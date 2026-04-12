@@ -1,0 +1,12 @@
+[package]
+name = "corvid-ast"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "AST types for the Corvid language."
+
+[dependencies]
+serde = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }

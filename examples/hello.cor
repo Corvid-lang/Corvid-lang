@@ -1,0 +1,8 @@
+# Hello, Corvid.
+
+prompt greet(name: String) -> String:
+    "Write a short, warm greeting to {name}."
+
+agent hello(name: String) -> String:
+    message = greet(name)
+    return message

@@ -1,0 +1,42 @@
+# The canonical Corvid example.
+# This file will not compile if `approve` is removed — that is the point.
+
+import python "anthropic" as anthropic
+
+type Ticket:
+    order_id: String
+    user_id: String
+    message: String
+
+type Order:
+    id: String
+    amount: Float
+    user_id: String
+
+type Decision:
+    should_refund: Bool
+    reason: String
+
+type Receipt:
+    refund_id: String
+    amount: Float
+
+tool get_order(id: String) -> Order
+tool issue_refund(id: String, amount: Float) -> Receipt dangerous
+
+prompt decide_refund(ticket: Ticket, order: Order) -> Decision:
+    """
+    Decide whether this ticket deserves a refund. Consider the order amount,
+    the user's complaint, and fairness. Return should_refund=true only when
+    the complaint is legitimate.
+    """
+
+agent refund_bot(ticket: Ticket) -> Decision:
+    order = get_order(ticket.order_id)
+    decision = decide_refund(ticket, order)
+
+    if decision.should_refund:
+        approve IssueRefund(order.id, order.amount)
+        issue_refund(order.id, order.amount)
+
+    return decision

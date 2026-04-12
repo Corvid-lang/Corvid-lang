@@ -1,0 +1,63 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/corvid-syntax",
+    "crates/corvid-ast",
+    "crates/corvid-resolve",
+    "crates/corvid-types",
+    "crates/corvid-ir",
+    "crates/corvid-codegen-py",
+    "crates/corvid-codegen-wasm",
+    "crates/corvid-runtime",
+    "crates/corvid-driver",
+    "crates/corvid-cli",
+    "crates/corvid-lsp",
+]
+
+[workspace.package]
+version = "0.0.1"
+edition = "2021"
+authors = ["Corvid Authors"]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/corvid-lang/corvid"
+rust-version = "1.75"
+
+[workspace.dependencies]
+# parsing
+chumsky = "0.9"
+ariadne = "0.4"
+
+# serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# async
+tokio = { version = "1", features = ["full"] }
+
+# CLI
+clap = { version = "4", features = ["derive"] }
+anyhow = "1"
+
+# testing
+insta = "1"
+
+# Python interop (optional, opt-in per crate)
+pyo3 = { version = "0.22", features = ["auto-initialize"] }
+
+# internal crates
+corvid-ast      = { path = "crates/corvid-ast" }
+corvid-syntax   = { path = "crates/corvid-syntax" }
+corvid-resolve  = { path = "crates/corvid-resolve" }
+corvid-types    = { path = "crates/corvid-types" }
+corvid-ir       = { path = "crates/corvid-ir" }
+corvid-codegen-py = { path = "crates/corvid-codegen-py" }
+corvid-runtime  = { path = "crates/corvid-runtime" }
+corvid-driver   = { path = "crates/corvid-driver" }
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+
+[profile.dev]
+opt-level = 0

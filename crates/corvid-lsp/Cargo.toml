@@ -1,0 +1,8 @@
+[package]
+name = "corvid-lsp"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Language server for Corvid (v0.5+)."
+
+[dependencies]

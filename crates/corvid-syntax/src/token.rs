@@ -1,0 +1,130 @@
+//! Token types produced by the lexer.
+
+use corvid_ast::Span;
+use serde::{Deserialize, Serialize};
+
+/// A lexed token: kind + source location.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Token {
+    pub kind: TokKind,
+    pub span: Span,
+}
+
+impl Token {
+    pub fn new(kind: TokKind, span: Span) -> Self {
+        Self { kind, span }
+    }
+}
+
+/// Every kind of token Corvid knows about.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum TokKind {
+    // --- keywords: declarations ---
+    KwAgent,
+    KwTool,
+    KwPrompt,
+    KwType,
+    KwImport,
+    KwAs,
+
+    // --- keywords: effect system ---
+    KwApprove,
+    KwDangerous,
+
+    // --- keywords: control flow ---
+    KwIf,
+    KwElse,
+    KwFor,
+    KwIn,
+    KwReturn,
+    KwBreak,
+    KwContinue,
+    KwPass,
+
+    // --- keywords: values ---
+    KwTrue,
+    KwFalse,
+    KwNothing,
+
+    // --- keywords: logical ---
+    KwAnd,
+    KwOr,
+    KwNot,
+
+    // --- punctuation ---
+    LParen,   // (
+    RParen,   // )
+    LBracket, // [
+    RBracket, // ]
+    Colon,    // :
+    Comma,    // ,
+    Dot,      // .
+    Arrow,    // ->
+
+    // --- operators ---
+    Assign,  // =
+    Eq,      // ==
+    NotEq,   // !=
+    Lt,      // <
+    LtEq,    // <=
+    Gt,      // >
+    GtEq,    // >=
+    Plus,    // +
+    Minus,   // -
+    Star,    // *
+    Slash,   // /
+    Percent, // %
+
+    // --- literals ---
+    Ident(String),
+    Int(i64),
+    Float(f64),
+    StringLit(String),
+
+    // --- structural (produced by indent pass) ---
+    Newline,
+    Indent,
+    Dedent,
+
+    // --- end of input ---
+    Eof,
+}
+
+impl TokKind {
+    /// If `s` is a Corvid keyword, return the matching `TokKind`.
+    pub fn keyword_from(s: &str) -> Option<TokKind> {
+        Some(match s {
+            "agent" => TokKind::KwAgent,
+            "tool" => TokKind::KwTool,
+            "prompt" => TokKind::KwPrompt,
+            "type" => TokKind::KwType,
+            "import" => TokKind::KwImport,
+            "as" => TokKind::KwAs,
+            "approve" => TokKind::KwApprove,
+            "dangerous" => TokKind::KwDangerous,
+            "if" => TokKind::KwIf,
+            "else" => TokKind::KwElse,
+            "for" => TokKind::KwFor,
+            "in" => TokKind::KwIn,
+            "return" => TokKind::KwReturn,
+            "break" => TokKind::KwBreak,
+            "continue" => TokKind::KwContinue,
+            "pass" => TokKind::KwPass,
+            "true" => TokKind::KwTrue,
+            "false" => TokKind::KwFalse,
+            "nothing" => TokKind::KwNothing,
+            "and" => TokKind::KwAnd,
+            "or" => TokKind::KwOr,
+            "not" => TokKind::KwNot,
+            _ => return None,
+        })
+    }
+
+    /// Is this a structural token emitted by the indent pass?
+    pub fn is_structural(&self) -> bool {
+        matches!(
+            self,
+            TokKind::Newline | TokKind::Indent | TokKind::Dedent | TokKind::Eof
+        )
+    }
+}

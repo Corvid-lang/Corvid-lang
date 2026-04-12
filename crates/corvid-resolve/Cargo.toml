@@ -1,0 +1,13 @@
+[package]
+name = "corvid-resolve"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Name resolution for the Corvid language."
+
+[dependencies]
+corvid-ast = { workspace = true }
+serde = { workspace = true }
+
+[dev-dependencies]
+corvid-syntax = { workspace = true }

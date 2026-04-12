@@ -1,0 +1,25 @@
+# Rust
+/target
+**/target
+Cargo.lock
+
+# Editor / OS
+.DS_Store
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Corvid generated output (in user projects)
+**/target/py/
+**/target/wasm/
+**/target/trace/
+
+# Snapshot test pending
+**/*.snap.new
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/

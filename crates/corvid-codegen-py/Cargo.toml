@@ -1,0 +1,9 @@
+[package]
+name = "corvid-codegen-py"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Python code generator for the Corvid compiler."
+
+[dependencies]
+corvid-ir = { workspace = true }

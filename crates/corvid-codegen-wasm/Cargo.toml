@@ -1,0 +1,8 @@
+[package]
+name = "corvid-codegen-wasm"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "WASM code generator for the Corvid compiler (v0.2+)."
+
+[dependencies]

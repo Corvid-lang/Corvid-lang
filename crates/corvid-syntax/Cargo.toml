@@ -1,0 +1,12 @@
+[package]
+name = "corvid-syntax"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Lexer and parser for the Corvid language."
+
+[dependencies]
+corvid-ast = { workspace = true }
+chumsky = { workspace = true }
+ariadne = { workspace = true }
+serde = { workspace = true }

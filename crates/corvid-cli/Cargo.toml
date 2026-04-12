@@ -1,0 +1,15 @@
+[package]
+name = "corvid-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "The `corvid` command-line compiler."
+
+[[bin]]
+name = "corvid"
+path = "src/main.rs"
+
+[dependencies]
+corvid-driver = { workspace = true }
+clap = { workspace = true }
+anyhow = { workspace = true }

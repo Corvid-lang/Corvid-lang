@@ -1,0 +1,9 @@
+[package]
+name = "corvid-ir"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Intermediate representation for the Corvid compiler."
+
+[dependencies]
+corvid-ast = { workspace = true }

@@ -1,0 +1,17 @@
+# This file demonstrates the compile-time approval check.
+# Uncomment the first version to see error E0101.
+
+tool send_email(to: String, body: String) -> Nothing dangerous
+
+# -------------------------------------------------------------------
+# Version 1: does NOT compile.
+# Error: E0101 — dangerous tool called without approve.
+#
+# agent spam(address: String) -> Nothing:
+#     send_email(address, "buy our stuff")
+# -------------------------------------------------------------------
+
+# Version 2: compiles cleanly.
+agent email_user(address: String, body: String) -> Nothing:
+    approve SendEmail(address, body)
+    send_email(address, body)

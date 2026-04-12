@@ -1,0 +1,15 @@
+[package]
+name = "corvid-driver"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Pipeline orchestrator for the Corvid compiler."
+
+[dependencies]
+corvid-ast = { workspace = true }
+corvid-syntax = { workspace = true }
+corvid-resolve = { workspace = true }
+corvid-types = { workspace = true }
+corvid-ir = { workspace = true }
+corvid-codegen-py = { workspace = true }
+anyhow = { workspace = true }
