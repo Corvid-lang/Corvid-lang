@@ -932,6 +932,96 @@ The combined "memory + String" slice was too big to land in one session safely. 
 
 Slice 12f pre-phase chat. Topic: `RuntimeFuncs` struct + module-wide declaration; lowering `IrLiteral::String` via `module.declare_data` + `define_data` with self-relative relocation for the descriptor's `bytes_ptr` field; ownership management (retain on `use_var`, release after consumed temps, release-on-rebind, retain-return + release-locals at function exit, scope-stack data structure that mirrors Corvid's lexical scoping rather than Cranelift's flat-Variable model); parity harness updates to parse `ALLOCS` / `RELEASES` from stderr.
 
+---
+
+## Day 24 — Phase 12 slice 12f: `String` operations + ownership wiring ✅
+
+**Corvid compiles String programs natively with refcount-balanced ownership.** A program like `greeting = "hello"; target = "world"; full = greeting + ", " + target + "!"; return full == "hello, world!"` becomes a real Windows binary that returns `1` (true) and the leak detector confirms `ALLOCS=3 RELEASES=3` — three concat allocations, all freed cleanly.
+
+### Pre-phase decisions, locked in conversation
+
+1. **Three-state ownership model** (`NonRefcounted` / `Owned` / `Borrowed`). `lower_expr` always returns Owned for refcounted types; `IrExprKind::Local` (use_var) emits an internal retain to convert Borrowed → Owned. Callers handle disposal uniformly: bind takes ownership (no extra retain), consumed temps (call args, discards) release after use, returns retain the return value (no-op for non-refcounted) and release all live locals.
+2. **Single `.rodata` block per literal** with self-relative relocation. One `declare_data` + `define_data` per literal; descriptor + bytes inline; `write_data_addr(16, self_gv, 32)` makes the `bytes_ptr` field point at the inline bytes.
+3. **Leak detector applied to every parity test** (not just String fixtures). Catches accidental allocations introduced by future slices even when no String code is present.
+
+### What landed
+
+**`corvid-codegen-cl::lowering`**
+- `RuntimeFuncs` struct holding FuncIds for `corvid_retain` / `corvid_release` / `corvid_string_concat` / `corvid_string_eq` / `corvid_string_cmp`, plus `Cell<u64>` literal counter for unique `.rodata` symbol names. Declared once per module via `declare_runtime_funcs`; threaded through every lowering function in place of the previous bare `overflow_func_id: FuncId` parameter.
+- `LocalsCtx` data structure for per-agent state (`env`, `var_idx`, `scope_stack`). Pushed onto the codebase but not yet used as a single bundled parameter — the existing function signatures still take `env`, `var_idx`, `scope_stack` separately. Migration to bundled `LocalsCtx` is a future cleanup.
+- `lower_string_literal`: emit a single `.rodata` block per literal with the `[refcount=i64::MIN | reserved | bytes_ptr | length | bytes]` layout. `write_data_addr(16, self_gv, 32)` for self-relative relocation. Returns `symbol_value(self) + 16` as the descriptor pointer (matching what `corvid_alloc` returns for heap strings).
+- `lower_string_binop`: dispatch in `lower_expr`'s `BinOp` arm when both operands have `Type::String`. Concat calls `corvid_string_concat`, equality/inequality call `corvid_string_eq` (narrowed to I8), ordering calls `corvid_string_cmp` (compared to 0 with the appropriate `IntCC`). Both inputs released after the call.
+- `IrExprKind::Local` arm: `emit_retain` on the use_var result when the local's type is refcounted. Three-state ownership: every `lower_expr` return is Owned for refcounted types.
+- `IrStmt::Let` arm: declare-or-reuse logic, plus release-on-rebind for refcounted locals (read old via `use_var` → release → bind new). New refcounted bindings tracked in the current scope for end-of-scope cleanup.
+- `IrStmt::Return` arm: walks all live scopes innermost-first, emits `release` for every refcounted local, then `return_`. The return value is Owned and transfers to the caller; non-refcounted return values are no-op.
+- `IrStmt::Expr` (discard) arm: if the lowered value is refcounted, emit `release` immediately — discarded temp has no owner.
+- Agent call sites: arguments come back from `lower_expr` as Owned (+1 each); after the call returns, refcounted args get released (the callee took its own ownership via parameter retain).
+- `define_agent`: pushes the function-root scope into `scope_stack`. Refcounted parameters get retained on entry (callee takes ownership per +0 ABI) and tracked in the function-root scope.
+- `lower_if`: each branch pushes its own scope; if the branch falls through normally, releases its branch-scope locals before jumping to merge; if the branch terminates (via return), the return path already released everything across all scopes — just pop.
+
+**`corvid-codegen-cl::lib`**
+- Driver guard for `String` entry-agent returns: raises `NotSupported` pointing at slice 12i (where the C shim grows to handle non-Int print formats). Existing Float entry-return guard updated with the same slice pointer.
+
+**`corvid-codegen-cl/runtime/alloc.c`**
+- Leak counter semantic fix: `corvid_release_count` now only increments when an allocation actually gets freed (refcount hits 0), not on every release call. This pairs the counter 1:1 with `corvid_alloc_count` so the leak detector's "ALLOCS == RELEASES" assertion catches actual leaks rather than counting intermediate retains/releases.
+
+**`crates/corvid-codegen-cl/tests/parity.rs`**
+- New `run_with_leak_detector` helper: runs the binary with `CORVID_DEBUG_ALLOC=1`, returns (stdout, stderr, status).
+- New `assert_no_leaks(stderr, src)` helper: parses `ALLOCS=N` and `RELEASES=N` from stderr lines, asserts equal.
+- `assert_parity` and `assert_parity_bool` updated: stdout reading now takes the first line (since stderr might also contain leak-detector output not interleaved with stdout, but defensively we take the first stdout line). Both helpers call `assert_no_leaks` after asserting the value matches.
+- Slice 12f fixtures: 7 new tests covering literal eq/neq, concat-then-eq, empty-string concat (both directions), `!=`, all four orderings (`<`, `<=`, `>`, `>=`), reassignment + concat + compare. All 59 fixtures (52 existing + 7 new) pass with the leak detector verifying balanced allocs/releases.
+
+### Bugs caught during the slice
+
+1. **Leak counter counted release calls instead of frees.** First test of the reassignment fixture (`s = "foo"; s = s + "bar"; return s == "foobar"`) reported `ALLOCS=1 RELEASES=2` — looked like a double-release but was actually correct behaviour mis-counted. The codegen emitted a retain inside `IrExprKind::Local` (Borrowed → Owned) and a balancing release after `corvid_string_eq`; the second release was the scope-exit cleanup of the local. Two real release calls, two counter increments, but only ONE allocation freed. Fix: only increment `corvid_release_count` when `previous == 1` (the free path). The "ALLOCS == freed allocations" semantic is what the leak detector actually wants.
+
+### Test counts
+
+| Crate | Tests |
+|---|---|
+| corvid-ast | 3 |
+| corvid-syntax | 75 |
+| corvid-resolve | 14 |
+| corvid-types | 18 |
+| corvid-ir | 6 |
+| corvid-runtime (unit) | 37 |
+| corvid-runtime (integration) | 6 |
+| corvid-vm | 35 |
+| corvid-codegen-py | 13 |
+| **corvid-codegen-cl (parity)** | **59 (was 52)** |
+| corvid-driver | 12 |
+| Python runtime | 10 |
+
+**Total: ~288 tests, all green.** Slice 12f added 7 String parity fixtures; the leak detector now runs on all 59.
+
+### Verified live
+
+```sh
+$ corvid build --target=native examples/strings.cor
+built: examples/strings.cor -> examples\target\bin\strings.exe
+
+$ ./examples/target/bin/strings.exe; echo "exit: $?"
+1
+exit: 0
+
+$ CORVID_DEBUG_ALLOC=1 ./examples/target/bin/strings.exe
+1
+ALLOCS=3
+RELEASES=3
+```
+
+Three intermediate concat allocations (`"hello" + ", "`, then `+ "world"`, then `+ "!"`), all freed cleanly at function exit. The reassignment-during-concat fixture exercises retain-on-rebind + scope-exit release: same balance, no leak.
+
+### Scope honestly held
+
+In: String literal lowering, six String operators, scope-stack-driven release insertion, full ownership wiring including parameter retains and call-arg releases, leak detector on every fixture.
+
+Out (deferred to later slices, each with explicit pointers): Struct → 12g. List + for + break/continue → 12h. Parameterised entry agents + non-Int returning entries → 12i. Native default for tool-free programs → 12j. Polish → 12k.
+
+### Next
+
+Slice 12g pre-phase chat. Topic: `Struct` lowering — memory layout (heap-allocated record behind the same 16-byte refcount header), field access via load+store at field offsets, struct-value passing convention (still a single I64 pointer, like String), constructor lowering (which currently is parsed as a Call but resolves to a struct literal). Leak detector continues to catch any retain/release imbalance.
+
 
 
 

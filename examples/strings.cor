@@ -1,0 +1,5 @@
+agent main() -> Bool:
+    greeting = "hello"
+    target = "world"
+    full = greeting + ", " + target + "!"
+    return full == "hello, world!"

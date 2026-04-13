@@ -19,6 +19,46 @@ use corvid_vm::Value;
 use std::process::Command;
 use std::sync::Arc;
 
+/// Run a compiled binary with the leak detector enabled. Returns
+/// (stdout, stderr, exit_status). Caller is responsible for verifying
+/// stdout / status; this helper handles the env var.
+fn run_with_leak_detector(bin: &std::path::Path) -> (String, String, std::process::ExitStatus) {
+    let output = Command::new(bin)
+        .env("CORVID_DEBUG_ALLOC", "1")
+        .output()
+        .expect("run compiled binary");
+    let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+    (stdout, stderr, output.status)
+}
+
+/// Parse `ALLOCS=N` and `RELEASES=N` from the stderr output the shim
+/// emits when `CORVID_DEBUG_ALLOC=1`. Asserts they are equal — any
+/// mismatch means the codegen forgot a `corvid_release` somewhere.
+#[track_caller]
+fn assert_no_leaks(stderr: &str, src: &str) {
+    let mut allocs: Option<i64> = None;
+    let mut releases: Option<i64> = None;
+    for line in stderr.lines() {
+        if let Some(rest) = line.strip_prefix("ALLOCS=") {
+            allocs = rest.trim().parse().ok();
+        } else if let Some(rest) = line.strip_prefix("RELEASES=") {
+            releases = rest.trim().parse().ok();
+        }
+    }
+    let a = allocs.unwrap_or_else(|| {
+        panic!("expected `ALLOCS=N` in stderr, got: {stderr}; src=\n{src}")
+    });
+    let r = releases.unwrap_or_else(|| {
+        panic!("expected `RELEASES=N` in stderr, got: {stderr}; src=\n{src}")
+    });
+    assert_eq!(
+        a, r,
+        "leak detected: ALLOCS={a} RELEASES={r} (delta={}); src=\n{src}",
+        a - r
+    );
+}
+
 /// End-to-end pipeline: source → IR → both tiers → assertion.
 ///
 /// `expected` is the `Int` value both tiers should produce.
@@ -49,22 +89,24 @@ fn assert_parity(src: &str, expected: i64) {
     let produced = build_native_to_disk(&ir, "corvid_parity_test", &bin_path)
         .expect("compile + link");
 
-    let output = Command::new(&produced).output().expect("run compiled binary");
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
+    let (stdout, stderr, status) = run_with_leak_detector(&produced);
     assert!(
-        output.status.success(),
+        status.success(),
         "compiled binary exited non-zero: status={:?} stderr={stderr} stdout={stdout} src=\n{src}",
-        output.status.code()
+        status.code()
     );
     let compiled_value: i64 = stdout
         .trim()
+        .lines()
+        .next()
+        .unwrap_or("")
         .parse()
         .unwrap_or_else(|e| panic!("parse stdout `{stdout}` as i64: {e}; src=\n{src}"));
     assert_eq!(
         compiled_value, expected,
         "compiled result mismatch for source:\n{src}\nstderr: {stderr}"
     );
+    assert_no_leaks(&stderr, src);
 }
 
 /// Like `assert_parity` but for agents that return `Bool`. Interpreter
@@ -93,16 +135,17 @@ fn assert_parity_bool(src: &str, expected: bool) {
     let bin_path = tmp.path().join("prog");
     let produced = build_native_to_disk(&ir, "corvid_parity_test", &bin_path)
         .expect("compile + link");
-    let output = Command::new(&produced).output().expect("run compiled binary");
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
+    let (stdout, stderr, status) = run_with_leak_detector(&produced);
     assert!(
-        output.status.success(),
+        status.success(),
         "compiled binary exited non-zero: status={:?} stderr={stderr} stdout={stdout} src=\n{src}",
-        output.status.code()
+        status.code()
     );
     let printed: i64 = stdout
         .trim()
+        .lines()
+        .next()
+        .unwrap_or("")
         .parse()
         .unwrap_or_else(|e| panic!("parse stdout `{stdout}` as i64: {e}; src=\n{src}"));
     let compiled_bool = match printed {
@@ -114,6 +157,7 @@ fn assert_parity_bool(src: &str, expected: bool) {
         compiled_bool, expected,
         "compiled result mismatch for source:\n{src}\nstderr: {stderr}"
     );
+    assert_no_leaks(&stderr, src);
 }
 
 /// Assert both tiers raise an overflow / divide-by-zero error. Interpreter
@@ -681,12 +725,103 @@ fn float_entry_return_is_blocked_with_clear_error() {
         CodegenErrorKind::NotSupported(ref msg) => {
             assert!(msg.contains("Float"), "expected message to mention Float: {msg}");
             assert!(
-                msg.contains("12h"),
-                "expected message to point at slice 12h: {msg}"
+                msg.contains("12i"),
+                "expected message to point at slice 12i (renumbered from 12h after slice split): {msg}"
             );
         }
         other => panic!("expected NotSupported, got {other:?}"),
     }
+}
+
+// ============================================================
+// Slice 12f fixtures: String literals, concat, comparisons.
+// Every fixture is also subject to the leak detector — if any
+// allocation outlives release, the test fails with the imbalance.
+// ============================================================
+
+#[test]
+fn string_literal_equality_is_true() {
+    assert_parity_bool(
+        "agent f() -> Bool:\n    return \"hello\" == \"hello\"\n",
+        true,
+    );
+}
+
+#[test]
+fn string_literal_inequality_is_false() {
+    assert_parity_bool(
+        "agent f() -> Bool:\n    return \"hello\" == \"world\"\n",
+        false,
+    );
+}
+
+#[test]
+fn string_concat_then_compare() {
+    // "hi " + "there" should equal "hi there" — exercises concat plus
+    // equality, plus the release of the heap-allocated concat result.
+    assert_parity_bool(
+        "agent f() -> Bool:\n    return \"hi \" + \"there\" == \"hi there\"\n",
+        true,
+    );
+}
+
+#[test]
+fn empty_string_concat_is_identity() {
+    assert_parity_bool(
+        "agent f() -> Bool:\n    return \"\" + \"x\" == \"x\"\n",
+        true,
+    );
+    assert_parity_bool(
+        "agent f() -> Bool:\n    return \"x\" + \"\" == \"x\"\n",
+        true,
+    );
+}
+
+#[test]
+fn string_not_equal_operator() {
+    assert_parity_bool(
+        "agent f() -> Bool:\n    return \"hello\" != \"world\"\n",
+        true,
+    );
+    assert_parity_bool(
+        "agent f() -> Bool:\n    return \"hello\" != \"hello\"\n",
+        false,
+    );
+}
+
+#[test]
+fn string_ordering_lexicographic() {
+    assert_parity_bool(
+        "agent f() -> Bool:\n    return \"abc\" < \"abd\"\n",
+        true,
+    );
+    assert_parity_bool(
+        "agent f() -> Bool:\n    return \"abc\" <= \"abc\"\n",
+        true,
+    );
+    assert_parity_bool(
+        "agent f() -> Bool:\n    return \"abd\" > \"abc\"\n",
+        true,
+    );
+    assert_parity_bool(
+        "agent f() -> Bool:\n    return \"abc\" >= \"abc\"\n",
+        true,
+    );
+}
+
+#[test]
+fn string_in_local_binding_then_concat_then_compare() {
+    // Exercises bind-time retain on Let + reassignment-time release-old +
+    // scope-exit release. Leak detector verifies count balance.
+    assert_parity_bool(
+        "\
+agent f() -> Bool:
+    s = \"foo\"
+    s = s + \"bar\"
+    return s == \"foobar\"
+",
+        true,
+    );
 }
 
 #[test]

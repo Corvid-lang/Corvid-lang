@@ -122,18 +122,19 @@ Originally scoped as "Memory foundation + String"; user split into 12e (foundati
 
 **Pre-phase decisions locked**: 16-byte header (preserves payload alignment + reserves a future-use word), atomic refcount (Phase 25 multi-agent will need it; cheap insurance now), scope-driven release insertion (correct now, liveness-driven optimisation is Phase 22), combined slice (foundation + String) — then split mid-session into 12e (foundation) + 12f (String) once the String integration revealed itself as a slice's worth of work on its own.
 
-#### Slice 12f 🚧 — `String` operations + ownership wiring (next)
-
-Pre-phase chat required. Scope:
-- [ ] `RuntimeFuncs` struct (FuncIds for retain / release / concat / eq / cmp), declared once per module in `lower_file`, threaded through every lowering function
-- [ ] Lower `IrLiteral::String` via `module.declare_data` + `define_data` — emit two `.rodata` symbols per literal (bytes + descriptor with relocation), descriptor's refcount = `i64::MIN` immortal sentinel
-- [ ] Lower `String + String` (concat) via `corvid_string_concat` call
-- [ ] Lower String comparison ops via `corvid_string_eq` / `corvid_string_cmp`
-- [ ] Scope-stack tracking for refcounted locals; `Vec<Vec<(LocalId, Variable)>>` pushed/popped at block entry/exit
-- [ ] Ownership management: retain on `use_var` of a refcounted local (borrowed → owned), release after passing to a call (consumed temp), release-on-rebind, retain return value + release locals on return, walk all scopes on return for cleanup
-- [ ] Driver guard: String entry params / returns → `NotSupported` pointing at slice 12i (parameterised entry agents)
-- [ ] Update parity harness to set `CORVID_DEBUG_ALLOC=1`, parse `ALLOCS=` / `RELEASES=` from stderr, assert balanced
-- [ ] ≥6 String parity fixtures + leak-detector assertion runs on every existing fixture
+#### Slice 12f ✅ — `String` operations + ownership wiring (Day 24)
+- [x] `RuntimeFuncs` struct (FuncIds for retain / release / concat / eq / cmp + `Cell<u64>` literal counter), declared once per module in `lower_file`, threaded through every lowering function
+- [x] `LocalsCtx` data structure — `(env, var_idx, scope_stack)` bundle for lowering-function locals
+- [x] Lower `IrLiteral::String` via `module.declare_data` + `define_data` — single `.rodata` block per literal `[refcount=i64::MIN | reserved | bytes_ptr → self+32 | length | bytes...]` with `write_data_addr(16, self_gv, 32)` self-relative relocation
+- [x] Lower `String + String` (concat) via `corvid_string_concat` call
+- [x] Lower String comparison ops (`==`, `!=`, `<`, `<=`, `>`, `>=`) via `corvid_string_eq` / `corvid_string_cmp`; narrow result `i64 → I8`
+- [x] Scope-stack tracking for refcounted locals; `Vec<Vec<(LocalId, Variable)>>` pushed/popped at if/else branch entry/exit; function-root scope pushed in `define_agent`
+- [x] Ownership management: retain on `use_var` of refcounted (Borrowed → Owned), release after passing to a call (consumed temp), release-on-rebind, retain return value + release locals on return, walk all scopes on return for cleanup
+- [x] Parameter binding retains incoming refcounted args (+0 ABI: caller passes without bump; callee retains on entry)
+- [x] Driver guard: String entry params / returns → `NotSupported` pointing at slice 12i
+- [x] Parity harness leak detector — `CORVID_DEBUG_ALLOC=1` on every binary, parse stderr `ALLOCS=N\nRELEASES=N`, assert equal
+- [x] Leak-counter semantic fix: `corvid_release_count` only increments when an allocation is actually freed (refcount hits 0), so it pairs 1:1 with `corvid_alloc_count`
+- [x] 7 new String parity fixtures (literal eq, literal neq, concat+eq, empty-string concat both directions, !=, six orderings, reassignment+concat+compare). Leak detector runs on all 59 fixtures (52 existing + 7 new), all balanced.
 
 #### Slice 12g — `Struct` (memory layout + field access)
 

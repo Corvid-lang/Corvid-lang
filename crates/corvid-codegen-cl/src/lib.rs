@@ -77,12 +77,24 @@ pub fn build_native_to_disk(
         ));
     }
     // Float entry-agent returns need a different print format in the C
-    // shim (or a second shim variant). Defer to slice 12h alongside
+    // shim (or a second shim variant). Defer to slice 12i alongside
     // argv decoding (when the shim already grows).
     if matches!(&entry.return_ty, corvid_types::Type::Float) {
         return Err(CodegenError::not_supported(
             format!(
-                "entry agent `{}` returns `Float` — the C shim's `printf(\"%lld\")` only handles Int/Bool; Float entry returns arrive in slice 12h",
+                "entry agent `{}` returns `Float` — the C shim's `printf(\"%lld\")` only handles Int/Bool; Float entry returns arrive in slice 12i",
+                entry.name
+            ),
+            entry.span,
+        ));
+    }
+    // String entry-agent returns: the shim can't print a String pointer
+    // meaningfully, and a String return would need its own print path.
+    // Defer to slice 12i alongside argv decoding.
+    if matches!(&entry.return_ty, corvid_types::Type::String) {
+        return Err(CodegenError::not_supported(
+            format!(
+                "entry agent `{}` returns `String` — slice 12i adds the C-shim variant that decodes argv and prints non-Int returns",
                 entry.name
             ),
             entry.span,

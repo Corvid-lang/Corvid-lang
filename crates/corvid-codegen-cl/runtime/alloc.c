@@ -81,7 +81,14 @@ void corvid_retain(void* payload) {
     atomic_fetch_add_explicit(&h->refcount, 1, memory_order_relaxed);
 }
 
-/* Decrement the refcount; free when it hits zero. No-op for immortals. */
+/* Decrement the refcount; free when it hits zero. No-op for immortals.
+ *
+ * `corvid_release_count` only increments when an allocation actually
+ * gets freed (refcount reached zero) — *not* on every release call —
+ * so it pairs 1:1 with `corvid_alloc_count` for leak detection. The
+ * parity harness asserts the two are equal at process exit; any
+ * imbalance means the codegen forgot a release somewhere.
+ */
 void corvid_release(void* payload) {
     if (payload == NULL) return;
     corvid_header* h = (corvid_header*)((char*)payload - CORVID_HEADER_BYTES);
@@ -96,7 +103,8 @@ void corvid_release(void* payload) {
                 "corvid: corvid_release on already-freed allocation (refcount was %lld)\n",
                 previous);
         exit(1);
-    } else {
-        atomic_fetch_add_explicit(&corvid_release_count, 1, memory_order_relaxed);
     }
+    /* `previous > 1`: the allocation has other owners still holding
+     * references. No leak counter increment — leak detection cares
+     * about freed allocations, not about every release call. */
 }

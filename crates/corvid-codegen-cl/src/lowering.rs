@@ -15,7 +15,7 @@ use cranelift_codegen::ir::{
 };
 use cranelift_codegen::Context;
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext, Variable};
-use cranelift_module::{FuncId, Linkage, Module};
+use cranelift_module::{DataDescription, FuncId, Linkage, Module};
 use cranelift_object::ObjectModule;
 use corvid_ast::{BinaryOp, Span, UnaryOp};
 use corvid_ir::{IrAgent, IrBlock, IrCallKind, IrExpr, IrExprKind, IrFile, IrLiteral, IrStmt};
@@ -37,6 +37,86 @@ fn lowered_outcome_placeholder() -> BlockOutcome {
 /// collisions with C runtime symbols (`main`, `printf`, `malloc`, ...).
 fn mangle_agent_symbol(user_name: &str) -> String {
     format!("corvid_agent_{user_name}")
+}
+
+/// Declare the imported runtime helpers (retain, release, string
+/// concat / eq / cmp) and bundle their FuncIds with the overflow
+/// handler into a `RuntimeFuncs`.
+fn declare_runtime_funcs(
+    module: &mut ObjectModule,
+    overflow_func_id: FuncId,
+) -> Result<RuntimeFuncs, CodegenError> {
+    let mut retain_sig = module.make_signature();
+    retain_sig.params.push(AbiParam::new(I64));
+    let retain_id = module
+        .declare_function(RETAIN_SYMBOL, Linkage::Import, &retain_sig)
+        .map_err(|e| CodegenError::cranelift(format!("declare retain: {e}"), Span::new(0, 0)))?;
+
+    let mut release_sig = module.make_signature();
+    release_sig.params.push(AbiParam::new(I64));
+    let release_id = module
+        .declare_function(RELEASE_SYMBOL, Linkage::Import, &release_sig)
+        .map_err(|e| CodegenError::cranelift(format!("declare release: {e}"), Span::new(0, 0)))?;
+
+    let mut concat_sig = module.make_signature();
+    concat_sig.params.push(AbiParam::new(I64));
+    concat_sig.params.push(AbiParam::new(I64));
+    concat_sig.returns.push(AbiParam::new(I64));
+    let concat_id = module
+        .declare_function(STRING_CONCAT_SYMBOL, Linkage::Import, &concat_sig)
+        .map_err(|e| {
+            CodegenError::cranelift(format!("declare string_concat: {e}"), Span::new(0, 0))
+        })?;
+
+    let mut eq_sig = module.make_signature();
+    eq_sig.params.push(AbiParam::new(I64));
+    eq_sig.params.push(AbiParam::new(I64));
+    eq_sig.returns.push(AbiParam::new(I64));
+    let eq_id = module
+        .declare_function(STRING_EQ_SYMBOL, Linkage::Import, &eq_sig)
+        .map_err(|e| CodegenError::cranelift(format!("declare string_eq: {e}"), Span::new(0, 0)))?;
+
+    let mut cmp_sig = module.make_signature();
+    cmp_sig.params.push(AbiParam::new(I64));
+    cmp_sig.params.push(AbiParam::new(I64));
+    cmp_sig.returns.push(AbiParam::new(I64));
+    let cmp_id = module
+        .declare_function(STRING_CMP_SYMBOL, Linkage::Import, &cmp_sig)
+        .map_err(|e| CodegenError::cranelift(format!("declare string_cmp: {e}"), Span::new(0, 0)))?;
+
+    Ok(RuntimeFuncs {
+        overflow: overflow_func_id,
+        retain: retain_id,
+        release: release_id,
+        string_concat: concat_id,
+        string_eq: eq_id,
+        string_cmp: cmp_id,
+        literal_counter: std::cell::Cell::new(0),
+    })
+}
+
+/// Helper: emit `corvid_retain(value)` if the value is refcounted
+/// (i.e., non-immortal at runtime). Caller decides whether the value
+/// needs ownership at this point — the helper just emits the call.
+fn emit_retain(
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    runtime: &RuntimeFuncs,
+    v: ClValue,
+) {
+    let callee = module.declare_func_in_func(runtime.retain, builder.func);
+    builder.ins().call(callee, &[v]);
+}
+
+/// Helper: emit `corvid_release(value)`.
+fn emit_release(
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    runtime: &RuntimeFuncs,
+    v: ClValue,
+) {
+    let callee = module.declare_func_in_func(runtime.release, builder.func);
+    builder.ins().call(callee, &[v]);
 }
 
 /// Whether a Corvid value of this type lives behind a refcounted heap
@@ -73,6 +153,93 @@ pub const STRING_EQ_SYMBOL: &str = "corvid_string_eq";
 /// `long long corvid_string_cmp(void* a, void* b)` — bytewise compare.
 pub const STRING_CMP_SYMBOL: &str = "corvid_string_cmp";
 
+/// Bundle of imported runtime helper FuncIds, declared once per module
+/// in `lower_file` and threaded through every lowering function.
+/// Replaces the previous bare `overflow_func_id: FuncId` parameter so
+/// call sites get every helper in one place.
+///
+/// `literal_counter` is a `Cell` so recursive lowering paths can take
+/// `&self` and still bump the counter for unique `.rodata` symbol names.
+pub struct RuntimeFuncs {
+    pub overflow: FuncId,
+    pub retain: FuncId,
+    pub release: FuncId,
+    pub string_concat: FuncId,
+    pub string_eq: FuncId,
+    pub string_cmp: FuncId,
+    pub literal_counter: std::cell::Cell<u64>,
+}
+
+impl RuntimeFuncs {
+    /// Allocate the next unique literal symbol number.
+    pub fn next_literal_id(&self) -> u64 {
+        let n = self.literal_counter.get();
+        self.literal_counter.set(n + 1);
+        n
+    }
+}
+
+/// Per-agent mutable state: the `LocalId → Variable` map, the
+/// monotonic Variable index, and the scope stack tracking refcounted
+/// locals for end-of-scope releases.
+///
+/// `scope_stack` mirrors Corvid's lexical scoping rather than
+/// Cranelift's flat-Variable model: each `if`/`else` branch pushes its
+/// own scope; locals declared inside a branch get released at branch
+/// exit; function-root locals release at function exit.
+pub struct LocalsCtx {
+    /// Bound locals: id → (Cranelift variable, declared width).
+    pub env: HashMap<LocalId, (Variable, clir::Type)>,
+    /// Monotonic Variable id counter — unique per agent.
+    pub var_idx: usize,
+    /// Stack of nested scopes, innermost on top. Each scope holds the
+    /// refcounted locals declared *in that scope*.
+    pub scope_stack: Vec<Vec<(LocalId, Variable)>>,
+}
+
+impl LocalsCtx {
+    pub fn new() -> Self {
+        Self {
+            env: HashMap::new(),
+            var_idx: 0,
+            scope_stack: Vec::new(),
+        }
+    }
+
+    /// Push a fresh scope onto the stack. Call at every block entry.
+    pub fn enter_scope(&mut self) {
+        self.scope_stack.push(Vec::new());
+    }
+
+    /// Pop the current scope and return its refcounted locals so the
+    /// caller can emit `release` calls *before* the block terminator.
+    pub fn exit_scope(&mut self) -> Vec<(LocalId, Variable)> {
+        self.scope_stack.pop().unwrap_or_default()
+    }
+
+    /// Register a refcounted local in the current scope. Called from
+    /// `IrStmt::Let` when a *new* binding (not reassignment) is made
+    /// for a String / Struct / List type.
+    pub fn track_refcounted(&mut self, local_id: LocalId, var: Variable) {
+        if let Some(top) = self.scope_stack.last_mut() {
+            top.push((local_id, var));
+        }
+    }
+
+    /// Iterate over every refcounted local across all scopes,
+    /// innermost first. Used by `IrStmt::Return` to release all live
+    /// locals before transferring the return value to the caller.
+    pub fn all_refcounted_innermost_first(&self) -> impl Iterator<Item = &(LocalId, Variable)> {
+        self.scope_stack.iter().rev().flat_map(|s| s.iter().rev())
+    }
+}
+
+impl Default for LocalsCtx {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 
 /// Symbol name used by the C entry shim to pick up the runtime
 /// overflow handler. Declared here so both codegen and the shim agree.
@@ -106,6 +273,11 @@ pub fn lower_file(
             CodegenError::cranelift(format!("declare overflow handler: {e}"), Span::new(0, 0))
         })?;
 
+    // Declare the refcount + string runtime helpers. All take and
+    // return `i64` (pointers / integers); we use I64 across the board
+    // so the calling convention is uniform.
+    let runtime = declare_runtime_funcs(module, overflow_func_id)?;
+
     // Pass 1: declare every agent. Signatures are Int + Bool only for
     // slice 12b. Symbols are mangled so user agent names (e.g. `main`,
     // `printf`, `malloc`) cannot collide with C runtime symbols at link
@@ -136,7 +308,7 @@ pub fn lower_file(
         let &func_id = func_ids_by_def
             .get(&agent.id)
             .expect("declared in pass 1");
-        define_agent(module, agent, func_id, &func_ids_by_def, overflow_func_id)?;
+        define_agent(module, agent, func_id, &func_ids_by_def, &runtime)?;
     }
 
     // Pass 3: emit the `corvid_entry` trampoline if an entry agent was
@@ -295,7 +467,7 @@ fn define_agent(
     agent: &IrAgent,
     func_id: FuncId,
     func_ids_by_def: &HashMap<DefId, FuncId>,
-    overflow_func_id: FuncId,
+    runtime: &RuntimeFuncs,
 ) -> Result<(), CodegenError> {
     let mut ctx = Context::new();
     ctx.func = Function::with_name_signature(
@@ -313,6 +485,10 @@ fn define_agent(
 
         let mut env: HashMap<LocalId, (Variable, clir::Type)> = HashMap::new();
         let mut var_idx: usize = 0;
+        // The function-root scope. `lower_block` for the agent body
+        // does NOT push its own scope (it would double-push); this is
+        // it. Branch blocks inside `if`/`else` push/pop their own.
+        let mut scope_stack: Vec<Vec<(LocalId, Variable)>> = vec![Vec::new()];
 
         for (i, p) in agent.params.iter().enumerate() {
             let block_arg = builder.block_params(entry)[i];
@@ -322,6 +498,13 @@ fn define_agent(
             builder.declare_var(var, ty);
             builder.def_var(var, block_arg);
             env.insert(p.local_id, (var, ty));
+            // +0 ABI: caller passed without bumping refcount. Callee
+            // takes ownership by retaining and tracking in the
+            // function-root scope. Symmetric: scope exit releases.
+            if is_refcounted_type(&p.ty) {
+                emit_retain(&mut builder, module, runtime, block_arg);
+                scope_stack[0].push((p.local_id, var));
+            }
         }
 
         let lowered = lower_block(
@@ -329,9 +512,10 @@ fn define_agent(
             &agent.body,
             &mut env,
             &mut var_idx,
+            &mut scope_stack,
             func_ids_by_def,
             module,
-            overflow_func_id,
+            runtime,
         );
         if let Err(e) = lowered {
             return Err(e);
@@ -385,13 +569,23 @@ fn lower_block(
     builder: &mut FunctionBuilder,
     block: &IrBlock,
     env: &mut HashMap<LocalId, (Variable, clir::Type)>,
-    _var_idx: &mut usize,
+    var_idx: &mut usize,
+    scope_stack: &mut Vec<Vec<(LocalId, Variable)>>,
     func_ids_by_def: &HashMap<DefId, FuncId>,
     module: &mut ObjectModule,
-    overflow_func_id: FuncId,
+    runtime: &RuntimeFuncs,
 ) -> Result<BlockOutcome, CodegenError> {
     for stmt in &block.stmts {
-        match lower_stmt(builder, stmt, env, _var_idx, func_ids_by_def, module, overflow_func_id)? {
+        match lower_stmt(
+            builder,
+            stmt,
+            env,
+            var_idx,
+            scope_stack,
+            func_ids_by_def,
+            module,
+            runtime,
+        )? {
             BlockOutcome::Terminated => return Ok(BlockOutcome::Terminated),
             BlockOutcome::Normal => {}
         }
@@ -404,14 +598,16 @@ fn lower_stmt(
     stmt: &IrStmt,
     env: &mut HashMap<LocalId, (Variable, clir::Type)>,
     var_idx: &mut usize,
+    scope_stack: &mut Vec<Vec<(LocalId, Variable)>>,
     func_ids_by_def: &HashMap<DefId, FuncId>,
     module: &mut ObjectModule,
-    overflow_func_id: FuncId,
+    runtime: &RuntimeFuncs,
 ) -> Result<BlockOutcome, CodegenError> {
     match stmt {
         IrStmt::Return { value, span } => {
+            let value_ty = value.as_ref().map(|e| e.ty.clone());
             let v = match value {
-                Some(e) => lower_expr(builder, e, env, func_ids_by_def, module, overflow_func_id)?,
+                Some(e) => lower_expr(builder, e, env, func_ids_by_def, module, runtime)?,
                 None => {
                     return Err(CodegenError::not_supported(
                         "bare `return` (Nothing type not supported in slice 12a)",
@@ -419,11 +615,33 @@ fn lower_stmt(
                     ));
                 }
             };
+            // The return value is an Owned temp (per the three-state
+            // ownership model — every `lower_expr` returns Owned for
+            // refcounted types). The caller will receive the +1 we
+            // hold; nothing more to do for the value itself.
+            //
+            // Release every refcounted local across all live scopes
+            // before transferring control. Walk innermost-first to
+            // mirror lexical scope exit order (matters only if the
+            // `release` call has side effects we care about, which it
+            // doesn't, but the ordering is conventional).
+            let _ = value_ty; // currently unused but shows intent
+            for scope in scope_stack.iter().rev() {
+                for (_, var) in scope.iter().rev() {
+                    let v_local = builder.use_var(*var);
+                    emit_release(builder, module, runtime, v_local);
+                }
+            }
             builder.ins().return_(&[v]);
             Ok(BlockOutcome::Terminated)
         }
         IrStmt::Expr { expr, .. } => {
-            let _ = lower_expr(builder, expr, env, func_ids_by_def, module, overflow_func_id)?;
+            let v = lower_expr(builder, expr, env, func_ids_by_def, module, runtime)?;
+            // Discarded statement-expression: if the value is a
+            // refcounted Owned temp, it has no owner — release it.
+            if is_refcounted_type(&expr.ty) {
+                emit_release(builder, module, runtime, v);
+            }
             Ok(BlockOutcome::Normal)
         }
         IrStmt::Let {
@@ -434,12 +652,13 @@ fn lower_stmt(
             ..
         } => {
             let cl_ty = cl_type_for(ty, *span)?;
+            let refcounted = is_refcounted_type(ty);
             // Declare-or-reuse: a fresh `LocalId` gets a new Cranelift
             // `Variable`; reassignment to a name already bound in this
             // function reuses the existing Variable. A type change on
             // reassignment is a typechecker bug — we surface it as a
             // clean `CodegenError` instead of letting Cranelift panic.
-            let var = match env.get(local_id) {
+            let (var, is_reassignment) = match env.get(local_id) {
                 Some(&(existing_var, existing_ty)) => {
                     if existing_ty != cl_ty {
                         return Err(CodegenError::cranelift(
@@ -449,18 +668,33 @@ fn lower_stmt(
                             *span,
                         ));
                     }
-                    existing_var
+                    (existing_var, true)
                 }
                 None => {
                     let new_var = Variable::from_u32(*var_idx as u32);
                     *var_idx += 1;
                     builder.declare_var(new_var, cl_ty);
                     env.insert(*local_id, (new_var, cl_ty));
-                    new_var
+                    (new_var, false)
                 }
             };
-            let v = lower_expr(builder, value, env, func_ids_by_def, module, overflow_func_id)?;
+            // For reassignment of a refcounted local: read the old
+            // value first, release it, THEN bind the new value (which
+            // came pre-Owned from `lower_expr`).
+            if refcounted && is_reassignment {
+                let old = builder.use_var(var);
+                emit_release(builder, module, runtime, old);
+            }
+            let v = lower_expr(builder, value, env, func_ids_by_def, module, runtime)?;
             builder.def_var(var, v);
+            // Track this binding in the current scope so it gets
+            // released at scope exit. Only on first binding — a
+            // reassignment is already tracked by the original Let.
+            if refcounted && !is_reassignment {
+                if let Some(top) = scope_stack.last_mut() {
+                    top.push((*local_id, var));
+                }
+            }
             Ok(BlockOutcome::Normal)
         }
         IrStmt::If {
@@ -475,9 +709,10 @@ fn lower_stmt(
             else_block.as_ref(),
             env,
             var_idx,
+            scope_stack,
             func_ids_by_def,
             module,
-            overflow_func_id,
+            runtime,
         ),
         IrStmt::For { span, .. } => Err(CodegenError::not_supported(
             "`for` loops — slice 12c adds them",
@@ -501,7 +736,7 @@ fn lower_expr(
     env: &HashMap<LocalId, (Variable, clir::Type)>,
     func_ids_by_def: &HashMap<DefId, FuncId>,
     module: &mut ObjectModule,
-    overflow_func_id: FuncId,
+    runtime: &RuntimeFuncs,
 ) -> Result<ClValue, CodegenError> {
     match &expr.kind {
         IrExprKind::Literal(IrLiteral::Int(n)) => Ok(builder.ins().iconst(I64, *n)),
@@ -509,10 +744,9 @@ fn lower_expr(
             Ok(builder.ins().iconst(I8, if *b { 1 } else { 0 }))
         }
         IrExprKind::Literal(IrLiteral::Float(n)) => Ok(builder.ins().f64const(*n)),
-        IrExprKind::Literal(IrLiteral::String(_)) => Err(CodegenError::not_supported(
-            "`String` literals — slice 12d adds strings",
-            expr.span,
-        )),
+        IrExprKind::Literal(IrLiteral::String(s)) => {
+            lower_string_literal(builder, module, runtime, s, expr.span)
+        }
         IrExprKind::Literal(IrLiteral::Nothing) => Err(CodegenError::not_supported(
             "`nothing` literal — slice 12d adds it alongside the `Nothing` type",
             expr.span,
@@ -524,7 +758,15 @@ fn lower_expr(
                     expr.span,
                 )
             })?;
-            Ok(builder.use_var(*var))
+            let v = builder.use_var(*var);
+            // Three-state ownership: `use_var` produces a Borrowed
+            // reference. Convert to Owned by retaining so the caller
+            // (bind / return / call-arg / discard) can dispose of it
+            // uniformly. For non-refcounted types this is a no-op.
+            if is_refcounted_type(&expr.ty) {
+                emit_retain(builder, module, runtime, v);
+            }
+            Ok(v)
         }
         IrExprKind::Decl { .. } => Err(CodegenError::not_supported(
             "declaration reference (imports/functions as values)",
@@ -540,16 +782,25 @@ fn lower_expr(
                     env,
                     func_ids_by_def,
                     module,
-                    overflow_func_id,
+                    runtime,
                 );
             }
-            let l = lower_expr(builder, left, env, func_ids_by_def, module, overflow_func_id)?;
-            let r = lower_expr(builder, right, env, func_ids_by_def, module, overflow_func_id)?;
-            lower_binop_strict(builder, *op, l, r, expr.span, module, overflow_func_id)
+            // String operands route through the String runtime helpers
+            // and have their own ownership semantics (release inputs
+            // after the helper call). Dispatch here so we have access
+            // to the IR type information.
+            if matches!(&left.ty, Type::String) && matches!(&right.ty, Type::String) {
+                let l = lower_expr(builder, left, env, func_ids_by_def, module, runtime)?;
+                let r = lower_expr(builder, right, env, func_ids_by_def, module, runtime)?;
+                return lower_string_binop(builder, *op, l, r, expr.span, module, runtime);
+            }
+            let l = lower_expr(builder, left, env, func_ids_by_def, module, runtime)?;
+            let r = lower_expr(builder, right, env, func_ids_by_def, module, runtime)?;
+            lower_binop_strict(builder, *op, l, r, expr.span, module, runtime)
         }
         IrExprKind::UnOp { op, operand } => {
-            let v = lower_expr(builder, operand, env, func_ids_by_def, module, overflow_func_id)?;
-            lower_unop(builder, *op, v, expr.span, module, overflow_func_id)
+            let v = lower_expr(builder, operand, env, func_ids_by_def, module, runtime)?;
+            lower_unop(builder, *op, v, expr.span, module, runtime)
         }
         IrExprKind::Call { kind, callee_name, args } => match kind {
             IrCallKind::Agent { def_id } => {
@@ -560,7 +811,14 @@ fn lower_expr(
                     )
                 })?;
                 let callee_ref = module.declare_func_in_func(*callee_id, builder.func);
+                // Lower arguments. Each refcounted arg comes back from
+                // `lower_expr` as Owned (+1). Per +0 ABI: caller does
+                // not pre-bump when passing; callee retains on entry.
+                // After the call returns, our caller's +1 is no longer
+                // needed (the callee owns its own copy now), so we
+                // release each refcounted arg.
                 let mut arg_vals = Vec::with_capacity(args.len());
+                let mut arg_refcounted: Vec<bool> = Vec::with_capacity(args.len());
                 for a in args {
                     arg_vals.push(lower_expr(
                         builder,
@@ -568,8 +826,9 @@ fn lower_expr(
                         env,
                         func_ids_by_def,
                         module,
-                        overflow_func_id,
+                        runtime,
                     )?);
+                    arg_refcounted.push(is_refcounted_type(&a.ty));
                 }
                 let call = builder.ins().call(callee_ref, &arg_vals);
                 let results = builder.inst_results(call);
@@ -582,7 +841,15 @@ fn lower_expr(
                         expr.span,
                     ));
                 }
-                Ok(results[0])
+                let result = results[0];
+                // Release each refcounted arg's +1 (the callee took its
+                // own ownership via parameter retain).
+                for (v, is_ref) in arg_vals.iter().zip(arg_refcounted.iter()) {
+                    if *is_ref {
+                        emit_release(builder, module, runtime, *v);
+                    }
+                }
+                Ok(result)
             }
             IrCallKind::Tool { .. } | IrCallKind::Prompt { .. } => Err(CodegenError::not_supported(
                 "tool / prompt calls in compiled code — Phase 14 adds them",
@@ -620,7 +887,7 @@ fn lower_binop_strict(
     r: ClValue,
     span: Span,
     module: &mut ObjectModule,
-    overflow_func_id: FuncId,
+    runtime: &RuntimeFuncs,
 ) -> Result<ClValue, CodegenError> {
     // Promote mixed Int + Float operands to F64 — same widening the
     // interpreter applies in `eval_arithmetic`.
@@ -629,26 +896,26 @@ fn lower_binop_strict(
     match (op, dom) {
         // ---- Int arithmetic, overflow-trapping ------------------------
         (BinaryOp::Add, ArithDomain::Int) => {
-            with_overflow_trap(builder, l, r, module, overflow_func_id, |b| {
+            with_overflow_trap(builder, l, r, module, runtime, |b| {
                 b.ins().sadd_overflow(l, r)
             })
         }
         (BinaryOp::Sub, ArithDomain::Int) => {
-            with_overflow_trap(builder, l, r, module, overflow_func_id, |b| {
+            with_overflow_trap(builder, l, r, module, runtime, |b| {
                 b.ins().ssub_overflow(l, r)
             })
         }
         (BinaryOp::Mul, ArithDomain::Int) => {
-            with_overflow_trap(builder, l, r, module, overflow_func_id, |b| {
+            with_overflow_trap(builder, l, r, module, runtime, |b| {
                 b.ins().smul_overflow(l, r)
             })
         }
         (BinaryOp::Div, ArithDomain::Int) => {
-            trap_on_zero(builder, r, module, overflow_func_id);
+            trap_on_zero(builder, r, module, runtime);
             Ok(builder.ins().sdiv(l, r))
         }
         (BinaryOp::Mod, ArithDomain::Int) => {
-            trap_on_zero(builder, r, module, overflow_func_id);
+            trap_on_zero(builder, r, module, runtime);
             Ok(builder.ins().srem(l, r))
         }
 
@@ -716,6 +983,134 @@ enum ArithDomain {
     Float,
 }
 
+/// String operators: `+` (concat), `==` / `!=`, `<` / `<=` / `>` / `>=`.
+/// Both operands arrive as Owned String pointers (per the three-state
+/// ownership model). The runtime helpers read but don't retain; we
+/// release each input after the call.
+fn lower_string_binop(
+    builder: &mut FunctionBuilder,
+    op: BinaryOp,
+    l: ClValue,
+    r: ClValue,
+    span: Span,
+    module: &mut ObjectModule,
+    runtime: &RuntimeFuncs,
+) -> Result<ClValue, CodegenError> {
+    match op {
+        BinaryOp::Add => {
+            // Concat returns +1 from `corvid_alloc` inside the helper.
+            let callee = module.declare_func_in_func(runtime.string_concat, builder.func);
+            let call = builder.ins().call(callee, &[l, r]);
+            let result = builder.inst_results(call)[0];
+            // Release the input Owned references.
+            emit_release(builder, module, runtime, l);
+            emit_release(builder, module, runtime, r);
+            Ok(result)
+        }
+        BinaryOp::Eq | BinaryOp::NotEq => {
+            let callee = module.declare_func_in_func(runtime.string_eq, builder.func);
+            let call = builder.ins().call(callee, &[l, r]);
+            let eq_i64 = builder.inst_results(call)[0];
+            // Narrow i64 (0/1) → i8 (0/1) to match Bool's Cranelift width.
+            let eq_i8 = builder.ins().ireduce(I8, eq_i64);
+            let result = if matches!(op, BinaryOp::Eq) {
+                eq_i8
+            } else {
+                // != : flip 0↔1.
+                let zero = builder.ins().iconst(I8, 0);
+                builder.ins().icmp(IntCC::Equal, eq_i8, zero)
+            };
+            emit_release(builder, module, runtime, l);
+            emit_release(builder, module, runtime, r);
+            Ok(result)
+        }
+        BinaryOp::Lt | BinaryOp::LtEq | BinaryOp::Gt | BinaryOp::GtEq => {
+            let callee = module.declare_func_in_func(runtime.string_cmp, builder.func);
+            let call = builder.ins().call(callee, &[l, r]);
+            let cmp_i64 = builder.inst_results(call)[0];
+            let zero = builder.ins().iconst(I64, 0);
+            let cc = match op {
+                BinaryOp::Lt => IntCC::SignedLessThan,
+                BinaryOp::LtEq => IntCC::SignedLessThanOrEqual,
+                BinaryOp::Gt => IntCC::SignedGreaterThan,
+                BinaryOp::GtEq => IntCC::SignedGreaterThanOrEqual,
+                _ => unreachable!(),
+            };
+            let result = builder.ins().icmp(cc, cmp_i64, zero);
+            emit_release(builder, module, runtime, l);
+            emit_release(builder, module, runtime, r);
+            Ok(result)
+        }
+        BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div | BinaryOp::Mod => Err(
+            CodegenError::not_supported(
+                format!("`{op:?}` is not defined for `String` operands"),
+                span,
+            ),
+        ),
+        BinaryOp::And | BinaryOp::Or => unreachable!("and/or short-circuited upstream"),
+    }
+}
+
+/// Lower a String literal into a static `.rodata` block and return the
+/// descriptor pointer (the value the runtime expects).
+///
+/// Layout (single allocation):
+/// ```text
+///   offset 0:  refcount (8) = i64::MIN  (immortal sentinel)
+///   offset 8:  reserved (8) = 0
+///   offset 16: bytes_ptr (8) = self + 32 (relocated)
+///   offset 24: length (8)
+///   offset 32: bytes (length bytes)
+/// ```
+/// The compiled value is `symbol_value(self) + 16`, pointing at the
+/// descriptor (matching what `corvid_alloc` returns for heap strings).
+fn lower_string_literal(
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    runtime: &RuntimeFuncs,
+    s: &str,
+    span: Span,
+) -> Result<ClValue, CodegenError> {
+    let id = runtime.next_literal_id();
+    let symbol_name = format!("corvid_lit_{id}");
+    let bytes = s.as_bytes();
+    let len = bytes.len() as i64;
+    let total = 32 + bytes.len();
+    let mut data = vec![0u8; total];
+    // refcount = i64::MIN (immortal)
+    data[0..8].copy_from_slice(&i64::MIN.to_le_bytes());
+    // reserved = 0 (already zeroed)
+    // bytes_ptr placeholder at offset 16 — written by the relocation
+    // length at offset 24
+    data[24..32].copy_from_slice(&len.to_le_bytes());
+    // bytes at offset 32
+    if !bytes.is_empty() {
+        data[32..].copy_from_slice(bytes);
+    }
+
+    let data_id = module
+        .declare_data(&symbol_name, Linkage::Local, false, false)
+        .map_err(|e| {
+            CodegenError::cranelift(format!("declare literal `{symbol_name}`: {e}"), span)
+        })?;
+    let mut desc = DataDescription::new();
+    desc.set_align(8);
+    desc.define(data.into_boxed_slice());
+    // Self-relative relocation: at offset 16, write the address of
+    // (this same symbol + 32) so `bytes_ptr` points at the inline bytes.
+    let self_gv = module.declare_data_in_data(data_id, &mut desc);
+    desc.write_data_addr(16, self_gv, 32);
+    module
+        .define_data(data_id, &desc)
+        .map_err(|e| CodegenError::cranelift(format!("define literal `{symbol_name}`: {e}"), span))?;
+
+    // The String value is the address of the descriptor (symbol + 16),
+    // matching what `corvid_alloc` returns for heap strings.
+    let gv = module.declare_data_in_func(data_id, builder.func);
+    let symbol_addr = builder.ins().symbol_value(I64, gv);
+    Ok(builder.ins().iadd_imm(symbol_addr, 16))
+}
+
 /// Implicit-promote mixed `Int + Float` operands to `Float`. Same rule
 /// as the interpreter's `eval_arithmetic`. Returns the (possibly
 /// promoted) operands and the resulting arithmetic domain.
@@ -764,7 +1159,7 @@ fn lower_unop(
     v: ClValue,
     span: Span,
     module: &mut ObjectModule,
-    overflow_func_id: FuncId,
+    runtime: &RuntimeFuncs,
 ) -> Result<ClValue, CodegenError> {
     let vt = builder.func.dfg.value_type(v);
     match op {
@@ -780,7 +1175,7 @@ fn lower_unop(
         UnaryOp::Neg if vt == I64 => {
             // Int `-x` ≡ `0 - x`, trap on overflow (only at i64::MIN).
             let zero = builder.ins().iconst(I64, 0);
-            with_overflow_trap(builder, zero, v, module, overflow_func_id, |b| {
+            with_overflow_trap(builder, zero, v, module, runtime, |b| {
                 b.ins().ssub_overflow(zero, v)
             })
         }
@@ -806,9 +1201,9 @@ fn lower_short_circuit(
     env: &HashMap<LocalId, (Variable, clir::Type)>,
     func_ids_by_def: &HashMap<DefId, FuncId>,
     module: &mut ObjectModule,
-    overflow_func_id: FuncId,
+    runtime: &RuntimeFuncs,
 ) -> Result<ClValue, CodegenError> {
-    let l = lower_expr(builder, left, env, func_ids_by_def, module, overflow_func_id)?;
+    let l = lower_expr(builder, left, env, func_ids_by_def, module, runtime)?;
 
     let right_block = builder.create_block();
     let merge_block = builder.create_block();
@@ -834,7 +1229,7 @@ fn lower_short_circuit(
 
     builder.switch_to_block(right_block);
     builder.seal_block(right_block);
-    let r = lower_expr(builder, right, env, func_ids_by_def, module, overflow_func_id)?;
+    let r = lower_expr(builder, right, env, func_ids_by_def, module, runtime)?;
     builder.ins().jump(merge_block, &[r.into()]);
 
     builder.switch_to_block(merge_block);
@@ -855,11 +1250,12 @@ fn lower_if(
     else_block_ir: Option<&IrBlock>,
     env: &mut HashMap<LocalId, (Variable, clir::Type)>,
     var_idx: &mut usize,
+    scope_stack: &mut Vec<Vec<(LocalId, Variable)>>,
     func_ids_by_def: &HashMap<DefId, FuncId>,
     module: &mut ObjectModule,
-    overflow_func_id: FuncId,
+    runtime: &RuntimeFuncs,
 ) -> Result<BlockOutcome, CodegenError> {
-    let cond_val = lower_expr(builder, cond, env, func_ids_by_def, module, overflow_func_id)?;
+    let cond_val = lower_expr(builder, cond, env, func_ids_by_def, module, runtime)?;
 
     let then_b = builder.create_block();
     let else_b = if else_block_ir.is_some() {
@@ -875,39 +1271,62 @@ fn lower_if(
     // cond-false path flows straight to merge via the brif above.
     let mut any_fell_through = else_b.is_none();
 
-    // Then branch.
+    // Then branch — push a new scope for branch-local refcounted Lets;
+    // pop after lowering, releasing each local's refcount if the
+    // branch fell through normally.
     builder.switch_to_block(then_b);
     builder.seal_block(then_b);
+    scope_stack.push(Vec::new());
     let then_outcome = lower_block(
         builder,
         then_block_ir,
         env,
         var_idx,
+        scope_stack,
         func_ids_by_def,
         module,
-        overflow_func_id,
+        runtime,
     )?;
     if matches!(then_outcome, BlockOutcome::Normal) {
+        // Release branch-scope refcounted locals before jumping to merge.
+        let scope = scope_stack.pop().unwrap_or_default();
+        for (_, var) in scope.iter().rev() {
+            let v = builder.use_var(*var);
+            emit_release(builder, module, runtime, v);
+        }
         builder.ins().jump(merge_b, &[]);
         any_fell_through = true;
+    } else {
+        // Branch terminated (return) — its return path already emitted
+        // releases for all live locals across all scopes. Just pop.
+        scope_stack.pop();
     }
 
     // Else branch (if present).
     if let (Some(else_b), Some(else_body)) = (else_b, else_block_ir) {
         builder.switch_to_block(else_b);
         builder.seal_block(else_b);
+        scope_stack.push(Vec::new());
         let else_outcome = lower_block(
             builder,
             else_body,
             env,
             var_idx,
+            scope_stack,
             func_ids_by_def,
             module,
-            overflow_func_id,
+            runtime,
         )?;
         if matches!(else_outcome, BlockOutcome::Normal) {
+            let scope = scope_stack.pop().unwrap_or_default();
+            for (_, var) in scope.iter().rev() {
+                let v = builder.use_var(*var);
+                emit_release(builder, module, runtime, v);
+            }
             builder.ins().jump(merge_b, &[]);
             any_fell_through = true;
+        } else {
+            scope_stack.pop();
         }
     }
 
@@ -933,7 +1352,7 @@ fn with_overflow_trap<F>(
     _l: ClValue,
     _r: ClValue,
     module: &mut ObjectModule,
-    overflow_func_id: FuncId,
+    runtime: &RuntimeFuncs,
     op: F,
 ) -> Result<ClValue, CodegenError>
 where
@@ -948,7 +1367,7 @@ where
 
     builder.switch_to_block(overflow_block);
     builder.seal_block(overflow_block);
-    let callee_ref = module.declare_func_in_func(overflow_func_id, builder.func);
+    let callee_ref = module.declare_func_in_func(runtime.overflow, builder.func);
     builder.ins().call(callee_ref, &[]);
     builder.ins().trap(cranelift_codegen::ir::TrapCode::INTEGER_OVERFLOW);
 
@@ -961,7 +1380,7 @@ fn trap_on_zero(
     builder: &mut FunctionBuilder,
     divisor: ClValue,
     module: &mut ObjectModule,
-    overflow_func_id: FuncId,
+    runtime: &RuntimeFuncs,
 ) {
     let zero = builder.ins().iconst(I64, 0);
     let is_zero = builder.ins().icmp(IntCC::Equal, divisor, zero);
@@ -972,7 +1391,7 @@ fn trap_on_zero(
         .brif(is_zero, trap_block, &[], cont_block, &[]);
     builder.switch_to_block(trap_block);
     builder.seal_block(trap_block);
-    let callee_ref = module.declare_func_in_func(overflow_func_id, builder.func);
+    let callee_ref = module.declare_func_in_func(runtime.overflow, builder.func);
     builder.ins().call(callee_ref, &[]);
     builder.ins().trap(cranelift_codegen::ir::TrapCode::INTEGER_OVERFLOW);
     builder.switch_to_block(cont_block);
