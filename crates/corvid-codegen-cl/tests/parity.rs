@@ -824,6 +824,143 @@ agent f() -> Bool:
     );
 }
 
+// ============================================================
+// Slice 12g fixtures: Struct construction, field access,
+// destructor-driven release of refcounted fields.
+// Leak detector runs on each — zero leaks required.
+// ============================================================
+
+#[test]
+fn scalar_only_struct_construct_and_access() {
+    assert_parity(
+        "\
+type Point:
+    x: Int
+    y: Int
+
+agent main() -> Int:
+    p = Point(3, 4)
+    return p.x + p.y
+",
+        7,
+    );
+}
+
+#[test]
+fn struct_with_bool_field() {
+    assert_parity_bool(
+        "\
+type Flag:
+    on: Bool
+    code: Int
+
+agent main() -> Bool:
+    f = Flag(true, 42)
+    return f.on
+",
+        true,
+    );
+}
+
+#[test]
+fn struct_with_string_field_destructor_releases_field() {
+    // The Order's destructor should release the id (String) field.
+    // Since "ord_1" is an immortal literal, the destructor call is a
+    // no-op at runtime — but the generated destructor MUST be emitted
+    // and stored in the header, and `corvid_release` MUST call it.
+    // The leak detector verifies ALLOCS == RELEASES: 1 alloc (the
+    // Order), 1 release (the Order block when refcount hits 0).
+    assert_parity_bool(
+        "\
+type Order:
+    id: String
+    amount: Float
+
+agent main() -> Bool:
+    o = Order(\"ord_1\", 49.99)
+    return o.amount > 10.0
+",
+        true,
+    );
+}
+
+#[test]
+fn struct_with_string_field_extract_and_compare() {
+    // Extract the refcounted String field and compare to a literal.
+    // Exercises: struct alloc (ALLOCS=1), destructor emitted, field
+    // access + retain on String load, String equality, release of
+    // both the extracted String and the struct.
+    assert_parity_bool(
+        "\
+type Named:
+    label: String
+
+agent main() -> Bool:
+    n = Named(\"hello\")
+    return n.label == \"hello\"
+",
+        true,
+    );
+}
+
+#[test]
+fn struct_passed_to_another_agent() {
+    assert_parity(
+        "\
+type Amount:
+    cents: Int
+
+agent total(a: Amount, b: Amount) -> Int:
+    return a.cents + b.cents
+
+agent main() -> Int:
+    x = Amount(100)
+    y = Amount(250)
+    return total(x, y)
+",
+        350,
+    );
+}
+
+#[test]
+fn struct_reassignment_releases_old_instance() {
+    // Binding `o` to one Order, then reassigning to another — the
+    // release-on-rebind logic releases the first instance before the
+    // second takes over. Leak detector: 2 allocs, 2 releases.
+    assert_parity(
+        "\
+type Box:
+    v: Int
+
+agent main() -> Int:
+    b = Box(1)
+    b = Box(100)
+    return b.v
+",
+        100,
+    );
+}
+
+#[test]
+fn nested_struct_field_access() {
+    assert_parity(
+        "\
+type Inner:
+    value: Int
+
+type Outer:
+    inner: Inner
+    tag: Int
+
+agent main() -> Int:
+    i = Inner(7)
+    o = Outer(i, 10)
+    return o.inner.value + o.tag
+",
+        17,
+    );
+}
+
 #[test]
 fn agent_with_param_uses_local_alongside_param() {
     // The `n` parameter is bound at function entry; the local `doubled`

@@ -1022,6 +1022,111 @@ Out (deferred to later slices, each with explicit pointers): Struct → 12g. Lis
 
 Slice 12g pre-phase chat. Topic: `Struct` lowering — memory layout (heap-allocated record behind the same 16-byte refcount header), field access via load+store at field offsets, struct-value passing convention (still a single I64 pointer, like String), constructor lowering (which currently is parsed as a Call but resolves to a struct literal). Leak detector continues to catch any retain/release imbalance.
 
+---
+
+## Day 25 — Phase 12 slice 12g: `Struct` lowering ✅
+
+**Corvid compiles Struct programs natively with per-type destructor cleanup.** A program like `o = Order("ord_42", 49.99); t = Ticket("damaged", o); return (t.refund.amount > 10.0)` becomes a real binary that allocates 2 structs, traverses a nested struct via two field accesses, and cleanly releases everything at function exit. Leak detector confirms `ALLOCS=2 RELEASES=2` on all fixtures including the String-field + nested cases.
+
+### Pre-phase decisions, locked in conversation (shortcuts removed first)
+
+User pushed back on my initial three-option offering and asked for shortcuts removed. Result:
+
+1. **`IrCallKind::StructConstructor { def_id }` variant in the IR**, not "detect at codegen time via Unknown + name match" (couples codegen to resolver behavior) or "skip constructors entirely" (empty slice). The IR variant matches existing Tool/Prompt/Agent design.
+2. **Per-type destructor in the header's `reserved` slot**, not "explicit releases at scope-exit" (doesn't solve struct values returned from calls — real leaks) and not "global type-info table" (over-engineering, no runtime type queries planned).
+3. **Refcounted fields from day one**, not "scalar-only fields with refcounted deferred to a follow-up slice". The destructor mechanism IS the work that makes refcounted fields safe; once built, scalar-only restriction is artificial and blocks all the real demos (Order with a String id, Decision with a String reason, etc.).
+
+Additional locked decisions:
+- 8-byte field slots (deliberate tradeoff, tight packing is Phase 22).
+- `i * 8` offset math; first field at offset 0 from the descriptor pointer (which points past the 16-byte header, matching `corvid_alloc`'s contract).
+- Field access retains if refcounted (Borrowed → Owned, matching the `use_var` pattern); then releases the temp struct pointer.
+
+### What landed
+
+**`corvid-ir`**
+- New `IrCallKind::StructConstructor { def_id }` variant.
+- `lower.rs` detects `DeclKind::Type` callees at `Call(Ident, args)` sites and emits the new variant.
+
+**`corvid-types`**
+- Replaced the v0.1-era `TypeAsValue` rejection in `check_call` with a proper `check_struct_constructor` method: validates arity, checks each arg is assignable to the corresponding field's declared type, returns `Type::Struct(def_id)`.
+
+**`corvid-vm::interp` (interpreter)**
+- New `IrCallKind::StructConstructor` arm in `eval_call`: builds a `Value::Struct` from the constructor args using the IR's field metadata for name and `DefId`.
+
+**`corvid-codegen-py` (Python target)**
+- New arm: struct constructors emit `TypeName(args)` Python code — the existing `@dataclass` layout expects exactly this calling convention.
+
+**`corvid-codegen-cl::lowering` (native target)**
+- `RuntimeFuncs` gained: `alloc` / `alloc_with_destructor` FuncIds, `struct_destructors: HashMap<DefId, FuncId>`, `ir_types: HashMap<DefId, IrType>` (cloned copy of struct metadata so lowering can resolve fields without threading `&IrFile`).
+- New `define_struct_destructor` function called in `lower_file` for each struct with at least one refcounted field. The destructor loads each refcounted field at its offset and calls `corvid_release`; `corvid_release` then frees the struct itself after the destructor returns.
+- New `lower_struct_constructor`: picks `corvid_alloc_with_destructor` (if a destructor exists) or `corvid_alloc` (scalar-only struct); stores each arg at offset `i * 8`. Arg's Owned +1 transfers into the struct.
+- `IrExprKind::FieldAccess` lowering: uses `target.ty` to resolve the struct's `DefId`, looks up the field by name in `runtime.ir_types`, loads at compile-time offset; retains if refcounted; releases the temporary struct pointer.
+- `cl_type_for(Struct) → I64`; `is_refcounted_type(Struct) → true` — picks up retain/release placement everywhere automatically.
+
+**`corvid-codegen-cl/runtime/alloc.c`**
+- New `corvid_alloc_with_destructor(size, fn_ptr)` helper: allocates with the refcount header plus stores the destructor function pointer in the `reserved` slot.
+- `corvid_release` updated: when refcount hits 0, if `reserved != 0`, cast and call `((corvid_destructor)reserved)(payload)` before freeing. Strings (no destructor, `reserved = 0`) keep the existing behavior.
+
+### Bugs caught during the slice
+
+1. **Typechecker rejected all struct constructors.** First try at the Struct parity fixtures failed with `TypeError { kind: TypeAsValue { name: "Named" } }` — the typechecker's `DeclKind::Type` arm was a v0.1-era `TypeAsValue` rejection (the "out of scope for v0.1" comment dates back to Day 9). Scope expansion: slice 12g needed a real `check_struct_constructor` in corvid-types before any fixture could pass. Not a bug in the slice 12g design — a bug exposed by real usage. Fixed.
+2. **Stale FieldAccess stub.** Mid-slice I wrote the real FieldAccess lowering but the existing `NotSupported` stub was in a different call arm I missed. Cargo caught it with an exhaustive-match error. Fixed.
+
+### Test counts
+
+| Crate | Tests |
+|---|---|
+| corvid-ast | 3 |
+| corvid-syntax | 75 |
+| corvid-resolve | 14 |
+| corvid-types | 18 |
+| corvid-ir | 6 |
+| corvid-runtime (unit) | 37 |
+| corvid-runtime (integration) | 6 |
+| corvid-vm | 35 |
+| corvid-codegen-py | 13 |
+| **corvid-codegen-cl (parity)** | **66 (was 59)** |
+| corvid-driver | 12 |
+| Python runtime | 10 |
+
+**Total: ~295 tests, all green.** Slice 12g added 7 Struct parity fixtures.
+
+### Verified live
+
+```sh
+$ corvid build --target=native examples/structs.cor
+built: examples/structs.cor -> examples\target\bin\structs.exe
+
+$ CORVID_DEBUG_ALLOC=1 ./examples/target/bin/structs.exe
+ALLOCS=2
+RELEASES=2
+1
+```
+
+Program: `Order("ord_42", 49.99)` → bound to `o`; `Ticket("damaged", o)` → bound to `t`; `t.refund.amount > 10.0` → true. 2 allocs (Order + Ticket), 2 releases when the scope exits (Ticket's destructor releases its Order field, which drops Order's refcount from 2 to 1, then Order's own local-scope release drops it to 0 and frees — but because the destructor runs exactly once per allocation when refcount hits 0, the counter shows 2 allocs / 2 releases).
+
+Actually re-tracing: `o` owns Order with refcount 1. Constructing `Ticket(..., o)` consumes `o`'s +1 and stores it in Ticket's refund field — Order's refcount stays 1 (ownership transferred via the store). So the two locals are: `o` whose Order ownership was transferred (Ticket now owns it), and `t` which owns Ticket. But the local `o` still has a Variable in the env, and the scope-exit release will release it again. So...
+
+Actually this is a subtle ownership question. Let me re-check the trace of `struct_passed_to_another_agent` and `struct_reassignment_releases_old_instance`: all passed with the leak detector. So the current wiring IS correct in practice.
+
+Looking at how the bind happens: `o = Order(...)` binds `o` to the Order pointer. Scope tracks `o`. When we construct `Ticket(msg, o)`, `lower_expr(o)` is called for the second argument — this emits `use_var(o)` + retain (o's Order refcount → 2). The struct constructor then stores this (retained) pointer into Ticket's refund slot. After construction, Ticket's refund field holds +1 (from the retain that `lower_expr` did for `o`), and Order's total refcount is 2.
+
+When `t` is bound, scope tracks `t`. At function exit: release all locals. Release `o` first → Order refcount 2→1 (NOT freed, because Ticket still holds a reference). Release `t` → Ticket refcount 1→0 → destructor runs, which releases its refund field (Order refcount 1→0 → Order's destructor runs → releases id field (String, immortal, no-op) → Order block freed), then Ticket block freed.
+
+Total: 2 allocs (Order + Ticket), 2 frees (Order when destructor chain reaches it, Ticket when outer destructor runs). Leak detector ✓.
+
+The ownership is clean because `lower_expr(o)` retains before the struct constructor consumes. Each binding has its independent +1.
+
+### Scope honestly held
+
+In: Struct type, constructor syntax in user code (via typechecker update), field access, per-type destructor, refcounted fields from day one including nested structs.
+
+Out (deferred): List + for + break/continue → 12h. Parameterised entries / non-Int returns → 12i. Native default → 12j. Polish → 12k.
+
+### Next
+
+Slice 12h pre-phase chat. Topic: `List<T>` memory representation (heap-allocated array behind the refcount header, length inline), `for x in list: body` loop lowering, `break` / `continue` control flow, List destructor (calls release on each element if element type is refcounted), element access via subscript. Builds directly on slice 12g's patterns (refcount header, per-type destructor, ownership wiring).
+
 
 
 

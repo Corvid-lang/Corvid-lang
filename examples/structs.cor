@@ -1,0 +1,15 @@
+type Order:
+    id: String
+    amount: Float
+
+type Ticket:
+    message: String
+    refund: Order
+
+agent main() -> Int:
+    o = Order("ord_42", 49.99)
+    t = Ticket("damaged package", o)
+    if t.refund.amount > 10.0:
+        return 1
+    else:
+        return 0

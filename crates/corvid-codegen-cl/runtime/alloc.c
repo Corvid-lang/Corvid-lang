@@ -31,6 +31,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <inttypes.h>
 
 #define CORVID_HEADER_BYTES 16
 
@@ -51,7 +52,7 @@ _Atomic long long corvid_release_count = 0;
 
 /* Allocate `payload_bytes` bytes of payload behind a 16-byte header.
  * Returns a pointer to the payload (not the header). Initial refcount
- * is 1 — one owner.
+ * is 1 — one owner. No destructor.
  */
 void* corvid_alloc(long long payload_bytes) {
     if (payload_bytes < 0) {
@@ -70,6 +71,25 @@ void* corvid_alloc(long long payload_bytes) {
     h->reserved = 0;
     atomic_fetch_add_explicit(&corvid_alloc_count, 1, memory_order_relaxed);
     return (void*)(block + CORVID_HEADER_BYTES);
+}
+
+/* Like corvid_alloc but stores a destructor function pointer in the
+ * header's reserved slot. `corvid_release` calls `destructor(payload)`
+ * just before freeing the block when refcount hits 0 — used by Struct
+ * (and future List / nested-Struct) allocations to release refcounted
+ * fields before the container itself is freed.
+ *
+ * Destructor signature: `void (*)(void* payload)`. The destructor
+ * receives the payload pointer (same as what corvid_release got) and
+ * is responsible for releasing any refcounted members. It must NOT
+ * free the block itself — corvid_release handles that.
+ */
+void* corvid_alloc_with_destructor(long long payload_bytes,
+                                   void (*destructor)(void*)) {
+    void* payload = corvid_alloc(payload_bytes);
+    corvid_header* h = (corvid_header*)((char*)payload - CORVID_HEADER_BYTES);
+    h->reserved = (long long)(intptr_t)destructor;
+    return payload;
 }
 
 /* Increment the refcount of `payload`. No-op for immortal allocations. */
@@ -96,6 +116,12 @@ void corvid_release(void* payload) {
     if (current == CORVID_REFCOUNT_IMMORTAL) return;
     long long previous = atomic_fetch_sub_explicit(&h->refcount, 1, memory_order_acq_rel);
     if (previous == 1) {
+        /* Run the type's destructor (if any) before freeing — releases
+         * refcounted fields of Structs, elements of Lists, etc. */
+        if (h->reserved != 0) {
+            typedef void (*corvid_destructor)(void*);
+            ((corvid_destructor)(intptr_t)h->reserved)(payload);
+        }
         atomic_fetch_add_explicit(&corvid_release_count, 1, memory_order_relaxed);
         free((void*)h);
     } else if (previous <= 0) {

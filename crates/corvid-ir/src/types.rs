@@ -216,6 +216,10 @@ pub enum IrCallKind {
     Prompt { def_id: DefId },
     /// Agent call — recursion or composition.
     Agent { def_id: DefId },
+    /// Struct constructor — `Order(id, amount)` builds an `Order`.
+    /// Args are field values in declaration order. Codegen lowers as
+    /// an allocation followed by per-field stores.
+    StructConstructor { def_id: DefId },
     /// Something we couldn't resolve (graceful degradation).
     Unknown,
 }

@@ -510,6 +510,40 @@ impl<'ir> Interpreter<'ir> {
                 sub.bind_params(agent, arg_values)?;
                 sub.run_body(agent).await
             }
+            IrCallKind::StructConstructor { def_id } => {
+                // Build a `Value::Struct` from the constructor args, in
+                // field declaration order (mirrors the codegen-cl
+                // lowering's store-at-offset pattern).
+                let ir_type = self.types_by_id.get(def_id).copied().ok_or_else(|| {
+                    InterpError::new(
+                        InterpErrorKind::DispatchFailed(format!(
+                            "struct type `{callee_name}` is missing from the IR"
+                        )),
+                        span,
+                    )
+                })?;
+                if arg_values.len() != ir_type.fields.len() {
+                    return Err(InterpError::new(
+                        InterpErrorKind::DispatchFailed(format!(
+                            "struct constructor `{callee_name}` expects {} field(s), got {}",
+                            ir_type.fields.len(),
+                            arg_values.len(),
+                        )),
+                        span,
+                    ));
+                }
+                let fields = ir_type
+                    .fields
+                    .iter()
+                    .zip(arg_values.into_iter())
+                    .map(|(f, v)| (f.name.clone(), v))
+                    .collect();
+                Ok(Value::Struct(std::sync::Arc::new(crate::value::StructValue {
+                    type_id: ir_type.id,
+                    type_name: ir_type.name.clone(),
+                    fields,
+                })))
+            }
             IrCallKind::Unknown => {
                 let _ = result_ty;
                 Err(InterpError::new(

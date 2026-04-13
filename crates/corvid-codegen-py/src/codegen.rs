@@ -301,6 +301,14 @@ impl Codegen {
                 self.emit_expr_list(args);
                 self.out.write(")");
             }
+            IrCallKind::StructConstructor { .. } => {
+                // User-declared types are emitted as `@dataclass`es.
+                // `TypeName(args)` constructs an instance — exactly the
+                // Python dataclass calling convention. No await needed.
+                self.out.write(&format!("{}(", name));
+                self.emit_expr_list(args);
+                self.out.write(")");
+            }
             IrCallKind::Unknown => {
                 // Imported function or unresolved — emit as plain Python call.
                 self.out.write(&format!("{}(", name));

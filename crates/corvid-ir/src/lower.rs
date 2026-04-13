@@ -331,6 +331,7 @@ impl<'a> Lowerer<'a> {
                         }
                         DeclKind::Prompt => IrCallKind::Prompt { def_id: *def_id },
                         DeclKind::Agent => IrCallKind::Agent { def_id: *def_id },
+                        DeclKind::Type => IrCallKind::StructConstructor { def_id: *def_id },
                         _ => IrCallKind::Unknown,
                     };
                     (kind, name.name.clone())

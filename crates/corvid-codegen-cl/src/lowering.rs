@@ -84,6 +84,28 @@ fn declare_runtime_funcs(
         .declare_function(STRING_CMP_SYMBOL, Linkage::Import, &cmp_sig)
         .map_err(|e| CodegenError::cranelift(format!("declare string_cmp: {e}"), Span::new(0, 0)))?;
 
+    // corvid_alloc(i64) -> i64
+    let mut alloc_sig = module.make_signature();
+    alloc_sig.params.push(AbiParam::new(I64));
+    alloc_sig.returns.push(AbiParam::new(I64));
+    let alloc_id = module
+        .declare_function(ALLOC_SYMBOL, Linkage::Import, &alloc_sig)
+        .map_err(|e| CodegenError::cranelift(format!("declare alloc: {e}"), Span::new(0, 0)))?;
+
+    // corvid_alloc_with_destructor(i64, fn_ptr) -> i64
+    let mut alloc_dtor_sig = module.make_signature();
+    alloc_dtor_sig.params.push(AbiParam::new(I64));
+    alloc_dtor_sig.params.push(AbiParam::new(I64));
+    alloc_dtor_sig.returns.push(AbiParam::new(I64));
+    let alloc_dtor_id = module
+        .declare_function(ALLOC_WITH_DESTRUCTOR_SYMBOL, Linkage::Import, &alloc_dtor_sig)
+        .map_err(|e| {
+            CodegenError::cranelift(
+                format!("declare alloc_with_destructor: {e}"),
+                Span::new(0, 0),
+            )
+        })?;
+
     Ok(RuntimeFuncs {
         overflow: overflow_func_id,
         retain: retain_id,
@@ -91,8 +113,74 @@ fn declare_runtime_funcs(
         string_concat: concat_id,
         string_eq: eq_id,
         string_cmp: cmp_id,
+        alloc: alloc_id,
+        alloc_with_destructor: alloc_dtor_id,
         literal_counter: std::cell::Cell::new(0),
+        struct_destructors: HashMap::new(),
+        ir_types: HashMap::new(),
     })
+}
+
+/// Generate and define `corvid_destroy_<TypeName>(payload)` for a
+/// struct type that has at least one refcounted field. The destructor
+/// loads each refcounted field at its compile-time offset and calls
+/// `corvid_release` on it. `corvid_release` then frees the struct's
+/// own allocation after the destructor returns.
+fn define_struct_destructor(
+    module: &mut ObjectModule,
+    ty: &corvid_ir::IrType,
+    runtime: &RuntimeFuncs,
+) -> Result<FuncId, CodegenError> {
+    let mut sig = module.make_signature();
+    sig.params.push(AbiParam::new(I64));
+
+    let symbol = format!("corvid_destroy_{}", ty.name);
+    let func_id = module
+        .declare_function(&symbol, Linkage::Local, &sig)
+        .map_err(|e| {
+            CodegenError::cranelift(format!("declare destructor `{symbol}`: {e}"), ty.span)
+        })?;
+
+    let mut ctx = Context::new();
+    ctx.func = Function::with_name_signature(
+        UserFuncName::user(0, func_id.as_u32()),
+        module.declarations().get_function_decl(func_id).signature.clone(),
+    );
+    let mut bctx = FunctionBuilderContext::new();
+    {
+        let mut builder = FunctionBuilder::new(&mut ctx.func, &mut bctx);
+        let entry = builder.create_block();
+        builder.append_block_params_for_function_params(entry);
+        builder.switch_to_block(entry);
+        builder.seal_block(entry);
+        let payload = builder.block_params(entry)[0];
+
+        // For each refcounted field, load and release.
+        let release_ref =
+            module.declare_func_in_func(runtime.release, builder.func);
+        for (i, field) in ty.fields.iter().enumerate() {
+            if is_refcounted_type(&field.ty) {
+                let offset = (i as i32) * STRUCT_FIELD_SLOT_BYTES;
+                let v = builder.ins().load(
+                    I64,
+                    cranelift_codegen::ir::MemFlags::trusted(),
+                    payload,
+                    offset,
+                );
+                builder.ins().call(release_ref, &[v]);
+            }
+        }
+
+        builder.ins().return_(&[]);
+        builder.finalize();
+    }
+
+    module
+        .define_function(func_id, &mut ctx)
+        .map_err(|e| {
+            CodegenError::cranelift(format!("define destructor `{symbol}`: {e}"), ty.span)
+        })?;
+    Ok(func_id)
 }
 
 /// Helper: emit `corvid_retain(value)` if the value is refcounted
@@ -126,7 +214,7 @@ fn emit_release(
 /// Slice 12e: only `String` is refcounted. Future slices add `Struct`
 /// (12f), `List` (12g) — both will return true here.
 fn is_refcounted_type(ty: &Type) -> bool {
-    matches!(ty, Type::String)
+    matches!(ty, Type::String | Type::Struct(_))
 }
 
 // ---- runtime helper symbols ----
@@ -153,6 +241,27 @@ pub const STRING_EQ_SYMBOL: &str = "corvid_string_eq";
 /// `long long corvid_string_cmp(void* a, void* b)` — bytewise compare.
 pub const STRING_CMP_SYMBOL: &str = "corvid_string_cmp";
 
+/// `void* corvid_alloc(long long payload_bytes)` — heap-allocate an
+/// N-byte payload behind the 16-byte refcount header. Used by Struct
+/// types that have no refcounted fields (no destructor needed).
+pub const ALLOC_SYMBOL: &str = "corvid_alloc";
+
+/// `void* corvid_alloc_with_destructor(long long size, void(*dtor)(void*))`
+/// — like `corvid_alloc` but stores a destructor function pointer in
+/// the header's `reserved` slot. Used by Struct types that have at
+/// least one refcounted field; the destructor releases those fields
+/// before the block is freed.
+pub const ALLOC_WITH_DESTRUCTOR_SYMBOL: &str = "corvid_alloc_with_destructor";
+
+/// Per-struct payload uses fixed 8-byte field slots for simple offset
+/// math. Tight packing is a Phase-22 optimization.
+pub const STRUCT_FIELD_SLOT_BYTES: i32 = 8;
+
+/// Bytes per struct field when computing alloc size.
+fn struct_payload_bytes(n_fields: usize) -> i64 {
+    (n_fields as i64) * (STRUCT_FIELD_SLOT_BYTES as i64)
+}
+
 /// Bundle of imported runtime helper FuncIds, declared once per module
 /// in `lower_file` and threaded through every lowering function.
 /// Replaces the previous bare `overflow_func_id: FuncId` parameter so
@@ -167,7 +276,20 @@ pub struct RuntimeFuncs {
     pub string_concat: FuncId,
     pub string_eq: FuncId,
     pub string_cmp: FuncId,
+    pub alloc: FuncId,
+    pub alloc_with_destructor: FuncId,
     pub literal_counter: std::cell::Cell<u64>,
+    /// Per-struct-type destructors generated in `lower_file` for
+    /// structs with at least one refcounted field. Missing entries
+    /// mean the struct has no refcounted fields (uses plain
+    /// `corvid_alloc` at construction time, no destructor invocation).
+    pub struct_destructors: HashMap<DefId, FuncId>,
+    /// Owned copy of the IR's struct type metadata, keyed by `DefId`.
+    /// Cloned into `RuntimeFuncs` in `lower_file` so the per-agent
+    /// lowering functions can resolve struct layouts (for field
+    /// offsets, constructor arity checks, destructor lookup) without
+    /// threading `&IrFile` through every call site.
+    pub ir_types: HashMap<DefId, corvid_ir::IrType>,
 }
 
 impl RuntimeFuncs {
@@ -276,7 +398,24 @@ pub fn lower_file(
     // Declare the refcount + string runtime helpers. All take and
     // return `i64` (pointers / integers); we use I64 across the board
     // so the calling convention is uniform.
-    let runtime = declare_runtime_funcs(module, overflow_func_id)?;
+    let mut runtime = declare_runtime_funcs(module, overflow_func_id)?;
+
+    // Populate the IR type registry so lowering functions can resolve
+    // field offsets and constructor arities without threading `&IrFile`.
+    for ty in &ir.types {
+        runtime.ir_types.insert(ty.id, ty.clone());
+    }
+
+    // Declare and define per-struct-type destructors for every user
+    // struct with at least one refcounted field. These must land
+    // before agent bodies are lowered so `IrCallKind::StructConstructor`
+    // can reference them via `runtime.struct_destructors`.
+    for ty in &ir.types {
+        if ty.fields.iter().any(|f| is_refcounted_type(&f.ty)) {
+            let dtor_id = define_struct_destructor(module, ty, &runtime)?;
+            runtime.struct_destructors.insert(ty.id, dtor_id);
+        }
+    }
 
     // Pass 1: declare every agent. Signatures are Int + Bool only for
     // slice 12b. Symbols are mangled so user agent names (e.g. `main`,
@@ -439,10 +578,10 @@ fn cl_type_for(ty: &Type, span: Span) -> Result<clir::Type, CodegenError> {
         // a 16-byte refcount header. Single I64 in registers/env keeps
         // the calling convention uniform with future Struct/List types.
         Type::String => Ok(I64),
-        Type::Struct(_) => Err(CodegenError::not_supported(
-            "`Struct` — slice 12d adds struct layout",
-            span,
-        )),
+        // Struct values are descriptor pointers (like String) — single
+        // I64 in registers/env. The actual layout lives behind the
+        // refcount header: `[header (16) | field0 (8) | ... | fieldN (8)]`.
+        Type::Struct(_) => Ok(I64),
         Type::List(_) => Err(CodegenError::not_supported(
             "`List` — slice 12d adds lists",
             span,
@@ -855,15 +994,78 @@ fn lower_expr(
                 "tool / prompt calls in compiled code — Phase 14 adds them",
                 expr.span,
             )),
+            IrCallKind::StructConstructor { def_id } => {
+                let ir_type = runtime.ir_types.get(def_id).cloned().ok_or_else(|| {
+                    CodegenError::cranelift(
+                        format!("struct type `{callee_name}` metadata missing from ir_types"),
+                        expr.span,
+                    )
+                })?;
+                lower_struct_constructor(
+                    builder,
+                    module,
+                    runtime,
+                    &ir_type,
+                    args,
+                    env,
+                    func_ids_by_def,
+                    expr.span,
+                )
+            }
             IrCallKind::Unknown => Err(CodegenError::cranelift(
                 format!("call to `{callee_name}` did not resolve — typecheck should have caught this"),
                 expr.span,
             )),
         },
-        IrExprKind::FieldAccess { .. } => Err(CodegenError::not_supported(
-            "field access — slice 12d adds structs",
-            expr.span,
-        )),
+        IrExprKind::FieldAccess { target, field } => {
+            let def_id = match &target.ty {
+                Type::Struct(id) => *id,
+                other => {
+                    return Err(CodegenError::cranelift(
+                        format!(
+                            "field access target has non-struct type `{other:?}` — typecheck should have caught this"
+                        ),
+                        expr.span,
+                    ));
+                }
+            };
+            let ir_type = runtime.ir_types.get(&def_id).cloned().ok_or_else(|| {
+                CodegenError::cranelift(
+                    format!("struct metadata missing for field access to `{field}`"),
+                    expr.span,
+                )
+            })?;
+            let (i, field_meta) = ir_type
+                .fields
+                .iter()
+                .enumerate()
+                .find(|(_, f)| &f.name == field)
+                .ok_or_else(|| {
+                    CodegenError::cranelift(
+                        format!("field `{field}` not found on struct `{}`", ir_type.name),
+                        expr.span,
+                    )
+                })?;
+            let offset = (i as i32) * STRUCT_FIELD_SLOT_BYTES;
+            let field_cl_ty = cl_type_for(&field_meta.ty, field_meta.span)?;
+
+            let struct_ptr =
+                lower_expr(builder, target, env, func_ids_by_def, module, runtime)?;
+            let field_val = builder.ins().load(
+                field_cl_ty,
+                cranelift_codegen::ir::MemFlags::trusted(),
+                struct_ptr,
+                offset,
+            );
+            // Retain refcounted field so caller gets an Owned ref.
+            if is_refcounted_type(&field_meta.ty) {
+                emit_retain(builder, module, runtime, field_val);
+            }
+            // Release the temp +1 on the struct pointer (the struct
+            // itself remains owned by its binding or deeper expr).
+            emit_release(builder, module, runtime, struct_ptr);
+            Ok(field_val)
+        }
         IrExprKind::Index { .. } => Err(CodegenError::not_supported(
             "list indexing — slice 12d adds lists",
             expr.span,
@@ -1049,6 +1251,70 @@ fn lower_string_binop(
         ),
         BinaryOp::And | BinaryOp::Or => unreachable!("and/or short-circuited upstream"),
     }
+}
+
+/// Lower a struct constructor: allocate, store each field at its
+/// offset, return the struct pointer (refcount = 1, Owned).
+///
+/// Each constructor argument is lowered as an Owned temp; the store
+/// transfers ownership into the struct (no extra retain, no release).
+/// If the struct has a per-type destructor (at least one refcounted
+/// field), we use `corvid_alloc_with_destructor` so `corvid_release`
+/// will release those fields when the struct is eventually freed.
+fn lower_struct_constructor(
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    runtime: &RuntimeFuncs,
+    ty: &corvid_ir::IrType,
+    args: &[IrExpr],
+    env: &HashMap<LocalId, (Variable, clir::Type)>,
+    func_ids_by_def: &HashMap<DefId, FuncId>,
+    span: Span,
+) -> Result<ClValue, CodegenError> {
+    if args.len() != ty.fields.len() {
+        return Err(CodegenError::cranelift(
+            format!(
+                "struct `{}` expects {} field(s), got {}",
+                ty.name,
+                ty.fields.len(),
+                args.len()
+            ),
+            span,
+        ));
+    }
+    let size = builder
+        .ins()
+        .iconst(I64, struct_payload_bytes(ty.fields.len()));
+    // Pick the allocator based on whether this struct has a destructor.
+    let struct_ptr = if let Some(&dtor_id) = runtime.struct_destructors.get(&ty.id) {
+        let alloc_ref = module.declare_func_in_func(runtime.alloc_with_destructor, builder.func);
+        let dtor_ref = module.declare_func_in_func(dtor_id, builder.func);
+        let sig = module.declarations().get_function_decl(dtor_id).signature.clone();
+        let sig_ref = builder.func.import_signature(sig);
+        let dtor_addr = builder.ins().func_addr(I64, dtor_ref);
+        let _ = sig_ref; // not strictly needed — we pass dtor as an opaque i64 pointer
+        let call = builder.ins().call(alloc_ref, &[size, dtor_addr]);
+        builder.inst_results(call)[0]
+    } else {
+        let alloc_ref = module.declare_func_in_func(runtime.alloc, builder.func);
+        let call = builder.ins().call(alloc_ref, &[size]);
+        builder.inst_results(call)[0]
+    };
+
+    // Store each field at offset i * STRUCT_FIELD_SLOT_BYTES. Each
+    // field arg is lowered as an Owned temp; the store transfers that
+    // +1 ownership into the struct — no extra retain, no release.
+    for (i, arg) in args.iter().enumerate() {
+        let value = lower_expr(builder, arg, env, func_ids_by_def, module, runtime)?;
+        let offset = (i as i32) * STRUCT_FIELD_SLOT_BYTES;
+        builder.ins().store(
+            cranelift_codegen::ir::MemFlags::trusted(),
+            value,
+            struct_ptr,
+            offset,
+        );
+    }
+    Ok(struct_ptr)
 }
 
 /// Lower a String literal into a static `.rodata` block and return the

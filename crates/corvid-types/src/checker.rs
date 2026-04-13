@@ -384,19 +384,7 @@ impl<'a> Checker<'a> {
                 }
                 Type::Unknown
             }
-            DeclKind::Type => {
-                // Type used as constructor — out of scope for v0.1.
-                self.errors.push(TypeError::new(
-                    TypeErrorKind::TypeAsValue {
-                        name: name.name.clone(),
-                    },
-                    name.span,
-                ));
-                for a in args {
-                    let _ = self.check_expr(a);
-                }
-                Type::Unknown
-            }
+            DeclKind::Type => self.check_struct_constructor(def_id, &name.name, args),
         }
     }
 
@@ -461,6 +449,44 @@ impl<'a> Checker<'a> {
             .expect("agent DefId not indexed");
         self.check_args_against_params(name, &agent.params, args);
         self.type_ref_to_type(&agent.return_ty)
+    }
+
+    /// `TypeName(field0, field1, ...)` — construct a struct. Field
+    /// values must be assignable to each field's declared type.
+    /// Returns `Struct(def_id)`.
+    fn check_struct_constructor(&mut self, def_id: DefId, name: &str, args: &[Expr]) -> Type {
+        let ty_decl = *self
+            .types_by_id
+            .get(&def_id)
+            .expect("type DefId not indexed");
+
+        if args.len() != ty_decl.fields.len() {
+            self.errors.push(TypeError::new(
+                TypeErrorKind::ArityMismatch {
+                    callee: name.to_string(),
+                    expected: ty_decl.fields.len(),
+                    got: args.len(),
+                },
+                args.first().map(|a| a.span()).unwrap_or(ty_decl.span),
+            ));
+        }
+        for (i, arg) in args.iter().enumerate() {
+            let arg_ty = self.check_expr(arg);
+            if let Some(field) = ty_decl.fields.get(i) {
+                let field_ty = self.type_ref_to_type(&field.ty);
+                if !arg_ty.is_assignable_to(&field_ty) {
+                    self.errors.push(TypeError::new(
+                        TypeErrorKind::TypeMismatch {
+                            expected: field_ty.display_name(),
+                            got: arg_ty.display_name(),
+                            context: format!("field `{}` of `{name}`", field.name.name),
+                        },
+                        arg.span(),
+                    ));
+                }
+            }
+        }
+        Type::Struct(def_id)
     }
 
     fn check_args_against_params(
