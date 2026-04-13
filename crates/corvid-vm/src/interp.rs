@@ -618,34 +618,21 @@ fn int_arith(op: BinaryOp, a: i64, b: i64, span: Span) -> Result<i64, InterpErro
     }
 }
 
-fn float_arith(op: BinaryOp, a: f64, b: f64, span: Span) -> Result<f64, InterpError> {
+fn float_arith(op: BinaryOp, a: f64, b: f64, _span: Span) -> Result<f64, InterpError> {
+    // Float arithmetic follows IEEE 754: `1.0 / 0.0 = +Inf`, `0.0 / 0.0
+    // = NaN`, `Inf - Inf = NaN`. NaN propagation is the platform's
+    // safety story for floats — telling callers "something went wrong
+    // upstream" without aborting. Int arithmetic still traps on
+    // overflow / div-by-zero because integers have no defined `Inf`.
     use BinaryOp::*;
-    match op {
-        Add => Ok(a + b),
-        Sub => Ok(a - b),
-        Mul => Ok(a * b),
-        Div => {
-            if b == 0.0 {
-                Err(InterpError::new(
-                    InterpErrorKind::Arithmetic("division by zero".into()),
-                    span,
-                ))
-            } else {
-                Ok(a / b)
-            }
-        }
-        Mod => {
-            if b == 0.0 {
-                Err(InterpError::new(
-                    InterpErrorKind::Arithmetic("modulo by zero".into()),
-                    span,
-                ))
-            } else {
-                Ok(a % b)
-            }
-        }
+    Ok(match op {
+        Add => a + b,
+        Sub => a - b,
+        Mul => a * b,
+        Div => a / b,
+        Mod => a % b,
         _ => unreachable!("non-arithmetic op routed here"),
-    }
+    })
 }
 
 fn eval_ordering(op: BinaryOp, l: Value, r: Value, span: Span) -> Result<Value, InterpError> {

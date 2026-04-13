@@ -15,6 +15,16 @@ use std::process::Command;
 /// Source of the C entry shim. Compiled and linked with every binary.
 pub const ENTRY_SHIM_SOURCE: &str = include_str!("../runtime/shim.c");
 
+/// Refcounted heap allocator. Linked with every binary so the runtime
+/// helpers (`corvid_alloc` / `corvid_retain` / `corvid_release`) are
+/// available even when the program doesn't allocate (the symbols cost
+/// nothing if unreferenced).
+pub const ALLOC_SOURCE: &str = include_str!("../runtime/alloc.c");
+
+/// String runtime helpers (`corvid_string_concat` / `_eq` / `_cmp`).
+/// Linked alongside the allocator.
+pub const STRINGS_SOURCE: &str = include_str!("../runtime/strings.c");
+
 /// Link `object_path` together with the built-in entry shim into an
 /// executable at `output_path`. Creates parent directories as needed.
 /// The object file must export a symbol named `corvid_entry` — the
@@ -30,14 +40,21 @@ pub fn link_binary(
             .map_err(|e| CodegenError::io(format!("create {}: {e}", parent.display())))?;
     }
 
-    // Write the (unmodified) shim to a temp file the compiler can read.
+    // Write the (unmodified) shim, allocator, and string runtime to a
+    // temp dir the compiler can read.
     let shim_dir = tempfile::Builder::new()
         .prefix("corvid-link-")
         .tempdir()
         .map_err(|e| CodegenError::io(format!("tempdir: {e}")))?;
     let shim_path = shim_dir.path().join("corvid_shim.c");
+    let alloc_path = shim_dir.path().join("corvid_alloc.c");
+    let strings_path = shim_dir.path().join("corvid_strings.c");
     std::fs::write(&shim_path, ENTRY_SHIM_SOURCE)
         .map_err(|e| CodegenError::io(format!("write shim: {e}")))?;
+    std::fs::write(&alloc_path, ALLOC_SOURCE)
+        .map_err(|e| CodegenError::io(format!("write alloc: {e}")))?;
+    std::fs::write(&strings_path, STRINGS_SOURCE)
+        .map_err(|e| CodegenError::io(format!("write strings: {e}")))?;
 
     let compiler = cc::Build::new()
         .opt_level(2)
@@ -58,23 +75,30 @@ pub fn link_binary(
     }
 
     if compiler.is_like_msvc() {
-        // MSVC: cl.exe writes the intermediate shim .obj into the cwd
-        // unless /Fo redirects it. Point at the per-invocation tempdir
-        // so parallel compiles don't collide on `corvid_shim.obj`.
-        // `/Fo<path>` without a colon is the canonical form; trailing
-        // backslash makes cl treat it as a directory.
+        // MSVC: cl.exe writes intermediate .obj files into the cwd
+        // unless /Fo redirects them. Per-invocation tempdir so parallel
+        // tests don't collide. `/std:c11` enables `<stdatomic.h>`,
+        // which the alloc.c runtime depends on.
         let obj_out_dir = shim_dir.path();
-        cmd.arg(format!(
-            "/Fo{}{}",
-            obj_out_dir.display(),
-            std::path::MAIN_SEPARATOR
-        ))
-        .arg(&shim_path)
-        .arg(object_path)
-        .arg(format!("/Fe:{}", output_path.display()));
+        cmd.arg("/std:c11")
+            .arg("/experimental:c11atomics")
+            .arg(format!(
+                "/Fo{}{}",
+                obj_out_dir.display(),
+                std::path::MAIN_SEPARATOR
+            ))
+            .arg(&shim_path)
+            .arg(&alloc_path)
+            .arg(&strings_path)
+            .arg(object_path)
+            .arg(format!("/Fe:{}", output_path.display()));
     } else {
-        // GCC/Clang: cc shim.c object.o -o output
-        cmd.arg(&shim_path)
+        // GCC/Clang: cc shim.c alloc.c strings.c object.o -o output.
+        // `-std=c11` enables `<stdatomic.h>` portably.
+        cmd.arg("-std=c11")
+            .arg(&shim_path)
+            .arg(&alloc_path)
+            .arg(&strings_path)
             .arg(object_path)
             .arg("-o")
             .arg(output_path);

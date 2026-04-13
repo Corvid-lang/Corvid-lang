@@ -695,6 +695,243 @@ Out (deferred to later slices, each with a pointer): `Let` + `for` + `break`/`co
 
 Slice 12c pre-phase chat. Topic: `Let` bindings via Cranelift `Variable`s, `for` loop lowering over lists (which requires list memory representation — fuzzy boundary with 12d), `break` / `continue` control flow, `pass` as a no-op. Possible sub-split: 12c1 Let + `pass` + `break`/`continue` without `for`; 12c2 `for` once we have lists. Worth discussing before code.
 
+---
+
+## Day 21 — Phase 12 slice 12c: local bindings + `pass` ✅
+
+**Corvid compiles programs with local variables natively.** A program like `base = 10; multiplier = 4; result = base * multiplier; if result > 30: result = result + 2; return result` becomes a real `.exe` that prints `42`. Reassignment, type-change defensive guard, `pass` as a noop — all in. 42 parity fixtures green, end-to-end through the AOT path.
+
+### Pre-phase decisions, locked in conversation
+
+1. **Narrow 12c to `Let` + `pass`. Defer `for` / `break` / `continue` to slice 12d alongside `List`.** The "keep 12c as three items" framing was momentum — the structural coupling is `for ↔ List`, not `for ↔ Let`. Bundling the wrong things together would be exactly the kind of "this'll do for now" the project values warn against. `break`/`continue` only make sense inside loops, so they go where the loops go.
+2. **Trust the resolver for scope.** Branch-defined locals (`if cond: x = 1 else: x = 2; return x`) aren't a codegen problem — the resolver already gives the two `x`s distinct `LocalId`s, so `return x` after the branch fails at resolve time. The codegen never sees the pattern. Same discipline as slice 12b's "trust the typechecker" stance on non-Bool `if` conditions.
+3. **Defensive type-change guard on reassignment.** If the same `LocalId` is reassigned with a different declared type (a typechecker bug), the codegen emits a clean `CodegenError::Cranelift` instead of letting Cranelift panic. One extra check; closes a failure mode.
+4. **Wording correction (caught mid-brief).** Corvid uses Python-style bare `x = expr`, no `let` keyword. The IR's `IrStmt::Let` is compiler-internal jargon (textbook convention for "introduce a binding"). Slice 12c doesn't add user-facing syntax — it makes the existing assignment syntax compile natively.
+
+### What landed
+
+**`corvid-codegen-cl::lowering`**
+- Env type changed from `HashMap<LocalId, Variable>` to `HashMap<LocalId, (Variable, clir::Type)>` everywhere (parameter binding, IrExprKind::Local lookup, lower_block, lower_stmt, lower_expr, lower_short_circuit, lower_if). The type record lets the reassignment path compare widths.
+- New `IrStmt::Let` arm:
+  - Compute `cl_ty = cl_type_for(&stmt.ty, span)?`.
+  - Look up `local_id` in env. If absent → declare new Variable with `cl_ty`, increment `var_idx`, insert into env. If present → check the recorded type matches; if not, raise `CodegenError::Cranelift("variable redeclared with different type: was X, now Y — typechecker should have caught this")`.
+  - Lower `value`, `def_var(var, v)`. Cranelift handles the SSA bookkeeping invisibly.
+- `IrStmt::Pass` arm flipped from `NotSupported` to `Ok(BlockOutcome::Normal)`.
+- `IrStmt::Break` / `IrStmt::Continue` arms now point at slice 12d (which absorbs them with `for` and `List`) instead of slice 12c.
+
+**Parity harness**
+- 9 new fixtures: literal binding + return; multi-binding arithmetic with precedence; binding used twice in one expression; three-step reassignment; Bool binding; reassignment inside `if` body; binding used in a Bool comparison; `pass` inside an `if` as a noop; parameterised-agent + local (interpreter-only since `--target=native` still requires parameter-less entry per slice 12d).
+
+### Bugs caught (or rather, design dead-ends avoided)
+
+- The fuzzy `for / List` boundary surfaced during the brief. We avoided shipping `for` in 12c without `List` (would have required inventing a `range` primitive that doesn't exist in the IR — pure scope creep). Cleaner answer: bundle `for` + `break` + `continue` into 12d where `List` already had to land anyway.
+
+### Test counts
+
+| Crate | Tests |
+|---|---|
+| corvid-ast | 3 |
+| corvid-syntax | 75 |
+| corvid-resolve | 14 |
+| corvid-types | 18 |
+| corvid-ir | 6 |
+| corvid-runtime (unit) | 37 |
+| corvid-runtime (integration) | 6 |
+| corvid-vm | 35 |
+| corvid-codegen-py | 13 |
+| **corvid-codegen-cl (parity)** | **42 (was 33)** |
+| corvid-driver | 12 |
+| Python runtime | 10 |
+
+**Total: ~271 tests, all green.** Slice 12c added 9 parity fixtures.
+
+### Verified live
+
+```sh
+$ corvid build --target=native examples/with_locals.cor
+built: examples/with_locals.cor -> examples\target\bin\with_locals.exe
+
+$ ./examples/target/bin/with_locals.exe; echo "exit: $?"
+42
+exit: 0
+```
+
+### Scope honestly held
+
+In: Let bindings, reassignment, type-change guard, `pass` as noop.
+
+Out (deferred to slice 12d, with explicit pointers in `NotSupported` errors): `for` loops, `break`, `continue`, `Float`, `String`, `Struct`, `List`, parameterised entry agents (which need argv handling in the C shim and land alongside `String`).
+
+### Next
+
+Slice 12d pre-phase chat. Big slice — type surface (Float / String / Struct / List), `for` loops, `break`/`continue`, parameterised entry agents. Multiple sub-decisions (memory representation for strings / structs / lists, GC policy, calling convention for non-Int returns, argv decoding). Worth a careful brief before any code.
+
+---
+
+## Day 22 — Phase 12 slice 12d: `Float` ✅
+
+**Corvid compiles Float arithmetic natively.** Programs like `price = 19.99; quantity = 3; total = price * quantity; if total > 50.0: return 1 else: return 0` produce real binaries that exit with the right answer. IEEE 754 semantics on both tiers — `1.0 / 0.0` is `+Inf`, `NaN != NaN`, no trap.
+
+### Pre-phase decisions, locked in conversation
+
+1. **Take the slice split.** Original 12d (Float + String + Struct + List + for + break/continue + parameterised entry) is five slices in a trench coat. Split into 12d (Float) / 12e (String) / 12f (Struct) / 12g (List + for + break/continue) / 12h (parameterised entry + Float-returning entries). Each piece has its own design boundary; bundling them would mean dev-log entries too long to read.
+2. **Float follows IEEE 754. Update the interpreter to match.** Different domain than Int: integer overflow has no defined "wrap" answer that's meaningful; Float has Inf/NaN as part of the value language. Every other language users have ever touched uses IEEE for floats. The interpreter's prior trap-on-Float-div-zero was a leftover from the Int treatment, applied without specific design intent — removing it is a consistency fix, not a regression. Corvid's safety story focuses on effects/approvals/grounding/citations, not arithmetic. Int stays trap-on-overflow because integers are a different domain.
+
+### What landed
+
+**`corvid-vm::interp::float_arith`**
+- Removed div-zero / mod-zero traps. Float div-by-zero returns `+Inf` / `-Inf` / `NaN` per IEEE; Float mod-zero returns `NaN`. Comment cites the design intent so future readers don't restore the trap.
+
+**`corvid-codegen-cl::lowering`**
+- `cl_type_for(Float) → F64`.
+- `IrLiteral::Float(n)` lowers to `f64const(n)`.
+- `lower_binop_strict` restructured around an `ArithDomain { Int, Float }` enum after a new `promote_arith` helper widens mixed `Int + Float` operands to `F64` via `fcvt_from_sint`. Same widening rule as `eval_arithmetic` in the interpreter.
+- Float arithmetic uses `fadd` / `fsub` / `fmul` / `fdiv`. Float `%` is computed as `a - trunc(a / b) * b` since Cranelift has no `frem` — matches Rust's `f64::%` semantics.
+- Float comparisons via `fcmp`: `==` is `FloatCC::Equal` (false on NaN), `!=` is `FloatCC::NotEqual` which is the IEEE-quiet ordered variant. Cranelift's NaN treatment matches Rust's `PartialEq` and IEEE 754, so parity is automatic.
+- `lower_unop` now dispatches by value type: `UnaryOp::Neg` on `F64` → `fneg` (no trap), on `I64` → existing `ssub_overflow(0, x)` with overflow trap.
+- `reject_unsupported_types` updated; the slice-pointer in error messages now says "12d supports Int/Bool/Float" and points at 12e–g for the rest.
+
+**`corvid-codegen-cl::lib::build_native_to_disk`**
+- New defensive guard: an entry agent returning `Float` raises `CodegenError::NotSupported` pointing at slice 12h. The C shim's `printf("%lld\n", corvid_entry())` only handles Int/Bool; supporting Float entries needs either a second shim variant or a different print-format selection at build time. Both naturally land in 12h alongside argv decoding, where the shim is already growing.
+
+### Bugs caught (well — divergence closed)
+
+The interpreter was trapping on `1.0 / 0.0`. That predates this slice but was never deliberate policy. Closing it before adding the codegen meant the parity harness validates IEEE-compliant behavior from the first compile, instead of accumulating a "known divergence" list that grows over time and stops being trusted. One-line interpreter fix (~6 lines including the explanatory comment).
+
+### Test counts
+
+| Crate | Tests |
+|---|---|
+| corvid-ast | 3 |
+| corvid-syntax | 75 |
+| corvid-resolve | 14 |
+| corvid-types | 18 |
+| corvid-ir | 6 |
+| corvid-runtime (unit) | 37 |
+| corvid-runtime (integration) | 6 |
+| corvid-vm | 35 |
+| corvid-codegen-py | 13 |
+| **corvid-codegen-cl (parity)** | **52 (was 42)** |
+| corvid-driver | 12 |
+| Python runtime | 10 |
+
+**Total: ~281 tests, all green.** Slice 12d added 10 parity fixtures: Float addition with eq-check, sub/mul, exact division, mixed Int+Float promotion (both orderings), all four orderings, unary negation, IEEE Inf-on-div-zero proof, NaN != NaN proof, Float in local binding, Float-entry-return defensive guard.
+
+### Verified live
+
+```sh
+$ corvid build --target=native examples/float_calc.cor
+built: examples/float_calc.cor -> examples\target\bin\float_calc.exe
+
+$ ./examples/target/bin/float_calc.exe; echo "exit: $?"
+1
+exit: 0
+```
+
+### Scope honestly held
+
+In: Float type, four arithmetic ops (with IEEE semantics), six comparisons (with IEEE NaN handling), mixed Int+Float promotion, Float negation, Float in local bindings.
+
+Out (deferred to later slices, each with explicit pointers): String → 12e. Struct → 12f. List + for + break/continue → 12g. Float-returning entry agents → 12h. Parameterised entries → 12h.
+
+### Next
+
+Slice 12e pre-phase chat. Topic: `String` memory representation (pointer + length, immutable), allocator policy (malloc + leak-on-exit, or arena, or refcount?), how string literals land in the object file's `.rodata`, how concatenation owns its result, how `==` on strings works (length compare + memcmp). Worth a careful brief — strings are the first non-scalar type and they expose calling-convention questions that ripple through the rest of Phase 12.
+
+---
+
+## Day 23 — Phase 12 slice 12e: memory management foundation ✅
+
+**Corvid native binaries now ship with a real refcounted heap allocator.** Atomic refcount, immortal sentinel for static literals, leak counters, full C runtime linked into every binary. No String lowering yet — that's slice 12f. But the foundation is real: every `corvid build --target=native` output now contains `corvid_alloc` / `corvid_retain` / `corvid_release` / `corvid_string_concat` / `corvid_string_eq` / `corvid_string_cmp` symbols, ready to be called the moment the codegen wires them in.
+
+### Pre-phase decisions, locked in conversation
+
+User pushed back on my "ship malloc + leak now, fix later" proposal — correctly. Corvid is positioned as **AI-native**, not just batch-agent-shaped. RAG services, multi-agent coordinators, eval pipelines, durable workflows all run for hours/days/weeks. Shipping `String` with leak semantics would make Corvid unviable for the very workloads it's positioned to serve, and would undermine the "compile-time safety beats runtime safety" pitch by ignoring runtime memory safety entirely.
+
+Locked decisions:
+
+1. **Refcount, not GC, not borrow checking.** Corvid's value semantics (immutable scalars + immutable composites + agent-call composition, no first-class mutable references) prevent reference cycles. Refcount is sufficient and stays sufficient. Swift / Obj-C / CPython have shipped real production runtimes on refcount.
+2. **16-byte header** — atomic refcount (8 bytes) + reserved word (8 bytes) for future per-allocation metadata (type tag, weak count, generation counter if cycles ever appear). Preserves natural 8-byte payload alignment.
+3. **Atomic refcount.** Single-threaded today; Phase 25 multi-agent will introduce concurrency. Going atomic now means no migration. Cost: ~10–50ns vs ~1–2ns non-atomic — small and worth not paying compounded interest later.
+4. **Scope-driven release insertion** (release at block exit) over liveness-driven (release at last use). Correctness now; the optimisation is a Phase 22 perf concern, not a slice 12e gate.
+5. **Combined slice (foundation + String)** — committed up front. Then mid-session, after the foundation landed cleanly and the String integration revealed itself as a substantial slice on its own (RuntimeFuncs threading + scope-stack data structure + ownership rules + literal lowering via `.rodata` + parity harness updates), split into 12e (foundation) and 12f (String operations + ownership wiring). This preserves the discipline the standing rule asks for: each slice = one coherent landing.
+
+### What landed
+
+**`crates/corvid-codegen-cl/runtime/alloc.c`** — the real refcount runtime.
+- 16-byte header struct: `_Atomic long long refcount; long long reserved;`
+- `corvid_alloc(payload_bytes)`: `malloc(16 + N)`, set refcount=1, reserved=0; return payload pointer (header + 16). Atomic-increments leak counter.
+- `corvid_retain(payload)`: walk back 16 bytes, atomic increment if refcount != INT64_MIN.
+- `corvid_release(payload)`: walk back 16, atomic decrement; free the underlying block when refcount hits zero. Atomic-increments release counter. Aborts with a clear stderr message on use-after-free (refcount already <= 0).
+- Two atomic counters (`corvid_alloc_count` / `corvid_release_count`) track totals for the shim's leak-detector output.
+
+**`crates/corvid-codegen-cl/runtime/strings.c`** — String operations on top of the allocator.
+- `corvid_string_concat(a, b)`: allocates `sizeof(corvid_string) + a.len + b.len` in one block; descriptor + bytes co-located; refcount=1; doesn't retain inputs.
+- `corvid_string_eq(a, b)`: length compare + `memcmp`; returns 1 / 0.
+- `corvid_string_cmp(a, b)`: `memcmp` of `min(len_a, len_b)` then length tiebreaker; returns -1 / 0 / 1.
+- `alloc_string(src, len)` — internal helper for fresh allocations from raw bytes (used internally; will be exposed if a `String.from_bytes` builtin ever appears).
+
+**`crates/corvid-codegen-cl/runtime/shim.c`** — leak detector wired in.
+- Existing entry-trampoline + overflow-handler behaviour preserved.
+- After `corvid_entry()` returns, if `getenv("CORVID_DEBUG_ALLOC")` is non-null, prints `ALLOCS=N\nRELEASES=N` to stderr.
+- Off by default — existing parity tests see clean stdout/stderr unchanged.
+
+**`crates/corvid-codegen-cl/src/link.rs`** — three C files now compile + link together.
+- `ALLOC_SOURCE` and `STRINGS_SOURCE` `include_str!`'d alongside `ENTRY_SHIM_SOURCE`.
+- All three written to the per-invocation tempdir before the C compiler runs (avoids `corvid_*.obj` collisions between parallel tests on MSVC).
+- `cl.exe` invocation gets `/std:c11 /experimental:c11atomics` for `<stdatomic.h>` support; `cc` invocation gets `-std=c11`.
+
+**`crates/corvid-codegen-cl/src/lowering.rs`** — type plumbing for the slice 12f integration to rest on.
+- `cl_type_for(Type::String) → I64` (descriptor pointer; same width as `Int`, distinguished only by `is_refcounted_type`).
+- `is_refcounted_type(ty)` returns true for `String` (will extend to `Struct` / `List` in 12g / 12h).
+- Public symbol constants: `RETAIN_SYMBOL`, `RELEASE_SYMBOL`, `STRING_CONCAT_SYMBOL`, `STRING_EQ_SYMBOL`, `STRING_CMP_SYMBOL`. Slice 12f imports them via `module.declare_function(SYMBOL, Linkage::Import, &sig)`.
+
+### Bugs caught during the slice
+
+1. **MSVC `<stdatomic.h>` requires `/std:c11`.** First link attempt failed with `fatal error C1189: "C atomics require C11 or later"`. Fix: add `/std:c11 /experimental:c11atomics` for MSVC and `-std=c11` for GCC/Clang in `link.rs`. Same fix would have come up later anyway when slice 12f tested — surfacing now means the foundation is portable on day one.
+
+### Test counts
+
+| Crate | Tests |
+|---|---|
+| corvid-ast | 3 |
+| corvid-syntax | 75 |
+| corvid-resolve | 14 |
+| corvid-types | 18 |
+| corvid-ir | 6 |
+| corvid-runtime (unit) | 37 |
+| corvid-runtime (integration) | 6 |
+| corvid-vm | 35 |
+| corvid-codegen-py | 13 |
+| **corvid-codegen-cl (parity)** | **52 (unchanged — runtime linked into every existing fixture without behaviour change)** |
+| corvid-driver | 12 |
+| Python runtime | 10 |
+
+**Total: ~281 tests, all green.** Slice 12e added zero new fixtures because the foundation is invisible to user code until slice 12f wires up String operations. The completion criterion was "every existing parity fixture still passes with the new C runtime linked," which holds.
+
+### Verified live
+
+```sh
+$ corvid build --target=native examples/with_locals.cor
+built: examples/with_locals.cor -> examples\target\bin\with_locals.exe
+
+$ ./examples/target/bin/with_locals.exe
+42
+
+$ CORVID_DEBUG_ALLOC=1 ./examples/target/bin/with_locals.exe
+42
+ALLOCS=0
+RELEASES=0
+```
+
+### Honest scope check
+
+The combined "memory + String" slice was too big to land in one session safely. Splitting mid-session preserved the discipline rather than rushing the ownership-wiring story (which is the most error-prone piece of the remaining work). The foundation is genuinely useful as a standalone landing — it's the substrate slice 12f, 12g, and 12h all reuse without modification, and exercising it via "every existing fixture still works" gives us confidence the C runtime + linker integration are correct before we layer ownership management on top.
+
+### Next
+
+Slice 12f pre-phase chat. Topic: `RuntimeFuncs` struct + module-wide declaration; lowering `IrLiteral::String` via `module.declare_data` + `define_data` with self-relative relocation for the descriptor's `bytes_ptr` field; ownership management (retain on `use_var`, release after consumed temps, release-on-rebind, retain-return + release-locals at function exit, scope-stack data structure that mirrors Corvid's lexical scoping rather than Cranelift's flat-Variable model); parity harness updates to parse `ALLOCS` / `RELEASES` from stderr.
+
 
 
 

@@ -1,0 +1,7 @@
+agent main() -> Int:
+    base = 10
+    multiplier = 4
+    result = base * multiplier
+    if result > 30:
+        result = result + 2
+    return result

@@ -90,17 +90,62 @@ Pre-phase decisions locked: **AOT-first** via `cranelift-object` (no JIT detour 
 - [x] Trampoline extends Bool → I64 via `uextend` when entry agent returns Bool
 - [x] 18 new parity fixtures (bringing the suite to 33)
 
-#### Slice 12c — Let bindings, for loops, recursive agent calls with branching
-(drafted in its own pre-phase brief)
+#### Slice 12c ✅ — Local bindings + `pass` (Day 21)
+- [x] `IrStmt::Let` lowering with declare-or-reuse: each `LocalId` maps to a Cranelift `Variable`; first sight declares with `cl_type_for(ty)`, later sights reuse and `def_var`
+- [x] Type-change-on-reassignment defensive guard → `CodegenError::Cranelift` (typechecker should catch it; this closes the failure mode if not)
+- [x] `IrStmt::Pass` becomes a no-op (was `NotSupported`)
+- [x] Env signature changed from `HashMap<LocalId, Variable>` to `HashMap<LocalId, (Variable, clir::Type)>` so the type-change guard has the existing width to compare against
+- [x] 9 new parity fixtures: simple binding, multi-binding arithmetic, repeated use, three-step reassignment, Bool binding, reassignment inside `if`, binding used in comparison, `pass` as noop, parameterised agent with locals
+- [x] Smoke-tested `corvid build --target=native examples/with_locals.cor`: locals + reassignment + `if` + native execution end-to-end
 
-#### Slice 12d — Float, String, Struct, List memory representation
-(drafted in its own pre-phase brief; boundary with Phase 13 is fuzzy, may absorb)
+#### Slice 12d ✅ — `Float` (Day 22)
+- [x] `cl_type_for(Float) → F64`; `IrLiteral::Float` lowering via `f64const`
+- [x] Float arithmetic via `fadd`/`fsub`/`fmul`/`fdiv`; `%` via `a - trunc(a/b) * b` to match Rust `f64::%`
+- [x] Float comparisons via `fcmp` with IEEE-correct NaN semantics (`==` returns false on NaN, `!=` returns true on NaN)
+- [x] Mixed Int+Float promotion via `fcvt_from_sint` — same widening rule as the interpreter
+- [x] Float unary negation via `fneg` (no trap — IEEE)
+- [x] **Interpreter updated to follow IEEE for Float div/mod by zero** (was trapping; now returns `Inf` / `NaN`). Closes a divergence rather than creates one.
+- [x] Defensive guard: Float entry-agent returns blocked with `NotSupported` pointing at slice 12h (where the C shim grows to handle non-Int print formats)
+- [x] 10 new parity fixtures including the IEEE divergence proofs (`1.0 / 0.0 > 1.0` true; `NaN != NaN` true)
 
-#### Slice 12e — Make native the default for tool-free programs
-(drafted in its own pre-phase brief; `corvid run` begins AOT-compiling + executing instead of interpreting where possible)
+#### Slice 12e ✅ — Memory management foundation (Day 23)
 
-#### Slice 12f — Polish + benchmarks
-(drafted in its own pre-phase brief)
+Originally scoped as "Memory foundation + String"; user split into 12e (foundation) + 12f (String) for cleaner landings after agreeing the combined slice was too large to ship safely in one session.
+
+- [x] `runtime/alloc.c` — 16-byte header (`atomic refcount + reserved`), `corvid_alloc` / `corvid_retain` / `corvid_release`, atomic leak counters
+- [x] `i64::MIN` immortal sentinel for `.rodata` literals — `retain` / `release` short-circuit so static memory is never written to
+- [x] `runtime/strings.c` — `corvid_string_concat` / `_eq` / `_cmp` built on the allocator (descriptor + bytes share one allocation block)
+- [x] `shim.c` updated — prints `ALLOCS` / `RELEASES` to stderr when `CORVID_DEBUG_ALLOC` is set, kept off by default so existing parity output is unchanged
+- [x] `link.rs` compiles and links all three C files via the host C compiler with `/std:c11` (MSVC) / `-std=c11` (GCC/Clang) for `<stdatomic.h>` support
+- [x] `cl_type_for(String) → I64` (descriptor pointer); `is_refcounted_type` helper; runtime helper symbol constants (`RETAIN_SYMBOL` / `RELEASE_SYMBOL` / `STRING_CONCAT_SYMBOL` / `STRING_EQ_SYMBOL` / `STRING_CMP_SYMBOL`)
+- [x] All 52 existing parity fixtures still green with the new C runtime linked into every binary
+
+**Pre-phase decisions locked**: 16-byte header (preserves payload alignment + reserves a future-use word), atomic refcount (Phase 25 multi-agent will need it; cheap insurance now), scope-driven release insertion (correct now, liveness-driven optimisation is Phase 22), combined slice (foundation + String) — then split mid-session into 12e (foundation) + 12f (String) once the String integration revealed itself as a slice's worth of work on its own.
+
+#### Slice 12f 🚧 — `String` operations + ownership wiring (next)
+
+Pre-phase chat required. Scope:
+- [ ] `RuntimeFuncs` struct (FuncIds for retain / release / concat / eq / cmp), declared once per module in `lower_file`, threaded through every lowering function
+- [ ] Lower `IrLiteral::String` via `module.declare_data` + `define_data` — emit two `.rodata` symbols per literal (bytes + descriptor with relocation), descriptor's refcount = `i64::MIN` immortal sentinel
+- [ ] Lower `String + String` (concat) via `corvid_string_concat` call
+- [ ] Lower String comparison ops via `corvid_string_eq` / `corvid_string_cmp`
+- [ ] Scope-stack tracking for refcounted locals; `Vec<Vec<(LocalId, Variable)>>` pushed/popped at block entry/exit
+- [ ] Ownership management: retain on `use_var` of a refcounted local (borrowed → owned), release after passing to a call (consumed temp), release-on-rebind, retain return value + release locals on return, walk all scopes on return for cleanup
+- [ ] Driver guard: String entry params / returns → `NotSupported` pointing at slice 12i (parameterised entry agents)
+- [ ] Update parity harness to set `CORVID_DEBUG_ALLOC=1`, parse `ALLOCS=` / `RELEASES=` from stderr, assert balanced
+- [ ] ≥6 String parity fixtures + leak-detector assertion runs on every existing fixture
+
+#### Slice 12g — `Struct` (memory layout + field access)
+
+#### Slice 12h — `List` + `for` + `break`/`continue`
+
+#### Slice 12i — Parameterised entry agents + Float-/String-returning entries (argv decoding + shim print formats)
+
+#### Slice 12j — Make native the default for tool-free programs
+(`corvid run` begins AOT-compiling + executing instead of interpreting where possible)
+
+#### Slice 12k — Polish + benchmarks
+(stability guarantees, perf measurements vs interpreter and vs hand-written Rust)
 
 **Out of Phase 12 (deliberately):**
 - Cross-compilation to non-host targets (Phase 32)

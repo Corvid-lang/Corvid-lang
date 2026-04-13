@@ -1,0 +1,8 @@
+agent main() -> Int:
+    price = 19.99
+    quantity = 3
+    total = price * quantity
+    if total > 50.0:
+        return 1
+    else:
+        return 0

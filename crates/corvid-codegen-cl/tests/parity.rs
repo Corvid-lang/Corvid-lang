@@ -467,3 +467,245 @@ fn bool_returning_agent_is_even() {
         true,
     );
 }
+
+// ============================================================
+// Slice 12c fixtures: bare local bindings (`x = expr`) and `pass`.
+// ============================================================
+
+#[test]
+fn local_binding_returns_value() {
+    assert_parity(
+        "agent run() -> Int:\n    x = 42\n    return x\n",
+        42,
+    );
+}
+
+#[test]
+fn local_binding_with_arithmetic() {
+    assert_parity(
+        "\
+agent run() -> Int:
+    x = 2
+    y = 3
+    return x + y * 4
+",
+        14,
+    );
+}
+
+#[test]
+fn local_binding_used_twice() {
+    assert_parity(
+        "\
+agent run() -> Int:
+    x = 7
+    return x + x
+",
+        14,
+    );
+}
+
+#[test]
+fn reassignment_takes_latest_value() {
+    assert_parity(
+        "\
+agent run() -> Int:
+    x = 5
+    x = x * 2
+    x = x + 1
+    return x
+",
+        11,
+    );
+}
+
+#[test]
+fn local_binding_with_bool() {
+    assert_parity_bool(
+        "\
+agent run() -> Bool:
+    flag = true
+    return flag
+",
+        true,
+    );
+}
+
+#[test]
+fn reassignment_inside_if_branch() {
+    assert_parity(
+        "\
+agent run() -> Int:
+    x = 5
+    if x == 5:
+        x = 100
+    return x
+",
+        100,
+    );
+}
+
+#[test]
+fn local_binding_used_in_comparison() {
+    assert_parity_bool(
+        "\
+agent run() -> Bool:
+    n = 4
+    return n % 2 == 0
+",
+        true,
+    );
+}
+
+#[test]
+fn pass_in_if_is_a_noop() {
+    assert_parity(
+        "\
+agent run() -> Int:
+    x = 5
+    if x > 0:
+        pass
+    return x
+",
+        5,
+    );
+}
+
+// ============================================================
+// Slice 12d fixtures: Float arithmetic + comparisons + IEEE 754.
+// ============================================================
+//
+// Float entry-agent returns are blocked until slice 12h (the C shim's
+// `printf("%lld")` doesn't print Floats), so every Float fixture
+// computes with Float internally but returns `Bool` or `Int`.
+
+#[test]
+fn float_addition_eq_check() {
+    assert_parity_bool(
+        "agent f() -> Bool:\n    return 1.5 + 2.5 == 4.0\n",
+        true,
+    );
+}
+
+#[test]
+fn float_subtraction_and_multiplication() {
+    assert_parity_bool(
+        "agent f() -> Bool:\n    return (5.0 - 1.5) * 2.0 == 7.0\n",
+        true,
+    );
+}
+
+#[test]
+fn float_division_exact() {
+    assert_parity_bool(
+        "agent f() -> Bool:\n    return 9.0 / 3.0 == 3.0\n",
+        true,
+    );
+}
+
+#[test]
+fn mixed_int_float_promotes_to_float() {
+    assert_parity_bool(
+        "agent f() -> Bool:\n    return 3 + 0.5 == 3.5\n",
+        true,
+    );
+    assert_parity_bool(
+        "agent f() -> Bool:\n    return 0.5 + 3 == 3.5\n",
+        true,
+    );
+}
+
+#[test]
+fn float_ordering() {
+    assert_parity_bool("agent f() -> Bool:\n    return 1.5 < 2.0\n", true);
+    assert_parity_bool("agent f() -> Bool:\n    return 2.0 <= 2.0\n", true);
+    assert_parity_bool("agent f() -> Bool:\n    return 3.14 > 3.0\n", true);
+    assert_parity_bool("agent f() -> Bool:\n    return 3.0 >= 3.0\n", true);
+}
+
+#[test]
+fn float_unary_negation() {
+    assert_parity_bool(
+        "agent f() -> Bool:\n    return -2.5 == 0.0 - 2.5\n",
+        true,
+    );
+}
+
+/// IEEE 754: `1.0 / 0.0` is `+Inf`, not a trap. `Inf > 1.0` is true.
+/// This is the headline divergence from Int's overflow-trap policy.
+#[test]
+fn float_div_by_zero_is_infinity_not_trap() {
+    assert_parity_bool(
+        "agent f() -> Bool:\n    return 1.0 / 0.0 > 1.0\n",
+        true,
+    );
+}
+
+/// IEEE 754: `0.0 / 0.0` is `NaN`. `NaN != NaN` is true; `NaN == NaN`
+/// is false. Both tiers must agree.
+#[test]
+fn nan_inequality_is_true() {
+    assert_parity_bool(
+        "agent f() -> Bool:\n    return (0.0 / 0.0) != (0.0 / 0.0)\n",
+        true,
+    );
+    assert_parity_bool(
+        "agent f() -> Bool:\n    return (0.0 / 0.0) == (0.0 / 0.0)\n",
+        false,
+    );
+}
+
+#[test]
+fn float_in_local_binding() {
+    assert_parity_bool(
+        "\
+agent f() -> Bool:
+    pi = 3.14
+    tau = pi * 2.0
+    return tau > 6.0
+",
+        true,
+    );
+}
+
+/// Float entry-agent returns are not yet supported — driver must
+/// surface a clean `NotSupported` pointing at slice 12h.
+#[test]
+fn float_entry_return_is_blocked_with_clear_error() {
+    use corvid_codegen_cl::{build_native_to_disk, CodegenErrorKind};
+    let ir = ir_of("agent f() -> Float:\n    return 3.14\n");
+    let tmp = tempfile::tempdir().unwrap();
+    let bin_path = tmp.path().join("prog");
+    let err = build_native_to_disk(&ir, "corvid_parity_test", &bin_path).unwrap_err();
+    match err.kind {
+        CodegenErrorKind::NotSupported(ref msg) => {
+            assert!(msg.contains("Float"), "expected message to mention Float: {msg}");
+            assert!(
+                msg.contains("12h"),
+                "expected message to point at slice 12h: {msg}"
+            );
+        }
+        other => panic!("expected NotSupported, got {other:?}"),
+    }
+}
+
+#[test]
+fn agent_with_param_uses_local_alongside_param() {
+    // The `n` parameter is bound at function entry; the local `doubled`
+    // demonstrates that parameter Variables and Let Variables coexist.
+    // Smoke-test via interpreter only — `corvid build --target=native`
+    // currently requires a parameter-less entry agent.
+    let ir = ir_of("agent calc(n: Int) -> Int:\n    doubled = n * 2\n    return doubled + 1\n");
+    let runtime = Runtime::builder()
+        .approver(Arc::new(ProgrammaticApprover::always_yes()))
+        .build();
+    let v = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(async {
+            corvid_vm::run_agent(&ir, "calc", vec![Value::Int(20)], &runtime).await
+        })
+        .expect("interp");
+    assert_eq!(v, Value::Int(41));
+}

@@ -7,8 +7,8 @@
 //! is auditable.
 
 use crate::errors::CodegenError;
-use cranelift_codegen::ir::condcodes::IntCC;
-use cranelift_codegen::ir::types::{I64, I8};
+use cranelift_codegen::ir::condcodes::{FloatCC, IntCC};
+use cranelift_codegen::ir::types::{F64, I64, I8};
 use cranelift_codegen::ir::{
     self as clir, AbiParam, Function, InstBuilder, MemFlags, Signature, UserFuncName,
     Value as ClValue,
@@ -38,6 +38,41 @@ fn lowered_outcome_placeholder() -> BlockOutcome {
 fn mangle_agent_symbol(user_name: &str) -> String {
     format!("corvid_agent_{user_name}")
 }
+
+/// Whether a Corvid value of this type lives behind a refcounted heap
+/// allocation. When true, the codegen tracks ownership: `retain` on
+/// bind, `release` on scope exit, etc.
+///
+/// Slice 12e: only `String` is refcounted. Future slices add `Struct`
+/// (12f), `List` (12g) — both will return true here.
+fn is_refcounted_type(ty: &Type) -> bool {
+    matches!(ty, Type::String)
+}
+
+// ---- runtime helper symbols ----
+//
+// The C runtime in `runtime/{alloc,strings}.c` exports these symbols.
+// `lower_file` declares them once per module as `Linkage::Import`; each
+// per-function lowering uses `module.declare_func_in_func` to get a
+// FuncRef, then `builder.ins().call`.
+
+/// `void corvid_retain(void* payload)` — atomic refcount increment.
+pub const RETAIN_SYMBOL: &str = "corvid_retain";
+
+/// `void corvid_release(void* payload)` — atomic refcount decrement;
+/// frees the underlying block when refcount hits zero.
+pub const RELEASE_SYMBOL: &str = "corvid_release";
+
+/// `void* corvid_string_concat(void* a, void* b)` — allocates a fresh
+/// String (refcount = 1) containing `a` followed by `b`.
+pub const STRING_CONCAT_SYMBOL: &str = "corvid_string_concat";
+
+/// `long long corvid_string_eq(void* a, void* b)` — bytewise equality.
+pub const STRING_EQ_SYMBOL: &str = "corvid_string_eq";
+
+/// `long long corvid_string_cmp(void* a, void* b)` — bytewise compare.
+pub const STRING_CMP_SYMBOL: &str = "corvid_string_cmp";
+
 
 /// Symbol name used by the C entry shim to pick up the runtime
 /// overflow handler. Declared here so both codegen and the shim agree.
@@ -198,7 +233,7 @@ fn reject_unsupported_types(agent: &IrAgent) -> Result<(), CodegenError> {
         cl_type_for(&p.ty, p.span).map_err(|_| {
             CodegenError::not_supported(
                 format!(
-                    "parameter `{}: {}` — slice 12b supports only `Int` and `Bool` parameters (Float/String/Struct/List land in slice 12d)",
+                    "parameter `{}: {}` — slice 12d supports `Int`, `Bool`, and `Float` (`String` / `Struct` / `List` land in slices 12e–g)",
                     p.name,
                     p.ty.display_name()
                 ),
@@ -209,7 +244,7 @@ fn reject_unsupported_types(agent: &IrAgent) -> Result<(), CodegenError> {
     cl_type_for(&agent.return_ty, agent.span).map_err(|_| {
         CodegenError::not_supported(
             format!(
-                "agent `{}` returns `{}` — slice 12b supports only `Int` and `Bool` returns",
+                "agent `{}` returns `{}` — slice 12d supports `Int`, `Bool`, and `Float` returns",
                 agent.name,
                 agent.return_ty.display_name()
             ),
@@ -227,14 +262,11 @@ fn cl_type_for(ty: &Type, span: Span) -> Result<clir::Type, CodegenError> {
     match ty {
         Type::Int => Ok(I64),
         Type::Bool => Ok(I8),
-        Type::Float => Err(CodegenError::not_supported(
-            "`Float` — slice 12d adds floating-point",
-            span,
-        )),
-        Type::String => Err(CodegenError::not_supported(
-            "`String` — slice 12d adds strings",
-            span,
-        )),
+        Type::Float => Ok(F64),
+        // String is a pointer to a 16-byte descriptor that lives behind
+        // a 16-byte refcount header. Single I64 in registers/env keeps
+        // the calling convention uniform with future Struct/List types.
+        Type::String => Ok(I64),
         Type::Struct(_) => Err(CodegenError::not_supported(
             "`Struct` — slice 12d adds struct layout",
             span,
@@ -279,7 +311,7 @@ fn define_agent(
         builder.switch_to_block(entry);
         builder.seal_block(entry);
 
-        let mut env: HashMap<LocalId, Variable> = HashMap::new();
+        let mut env: HashMap<LocalId, (Variable, clir::Type)> = HashMap::new();
         let mut var_idx: usize = 0;
 
         for (i, p) in agent.params.iter().enumerate() {
@@ -289,7 +321,7 @@ fn define_agent(
             let ty = cl_type_for(&p.ty, p.span)?;
             builder.declare_var(var, ty);
             builder.def_var(var, block_arg);
-            env.insert(p.local_id, var);
+            env.insert(p.local_id, (var, ty));
         }
 
         let lowered = lower_block(
@@ -352,7 +384,7 @@ enum BlockOutcome {
 fn lower_block(
     builder: &mut FunctionBuilder,
     block: &IrBlock,
-    env: &mut HashMap<LocalId, Variable>,
+    env: &mut HashMap<LocalId, (Variable, clir::Type)>,
     _var_idx: &mut usize,
     func_ids_by_def: &HashMap<DefId, FuncId>,
     module: &mut ObjectModule,
@@ -370,7 +402,7 @@ fn lower_block(
 fn lower_stmt(
     builder: &mut FunctionBuilder,
     stmt: &IrStmt,
-    env: &mut HashMap<LocalId, Variable>,
+    env: &mut HashMap<LocalId, (Variable, clir::Type)>,
     var_idx: &mut usize,
     func_ids_by_def: &HashMap<DefId, FuncId>,
     module: &mut ObjectModule,
@@ -394,10 +426,43 @@ fn lower_stmt(
             let _ = lower_expr(builder, expr, env, func_ids_by_def, module, overflow_func_id)?;
             Ok(BlockOutcome::Normal)
         }
-        IrStmt::Let { span, .. } => Err(CodegenError::not_supported(
-            "`let` bindings — slice 12c adds them",
-            *span,
-        )),
+        IrStmt::Let {
+            local_id,
+            ty,
+            value,
+            span,
+            ..
+        } => {
+            let cl_ty = cl_type_for(ty, *span)?;
+            // Declare-or-reuse: a fresh `LocalId` gets a new Cranelift
+            // `Variable`; reassignment to a name already bound in this
+            // function reuses the existing Variable. A type change on
+            // reassignment is a typechecker bug — we surface it as a
+            // clean `CodegenError` instead of letting Cranelift panic.
+            let var = match env.get(local_id) {
+                Some(&(existing_var, existing_ty)) => {
+                    if existing_ty != cl_ty {
+                        return Err(CodegenError::cranelift(
+                            format!(
+                                "variable redeclared with different type: was {existing_ty}, now {cl_ty} — typechecker should have caught this"
+                            ),
+                            *span,
+                        ));
+                    }
+                    existing_var
+                }
+                None => {
+                    let new_var = Variable::from_u32(*var_idx as u32);
+                    *var_idx += 1;
+                    builder.declare_var(new_var, cl_ty);
+                    env.insert(*local_id, (new_var, cl_ty));
+                    new_var
+                }
+            };
+            let v = lower_expr(builder, value, env, func_ids_by_def, module, overflow_func_id)?;
+            builder.def_var(var, v);
+            Ok(BlockOutcome::Normal)
+        }
         IrStmt::If {
             cond,
             then_block,
@@ -422,19 +487,18 @@ fn lower_stmt(
             "`approve` in compiled code — Phase 14 adds it alongside the tool registry",
             *span,
         )),
-        IrStmt::Break { span } | IrStmt::Continue { span } | IrStmt::Pass { span } => {
-            Err(CodegenError::not_supported(
-                "loop control flow — slice 12c adds it",
-                *span,
-            ))
-        }
+        IrStmt::Pass { .. } => Ok(BlockOutcome::Normal),
+        IrStmt::Break { span } | IrStmt::Continue { span } => Err(CodegenError::not_supported(
+            "`break` / `continue` — slice 12d adds them alongside `for` and `List`",
+            *span,
+        )),
     }
 }
 
 fn lower_expr(
     builder: &mut FunctionBuilder,
     expr: &IrExpr,
-    env: &HashMap<LocalId, Variable>,
+    env: &HashMap<LocalId, (Variable, clir::Type)>,
     func_ids_by_def: &HashMap<DefId, FuncId>,
     module: &mut ObjectModule,
     overflow_func_id: FuncId,
@@ -444,10 +508,7 @@ fn lower_expr(
         IrExprKind::Literal(IrLiteral::Bool(b)) => {
             Ok(builder.ins().iconst(I8, if *b { 1 } else { 0 }))
         }
-        IrExprKind::Literal(IrLiteral::Float(_)) => Err(CodegenError::not_supported(
-            "`Float` literals — slice 12d adds floating-point",
-            expr.span,
-        )),
+        IrExprKind::Literal(IrLiteral::Float(n)) => Ok(builder.ins().f64const(*n)),
         IrExprKind::Literal(IrLiteral::String(_)) => Err(CodegenError::not_supported(
             "`String` literals — slice 12d adds strings",
             expr.span,
@@ -457,7 +518,7 @@ fn lower_expr(
             expr.span,
         )),
         IrExprKind::Local { local_id, name } => {
-            let var = env.get(local_id).ok_or_else(|| {
+            let (var, _ty) = env.get(local_id).ok_or_else(|| {
                 CodegenError::cranelift(
                     format!("no variable for local `{name}` — compiler bug"),
                     expr.span,
@@ -547,9 +608,11 @@ fn lower_expr(
     }
 }
 
-/// Int arithmetic (overflow-trapping) and comparison (Int or Bool).
-/// Short-circuit `and`/`or` are handled in `lower_short_circuit`, not
-/// here — by the time this helper runs, both sides have been evaluated.
+/// Strict (eager) binary operator lowering: arithmetic and comparison
+/// for both `Int` and `Float`. Mixed `Int + Float` operands are
+/// promoted to `F64` first (matches the interpreter's widening rule).
+/// `Int` arithmetic traps on overflow / div-zero; `Float` follows IEEE
+/// 754 (no trap, NaN/Inf propagate naturally).
 fn lower_binop_strict(
     builder: &mut FunctionBuilder,
     op: BinaryOp,
@@ -559,35 +622,135 @@ fn lower_binop_strict(
     module: &mut ObjectModule,
     overflow_func_id: FuncId,
 ) -> Result<ClValue, CodegenError> {
-    match op {
-        BinaryOp::Add => with_overflow_trap(builder, l, r, module, overflow_func_id, |b| {
-            b.ins().sadd_overflow(l, r)
-        }),
-        BinaryOp::Sub => with_overflow_trap(builder, l, r, module, overflow_func_id, |b| {
-            b.ins().ssub_overflow(l, r)
-        }),
-        BinaryOp::Mul => with_overflow_trap(builder, l, r, module, overflow_func_id, |b| {
-            b.ins().smul_overflow(l, r)
-        }),
-        BinaryOp::Div => {
+    // Promote mixed Int + Float operands to F64 — same widening the
+    // interpreter applies in `eval_arithmetic`.
+    let (l, r, dom) = promote_arith(builder, l, r, span)?;
+
+    match (op, dom) {
+        // ---- Int arithmetic, overflow-trapping ------------------------
+        (BinaryOp::Add, ArithDomain::Int) => {
+            with_overflow_trap(builder, l, r, module, overflow_func_id, |b| {
+                b.ins().sadd_overflow(l, r)
+            })
+        }
+        (BinaryOp::Sub, ArithDomain::Int) => {
+            with_overflow_trap(builder, l, r, module, overflow_func_id, |b| {
+                b.ins().ssub_overflow(l, r)
+            })
+        }
+        (BinaryOp::Mul, ArithDomain::Int) => {
+            with_overflow_trap(builder, l, r, module, overflow_func_id, |b| {
+                b.ins().smul_overflow(l, r)
+            })
+        }
+        (BinaryOp::Div, ArithDomain::Int) => {
             trap_on_zero(builder, r, module, overflow_func_id);
             Ok(builder.ins().sdiv(l, r))
         }
-        BinaryOp::Mod => {
+        (BinaryOp::Mod, ArithDomain::Int) => {
             trap_on_zero(builder, r, module, overflow_func_id);
             Ok(builder.ins().srem(l, r))
         }
-        BinaryOp::Eq => Ok(builder.ins().icmp(IntCC::Equal, l, r)),
-        BinaryOp::NotEq => Ok(builder.ins().icmp(IntCC::NotEqual, l, r)),
-        BinaryOp::Lt => Ok(builder.ins().icmp(IntCC::SignedLessThan, l, r)),
-        BinaryOp::LtEq => Ok(builder.ins().icmp(IntCC::SignedLessThanOrEqual, l, r)),
-        BinaryOp::Gt => Ok(builder.ins().icmp(IntCC::SignedGreaterThan, l, r)),
-        BinaryOp::GtEq => Ok(builder.ins().icmp(IntCC::SignedGreaterThanOrEqual, l, r)),
-        BinaryOp::And | BinaryOp::Or => {
+
+        // ---- Float arithmetic, IEEE 754 (no trap) ---------------------
+        (BinaryOp::Add, ArithDomain::Float) => Ok(builder.ins().fadd(l, r)),
+        (BinaryOp::Sub, ArithDomain::Float) => Ok(builder.ins().fsub(l, r)),
+        (BinaryOp::Mul, ArithDomain::Float) => Ok(builder.ins().fmul(l, r)),
+        (BinaryOp::Div, ArithDomain::Float) => Ok(builder.ins().fdiv(l, r)),
+        (BinaryOp::Mod, ArithDomain::Float) => {
+            // Cranelift has no `frem`. Compute `a - trunc(a / b) * b`,
+            // matching Rust's `f64::%` semantics.
+            let div = builder.ins().fdiv(l, r);
+            let trunc = builder.ins().trunc(div);
+            let mul = builder.ins().fmul(trunc, r);
+            Ok(builder.ins().fsub(l, mul))
+        }
+
+        // ---- Comparisons -----------------------------------------------
+        (BinaryOp::Eq, ArithDomain::Int) => Ok(builder.ins().icmp(IntCC::Equal, l, r)),
+        (BinaryOp::NotEq, ArithDomain::Int) => Ok(builder.ins().icmp(IntCC::NotEqual, l, r)),
+        (BinaryOp::Lt, ArithDomain::Int) => Ok(builder.ins().icmp(IntCC::SignedLessThan, l, r)),
+        (BinaryOp::LtEq, ArithDomain::Int) => {
+            Ok(builder.ins().icmp(IntCC::SignedLessThanOrEqual, l, r))
+        }
+        (BinaryOp::Gt, ArithDomain::Int) => {
+            Ok(builder.ins().icmp(IntCC::SignedGreaterThan, l, r))
+        }
+        (BinaryOp::GtEq, ArithDomain::Int) => {
+            Ok(builder.ins().icmp(IntCC::SignedGreaterThanOrEqual, l, r))
+        }
+        // Float comparisons: IEEE-correct NaN handling. Rust's `==`
+        // returns false when either side is NaN; `!=` returns true.
+        // FloatCC::Equal matches `==`; UnorderedOrNotEqual matches `!=`.
+        // The ordered LessThan / LessThanOrEqual / GreaterThan /
+        // GreaterThanOrEqual variants all return false on NaN, matching
+        // Rust's lt/le/gt/ge.
+        (BinaryOp::Eq, ArithDomain::Float) => Ok(builder.ins().fcmp(FloatCC::Equal, l, r)),
+        (BinaryOp::NotEq, ArithDomain::Float) => {
+            Ok(builder.ins().fcmp(FloatCC::NotEqual, l, r))
+        }
+        (BinaryOp::Lt, ArithDomain::Float) => Ok(builder.ins().fcmp(FloatCC::LessThan, l, r)),
+        (BinaryOp::LtEq, ArithDomain::Float) => {
+            Ok(builder.ins().fcmp(FloatCC::LessThanOrEqual, l, r))
+        }
+        (BinaryOp::Gt, ArithDomain::Float) => {
+            Ok(builder.ins().fcmp(FloatCC::GreaterThan, l, r))
+        }
+        (BinaryOp::GtEq, ArithDomain::Float) => {
+            Ok(builder.ins().fcmp(FloatCC::GreaterThanOrEqual, l, r))
+        }
+
+        (BinaryOp::And | BinaryOp::Or, _) => {
             let _ = span;
             unreachable!("and/or is short-circuited upstream and never reaches lower_binop_strict")
         }
     }
+}
+
+/// Which arithmetic family this binop operates in after operand
+/// promotion. `Bool == Bool` lands in `Int` because `I8` is integer
+/// from Cranelift's perspective.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ArithDomain {
+    Int,
+    Float,
+}
+
+/// Implicit-promote mixed `Int + Float` operands to `Float`. Same rule
+/// as the interpreter's `eval_arithmetic`. Returns the (possibly
+/// promoted) operands and the resulting arithmetic domain.
+fn promote_arith(
+    builder: &mut FunctionBuilder,
+    l: ClValue,
+    r: ClValue,
+    span: Span,
+) -> Result<(ClValue, ClValue, ArithDomain), CodegenError> {
+    let lt = builder.func.dfg.value_type(l);
+    let rt = builder.func.dfg.value_type(r);
+    if lt == F64 && rt == F64 {
+        return Ok((l, r, ArithDomain::Float));
+    }
+    if lt == I64 && rt == I64 {
+        return Ok((l, r, ArithDomain::Int));
+    }
+    // Bool == Bool is Int domain — both sides are I8.
+    if lt == I8 && rt == I8 {
+        return Ok((l, r, ArithDomain::Int));
+    }
+    if lt == I64 && rt == F64 {
+        let l_promoted = builder.ins().fcvt_from_sint(F64, l);
+        return Ok((l_promoted, r, ArithDomain::Float));
+    }
+    if lt == F64 && rt == I64 {
+        let r_promoted = builder.ins().fcvt_from_sint(F64, r);
+        return Ok((l, r_promoted, ArithDomain::Float));
+    }
+    Err(CodegenError::cranelift(
+        format!(
+            "unsupported operand width combination for binop: {lt:?} and {rt:?} — typecheck should have caught this"
+        ),
+        span,
+    ))
 }
 
 /// Lower unary operators.
@@ -599,22 +762,32 @@ fn lower_unop(
     builder: &mut FunctionBuilder,
     op: UnaryOp,
     v: ClValue,
-    _span: Span,
+    span: Span,
     module: &mut ObjectModule,
     overflow_func_id: FuncId,
 ) -> Result<ClValue, CodegenError> {
+    let vt = builder.func.dfg.value_type(v);
     match op {
         UnaryOp::Not => {
             let zero = builder.ins().iconst(I8, 0);
             Ok(builder.ins().icmp(IntCC::Equal, v, zero))
         }
-        UnaryOp::Neg => {
-            // `-x` ≡ `0 - x`, trap on overflow (only at i64::MIN).
+        UnaryOp::Neg if vt == F64 => {
+            // Float negation is IEEE — flips the sign bit, no trap. NaN
+            // negation produces NaN with the sign flipped, also fine.
+            Ok(builder.ins().fneg(v))
+        }
+        UnaryOp::Neg if vt == I64 => {
+            // Int `-x` ≡ `0 - x`, trap on overflow (only at i64::MIN).
             let zero = builder.ins().iconst(I64, 0);
             with_overflow_trap(builder, zero, v, module, overflow_func_id, |b| {
                 b.ins().ssub_overflow(zero, v)
             })
         }
+        UnaryOp::Neg => Err(CodegenError::cranelift(
+            format!("unary `-` applied to value of width {vt:?} — typecheck should have caught this"),
+            span,
+        )),
     }
 }
 
@@ -630,7 +803,7 @@ fn lower_short_circuit(
     op: BinaryOp,
     left: &IrExpr,
     right: &IrExpr,
-    env: &HashMap<LocalId, Variable>,
+    env: &HashMap<LocalId, (Variable, clir::Type)>,
     func_ids_by_def: &HashMap<DefId, FuncId>,
     module: &mut ObjectModule,
     overflow_func_id: FuncId,
@@ -680,7 +853,7 @@ fn lower_if(
     cond: &IrExpr,
     then_block_ir: &IrBlock,
     else_block_ir: Option<&IrBlock>,
-    env: &mut HashMap<LocalId, Variable>,
+    env: &mut HashMap<LocalId, (Variable, clir::Type)>,
     var_idx: &mut usize,
     func_ids_by_def: &HashMap<DefId, FuncId>,
     module: &mut ObjectModule,

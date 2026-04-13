@@ -64,14 +64,26 @@ pub fn build_native_to_disk(
     bin_path: &Path,
 ) -> Result<PathBuf, CodegenError> {
     let entry = pick_entry_agent(ir)?;
-    // Slice 12a requires a parameter-less entry; a parameterised
-    // entry needs argv handling in the shim (later slice).
+    // Parameter-less entry only — argv decoding requires `String` and a
+    // shim variant; both arrive together in slice 12h.
     if !entry.params.is_empty() {
         return Err(CodegenError::not_supported(
             format!(
-                "entry agent `{}` has {} parameter(s); slice 12a requires a parameter-less entry — parameterised entries arrive alongside String support in slice 12d",
+                "entry agent `{}` has {} parameter(s); `corvid build --target=native` requires a parameter-less entry — parameterised entries arrive in slice 12h alongside argv handling",
                 entry.name,
                 entry.params.len()
+            ),
+            entry.span,
+        ));
+    }
+    // Float entry-agent returns need a different print format in the C
+    // shim (or a second shim variant). Defer to slice 12h alongside
+    // argv decoding (when the shim already grows).
+    if matches!(&entry.return_ty, corvid_types::Type::Float) {
+        return Err(CodegenError::not_supported(
+            format!(
+                "entry agent `{}` returns `Float` — the C shim's `printf(\"%lld\")` only handles Int/Bool; Float entry returns arrive in slice 12h",
+                entry.name
             ),
             entry.span,
         ));
