@@ -346,6 +346,355 @@ Hard way, no shortcuts. Started the VM crate. Two real bugs surfaced during the 
 
 **Next Phase-11 slice:** wire the native runtime. Tool dispatch in Rust, native HTTP via `reqwest`, Anthropic adapter, approval flow, tracing. Then `corvid run` invokes the interpreter instead of shelling to `python3`.
 
+---
+
+## Day 16 — feature-proposal: interop rigor, grounding contracts, effect-system extension
+
+Four-workstream proposal reviewed. Decision: accept the language-level pieces, defer the library-level pieces to separate packages. Positioning stays unchanged — Corvid is a standalone, natively-compiled language with first-class Python interop (TypeScript/`.d.ts` analogy). Cranelift (Phase 12+) is **not** deferred.
+
+**Rule applied:** if removing the feature means the compiler can no longer enforce a safety property, it's language and it goes in. If removing it only means users write `corvid add <pkg>`, it's a library and it doesn't.
+
+**Accepted (compiler-enforced):**
+
+1. **Effect-tagged `import python`.** Imports declare effect sets at the import site; untagged rejected; `effects: unsafe` is a visible escape hatch. → Phase 16 enhanced.
+2. **Grounding + citation contracts.** `grounds_on ctx` / `cites ctx` / `cites ctx strictly` on prompts; `Grounded<T>` compiler-known type with `.unwrap_discarding_sources()`; errors `E0201`/`E0202`/`E0203`; `retrieves` effect on retriever tools. → Phase 22 expanded.
+3. **Custom effects + effect rows.** User-declared `effect Name` (revisits Day-4 `Safe | Dangerous` — additive, non-breaking). Effect rows on signatures, data-flow tracking, per-effect approval policies, property-based bypass tests. → Phase 22.
+4. **`eval ... assert ...` language syntax.** Pulled from Phase 31 into Phase 22; CLI/reports/CI stay in Phase 31.
+5. **Written effect-system specification.** 20–40 page spec doc — syntax, typing rules, worked examples, FFI/async/generics interactions, related work (Koka, Eff, Frank, Haskell, Rust `unsafe`, capabilities). Phase 22 deliverable.
+
+**Rejected (library, not language):**
+
+- `corvid-py` Python-embedding package.
+- Typed wrappers for top-10 Python libs (`std.python.*`).
+- `std.rag` runtime substrate — sqlite-vec bundling, document loaders, chunking, incremental reindexing, embedder. Ships as separate `corvid-rag` package.
+- `Retriever<T>`, `Chunk<T>`, `Query` types — live in `corvid-rag` (`Grounded<T>` stays in the language because `cites` needs to check its return type).
+- MCP runtime client/server. Protocol library. Custom-effect mechanism from Phase 22 is enough to tag `mcp_call` when the runtime lands.
+- `corvid new rag-bot` template, HTML eval reports, CI mechanics — scaffolding/tooling, arrive with Phase 31 and the eventual package registry.
+
+**Docs updated:** `FEATURES.md` (v0.3 FFI enhanced, v0.4 gains 4 items, v0.7 eval tooling clarified, deferred list updated); `ROADMAP.md` (Phase 16 enhanced, Phase 22 expanded, Phase 31 renamed); `ARCHITECTURE.md` (§7 import example carries effect tags, §14 RAG non-goal softened to "not a RAG framework" with the runtime-substrate clarification).
+
+**Non-change:** Cranelift timeline. Standalone native binary remains v1.0. Python interop is the TS/JS-style peer, not a replacement for the native target.
+
+Next: resume Phase 11 slice 2 (native runtime wiring). The Phase 22 work stays on its scheduled runway.
+
+---
+
+## Day 17 — Phase 11 slice 2a: native runtime stand-up 🚀
+
+**`corvid run` no longer needs Python.** The interpreter dispatches tools, prompts, agents, and approvals through a Rust-native `corvid-runtime`. The refund_bot demo runs end-to-end with Python uninstalled.
+
+### Pre-phase decisions, locked in conversation
+
+1. **Async interpreter end-to-end** — not the easy "block_on at call sites" shortcut. Reason: the Cranelift backend (Phase 12+) will be async-native, and our compiler-vs-interpreter parity strategy depends on identical observable behaviour under concurrency. Cost accepted: boxed recursion via `async-recursion`, slightly more boilerplate. Returns: the oracle property survives.
+2. **Slice 2 split into 2a + 2b.** 2a brings up the runtime skeleton (no network); 2b adds reqwest + the Anthropic adapter + `.env` loading. Smaller wins, two dev-log entries, two clean test boundaries.
+3. **JSON at the runtime boundary.** Tools and LLM adapters speak `serde_json::Value`; the interpreter does `Value` ↔ JSON conversion in `corvid-vm/src/conv.rs`. Reason: avoids the circular crate dependency (runtime → vm → runtime), matches every real LLM tool wire format, lets the future Cranelift backend reuse `corvid-runtime` without dragging the interpreter's value type along.
+4. **Approval policy.** No "default approve all". `Runtime::builder()` defaults to `StdinApprover`; tests opt into `ProgrammaticApprover::always_yes` explicitly so the intent is on the page.
+5. **`.env` confirmed for slice 2b.** Standard convention. No custom `.secret` file. Loaded via `dotenvy` when slice 2b lands.
+
+### What landed
+
+**`corvid-runtime` (real this time)**
+- `errors.rs`: `RuntimeError` with variants for unknown tool / tool failed / unknown prompt / no adapter / approval denied / marshal / no-model-configured.
+- `tools.rs`: `ToolRegistry` with closure-based registration. `register("name", |args| async move { ... })`.
+- `approvals.rs`: `Approver` trait + `StdinApprover` (spawn_blocking for stdin) + `ProgrammaticApprover` (closure wrap + `always_yes` / `always_no` constructors).
+- `tracing.rs`: JSONL `Tracer`, event-shape parity with the Python runtime, IO failures swallowed so a broken trace cannot crash an agent.
+- `llm/mod.rs`: `LlmAdapter` trait + prefix-dispatch `LlmRegistry`.
+- `llm/mock.rs`: `MockAdapter` keyed by prompt name with builder-style `.reply(...)` and `add_reply(...)`.
+- `runtime.rs`: top-level `Runtime` + `RuntimeBuilder`. Bracketing trace events around tool/LLM/approval calls.
+
+**`corvid-vm` async conversion**
+- All `eval_*` methods became `async fn` with `#[async_recursion]` on the recursive ones.
+- `InterpErrorKind` gained `Runtime(RuntimeError)` and `Marshal(String)` variants. Removed `PartialEq` from `InterpError` since `RuntimeError` doesn't implement it (would require `PartialEq` on every `serde_json::Value` we drag through, which is not worth it).
+- Added `crate::conv` — `value_to_json` and `json_to_value`, the latter type-driven so struct results recover their `type_id` / `type_name` from the IR's type table.
+- Wired the four call kinds: Tool → `runtime.call_tool`, Prompt → render template + `runtime.call_llm`, Agent → recurse with a fresh sub-`Interpreter`, Approve → `runtime.approval_gate`. Unknown call kind = hard `DispatchFailed`.
+- `run_agent(ir, name, args, &runtime)` is the new public entry point. Existing tests rewritten to `#[tokio::test]` with an `empty_runtime()` helper.
+
+**`corvid-driver` native run path**
+- `compile_to_ir(source) -> Result<IrFile, Vec<Diagnostic>>` exposed for embedding hosts.
+- `run_with_runtime(path, agent, args, &runtime)` — full pipeline + interpreter.
+- `run_ir_with_runtime(...)` — same but takes pre-lowered IR.
+- `run_native(path)` — what `corvid run` calls. Builds an empty runtime with stdin approver and JSONL trace under `<project>/target/trace/`. Tool-using programs need a runner binary; documented.
+- `RunError` enum: `Io`, `Compile`, `NoAgents`, `AmbiguousAgent`, `UnknownAgent`, `NeedsArgs`, `Interp`. Each prints a clear, actionable message.
+- Re-exports the runtime + vm surface so consumers depend only on `corvid-driver`.
+
+**`corvid-cli`**
+- `cmd_run` now dispatches to `run_native`. The `python3 target/py/...` shell-out is gone.
+
+**`examples/refund_bot_demo` becomes a workspace member**
+- New `Cargo.toml` + `runner/main.rs` — registers mock `get_order` / `issue_refund` tools, `ProgrammaticApprover::always_yes`, a `MockAdapter` returning a canned `Decision`, and runs the agent with a constructed `Ticket` struct. Trace file lands under `examples/refund_bot_demo/target/trace/run-*.jsonl`.
+- README updated: the native path (`cargo run -p refund_bot_demo`) is now the primary; the Python path stays documented as legacy.
+
+### Bug caught honestly during the slice
+
+**Lexer didn't accept CRLF line endings.** The first attempt to run the demo on Windows produced 34 lex errors. Existing tests use string literals with `\n` only, so the bug had never been exercised. Fix: add `b'\r'` to the inline-whitespace match arm of the main lexer loop, plus a leading-`\r` skip in `process_line_start` for blank CRLF lines, plus `b'\r'` in the blank-line check. Two-character lex bug fix; the bigger lesson is that we now exercise file I/O for real.
+
+### Test counts
+
+All green across the workspace:
+
+| Crate | Tests |
+|---|---|
+| corvid-ast | 3 |
+| corvid-syntax | 75 |
+| corvid-resolve | 14 |
+| corvid-types | 16 |
+| corvid-ir | 6 |
+| **corvid-runtime** | **16 (new)** |
+| corvid-vm | **31 (was 25)** |
+| corvid-codegen-py | 13 |
+| **corvid-driver** | **12 (was 8)** |
+| Python runtime | 10 |
+
+**Total: ~196 tests, all green.** 6 new VM integration tests (tool-with-handler, tool-without-handler, approve-yes, approve-no, prompt-via-mock, agent-to-agent). 4 new driver tests (full refund_bot e2e, ambiguous agent, prefer-`main`, args-required-for-arg-taking-agent). 4 conv unit tests inside the VM. 16 runtime unit tests across all five new modules.
+
+### Verified end-to-end
+
+```sh
+$ cargo run -p refund_bot_demo
+refund_bot decided: should_refund=true reason="user reported legitimate complaint"
+trace written under examples/refund_bot_demo/target/trace
+```
+
+The trace file shows the expected event sequence: `run_started → tool_call(get_order) → tool_result → llm_call → llm_result → approval_request → approval_response(approved=true) → tool_call(issue_refund) → tool_result → run_completed(ok=true)`.
+
+### Scope honestly held
+
+In: runtime skeleton, async interpreter, JSON marshalling, four call kinds wired, demo runner.
+
+Out (deferred to slice 2b as agreed): `reqwest`, real Anthropic adapter, `.env` loading + `dotenvy`, the proper `corvid run`-with-tool-registration story (currently `corvid run` works only on tool-free programs; tool-using programs need a runner binary like the demo's). Effect-tagged `import python` stays on its Phase 16 schedule.
+
+### Next
+
+Slice 2b pre-phase chat. Topic: HTTP client, Anthropic adapter, `.env` loading, secret redaction in traces, and how `corvid run` should learn about user-side tool implementations once we have a way to load them.
+
+---
+
+## Day 18 — Phase 11 slice 2b: real network + secrets ✅
+
+**Phase 11 is complete.** Real Claude and GPT calls work end-to-end. `.env` loading, secret redaction, two adapters side by side, two minimal real-network demos, mock-HTTP integration tests for both adapters. Python has been off the critical path since slice 2a; slice 2b is what makes the runtime useful.
+
+### Pre-phase decisions, locked in conversation
+
+1. **Provider scope: OpenAI + Anthropic** (Option B). Reason: the developer has an OpenAI key, so Anthropic alone would mean shipping unverifiable code. Two adapters also prove the prefix-dispatch abstraction holds against two different APIs. Google + Ollama stay on the Phase 18 schedule.
+2. **TLS: `rustls-tls`.** Pure Rust, identical behaviour across Linux / macOS / Windows, no system OpenSSL or schannel surprises. Cost accepted: slightly larger binary.
+3. **Tool-program gap stays open.** `corvid run` for tool-using programs still requires a runner binary. Closes properly in Phase 14 when proc-macro `#[tool]` registration lands. No `--runner` stopgap (would ossify into a permanent UX bandaid).
+4. **Schema lives in `corvid-vm`, not `corvid-runtime`.** The runtime stays type-agnostic — no dependency on `corvid-types`. Schema derivation goes in `corvid-vm/src/schema.rs`; the interpreter populates `LlmRequest.output_schema: Option<serde_json::Value>` per call. Adapters consume it without ever knowing what a `Type` is.
+5. **Structured output per provider.** Anthropic uses `tool_use` (a synthetic tool named `respond_with_<prompt>` with `tool_choice` forcing it). OpenAI uses `response_format: {type: "json_schema", json_schema: {strict: true, schema: ...}}`. The same JSON Schema feeds both — our derivation already meets OpenAI strict-mode requirements (`additionalProperties: false`, every property in `required`).
+
+### What landed
+
+**`corvid-runtime`**
+- `Cargo.toml`: `reqwest = "0.12"` with `default-features = false, features = ["json", "rustls-tls"]`, `dotenvy = "0.15"`, `wiremock` as dev-dep.
+- `llm/anthropic.rs`: `AnthropicAdapter` — `POST /v1/messages`, `x-api-key` + `anthropic-version: 2023-06-01` headers, structured output via `tool_use` with `tool_choice: {type: "tool", name: ...}`, text-block concatenation for unstructured. `with_base_url` for tests. 60s default timeout. `handles(model)` matches `claude-*`.
+- `llm/openai.rs`: `OpenAiAdapter` — `POST /v1/chat/completions`, `Authorization: Bearer`, `response_format: json_schema` with `strict: true`, content-string parse for unstructured. Same `with_base_url` pattern. `handles(model)` matches `gpt-*`, `o1-*`, `o3-*`, `o4-*`, plus bare `o1`/`o3`/`o4`.
+- `env.rs`: `find_dotenv_walking` + `load_dotenv_walking` + `load_dotenv`. Real env vars win; missing `.env` is silent. `dotenvy::from_path` is the underlying call.
+- `redact.rs`: `RedactionSet` — built once from env vars matching `*_KEY` / `*_TOKEN` / `*_SECRET` / `*_PASSWORD`. `redact(Value)` walks JSON recursively, replacing string matches with `"<redacted>"`. `redact_args(Vec)` for trace events.
+- `tracing.rs`: `Tracer::with_redaction(RedactionSet)` builder method. `emit` filters event payloads (`ToolCall.args`, `ToolResult.result`, `LlmResult.result`, `ApprovalRequest.args`) before serialization. Note: `with_redaction` must be called before any clones — documented.
+
+**`corvid-vm`**
+- `schema.rs`: `schema_for(&Type, &types_by_id) -> serde_json::Value`. Cycle-guarded for defensive reasons (the type system doesn't permit recursive types yet but the schema walker shouldn't loop if one ever slips through). `Function` and `Unknown` emit `{}` (permissive — type checker is the real backstop). Handles inline nested struct schemas (no `$ref`).
+- `interp.rs::eval_call`: when handling a `Prompt` call, derives the schema from `prompt.return_ty` and threads it into `LlmRequest.output_schema`.
+
+**`corvid-driver`**
+- `run_native`: now loads `.env` (walks from source's parent and from cwd), opens the tracer with `RedactionSet::from_env()`, and autoregisters adapters: Anthropic when `ANTHROPIC_API_KEY` is set, OpenAI when `OPENAI_API_KEY` is set. `CORVID_MODEL` becomes the default model.
+- Re-exports: added `AnthropicAdapter`, `OpenAiAdapter`, `RedactionSet`, `fresh_run_id`, `load_dotenv_walking`, plus `StructValue` for runner ergonomics.
+
+**`corvid-cli`**
+- `cmd_doctor` rewritten. Loads `.env` so it sees what programs would. Reports: `.env` path / absent, `CORVID_MODEL` value or hint, `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` set/unset, model-prefix vs key cross-check (warns if `CORVID_MODEL=claude-*` but no Anthropic key, etc.), Python presence as legacy-only note.
+
+**Demos** (workspace members)
+- `examples/openai_hello/` — `Greeting { salutation, target }` returned by a real `gpt-4o-mini` call.
+- `examples/anthropic_hello/` — same shape, Claude-haiku default.
+- Both register their own tracer with redaction.
+
+**Mock-HTTP integration tests**
+- `crates/corvid-runtime/tests/anthropic_integration.rs` — 3 tests: structured call sends tool definition + extracts tool_use input, unstructured concatenates text blocks, HTTP error surfaces as `AdapterFailed`.
+- `crates/corvid-runtime/tests/openai_integration.rs` — 3 tests: structured call sends `response_format` + parses JSON content string, unstructured returns raw string, HTTP error surfaces as `AdapterFailed`. Both inspect the recorded request to verify wire format.
+
+### Test counts
+
+| Crate | Tests |
+|---|---|
+| corvid-ast | 3 |
+| corvid-syntax | 75 |
+| corvid-resolve | 14 |
+| corvid-types | 18 |
+| corvid-ir | 6 |
+| corvid-runtime (unit) | 37 |
+| corvid-runtime (anthropic_integration) | 3 |
+| corvid-runtime (openai_integration) | 3 |
+| corvid-vm | 35 |
+| corvid-codegen-py | 13 |
+| corvid-driver | 12 |
+| Python runtime | 10 |
+
+**Total: ~229 across the workspace, all green.** Slice 2b added: 5 anthropic + 5 openai unit, 4 env + 6 redact, 4 schema, 6 mock-HTTP integration (3 per adapter).
+
+### Honest scope check
+
+- **No real-network test in the suite.** A `#[ignore]`d test per adapter was in the brief; we omitted it because `wiremock` already covers wire-format correctness, and an `#[ignore]`d test that nobody runs is documentation pretending to be a test. We rely on the demos (`cargo run -p openai_hello` / `anthropic_hello`) for real-network verification.
+- **`with_redaction` clone-ordering caveat** is documented in code: callers must apply it before sharing the `Tracer` handle, otherwise the redaction-aware sibling has no file backing. The `RuntimeBuilder` path in `run_native` orders this correctly. Acceptable for slice 2b; revisit if it bites a real user.
+- **Retries / circuit breakers** belong to Phase 20 (typed `Result` + retry policies). A 401 / 429 / 5xx today returns `RuntimeError::AdapterFailed` and the agent aborts. That's the correct behaviour for now.
+
+### Phase 11 done
+
+`corvid run examples/refund_bot_demo/src/refund_bot.cor` (or `cargo run -p refund_bot_demo`) works without Python. Real `claude-*` and `gpt-*` calls work given the matching API key. Trace events get scrubbed of secrets. The TS/`.d.ts` analogy holds: Corvid is a standalone language with first-class provider interop, not a wrapper around any one vendor.
+
+### Next
+
+Phase 12 — Cranelift scaffolding. Pre-phase chat first per the standing rule. Topic: Cranelift module layout, IR → CLIR translation strategy for arithmetic / control flow / calls, parity-test harness, and how `corvid build` starts emitting native binaries alongside the existing Python `target/py/`.
+
+---
+
+## Day 19 — Phase 12 slice 12a: AOT scaffolding + Int arithmetic ✅
+
+**Corvid now produces real native binaries.** `corvid build --target=native examples/answer.cor` emits `examples\target\bin\answer.exe` (or `answer` on Unix), a standalone executable that runs, prints its `i64` result, and exits cleanly. The interpreter-vs-compiled-binary parity harness proves 15 fixtures agree byte-for-byte, including the three overflow/div-zero cases.
+
+### Pre-phase decisions, locked in conversation
+
+1. **AOT-first, not JIT.** The v1.0 pitch is literally "single binary." JIT would have been ~50 lines of throwaway plumbing and a spiritually wrong detour. We use `cranelift-object` + system linker (via the `cc` crate) from day one.
+2. **Trap-on-overflow arithmetic.** Cranelift's `iadd` is wrapping; the interpreter uses `checked_add`. Silent wrapping is the exact bug class "safety at compile time" is supposed to prevent, and a divergence between tiers destroys the oracle property. We emit `sadd_overflow` / `ssub_overflow` / `smul_overflow` with a branch to a runtime handler on overflow. Division and modulo trap on a zero divisor. Matches interpreter semantics byte-for-byte. Cost: one extra instruction per arithmetic op (~ Rust-debug-mode speed). `@wrapping` opt-out is a Phase-22 conversation alongside `@budget($)`.
+3. **Slice plan for Phase 12.** 12a = Int-only AOT scaffolding. 12b = Bool + comparisons + if/else. 12c = Let + for + richer control flow. 12d = Float / String / Struct / List. 12e = make native the default for tool-free programs. 12f = polish + benchmarks. Tool / prompt / approve calls in compiled code wait for Phase 14.
+
+### What landed
+
+**New crate `corvid-codegen-cl`**
+- `src/errors.rs` — `CodegenError` with `NotSupported` / `Cranelift` / `Link` / `Io` kinds. Every `NotSupported` message names the slice that will remove the limitation, so the boundary is auditable.
+- `src/module.rs` — `make_host_object_module(name)`: `target-lexicon::Triple::host()`, PIC on, `opt_level=speed`, verifier on. Uses `cranelift-object::ObjectBuilder`.
+- `src/lowering.rs` — The heart. Two passes (declare all agents, then define bodies), plus a third pass that emits the `corvid_entry` trampoline. Arithmetic ops with overflow trap. Int-only gate with a type-name error pointing at slice 12d.
+- `src/link.rs` — Drives `cc::Build::get_compiler()` + `std::process::Command`. MSVC: `cl.exe /Fo<tmpdir>\ shim.c object.o /Fe:out.exe`. Unix: `cc shim.c object.o -o out`. Per-invocation tempdir so parallel test runs don't race for `corvid_shim.obj`.
+- `runtime/shim.c` — `int main(void)` calls `extern long long corvid_entry(void)` and `printf`s the result. `corvid_runtime_overflow` prints `corvid: runtime error: integer overflow or division by zero` to stderr and `exit(1)`s. Slice 12a keeps it parameter-less; argv handling arrives alongside `String` in 12d.
+- `tests/parity.rs` — The oracle. 15 fixtures. Each runs through both tiers, asserts identical result or parallel failure.
+
+**Driver + CLI**
+- `corvid-driver::build_native_to_disk(path)` → `NativeBuildOutput { source, output_path, diagnostics }`. Output dir convention mirrors the Python path: `<project>/target/bin/<stem>[.exe]` when source is under a `src/` dir.
+- `corvid build --target=native <file>` dispatches to it. Default target remains `python` for backwards compatibility; `--target=py` is an alias.
+
+### Design choices made during implementation
+
+1. **`corvid_entry` trampoline, not shim patching.** Initial attempt rewrote `corvid_entry` → user agent name in the shim source. That collided when users named an agent `main` (duplicate C `int main` definition). Replaced with a stable `corvid_entry` symbol the compiler emits as a trampoline calling the chosen entry agent. Shim is 100% static text now — `include_str!`'d, never mutated.
+2. **User agents get `corvid_agent_` symbol prefix.** A user's `agent main() -> Int` should not collide with C's `int main`. Mangling also pre-empts future collisions with `printf`, `malloc`, etc. Only the trampoline is exported; user agents are `Linkage::Local`.
+3. **`/Fo<tempdir>\` for MSVC.** `cl.exe` writes the intermediate `.obj` for `shim.c` to the current directory by default. Parallel test runs all wrote to the same `corvid_shim.obj`, causing cascading permission-denied and LNK2005 failures. Redirecting with `/Fo<tempdir>\` isolates each invocation.
+4. **`INTEGER_OVERFLOW` trap code.** Cranelift 0.116 changed `TrapCode` from an enum to a struct with associated constants. `TrapCode::UnreachableCodeReached` no longer exists; `TrapCode::INTEGER_OVERFLOW` is the right match for our semantic (both overflow and div-by-zero route to the same handler anyway).
+
+### Test counts
+
+| Crate | Tests |
+|---|---|
+| corvid-ast | 3 |
+| corvid-syntax | 75 |
+| corvid-resolve | 14 |
+| corvid-types | 18 |
+| corvid-ir | 6 |
+| corvid-runtime (unit) | 37 |
+| corvid-runtime (integration) | 6 |
+| corvid-vm | 35 |
+| corvid-codegen-py | 13 |
+| **corvid-codegen-cl (parity)** | **15 (new)** |
+| corvid-driver | 12 |
+| Python runtime | 10 |
+
+**Total: ~244 tests, all green.**
+
+### Verified live
+
+```sh
+$ cargo run -p corvid-cli -- build --target=native examples/answer.cor
+built: examples/answer.cor -> examples\target\bin\answer.exe
+
+$ ./examples/target/bin/answer.exe; echo "exit: $?"
+42
+exit: 0
+```
+
+### Scope honestly held
+
+In: Int-only arithmetic, agent-to-agent calls, overflow trap, AOT binary on disk, CLI flag, parity harness.
+
+Out (deferred to later slices, each with a pointer): `Bool` + comparisons + `if`/`else` → 12b. `Let` + `for` + rich control flow → 12c. `Float` / `String` / `Struct` / `List` → 12d (which is where argv-taking entry agents also land). Native default for tool-free programs → 12e. `corvid-codegen-cl` currently stays at `Linkage::Local` for user agents and `Export` only for the trampoline — cross-object-file composition lands whenever we get there.
+
+### Next
+
+Slice 12b pre-phase chat. Topic: `Bool` type representation (i8 in Cranelift), comparison lowering for Int (`icmp`) and String (deferred with String itself), `if`/`else` branch lowering (two blocks with a join, merging values via block parameters). No runtime changes expected.
+
+---
+
+## Day 20 — Phase 12 slice 12b: Bool, comparisons, if/else ✅
+
+**Corvid compiles conditional Int+Bool programs natively.** `agent main() -> Int: if 4 % 2 == 0: return 100 else: return 200` becomes a real Windows executable that prints `100` and exits 0. Short-circuit `and`/`or` works on both the interpreter and the compiled binary: `true or (1 / (3 - 3) == 0)` returns `true` without ever dividing, on both tiers. The oracle parity holds across 33 fixtures.
+
+### Pre-phase decisions, locked in conversation
+
+1. **Bool as `I8`, not `I32`.** Matches `icmp`'s native output; C/Rust ABI is 1 byte; packs tightly in future struct layout; avoids redundant `uextend`s on every comparison result. The only wider conversion needed anywhere is the trampoline's final `uextend I8 → I64` to satisfy the C shim's `long long` contract.
+2. **Short-circuit `and` / `or` on both tiers.** The interpreter has a comment promising short-circuit for "Phase 12+" — this is that phase. Rewrote `eval_expr`'s BinOp arm to evaluate the right operand only when the left doesn't determine the answer. Parity is now real: observable short-circuit tests like `true or (1 / 0 == 0)` return `true` without raising on either tier.
+3. **Negation `-x` traps on `i64::MIN`.** Same mechanism as slice 12a's binary-arithmetic overflow. `UnaryOp::Neg` lowers to `ssub_overflow(iconst.I64 0, x) → brif → corvid_runtime_overflow`. Matches `checked_neg` semantics byte-for-byte.
+
+### What landed
+
+**`corvid-vm::interp::eval_expr`**
+- BinOp arm restructured: `And` / `Or` are intercepted before both sides evaluate. Left evaluates first; right only evaluates when the left doesn't already determine the result. `eval_binop`'s `And` / `Or` arms now panic with `unreachable!("short-circuited upstream")` — they're dead code.
+
+**`corvid-codegen-cl::lowering`**
+- `cl_type_for(&Type, Span) -> Result<clir::Type, CodegenError>` — the single gate all signature / value-construction flows through. Int→I64, Bool→I8; every other type raises `NotSupported` with a pointer to the slice that introduces it. Replaces the slice-12a hardcoded `I64`.
+- Agent signatures now use `cl_type_for` for every param and return. Parameter variables are declared with the right Cranelift width.
+- `reject_non_int_types` became `reject_unsupported_types`, delegating to `cl_type_for`.
+- `IrLiteral::Bool(b)` lowers to `iconst(I8, if b { 1 } else { 0 })`. Float / String / Nothing literals each raise with their own slice-12d pointer.
+- Comparison ops (`==`, `!=`, `<`, `<=`, `>`, `>=`) lower to `icmp` with the matching `IntCC`. Works for Int+Int; Bool+Bool equality round-trips through the same path naturally.
+- `lower_int_binop` renamed to `lower_binop_strict` and extended with the comparison arms. `And`/`Or` arms are now `unreachable!()` — the `lower_expr` BinOp case short-circuits them into `lower_short_circuit` before any evaluation.
+- New `lower_unop(op, v)`: `Not` → `icmp_eq(v, 0)`; `Neg` → `ssub_overflow(iconst 0, v)` + overflow-trap branch.
+- New `lower_short_circuit(op, left, right)`: emits a right-eval block + a merge block with an `I8` block parameter. For `and`: `brif(l, right_block, merge[0])`. For `or`: `brif(l, merge[1], right_block)`. The right block evaluates the RHS and `jump merge[v_right]`. Merge's block param is the result.
+- New `lower_if(cond, then, else?)`: classic cond/then/else/merge block pattern. Tracks `any_fell_through` to decide whether merge is reachable; if no branch falls through, terminates merge with a trap and returns `BlockOutcome::Terminated` so the enclosing lower_block knows to stop emitting code.
+- `emit_entry_trampoline` now takes `entry_return_ty: clir::Type`. If `I8`, inserts `uextend.i64` before `return_` so the C shim's `long long corvid_entry(void)` contract holds.
+
+**Parity harness**
+- New `assert_parity_bool(src, expected_bool)` helper. Trampoline zero-extends Bool → I64; shim prints `0` or `1`; harness parses and checks `Value::Bool`.
+- 18 new fixtures: Bool literals (true/false), int equality/inequality, int ordering (all four), `not`, unary negation, unary-negation-of-`i64::MIN` overflow parity, if/else taking the then/else branch, if-without-else fallthrough and take-then, nested if/else, short-circuit `and` with true/false LHS, short-circuit `or` with true/false LHS, **observable** short-circuit for both `or` (skips div-by-zero) and `and` (skips div-by-zero), Bool-returning agent end-to-end.
+
+### Bugs caught during the slice
+
+1. First attempt at unary-negation fixtures used `let` bindings (`x = 5`). Those aren't compilable until slice 12c — got a clean `CodegenError::NotSupported` pointing at the right slice. Rewrote the fixtures to use the prefix `-` form directly (`return -5`, `return -(2+3)`, `return -(0 - i64::MAX - 1)`). Clean outcome: the `NotSupported` machinery works as intended and the fixtures now exercise the Neg path.
+2. Bool-returning fixture accidentally included a top-level assignment that isn't valid Corvid syntax. Typo; removed.
+
+### Test counts
+
+| Crate | Tests |
+|---|---|
+| corvid-ast | 3 |
+| corvid-syntax | 75 |
+| corvid-resolve | 14 |
+| corvid-types | 18 |
+| corvid-ir | 6 |
+| corvid-runtime (unit) | 37 |
+| corvid-runtime (integration) | 6 |
+| corvid-vm | 35 |
+| corvid-codegen-py | 13 |
+| **corvid-codegen-cl (parity)** | **33 (was 15)** |
+| corvid-driver | 12 |
+| Python runtime | 10 |
+
+**Total: ~262 tests, all green.** Slice 12b added 18 parity fixtures.
+
+### Verified live
+
+```sh
+$ corvid build --target=native examples/conditional.cor
+built: examples/conditional.cor -> examples\target\bin\conditional.exe
+
+$ ./examples/target/bin/conditional.exe; echo "exit: $?"
+100
+exit: 0
+```
+
+### Scope honestly held
+
+In: `cl_type_for` gate, Bool representation as I8, six comparison ops, unary not / neg (with overflow trap), short-circuit and/or on both tiers, if/else lowering, trampoline uextend for Bool.
+
+Out (deferred to later slices, each with a pointer): `Let` + `for` + `break`/`continue`/`pass` → 12c. `Float` / `String` / `Struct` / `List` → 12d. Tool / prompt / approve in compiled code → Phase 14.
+
+### Next
+
+Slice 12c pre-phase chat. Topic: `Let` bindings via Cranelift `Variable`s, `for` loop lowering over lists (which requires list memory representation — fuzzy boundary with 12d), `break` / `continue` control flow, `pass` as a no-op. Possible sub-split: 12c1 Let + `pass` + `break`/`continue` without `for`; 12c2 `for` once we have lists. Worth discussing before code.
+
 
 
 

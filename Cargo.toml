@@ -8,11 +8,15 @@ members = [
     "crates/corvid-ir",
     "crates/corvid-vm",
     "crates/corvid-codegen-py",
+    "crates/corvid-codegen-cl",
     "crates/corvid-codegen-wasm",
     "crates/corvid-runtime",
     "crates/corvid-driver",
     "crates/corvid-cli",
     "crates/corvid-lsp",
+    "examples/refund_bot_demo",
+    "examples/openai_hello",
+    "examples/anthropic_hello",
 ]
 
 [workspace.package]
@@ -54,6 +58,7 @@ corvid-types    = { path = "crates/corvid-types" }
 corvid-ir       = { path = "crates/corvid-ir" }
 corvid-vm       = { path = "crates/corvid-vm" }
 corvid-codegen-py = { path = "crates/corvid-codegen-py" }
+corvid-codegen-cl = { path = "crates/corvid-codegen-cl" }
 corvid-runtime  = { path = "crates/corvid-runtime" }
 corvid-driver   = { path = "crates/corvid-driver" }
 

@@ -10,6 +10,10 @@ corvid-ast = { workspace = true }
 corvid-ir = { workspace = true }
 corvid-resolve = { workspace = true }
 corvid-types = { workspace = true }
+corvid-runtime = { workspace = true }
+serde_json = { workspace = true }
+async-recursion = "1"
 
 [dev-dependencies]
 corvid-syntax = { workspace = true }
+tokio = { workspace = true }

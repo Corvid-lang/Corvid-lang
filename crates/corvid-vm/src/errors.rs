@@ -6,9 +6,10 @@
 
 use corvid_ast::Span;
 use corvid_resolve::LocalId;
+use corvid_runtime::RuntimeError;
 use std::fmt;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub struct InterpError {
     pub kind: InterpErrorKind,
     pub span: Span,
@@ -20,7 +21,7 @@ impl InterpError {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub enum InterpErrorKind {
     /// A local was referenced that has no binding in the current env.
     /// Reaching this typically means the resolver / IR lowering are out
@@ -50,8 +51,15 @@ pub enum InterpErrorKind {
     /// An approval action was denied or failed at runtime.
     ApprovalDenied(String),
 
-    /// A tool or prompt couldn't be dispatched. Arrives in later Phase-11 slices.
+    /// A tool or prompt couldn't be dispatched.
     DispatchFailed(String),
+
+    /// An error bubbled up from `corvid-runtime` (tool/LLM/approval/IO).
+    Runtime(RuntimeError),
+
+    /// Marshalling between `Value` and `serde_json::Value` failed at the
+    /// runtime boundary.
+    Marshal(String),
 
     /// Catch-all with message. Prefer adding a dedicated variant over this.
     Other(String),
@@ -79,6 +87,8 @@ impl fmt::Display for InterpErrorKind {
                 write!(f, "approval denied for action `{action}`")
             }
             Self::DispatchFailed(msg) => write!(f, "call dispatch failed: {msg}"),
+            Self::Runtime(err) => write!(f, "{err}"),
+            Self::Marshal(msg) => write!(f, "marshalling error: {msg}"),
             Self::Other(m) => f.write_str(m),
         }
     }

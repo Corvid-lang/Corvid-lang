@@ -1,0 +1,17 @@
+[package]
+name = "anthropic_hello"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Minimal real-network Anthropic demo: a single prompt call returning a typed Greeting."
+publish = false
+
+[[bin]]
+name = "anthropic_hello"
+path = "runner/main.rs"
+
+[dependencies]
+corvid-driver = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+anyhow = { workspace = true }

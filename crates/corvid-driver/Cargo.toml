@@ -12,8 +12,13 @@ corvid-resolve = { workspace = true }
 corvid-types = { workspace = true }
 corvid-ir = { workspace = true }
 corvid-codegen-py = { workspace = true }
+corvid-codegen-cl = { workspace = true }
+corvid-runtime = { workspace = true }
+corvid-vm = { workspace = true }
+tokio = { workspace = true }
 anyhow = { workspace = true }
 ariadne = { workspace = true }
 
 [dev-dependencies]
 tempfile = "3"
+serde_json = { workspace = true }

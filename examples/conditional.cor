@@ -1,0 +1,5 @@
+agent main() -> Int:
+    if 4 % 2 == 0:
+        return 100
+    else:
+        return 200

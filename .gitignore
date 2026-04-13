@@ -24,3 +24,8 @@ __pycache__/
 .pytest_cache/
 .venv/
 venv/
+
+# Secrets / local config
+.env
+.env.*
+!.env.example

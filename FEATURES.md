@@ -71,7 +71,7 @@ Features that turn triers into production users.
 3. **Memory primitives** — `session`, `memory` as typed, SQLite-backed stores.
 4. **Error handling** — typed `Result` / `Option`; retry policies as syntax.
 5. **HITL beyond `approve`** — `ask(...)` for clarifications, `choose(...)` for options.
-6. **Python FFI via PyO3** — `import python "lib"` works from the interpreter.
+6. **Python FFI via PyO3, effect-tagged at the import site** — `import python "lib" as x effects: network, spends` works from the interpreter. Untagged Python imports rejected by default; `effects: unsafe` exists as an opt-in escape hatch and is visually discouraged. TypeScript's `.d.ts` analog: the compiler trusts declared effects, so untagged Python usage cannot be introduced by accident.
 
 ---
 
@@ -84,6 +84,15 @@ Hard-to-copy features that a compiler enables and a library can't.
 3. **Streaming as first-class type** — `Stream<Token>`, `Stream<T>` for partial structured outputs.
 4. **Prompt-aware compilation** — prompt deduplication, schema caching, TOON-compressed payloads.
 5. **Replay as a language concept** — every run replayable by construction; `corvid replay` as a primitive.
+6. **Custom effects + effect rows** — user-declared `effect Name` definitions beyond `safe`/`dangerous` (`retrieves`, `spends`, `reads_pii`, `mutates_db`, `cites`, etc.). Effect rows on tool/agent signatures; compiler verifies body against declaration. Data-flow tracking: callers inherit callees' effects unless explicitly scoped. Per-effect approval policy declarable. Property-based test suite proves the checker cannot be bypassed via FFI, generics, or indirect calls.
+7. **Grounding + citation contracts** — compile-time RAG correctness.
+   - `grounds_on ctx` annotation on prompts; template must reference `ctx` or compile error `E0201`.
+   - `cites ctx` effect on prompts; return type must be `Grounded<T>` or `E0202`; template must request citations or `E0203`.
+   - `cites ctx strictly` opts into runtime citation-verification failure.
+   - `Grounded<T>` is a compiler-known stdlib type; unwrapping requires `.unwrap_discarding_sources()`.
+   - The vector store, document loaders, chunking, and embedder ship as the separate `corvid-rag` package — library, not language.
+8. **Eval as language syntax** — first-class `eval <agent> on dataset(...) { assert ... }` declarations with typed assertion predicates (approval_rate, grounding_rate, citation_verification_rate, average_cost, average_latency). The `corvid eval` CLI command, HTML reports, and CI integration land in v0.7.
+9. **Written effect-system specification** — 20–40 page document (syntax, typing rules, worked examples, FFI/async/generics interactions, related-work: Koka, Eff, Frank, Haskell effect libs, Rust `unsafe`, capability systems). Ships at the v0.4 boundary.
 
 ---
 
@@ -120,13 +129,7 @@ What makes a language a movement.
 1. **Package manager** — `corvid add <package>`. Study Cargo; copy what works.
 2. **IDE support** — LSP server, VS Code extension, inline trace viewer.
 3. **Standard library** — common agent patterns (RAG, tool-use, planning) as stdlib.
-4. **Eval framework as language feature**
-   ```
-   eval refund_bot_quality against dataset("./traces/*") {
-     assert average_cost < $0.05
-     assert approval_rate_on_blockers > 0.95
-   }
-   ```
+4. **Eval tooling** — `corvid eval` CLI command, terminal + HTML reports, regression detection against previous runs, CI integration (exit code 0/non-zero). The language syntax (`eval ... assert ...`) already landed in v0.4; this phase adds the runner, the reports, and the CI contract.
 
 ---
 
@@ -147,7 +150,6 @@ Stable API, documented, production-ready.
 Not necessarily bad ideas, but not v1.0 scope:
 
 - Macros / metaprogramming
-- Custom effect definitions (beyond `safe`/`dangerous`)
 - Dependent types
 - Linear / affine types
 - Formal verification hooks
@@ -155,6 +157,10 @@ Not necessarily bad ideas, but not v1.0 scope:
 - Multi-model ensemble primitives
 - Fine-tuning as a language feature
 - Visual/block-based editor
+- RAG framework (vector store, loaders, chunking, reranking) bundled in the compiler distribution — the grounding/citation *contracts* are language; the runtime substrate ships as the separate `corvid-rag` package
+- MCP runtime client/server — belongs in `corvid-runtime` or a package, not the compiler core (effect tagging for MCP calls can arrive with custom effects in v0.4)
+- Typed Python library wrappers (`std.python.anthropic`, etc.) — library work, not language
+- `corvid-py` Python-embedding package — distribution/library question, handled outside the language roadmap
 
 ---
 

@@ -54,8 +54,10 @@ impl<'a> Lexer<'a> {
         while self.pos < self.bytes.len() {
             let c = self.bytes[self.pos];
             match c {
-                // Inline whitespace: just skip.
-                b' ' | b'\t' => {
+                // Inline whitespace: just skip. `\r` is silently absorbed
+                // so CRLF-encoded files (Windows defaults, Git autocrlf)
+                // lex identically to LF-only sources.
+                b' ' | b'\t' | b'\r' => {
                     self.pos += 1;
                 }
                 b'\n' => {
@@ -101,6 +103,11 @@ impl<'a> Lexer<'a> {
     /// start. Measures indentation and emits `Indent`/`Dedent` tokens.
     /// Blank or comment-only lines are skipped.
     fn process_line_start(&mut self) {
+        // Tolerate a leading `\r` from a CRLF blank line.
+        while self.pos < self.bytes.len() && self.bytes[self.pos] == b'\r' {
+            self.pos += 1;
+        }
+
         let start = self.pos;
         let mut indent = 0usize;
         let mut had_tab = false;
@@ -124,7 +131,7 @@ impl<'a> Lexer<'a> {
             return;
         }
         match self.bytes[self.pos] {
-            b'\n' | b'#' => return,
+            b'\n' | b'\r' | b'#' => return,
             _ => {}
         }
 

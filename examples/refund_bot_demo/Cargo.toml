@@ -1,0 +1,17 @@
+[package]
+name = "refund_bot_demo"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Standalone Rust runner for the Corvid refund_bot demo. Proves the native runtime works without Python."
+publish = false
+
+[[bin]]
+name = "refund_bot"
+path = "runner/main.rs"
+
+[dependencies]
+corvid-driver = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+anyhow = { workspace = true }

@@ -1,32 +1,37 @@
-//! Tree-walking interpreter.
+//! Tree-walking interpreter, async edition.
 //!
-//! Consumes an `IrFile` and executes agent bodies. This slice covers pure
-//! computation only — literals, locals, arithmetic, comparisons, control
-//! flow, struct field access, and list operations.
-//!
-//! Tool calls, prompt calls, agent calls, and `approve` statements produce
-//! `InterpErrorKind::NotImplemented` for now; those are added in the next
-//! sub-phase alongside the native runtime (`corvid-runtime`).
+//! Asynchronous from the top because tool calls, prompt calls, and
+//! approvals are async at the runtime boundary. The performance hit of
+//! boxing recursive futures (via `async-recursion`) is the price for
+//! keeping this tier behaviourally identical to the future Cranelift
+//! backend, which will also be async-native. Behavioural parity is what
+//! makes this interpreter useful as a correctness oracle.
 
+use crate::conv::{json_to_value, value_to_json};
 use crate::env::Env;
 use crate::errors::{InterpError, InterpErrorKind};
 use crate::value::{StructValue, Value};
+use async_recursion::async_recursion;
 use corvid_ast::{BinaryOp, Span, UnaryOp};
 use corvid_ir::{
-    IrAgent, IrBlock, IrCallKind, IrExpr, IrExprKind, IrFile, IrLiteral, IrStmt, IrType,
+    IrAgent, IrBlock, IrCallKind, IrExpr, IrExprKind, IrFile, IrLiteral, IrPrompt, IrStmt,
+    IrTool, IrType,
 };
 use corvid_resolve::{DefId, LocalId};
+use corvid_runtime::{LlmRequest, Runtime, TraceEvent};
 use std::collections::HashMap;
 use std::sync::Arc;
 
-/// Public interpreter entry point: run `agent_name` with `args`.
+/// Public entry point: run `agent_name` with `args` against `runtime`.
 ///
-/// Returns the agent's `Return`-ed value, or the span-carrying error that
-/// aborted execution.
-pub fn run_agent(
+/// The runtime owns tool/LLM/approval dispatch and tracing. Pass a
+/// minimal runtime built via `Runtime::builder().build()` for tests
+/// that don't exercise external calls.
+pub async fn run_agent(
     ir: &IrFile,
     agent_name: &str,
     args: Vec<Value>,
+    runtime: &Runtime,
 ) -> Result<Value, InterpError> {
     let agent = ir
         .agents
@@ -41,9 +46,68 @@ pub fn run_agent(
             )
         })?;
 
-    let mut interp = Interpreter::new(ir);
-    interp.bind_params(agent, args)?;
-    interp.run_body(agent)
+    runtime.tracer().emit(TraceEvent::RunStarted {
+        ts_ms: corvid_runtime::now_ms(),
+        run_id: runtime.tracer().run_id().to_string(),
+        agent: agent_name.to_string(),
+    });
+
+    let mut interp = Interpreter::new(ir, runtime);
+    let bind_result = interp.bind_params(agent, args);
+    let outcome = match bind_result {
+        Ok(()) => interp.run_body(agent).await,
+        Err(e) => Err(e),
+    };
+
+    runtime.tracer().emit(TraceEvent::RunCompleted {
+        ts_ms: corvid_runtime::now_ms(),
+        run_id: runtime.tracer().run_id().to_string(),
+        ok: outcome.is_ok(),
+    });
+    outcome
+}
+
+/// Pre-bind specific locals and run an agent. Used by tests that want
+/// to inject pre-built struct parameters bypassing the parameter list.
+pub async fn bind_and_run_agent(
+    ir: &IrFile,
+    agent_name: &str,
+    params_with_values: Vec<(LocalId, Value)>,
+    fallback_args: Vec<Value>,
+    runtime: &Runtime,
+) -> Result<Value, InterpError> {
+    if params_with_values.is_empty() {
+        return run_agent(ir, agent_name, fallback_args, runtime).await;
+    }
+    let agent = ir
+        .agents
+        .iter()
+        .find(|a| a.name == agent_name)
+        .ok_or_else(|| {
+            InterpError::new(
+                InterpErrorKind::DispatchFailed(format!("no agent named `{agent_name}`")),
+                Span::new(0, 0),
+            )
+        })?;
+    let mut interp = Interpreter::new(ir, runtime);
+    for (id, v) in params_with_values {
+        interp.env.bind(id, v);
+    }
+    interp.run_body(agent).await
+}
+
+/// Build a struct `Value` from field name → value pairs. Convenience used
+/// by tests to construct struct arguments to inject into agent runs.
+pub fn build_struct(
+    type_id: DefId,
+    type_name: &str,
+    fields: impl IntoIterator<Item = (String, Value)>,
+) -> Value {
+    Value::Struct(Arc::new(StructValue {
+        type_id,
+        type_name: type_name.to_string(),
+        fields: fields.into_iter().collect(),
+    }))
 }
 
 /// Control-flow outcome of evaluating a statement or block.
@@ -55,41 +119,34 @@ enum Flow {
     Continue,
 }
 
-/// Type-index, used by struct constructors during lowering.
-struct TypeIndex {
-    by_name: HashMap<String, DefId>,
-}
-
-impl TypeIndex {
-    fn new(ir: &IrFile) -> Self {
-        let mut by_name = HashMap::new();
-        for t in &ir.types {
-            by_name.insert(t.name.clone(), t.id);
-        }
-        Self { by_name }
-    }
-}
-
 struct Interpreter<'ir> {
-    #[allow(dead_code)]
     ir: &'ir IrFile,
     env: Env,
-    #[allow(dead_code)]
-    types: TypeIndex,
-    #[allow(dead_code)]
     types_by_id: HashMap<DefId, &'ir IrType>,
+    tools_by_id: HashMap<DefId, &'ir IrTool>,
+    prompts_by_id: HashMap<DefId, &'ir IrPrompt>,
+    agents_by_id: HashMap<DefId, &'ir IrAgent>,
+    runtime: &'ir Runtime,
 }
 
 impl<'ir> Interpreter<'ir> {
-    fn new(ir: &'ir IrFile) -> Self {
-        let types = TypeIndex::new(ir);
+    fn new(ir: &'ir IrFile, runtime: &'ir Runtime) -> Self {
         let types_by_id: HashMap<DefId, &IrType> =
             ir.types.iter().map(|t| (t.id, t)).collect();
+        let tools_by_id: HashMap<DefId, &IrTool> =
+            ir.tools.iter().map(|t| (t.id, t)).collect();
+        let prompts_by_id: HashMap<DefId, &IrPrompt> =
+            ir.prompts.iter().map(|p| (p.id, p)).collect();
+        let agents_by_id: HashMap<DefId, &IrAgent> =
+            ir.agents.iter().map(|a| (a.id, a)).collect();
         Self {
             ir,
             env: Env::new(),
-            types,
             types_by_id,
+            tools_by_id,
+            prompts_by_id,
+            agents_by_id,
+            runtime,
         }
     }
 
@@ -115,32 +172,23 @@ impl<'ir> Interpreter<'ir> {
         Ok(())
     }
 
-    fn run_body(&mut self, agent: &'ir IrAgent) -> Result<Value, InterpError> {
-        match self.eval_block(&agent.body)? {
+    async fn run_body(&mut self, agent: &'ir IrAgent) -> Result<Value, InterpError> {
+        match self.eval_block(&agent.body).await? {
             Flow::Return(v) => Ok(v),
-            Flow::Normal => {
-                // The return statement is syntactically optional in v0.1 only
-                // for agents returning `Nothing`. Any other shape is the type
-                // checker's responsibility; the interpreter surfaces the gap.
-                Ok(Value::Nothing)
-            }
+            Flow::Normal => Ok(Value::Nothing),
             Flow::Break | Flow::Continue => Err(InterpError::new(
-                InterpErrorKind::Other(format!(
-                    "`{}` escaped its enclosing loop",
-                    match self.eval_block(&agent.body)? {
-                        Flow::Break => "break",
-                        Flow::Continue => "continue",
-                        _ => "control",
-                    }
-                )),
+                InterpErrorKind::Other(
+                    "loop control flow escaped its enclosing loop".into(),
+                ),
                 agent.span,
             )),
         }
     }
 
-    fn eval_block(&mut self, block: &'ir IrBlock) -> Result<Flow, InterpError> {
+    #[async_recursion]
+    async fn eval_block(&mut self, block: &'ir IrBlock) -> Result<Flow, InterpError> {
         for stmt in &block.stmts {
-            match self.eval_stmt(stmt)? {
+            match self.eval_stmt(stmt).await? {
                 Flow::Normal => continue,
                 other => return Ok(other),
             }
@@ -148,16 +196,17 @@ impl<'ir> Interpreter<'ir> {
         Ok(Flow::Normal)
     }
 
-    fn eval_stmt(&mut self, stmt: &'ir IrStmt) -> Result<Flow, InterpError> {
+    #[async_recursion]
+    async fn eval_stmt(&mut self, stmt: &'ir IrStmt) -> Result<Flow, InterpError> {
         match stmt {
             IrStmt::Let { local_id, value, .. } => {
-                let v = self.eval_expr(value)?;
+                let v = self.eval_expr(value).await?;
                 self.env.bind(*local_id, v);
                 Ok(Flow::Normal)
             }
             IrStmt::Return { value, .. } => {
                 let v = match value {
-                    Some(e) => self.eval_expr(e)?,
+                    Some(e) => self.eval_expr(e).await?,
                     None => Value::Nothing,
                 };
                 Ok(Flow::Return(v))
@@ -168,7 +217,7 @@ impl<'ir> Interpreter<'ir> {
                 else_block,
                 ..
             } => {
-                let c = self.eval_expr(cond)?;
+                let c = self.eval_expr(cond).await?;
                 let take_then = match c {
                     Value::Bool(b) => b,
                     other => {
@@ -182,9 +231,9 @@ impl<'ir> Interpreter<'ir> {
                     }
                 };
                 if take_then {
-                    self.eval_block(then_block)
+                    self.eval_block(then_block).await
                 } else if let Some(eb) = else_block {
-                    self.eval_block(eb)
+                    self.eval_block(eb).await
                 } else {
                     Ok(Flow::Normal)
                 }
@@ -196,11 +245,10 @@ impl<'ir> Interpreter<'ir> {
                 span,
                 ..
             } => {
-                let iter_val = self.eval_expr(iter)?;
+                let iter_val = self.eval_expr(iter).await?;
                 let items = match iter_val {
                     Value::List(items) => items,
                     Value::String(s) => {
-                        // Strings iterate as single-char String values.
                         let chars: Vec<Value> = s
                             .chars()
                             .map(|c| Value::String(Arc::from(c.to_string())))
@@ -219,7 +267,7 @@ impl<'ir> Interpreter<'ir> {
                 };
                 for item in items.iter() {
                     self.env.bind(*var_local, item.clone());
-                    match self.eval_block(body)? {
+                    match self.eval_block(body).await? {
                         Flow::Normal | Flow::Continue => continue,
                         Flow::Break => return Ok(Flow::Normal),
                         Flow::Return(v) => return Ok(Flow::Return(v)),
@@ -227,12 +275,20 @@ impl<'ir> Interpreter<'ir> {
                 }
                 Ok(Flow::Normal)
             }
-            IrStmt::Approve { span, .. } => Err(InterpError::new(
-                InterpErrorKind::NotImplemented("approve statements".into()),
-                *span,
-            )),
+            IrStmt::Approve { label, args, span } => {
+                let mut json_args = Vec::with_capacity(args.len());
+                for a in args {
+                    let v = self.eval_expr(a).await?;
+                    json_args.push(value_to_json(&v));
+                }
+                self.runtime
+                    .approval_gate(label, json_args)
+                    .await
+                    .map_err(|e| InterpError::new(InterpErrorKind::Runtime(e), *span))?;
+                Ok(Flow::Normal)
+            }
             IrStmt::Expr { expr, .. } => {
-                let _ = self.eval_expr(expr)?;
+                let _ = self.eval_expr(expr).await?;
                 Ok(Flow::Normal)
             }
             IrStmt::Break { .. } => Ok(Flow::Break),
@@ -241,7 +297,8 @@ impl<'ir> Interpreter<'ir> {
         }
     }
 
-    fn eval_expr(&mut self, expr: &'ir IrExpr) -> Result<Value, InterpError> {
+    #[async_recursion]
+    async fn eval_expr(&mut self, expr: &'ir IrExpr) -> Result<Value, InterpError> {
         match &expr.kind {
             IrExprKind::Literal(lit) => Ok(eval_literal(lit)),
 
@@ -261,23 +318,13 @@ impl<'ir> Interpreter<'ir> {
                 expr.span,
             )),
 
-            IrExprKind::Call { kind, callee_name, .. } => {
-                let what = match kind {
-                    IrCallKind::Tool { .. } => "tool calls",
-                    IrCallKind::Prompt { .. } => "prompt calls",
-                    IrCallKind::Agent { .. } => "agent-to-agent calls",
-                    IrCallKind::Unknown => "unresolved calls",
-                };
-                Err(InterpError::new(
-                    InterpErrorKind::NotImplemented(format!(
-                        "{what} (at `{callee_name}`)"
-                    )),
-                    expr.span,
-                ))
+            IrExprKind::Call { kind, callee_name, args } => {
+                self.eval_call(kind, callee_name, args, &expr.ty, expr.span)
+                    .await
             }
 
             IrExprKind::FieldAccess { target, field } => {
-                let t = self.eval_expr(target)?;
+                let t = self.eval_expr(target).await?;
                 match t {
                     Value::Struct(s) => s.fields.get(field).cloned().ok_or_else(|| {
                         InterpError::new(
@@ -299,8 +346,8 @@ impl<'ir> Interpreter<'ir> {
             }
 
             IrExprKind::Index { target, index } => {
-                let t = self.eval_expr(target)?;
-                let i = self.eval_expr(index)?;
+                let t = self.eval_expr(target).await?;
+                let i = self.eval_expr(index).await?;
                 match (t, i) {
                     (Value::List(items), Value::Int(idx)) => {
                         let len = items.len();
@@ -324,25 +371,172 @@ impl<'ir> Interpreter<'ir> {
             }
 
             IrExprKind::BinOp { op, left, right } => {
-                let l = self.eval_expr(left)?;
-                let r = self.eval_expr(right)?;
+                // Short-circuit `and` / `or`: evaluate the right operand
+                // only when the left doesn't determine the result. This
+                // matches the Cranelift lowering's merge-block pattern
+                // and lets idioms like `true or (1 / 0 == 0)` return
+                // `true` instead of raising.
+                match op {
+                    BinaryOp::And => {
+                        let l = self.eval_expr(left).await?;
+                        let lb = require_bool(&l, left.span, "left operand of `and`")?;
+                        if !lb {
+                            return Ok(Value::Bool(false));
+                        }
+                        let r = self.eval_expr(right).await?;
+                        let rb = require_bool(&r, right.span, "right operand of `and`")?;
+                        return Ok(Value::Bool(rb));
+                    }
+                    BinaryOp::Or => {
+                        let l = self.eval_expr(left).await?;
+                        let lb = require_bool(&l, left.span, "left operand of `or`")?;
+                        if lb {
+                            return Ok(Value::Bool(true));
+                        }
+                        let r = self.eval_expr(right).await?;
+                        let rb = require_bool(&r, right.span, "right operand of `or`")?;
+                        return Ok(Value::Bool(rb));
+                    }
+                    _ => {}
+                }
+                let l = self.eval_expr(left).await?;
+                let r = self.eval_expr(right).await?;
                 eval_binop(*op, l, r, expr.span)
             }
 
             IrExprKind::UnOp { op, operand } => {
-                let v = self.eval_expr(operand)?;
+                let v = self.eval_expr(operand).await?;
                 eval_unop(*op, v, expr.span)
             }
 
             IrExprKind::List { items } => {
                 let mut out = Vec::with_capacity(items.len());
                 for it in items {
-                    out.push(self.eval_expr(it)?);
+                    out.push(self.eval_expr(it).await?);
                 }
                 Ok(Value::List(Arc::new(out)))
             }
         }
     }
+
+    /// Dispatch a call expression. Routes Tool / Prompt / Agent through
+    /// the right runtime path; an `Unknown` kind is a hard error
+    /// (typecheck should have caught it).
+    async fn eval_call(
+        &mut self,
+        kind: &'ir IrCallKind,
+        callee_name: &str,
+        args: &'ir [IrExpr],
+        result_ty: &Type,
+        span: Span,
+    ) -> Result<Value, InterpError> {
+        // Evaluate args eagerly (left to right) before any external call.
+        let mut arg_values = Vec::with_capacity(args.len());
+        for a in args {
+            arg_values.push(self.eval_expr(a).await?);
+        }
+
+        match kind {
+            IrCallKind::Tool { def_id, .. } => {
+                let tool = self.tools_by_id.get(def_id).copied().ok_or_else(|| {
+                    InterpError::new(
+                        InterpErrorKind::DispatchFailed(format!(
+                            "tool `{callee_name}` is missing from the IR"
+                        )),
+                        span,
+                    )
+                })?;
+                let json_args: Vec<serde_json::Value> =
+                    arg_values.iter().map(value_to_json).collect();
+                let result = self
+                    .runtime
+                    .call_tool(callee_name, json_args)
+                    .await
+                    .map_err(|e| InterpError::new(InterpErrorKind::Runtime(e), span))?;
+                json_to_value(result, &tool.return_ty, &self.types_by_id).map_err(|e| {
+                    InterpError::new(
+                        InterpErrorKind::Marshal(format!("tool `{callee_name}`: {e}")),
+                        span,
+                    )
+                })
+            }
+            IrCallKind::Prompt { def_id } => {
+                let prompt = self.prompts_by_id.get(def_id).copied().ok_or_else(|| {
+                    InterpError::new(
+                        InterpErrorKind::DispatchFailed(format!(
+                            "prompt `{callee_name}` is missing from the IR"
+                        )),
+                        span,
+                    )
+                })?;
+                let json_args: Vec<serde_json::Value> =
+                    arg_values.iter().map(value_to_json).collect();
+                let rendered = render_prompt(prompt, &arg_values);
+                let output_schema =
+                    Some(crate::schema::schema_for(&prompt.return_ty, &self.types_by_id));
+                let req = LlmRequest {
+                    prompt: callee_name.to_string(),
+                    model: String::new(),
+                    rendered,
+                    args: json_args,
+                    output_schema,
+                };
+                let resp = self
+                    .runtime
+                    .call_llm(req)
+                    .await
+                    .map_err(|e| InterpError::new(InterpErrorKind::Runtime(e), span))?;
+                json_to_value(resp.value, &prompt.return_ty, &self.types_by_id).map_err(
+                    |e| {
+                        InterpError::new(
+                            InterpErrorKind::Marshal(format!(
+                                "prompt `{callee_name}`: {e}"
+                            )),
+                            span,
+                        )
+                    },
+                )
+            }
+            IrCallKind::Agent { def_id } => {
+                let agent = self.agents_by_id.get(def_id).copied().ok_or_else(|| {
+                    InterpError::new(
+                        InterpErrorKind::DispatchFailed(format!(
+                            "agent `{callee_name}` is missing from the IR"
+                        )),
+                        span,
+                    )
+                })?;
+                let mut sub = Interpreter::new(self.ir, self.runtime);
+                sub.bind_params(agent, arg_values)?;
+                sub.run_body(agent).await
+            }
+            IrCallKind::Unknown => {
+                let _ = result_ty;
+                Err(InterpError::new(
+                    InterpErrorKind::DispatchFailed(format!(
+                        "call to `{callee_name}` did not resolve to a tool, prompt, or agent"
+                    )),
+                    span,
+                ))
+            }
+        }
+    }
+}
+
+/// Render a prompt template by substituting `{paramname}` with the
+/// JSON-serialized form of each argument. Unknown placeholders are left
+/// alone — adapters that don't read `rendered` (like the mock) won't
+/// notice.
+fn render_prompt(prompt: &IrPrompt, args: &[Value]) -> String {
+    let mut out = prompt.template.clone();
+    for (param, value) in prompt.params.iter().zip(args) {
+        let needle = format!("{{{}}}", param.name);
+        if out.contains(&needle) {
+            let replacement = value_to_json(value).to_string();
+            out = out.replace(&needle, &replacement);
+        }
+    }
+    out
 }
 
 fn eval_literal(lit: &IrLiteral) -> Value {
@@ -362,16 +556,9 @@ fn eval_binop(op: BinaryOp, l: Value, r: Value, span: Span) -> Result<Value, Int
         Eq => Ok(Value::Bool(l == r)),
         NotEq => Ok(Value::Bool(l != r)),
         Lt | LtEq | Gt | GtEq => eval_ordering(op, l, r, span),
-        And => {
-            let lb = require_bool(&l, span, "left operand of `and`")?;
-            let rb = require_bool(&r, span, "right operand of `and`")?;
-            Ok(Value::Bool(lb && rb))
-        }
-        Or => {
-            let lb = require_bool(&l, span, "left operand of `or`")?;
-            let rb = require_bool(&r, span, "right operand of `or`")?;
-            Ok(Value::Bool(lb || rb))
-        }
+        // `and`/`or` are short-circuited inside `eval_expr` and never
+        // reach this helper with both sides already evaluated.
+        And | Or => unreachable!("and/or is short-circuited upstream"),
     }
 }
 
@@ -543,53 +730,15 @@ fn overflow(span: Span) -> InterpError {
     )
 }
 
-// Suppress the unused-field warning for fields we'll start using in the
-// next slice (tool calls, prompt calls, approve). The `_` prefixes on
-// arguments already cover most, but the struct fields need this pragma.
+// `Type` import: needed by `eval_call`'s signature. Imported here at the
+// bottom so the file's structure stays close to the original.
+use corvid_types::Type;
+
+// Suppress dead-field warnings on the few fields the interpreter holds
+// but doesn't yet read directly (the IR is read indirectly via the
+// per-kind id maps).
 #[allow(dead_code)]
 fn _force_use(i: &Interpreter<'_>) {
     let _ = &i.ir;
-    let _ = &i.types;
     let _ = &i.types_by_id;
-}
-
-/// Build a struct `Value` from field name → value pairs. Used by the
-/// runtime when converting native tool/prompt results into Corvid values
-/// during the next slice of Phase 11.
-pub fn build_struct(
-    type_id: DefId,
-    type_name: &str,
-    fields: impl IntoIterator<Item = (String, Value)>,
-) -> Value {
-    Value::Struct(Arc::new(StructValue {
-        type_id,
-        type_name: type_name.to_string(),
-        fields: fields.into_iter().collect(),
-    }))
-}
-
-/// Expose the interpreter creator so the runtime can bind locals and run
-/// isolated snippets in future slices.
-pub fn bind_and_run_agent(
-    ir: &IrFile,
-    agent_name: &str,
-    params_with_values: Vec<(LocalId, Value)>,
-    fallback_args: Vec<Value>,
-) -> Result<Value, InterpError> {
-    // Pre-bind known locals (used when the runtime wants to inject
-    // pre-constructed struct params in tests).
-    if params_with_values.is_empty() {
-        return run_agent(ir, agent_name, fallback_args);
-    }
-    let agent = ir.agents.iter().find(|a| a.name == agent_name).ok_or_else(|| {
-        InterpError::new(
-            InterpErrorKind::DispatchFailed(format!("no agent named `{agent_name}`")),
-            Span::new(0, 0),
-        )
-    })?;
-    let mut interp = Interpreter::new(ir);
-    for (id, v) in params_with_values {
-        interp.env.bind(id, v);
-    }
-    interp.run_body(agent)
 }

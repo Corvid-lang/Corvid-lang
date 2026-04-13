@@ -1,0 +1,13 @@
+type Greeting:
+    salutation: String
+    target: String
+
+prompt make_greeting(name: String) -> Greeting:
+    """
+    Produce a friendly greeting for {name}. The salutation should be a
+    single warm word (like "hello" or "welcome") and target should be
+    the name itself.
+    """
+
+agent greet(name: String) -> Greeting:
+    return make_greeting(name)

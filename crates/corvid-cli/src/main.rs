@@ -12,7 +12,11 @@ use std::process::ExitCode;
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 
-use corvid_driver::{build_to_disk, compile, render_all_pretty, scaffold_new};
+#[allow(unused_imports)]
+use corvid_driver::{
+    build_native_to_disk, build_to_disk, compile, load_dotenv_walking, render_all_pretty,
+    run_native, scaffold_new,
+};
 
 #[derive(Parser)]
 #[command(name = "corvid", version, about = "The Corvid language compiler")]
@@ -27,8 +31,14 @@ enum Command {
     New { name: String },
     /// Type-check a Corvid source file.
     Check { file: PathBuf },
-    /// Compile a Corvid source file to Python (target/py/).
-    Build { file: PathBuf },
+    /// Compile a Corvid source file. Default target is Python (target/py/);
+    /// `--target=native` emits a machine-code binary under target/bin/.
+    Build {
+        file: PathBuf,
+        /// Output target. `python` (default) or `native`.
+        #[arg(long, default_value = "python")]
+        target: String,
+    },
     /// Build a Corvid source file and run the generated Python.
     Run { file: PathBuf },
     /// Run tests (not yet implemented).
@@ -43,7 +53,7 @@ fn main() -> ExitCode {
     let result = match cli.command {
         Some(Command::New { name }) => cmd_new(&name),
         Some(Command::Check { file }) => cmd_check(&file),
-        Some(Command::Build { file }) => cmd_build(&file),
+        Some(Command::Build { file, target }) => cmd_build(&file, &target),
         Some(Command::Run { file }) => cmd_run(&file),
         Some(Command::Test) => {
             eprintln!("`corvid test` is not implemented yet (v0.2).");
@@ -93,38 +103,46 @@ fn cmd_check(file: &Path) -> Result<u8> {
     }
 }
 
-fn cmd_build(file: &Path) -> Result<u8> {
-    let out = build_to_disk(file)
-        .with_context(|| format!("failed to build `{}`", file.display()))?;
-    if let Some(path) = out.output_path {
-        println!("built: {} -> {}", file.display(), path.display());
-        Ok(0)
-    } else {
-        eprint!("{}", render_all_pretty(&out.diagnostics, file, &out.source));
-        Ok(1)
+fn cmd_build(file: &Path, target: &str) -> Result<u8> {
+    match target {
+        "python" | "py" => {
+            let out = build_to_disk(file)
+                .with_context(|| format!("failed to build `{}`", file.display()))?;
+            if let Some(path) = out.output_path {
+                println!("built: {} -> {}", file.display(), path.display());
+                Ok(0)
+            } else {
+                eprint!("{}", render_all_pretty(&out.diagnostics, file, &out.source));
+                Ok(1)
+            }
+        }
+        "native" => {
+            let out = build_native_to_disk(file)
+                .with_context(|| format!("failed to build `{}` (native)", file.display()))?;
+            if let Some(path) = out.output_path {
+                println!("built: {} -> {}", file.display(), path.display());
+                Ok(0)
+            } else {
+                eprint!("{}", render_all_pretty(&out.diagnostics, file, &out.source));
+                Ok(1)
+            }
+        }
+        other => {
+            anyhow::bail!(
+                "unknown target `{other}`; valid: `python` (default), `native`"
+            )
+        }
     }
 }
 
 fn cmd_run(file: &Path) -> Result<u8> {
-    let out = build_to_disk(file)
-        .with_context(|| format!("failed to build `{}`", file.display()))?;
-
-    let Some(path) = out.output_path else {
-        eprint!("{}", render_all_pretty(&out.diagnostics, file, &out.source));
-        return Ok(1);
-    };
-
-    // Shell out to Python.
-    let status = std::process::Command::new("python3")
-        .arg(&path)
-        .status()
-        .with_context(|| "failed to spawn python3 — is it on PATH?")?;
-
-    if status.success() {
-        Ok(0)
-    } else {
-        Ok(status.code().unwrap_or(1) as u8)
-    }
+    // Native dispatch via the interpreter + corvid-runtime — Python is no
+    // longer on the path. Tools and prompts that need handlers must be
+    // registered through a runner binary that calls `run_with_runtime`;
+    // see `examples/refund_bot_demo/runner.rs`. `corvid run` itself uses
+    // an empty runtime suitable for tool-free agents.
+    run_native(file)
+        .with_context(|| format!("failed to run `{}`", file.display()))
 }
 
 // ------------------------------------------------------------
@@ -132,71 +150,72 @@ fn cmd_run(file: &Path) -> Result<u8> {
 // ------------------------------------------------------------
 
 fn cmd_doctor() -> Result<u8> {
+    use corvid_driver::load_dotenv_walking;
+
     println!("corvid doctor — checking local environment...\n");
-    let mut ok = true;
 
-    // Python 3.11+
-    match std::process::Command::new("python3")
-        .arg("--version")
-        .output()
-    {
-        Ok(out) if out.status.success() => {
-            let v = String::from_utf8_lossy(&out.stdout).trim().to_string();
-            println!("  ✓ {v}");
-        }
-        _ => {
-            println!(
-                "  ✗ python3 not found. Install Python 3.11 or newer.\n     see: https://www.python.org/downloads/"
-            );
-            ok = false;
-        }
-    }
-
-    // corvid-runtime
-    let has_runtime = std::process::Command::new("python3")
-        .args(["-c", "import corvid_runtime; print(corvid_runtime.__name__)"])
-        .output()
-        .ok()
-        .map(|o| o.status.success())
-        .unwrap_or(false);
-    if has_runtime {
-        println!("  ✓ corvid-runtime installed");
-    } else {
-        println!(
-            "  ✗ corvid-runtime not installed.\n     run: pip install 'corvid-runtime[anthropic]'"
-        );
-        ok = false;
-    }
-
-    // anthropic (optional)
-    let has_anthropic = std::process::Command::new("python3")
-        .args(["-c", "import anthropic"])
-        .output()
-        .ok()
-        .map(|o| o.status.success())
-        .unwrap_or(false);
-    if has_anthropic {
-        println!("  ✓ anthropic SDK installed (Claude adapter available)");
-    } else {
-        println!(
-            "  · anthropic not installed (optional).\n     run: pip install 'corvid-runtime[anthropic]'"
-        );
+    // Try loading .env first so the rest of the checks see what programs would.
+    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    match load_dotenv_walking(&cwd) {
+        Some(p) => println!("  ✓ .env loaded from {}", p.display()),
+        None => println!("  · no .env file found from cwd upward (optional)"),
     }
 
     // CORVID_MODEL
-    match std::env::var("CORVID_MODEL") {
-        Ok(v) => println!("  ✓ CORVID_MODEL = {v}"),
-        Err(_) => println!(
-            "  · CORVID_MODEL not set. Set one (e.g. `export CORVID_MODEL=claude-opus-4-6`) or\n    put `default_model = \"...\"` in corvid.toml under [llm]."
+    let model = std::env::var("CORVID_MODEL").ok();
+    match &model {
+        Some(v) => println!("  ✓ CORVID_MODEL = {v}"),
+        None => println!(
+            "  · CORVID_MODEL not set. Set one (e.g. `export CORVID_MODEL=gpt-4o-mini` or\n    `claude-opus-4-6`) or put `default_model = \"...\"` in corvid.toml under [llm]."
         ),
     }
 
-    println!();
-    if ok {
-        println!("all required components look good.");
-        Ok(0)
+    // Anthropic
+    if std::env::var("ANTHROPIC_API_KEY").is_ok() {
+        println!("  ✓ ANTHROPIC_API_KEY set (Claude models available)");
     } else {
-        println!("issues found — resolve the ✗ items above and run `corvid doctor` again.");
-        Ok(1)
+        println!("  · ANTHROPIC_API_KEY not set — Claude calls will error at the prompt site");
     }
+
+    // OpenAI
+    if std::env::var("OPENAI_API_KEY").is_ok() {
+        println!("  ✓ OPENAI_API_KEY set (GPT / o-series models available)");
+    } else {
+        println!("  · OPENAI_API_KEY not set — OpenAI calls will error at the prompt site");
+    }
+
+    // Cross-check: model prefix vs. available keys.
+    if let Some(m) = &model {
+        if m.starts_with("claude-") && std::env::var("ANTHROPIC_API_KEY").is_err() {
+            println!(
+                "  ✗ CORVID_MODEL is `{m}` but ANTHROPIC_API_KEY is not set"
+            );
+        }
+        let openai_prefixes = ["gpt-", "o1-", "o3-", "o4-"];
+        if openai_prefixes.iter().any(|p| m.starts_with(p))
+            && std::env::var("OPENAI_API_KEY").is_err()
+        {
+            println!(
+                "  ✗ CORVID_MODEL is `{m}` but OPENAI_API_KEY is not set"
+            );
+        }
+    }
+
+    // Python (legacy `--target=python` users only)
+    let has_python = std::process::Command::new("python3")
+        .arg("--version")
+        .output()
+        .ok()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+    if has_python {
+        println!("  · python3 detected (legacy `--target=python` available)");
+    } else {
+        println!("  · python3 not detected (only needed for `--target=python`)");
+    }
+
+    println!();
+    println!("native `corvid run` works without Python. Configure CORVID_MODEL + the");
+    println!("matching API key and prompt-only programs run end-to-end.");
+    Ok(0)
 }

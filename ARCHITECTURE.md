@@ -313,14 +313,19 @@ corvid-runtime/src/interop/
 ### User-facing import syntax
 
 ```
-import python "anthropic" as anthropic {
+import python "anthropic" as anthropic
+    effects: network, spends
+{
   fn Messages.create(model: String, messages: List[Message]) -> Response
 }
 
 import python "pandas" as pd
+    effects: reads_fs
 ```
 
-Year 1 strategy: users declare Python function signatures; the compiler trusts them and emits runtime assertions. Year 3: auto-generate from `.pyi` stubs.
+Year 1 strategy: users declare Python function signatures and an effect set; the compiler trusts the declarations and emits runtime assertions. Untagged imports are rejected. `effects: unsafe` is the opt-in escape hatch and is flagged. Year 3: auto-generate from `.pyi` stubs.
+
+This is the TypeScript `.d.ts` analog. Corvid stays a standalone, natively-compiled language; Python interop is first-class but effect-visible to the compiler, so untagged Python usage cannot be introduced by accident.
 
 ### Interop timeline
 
@@ -447,7 +452,7 @@ Rules the language holds to, in order of importance:
 - **Not a replacement for Python.** Corvid calls Python. Use Python for data work, training, web backends.
 - **Not a framework.** Corvid is a compiler + runtime. Frameworks can be built in Corvid.
 - **Not a workflow engine.** Durable execution is a feature, not the core identity.
-- **Not a vector DB or RAG tool.** Those are libraries users import.
+- **Not a RAG framework.** Corvid provides compile-time *grounding and citation contracts* (`grounds_on`, `cites`, `Grounded<T>`) — those are language. The vector store, document loaders, chunking, and embedder ship as the separate `corvid-rag` package. Library.
 
 ---
 
