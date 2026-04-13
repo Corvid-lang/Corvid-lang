@@ -235,6 +235,43 @@ agent refund_bot(ticket: Ticket) -> Decision:
     }
 
     #[test]
+    fn reassignment_reuses_same_local() {
+        // `x = 1` then `x = x + 1` must bind to the same LocalId on both
+        // sides — Pythonic mutation semantics. The side-table has two
+        // binding entries (one per LHS span), both pointing at the same id.
+        let src = "\
+agent mutate(n: Int) -> Int:
+    total = 0
+    total = total + n
+    return total
+";
+        let r = resolve_src(src);
+        assert!(r.errors.is_empty(), "errors: {:?}", r.errors);
+
+        let locals: Vec<LocalId> = r
+            .bindings
+            .values()
+            .filter_map(|b| match b {
+                Binding::Local(id) => Some(*id),
+                _ => None,
+            })
+            .collect();
+
+        // Count distinct LocalIds used. Expected: 2 — one for `n` (param),
+        // one for `total` shared between its two assignment sites and its read.
+        let mut unique: Vec<LocalId> = locals.clone();
+        unique.sort_by_key(|i| i.0);
+        unique.dedup();
+        assert_eq!(
+            unique.len(),
+            2,
+            "expected 2 distinct LocalIds (n and total), got {}: {:?}",
+            unique.len(),
+            unique
+        );
+    }
+
+    #[test]
     fn break_continue_pass_resolve_as_builtins() {
         let src = "\
 agent loop_stuff(xs: String) -> String:

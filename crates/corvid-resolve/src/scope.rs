@@ -31,6 +31,7 @@ pub enum BuiltIn {
     Float,
     String,
     Bool,
+    Nothing,
     // Structural sentinels (surface as Idents today; real variants later).
     Break,
     Continue,
@@ -76,6 +77,7 @@ impl SymbolTable {
         self.builtins.insert("Float".into(), BuiltIn::Float);
         self.builtins.insert("String".into(), BuiltIn::String);
         self.builtins.insert("Bool".into(), BuiltIn::Bool);
+        self.builtins.insert("Nothing".into(), BuiltIn::Nothing);
         self.builtins.insert("break".into(), BuiltIn::Break);
         self.builtins.insert("continue".into(), BuiltIn::Continue);
         self.builtins.insert("pass".into(), BuiltIn::Pass);
@@ -114,6 +116,11 @@ impl SymbolTable {
             return Some(Binding::BuiltIn(b));
         }
         None
+    }
+
+    /// Look up the `DefId` for a top-level declaration by name.
+    pub fn lookup_def(&self, name: &str) -> Option<DefId> {
+        self.by_name.get(name).copied()
     }
 
     pub fn entries(&self) -> &[DeclEntry] {

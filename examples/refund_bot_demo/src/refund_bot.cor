@@ -1,0 +1,43 @@
+# A runnable refund_bot demo. No real LLM or database required —
+# tools.py provides mocked implementations so this runs offline.
+#
+# Build + run:
+#   cd examples/refund_bot_demo
+#   corvid run src/refund_bot.cor
+
+type Ticket:
+    order_id: String
+    user_id: String
+    message: String
+
+type Order:
+    id: String
+    amount: Float
+    user_id: String
+
+type Decision:
+    should_refund: Bool
+    reason: String
+
+type Receipt:
+    refund_id: String
+    amount: Float
+
+tool get_order(id: String) -> Order
+tool issue_refund(id: String, amount: Float) -> Receipt dangerous
+
+prompt decide_refund(ticket: Ticket, order: Order) -> Decision:
+    """
+    Decide whether this ticket deserves a refund. Consider the order amount,
+    the user's complaint, and fairness.
+    """
+
+agent refund_bot(ticket: Ticket) -> Decision:
+    order = get_order(ticket.order_id)
+    decision = decide_refund(ticket, order)
+
+    if decision.should_refund:
+        approve IssueRefund(order.id, order.amount)
+        issue_refund(order.id, order.amount)
+
+    return decision

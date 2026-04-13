@@ -173,9 +173,26 @@ impl Resolver {
                 if let Some(t) = ty {
                     self.resolve_type_ref(t);
                 }
+                // RHS is resolved *before* the LHS binding exists. This
+                // mirrors Python semantics: `x = x + 1` reads the old `x`.
                 self.resolve_expr(value);
-                let id = self.fresh_local();
-                self.current_scope_mut().insert(&name.name, id);
+
+                // Pythonic assignment: if `name` already exists in the
+                // current function's scope, reuse its LocalId. That way
+                // `total = total + x` in a loop mutates the same binding
+                // across iterations instead of creating new ones.
+                let id = match self
+                    .scopes
+                    .last()
+                    .and_then(|s| s.lookup(&name.name))
+                {
+                    Some(existing) => existing,
+                    None => {
+                        let fresh = self.fresh_local();
+                        self.current_scope_mut().insert(&name.name, fresh);
+                        fresh
+                    }
+                };
                 self.bindings.insert(name.span, Binding::Local(id));
             }
             Stmt::Return { value, .. } => {

@@ -13,3 +13,7 @@ corvid-types = { workspace = true }
 corvid-ir = { workspace = true }
 corvid-codegen-py = { workspace = true }
 anyhow = { workspace = true }
+ariadne = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3"

@@ -1,0 +1,9 @@
+name = "refund_bot_demo"
+version = "0.1.0"
+
+[llm]
+# No default model is set. Pick one explicitly via one of:
+#   - uncomment below
+#   - export CORVID_MODEL=claude-opus-4-6
+#   - pass `model=...` per call
+# default_model = "claude-opus-4-6"

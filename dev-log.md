@@ -147,6 +147,212 @@ Next: Phase 4 — Name resolution. Link every identifier use to its declaration;
 
 Next: Phase 5 — Type checker + effect checker. The killer feature. A dangerous tool call must be preceded by a matching `approve` in the same block, or the file fails to compile.
 
+---
+
+## Day 9 — Type checker + effect checker (Phase 5) 🎯
+
+**The killer feature is live.** A file that calls a dangerous tool without a matching `approve` no longer compiles.
+
+- Filled out `crates/corvid-types/` with `types.rs`, `errors.rs`, `checker.rs`.
+- `TypeError` carries a one-line `message()` and an optional `hint()` — every error suggests the fix. Example: `UnapprovedDangerousCall` hints `add \`approve IssueRefund(arg1, arg2)\` on the line before this call`.
+- `Type` enum: `Int | Float | String | Bool | Nothing | Struct(DefId) | Function{...} | List(T) | Unknown`. `Unknown` is load-bearing — it suppresses error cascades when we can't infer cleanly.
+- Effect algorithm: a flat `approvals` stack. On entering a block, save its length; on leaving, truncate back. Outer approvals are visible to inner blocks; inner approvals don't leak out.
+- Matching rule (locked with user): `approve IssueRefund(a, b)` authorizes subsequent `issue_refund(..., ...)` if `snake_case(label) == tool_name` **and** arity matches.
+- Added `Nothing` as a built-in type (was missing from resolver).
+- Added `SymbolTable::lookup_def` so the checker can turn named types into `Type::Struct(DefId)`.
+- Decisions made:
+  - No approval consumption in v0.1 — one approve authorizes N subsequent matching calls in the same scope. Simpler mental model; tightening comes later.
+  - Int widens to Float in assignments (standard numeric widening).
+  - `Unknown` propagates without producing secondary errors.
+  - Bare function reference (`x = get_order`) is an error — no first-class functions in v0.1.
+  - Type used as value (`x = String`) is an error with a specific hint.
+- **The two headline tests pass:**
+  - `refund_bot_typechecks_cleanly` — canonical program with `approve IssueRefund(...)` → zero errors.
+  - `refund_bot_without_approve_fails_to_compile` — same program minus the `approve` line → exactly one `UnapprovedDangerousCall` error whose hint says `add \`approve IssueRefund(...)\``.
+
+Running total across the workspace: **107 tests, all green** (3 AST + 75 syntax + 13 resolve + 16 types).
+
+Next: Phase 6 — IR lowering. Desugar and normalize the typed AST into an intermediate representation ready for codegen.
+
+---
+
+## Day 10 — IR lowering (Phase 6)
+
+- Filled out `crates/corvid-ir/` with `types.rs` (IR node types) and `lower.rs` (AST → IR transform).
+- IR types: `IrFile` holding imports, types, tools, prompts, agents. Parallel shape to AST but references are resolved (`DefId`/`LocalId` instead of idents), types are attached to every expression, and parse-time hacks are normalized away.
+- Normalizations performed:
+  - `Stmt::Expr(Ident("break"))` → `IrStmt::Break`. Same for `continue` and `pass`. The parser's sentinel hack ends at the IR boundary.
+  - `Stmt::Approve { action: Call(label, args) }` → `IrStmt::Approve { label: "IssueRefund", args: [...] }`. Codegen consumes this structured form directly.
+  - Every call is classified: `IrCallKind::Tool { def_id, effect }` / `Prompt { def_id }` / `Agent { def_id }` / `Unknown`. Codegen routes by this tag.
+- Noted for later: `SymbolTable` doesn't carry the full decl, so the tool-effect lookup in `lower_call` conservatively returns `Safe` and defers the truth to `IrTool.effect` (which the codegen should prefer). A future refactor can push effect into `DeclEntry`.
+- Tests: 6 tests green — simple agent lowering, break/continue/pass → dedicated variants, approve structure preserved with label + arity, tool call IR identifies the tool, full `refund_bot` produces the expected 1+4+2+1+1 declaration counts with the dangerous flag preserved.
+
+Running total across workspace: **113 tests green** (3 AST + 75 syntax + 13 resolve + 16 types + 6 ir).
+
+Next: Phase 7 — Python code generator. Walk `IrFile` and emit runnable `.py` to `target/py/`. The first phase users can actually *run*.
+
+---
+
+## Day 11 — Python codegen (Phase 7)
+
+- Filled out `crates/corvid-codegen-py/` with `emitter.rs` (indentation-aware string builder) and `codegen.rs` (IR → Python walker).
+- Generated Python structure:
+  - Preamble: `from corvid_runtime import tool_call, approve_gate, llm_call` + `@dataclass` import.
+  - User imports (`import python "X" as Y` → `import X as Y`; collapses `import X as X` to `import X`).
+  - `TOOLS` dict marking each tool's effect (`"safe"` / `"dangerous"`) and arity.
+  - `PROMPTS` dict with template + param names.
+  - `@dataclass`-decorated Python classes for each `type` decl.
+  - `async def` for each agent body.
+- Call dispatch: tools → `await tool_call("name", [args])`, prompts → `await llm_call("name", [args])`, agents → `await agent_name(args)`, imports/unknown → direct Python call.
+- `approve IssueRefund(a, b)` → `await approve_gate("IssueRefund", [a, b])`. The structured IR form makes this a one-line emission.
+- `break`/`continue`/`pass` become their Python equivalents directly.
+- Literals round-trip faithfully: floats always carry a decimal point, strings are escaped, `nothing` → `None`, `true/false` → `True/False`.
+- Binops wrap in parens to preserve precedence without tracking it at emit time.
+- Tests: 13/13 green. The canonical `refund_bot.cor` generates Python that:
+  - Declares `TOOLS` with `"issue_refund": {"effect": "dangerous"}`
+  - Produces 4 `@dataclass` definitions
+  - Emits `async def refund_bot(ticket):`
+  - Correctly orders `approve_gate(...)` BEFORE `tool_call("issue_refund", ...)`
+
+Running total: **126 tests green** across the workspace (3 AST + 75 syntax + 13 resolve + 16 types + 6 ir + 13 codegen).
+
+Next: Phase 8 — the `corvid_runtime` Python package. Implements `tool_call`, `approve_gate`, `llm_call`, a tool registry, and the actual LLM dispatch. This makes generated code *executable*.
+
+---
+
+## Day 12 — Python runtime (Phase 8)
+
+- Created `runtime/python/` with a proper `pyproject.toml` and the `corvid_runtime` package.
+- Modules:
+  - `core.py` — `tool_call`, re-exports `approve_gate` and `llm_call`, plus `run` / `run_sync` trace wrappers.
+  - `registry.py` — `@tool("name")` decorator, `register_tools` / `register_prompts` called from generated modules.
+  - `approvals.py` — interactive stdin prompt by default; programmatic `set_approver(fn)`; `CORVID_APPROVE_ALL=1` for CI.
+  - `llm.py` — adapter registry keyed by model name prefix. Claude adapter auto-registers under `claude-`. Renders prompt templates via `{name}` substitution.
+  - `config.py` — model resolution precedence: per-call → `CORVID_MODEL` env → `corvid.toml`. No hardcoded default.
+  - `tracing.py` — JSONL event emission to `target/trace/<run_id>.jsonl`. Silently swallows IO errors so tracing can't crash user code.
+  - `errors.py` — CorvidError hierarchy (NoModelConfigured, UnknownTool, UnknownPrompt, ApprovalDenied, etc.).
+  - `testing.py` — `mock_llm`, `mock_approve_all`, `reset` for tests.
+- Decisions locked (with user):
+  - **No default model.** Missing config → `NoModelConfigured` with a fix hint.
+  - **No default approver.** Interactive by default; programmatic via `set_approver`.
+  - Adapter-based LLM dispatch — v0.2 adds OpenAI, Google, Ollama as additional adapters.
+- Tests: 10/10 green with pytest-asyncio. Covers tool dispatch, missing impl, approval approve/deny paths, env-flag auto-approve, missing-model error, mock adapter, unknown prompt, and trace file creation + `run()` wrapper.
+- Package installed locally with `pip install -e '.[dev]'` — `pytest` passes cleanly.
+
+Phase 8 complete. Running total: **Rust — 126 tests, Python — 10 tests, all green.**
+
+Next: Phase 9 — wire the CLI so `corvid build refund_bot.cor` produces `target/py/refund_bot.py` on disk, and `corvid run refund_bot.cor` executes it end-to-end.
+
+---
+
+## Day 13 — CLI wiring (Phase 9) 🚀
+
+**The compiler is real.** `corvid check` / `build` / `run` / `new` all work.
+
+- `corvid-driver/src/lib.rs`: grew real implementations.
+  - `compile(source)` runs the full frontend and returns `CompileResult { python_source, diagnostics }`.
+  - `build_to_disk(path)` reads a file, compiles, and writes `target/py/<stem>.py`.
+  - `scaffold_new(name)` / `scaffold_new_in(parent, name)` create a project skeleton.
+  - `Diagnostic` type unifies errors from every phase (lex/parse/resolve/typecheck) so the CLI has one thing to render.
+  - `line_col_of` converts byte offsets to 1-based line/col for error display.
+- Output path convention: if the source is under `<project>/src/`, output goes to `<project>/target/py/<stem>.py`; otherwise to `<source_dir>/target/py/<stem>.py`.
+- Build returns a file ONLY when zero diagnostics — partial output is more confusing than nothing.
+- `corvid-cli/src/main.rs`: subcommands (`new`, `check`, `build`, `run`, `test`) now dispatch to the driver. `run` shells out to `python3 <file>`.
+- Exit codes: 0 = ok, 1 = compile errors, 2 = usage/IO errors.
+- Tests: 8 driver tests green (clean compile → Python, bad effect → diagnostic with hint, `build_to_disk` writes file, src-dir-aware output path, no file when errors, scaffold creates expected structure, scaffold rejects existing dir, line/col translation).
+- **End-to-end verified on the real binary:**
+  - `corvid check examples/refund_bot.cor` → `ok: examples/refund_bot.cor — no errors`
+  - `corvid build examples/refund_bot.cor` → writes `examples/target/py/refund_bot.py`
+  - The output parses cleanly with Python's `ast.parse` — it's syntactically valid Python.
+  - `corvid check /tmp/bad.cor` (missing approve) prints:
+    ```
+    /tmp/bad.cor:7:12: error: dangerous tool `issue_refund` called without a prior `approve`
+      help: add `approve IssueRefund(arg1, arg2)` on the line before this call
+    1 error(s) found.
+    ```
+    Exits 1.
+
+Running total: **Rust — 134 tests, Python — 10 tests, all green.** The full pipeline (source .cor → runnable .py) works from one `corvid build` command.
+
+Next: Phase 10 — polish. Line numbers in error output already done. Remaining polish: prettier multi-line error rendering via `ariadne`, docs, the 30-second demo video/GIF, launch-ready README.
+
+---
+
+## Day 14 — Polish (Phase 10) 🎨
+
+- **Ariadne rendering**: added `corvid-driver/src/render.rs`. CLI errors now look like Rust's compiler output — multi-line, caret-underlined, colored, with error codes (`E0101`, etc.) and help footers. Ariadne 0.4 API signature fixed on the first compile error.
+- **Error codes assigned** across the compiler (E0001-E0003 lex, E0051-E0054 parse, E0101 effect, E0201-E0208 type, E0301-E0302 resolve). Stable, documentable, searchable.
+- **New command**: `corvid doctor` — detects Python 3.11+, `corvid-runtime`, `anthropic` (optional), and `CORVID_MODEL`. Tells the user exactly what to install.
+- **README rewritten** for a real audience: the "what makes it different" section, the install flow (3 commands), the architecture diagram, and links to ARCHITECTURE.md / FEATURES.md / dev-log.md.
+- **Runnable demo project** at `examples/refund_bot_demo/` with a `corvid.toml`, a `.cor` source, a `tools.py` with mocked tool impls + a fake LLM adapter. `corvid build src/refund_bot.cor && python3 tools.py` prints `refund_bot decided: should_refund=True reason='...'`.
+- **Real bug caught by the demo**: codegen was emitting `TOOLS` and `PROMPTS` dicts but never calling `register_tools`/`register_prompts`. One-line fix; the integration now works end-to-end. (Good reminder: integration tests that run generated code surface bugs unit tests miss.)
+- Tests: **134 Rust + 10 Python, all green.**
+
+**The CLI user experience now:**
+
+```
+$ corvid check refund_bot.cor
+ok: refund_bot.cor — no errors
+
+$ corvid build refund_bot.cor
+built: refund_bot.cor -> target/py/refund_bot.py
+
+$ corvid check broken.cor
+[E0101] error: dangerous tool `issue_refund` called without a prior `approve`
+   ╭─[broken.cor:7:12]
+   │
+ 7 │     return issue_refund(id, amount)
+   │            ─────────┬──────────────
+   │                     ╰── this call needs prior approval
+   │
+   │ Help: add `approve IssueRefund(arg1, arg2)` on the line before this call
+───╯
+
+1 error(s) found.
+```
+
+**v0.1 is done.** The compiler parses, resolves, typechecks, lowers, codegens. The runtime dispatches tools, gates approvals, calls LLM adapters, writes traces. The CLI scaffolds, checks, builds, runs. The demo runs offline in 2 commands.
+
+What's left before a real launch: a domain + install script, a short demo GIF, and a blog post. Those are promotion, not product. The product works.
+
+---
+
+## Day 15 — Phase 11 first slice: interpreter foundation
+
+Hard way, no shortcuts. Started the VM crate. Two real bugs surfaced during the first test run — fixed each at its root rather than patching the test.
+
+**New crate `corvid-vm`:**
+
+- `value.rs` — `Value` enum (Int, Float, String via `Arc<str>`, Bool, Nothing, Struct, List). `StructValue` holds `type_id + type_name + fields`. `PartialEq` implements Corvid's `==` semantics (Int-Float cross-compare, structural struct equality).
+- `env.rs` — `Env` maps `LocalId` → `Value`. One flat scope per function body (matches resolver's current model).
+- `errors.rs` — `InterpError` with kinds for UndefinedLocal, TypeMismatch, UnknownField, Arithmetic, IndexOutOfBounds, NotImplemented, MissingReturn, ApprovalDenied, DispatchFailed. Every one carries a span.
+- `interp.rs` — tree-walking interpreter. Evaluates literals, locals, binops, unops, field access, index, list, if/else, for (over lists and strings), break/continue/pass, let bindings, return, expression statements. Arithmetic uses `checked_*` for Int overflow; float follows IEEE 754. String `+` concatenates.
+- Tool/prompt/agent calls and `approve` return `NotImplemented` — the next Phase-11 slice wires them to `corvid-runtime`.
+
+**Bugs caught by the tests (honest fixes, not patched-over):**
+
+1. **Resolver: `x = expr` was creating a fresh `LocalId` every time.** In a loop body, `total = total + x` read the *outer* binding and wrote to a *new* one, so accumulators never accumulated. Fixed `corvid-resolve` to reuse the existing `LocalId` when the name is already bound in the current function's scope. Added `reassignment_reuses_same_local` test in `corvid-resolve`.
+2. **Typechecker rejected `String + String`.** But the obvious user expectation (and the interpreter's impl) was concatenation. Updated `check_binop` to special-case `Add`: `(String, String) → String`. `Sub/Mul/Div/Mod` still numeric-only. Added two tests: `string_plus_string_is_concatenation` and `string_plus_int_still_errors`.
+
+**Belt-and-braces test:**
+
+`if_non_bool_condition_is_defensive_runtime_error` constructs `IrFile` by hand (bypassing the typechecker) and asserts the interpreter's defensive branch produces a `TypeMismatch` instead of panicking. Hard way: test the dead-in-practice code path, don't just delete the test.
+
+**Test counts:**
+
+- Added 25 new tests in this slice (22 VM + 1 resolve + 2 types).
+- Total: **Rust 159 + Python 10 = 169 green.**
+- Canonical `corvid check examples/refund_bot.cor` still clean.
+
+**Next Phase-11 slice:** wire the native runtime. Tool dispatch in Rust, native HTTP via `reqwest`, Anthropic adapter, approval flow, tracing. Then `corvid run` invokes the interpreter instead of shelling to `python3`.
+
+
+
+
+
+
+
+
 
 
 

@@ -20,6 +20,22 @@ This is the one thing Python + Pydantic AI structurally cannot provide.
 
 ---
 
+## 1a. The v1.0 product
+
+**What users get at v1.0:**
+
+- **Standalone.** A single native binary. No Python, no other runtime, nothing else to install.
+- **Natively fast.** Source code is compiled ahead-of-time to machine code via Cranelift. Non-LLM code runs at roughly Rust speed.
+- **AI-native.** The language features (`agent`, `tool`, `prompt`, `approve`, `dangerous`) are built into the compiler, not bolted on as libraries.
+- **Python interop on demand.** Users who need a Python library write `import python "pandas" as pd` and the runtime loads CPython via a lazy FFI bridge. Users who don't write that never touch Python.
+
+**What is NOT v1.0:**
+
+- The Python-transpile backend from v0.1 remains in the repo as `--target=python` for users who want to ship as Python. It is not the default, not the marketed experience, and not v1.0.
+- The tree-walking interpreter is an internal reference implementation (dev tier + compiler oracle). Users do not normally invoke it directly.
+
+---
+
 ## 2. Naming and conventions
 
 - Language name: **Corvid**
@@ -56,42 +72,53 @@ my_project/
 
 ```
 corvid/
-├── Cargo.toml              # workspace root
+├── Cargo.toml               # workspace root
 ├── ARCHITECTURE.md
 ├── FEATURES.md
+├── ROADMAP.md               # phase plan from v0.1 through v1.0
 ├── README.md
-├── dev-log.md              # weekly journal
+├── dev-log.md               # weekly journal
 │
 ├── crates/
-│   ├── corvid-syntax/      # lexer + parser (chumsky), emits AST
-│   ├── corvid-ast/         # AST types, shared across crates
-│   ├── corvid-resolve/     # name resolution, import handling
-│   ├── corvid-types/       # type system (effects, inference, checking)
-│   ├── corvid-ir/          # intermediate representation (post-typecheck)
-│   ├── corvid-codegen-py/  # Python emitter (v0.1 target)
-│   ├── corvid-codegen-wasm/# WASM emitter (v0.2+, stub now)
-│   ├── corvid-runtime/     # runtime glue: LLM calls, approvals, tracing
-│   ├── corvid-driver/      # orchestrates the full pipeline
-│   ├── corvid-cli/         # the `corvid` binary
-│   └── corvid-lsp/         # language server (v0.5+, stub now)
+│   ├── corvid-syntax/       # lexer + parser (chumsky), emits AST
+│   ├── corvid-ast/          # AST types, shared across crates
+│   ├── corvid-resolve/      # name resolution, import handling
+│   ├── corvid-types/        # type system (effects, inference, checking)
+│   ├── corvid-ir/           # intermediate representation (post-typecheck)
+│   ├── corvid-vm/           # tree-walking interpreter (dev tier + oracle)
+│   ├── corvid-codegen-cl/   # Cranelift native codegen (v1.0 default)
+│   ├── corvid-codegen-py/   # Python emitter (opt-in --target=python)
+│   ├── corvid-codegen-wasm/ # WASM emitter (v0.6+, stub)
+│   ├── corvid-runtime/      # native runtime: HTTP, adapters, tools,
+│   │                        # approvals, tracing, PyO3 bridge
+│   ├── corvid-driver/       # orchestrates the full pipeline
+│   ├── corvid-cli/          # the `corvid` binary
+│   └── corvid-lsp/          # language server (v0.6+, stub)
+│
+├── runtime/
+│   └── python/              # legacy Python runtime for --target=python
 │
 ├── examples/
 │   ├── hello.cor
 │   ├── refund_bot.cor
-│   └── approve_demo.cor
+│   ├── approve_demo.cor
+│   └── refund_bot_demo/     # runnable offline demo
 │
 ├── tests/
 │   ├── parse/
 │   ├── typecheck/
 │   ├── codegen/
+│   ├── vm/
 │   └── e2e/
 │
-└── docs/                   # user-facing docs
+└── docs/                    # user-facing docs
 ```
 
 ---
 
 ## 4. Compiler pipeline
+
+The frontend is shared; the backend splits into three tiers. The interpreter and native compiler share IR and must produce semantically identical results (enforced by `cargo test`).
 
 ```
 source.cor
@@ -131,20 +158,29 @@ source.cor
          ▼
         IR
          │
-         ▼
-┌──────────────────┐
-│  Code gen        │  Python (v0.1), WASM (v0.2), native (v0.3)
-└────────┬─────────┘
-         ▼
-    target/py/*.py
-         │
-         ▼
-┌──────────────────┐
-│  Runtime         │  corvid-runtime — LLM calls, approvals, traces
-└──────────────────┘
+         ├──────────────┬──────────────────────┐
+         ▼              ▼                      ▼
+┌──────────────┐ ┌────────────────┐  ┌────────────────────┐
+│ Interpreter  │ │ Native codegen │  │ Python codegen     │
+│ corvid-vm    │ │ Cranelift      │  │ corvid-codegen-py  │
+│ (dev + oracle│ │ (v1.0 default) │  │ (opt-in --target=  │
+│  for tests)  │ │                │  │   python)          │
+└──────┬───────┘ └───────┬────────┘  └─────────┬──────────┘
+       ▼                 ▼                      ▼
+   values on-     target/bin/<name>        target/py/<name>.py
+   the-fly        (native binary)          (Python file)
+                        │                         │
+                        └────── both use ─────────┘
+                                   ▼
+                           ┌──────────────────┐
+                           │ corvid-runtime   │
+                           │ HTTP, adapters,  │
+                           │ tool registry,   │
+                           │ approvals, trace │
+                           └──────────────────┘
 ```
 
-Each arrow is a crate boundary. Each stage is independently testable.
+Each arrow is a crate boundary. Each stage is independently testable. The two production backends (native + Python) both call into `corvid-runtime`, which is implemented in Rust with optional PyO3 bridges.
 
 ---
 
@@ -229,33 +265,36 @@ This rule is the soul of the language. Everything else is supporting infrastruct
 
 ## 6. Runtime architecture
 
-The `corvid-runtime` crate provides:
+The `corvid-runtime` crate is the **native runtime**. It is implemented in Rust and provides the support libraries both backends (interpreter + Cranelift) call into.
 
-- **LLM abstraction** — unified interface over Anthropic, OpenAI, Google, local models.
-- **Tool execution** — async dispatch with effect gating.
-- **Approval flow** — suspension, state persistence, webhook/CLI resume.
-- **Trace emission** — structured JSONL events (`target/trace/*.jsonl`).
-- **Memory primitives** — `session`, `memory` backed by SQLite (v0.2).
+It exposes:
 
-### Generated Python structure
+- **LLM adapter registry** — prefix-keyed dispatch over Anthropic / OpenAI / Google / local models. Built-in Rust adapters; each speaks HTTP+JSON directly via `reqwest`.
+- **Tool dispatch** — registered natively (Rust `#[tool]` proc macro) or via `.cor` bodies; effect-tagged so the runtime can refuse bypasses at runtime too.
+- **Approval flow** — `approve_gate` blocks a running agent until a response arrives via stdin prompt, programmatic hook, or (v0.3+) webhook resumption.
+- **Trace emission** — structured JSONL events (`target/trace/*.jsonl`) written without blocking agent execution.
+- **Memory primitives** — `session`, `memory` backed by SQLite (v0.3+).
+- **Python FFI** — an optional PyO3 bridge is compiled in. Cold on startup; lazy-loads CPython only if the program contains `import python "..."`. Users without Python imports never pay for Python.
+
+### Legacy Python runtime
+
+For users building on `--target=python`, a parallel `corvid-runtime` Python package lives under `runtime/python/`. It mirrors the Rust runtime's public surface but implements everything in Python. Kept in sync with the Rust runtime's public API.
+
+### Generated native structure
+
+Native codegen via Cranelift produces a statically-linked binary under `target/bin/<name>`. The binary embeds the runtime library; no dynamic linking required for the runtime.
+
+### Generated Python structure (opt-in)
 
 ```python
-# target/py/refund_bot.py (generated from refund_bot.cor)
-from corvid_runtime import llm, tool_call, approve_gate, trace
+# target/py/refund_bot.py — only produced when `corvid build --target=python`
+from corvid_runtime import tool_call, approve_gate, llm_call, register_tools, register_prompts
 
 async def refund_bot(ticket):
-    with trace.run("refund_bot") as t:
-        order = await tool_call(
-            "get_order",
-            effect="pure",
-            args={"id": ticket.order_id},
-        )
-        ...
-        await approve_gate(
-            action=IssueRefund(order.id, order.amount),
-            effect="irreversible",
-        )
-        await tool_call("issue_refund", ...)
+    order = await tool_call("get_order", [ticket.order_id])
+    ...
+    await approve_gate("IssueRefund", [order.id, order.amount])
+    await tool_call("issue_refund", [order.id, order.amount])
 ```
 
 Generated files are plain Python. Pytest, mypy, ruff, and IDEs treat them as regular modules.

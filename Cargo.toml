@@ -6,6 +6,7 @@ members = [
     "crates/corvid-resolve",
     "crates/corvid-types",
     "crates/corvid-ir",
+    "crates/corvid-vm",
     "crates/corvid-codegen-py",
     "crates/corvid-codegen-wasm",
     "crates/corvid-runtime",
@@ -49,7 +50,9 @@ corvid-ast      = { path = "crates/corvid-ast" }
 corvid-syntax   = { path = "crates/corvid-syntax" }
 corvid-resolve  = { path = "crates/corvid-resolve" }
 corvid-types    = { path = "crates/corvid-types" }
+
 corvid-ir       = { path = "crates/corvid-ir" }
+corvid-vm       = { path = "crates/corvid-vm" }
 corvid-codegen-py = { path = "crates/corvid-codegen-py" }
 corvid-runtime  = { path = "crates/corvid-runtime" }
 corvid-driver   = { path = "crates/corvid-driver" }

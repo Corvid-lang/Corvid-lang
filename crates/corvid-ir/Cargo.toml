@@ -7,3 +7,8 @@ description = "Intermediate representation for the Corvid compiler."
 
 [dependencies]
 corvid-ast = { workspace = true }
+corvid-resolve = { workspace = true }
+corvid-types = { workspace = true }
+
+[dev-dependencies]
+corvid-syntax = { workspace = true }

@@ -1,15 +1,15 @@
 [package]
-name = "corvid-codegen-py"
+name = "corvid-vm"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Python code generator for the Corvid compiler."
+description = "Tree-walking interpreter for the Corvid IR. Dev tier + correctness oracle for the native compiler."
 
 [dependencies]
-corvid-ir = { workspace = true }
 corvid-ast = { workspace = true }
+corvid-ir = { workspace = true }
+corvid-resolve = { workspace = true }
 corvid-types = { workspace = true }
 
 [dev-dependencies]
 corvid-syntax = { workspace = true }
-corvid-resolve = { workspace = true }

@@ -1,6 +1,21 @@
 # Corvid — Features & Roadmap
 
 > The feature roadmap from v0.1 through v1.0. Every feature on this list has earned its place. Adding a feature requires justification in `dev-log.md`; removing one requires archiving the rationale.
+>
+> See also: [`ROADMAP.md`](./ROADMAP.md) for the phase-by-phase build plan.
+
+---
+
+## v1.0 product definition
+
+**What users will download at v1.0:**
+
+- A single native binary (`corvid`).
+- The compiler emits native machine code via Cranelift.
+- Generated programs link a Rust-native runtime and run without any Python.
+- Python FFI is available via `import python "..."`, loaded lazily only when used.
+
+v1.0 is not an "evolved v0.1." The Python-transpile backend we shipped internally in v0.1 stays as `--target=python` for users who want it, but the default, the marketing, and the "this is Corvid" experience is the standalone native compiler.
 
 ---
 
@@ -15,138 +30,95 @@ For every feature, ask: **"If I remove this, does the language still have a reas
 
 ---
 
-## v0.1 — Foundation (target: 4–6 months)
+## v0.1 — Foundation ✅ COMPLETE (Python transpile backend)
 
-The minimum that makes Corvid real. Effect types are the killer demo.
+Internal milestone. Full frontend + Python codegen. All in.
 
-### Language features
+1. Typed prompts as first-class declarations
+2. Tools with `dangerous` effect annotation
+3. Compiler-enforced approval for dangerous effects
+4. Agents as top-level declarations
+5. Structured output with typed returns
+6. Python codegen (opt-in at v1.0 via `--target=python`)
+7. CLI (`corvid new`, `check`, `build`, `run`, `doctor`)
+8. Ariadne-quality error messages with stable error codes
 
-1. **Typed prompts as first-class declarations**
-   ```
-   prompt classify(t: Ticket) -> Category {
-     "Classify this ticket into one category."
-   }
-   ```
-   The compiler generates the JSON schema, handles the LLM call, parses the output. No `ai.decide(ReturnType, ...)` — it's syntax.
-
-2. **Tools with `dangerous` annotation**
-   ```
-   tool get_order(id: String) -> Order
-   tool issue_refund(id: String, amt: Float) -> Receipt dangerous
-   ```
-   Two effect classes: safe (the default) and `dangerous`. Additional classes may arrive later (v0.2+).
-
-3. **Compiler-enforced approval for dangerous effects**
-   ```
-   # does not compile
-   r = issue_refund("ord_42", 500.0)
-
-   # compiles
-   approve IssueRefund("ord_42", 500.0)
-   r = issue_refund("ord_42", 500.0)
-   ```
-   **This is the v0.1 demo.** The language refuses to compile unsafe agent code.
-
-4. **Agents as top-level declarations**
-   ```
-   agent refund_bot(ticket: Ticket) -> Decision {
-     let order = get_order(ticket.order_id)
-     let d = decide_refund(ticket, order)
-     if d.refund {
-       approve(IssueRefund(order.id, order.amount))
-       issue_refund(order.id, order.amount)
-     }
-     return d
-   }
-   ```
-
-5. **Structured output with typed returns**
-   Return types are Pydantic-shaped structs. The compiler emits JSON schemas. The runtime validates.
-
-### Infrastructure
-
-6. **Python interop**
-   ```
-   import python "anthropic" as anthropic
-   import python "pandas" as pd
-   ```
-   Users get the entire Python ecosystem from day one.
-
-7. **CLI runner**
-   ```
-   corvid new my_project
-   corvid check
-   corvid build
-   corvid run src/refund_bot.cor
-   ```
-
-### Polish (non-negotiable)
-
-- One-command install (`curl | sh`).
-- World-class compiler error messages (`ariadne`) with fix-it hints.
-- A 5-minute tutorial that works flawlessly.
-- Side-by-side Python vs Corvid landing page demo.
+Status: 134 Rust + 10 Python tests green. Canonical `refund_bot.cor` compiles, runs, enforces approve-before-dangerous at compile time.
 
 ---
 
-## v0.2 — Retention (target: 8–10 months)
+## v0.2 — Standalone interpreter (in progress)
 
-Features that turn triers into users.
+Replaces the Python-shell-out runtime with a native Rust runtime. Users still don't see this publicly — it's the scaffolding v1.0 is built on.
 
-1. **Testing primitives** — `mock`, `fixture`, `assert_behavior` as language features.
-   ```
-   test refund_bot_flags_large_refunds {
-     mock decide_refund returns RefundDecision(refund: true, amount: 500)
-     let r = refund_bot(fake_ticket())
-     assert r.needs_approval
-   }
-   ```
-2. **Multi-provider LLM abstraction** — OpenAI, Google, local models via one interface.
+1. **Tree-walking interpreter** — `corvid-vm` crate walks the IR, executes directly.
+2. **Native HTTP + Anthropic adapter** — `reqwest` + JSON, no Python needed for LLM calls.
+3. **Native tool registry** — tools registered from Rust; `.cor`-defined tools arrive in v0.3.
+4. **Native approval flow** — stdin prompt + programmatic hook, all in Rust.
+5. **Native tracing** — JSONL writer in Rust.
+6. **CLI: `corvid run` executes natively** — Python is no longer on the critical path.
+
+Output: users running `corvid run refund_bot.cor` don't need Python installed. Python codegen remains for `--target=python`.
+
+---
+
+## v0.3 — Language-feature parity + durability
+
+Features that turn triers into production users.
+
+1. **Testing primitives** — `test`, `mock`, `fixture` as language features.
+2. **Multi-provider LLM** — OpenAI, Google, Ollama adapters alongside Anthropic.
 3. **Memory primitives** — `session`, `memory` as typed, SQLite-backed stores.
 4. **Error handling** — typed `Result` / `Option`; retry policies as syntax.
-5. **Human-in-the-loop beyond `approve`** — `ask(...)` for clarifications, `choose(...)` for options.
+5. **HITL beyond `approve`** — `ask(...)` for clarifications, `choose(...)` for options.
+6. **Python FFI via PyO3** — `import python "lib"` works from the interpreter.
 
 ---
 
-## v0.3 — Differentiation (target: 12–15 months)
+## v0.4 — Differentiation (the moat)
 
-The moat features — hard to copy without a compiler.
+Hard-to-copy features that a compiler enables and a library can't.
 
 1. **Uncertainty types** — `T?confidence`; compiler forces low-confidence handling.
-   ```
-   let category: Category?confidence = classify(ticket)
-   if confidence(category) < 0.8 {
-     return escalate(ticket)
-   }
-   ```
 2. **Cost budgets** — compile-time-checked spend caps.
-   ```
-   agent triage(t: Ticket) -> Action @budget($0.10) { ... }
-   ```
 3. **Streaming as first-class type** — `Stream<Token>`, `Stream<T>` for partial structured outputs.
-4. **Prompt-aware compilation** — compiler deduplicates prompts, caches schemas, emits TOON-compressed payloads.
+4. **Prompt-aware compilation** — prompt deduplication, schema caching, TOON-compressed payloads.
 5. **Replay as a language concept** — every run replayable by construction; `corvid replay` as a primitive.
 
 ---
 
-## v0.4 — Scale (target: 18–24 months)
+## v0.5 — Cranelift native backend
 
-Features for serious production use.
+The switchover. v1.0's performance story materializes here.
 
-1. **Multi-agent composition** — agents calling agents with automatic trace merging.
-2. **Durable execution** — crash-safe by default; no Temporal needed.
-3. **Observability built in** — tracing, cost analytics, per-agent dashboards in `target/trace/`.
-4. **Policy system** — declarative rate limits, auth, auditing.
-5. **Hot reload** — edit agent; in-flight runs keep version; new runs use new code.
+1. **Cranelift integration** — `corvid-codegen-cl` crate, IR → Cranelift IR → native.
+2. **Native runtime linkage** — compiled binaries statically embed `corvid-runtime`.
+3. **AOT compile path** — `corvid build refund_bot.cor` produces `target/bin/refund_bot`.
+4. **Compiler-vs-interpreter parity tests** — every fixture validated on both tiers.
+5. **Benchmarks** — non-LLM code within 2× of hand-written Rust for the demo suite.
+6. **Async runtime integration** — Tokio linked in; `async` native at the machine-code level.
 
 ---
 
-## v0.5 — Ecosystem (target: year 2, Q3–Q4)
+## v0.6 — Scale
+
+Features for serious multi-agent production systems.
+
+1. **Multi-agent composition** — agents calling agents with automatic trace merging.
+2. **Durable execution** — crash-safe by default; no Temporal needed.
+3. **Observability built in** — tracing, cost analytics, per-agent dashboards.
+4. **Policy system** — declarative rate limits, auth, auditing.
+5. **Hot reload** — edit agent; in-flight runs keep version; new runs use new code.
+6. **WASM target** — `corvid-codegen-wasm` reads the same IR; runs in browsers, Deno, edge.
+
+---
+
+## v0.7 — Ecosystem
 
 What makes a language a movement.
 
 1. **Package manager** — `corvid add <package>`. Study Cargo; copy what works.
-2. **IDE support** — LSP server, VS Code extension, syntax highlighting, inline trace viewer.
+2. **IDE support** — LSP server, VS Code extension, inline trace viewer.
 3. **Standard library** — common agent patterns (RAG, tool-use, planning) as stdlib.
 4. **Eval framework as language feature**
    ```
@@ -158,15 +130,15 @@ What makes a language a movement.
 
 ---
 
-## v1.0 — Launch (target: year 3)
+## v1.0 — Launch
 
-Native runtime, stable API, production-ready.
+Stable API, documented, production-ready.
 
-1. **Native runtime via Cranelift** — stop transpiling to Python for production code.
-2. **WASM target** — browser, Node, Deno, edge.
-3. **Stable language spec** — semver `1.0` guarantees, no breaking changes without major bump.
-4. **Full docs + tutorial + book**.
-5. **Public launch** — HN, conferences, keynote demo.
+1. **Stable language spec** — semver `1.0` guarantees; no breaking changes without major bump.
+2. **Full docs + tutorial + book**.
+3. **Installer** — `curl -fsSL corvid.dev/install.sh | sh` distributes the binary and sets up the environment.
+4. **Public launch** — HN, conferences, keynote demo.
+5. **Windows + Linux + macOS** binaries shipped through the installer.
 
 ---
 
@@ -175,7 +147,7 @@ Native runtime, stable API, production-ready.
 Not necessarily bad ideas, but not v1.0 scope:
 
 - Macros / metaprogramming
-- Custom effect definitions (beyond pure/compensable/irreversible)
+- Custom effect definitions (beyond `safe`/`dangerous`)
 - Dependent types
 - Linear / affine types
 - Formal verification hooks
