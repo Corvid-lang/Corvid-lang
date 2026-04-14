@@ -278,6 +278,8 @@ fn declare_runtime_funcs(
         literal_counter: std::cell::Cell::new(0),
         struct_destructors: HashMap::new(),
         ir_types: HashMap::new(),
+        ir_tools: HashMap::new(),
+        tool_wrapper_ids: std::cell::RefCell::new(HashMap::new()),
     })
 }
 
@@ -506,6 +508,15 @@ pub struct RuntimeFuncs {
     /// offsets, constructor arity checks, destructor lookup) without
     /// threading `&IrFile` through every call site.
     pub ir_types: HashMap<DefId, corvid_ir::IrType>,
+    /// Phase 14 — tool declarations, keyed by `DefId`. The codegen
+    /// needs to know the declared signature (param types, return type)
+    /// to emit a correctly-typed direct call to the `#[tool]` wrapper
+    /// symbol. Cloned in from the `IrFile` the same way `ir_types` is.
+    pub ir_tools: HashMap<DefId, corvid_ir::IrTool>,
+    /// Phase 14 — cache of imported `__corvid_tool_<name>` FuncIds so
+    /// repeated calls to the same tool re-use one declaration. First
+    /// sight declares; later sights re-use.
+    pub tool_wrapper_ids: std::cell::RefCell<HashMap<DefId, FuncId>>,
 }
 
 impl RuntimeFuncs {
@@ -636,6 +647,13 @@ pub fn lower_file(
     // field offsets and constructor arities without threading `&IrFile`.
     for ty in &ir.types {
         runtime.ir_types.insert(ty.id, ty.clone());
+    }
+
+    // Phase 14 — same pattern for tool declarations so the Cranelift
+    // `IrCallKind::Tool` lowering can look up param + return types and
+    // declare the matching `__corvid_tool_<name>` wrapper import.
+    for tool in &ir.tools {
+        runtime.ir_tools.insert(tool.id, tool.clone());
     }
 
     // Declare and define per-struct-type destructors for every user
@@ -1377,10 +1395,36 @@ fn lower_stmt(
             module,
             runtime,
         ),
-        IrStmt::Approve { span, .. } => Err(CodegenError::not_supported(
-            "`approve` in compiled code — Phase 14 adds it alongside the tool registry",
-            *span,
-        )),
+        IrStmt::Approve { args, .. } => {
+            // Phase 14: `approve` compiles to a no-op. The effect
+            // checker (Phase 5) statically verifies that every
+            // dangerous-tool call is preceded by a matching approve
+            // — that's Corvid's primary enforcement mechanism and
+            // it already runs before codegen. Runtime approve
+            // verification (belt-and-braces against malicious IR
+            // that bypasses the checker) lands in Phase 20 alongside
+            // the rest of the effect-row machinery — at that point
+            // approve gains a full runtime stack with typed args.
+            // Today we still lower the arg expressions so their side
+            // effects + refcount work happens (an approve with heap
+            // String args in its argument position must still
+            // release those Strings at end of scope), we just don't
+            // push anything runtime-side.
+            for a in args {
+                let v = lower_expr(
+                    builder,
+                    a,
+                    env,
+                    func_ids_by_def,
+                    module,
+                    runtime,
+                )?;
+                if is_refcounted_type(&a.ty) {
+                    emit_release(builder, module, runtime, v);
+                }
+            }
+            Ok(BlockOutcome::Normal)
+        }
         IrStmt::Pass { .. } => Ok(BlockOutcome::Normal),
         IrStmt::Break { span } => lower_break_or_continue(
             builder,
@@ -1524,51 +1568,125 @@ fn lower_expr(
                 }
                 Ok(result)
             }
-            IrCallKind::Tool { .. } => {
-                // Phase 13 narrow support: zero-arg tool returning Int.
-                // Phase 14 generalises to full JSON-arg tool dispatch
-                // with arbitrary return types.
-                if !args.is_empty() {
-                    return Err(CodegenError::not_supported(
+            IrCallKind::Tool { def_id, .. } => {
+                // Phase 14: emit a DIRECT typed call to the tool's
+                // `#[tool]`-generated wrapper symbol. No JSON, no
+                // dynamic dispatch — just a `call` instruction against
+                // a named import. Link-time symbol resolution catches
+                // missing tool implementations; Cranelift-level
+                // type-matching catches wrong-type mismatches at
+                // parity-harness or codegen time.
+                let tool = runtime.ir_tools.get(def_id).cloned().ok_or_else(|| {
+                    CodegenError::cranelift(
                         format!(
-                            "tool `{callee_name}` has {} argument(s) — Phase 13 supports only zero-arg tools; Phase 14 adds the generalised bridge",
+                            "tool `{callee_name}` metadata missing from ir_tools — declare-pass invariant violated"
+                        ),
+                        expr.span,
+                    )
+                })?;
+
+                // Arity cross-check — belt-and-braces vs. the
+                // typechecker's check that already ran.
+                if tool.params.len() != args.len() {
+                    return Err(CodegenError::cranelift(
+                        format!(
+                            "tool `{callee_name}` declared with {} param(s) but called with {}",
+                            tool.params.len(),
                             args.len()
                         ),
                         expr.span,
                     ));
                 }
-                if !matches!(expr.ty, Type::Int) {
-                    return Err(CodegenError::not_supported(
+
+                // Declare or re-use the wrapper-symbol import.
+                let wrapper_id = {
+                    let mut cache = runtime.tool_wrapper_ids.borrow_mut();
+                    if let Some(id) = cache.get(def_id) {
+                        *id
+                    } else {
+                        let mut sig = module.make_signature();
+                        for p in &tool.params {
+                            sig.params.push(AbiParam::new(cl_type_for(&p.ty, p.span)?));
+                        }
+                        if !matches!(tool.return_ty, Type::Nothing) {
+                            sig.returns
+                                .push(AbiParam::new(cl_type_for(&tool.return_ty, tool.span)?));
+                        }
+                        let symbol = tool_wrapper_symbol(&tool.name);
+                        let id = module
+                            .declare_function(&symbol, Linkage::Import, &sig)
+                            .map_err(|e| {
+                                CodegenError::cranelift(
+                                    format!(
+                                        "declare tool wrapper `{symbol}`: {e}"
+                                    ),
+                                    expr.span,
+                                )
+                            })?;
+                        cache.insert(*def_id, id);
+                        id
+                    }
+                };
+
+                // Tool-call ABI (Phase 14): refcount lifecycle matches
+                // the agent-call convention (slice 12f) — caller
+                // produces an Owned (+1) refcounted arg via the
+                // existing `lower_expr` path (use_var retains to
+                // convert Borrowed→Owned), the `#[tool]` wrapper
+                // reads bytes without touching refcount
+                // (`abi::FromCorvidAbi for String` is borrow-only so
+                // the wrapper neither retains nor releases), and
+                // after the call returns the caller releases its +1.
+                // Net effect: one retain + one release around the
+                // call = zero net refcount change, which is what a
+                // borrow-style FFI boundary should look like. Without
+                // the release, the +1 leaks.
+                let mut arg_vals = Vec::with_capacity(args.len());
+                let mut arg_refcounted: Vec<bool> = Vec::with_capacity(args.len());
+                for a in args {
+                    arg_vals.push(lower_expr(
+                        builder,
+                        a,
+                        env,
+                        func_ids_by_def,
+                        module,
+                        runtime,
+                    )?);
+                    arg_refcounted.push(is_refcounted_type(&a.ty));
+                }
+
+                let fref = module.declare_func_in_func(wrapper_id, builder.func);
+                let call = builder.ins().call(fref, &arg_vals);
+                let result_vals: Vec<ClValue> =
+                    builder.inst_results(call).iter().copied().collect();
+
+                // Release the +1 we put on each refcounted arg. For
+                // literals (refcount = i64::MIN sentinel) this is a
+                // no-op; for heap values it decrements the refcount
+                // we bumped pre-call.
+                for (v, is_ref) in arg_vals.iter().zip(arg_refcounted.iter()) {
+                    if *is_ref {
+                        emit_release(builder, module, runtime, *v);
+                    }
+                }
+
+                // Return-value unpacking. For Nothing-returning tools
+                // there's no result to hand back; synthesize a
+                // zero-Int so the expr-result contract stays uniform.
+                if matches!(expr.ty, Type::Nothing) {
+                    Ok(builder.ins().iconst(I64, 0))
+                } else if result_vals.len() == 1 {
+                    Ok(result_vals[0])
+                } else {
+                    Err(CodegenError::cranelift(
                         format!(
-                            "tool `{callee_name}` returns `{}` — Phase 13 supports only Int-returning tools; Phase 14 adds the generalised bridge",
+                            "tool `{callee_name}` wrapper returned {} values; expected 1 for type `{}`",
+                            result_vals.len(),
                             expr.ty.display_name()
                         ),
                         expr.span,
-                    ));
+                    ))
                 }
-                // Emit the tool name as a `.rodata` byte array and get
-                // a pointer to it. The bridge takes (ptr, len); no
-                // descriptor header needed, this is raw UTF-8 bytes.
-                let name_ptr = emit_cstr_bytes(
-                    builder, module, runtime, callee_name, expr.span,
-                )?;
-                let name_len = builder
-                    .ins()
-                    .iconst(I64, callee_name.as_bytes().len() as i64);
-                let fref = module
-                    .declare_func_in_func(runtime.tool_call_sync_int, builder.func);
-                let call = builder.ins().call(fref, &[name_ptr, name_len]);
-                let results = builder.inst_results(call);
-                if results.len() != 1 {
-                    return Err(CodegenError::cranelift(
-                        format!(
-                            "tool_call_sync_int returned {} values; expected 1",
-                            results.len()
-                        ),
-                        expr.span,
-                    ));
-                }
-                Ok(results[0])
             }
             IrCallKind::Prompt { .. } => Err(CodegenError::not_supported(
                 "prompt calls in compiled code — Phase 15 adds them",
@@ -2229,44 +2347,19 @@ fn lower_struct_constructor(
 /// Lower a String literal into a static `.rodata` block and return the
 /// descriptor pointer (the value the runtime expects).
 ///
-/// Emit raw UTF-8 bytes as a `.rodata` symbol and return a Cranelift
-/// `ClValue` that is the pointer to the first byte.
+/// Compute the linker-visible symbol of the `#[tool]`-generated
+/// wrapper for a given Corvid tool declaration name.
 ///
-/// Used by Phase 13's tool-call bridge lowering: the `corvid_tool_call_sync_int`
-/// signature takes `(name_ptr, name_len)` where `name_ptr` is a raw
-/// byte pointer (no descriptor header). Separate from `lower_string_literal`
-/// because Corvid Strings wrap the bytes in a refcount header + length
-/// descriptor; the bridge wants just the bytes + a separate length arg.
-fn emit_cstr_bytes(
-    builder: &mut FunctionBuilder,
-    module: &mut ObjectModule,
-    runtime: &RuntimeFuncs,
-    s: &str,
-    span: Span,
-) -> Result<ClValue, CodegenError> {
-    let id = runtime.next_literal_id();
-    let symbol_name = format!("corvid_cstr_{id}");
-    let bytes = s.as_bytes();
-    // Null-terminate for easy interop with any future C callers that
-    // might prefer strlen over an explicit length; bridge uses explicit
-    // length so the NUL is belt-and-braces.
-    let mut data = Vec::with_capacity(bytes.len() + 1);
-    data.extend_from_slice(bytes);
-    data.push(0);
-
-    let data_id = module
-        .declare_data(&symbol_name, Linkage::Local, false, false)
-        .map_err(|e| {
-            CodegenError::cranelift(format!("declare cstr `{symbol_name}`: {e}"), span)
-        })?;
-    let mut desc = DataDescription::new();
-    desc.set_align(1);
-    desc.define(data.into_boxed_slice());
-    module
-        .define_data(data_id, &desc)
-        .map_err(|e| CodegenError::cranelift(format!("define cstr `{symbol_name}`: {e}"), span))?;
-    let gv = module.declare_data_in_func(data_id, builder.func);
-    Ok(builder.ins().symbol_value(I64, gv))
+/// Must stay aligned with `corvid_macros::mangle_tool_name`. If the
+/// two drift, link errors point at `__corvid_tool_<one-name>` while
+/// the user's crate defines `__corvid_tool_<other-name>`. Mangling
+/// rule: every non-ASCII-alphanumeric character becomes `_`.
+fn tool_wrapper_symbol(tool_name: &str) -> String {
+    let mangled: String = tool_name
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
+        .collect();
+    format!("__corvid_tool_{mangled}")
 }
 
 /// Layout (single allocation):

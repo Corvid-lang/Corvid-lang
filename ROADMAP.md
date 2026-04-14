@@ -257,19 +257,26 @@ Ordering principles (applied without exception):
 
 **Driver-level user-visible behavior:** unchanged in Phase 13. `corvid run <file>` with a tool-using program still falls back to the interpreter via `native_ability::NotNativeReason::ToolCall` — Phase 14 updates the driver to allow tool-using programs to run natively once the proc-macro registry is wired. Phase 13's codegen supports tools; Phase 13's driver doesn't expose that support to users. Parity harness tests it directly.
 
-### Phase 14 — Native tool dispatch (~4–6 weeks)
+### Phase 14 ✅ — Native tool dispatch (Day 31)
 
-**Goal.** User-written tool implementations callable from compiled Corvid code.
+**Hard dep:** Phase 13 (native async runtime).
 
-**Hard dep:** Phase 13 (async — tools are fundamentally I/O-bound).
+- [x] `corvid-macros` proc-macro crate. `#[tool("name")]` on an `async fn` generates a typed-ABI `extern "C"` wrapper + an `inventory::submit!(ToolMetadata)` registration. The user's async fn remains callable as plain Rust for interpreter-tier use.
+- [x] **Typed C ABI — no JSON marshalling.** Committed to the extraordinary answer after auditing JSON as the lazy default: both sides of the tool-call boundary know the schemas at compile time, both sides are ours, no LLM tokens cross this boundary. JSON's compactness / universality don't apply; its costs (heap alloc per call, UTF-8 parsing, type erasure, opacity to the optimizer) do. Typed direct calls are what Rust FFI uses idiomatically — Corvid picks the same.
+- [x] `#[repr(C)]` ABI wrappers in `corvid-runtime::abi`: `CorvidString` (transparent over descriptor pointer), identity wrappers for `i64` / `f64` / `bool`. `FromCorvidAbi` / `IntoCorvidAbi` traits the macro calls at conversion sites.
+- [x] **Refcount conventions for the tool-call boundary:** caller uses the same Owned (+1) / release-after-call pattern as agent-to-agent calls; wrapper's `FromCorvidAbi for String` is borrow-only (reads bytes, never touches refcount). Net: one retain + one release around the call, matching a borrow-style FFI contract. Leak detector (`CORVID_DEBUG_ALLOC=1`) green on every fixture including String-in String-out round-trip.
+- [x] `inventory::collect!(ToolMetadata)` in `corvid-runtime`; `corvid_runtime_init` iterates at startup, records the count for diagnostics.
+- [x] Cranelift lowering for `IrCallKind::Tool`: emits a direct `call` to `__corvid_tool_<name>` with typed arguments. Link-time symbol resolution means missing `#[tool]` implementations produce linker errors naming the missing symbol — better than the Phase 13 runtime "tool not found" it replaces. Phase 13's narrow `corvid_tool_call_sync_int` bridge is deleted; the single typed-ABI path covers every signature.
+- [x] `IrStmt::Approve` lowers to a no-op in compiled code. Effect checker (Phase 5) already enforces `approve`-before-dangerous-tool-call at COMPILE time; runtime verification of approve tokens is Phase 20's moat-phase territory where custom effect rows make it meaningful. Arg expressions still lower (side effects + refcount).
+- [x] `corvid-test-tools` crate: staticlib with mock `#[tool]` implementations covering each scalar type + multi-arg. Parity harness links this into every fixture binary; env-var-based tool bodies let tests vary behavior without rebuilding.
+- [x] Driver gate lifted conditionally: `native_ability::NotNativeReason::ToolCall` still fires, but `run_with_target` treats it as "satisfied" when `--with-tools-lib <path>` is provided. Fall back to interpreter (auto) or error with a clear pointer-at-the-fix message (native) otherwise. `NotNativeReason::Approve` removed entirely — approve compiles fine.
+- [x] CLI: `corvid run <file> [--target=...] [--with-tools-lib <path>]`. Flag-validation checks the path exists. Cache key incorporates the tools-lib path so `--with-tools-lib A` vs `--with-tools-lib B` produce distinct cached binaries.
+- [x] 10 new parity fixtures exercising: Int arg, two Int args, String→Int, String→String roundtrip, approve-before-dangerous tool call. Every fixture leak-detector-audited. Total parity suite: **96 fixtures** (up from 85).
+- [x] Live smoke: `corvid run examples/tool_call.cor --with-tools-lib target/release/corvid_test_tools.lib` prints `42`. Without `--with-tools-lib`, auto falls back to interpreter with a clear "pass --with-tools-lib" notice. `--target=native` without the lib errors out.
 
-**Scope:**
-- Proc-macro `#[tool(name = "...")]` in a user Rust crate registers the implementation. **Registry mechanism: `inventory` crate.** Battle-tested (used by `rstest`, `iota`, many Rust frameworks), no linker-script tricks (unlike `linkme`), works uniformly across Linux / macOS / Windows / MSVC / GCC / Clang. Pre-phase chat revisits only if a concrete blocker surfaces.
-- `corvid build --target=native` accepts a `--with-tools <crate>` flag; the tools crate is linked into the binary. Generated code emits a dispatch call through the runtime's `ToolRegistry`.
-- `approve` tokens flow through at runtime. Runtime verifies the token matches the call site before the tool body runs. Effect checker continues to enforce that `approve` precedes the call statically; Phase 14 ensures the runtime check can't be bypassed.
-- Slice 12j's `NotNativeReason::ToolCall` is lifted — tool-using programs start running native.
+**Linker architecture note.** `corvid-runtime` now ships as both rlib + staticlib. Rust crates use the rlib; compiled Corvid binaries link exactly ONE "runtime-bearing" staticlib — either the standalone `corvid-runtime.lib` (tool-free programs) or the user's tools staticlib which transitively includes corvid-runtime via rlib dep (tool-using programs). Linking both produces `LNK2005` duplicate-symbol errors on every Rust std symbol because each staticlib bundles its own std. The conditional-link logic in `link.rs` handles the either/or.
 
-**Non-scope:** Prompt calls (Phase 15). Python-backed tools (Phase 30 completes that story).
+**Non-scope (deliberate):** Prompt calls — Phase 15. Runtime approve-token verification — Phase 20 (alongside effect rows + custom effects + cost budgets). Tool signatures with Struct/List args — Phase 15 (composite-type marshalling lands alongside prompts). Auto-build of tools crate via `corvid build` spawning cargo — Phase 33 launch polish. `corvid.toml` `[tools]` section — Phase 25 (package manager).
 
 ### Phase 15 — Native prompt dispatch (~3 weeks)
 

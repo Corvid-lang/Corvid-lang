@@ -29,6 +29,7 @@
 #![deny(unsafe_code)]
 #![allow(dead_code)]
 
+pub mod abi;
 pub mod approvals;
 pub mod env;
 pub mod errors;
@@ -38,6 +39,13 @@ pub mod redact;
 pub mod runtime;
 pub mod tools;
 pub mod tracing;
+
+// Re-exports consumed by `corvid-macros`-expanded code. The proc-macro
+// emits `::corvid_runtime::inventory::submit! { ... }` and
+// `::corvid_runtime::ToolMetadata { ... }`; users never write these
+// paths by hand.
+pub use abi::{registered_tool_count, CorvidString, ToolMetadata};
+pub use inventory;
 
 pub use approvals::{
     ApprovalDecision, ApprovalRequest, Approver, ProgrammaticApprover, StdinApprover,

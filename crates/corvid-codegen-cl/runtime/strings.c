@@ -105,3 +105,16 @@ void* corvid_string_from_cstr(const char* s) {
     long long len = (long long)strlen(s);
     return alloc_string(s, len);
 }
+
+/* Wrap an explicit-length byte slice as a refcounted Corvid String.
+ * Phase 14: consumed by the Rust-side `string_from_rust` helper in
+ * `corvid-runtime::ffi_bridge` when a `#[tool]` wrapper converts a
+ * returned Rust `String` back into a `CorvidString`. NUL bytes within
+ * the payload are preserved — this is not strcpy.
+ *
+ * Returns at refcount = 1; caller takes ownership.
+ */
+void* corvid_string_from_bytes(const char* bytes, long long length) {
+    if (length < 0) length = 0;
+    return alloc_string(bytes, length);
+}

@@ -16,8 +16,31 @@ use corvid_runtime::{ProgrammaticApprover, Runtime};
 use corvid_syntax::{lex, parse_file};
 use corvid_types::typecheck;
 use corvid_vm::Value;
+use std::path::PathBuf;
 use std::process::Command;
 use std::sync::Arc;
+
+/// Path to the `corvid-test-tools` staticlib. The parity harness links
+/// this into every compiled Corvid binary so `#[tool]`-declared mocks
+/// are available for fixtures that exercise tool calls (Phase 14
+/// onwards). Pure-computation fixtures don't call into it — the dead
+/// symbols are stripped by the linker.
+fn test_tools_lib_path() -> PathBuf {
+    // `CARGO_MANIFEST_DIR` is this crate's dir; walk up to workspace
+    // root, then into `target/release/` for the staticlib.
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let workspace_root = manifest_dir
+        .ancestors()
+        .nth(2)
+        .expect("workspace root")
+        .to_path_buf();
+    let name = if cfg!(windows) {
+        "corvid_test_tools.lib"
+    } else {
+        "libcorvid_test_tools.a"
+    };
+    workspace_root.join("target").join("release").join(name)
+}
 
 /// Run a compiled binary with the leak detector enabled. Returns
 /// (stdout, stderr, exit_status). Caller is responsible for verifying
@@ -32,28 +55,36 @@ fn run_with_leak_detector(bin: &std::path::Path) -> (String, String, std::proces
     (stdout, stderr, output.status)
 }
 
-/// Like `run_with_leak_detector`, but passes Phase 13's mock-tool env
-/// var so the compiled binary's `corvid_runtime_init` registers the
-/// named zero-arg Int-returning tools before the entry agent runs.
-/// `mocks` is a list of `(tool_name, int_value)` pairs.
+/// Run a binary with Phase 14 tool-return values set via env vars.
+/// Each entry maps a Corvid tool name (e.g. `"answer"`) to the Int
+/// value the test wants that tool to return. The helper translates
+/// the name to the env-var key the test-tools staticlib reads (e.g.
+/// `CORVID_TEST_TOOL_ANSWER`).
+///
+/// Matches the pattern `crates/corvid-test-tools/src/lib.rs` uses:
+/// each `#[tool]` there reads its value from `env_i64(...)` during
+/// dispatch, so per-fixture env vars tune behaviour without rebuilding.
 fn run_with_leak_detector_and_mocks(
     bin: &std::path::Path,
     mocks: &[(&str, i64)],
 ) -> (String, String, std::process::ExitStatus) {
-    let spec = mocks
-        .iter()
-        .map(|(name, value)| format!("{name}:{value}"))
-        .collect::<Vec<_>>()
-        .join(";");
-    let output = Command::new(bin)
-        .env("CORVID_DEBUG_ALLOC", "1")
-        .env("CORVID_TEST_MOCK_INT_TOOLS", &spec)
-        .env("CORVID_APPROVE_AUTO", "1")
-        .output()
-        .expect("run compiled binary");
+    let mut cmd = Command::new(bin);
+    cmd.env("CORVID_DEBUG_ALLOC", "1")
+        .env("CORVID_APPROVE_AUTO", "1");
+    for (name, value) in mocks {
+        let key = tool_env_var_name(name);
+        cmd.env(&key, value.to_string());
+    }
+    let output = cmd.output().expect("run compiled binary");
     let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
     let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
     (stdout, stderr, output.status)
+}
+
+/// Map a Corvid tool name to the env-var key `corvid-test-tools`
+/// reads. Convention: `CORVID_TEST_TOOL_<UPPER(name)>`.
+fn tool_env_var_name(tool_name: &str) -> String {
+    format!("CORVID_TEST_TOOL_{}", tool_name.to_ascii_uppercase())
 }
 
 /// Parse `ALLOCS=N` and `RELEASES=N` from the stderr output the shim
@@ -110,7 +141,7 @@ fn assert_parity(src: &str, expected: i64) {
     // --- Compiled binary tier ---
     let tmp = tempfile::tempdir().expect("tempdir");
     let bin_path = tmp.path().join("prog");
-    let produced = build_native_to_disk(&ir, "corvid_parity_test", &bin_path)
+    let produced = build_native_to_disk(&ir, "corvid_parity_test", &bin_path, &[test_tools_lib_path().as_path()])
         .expect("compile + link");
 
     let (stdout, stderr, status) = run_with_leak_detector(&produced);
@@ -157,7 +188,7 @@ fn assert_parity_bool(src: &str, expected: bool) {
 
     let tmp = tempfile::tempdir().expect("tempdir");
     let bin_path = tmp.path().join("prog");
-    let produced = build_native_to_disk(&ir, "corvid_parity_test", &bin_path)
+    let produced = build_native_to_disk(&ir, "corvid_parity_test", &bin_path, &[test_tools_lib_path().as_path()])
         .expect("compile + link");
     let (stdout, stderr, status) = run_with_leak_detector(&produced);
     assert!(
@@ -207,7 +238,7 @@ fn assert_parity_overflow(src: &str) {
 
     let tmp = tempfile::tempdir().expect("tempdir");
     let bin_path = tmp.path().join("prog");
-    let produced = build_native_to_disk(&ir, "corvid_parity_test", &bin_path)
+    let produced = build_native_to_disk(&ir, "corvid_parity_test", &bin_path, &[test_tools_lib_path().as_path()])
         .expect("compile + link");
     let output = Command::new(&produced).output().expect("run compiled binary");
     assert!(
@@ -747,7 +778,7 @@ fn struct_entry_return_is_blocked_with_clear_error() {
     );
     let tmp = tempfile::tempdir().unwrap();
     let bin_path = tmp.path().join("prog");
-    let err = build_native_to_disk(&ir, "corvid_parity_test", &bin_path).unwrap_err();
+    let err = build_native_to_disk(&ir, "corvid_parity_test", &bin_path, &[test_tools_lib_path().as_path()]).unwrap_err();
     match err.kind {
         CodegenErrorKind::NotSupported(ref msg) => {
             assert!(
@@ -1163,7 +1194,7 @@ fn compile_and_run(src: &str, argv: &[&str]) -> (String, String) {
     let tmp = tempfile::tempdir().expect("tempdir");
     let bin_path = tmp.path().join("prog");
     let produced =
-        build_native_to_disk(&ir, "corvid_parity_test", &bin_path).expect("compile + link");
+        build_native_to_disk(&ir, "corvid_parity_test", &bin_path, &[test_tools_lib_path().as_path()]).expect("compile + link");
     let (stdout, stderr, status) = run_compiled_with_args(&produced, argv);
     assert!(
         status.success(),
@@ -1323,7 +1354,7 @@ fn arity_mismatch_exits_nonzero() {
     let tmp = tempfile::tempdir().unwrap();
     let bin_path = tmp.path().join("prog");
     let produced =
-        build_native_to_disk(&ir, "corvid_parity_test", &bin_path).expect("compile + link");
+        build_native_to_disk(&ir, "corvid_parity_test", &bin_path, &[test_tools_lib_path().as_path()]).expect("compile + link");
     let output = Command::new(&produced).output().expect("run");
     assert!(
         !output.status.success(),
@@ -1346,7 +1377,7 @@ fn parse_error_on_bad_int_argv_exits_nonzero() {
     let tmp = tempfile::tempdir().unwrap();
     let bin_path = tmp.path().join("prog");
     let produced =
-        build_native_to_disk(&ir, "corvid_parity_test", &bin_path).expect("compile + link");
+        build_native_to_disk(&ir, "corvid_parity_test", &bin_path, &[test_tools_lib_path().as_path()]).expect("compile + link");
     let output = Command::new(&produced)
         .arg("notanint")
         .output()
@@ -1431,7 +1462,7 @@ fn assert_parity_with_mock_tools(src: &str, mocks: &[(&str, i64)], expected: i64
     // --- Compiled binary tier with mocks passed via env var ---
     let tmp = tempfile::tempdir().expect("tempdir");
     let bin_path = tmp.path().join("prog");
-    let produced = build_native_to_disk(&ir, "corvid_parity_test", &bin_path)
+    let produced = build_native_to_disk(&ir, "corvid_parity_test", &bin_path, &[test_tools_lib_path().as_path()])
         .expect("compile + link");
 
     let (stdout, stderr, status) = run_with_leak_detector_and_mocks(&produced, mocks);
@@ -1521,5 +1552,158 @@ fn tool_called_from_helper_agent() {
         "tool leaf() -> Int\n\nagent helper() -> Int:\n    return leaf() + 1\n\nagent main() -> Int:\n    return helper() * 10\n",
         &[("leaf", 4)],
         50,
+    );
+}
+
+// ============================================================
+// Phase 14 fixtures: typed-ABI dispatch across scalar arg types.
+// Each fixture uses a fixed-behaviour tool from `corvid-test-tools`
+// (no env var required — the tool's behaviour is baked in). The
+// interpreter tier registers a matching handler via
+// `RuntimeBuilder::tool`; the compiled tier picks up the typed
+// extern wrapper from the linked staticlib. Both tiers must agree.
+// ============================================================
+
+/// Helper for Phase 14 fixtures whose tools have fixed (non-env)
+/// behaviour. Caller supplies a closure that adds the tool handlers
+/// to the interpreter Runtime; the native binary uses `corvid-test-tools`'s
+/// baked-in implementations.
+#[track_caller]
+fn assert_parity_prebuilt_tools<F>(src: &str, expected: i64, register_handlers: F)
+where
+    F: FnOnce(corvid_runtime::RuntimeBuilder) -> corvid_runtime::RuntimeBuilder,
+{
+    let ir = ir_of(src);
+
+    let builder =
+        Runtime::builder().approver(Arc::new(ProgrammaticApprover::always_yes()));
+    let runtime = register_handlers(builder).build();
+    let interp_value = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(async { corvid_vm::run_agent(&ir, entry_name(&ir), vec![], &runtime).await })
+        .expect("interpreter run");
+    assert_eq!(
+        interp_value,
+        Value::Int(expected),
+        "interpreter mismatch for src:\n{src}"
+    );
+
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let bin_path = tmp.path().join("prog");
+    let produced =
+        build_native_to_disk(&ir, "corvid_parity_test", &bin_path, &[test_tools_lib_path().as_path()])
+            .expect("compile + link");
+    // No env vars needed — the test-tools `#[tool]` impls here have
+    // fixed behaviour. APPROVE_AUTO still on for safety.
+    let (stdout, stderr, status) = run_with_leak_detector_and_mocks(&produced, &[]);
+    assert!(
+        status.success(),
+        "compiled binary exited non-zero: status={:?} stdout={stdout} stderr={stderr} src=\n{src}"
+    , status.code());
+    let compiled: i64 = stdout
+        .trim()
+        .lines()
+        .next()
+        .unwrap_or("")
+        .parse()
+        .unwrap_or_else(|e| panic!("parse stdout `{stdout}` as i64: {e}"));
+    assert_eq!(
+        compiled, expected,
+        "compiled result mismatch for src:\n{src}\nstderr: {stderr}"
+    );
+    assert_no_leaks(&stderr, src);
+}
+
+#[test]
+fn tool_takes_int_arg() {
+    // Typed-ABI call: Int argument passed directly (no JSON marshalling).
+    assert_parity_prebuilt_tools(
+        "tool double_int(n: Int) -> Int\n\nagent main() -> Int:\n    return double_int(21)\n",
+        42,
+        |b| {
+            b.tool("double_int", |args| async move {
+                let n = args[0].as_i64().unwrap();
+                Ok(serde_json::json!(n * 2))
+            })
+        },
+    );
+}
+
+#[test]
+fn tool_takes_two_int_args() {
+    // Multi-arg typed-ABI call. Verifies argument ordering + ABI
+    // alignment at the boundary.
+    assert_parity_prebuilt_tools(
+        "tool add_two(a: Int, b: Int) -> Int\n\nagent main() -> Int:\n    return add_two(17, 25)\n",
+        42,
+        |b| {
+            b.tool("add_two", |args| async move {
+                let a = args[0].as_i64().unwrap();
+                let b = args[1].as_i64().unwrap();
+                Ok(serde_json::json!(a + b))
+            })
+        },
+    );
+}
+
+#[test]
+fn tool_takes_string_arg_returns_int() {
+    // CorvidString -> Rust `String` conversion on the arg; i64
+    // return. Exercises the refcount-aware String ABI wrapper.
+    assert_parity_prebuilt_tools(
+        "tool string_len(s: String) -> Int\n\nagent main() -> Int:\n    return string_len(\"hello world\")\n",
+        11,
+        |b| {
+            b.tool("string_len", |args| async move {
+                let s = args[0].as_str().unwrap();
+                Ok(serde_json::json!(s.chars().count() as i64))
+            })
+        },
+    );
+}
+
+#[test]
+fn approve_before_dangerous_tool_compiles_and_runs() {
+    // Phase 14: `approve` is a compile-time-checked no-op in
+    // generated code. The effect checker (Phase 5) verifies that
+    // every dangerous-tool call is preceded by a matching approve
+    // at COMPILE time; Phase 20's moat work adds runtime verification
+    // as additional defense-in-depth. Here we exercise the codegen
+    // path end-to-end: the approve statement lowers, the dangerous
+    // tool call dispatches through the typed ABI, and the result
+    // flows back.
+    assert_parity_prebuilt_tools(
+        "tool double_int(n: Int) -> Int dangerous\n\nagent main() -> Int:\n    approve DoubleInt(5)\n    return double_int(5)\n",
+        10,
+        |b| {
+            b.tool("double_int", |args| async move {
+                let n = args[0].as_i64().unwrap();
+                Ok(serde_json::json!(n * 2))
+            })
+        },
+    );
+}
+
+#[test]
+fn tool_roundtrips_string() {
+    // String in, String out — exercises both conversion directions
+    // through the typed ABI. Compares via `string_len` on the
+    // result to fit the Int-return parity helper contract.
+    assert_parity_prebuilt_tools(
+        "tool greet_string(name: String) -> String\ntool string_len(s: String) -> Int\n\nagent main() -> Int:\n    g = greet_string(\"world\")\n    return string_len(g)\n",
+        // "hi world" = 8 chars
+        8,
+        |b| {
+            b.tool("greet_string", |args| async move {
+                let name = args[0].as_str().unwrap();
+                Ok(serde_json::json!(format!("hi {name}")))
+            })
+            .tool("string_len", |args| async move {
+                let s = args[0].as_str().unwrap();
+                Ok(serde_json::json!(s.chars().count() as i64))
+            })
+        },
     );
 }

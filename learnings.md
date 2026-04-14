@@ -497,6 +497,68 @@ x = 5
 
 Compiles via the interpreter; raises `NotSupported` in the native compiler. The fix is either a shared iterator protocol or a String-specific lowering path — neither is on the immediate roadmap. Use `for x in list` when you're writing native-targeted code.
 
+### Writing tools in Rust
+
+Phase 14 ships a typed C-ABI for tool dispatch. Users write tool implementations in a Rust crate, decorate them with `#[tool("name")]`, build the crate as a staticlib, and pass the resulting `.lib` / `.a` to `corvid run --with-tools-lib <path>` or `corvid build --target=native --with-tools-lib <path>`.
+
+Example tool crate:
+
+```toml
+# Cargo.toml
+[package]
+name = "my_tools"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["staticlib"]
+
+[dependencies]
+corvid-runtime = { path = "../path/to/corvid/crates/corvid-runtime" }
+corvid-macros  = { path = "../path/to/corvid/crates/corvid-macros" }
+tokio          = { version = "1", features = ["full"] }
+```
+
+```rust
+// src/lib.rs
+use corvid_macros::tool;
+
+#[tool("get_order")]
+async fn get_order(id: String) -> String {
+    // call your DB, an HTTP API, anything
+    format!("order: {id}")
+}
+
+#[tool("issue_refund")]
+async fn issue_refund(order_id: String, amount: f64) -> i64 {
+    // returns the refund ID
+    42
+}
+```
+
+Build + run:
+
+```bash
+cd my_tools
+cargo build --release    # produces target/release/libmy_tools.a (or .lib on Windows)
+
+cd ../my_corvid_app
+corvid run main.cor --with-tools-lib ../my_tools/target/release/libmy_tools.a
+```
+
+Phase 14 supported tool signatures (scalars only; Struct/List defer to Phase 15):
+
+| Corvid type | Rust type   |
+|-------------|-------------|
+| `Int`       | `i64`       |
+| `Bool`      | `bool`      |
+| `Float`     | `f64`       |
+| `String`    | `String`    |
+
+Tools must be `async fn`. Wrap a sync body in `async { ... }` if you don't need to await anything. The tool function name in `#[tool("...")]` matches the Corvid `tool` declaration's name.
+
+Without `--with-tools-lib`, programs that call user tools fall back to the interpreter (auto) or error out (`--target=native`). The interpreter tier needs tool implementations registered separately via `Runtime::builder().tool(...)` in a runner binary — that pattern is unchanged.
+
 ### Performance — when native wins
 
 Phase 12 closed with published numbers (ARCHITECTURE.md §18). End-to-end wall-clock on three representative workloads:
@@ -573,7 +635,7 @@ Corvid is single-threaded today. Atomic refcount is cheap insurance for Phase 25
 
 Per [ROADMAP.md](ROADMAP.md):
 
-- **Phase 14** (next) — Native tool dispatch. Proc-macro `#[tool]` registry (`inventory`-backed). Phase 13 shipped the tokio runtime in compiled binaries + a narrow `() -> Int` bridge for testing; Phase 14 generalises it to user-declared tools of any signature, calling through the same runtime.
+- **Phase 15** (next) — Native prompt dispatch. Compiled code calls `prompt ... -> T:` declarations against live LLM adapters. Same typed-ABI model as tools (Phase 14), plus JSON-schema derivation from the prompt's declared return type.
 - **Slice 12k** — polish, benchmarks, stability guarantees.
 - **Phase 14** — proc-macro `#[tool]` registry, tool/prompt/approve in compiled code.
 - **Phase 16** — effect-tagged `import python "..."` (TypeScript `.d.ts` analog).
@@ -604,6 +666,7 @@ Each user-visible feature lands with a dev-log entry explaining the design decis
 | Native as the default tier for tool-free programs + compile cache | [Day 28](dev-log.md) |
 | Phase 12 close-out benchmarks: native is 2.7×–13.6× faster end-to-end | [Day 29](dev-log.md) |
 | Phase 13: tokio + corvid runtime embedded in compiled binaries; native tool dispatch (narrow case) | [Day 30](dev-log.md) |
+| Phase 14: `#[tool]` proc-macro + typed C ABI dispatch + `--with-tools-lib` | [Day 31](dev-log.md) |
 
 ---
 

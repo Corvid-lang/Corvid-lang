@@ -51,6 +51,13 @@ enum Command {
         /// / `interpreter` forces the interpreter tier.
         #[arg(long, default_value = "auto")]
         target: String,
+        /// Path to a compiled `#[tool]` staticlib (Phase 14). When
+        /// provided, tool-using programs compile + run natively; the
+        /// linker resolves `__corvid_tool_<name>` symbols against this
+        /// lib. Without it, tool-using programs fall back to the
+        /// interpreter (auto) or error out (native).
+        #[arg(long, value_name = "PATH")]
+        with_tools_lib: Option<PathBuf>,
     },
     /// Run tests (not yet implemented).
     Test,
@@ -65,7 +72,11 @@ fn main() -> ExitCode {
         Some(Command::New { name }) => cmd_new(&name),
         Some(Command::Check { file }) => cmd_check(&file),
         Some(Command::Build { file, target }) => cmd_build(&file, &target),
-        Some(Command::Run { file, target }) => cmd_run(&file, &target),
+        Some(Command::Run {
+            file,
+            target,
+            with_tools_lib,
+        }) => cmd_run(&file, &target, with_tools_lib.as_deref()),
         Some(Command::Test) => {
             eprintln!("`corvid test` is not implemented yet (v0.2).");
             Ok(0)
@@ -146,7 +157,7 @@ fn cmd_build(file: &Path, target: &str) -> Result<u8> {
     }
 }
 
-fn cmd_run(file: &Path, target: &str) -> Result<u8> {
+fn cmd_run(file: &Path, target: &str, tools_lib: Option<&Path>) -> Result<u8> {
     let rt = match target {
         "auto" => RunTarget::Auto,
         "native" => RunTarget::Native,
@@ -155,11 +166,20 @@ fn cmd_run(file: &Path, target: &str) -> Result<u8> {
             "unknown target `{other}`; valid: `auto` (default), `native`, `interpreter`"
         ),
     };
-    // Auto: native AOT tier when the IR is tool-free + scalar-boundary,
-    // interpreter otherwise (with a stderr notice). Native-required and
-    // interpreter-forced are the explicit overrides. See `RunTarget`
-    // docs in corvid-driver for the exact semantics.
-    run_with_target(file, rt)
+    if let Some(lib) = tools_lib {
+        if !lib.exists() {
+            anyhow::bail!(
+                "--with-tools-lib `{}` does not exist — build the tools crate first (`cargo build -p <your-tools-crate> --release`)",
+                lib.display()
+            );
+        }
+    }
+    // Auto: native AOT tier when the IR is tool-free + scalar-boundary
+    // OR (Phase 14) tool-using with a tools staticlib provided.
+    // Interpreter otherwise (with a stderr notice). Native-required
+    // and interpreter-forced are the explicit overrides. See
+    // `RunTarget` docs in corvid-driver for the exact semantics.
+    run_with_target(file, rt, tools_lib)
         .with_context(|| format!("failed to run `{}`", file.display()))
 }
 

@@ -11,6 +11,8 @@ members = [
     "crates/corvid-codegen-cl",
     "crates/corvid-codegen-wasm",
     "crates/corvid-runtime",
+    "crates/corvid-macros",
+    "crates/corvid-test-tools",
     "crates/corvid-driver",
     "crates/corvid-cli",
     "crates/corvid-lsp",
@@ -60,7 +62,17 @@ corvid-vm       = { path = "crates/corvid-vm" }
 corvid-codegen-py = { path = "crates/corvid-codegen-py" }
 corvid-codegen-cl = { path = "crates/corvid-codegen-cl" }
 corvid-runtime  = { path = "crates/corvid-runtime" }
+corvid-macros   = { path = "crates/corvid-macros" }
+corvid-test-tools = { path = "crates/corvid-test-tools" }
 corvid-driver   = { path = "crates/corvid-driver" }
+
+# Proc-macro deps used by corvid-macros.
+proc-macro2 = "1"
+quote       = "1"
+syn         = { version = "2", features = ["full", "extra-traits"] }
+
+# Compile-time tool registration used by corvid-runtime + tool crates.
+inventory   = "0.3"
 
 [profile.release]
 opt-level = 3

@@ -43,6 +43,33 @@ pub fn cache_dir_for(source_path: &Path) -> PathBuf {
     parent.join("target").join("cache").join("native")
 }
 
+/// Compute the cache key for a given source + tools-lib path.
+/// Wrapper over `cache_key` that folds the tools-lib path into the
+/// hash so `--with-tools-lib A` and `--with-tools-lib B` produce
+/// distinct cached binaries. Pass an empty string for the no-tools
+/// case (default for tool-free programs).
+pub fn cache_key_with_tools(source: &str, tools_lib_path: &str) -> String {
+    let base = cache_key(source);
+    if tools_lib_path.is_empty() {
+        return base;
+    }
+    // Extend the hash. Same FNV-1a state the base fold uses, reset
+    // then fed (base || "|tools=" || path). Separate domain prefix
+    // so a source that happens to end with the tools-lib path
+    // doesn't collide with the no-tools cache key.
+    let mut h: u64 = 0xcbf29ce484222325;
+    let feed = |bytes: &[u8], h: &mut u64| {
+        for b in bytes {
+            *h ^= *b as u64;
+            *h = h.wrapping_mul(0x100000001b3);
+        }
+    };
+    feed(base.as_bytes(), &mut h);
+    feed(b"|tools=", &mut h);
+    feed(tools_lib_path.as_bytes(), &mut h);
+    format!("{h:016x}")
+}
+
 /// Compute the cache key for a given source. Deterministic — same input
 /// bytes always produce the same 16-char hex string.
 pub fn cache_key(source: &str) -> String {

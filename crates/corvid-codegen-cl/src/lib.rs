@@ -58,10 +58,20 @@ pub fn compile_to_object(
 /// Compile + link `ir` into a native binary at `bin_path`. Picks the
 /// entry agent automatically: the sole agent, or the one named `main`
 /// if multiple are present.
+///
+/// `extra_tool_libs` holds additional `.lib` / `.a` paths the linker
+/// should pull in. Phase 14 uses this for the tool-implementation
+/// staticlib: `cargo build` produces `libuser_tools.a`, the path goes
+/// here, and the linker resolves `__corvid_tool_<name>` symbols
+/// emitted by `IrCallKind::Tool` codegen. An empty slice means no
+/// user-provided tools — tool-using programs will fail to link with
+/// an unresolved-symbol error, which is the correct outcome (Phase
+/// 14's driver gate surfaces a friendlier error earlier).
 pub fn build_native_to_disk(
     ir: &IrFile,
     module_name: &str,
     bin_path: &Path,
+    extra_tool_libs: &[&Path],
 ) -> Result<PathBuf, CodegenError> {
     let entry = pick_entry_agent(ir)?;
     // Slice 12i lifted parameter-less + Int/Bool-only restrictions for
@@ -113,7 +123,7 @@ pub fn build_native_to_disk(
         .map_err(|e| CodegenError::io(format!("tempdir: {e}")))?;
     let object_path = obj_dir.path().join(format!("{module_name}.o"));
     compile_to_object(ir, module_name, &object_path, Some(&entry.name))?;
-    link::link_binary(&object_path, &entry.name, &out_bin)?;
+    link::link_binary(&object_path, &entry.name, &out_bin, extra_tool_libs)?;
     Ok(out_bin)
 }
 

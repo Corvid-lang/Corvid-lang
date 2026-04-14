@@ -131,7 +131,8 @@ fn build_fixture(name: &str, src: &str) -> BenchFixture {
         .tempdir()
         .expect("tempdir");
     let out = tmp.path().join(name);
-    let binary = build_native_to_disk(&ir, name, &out).expect("native build");
+    // No tools crate linked — bench fixtures are pure-computation.
+    let binary = build_native_to_disk(&ir, name, &out, &[]).expect("native build");
     BenchFixture {
         ir,
         binary,

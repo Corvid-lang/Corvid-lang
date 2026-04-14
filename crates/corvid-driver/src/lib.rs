@@ -258,8 +258,15 @@ pub fn build_native_to_disk(source_path: &Path) -> anyhow::Result<NativeBuildOut
                 .unwrap_or("program")
                 .to_string();
             let requested = bin_dir.join(&stem);
-            let produced = corvid_codegen_cl::build_native_to_disk(&ir, &stem, &requested)
-                .map_err(|e| anyhow::anyhow!("native codegen failed: {e}"))?;
+            // Phase 14: production users pass `--with-tools-lib` to
+            // the CLI (slice 14f); this path is the one hit by that
+            // flow and by tool-free `corvid build --target=native`.
+            // Empty slice = no user tool crates linked — tool-using
+            // programs fail at link time with an unresolved-symbol
+            // error that surfaces the missing tool by name.
+            let produced =
+                corvid_codegen_cl::build_native_to_disk(&ir, &stem, &requested, &[])
+                    .map_err(|e| anyhow::anyhow!("native codegen failed: {e}"))?;
             Ok(NativeBuildOutput {
                 source,
                 output_path: Some(produced),
@@ -526,17 +533,25 @@ pub enum RunTarget {
 
 /// `corvid run <file>` with auto-dispatch — native tier where possible,
 /// interpreter fallback with an announced-on-stderr reason otherwise.
-/// Equivalent to `run_with_target(path, RunTarget::Auto)`.
+/// Equivalent to `run_with_target(path, RunTarget::Auto, None)`.
 pub fn run_native(path: &Path) -> Result<u8, anyhow::Error> {
-    run_with_target(path, RunTarget::Auto)
+    run_with_target(path, RunTarget::Auto, None)
 }
 
-/// `corvid run <file> [--target=...]` entry point. Dispatches by tier
-/// per `target`; see `RunTarget` for semantics.
+/// `corvid run <file> [--target=...] [--with-tools-lib <path>]`
+/// entry point. Dispatches by tier per `target`; when `tools_lib`
+/// is `Some`, tool-using programs gain access to the native tier
+/// (their tool implementations live in that staticlib — see Phase 14's
+/// `#[tool]` proc-macro). Without a tools_lib, tool calls still route
+/// to the interpreter fallback (auto) or hard-fail (native).
 ///
 /// Common setup (env, tracer config) lives in the per-tier helpers
 /// since only the interpreter needs the async runtime.
-pub fn run_with_target(path: &Path, target: RunTarget) -> Result<u8, anyhow::Error> {
+pub fn run_with_target(
+    path: &Path,
+    target: RunTarget,
+    tools_lib: Option<&Path>,
+) -> Result<u8, anyhow::Error> {
     // Env is loaded for both tiers: the native binary may read it via
     // libc `getenv` (the entry shim's leak-counter toggle does), and the
     // interpreter needs API keys from it.
@@ -560,9 +575,23 @@ pub fn run_with_target(path: &Path, target: RunTarget) -> Result<u8, anyhow::Err
         }
     };
 
+    // Tool calls are native-able only when the caller supplied a
+    // tools staticlib. The `native_ability` scan reports ToolCall
+    // unconditionally (it doesn't know about the lib); the dispatcher
+    // here decides whether to treat that reason as a blocker. Other
+    // reasons (python imports, prompt calls) still block until their
+    // respective phases.
+    let scan = native_ability(&ir);
+    let tools_satisfy = |r: &NotNativeReason| -> bool {
+        matches!(r, NotNativeReason::ToolCall { .. }) && tools_lib.is_some()
+    };
+
     match target {
-        RunTarget::Native => match native_ability(&ir) {
-            Ok(()) => run_via_native_tier(path, &source, &ir),
+        RunTarget::Native => match &scan {
+            Ok(()) => run_via_native_tier(path, &source, &ir, tools_lib),
+            Err(reason) if tools_satisfy(reason) => {
+                run_via_native_tier(path, &source, &ir, tools_lib)
+            }
             Err(reason) => {
                 eprintln!(
                     "error: `--target=native` refused: {reason}. Run without `--target` to fall back to the interpreter."
@@ -571,8 +600,11 @@ pub fn run_with_target(path: &Path, target: RunTarget) -> Result<u8, anyhow::Err
             }
         },
         RunTarget::Interpreter => run_via_interpreter_tier(path, &ir),
-        RunTarget::Auto => match native_ability(&ir) {
-            Ok(()) => run_via_native_tier(path, &source, &ir),
+        RunTarget::Auto => match &scan {
+            Ok(()) => run_via_native_tier(path, &source, &ir, tools_lib),
+            Err(reason) if tools_satisfy(reason) => {
+                run_via_native_tier(path, &source, &ir, tools_lib)
+            }
             Err(reason) => {
                 eprintln!("↻ running via interpreter: {reason}");
                 run_via_interpreter_tier(path, &ir)
@@ -635,8 +667,9 @@ fn run_via_native_tier(
     path: &Path,
     source: &str,
     ir: &IrFile,
+    tools_lib: Option<&Path>,
 ) -> Result<u8, anyhow::Error> {
-    let binary = build_or_get_cached_native(path, source, ir)?.path;
+    let binary = build_or_get_cached_native(path, source, ir, tools_lib)?.path;
     let status = std::process::Command::new(&binary)
         .status()
         .map_err(|e| anyhow::anyhow!("spawn native binary `{}`: {e}", binary.display()))?;
@@ -664,9 +697,19 @@ pub fn build_or_get_cached_native(
     path: &Path,
     source: &str,
     ir: &IrFile,
+    tools_lib: Option<&Path>,
 ) -> anyhow::Result<CachedNativeBinary> {
     let cache_dir = native_cache::cache_dir_for(path);
-    let key = native_cache::cache_key(source);
+    // Tools-lib path participates in the cache key: if the user
+    // swaps between `--with-tools-lib A` and `--with-tools-lib B`,
+    // they get distinct cached binaries. Re-linking against the same
+    // lib re-uses. Users who modify A in place and keep the same
+    // path get stale cache — a `cargo clean` fixes it; a future
+    // polish slice could hash the lib contents.
+    let tools_lib_str = tools_lib
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or_default();
+    let key = native_cache::cache_key_with_tools(source, &tools_lib_str);
     let cached = native_cache::cached_binary_path(&cache_dir, &key);
     if cached.exists() {
         return Ok(CachedNativeBinary {
@@ -686,8 +729,17 @@ pub fn build_or_get_cached_native(
         .to_string();
     let module_name = format!("corvid_native_{key}");
     let target_bin = cache_dir.join(&key);
-    let produced = corvid_codegen_cl::build_native_to_disk(ir, &module_name, &target_bin)
-        .map_err(|e| anyhow::anyhow!("native codegen failed for `{stem}`: {e}"))?;
+    // Phase 14: forward the tools lib (if any) to the linker so
+    // `__corvid_tool_<name>` symbols resolve against the user's
+    // compiled `#[tool]` implementations.
+    let extra_libs_owned: Vec<&Path> = tools_lib.iter().copied().collect();
+    let produced = corvid_codegen_cl::build_native_to_disk(
+        ir,
+        &module_name,
+        &target_bin,
+        &extra_libs_owned,
+    )
+    .map_err(|e| anyhow::anyhow!("native codegen failed for `{stem}`: {e}"))?;
     Ok(CachedNativeBinary {
         path: produced,
         from_cache: false,
@@ -1076,12 +1128,12 @@ agent main() -> String:
         std::fs::write(&src_path, NATIVE_ABLE_SRC).expect("write");
         let ir = compile_to_ir(NATIVE_ABLE_SRC).expect("compile");
 
-        let first = build_or_get_cached_native(&src_path, NATIVE_ABLE_SRC, &ir).expect("first");
+        let first = build_or_get_cached_native(&src_path, NATIVE_ABLE_SRC, &ir, None).expect("first");
         assert!(!first.from_cache, "first call must compile (not cached yet)");
         assert!(first.path.exists(), "first build should produce a binary");
         let first_mtime = std::fs::metadata(&first.path).unwrap().modified().unwrap();
 
-        let second = build_or_get_cached_native(&src_path, NATIVE_ABLE_SRC, &ir).expect("second");
+        let second = build_or_get_cached_native(&src_path, NATIVE_ABLE_SRC, &ir, None).expect("second");
         assert!(second.from_cache, "second call must reuse cached binary");
         assert_eq!(first.path, second.path, "same cache key => same path");
         let second_mtime = std::fs::metadata(&second.path).unwrap().modified().unwrap();
@@ -1100,7 +1152,7 @@ agent main() -> String:
         let src_path = tmp.path().join("pure.cor");
         std::fs::write(&src_path, NATIVE_ABLE_SRC).expect("write");
 
-        let code = run_with_target(&src_path, RunTarget::Auto).expect("run");
+        let code = run_with_target(&src_path, RunTarget::Auto, None).expect("run");
         assert_eq!(code, 0, "pure program should exit 0");
         // Cache populated under <tmpdir>/target/cache/native/.
         let cache_dir = tmp.path().join("target").join("cache").join("native");
@@ -1128,7 +1180,7 @@ agent main() -> String:
         let src_path = tmp.path().join("tooly.cor");
         std::fs::write(&src_path, TOOL_USING_SRC).expect("write");
 
-        let code = run_with_target(&src_path, RunTarget::Native).expect("run");
+        let code = run_with_target(&src_path, RunTarget::Native, None).expect("run");
         assert_eq!(
             code, 1,
             "native-required on a tool-using program must exit 1"

@@ -1,0 +1,25 @@
+[package]
+name = "corvid-test-tools"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Mock `#[tool]` implementations for the parity harness. Test-only — not published, not part of the v1.0 user surface. Every tool reads its return value from a dedicated env var so the harness can vary behavior per fixture without rebuilding."
+
+[lib]
+# Staticlib so the parity harness can link it into Corvid-compiled
+# binaries alongside the corvid-runtime staticlib. The rlib
+# crate-type is not needed; nothing depends on this crate as Rust.
+crate-type = ["staticlib"]
+# Disable `cargo test`'s test-harness binary for this crate. The
+# staticlib refs `corvid_string_from_bytes` which is only resolvable
+# once the C runtime files are linked alongside — `cargo test` builds
+# a plain test exe that skips those, producing an LNK2019. No tests
+# live in this crate anyway (it's purely artefacts for the parity
+# harness over in corvid-codegen-cl), so disabling is correct.
+test = false
+doctest = false
+
+[dependencies]
+corvid-runtime = { workspace = true }
+corvid-macros  = { workspace = true }
+tokio          = { workspace = true }

@@ -1,0 +1,4 @@
+tool double_int(n: Int) -> Int
+
+agent main() -> Int:
+    return double_int(21)

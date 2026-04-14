@@ -1,0 +1,21 @@
+[package]
+name = "corvid-macros"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Proc-macros for Corvid. Defines `#[tool]` — the attribute users put on Rust functions to make them callable from compiled Corvid code via the Phase 14 typed C-ABI bridge."
+
+[lib]
+proc-macro = true
+
+[dependencies]
+proc-macro2 = { workspace = true }
+quote       = { workspace = true }
+syn         = { workspace = true }
+
+[dev-dependencies]
+# Macro-expansion tests use a tiny companion crate that depends on
+# corvid-runtime + corvid-macros. See tests/expand.rs.
+corvid-runtime = { workspace = true }
+tokio          = { workspace = true }
+trybuild       = "1"

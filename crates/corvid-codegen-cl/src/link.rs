@@ -47,6 +47,13 @@ pub fn link_binary(
     object_path: &Path,
     _entry_agent_symbol: &str,
     output_path: &Path,
+    // Phase 14: tool-implementation staticlibs to link in. The Cranelift
+    // codegen's `IrCallKind::Tool` lowering emits calls to
+    // `__corvid_tool_<name>` symbols which must be provided by these
+    // libs; if an expected symbol is missing, the linker fails with a
+    // clear "unresolved external" error at build time rather than a
+    // runtime "tool not found" at execution time.
+    extra_tool_libs: &[&Path],
 ) -> Result<(), CodegenError> {
     if let Some(parent) = output_path.parent() {
         std::fs::create_dir_all(parent)
@@ -99,19 +106,26 @@ pub fn link_binary(
     // platform convention (`corvid_runtime.lib` on MSVC, `libcorvid_runtime.a`
     // on Unix). Resolved here, not in the build script, so the exact
     // filename matches the host we're linking on right now.
+    //
+    // When the caller supplies a tools staticlib via `extra_tool_libs`,
+    // that lib transitively includes corvid-runtime (via rlib dep) and
+    // linking BOTH would produce LNK2005 duplicate-symbol errors —
+    // each staticlib bundles its own copy of Rust's std. Resolution:
+    // link exactly one "runtime-bearing" staticlib, either
+    // corvid-runtime standalone (tool-free programs) or the user's
+    // tools crate (tool-using programs; their staticlib brings the
+    // runtime along for the ride).
     let staticlib_dir = std::path::Path::new(env!("CORVID_STATICLIB_DIR"));
-    let (staticlib_name, staticlib_path) = if compiler.is_like_msvc() {
-        let name = "corvid_runtime.lib";
-        (name, staticlib_dir.join(name))
+    let runtime_staticlib_path = if compiler.is_like_msvc() {
+        staticlib_dir.join("corvid_runtime.lib")
     } else {
-        let name = "libcorvid_runtime.a";
-        (name, staticlib_dir.join(name))
+        staticlib_dir.join("libcorvid_runtime.a")
     };
-    if !staticlib_path.exists() {
+    let link_standalone_runtime = extra_tool_libs.is_empty();
+    if link_standalone_runtime && !runtime_staticlib_path.exists() {
         return Err(CodegenError::link(format!(
-            "corvid-runtime staticlib missing at `{}`. Run `cargo build -p corvid-runtime --release` (or `--debug` to match the build profile you are linking against) so cargo emits `{}` — this is a build-setup issue, not a codegen bug.",
-            staticlib_path.display(),
-            staticlib_name
+            "corvid-runtime staticlib missing at `{}`. Run `cargo build -p corvid-runtime --release` — this is a build-setup issue, not a codegen bug.",
+            runtime_staticlib_path.display()
         )));
     }
 
@@ -134,9 +148,20 @@ pub fn link_binary(
             .arg(&lists_path)
             .arg(&entry_path)
             .arg(object_path)
-            .arg(format!("/Fe:{}", output_path.display()))
-            // Corvid-runtime Rust staticlib.
-            .arg(&staticlib_path)
+            .arg(format!("/Fe:{}", output_path.display()));
+        // Exactly ONE runtime-bearing staticlib: either the standalone
+        // corvid-runtime (tool-free programs) or the user's tools
+        // staticlib (which transitively includes corvid-runtime via
+        // its rlib dep). Linking both triggers LNK2005 on every Rust
+        // std symbol.
+        if link_standalone_runtime {
+            cmd.arg(&runtime_staticlib_path);
+        } else {
+            for lib in extra_tool_libs {
+                cmd.arg(lib);
+            }
+        }
+        cmd
             // `/link` separates cl.exe driver args from linker args.
             // Everything after this goes straight to link.exe.
             .arg("/link")
@@ -171,8 +196,18 @@ pub fn link_binary(
             .arg(&strings_path)
             .arg(&lists_path)
             .arg(&entry_path)
-            .arg(object_path)
-            .arg(&staticlib_path)
+            .arg(object_path);
+        // Exactly ONE runtime-bearing staticlib (see MSVC branch above
+        // for the LNK2005 explanation — same constraint applies on
+        // Unix, just with a different linker phrasing).
+        if link_standalone_runtime {
+            cmd.arg(&runtime_staticlib_path);
+        } else {
+            for lib in extra_tool_libs {
+                cmd.arg(lib);
+            }
+        }
+        cmd
             // System libs tokio + reqwest + rustls + Rust std need
             // on Linux / macOS. The set is near-identical; macOS
             // additions are frameworks (`-framework Security` etc.).

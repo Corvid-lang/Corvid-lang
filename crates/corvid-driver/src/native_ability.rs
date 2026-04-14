@@ -1,10 +1,13 @@
 //! Decides whether an IR file can run through the native AOT tier.
 //!
-//! Phase 12 ships "native for tool-free programs." Anything that needs
-//! the async interpreter or runtime (tool calls, prompt calls, `approve`,
-//! Python imports) falls back to the interpreter. The scan produces a
-//! structured reason so the CLI can tell the user which future slice or
-//! phase would lift each restriction.
+//! Phase 12 ships "native for tool-free programs." Phase 13 adds the
+//! async runtime bridge. Phase 14 lifts the `approve` restriction and
+//! adds conditional tool-call support: programs with tool calls can
+//! compile when the caller supplies a tools staticlib via
+//! `--with-tools-lib`; otherwise the scan still reports `ToolCall` so
+//! the dispatcher falls back to the interpreter. The scan produces a
+//! structured reason so the CLI can tell the user which future slice
+//! or phase would lift each remaining restriction.
 //!
 //! Rationale for a pre-flight IR scan (vs. "try compile, catch
 //! NotSupported"): (a) names the native-ability rule explicitly so it's
@@ -19,9 +22,12 @@ use corvid_ir::{IrBlock, IrCallKind, IrExpr, IrExprKind, IrFile, IrImportSource,
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum NotNativeReason {
     PythonImport { module: String },
+    /// User-declared tool called from compiled code. Phase 14 supports
+    /// this via typed-ABI direct calls, but only when the caller
+    /// supplies a tools staticlib (`--with-tools-lib`). Without one,
+    /// the scan reports this reason and the dispatcher falls back.
     ToolCall { name: String },
     PromptCall { name: String },
-    Approve { label: String },
 }
 
 impl std::fmt::Display for NotNativeReason {
@@ -29,19 +35,15 @@ impl std::fmt::Display for NotNativeReason {
         match self {
             Self::PythonImport { module } => write!(
                 f,
-                "program imports Python module `{module}` — native Python FFI lands in Phase 16"
+                "program imports Python module `{module}` — native Python FFI lands in Phase 30"
             ),
             Self::ToolCall { name } => write!(
                 f,
-                "program calls tool `{name}` — native tool dispatch lands in Phase 14"
+                "program calls tool `{name}` — pass `--with-tools-lib <path>` pointing at your compiled `#[tool]` staticlib, or let auto-dispatch fall back to the interpreter"
             ),
             Self::PromptCall { name } => write!(
                 f,
-                "program calls prompt `{name}` — native prompt dispatch lands in Phase 14"
-            ),
-            Self::Approve { label } => write!(
-                f,
-                "program uses `approve {label}` — native approve handling lands in Phase 14"
+                "program calls prompt `{name}` — native prompt dispatch lands in Phase 15"
             ),
         }
     }
@@ -95,13 +97,16 @@ fn scan_stmt(stmt: &IrStmt) -> Result<(), NotNativeReason> {
             scan_expr(iter)?;
             scan_block(body)
         }
-        IrStmt::Approve { label, args, .. } => {
+        IrStmt::Approve { args, .. } => {
+            // Phase 14: `approve` compiles to a no-op (statically
+            // checked by the effect checker; runtime verification
+            // lands in Phase 20). Still walk the arg expressions so
+            // any tool/prompt call buried in an approve arg is
+            // reported.
             for a in args {
                 scan_expr(a)?;
             }
-            Err(NotNativeReason::Approve {
-                label: label.clone(),
-            })
+            Ok(())
         }
         IrStmt::Expr { expr, .. } => scan_expr(expr),
         IrStmt::Break { .. } | IrStmt::Continue { .. } | IrStmt::Pass { .. } => Ok(()),

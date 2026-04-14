@@ -40,6 +40,7 @@
 
 #![allow(unsafe_code)]
 
+use crate::abi::{CorvidString, REGISTERED_TOOL_COUNT};
 use crate::approvals::{ProgrammaticApprover, StdinApprover};
 use crate::llm::anthropic::AnthropicAdapter;
 use crate::llm::openai::OpenAiAdapter;
@@ -150,6 +151,21 @@ pub extern "C" fn corvid_runtime_init() -> i32 {
     let ptr = Box::into_raw(boxed);
 
     BRIDGE.store(ptr, Ordering::Release);
+
+    // Slice 14c: walk every `#[tool]` metadata entry linked into this
+    // binary. Today we just record the count for diagnostics; slice
+    // 14e plumbs these entries into the approve-policy table, and a
+    // future `corvid check` command can cross-verify the signatures
+    // against the `.cor` source.
+    //
+    // This walk is cold-path — once per program startup, O(n) in the
+    // number of tools. For any realistic program, n < 100.
+    let mut count: i64 = 0;
+    for _meta in iter_registered_tools() {
+        count += 1;
+    }
+    record_registered_tool_count(count);
+
     0
 }
 
@@ -257,6 +273,94 @@ pub unsafe extern "C" fn corvid_tool_call_sync_int(
             i64::MIN
         }
     }
+}
+
+// ------------------------------------------------------------
+// Public helpers used by `#[tool]`-generated wrappers and the
+// Cranelift codegen. Not part of the C ABI — ordinary Rust surface
+// consumed by compile-time-generated code.
+// ------------------------------------------------------------
+
+/// Tokio handle the `#[tool]` wrappers block_on. Panics if
+/// `corvid_runtime_init` hasn't run — matches the eager-init contract.
+pub fn tokio_handle() -> tokio::runtime::Handle {
+    bridge().tokio_handle()
+}
+
+/// Clone of the process-global `Arc<Runtime>`. Available to anything
+/// that needs to dispatch through the runtime from a non-C-ABI
+/// context (e.g. in-process tests).
+pub fn runtime() -> std::sync::Arc<crate::runtime::Runtime> {
+    bridge().corvid_runtime()
+}
+
+// ------------------------------------------------------------
+// String helpers consumed by `corvid_runtime::abi`'s conversion
+// traits. Declared here because they cross the FFI boundary — the
+// bytes they allocate are visible to compiled Corvid code as
+// refcounted Corvid Strings.
+// ------------------------------------------------------------
+
+extern "C" {
+    /// Allocate a heap Corvid String from `bytes` + `length`.
+    /// Implemented in C (`runtime/strings.c`). Returns a descriptor
+    /// pointer with refcount 1.
+    fn corvid_string_from_bytes(bytes: *const u8, length: i64) -> *const u8;
+
+    /// Decrement a Corvid String's refcount, freeing when it hits 0.
+    /// The refcount sentinel `i64::MIN` short-circuits for immortal
+    /// `.rodata` literals.
+    fn corvid_release(descriptor: *const u8);
+}
+
+/// Allocate a Corvid String from a Rust `String`. The returned
+/// `CorvidString` has refcount 1 — caller takes ownership.
+pub fn string_from_rust(s: String) -> CorvidString {
+    let bytes = s.as_bytes();
+    let ptr = bytes.as_ptr();
+    let len = bytes.len() as i64;
+    // SAFETY: `corvid_string_from_bytes` reads `len` bytes starting
+    // at `ptr`. We hold `s` alive for the duration of the call, so
+    // the bytes are valid. The returned descriptor owns its own
+    // allocation — caller is free to drop `s` after this returns.
+    let descriptor = unsafe { corvid_string_from_bytes(ptr, len) };
+    // SAFETY: `CorvidString` is `#[repr(transparent)]` over a
+    // descriptor pointer; transmuting from a raw pointer of the same
+    // layout is sound. Using `transmute_copy` is overkill — a plain
+    // pointer cast is enough, but we use an unsafe block to make the
+    // layout assumption auditable.
+    unsafe { std::mem::transmute(descriptor) }
+}
+
+/// Release a `CorvidString`'s refcount. Used by the `FromCorvidAbi`
+/// impl on `String` after copying bytes out — paired with the implicit
+/// retain the caller's `+0 ABI` contract performed on entry.
+///
+/// # Safety
+///
+/// `cs` must come from valid codegen- or runtime-emitted source
+/// (i.e. the caller followed the Corvid ABI when passing the value).
+pub unsafe fn release_string(cs: CorvidString) {
+    // SAFETY: Transmuting a `#[repr(transparent)]` wrapper back to its
+    // single field is sound. `corvid_release` expects a descriptor
+    // pointer (the type alias for "CorvidString at the ABI") and
+    // tolerates null by short-circuiting.
+    unsafe {
+        let descriptor: *const u8 = std::mem::transmute(cs);
+        corvid_release(descriptor);
+    }
+}
+
+/// Iterate every `ToolMetadata` registered via `#[tool]` across all
+/// linked tool crates. Used by `corvid_runtime_init` at startup.
+pub fn iter_registered_tools() -> impl Iterator<Item = &'static crate::abi::ToolMetadata> {
+    inventory::iter::<crate::abi::ToolMetadata>().into_iter()
+}
+
+/// Snapshot the tool-registration count so diagnostics can surface it.
+/// Called once during `corvid_runtime_init` after iterating inventory.
+pub(crate) fn record_registered_tool_count(n: i64) {
+    REGISTERED_TOOL_COUNT.store(n, std::sync::atomic::Ordering::Relaxed);
 }
 
 // ------------------------------------------------------------
