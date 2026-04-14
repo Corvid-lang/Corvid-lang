@@ -147,12 +147,15 @@ fn extract_response(parsed: &Value, expect_structured: bool) -> Result<LlmRespon
             message: "response missing `content` array".into(),
         })?;
 
+    let usage = extract_usage(parsed);
+
     if expect_structured {
         for block in content {
             if block.get("type").and_then(|t| t.as_str()) == Some("tool_use") {
                 if let Some(input) = block.get("input") {
                     return Ok(LlmResponse {
                         value: input.clone(),
+                        usage,
                     });
                 }
             }
@@ -173,7 +176,31 @@ fn extract_response(parsed: &Value, expect_structured: bool) -> Result<LlmRespon
         }
         Ok(LlmResponse {
             value: Value::String(buf),
+            usage,
         })
+    }
+}
+
+/// Pull token-usage out of an Anthropic response. Shape:
+///   `{"usage": {"input_tokens": N, "output_tokens": N}}`
+/// Note Anthropic uses `input_tokens`/`output_tokens` whereas OpenAI
+/// uses `prompt_tokens`/`completion_tokens` — same concept,
+/// different field names. Returns zeros when the provider doesn't
+/// include the block (unusual but possible on edge cases).
+fn extract_usage(parsed: &Value) -> crate::llm::TokenUsage {
+    let usage = parsed.get("usage");
+    let prompt_tokens = usage
+        .and_then(|u| u.get("input_tokens"))
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0) as u32;
+    let completion_tokens = usage
+        .and_then(|u| u.get("output_tokens"))
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0) as u32;
+    crate::llm::TokenUsage {
+        prompt_tokens,
+        completion_tokens,
+        total_tokens: prompt_tokens + completion_tokens,
     }
 }
 

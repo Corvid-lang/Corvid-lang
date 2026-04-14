@@ -252,6 +252,73 @@ fn declare_runtime_funcs(
             )
         })?;
 
+    // Phase 15 stringification helpers. Each takes a typed scalar
+    // and returns a Corvid String descriptor pointer (i64).
+    let mut sfi_sig = module.make_signature();
+    sfi_sig.params.push(AbiParam::new(I64));
+    sfi_sig.returns.push(AbiParam::new(I64));
+    let string_from_int_id = module
+        .declare_function(STRING_FROM_INT_SYMBOL, Linkage::Import, &sfi_sig)
+        .map_err(|e| {
+            CodegenError::cranelift(format!("declare string_from_int: {e}"), Span::new(0, 0))
+        })?;
+
+    let mut sfb_sig = module.make_signature();
+    sfb_sig.params.push(AbiParam::new(I8));
+    sfb_sig.returns.push(AbiParam::new(I64));
+    let string_from_bool_id = module
+        .declare_function(STRING_FROM_BOOL_SYMBOL, Linkage::Import, &sfb_sig)
+        .map_err(|e| {
+            CodegenError::cranelift(format!("declare string_from_bool: {e}"), Span::new(0, 0))
+        })?;
+
+    let mut sff_sig = module.make_signature();
+    sff_sig.params.push(AbiParam::new(F64));
+    sff_sig.returns.push(AbiParam::new(I64));
+    let string_from_float_id = module
+        .declare_function(STRING_FROM_FLOAT_SYMBOL, Linkage::Import, &sff_sig)
+        .map_err(|e| {
+            CodegenError::cranelift(format!("declare string_from_float: {e}"), Span::new(0, 0))
+        })?;
+
+    // Phase 15 prompt bridges. Each takes 4 CorvidString descriptor
+    // pointers (i64) — prompt name, signature, rendered template,
+    // model — and returns the typed value.
+    let make_prompt_sig =
+        |module: &mut ObjectModule, ret_ty: cranelift_codegen::ir::Type| {
+            let mut s = module.make_signature();
+            s.params.push(AbiParam::new(I64));
+            s.params.push(AbiParam::new(I64));
+            s.params.push(AbiParam::new(I64));
+            s.params.push(AbiParam::new(I64));
+            s.returns.push(AbiParam::new(ret_ty));
+            s
+        };
+    let prompt_int_sig = make_prompt_sig(module, I64);
+    let prompt_call_int_id = module
+        .declare_function(PROMPT_CALL_INT_SYMBOL, Linkage::Import, &prompt_int_sig)
+        .map_err(|e| {
+            CodegenError::cranelift(format!("declare prompt_call_int: {e}"), Span::new(0, 0))
+        })?;
+    let prompt_bool_sig = make_prompt_sig(module, I8);
+    let prompt_call_bool_id = module
+        .declare_function(PROMPT_CALL_BOOL_SYMBOL, Linkage::Import, &prompt_bool_sig)
+        .map_err(|e| {
+            CodegenError::cranelift(format!("declare prompt_call_bool: {e}"), Span::new(0, 0))
+        })?;
+    let prompt_float_sig = make_prompt_sig(module, F64);
+    let prompt_call_float_id = module
+        .declare_function(PROMPT_CALL_FLOAT_SYMBOL, Linkage::Import, &prompt_float_sig)
+        .map_err(|e| {
+            CodegenError::cranelift(format!("declare prompt_call_float: {e}"), Span::new(0, 0))
+        })?;
+    let prompt_string_sig = make_prompt_sig(module, I64); // returns CorvidString descriptor ptr
+    let prompt_call_string_id = module
+        .declare_function(PROMPT_CALL_STRING_SYMBOL, Linkage::Import, &prompt_string_sig)
+        .map_err(|e| {
+            CodegenError::cranelift(format!("declare prompt_call_string: {e}"), Span::new(0, 0))
+        })?;
+
     Ok(RuntimeFuncs {
         overflow: overflow_func_id,
         retain: retain_id,
@@ -275,11 +342,19 @@ fn declare_runtime_funcs(
         tool_call_sync_int: tool_call_sync_int_id,
         runtime_init: runtime_init_id,
         runtime_shutdown: runtime_shutdown_id,
+        string_from_int: string_from_int_id,
+        string_from_bool: string_from_bool_id,
+        string_from_float: string_from_float_id,
+        prompt_call_int: prompt_call_int_id,
+        prompt_call_bool: prompt_call_bool_id,
+        prompt_call_float: prompt_call_float_id,
+        prompt_call_string: prompt_call_string_id,
         literal_counter: std::cell::Cell::new(0),
         struct_destructors: HashMap::new(),
         ir_types: HashMap::new(),
         ir_tools: HashMap::new(),
         tool_wrapper_ids: std::cell::RefCell::new(HashMap::new()),
+        ir_prompts: HashMap::new(),
     })
 }
 
@@ -444,6 +519,24 @@ pub const PRINT_STRING_SYMBOL: &str = "corvid_print_string";
 // marshalling.
 pub const TOOL_CALL_SYNC_INT_SYMBOL: &str = "corvid_tool_call_sync_int";
 
+// Phase 15 — scalar-to-String stringification helpers. Used by the
+// Cranelift codegen for `IrCallKind::Prompt` lowering when a
+// non-String argument is interpolated into a prompt template. Each
+// returns a refcount-1 Corvid String the caller must release.
+pub const STRING_FROM_INT_SYMBOL: &str = "corvid_string_from_int";
+pub const STRING_FROM_BOOL_SYMBOL: &str = "corvid_string_from_bool";
+pub const STRING_FROM_FLOAT_SYMBOL: &str = "corvid_string_from_float";
+
+// Phase 15 — typed prompt-dispatch bridges. One per return type;
+// each takes 4 CorvidString args (prompt name, signature, rendered
+// template, model) and returns the typed value. Built-in
+// retry-with-validation + function-signature context — see the
+// Rust-side implementations in `corvid-runtime::ffi_bridge`.
+pub const PROMPT_CALL_INT_SYMBOL: &str = "corvid_prompt_call_int";
+pub const PROMPT_CALL_BOOL_SYMBOL: &str = "corvid_prompt_call_bool";
+pub const PROMPT_CALL_FLOAT_SYMBOL: &str = "corvid_prompt_call_float";
+pub const PROMPT_CALL_STRING_SYMBOL: &str = "corvid_prompt_call_string";
+
 // Phase 13 — runtime bridge init/shutdown called from `corvid_init`
 // at the start of codegen-emitted `main` when the program uses any
 // tool/prompt/approve construct. Tool-free programs skip these
@@ -496,6 +589,15 @@ pub struct RuntimeFuncs {
     pub tool_call_sync_int: FuncId,
     pub runtime_init: FuncId,
     pub runtime_shutdown: FuncId,
+    // Phase 15 — scalar→String helpers for prompt-template interpolation.
+    pub string_from_int: FuncId,
+    pub string_from_bool: FuncId,
+    pub string_from_float: FuncId,
+    // Phase 15 — typed prompt bridges, one per return type.
+    pub prompt_call_int: FuncId,
+    pub prompt_call_bool: FuncId,
+    pub prompt_call_float: FuncId,
+    pub prompt_call_string: FuncId,
     pub literal_counter: std::cell::Cell<u64>,
     /// Per-struct-type destructors generated in `lower_file` for
     /// structs with at least one refcounted field. Missing entries
@@ -517,6 +619,10 @@ pub struct RuntimeFuncs {
     /// repeated calls to the same tool re-use one declaration. First
     /// sight declares; later sights re-use.
     pub tool_wrapper_ids: std::cell::RefCell<HashMap<DefId, FuncId>>,
+    /// Phase 15 — prompt declarations, keyed by `DefId`. Codegen reads
+    /// each prompt's params + template + return type to emit
+    /// signature-aware bridge calls.
+    pub ir_prompts: HashMap<DefId, corvid_ir::IrPrompt>,
 }
 
 impl RuntimeFuncs {
@@ -654,6 +760,13 @@ pub fn lower_file(
     // declare the matching `__corvid_tool_<name>` wrapper import.
     for tool in &ir.tools {
         runtime.ir_tools.insert(tool.id, tool.clone());
+    }
+
+    // Phase 15 — same pattern for prompt declarations. `IrCallKind::Prompt`
+    // lowering reads each prompt's params + template + return type to
+    // emit signature-aware bridge calls.
+    for prompt in &ir.prompts {
+        runtime.ir_prompts.insert(prompt.id, prompt.clone());
     }
 
     // Declare and define per-struct-type destructors for every user
@@ -1688,10 +1801,20 @@ fn lower_expr(
                     ))
                 }
             }
-            IrCallKind::Prompt { .. } => Err(CodegenError::not_supported(
-                "prompt calls in compiled code — Phase 15 adds them",
-                expr.span,
-            )),
+            IrCallKind::Prompt { def_id, .. } => {
+                lower_prompt_call(
+                    builder,
+                    module,
+                    runtime,
+                    *def_id,
+                    callee_name,
+                    args,
+                    env,
+                    func_ids_by_def,
+                    &expr.ty,
+                    expr.span,
+                )
+            }
             IrCallKind::StructConstructor { def_id } => {
                 let ir_type = runtime.ir_types.get(def_id).cloned().ok_or_else(|| {
                     CodegenError::cranelift(
@@ -2354,6 +2477,325 @@ fn lower_struct_constructor(
 /// two drift, link errors point at `__corvid_tool_<one-name>` while
 /// the user's crate defines `__corvid_tool_<other-name>`. Mangling
 /// rule: every non-ASCII-alphanumeric character becomes `_`.
+// ------------------------------------------------------------
+// Phase 15 — prompt call lowering.
+//
+// Codegen knows the prompt's template + signature + return type at
+// compile time. The strategy:
+//   1. Parse the template into segments (Literal | Param) at codegen
+//      time. Each Param segment names a parameter to interpolate.
+//   2. At the call site, emit a sequence of string-concat operations
+//      that builds the rendered prompt: literal text + stringified
+//      arg + literal text + ...
+//   3. Build literal CorvidStrings for the prompt name, the human-
+//      readable signature ("foo(x: Int) -> String"), and the model
+//      (empty — runtime falls back to default_model from CORVID_MODEL).
+//   4. Call the typed bridge by return type, passing the four
+//      CorvidString args.
+//   5. Receive the typed return.
+// ------------------------------------------------------------
+
+#[derive(Debug)]
+enum TemplateSegment<'a> {
+    Literal(&'a str),
+    Param(usize), // index into the prompt's params
+}
+
+/// Parse a prompt template into literal + `{param_name}` segments.
+/// Param names that aren't in `params` produce a codegen error —
+/// matches what the typechecker should already enforce, kept as
+/// belt-and-braces.
+fn parse_prompt_template<'a>(
+    template: &'a str,
+    params: &[corvid_ir::IrParam],
+    span: Span,
+) -> Result<Vec<TemplateSegment<'a>>, CodegenError> {
+    let mut out: Vec<TemplateSegment<'a>> = Vec::new();
+    let mut cursor = 0;
+    let bytes = template.as_bytes();
+    while cursor < bytes.len() {
+        if let Some(open_rel) = template[cursor..].find('{') {
+            let open = cursor + open_rel;
+            // Emit literal up to the brace.
+            if open > cursor {
+                out.push(TemplateSegment::Literal(&template[cursor..open]));
+            }
+            // Find closing brace.
+            let close_rel = template[open + 1..].find('}').ok_or_else(|| {
+                CodegenError::cranelift(
+                    format!(
+                        "prompt template has unmatched `{{` near offset {open}: `{template}`"
+                    ),
+                    span,
+                )
+            })?;
+            let close = open + 1 + close_rel;
+            let name = template[open + 1..close].trim();
+            let idx = params.iter().position(|p| p.name == name).ok_or_else(|| {
+                CodegenError::cranelift(
+                    format!(
+                        "prompt template references `{{{name}}}` but no such parameter — typechecker should have caught this; available: {:?}",
+                        params.iter().map(|p| &p.name).collect::<Vec<_>>()
+                    ),
+                    span,
+                )
+            })?;
+            out.push(TemplateSegment::Param(idx));
+            cursor = close + 1;
+        } else {
+            out.push(TemplateSegment::Literal(&template[cursor..]));
+            break;
+        }
+    }
+    Ok(out)
+}
+
+/// Emit a CorvidString from a `&str` literal — wraps the existing
+/// `lower_string_literal` helper so prompt-bridge call sites can
+/// pass the prompt name / signature / model as ordinary string
+/// constants without contortions.
+fn emit_string_const(
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    runtime: &RuntimeFuncs,
+    s: &str,
+    span: Span,
+) -> Result<ClValue, CodegenError> {
+    lower_string_literal(builder, module, runtime, s, span)
+}
+
+/// Stringify a non-String scalar arg via the runtime helper that
+/// matches the value's Cranelift type. Returns a fresh refcount-1
+/// CorvidString. For String args the value is returned as-is.
+fn emit_stringify_arg(
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    runtime: &RuntimeFuncs,
+    arg_value: ClValue,
+    arg_ty: &Type,
+    span: Span,
+) -> Result<ClValue, CodegenError> {
+    match arg_ty {
+        Type::String => Ok(arg_value),
+        Type::Int => {
+            let f = module.declare_func_in_func(runtime.string_from_int, builder.func);
+            let call = builder.ins().call(f, &[arg_value]);
+            let results: Vec<ClValue> =
+                builder.inst_results(call).iter().copied().collect();
+            Ok(results[0])
+        }
+        Type::Bool => {
+            let f = module.declare_func_in_func(runtime.string_from_bool, builder.func);
+            let call = builder.ins().call(f, &[arg_value]);
+            let results: Vec<ClValue> =
+                builder.inst_results(call).iter().copied().collect();
+            Ok(results[0])
+        }
+        Type::Float => {
+            let f = module.declare_func_in_func(runtime.string_from_float, builder.func);
+            let call = builder.ins().call(f, &[arg_value]);
+            let results: Vec<ClValue> =
+                builder.inst_results(call).iter().copied().collect();
+            Ok(results[0])
+        }
+        other => Err(CodegenError::not_supported(
+            format!(
+                "prompt argument type `{}` is not yet supported in template interpolation — Phase 15 supports Int / Bool / Float / String only; Struct / List defer to a later slice",
+                other.display_name()
+            ),
+            span,
+        )),
+    }
+}
+
+/// Concatenate a sequence of CorvidString values into one. Releases
+/// the intermediate +1 refcounts as concatenation proceeds so the
+/// final CorvidString is the only live allocation.
+fn emit_concat_chain(
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    runtime: &RuntimeFuncs,
+    parts: Vec<ClValue>,
+    span: Span,
+) -> Result<ClValue, CodegenError> {
+    if parts.is_empty() {
+        // Empty rendered prompt — emit an empty literal.
+        return emit_string_const(builder, module, runtime, "", span);
+    }
+    let mut acc = parts[0];
+    let concat_fid =
+        module.declare_func_in_func(runtime.string_concat, builder.func);
+    for next in parts.into_iter().skip(1) {
+        let call = builder.ins().call(concat_fid, &[acc, next]);
+        let results: Vec<ClValue> =
+            builder.inst_results(call).iter().copied().collect();
+        let new_acc = results[0];
+        // Release the previous accumulator + the just-consumed next.
+        // string_concat returns a fresh +1; the inputs are consumed
+        // (concat keeps its own copies if it needs them, but the
+        // result is independent — release-on-consume is safe).
+        emit_release(builder, module, runtime, acc);
+        emit_release(builder, module, runtime, next);
+        acc = new_acc;
+    }
+    Ok(acc)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn lower_prompt_call(
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    runtime: &RuntimeFuncs,
+    def_id: DefId,
+    callee_name: &str,
+    args: &[IrExpr],
+    env: &HashMap<LocalId, (Variable, clir::Type)>,
+    func_ids_by_def: &HashMap<DefId, FuncId>,
+    return_ty: &Type,
+    span: Span,
+) -> Result<ClValue, CodegenError> {
+    let prompt = runtime
+        .ir_prompts
+        .get(&def_id)
+        .cloned()
+        .ok_or_else(|| {
+            CodegenError::cranelift(
+                format!(
+                    "prompt `{callee_name}` metadata missing from ir_prompts — declare-pass invariant violated"
+                ),
+                span,
+            )
+        })?;
+
+    if prompt.params.len() != args.len() {
+        return Err(CodegenError::cranelift(
+            format!(
+                "prompt `{callee_name}` declared with {} param(s) but called with {}",
+                prompt.params.len(),
+                args.len()
+            ),
+            span,
+        ));
+    }
+
+    // 1. Lower each arg expression. Refcounted args (Strings) come
+    //    back as Owned (+1).
+    let mut arg_vals: Vec<ClValue> = Vec::with_capacity(args.len());
+    for a in args {
+        arg_vals.push(lower_expr(builder, a, env, func_ids_by_def, module, runtime)?);
+    }
+
+    // 2. Parse the template into segments at codegen time.
+    let segments = parse_prompt_template(&prompt.template, &prompt.params, span)?;
+
+    // 3. Build the rendered-prompt CorvidString by emitting concat ops
+    //    over (literal | stringified arg) parts.
+    let mut parts: Vec<ClValue> = Vec::with_capacity(segments.len());
+    // Track which arg values we used for stringification so we can
+    // release the originals at scope end. Already-Owned values from
+    // lower_expr need their +1 dropped after the call sequence.
+    for seg in &segments {
+        let part = match seg {
+            TemplateSegment::Literal(text) => {
+                emit_string_const(builder, module, runtime, text, span)?
+            }
+            TemplateSegment::Param(idx) => {
+                let av = arg_vals[*idx];
+                let aty = &args[*idx].ty;
+                emit_stringify_arg(builder, module, runtime, av, aty, span)?
+            }
+        };
+        parts.push(part);
+    }
+    let rendered = emit_concat_chain(builder, module, runtime, parts, span)?;
+
+    // 4. Build the constant CorvidStrings for prompt name, signature,
+    //    and model. The model is left empty so the runtime falls back
+    //    to `default_model` from `CORVID_MODEL`.
+    let prompt_name_val = emit_string_const(builder, module, runtime, &prompt.name, span)?;
+    let signature_val = emit_string_const(
+        builder,
+        module,
+        runtime,
+        &format_prompt_signature(&prompt),
+        span,
+    )?;
+    let model_val = emit_string_const(builder, module, runtime, "", span)?;
+
+    // 5. Call the typed bridge by return type.
+    let bridge_id = match return_ty {
+        Type::Int => runtime.prompt_call_int,
+        Type::Bool => runtime.prompt_call_bool,
+        Type::Float => runtime.prompt_call_float,
+        Type::String => runtime.prompt_call_string,
+        other => {
+            return Err(CodegenError::not_supported(
+                format!(
+                    "prompt `{callee_name}` returns `{}` — Phase 15 supports Int / Bool / Float / String returns; structured returns defer to Phase 20 (`Grounded<T>`)",
+                    other.display_name()
+                ),
+                span,
+            ));
+        }
+    };
+    let fref = module.declare_func_in_func(bridge_id, builder.func);
+    let call = builder
+        .ins()
+        .call(fref, &[prompt_name_val, signature_val, rendered, model_val]);
+    let result_vals: Vec<ClValue> =
+        builder.inst_results(call).iter().copied().collect();
+
+    // 6. Release the four CorvidString constants we passed in (each
+    //    came back from emit_string_const as Owned +1; the bridge
+    //    is borrow-only on its String args same as #[tool] wrappers).
+    emit_release(builder, module, runtime, prompt_name_val);
+    emit_release(builder, module, runtime, signature_val);
+    emit_release(builder, module, runtime, rendered);
+    emit_release(builder, module, runtime, model_val);
+
+    // Release the original arg values (we passed their stringified
+    // copies into the rendered prompt, but the originals still hold
+    // the +1 they came back from `lower_expr` with). For String args,
+    // we passed the value through stringify-as-identity, so the +1
+    // already got consumed by `emit_concat_chain`. For non-String,
+    // the original is still held.
+    for (v, a) in arg_vals.iter().zip(args.iter()) {
+        if is_refcounted_type(&a.ty) {
+            // String args: ownership transferred into the concat
+            // chain (released there). Skip.
+        } else {
+            // Non-refcounted (Int/Bool/Float): nothing to release.
+            let _ = v;
+        }
+    }
+
+    if result_vals.len() != 1 {
+        return Err(CodegenError::cranelift(
+            format!(
+                "prompt bridge returned {} values; expected 1 for return type `{}`",
+                result_vals.len(),
+                return_ty.display_name()
+            ),
+            span,
+        ));
+    }
+    Ok(result_vals[0])
+}
+
+/// Render a prompt's signature for the LLM's system prompt context.
+/// Format: `name(p1: T1, p2: T2) -> R`. Same as what a Corvid user
+/// would write in the source — gives the LLM the typed function
+/// contract to implement.
+fn format_prompt_signature(p: &corvid_ir::IrPrompt) -> String {
+    let params = p
+        .params
+        .iter()
+        .map(|param| format!("{}: {}", param.name, param.ty.display_name()))
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("{}({}) -> {}", p.name, params, p.return_ty.display_name())
+}
+
 fn tool_wrapper_symbol(tool_name: &str) -> String {
     let mangled: String = tool_name
         .chars()

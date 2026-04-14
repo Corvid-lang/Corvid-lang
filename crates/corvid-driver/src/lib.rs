@@ -1111,12 +1111,15 @@ agent main() -> String:
     }
 
     #[test]
-    fn native_ability_rejects_prompt_call() {
+    fn native_ability_accepts_prompt_calls_phase_15() {
+        // Phase 15 lifted the prompt-call gate — prompts compile +
+        // run natively against the runtime's bundled LLM adapters.
+        // Was `Err(NotNativeReason::PromptCall { ... })` pre-Phase-15.
         let ir = compile_to_ir(PROMPT_USING_SRC).expect("compile");
-        match native_ability(&ir) {
-            Err(NotNativeReason::PromptCall { name }) => assert_eq!(name, "greet"),
-            other => panic!("expected PromptCall rejection, got {other:?}"),
-        }
+        assert!(
+            native_ability(&ir).is_ok(),
+            "Phase 15 lifted the prompt gate; scan should accept prompt-using IRs"
+        );
     }
 
     /// Second compilation of the same source hits the cache: no

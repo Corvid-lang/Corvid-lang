@@ -12,6 +12,15 @@ description = "Native runtime for Corvid: tool dispatch, approvals, LLM adapters
 # generated code can call into tokio + the Corvid runtime. Phase 13 scope.
 crate-type = ["lib", "staticlib"]
 
+[build-dependencies]
+# Phase 15: corvid-runtime's build.rs compiles the C runtime files
+# (runtime/*.c) into the produced lib/staticlib via the `cc` crate.
+# This keeps corvid-runtime self-contained — Rust callers (tests,
+# corvid-driver, corvid-vm) don't need a separate C compile to
+# resolve the C-side helpers (`corvid_alloc`, `corvid_release`,
+# `corvid_string_from_bytes`, etc.) the abi + ffi_bridge layers use.
+cc = "1"
+
 [dependencies]
 serde = { workspace = true }
 serde_json = { workspace = true }

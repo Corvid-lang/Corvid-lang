@@ -12,7 +12,7 @@
 //! reasoning-effort knobs for o-series.
 
 use crate::errors::RuntimeError;
-use crate::llm::{LlmAdapter, LlmRequest, LlmResponse};
+use crate::llm::{LlmAdapter, LlmRequest, LlmResponse, TokenUsage};
 use futures::future::BoxFuture;
 use serde_json::{json, Value};
 use std::time::Duration;
@@ -144,6 +144,8 @@ fn extract_response(parsed: &Value, expect_structured: bool) -> Result<LlmRespon
             message: "response missing `choices[0].message.content`".into(),
         })?;
 
+    let usage = extract_usage(parsed);
+
     if expect_structured {
         let value: Value = serde_json::from_str(content).map_err(|e| {
             RuntimeError::AdapterFailed {
@@ -153,11 +155,38 @@ fn extract_response(parsed: &Value, expect_structured: bool) -> Result<LlmRespon
                 ),
             }
         })?;
-        Ok(LlmResponse { value })
+        Ok(LlmResponse { value, usage })
     } else {
         Ok(LlmResponse {
             value: Value::String(content.to_string()),
+            usage,
         })
+    }
+}
+
+/// Pull the `usage` block out of an OpenAI response. Standard shape:
+///   `{"usage": {"prompt_tokens": N, "completion_tokens": N, "total_tokens": N}}`
+/// Returns zeros if missing — older endpoints + some compat servers
+/// don't report usage; treating absence as "unknown" is safer than
+/// failing the call.
+pub(crate) fn extract_usage(parsed: &Value) -> TokenUsage {
+    let usage = parsed.get("usage");
+    let prompt_tokens = usage
+        .and_then(|u| u.get("prompt_tokens"))
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0) as u32;
+    let completion_tokens = usage
+        .and_then(|u| u.get("completion_tokens"))
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0) as u32;
+    let total_tokens = usage
+        .and_then(|u| u.get("total_tokens"))
+        .and_then(|v| v.as_u64())
+        .unwrap_or((prompt_tokens + completion_tokens) as u64) as u32;
+    TokenUsage {
+        prompt_tokens,
+        completion_tokens,
+        total_tokens,
     }
 }
 

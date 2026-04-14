@@ -118,3 +118,48 @@ void* corvid_string_from_bytes(const char* bytes, long long length) {
     if (length < 0) length = 0;
     return alloc_string(bytes, length);
 }
+
+/* Phase 15: scalar-to-String stringification helpers used by the
+ * Cranelift codegen when interpolating prompt-template `{var}`
+ * placeholders whose argument is a non-String scalar. The rendered
+ * prompt is built up by concatenating template literals and these
+ * stringified scalars before the LLM call.
+ *
+ * Each returns a fresh refcounted Corvid String at refcount = 1;
+ * caller takes ownership.
+ */
+
+#include <stdio.h>
+
+void* corvid_string_from_int(long long n) {
+    /* `%lld` with a 32-byte buffer covers every possible i64 (max
+     * decimal length of i64 is 20 chars including the sign). */
+    char buf[32];
+    int len = snprintf(buf, sizeof(buf), "%lld", n);
+    if (len < 0) len = 0;
+    return alloc_string(buf, (long long)len);
+}
+
+void* corvid_string_from_bool(char b) {
+    /* Match the user-visible Bool format Corvid uses on stdout
+     * (slice 12i's `corvid_print_bool`): `true` / `false`, lowercase.
+     * Templates embedding Bool values get the same string literal
+     * a user would see when printing. */
+    if (b) {
+        return alloc_string("true", 4);
+    } else {
+        return alloc_string("false", 5);
+    }
+}
+
+void* corvid_string_from_float(double v) {
+    /* `%.17g` is the round-trippable IEEE 754 format — same one slice
+     * 12i's `corvid_print_f64` uses for stdout. NaN / Inf round-trip
+     * as their printf representations ("nan" / "inf" / "-inf"). 64
+     * bytes is conservatively above the longest possible %.17g
+     * output (~25 chars). */
+    char buf[64];
+    int len = snprintf(buf, sizeof(buf), "%.17g", v);
+    if (len < 0) len = 0;
+    return alloc_string(buf, (long long)len);
+}

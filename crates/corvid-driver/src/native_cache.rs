@@ -83,16 +83,11 @@ pub fn cache_key(source: &str) -> String {
     feed(source.as_bytes(), &mut h);
     feed(b"|cl=", &mut h);
     feed(env!("CARGO_PKG_VERSION").as_bytes(), &mut h);
-    feed(b"|shim=", &mut h);
-    feed(link::ENTRY_SHIM_SOURCE.as_bytes(), &mut h);
-    feed(b"|entry=", &mut h);
-    feed(link::ENTRY_SOURCE.as_bytes(), &mut h);
-    feed(b"|alloc=", &mut h);
-    feed(link::ALLOC_SOURCE.as_bytes(), &mut h);
-    feed(b"|strings=", &mut h);
-    feed(link::STRINGS_SOURCE.as_bytes(), &mut h);
-    feed(b"|lists=", &mut h);
-    feed(link::LISTS_SOURCE.as_bytes(), &mut h);
+    // Phase 15: C runtime moved into corvid-runtime — folding its
+    // crate version into the key catches cache invalidation when the
+    // runtime is rebuilt with C-side changes.
+    feed(b"|runtime=", &mut h);
+    feed(corvid_runtime::c_runtime::C_RUNTIME_LIB_PATH.as_bytes(), &mut h);
     format!("{h:016x}")
 }
 

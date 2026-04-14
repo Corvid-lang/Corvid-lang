@@ -278,19 +278,38 @@ Ordering principles (applied without exception):
 
 **Non-scope (deliberate):** Prompt calls — Phase 15. Runtime approve-token verification — Phase 20 (alongside effect rows + custom effects + cost budgets). Tool signatures with Struct/List args — Phase 15 (composite-type marshalling lands alongside prompts). Auto-build of tools crate via `corvid build` spawning cargo — Phase 33 launch polish. `corvid.toml` `[tools]` section — Phase 25 (package manager).
 
-### Phase 15 — Native prompt dispatch (~3 weeks)
+### Phase 15 ✅ — Native prompt dispatch + multi-provider LLM coverage (Day 32)
 
-**Goal.** `prompt ... -> T:` declarations callable from compiled Corvid code, talking to the LLM adapters live.
+**Hard dep:** Phase 13 (native async runtime).
 
-**Hard dep:** Phase 13 (async).
+User pushback during pre-phase chat caught two latent shortcuts in the original brief: provider coverage limited to Anthropic + OpenAI (insufficient for AI-native positioning, especially missing local-model support) and naive text-then-parse with no retry (brittle by design). Both got rewritten before any code shipped.
 
-**Scope:**
-- Codegen lowers `IrCallKind::Prompt` to a runtime call that (a) serialises the prompt template with interpolated args, (b) requests structured output matching the declared return type, (c) deserialises and returns.
-- Return-type JSON schema derived automatically from the declared Type. No user-registry needed — prompts live in source.
-- Slice 12j's `NotNativeReason::PromptCall` is lifted. Combined with Phase 14, every program from the `examples/` directory runs natively end-to-end.
-- Refund-bot demo running with `corvid run examples/refund_bot_demo/src/main.cor --target=native` is the phase-boundary verification.
+- [x] **5 LLM provider adapters cover every category for v0.4.**
+  - **Anthropic** — existing.
+  - **OpenAI** — existing (refactored to extract `extract_usage` for reuse).
+  - **`OpenAiCompatibleAdapter`** (new) — universal escape hatch via `openai-compat:<base-url>:<model>` model spec. Covers OpenRouter, Together, Anyscale, Groq, Fireworks, Azure OpenAI, llama.cpp server, vLLM, LM Studio, and ~20 other providers exposing OpenAI-compatible endpoints. **One adapter, ~30+ backends.**
+  - **`OllamaAdapter`** (new) — local-first via `POST localhost:11434/api/chat`. Routed by `ollama:<model>` prefix. No API key. `OLLAMA_BASE_URL` override for non-default servers.
+  - **`GeminiAdapter`** (new) — Google Gemini via `POST /v1beta/models/<m>:generateContent`. Routed by `gemini-*` prefix. Auth via `GOOGLE_API_KEY` / `GEMINI_API_KEY`.
+- [x] **`TokenUsage` on every `LlmResponse`.** Every adapter populates `prompt_tokens` / `completion_tokens` / `total_tokens` from the provider response — Anthropic's `input_tokens`/`output_tokens`, OpenAI's `prompt_tokens`/`completion_tokens`, Ollama's `prompt_eval_count`/`eval_count`, Gemini's `usageMetadata`. Foundation for Phase 20's `@budget($)` cost annotations.
+- [x] **`EnvVarMockAdapter`** — env-var-based mock for parity tests. `CORVID_TEST_MOCK_LLM=1` registers it as the first adapter so its wildcard `handles()` claims every model spec, avoiding real API egress in CI even when keys leak.
+- [x] **4 typed prompt-dispatch bridges** in `corvid-runtime::ffi_bridge`: `corvid_prompt_call_int` / `_bool` / `_float` / `_string`. Each takes 4 `CorvidString` args (prompt name, signature, rendered template, model). Mirrors Phase 14's typed-ABI design.
+- [x] **Built-in retry-with-validation.** `CORVID_PROMPT_MAX_RETRIES` (default 3). Each retry escalates the system prompt with stronger format instructions + the prior unparseable response. Tolerant `parse_int` / `parse_bool` / `parse_float` strip surrounding quotes, code fences, and whitespace before parsing.
+- [x] **Function-signature context in the system prompt.** Every prompt call automatically tells the LLM "you are a function with signature `name(params) -> ReturnType` — return the appropriate value." Codegen embeds the signature as a literal at compile time. Treats prompts as typed functions the LLM is implementing, not ad-hoc string queries.
+- [x] **Stringification helpers** (`corvid_string_from_int` / `_bool` / `_float`) in the C runtime. Cranelift codegen calls them when interpolating non-String args into prompt templates.
+- [x] **Cranelift lowering for `IrCallKind::Prompt`.** Compile-time template parser splits `{var}` placeholders; codegen emits a chain of `corvid_string_concat` operations with stringified args between literal segments. Bridge selection by return type.
+- [x] **Driver gate lifted unconditionally.** `NotNativeReason::PromptCall` removed. Prompt-using programs compile + run natively without any extra user-provided lib (`corvid-runtime` ships the adapters built-in). Runtime errors surface at LLM call time if no provider is configured.
+- [x] **Architectural fix: C runtime moved into `corvid-runtime`.** The `runtime/*.c` files (alloc, strings, lists, entry, shim) relocated from `corvid-codegen-cl/runtime/` to `corvid-runtime/runtime/`. New `corvid-runtime/build.rs` compiles them via `cc::Build` into a `corvid_c_runtime` staticlib. `corvid-runtime` re-exports the path via `c_runtime::C_RUNTIME_LIB_PATH`. `corvid-codegen-cl::link.rs` and the FFI smoke test add this lib to their linker invocations. **Why:** the prompt bridges' `IntoCorvidAbi for String` reaches `corvid_string_from_bytes`, which any binary linking corvid-runtime must resolve — making corvid-runtime self-contained means Rust test binaries link cleanly without separate C-source compilation per test.
+- [x] **4 new parity fixtures** (total: **99**): zero-arg Int return, Int-arg interpolation + Int return, String-arg interpolation + Int return. Every fixture uses the env-var mock LLM. Leak-detector-audited.
 
-**Non-scope:** Multi-provider adapters beyond Anthropic + OpenAI (Phase 31).
+**Non-scope (deliberate, named for future phases):**
+- **Provider-specific JSON-schema structured output** (OpenAI `response_format`, Anthropic tool-use for structured returns, Gemini's `responseSchema`) → Phase 20 (moat, alongside `Grounded<T>`). Phase 15's text-then-parse with retry covers ~95% of cases.
+- **Streaming `Stream<T>` returns** → Phase 20.
+- **Replay** (deterministic re-execution of recorded LLM calls) → Phase 21.
+- **`@budget($)` cost bounds** → Phase 20 (uses the `TokenUsage` Phase 15 plumbed through).
+- **Per-prompt model selection in source** (`prompt foo() -> Int using "gpt-4o":`) → Phase 31.
+- **Caching response by `(prompt, args, model)`** → Phase 21.
+- **Real-API integration tests** against Ollama / OpenAI / Anthropic / Gemini → Phase 33 launch polish, when CI has a runner that can install Ollama + has provider keys configured.
+- **`corvid stats` CLI subcommand** for token-usage diagnostics → Phase 20 ships this alongside `@budget($)` enforcement that uses the same data.
 
 **v0.4 cuts here.** Native tier is actually useful for real programs.
 

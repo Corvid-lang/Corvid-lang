@@ -1392,6 +1392,90 @@ Phase 13 pre-phase chat. Topic: Native async runtime. Tokio embedded in compiled
 
 ---
 
+## Day 32 — Phase 15: Native prompt dispatch ✅ — v0.4 cut
+
+User pushback during the pre-phase chat caught two latent shortcuts in the original brief — provider coverage limited to Anthropic + OpenAI (insufficient for AI-native positioning), and naive text-then-parse with no retry (brittle by design). Both got rewritten before any code shipped. The phase that landed is materially more inventive than the one I first proposed.
+
+### The two shortcuts I almost shipped
+
+**1. "Anthropic + OpenAI is enough for v0.4."** That framing leaves out local models entirely (Ollama, llama.cpp, vLLM, LM Studio), Google Gemini, OpenRouter, Together, Anyscale, Groq, and basically every privacy-sensitive deployment scenario. For an AI-native language, it's a credibility ceiling, not an "early-version trade-off." User push: "we should consider all the LLM models including local models."
+
+The architectural answer that emerged: **`OpenAiCompatibleAdapter`** — one parameterizable adapter routed by `openai-compat:<base-url>:<model>` that covers ~30 backends because they all expose `/v1/chat/completions`. Plus dedicated `OllamaAdapter` (local-first), `GeminiAdapter` (Google's API shape). Five total adapters covering every category that matters for v0.4.
+
+**2. "Text-then-parse, error if unparseable."** That's how most frameworks approach LLM responses — call once, parse, fail loudly. It ships ~5–20% real-world failure rates depending on model + prompt. User push: "for prompting let us use the most inventive ways."
+
+Two architectural improvements landed instead:
+
+- **Built-in retry-with-validation in the bridge.** `CORVID_PROMPT_MAX_RETRIES` (default 3). Each retry escalates the system prompt: includes the prior unparseable response, restates the format, eventually says "this is your last attempt, format requirements are absolute." Tolerant parsers strip surrounding quotes / code fences / whitespace before parsing. Reliability becomes a runtime property, not a per-program user task.
+- **Function-signature context in the system prompt.** Every prompt call automatically tells the LLM "you are a function with signature `name(p: T) -> ReturnType` — return the appropriate value, formatted as follows." Codegen embeds the signature as a literal at compile time. The LLM stops being asked "complete this text" and starts being asked "implement this typed function." Same prompt body, much better behavior — and no other framework does this consistently because it requires owning the codegen.
+
+### The architectural piece that made this work cleanly
+
+Phase 13 + 14 had built-in fragility that surfaced when Phase 15's prompt bridge added new C-symbol references: any Rust binary linking corvid-runtime ALSO needed the C-runtime symbols (`corvid_alloc`, `corvid_string_from_bytes`, etc.), but those were compiled separately by `corvid-codegen-cl::link.rs` at user-binary link time. Rust test binaries that just depended on corvid-runtime would fail to link with unresolved-symbol errors.
+
+Fix: **moved the C runtime into corvid-runtime.** `runtime/*.c` files relocated from `corvid-codegen-cl/runtime/` to `corvid-runtime/runtime/`. New `corvid-runtime/build.rs` compiles them via `cc::Build` into a `corvid_c_runtime` staticlib. `corvid-runtime` re-exports the path via `pub mod c_runtime { pub const C_RUNTIME_LIB_PATH: &str = ... }`. `corvid-codegen-cl::link.rs` and the FFI smoke test add this lib to their linker invocations. corvid-runtime becomes self-contained.
+
+This wasn't on the original Phase 15 plan but turned out to be load-bearing for Phase 15 to land cleanly. Caught it the moment the parity test binary failed to link.
+
+### Shape of the change
+
+- **`crates/corvid-runtime/src/abi.rs`:** `LlmResponse` gains `usage: TokenUsage` (Phase 20 cost-budget infrastructure prep). Every adapter populates from the provider's response.
+- **`crates/corvid-runtime/src/llm/openai_compat.rs`** (new): universal `openai-compat:<url>:<model>` adapter.
+- **`crates/corvid-runtime/src/llm/ollama.rs`** (new): local-first via `localhost:11434/api/chat`.
+- **`crates/corvid-runtime/src/llm/gemini.rs`** (new): Google Gemini.
+- **`crates/corvid-runtime/src/llm/mock.rs`:** new `EnvVarMockAdapter` for parity-test mock injection via `CORVID_TEST_MOCK_LLM=1`.
+- **`crates/corvid-runtime/src/ffi_bridge.rs`:** four typed prompt bridges (`corvid_prompt_call_int` / `_bool` / `_float` / `_string`) with retry-with-validation + function-signature context construction. Adapter registration in `build_corvid_runtime` updated to register all 5 providers + the env-var mock when in test mode.
+- **`crates/corvid-runtime/runtime/strings.c`:** new `corvid_string_from_int` / `_bool` / `_float` helpers.
+- **`crates/corvid-runtime/build.rs`** (new): compiles the C runtime into `corvid_c_runtime` staticlib + emits the path constant.
+- **`crates/corvid-codegen-cl/src/lowering.rs`:** new `lower_prompt_call` with compile-time template parsing; `IrCallKind::Prompt` lifted from rejection. New `RuntimeFuncs` entries for the prompt bridges + stringification helpers.
+- **`crates/corvid-codegen-cl/src/link.rs`:** removed the per-build C source compilation; now just links the `corvid_c_runtime` lib alongside `corvid_runtime.lib`.
+- **`crates/corvid-driver/src/native_ability.rs`:** removed `NotNativeReason::PromptCall`. Prompts compile + run natively unconditionally.
+
+### Tests
+
+**99 parity tests** (up from 96): 3 new for prompt dispatch — zero-arg Int return, Int-arg interpolation, String-arg interpolation. Every fixture leak-detector-audited under `CORVID_DEBUG_ALLOC=1`. Workspace total: ~360 tests, all green.
+
+| Crate | Tests |
+|---|---|
+| corvid-ast | 13 |
+| corvid-ir | 38 |
+| corvid-resolve | 14 |
+| corvid-types | 75 |
+| corvid-syntax | 18 |
+| **corvid-runtime** | **49 (was 35 — new adapter unit tests)** |
+| corvid-runtime (integration) | 6 |
+| corvid-vm | 35 |
+| corvid-codegen-py | 13 |
+| **corvid-codegen-cl (parity)** | **99 (was 96)** |
+| corvid-codegen-cl (ffi_bridge_smoke) | 1 |
+| corvid-macros | 4 |
+| corvid-driver | 22 |
+| Python runtime | 10 |
+
+### Scope honestly held
+
+In: stringification helpers, 5 LLM adapters with token usage, env-var mock, 4 prompt bridges with retry-with-validation + signature context, Cranelift template-parsing + lowering, driver gate lift, C-runtime move, 3 parity fixtures.
+
+Out (deliberately, named in ROADMAP):
+- **Provider-specific JSON-schema structured output** → Phase 20 (alongside `Grounded<T>`). Phase 15's text-then-parse with retry covers ~95% of cases.
+- **Streaming `Stream<T>`** → Phase 20.
+- **Replay** → Phase 21.
+- **`@budget($)` cost bounds** → Phase 20 (uses `TokenUsage` Phase 15 plumbed).
+- **Per-prompt model selection in source** → Phase 31.
+- **Caching by `(prompt, args, model)`** → Phase 21.
+- **Real-API integration tests** against Ollama + cloud providers → Phase 33 launch polish (CI runner with Ollama install).
+- **`corvid stats` CLI subcommand** → Phase 20.
+
+### v0.4 cuts here
+
+Phases 13–15 together complete the "native tier actually useful for real programs" promise from the roadmap. Tool-using programs compile + run natively (Phase 14). Prompt-using programs compile + run natively (Phase 15). Combined with Phase 13's runtime bridge, every program in `examples/` runs natively end-to-end against a mock or live LLM.
+
+### Next
+
+Phase 16 pre-phase chat — methods on types. Kicks off v0.5 ("GP feel"): the cheapest, loudest general-purpose-language signal feature. Single dispatch, no inheritance, lowers to free functions with a named receiver. Decisions to lock at the chat: `impl T:` block syntax (Rust/Swift idiom) vs methods-inside-`type-T:` block, receiver naming (`self` vs explicit param), whether method resolution unifies with a future trait/interface system or stays purely concrete.
+
+---
+
 ## Day 31 — Phase 14: Native tool dispatch ✅
 
 User-written `#[tool]` implementations now dispatch from compiled Corvid code with zero JSON marshalling, full link-time symbol resolution, and a `--with-tools-lib` CLI flag that wires it together. Phase 14 closes; Phase 15 (prompt dispatch) is the only thing standing between us and v0.4.

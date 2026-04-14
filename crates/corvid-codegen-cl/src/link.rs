@@ -3,46 +3,23 @@
 //!
 //! Uses the `cc` crate's compiler discovery (`cc::Build::new().get_compiler()`)
 //! so we pick up `cl.exe` on Windows/MSVC, `cc`/`clang` on macOS, and
-//! `cc` on Linux. We then drive it directly via `std::process::Command`
+//! `cc` on Linux. We drive it directly via `std::process::Command`
 //! because `cc::Build` is optimised for build-script use and does not
 //! expose a "link these objects into this binary" entry point on all
 //! platforms uniformly.
+//!
+//! Phase 15: the C runtime files (alloc.c, strings.c, lists.c, entry.c,
+//! shim.c) moved to corvid-runtime/runtime/. corvid-runtime's build.rs
+//! compiles them into the corvid-runtime.lib staticlib, so this
+//! linker invocation just needs to combine the Cranelift-emitted .obj
+//! with whichever runtime-bearing staticlib the caller picked.
 
 use crate::errors::CodegenError;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-/// Source of the C entry shim. Compiled and linked with every binary.
-pub const ENTRY_SHIM_SOURCE: &str = include_str!("../runtime/shim.c");
-
-/// Refcounted heap allocator. Linked with every binary so the runtime
-/// helpers (`corvid_alloc` / `corvid_retain` / `corvid_release`) are
-/// available even when the program doesn't allocate (the symbols cost
-/// nothing if unreferenced).
-pub const ALLOC_SOURCE: &str = include_str!("../runtime/alloc.c");
-
-/// String runtime helpers (`corvid_string_concat` / `_eq` / `_cmp`).
-/// Linked alongside the allocator.
-pub const STRINGS_SOURCE: &str = include_str!("../runtime/strings.c");
-
-/// List runtime helpers (`corvid_destroy_list_refcounted`). One shared
-/// destructor for every refcounted-element list type — operating on
-/// raw pointers, it doesn't care whether T is String, Struct, or
-/// nested List.
-pub const LISTS_SOURCE: &str = include_str!("../runtime/lists.c");
-
-/// Entry-agent helpers: argv decoding (parse_i64/_f64/_bool),
-/// result printing (print_i64/_bool/_f64/_string), arity-mismatch
-/// reporting, and the atexit registration for leak-counter printing.
-/// Linked alongside the rest of the runtime; the codegen-emitted
-/// `main` calls into these helpers per the entry agent's signature.
-pub const ENTRY_SOURCE: &str = include_str!("../runtime/entry.c");
-
-/// Link `object_path` together with the built-in entry shim into an
+/// Link `object_path` together with the runtime staticlib(s) into an
 /// executable at `output_path`. Creates parent directories as needed.
-/// The object file must export a symbol named `corvid_entry` — the
-/// codegen emits a trampoline with that name that calls the chosen
-/// entry agent, which keeps the shim free of per-user patching.
 pub fn link_binary(
     object_path: &Path,
     _entry_agent_symbol: &str,
@@ -59,28 +36,6 @@ pub fn link_binary(
         std::fs::create_dir_all(parent)
             .map_err(|e| CodegenError::io(format!("create {}: {e}", parent.display())))?;
     }
-
-    // Write the (unmodified) shim, allocator, and string runtime to a
-    // temp dir the compiler can read.
-    let shim_dir = tempfile::Builder::new()
-        .prefix("corvid-link-")
-        .tempdir()
-        .map_err(|e| CodegenError::io(format!("tempdir: {e}")))?;
-    let shim_path = shim_dir.path().join("corvid_shim.c");
-    let alloc_path = shim_dir.path().join("corvid_alloc.c");
-    let strings_path = shim_dir.path().join("corvid_strings.c");
-    let lists_path = shim_dir.path().join("corvid_lists.c");
-    let entry_path = shim_dir.path().join("corvid_entry.c");
-    std::fs::write(&shim_path, ENTRY_SHIM_SOURCE)
-        .map_err(|e| CodegenError::io(format!("write shim: {e}")))?;
-    std::fs::write(&alloc_path, ALLOC_SOURCE)
-        .map_err(|e| CodegenError::io(format!("write alloc: {e}")))?;
-    std::fs::write(&strings_path, STRINGS_SOURCE)
-        .map_err(|e| CodegenError::io(format!("write strings: {e}")))?;
-    std::fs::write(&lists_path, LISTS_SOURCE)
-        .map_err(|e| CodegenError::io(format!("write lists: {e}")))?;
-    std::fs::write(&entry_path, ENTRY_SOURCE)
-        .map_err(|e| CodegenError::io(format!("write entry: {e}")))?;
 
     let compiler = cc::Build::new()
         .opt_level(2)
@@ -129,25 +84,19 @@ pub fn link_binary(
         )));
     }
 
+    // Phase 15: corvid-runtime's build.rs compiles the C runtime
+    // (alloc.c, strings.c, etc.) into a separate `corvid_c_runtime`
+    // staticlib. cargo's auto-link-lib mechanism only flows through
+    // managed cargo builds; non-cargo linker invocations (here +
+    // ffi_bridge_smoke) must add the C-runtime lib path explicitly.
+    let c_runtime_lib = std::path::Path::new(corvid_runtime::c_runtime::C_RUNTIME_LIB_PATH);
+
     if compiler.is_like_msvc() {
-        // MSVC: cl.exe writes intermediate .obj files into the cwd
-        // unless /Fo redirects them. Per-invocation tempdir so parallel
-        // tests don't collide. `/std:c11` enables `<stdatomic.h>`,
-        // which the alloc.c runtime depends on.
-        let obj_out_dir = shim_dir.path();
-        cmd.arg("/std:c11")
-            .arg("/experimental:c11atomics")
-            .arg(format!(
-                "/Fo{}{}",
-                obj_out_dir.display(),
-                std::path::MAIN_SEPARATOR
-            ))
-            .arg(&shim_path)
-            .arg(&alloc_path)
-            .arg(&strings_path)
-            .arg(&lists_path)
-            .arg(&entry_path)
-            .arg(object_path)
+        // MSVC: cl.exe acts as the link driver. The C runtime is
+        // already inside corvid_c_runtime.lib (built by corvid-runtime's
+        // build.rs in Phase 15), so we just hand cl.exe the Cranelift
+        // .obj plus the runtime/tools staticlibs.
+        cmd.arg(object_path)
             .arg(format!("/Fe:{}", output_path.display()));
         // Exactly ONE runtime-bearing staticlib: either the standalone
         // corvid-runtime (tool-free programs) or the user's tools
@@ -161,6 +110,10 @@ pub fn link_binary(
                 cmd.arg(lib);
             }
         }
+        // C runtime (`corvid_alloc`, `corvid_release`,
+        // `corvid_string_from_bytes`, etc.) is in a separate
+        // staticlib produced by corvid-runtime's build.rs.
+        cmd.arg(c_runtime_lib);
         cmd
             // `/link` separates cl.exe driver args from linker args.
             // Everything after this goes straight to link.exe.
@@ -184,19 +137,10 @@ pub fn link_binary(
             // explicitly.
             .arg("legacy_stdio_definitions.lib");
     } else {
-        // GCC/Clang: cc shim.c alloc.c strings.c lists.c entry.c object.o
-        //   libcorvid_runtime.a <native system libs> -o output
-        // `-std=c11` enables `<stdatomic.h>` portably. The staticlib
-        // goes after the .o (left-to-right symbol resolution on Unix
-        // linkers; user code references staticlib symbols, not the
-        // other way around).
-        cmd.arg("-std=c11")
-            .arg(&shim_path)
-            .arg(&alloc_path)
-            .arg(&strings_path)
-            .arg(&lists_path)
-            .arg(&entry_path)
-            .arg(object_path);
+        // GCC/Clang: cc object.o libcorvid_runtime.a <native libs> -o output
+        // The C runtime is inside corvid-runtime.a (Phase 15 onwards),
+        // so just hand the linker the .obj + the staticlibs.
+        cmd.arg(object_path);
         // Exactly ONE runtime-bearing staticlib (see MSVC branch above
         // for the LNK2005 explanation — same constraint applies on
         // Unix, just with a different linker phrasing).
@@ -207,6 +151,7 @@ pub fn link_binary(
                 cmd.arg(lib);
             }
         }
+        cmd.arg(c_runtime_lib);
         cmd
             // System libs tokio + reqwest + rustls + Rust std need
             // on Linux / macOS. The set is near-identical; macOS
@@ -242,8 +187,6 @@ pub fn link_binary(
             String::from_utf8_lossy(&output.stdout),
         )));
     }
-    // Keep `shim_dir` alive until link completes.
-    drop(shim_dir);
     Ok(())
 }
 

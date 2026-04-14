@@ -10,8 +10,11 @@
 //! Real `claude-*` HTTP dispatch lands in slice 2b.
 
 pub mod anthropic;
+pub mod gemini;
 pub mod mock;
+pub mod ollama;
 pub mod openai;
+pub mod openai_compat;
 
 use crate::errors::RuntimeError;
 use futures::future::BoxFuture;
@@ -43,9 +46,25 @@ pub struct LlmRequest {
 /// the interpreter will marshal back into the prompt's declared return
 /// type. For string-returning prompts this is a JSON string; for struct
 /// returns it's a JSON object whose keys match the declared fields.
+///
+/// `usage` records the token counts the provider reports. Phase 15
+/// adds this so the runtime can aggregate per-process totals (foundation
+/// for Phase 20's `@budget($)` cost-bound annotations). Adapters that
+/// don't have token info from the provider report zeros.
 #[derive(Debug, Clone)]
 pub struct LlmResponse {
     pub value: serde_json::Value,
+    pub usage: TokenUsage,
+}
+
+/// Token counts for a single LLM call. Filled in by adapters from the
+/// provider's response (every major API returns these). Zeros mean
+/// "the provider didn't report" (e.g., older endpoints, mocks).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct TokenUsage {
+    pub prompt_tokens: u32,
+    pub completion_tokens: u32,
+    pub total_tokens: u32,
 }
 
 /// Trait every LLM adapter implements.

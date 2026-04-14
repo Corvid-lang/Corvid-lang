@@ -47,6 +47,15 @@ pub mod tracing;
 pub use abi::{registered_tool_count, CorvidString, ToolMetadata};
 pub use inventory;
 
+/// Path to the C-runtime staticlib (`corvid_c_runtime.lib` / `.a`)
+/// that corvid-runtime's build.rs compiled. Used by corvid-codegen-cl's
+/// `link.rs` when assembling a Corvid binary outside the cargo
+/// link-step machinery (cargo's `rustc-link-lib=static=...` only flows
+/// through cargo-managed builds).
+pub mod c_runtime {
+    include!(concat!(env!("OUT_DIR"), "/c_runtime_path.rs"));
+}
+
 pub use approvals::{
     ApprovalDecision, ApprovalRequest, Approver, ProgrammaticApprover, StdinApprover,
 };
@@ -54,8 +63,13 @@ pub use env::{find_dotenv_walking, load_dotenv, load_dotenv_walking};
 pub use errors::RuntimeError;
 pub use redact::RedactionSet;
 pub use llm::{
-    anthropic::AnthropicAdapter, mock::MockAdapter, openai::OpenAiAdapter, LlmAdapter,
-    LlmRegistry, LlmRequest, LlmResponse,
+    anthropic::AnthropicAdapter,
+    gemini::GeminiAdapter,
+    mock::{EnvVarMockAdapter, MockAdapter},
+    ollama::OllamaAdapter,
+    openai::OpenAiAdapter,
+    openai_compat::OpenAiCompatibleAdapter,
+    LlmAdapter, LlmRegistry, LlmRequest, LlmResponse, TokenUsage,
 };
 pub use runtime::{Runtime, RuntimeBuilder};
 pub use tools::{ToolHandler, ToolRegistry};

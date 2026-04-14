@@ -1664,6 +1664,147 @@ fn tool_takes_string_arg_returns_int() {
     );
 }
 
+// ============================================================
+// Phase 15 fixtures: native-tier prompt dispatch through the
+// LlmRegistry + adapter pipeline.
+//
+// Every fixture uses the env-var mock LLM (`CORVID_TEST_MOCK_LLM=1`,
+// response from `CORVID_TEST_MOCK_LLM_RESPONSE`) so we don't need
+// real provider API keys in CI. The compiled binary's
+// `corvid_runtime_init` registers the mock as the FIRST adapter,
+// so its wildcard `handles()` claims every model spec — real
+// providers (Anthropic / OpenAI / Gemini / Ollama / openai-compat)
+// remain registered but never get hit.
+// ============================================================
+
+/// Run a prompt-using parity fixture with a fixed mock LLM response.
+/// Verifies both tiers produce the same result given the same mock.
+/// `mock_value` is the JSON value the interpreter mock returns
+/// (typically `json!(42)`, `json!(true)`, etc.); the native tier
+/// receives the same value as TEXT (stringified per `Value::to_string`)
+/// because the env-var mock channel is text-only and the bridge's
+/// retry-with-validation parses it back. Both tiers must produce
+/// `expected`.
+#[track_caller]
+fn assert_parity_with_mock_llm(
+    src: &str,
+    mock_value: serde_json::Value,
+    expected: i64,
+    model: &str,
+    prompt_name: &str,
+) {
+    let ir = ir_of(src);
+
+    // --- Interpreter tier ---
+    let mock = corvid_runtime::MockAdapter::new(model)
+        .reply(prompt_name, mock_value.clone());
+    let runtime = Runtime::builder()
+        .approver(Arc::new(ProgrammaticApprover::always_yes()))
+        .llm(Arc::new(mock))
+        .default_model(model)
+        .build();
+    let interp_value = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(async { corvid_vm::run_agent(&ir, entry_name(&ir), vec![], &runtime).await })
+        .expect("interpreter run");
+    assert_eq!(
+        interp_value,
+        Value::Int(expected),
+        "interpreter result mismatch for src:\n{src}"
+    );
+
+    // --- Native tier with env-var mock ---
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let bin_path = tmp.path().join("prog");
+    let produced = build_native_to_disk(
+        &ir,
+        "corvid_parity_test",
+        &bin_path,
+        &[test_tools_lib_path().as_path()],
+    )
+    .expect("compile + link");
+
+    // Stringify the mock JSON value for the env-var channel. For
+    // `json!(42)` this is `"42"`; for `json!("hi")` it's `"hi"` (we
+    // strip surrounding JSON-string quotes since the bridge will
+    // strip them back during parse anyway). Using as_str when
+    // available avoids the JSON-quoted form for String returns.
+    let mock_text = match &mock_value {
+        serde_json::Value::String(s) => s.clone(),
+        other => other.to_string(),
+    };
+    let output = Command::new(&produced)
+        .env("CORVID_DEBUG_ALLOC", "1")
+        .env("CORVID_APPROVE_AUTO", "1")
+        .env("CORVID_TEST_MOCK_LLM", "1")
+        .env("CORVID_TEST_MOCK_LLM_RESPONSE", mock_text)
+        .env("CORVID_MODEL", model)
+        .output()
+        .expect("run compiled binary");
+    let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+    assert!(
+        output.status.success(),
+        "compiled binary exited non-zero: status={:?} stdout={stdout} stderr={stderr} src=\n{src}",
+        output.status.code()
+    );
+    let compiled: i64 = stdout
+        .trim()
+        .lines()
+        .next()
+        .unwrap_or("")
+        .parse()
+        .unwrap_or_else(|e| panic!("parse stdout `{stdout}` as i64: {e}"));
+    assert_eq!(
+        compiled, expected,
+        "compiled result mismatch for src:\n{src}\nstderr: {stderr}"
+    );
+    assert_no_leaks(&stderr, src);
+}
+
+#[test]
+fn prompt_returns_int() {
+    // Simplest prompt path: zero-arg, Int return. Mock LLM returns
+    // 42 (JSON Int for interpreter; "42" text for compiled bridge).
+    assert_parity_with_mock_llm(
+        "prompt answer() -> Int:\n    \"What is the answer\"\n\nagent main() -> Int:\n    return answer()\n",
+        serde_json::json!(42),
+        42,
+        "mock-1",
+        "answer",
+    );
+}
+
+#[test]
+fn prompt_with_int_arg_interpolation() {
+    // Template interpolation of a non-String arg. Codegen calls
+    // `corvid_string_from_int` to stringify the Int before
+    // concatenating into the rendered prompt. Mock returns a known
+    // value regardless — the test verifies the dispatch path works.
+    assert_parity_with_mock_llm(
+        "prompt double(n: Int) -> Int:\n    \"Double {n}\"\n\nagent main() -> Int:\n    return double(7)\n",
+        serde_json::json!(14),
+        14,
+        "mock-1",
+        "double",
+    );
+}
+
+#[test]
+fn prompt_with_string_arg_interpolation() {
+    // String arg passes through stringify-as-identity in codegen.
+    // Tests the String concat path through the prompt bridge.
+    assert_parity_with_mock_llm(
+        "prompt classify(message: String) -> Int:\n    \"Classify: {message}\"\n\nagent main() -> Int:\n    return classify(\"hello\")\n",
+        serde_json::json!(1),
+        1,
+        "mock-1",
+        "classify",
+    );
+}
+
 #[test]
 fn approve_before_dangerous_tool_compiles_and_runs() {
     // Phase 14: `approve` is a compile-time-checked no-op in

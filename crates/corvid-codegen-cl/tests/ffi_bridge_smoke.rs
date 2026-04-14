@@ -122,18 +122,10 @@ fn ffi_bridge_init_probe_shutdown() {
     let c_path = tmp.path().join("ffi_smoke.c");
     std::fs::write(&c_path, FFI_SMOKE_C).expect("write c source");
 
-    // Slice 14a onwards: the corvid-runtime staticlib references
-    // `corvid_release` and `corvid_string_from_bytes`, implemented in
-    // `runtime/alloc.c` and `runtime/strings.c`. Without those, the
-    // FFI smoke binary fails to link — the types `CorvidString`,
-    // `FromCorvidAbi`, `IntoCorvidAbi` are present in the staticlib's
-    // object files even if this particular test doesn't call them.
-    let alloc_path = tmp.path().join("corvid_alloc.c");
-    let strings_path = tmp.path().join("corvid_strings.c");
-    std::fs::write(&alloc_path, corvid_codegen_cl::link::ALLOC_SOURCE)
-        .expect("write alloc.c");
-    std::fs::write(&strings_path, corvid_codegen_cl::link::STRINGS_SOURCE)
-        .expect("write strings.c");
+    // Phase 15: the C runtime (alloc.c, strings.c, etc.) is now
+    // compiled into corvid-runtime.lib by corvid-runtime's build.rs.
+    // The smoke test links just the staticlib — no separate C source
+    // compile needed.
 
     // Locate the staticlib — same path link.rs computes at runtime.
     let staticlib_dir =
@@ -165,19 +157,20 @@ fn ffi_bridge_init_probe_shutdown() {
         staticlib_path.display()
     );
 
+    let c_runtime_lib =
+        std::path::Path::new(corvid_runtime::c_runtime::C_RUNTIME_LIB_PATH);
+
     if compiler.is_like_msvc() {
         cmd.arg("/std:c11")
-            .arg("/experimental:c11atomics")
             .arg(format!(
                 "/Fo{}{}",
                 tmp.path().display(),
                 std::path::MAIN_SEPARATOR
             ))
             .arg(&c_path)
-            .arg(&alloc_path)
-            .arg(&strings_path)
             .arg(format!("/Fe:{}", out_bin.display()))
             .arg(&staticlib_path)
+            .arg(c_runtime_lib)
             .arg("/link")
             .arg("bcrypt.lib")
             .arg("advapi32.lib")
@@ -190,9 +183,8 @@ fn ffi_bridge_init_probe_shutdown() {
     } else {
         cmd.arg("-std=c11")
             .arg(&c_path)
-            .arg(&alloc_path)
-            .arg(&strings_path)
             .arg(&staticlib_path)
+            .arg(c_runtime_lib)
             .arg("-lpthread")
             .arg("-ldl")
             .arg("-lm")

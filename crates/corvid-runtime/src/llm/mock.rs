@@ -5,7 +5,7 @@
 //! tests don't silently pass on missing setup.
 
 use crate::errors::RuntimeError;
-use crate::llm::{LlmAdapter, LlmRequest, LlmResponse};
+use crate::llm::{LlmAdapter, LlmRequest, LlmResponse, TokenUsage};
 use futures::future::BoxFuture;
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -64,7 +64,67 @@ impl LlmAdapter for MockAdapter {
                         req.prompt
                     ),
                 })?;
-            Ok(LlmResponse { value })
+            Ok(LlmResponse {
+                value,
+                // Mocks have no real token counts. Zeros are the
+                // documented "no usage info" sentinel.
+                usage: TokenUsage::default(),
+            })
+        })
+    }
+}
+
+/// Test-mode mock that returns the same response for every prompt
+/// call. Configured from a single env var by the runtime's bridge
+/// when `CORVID_TEST_MOCK_LLM=1`. Useful for parity fixtures that
+/// exercise the prompt-dispatch path without needing per-prompt
+/// canned data.
+pub struct EnvVarMockAdapter {
+    name: String,
+    response: serde_json::Value,
+}
+
+impl EnvVarMockAdapter {
+    /// Build from the env. Reads `CORVID_TEST_MOCK_LLM_RESPONSE` for
+    /// the canned response (raw string — adapter wraps it in a
+    /// `serde_json::Value::String` so it round-trips through the
+    /// String path; numeric responses for Int/Bool/Float prompts go
+    /// in the same env var as their textual representation, e.g.
+    /// `"42"` or `"true"`).
+    pub fn from_env() -> Self {
+        let raw = std::env::var("CORVID_TEST_MOCK_LLM_RESPONSE").unwrap_or_default();
+        Self {
+            name: "env-mock-llm".into(),
+            response: serde_json::Value::String(raw),
+        }
+    }
+}
+
+impl LlmAdapter for EnvVarMockAdapter {
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    fn handles(&self, _model: &str) -> bool {
+        // Wildcard match — once registered, this adapter handles
+        // every model spec. The bridge only registers it when
+        // CORVID_TEST_MOCK_LLM=1, and the registry's first-match
+        // dispatch means the env mock takes precedence over real
+        // providers in test mode (intentional: avoids real API
+        // calls in CI even when API keys leak into the env).
+        true
+    }
+
+    fn call<'a>(
+        &'a self,
+        _req: &'a LlmRequest,
+    ) -> BoxFuture<'a, Result<LlmResponse, RuntimeError>> {
+        let value = self.response.clone();
+        Box::pin(async move {
+            Ok(LlmResponse {
+                value,
+                usage: TokenUsage::default(),
+            })
         })
     }
 }

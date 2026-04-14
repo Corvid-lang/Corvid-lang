@@ -43,7 +43,11 @@
 use crate::abi::{CorvidString, REGISTERED_TOOL_COUNT};
 use crate::approvals::{ProgrammaticApprover, StdinApprover};
 use crate::llm::anthropic::AnthropicAdapter;
+use crate::llm::gemini::GeminiAdapter;
+use crate::llm::mock::EnvVarMockAdapter;
+use crate::llm::ollama::OllamaAdapter;
 use crate::llm::openai::OpenAiAdapter;
+use crate::llm::openai_compat::OpenAiCompatibleAdapter;
 use crate::runtime::{Runtime, RuntimeBuilder};
 use crate::tracing::{fresh_run_id, Tracer};
 use crate::redact::RedactionSet;
@@ -364,6 +368,335 @@ pub(crate) fn record_registered_tool_count(n: i64) {
 }
 
 // ------------------------------------------------------------
+// Phase 15 — typed prompt-dispatch bridges.
+//
+// One bridge per return type, mirroring Phase 14's typed-ABI design.
+// Each takes 4 CorvidString args (prompt name, signature string,
+// rendered prompt body, model name) and returns the typed value.
+//
+// All four bridges follow the same shape internally:
+//   1. Read CorvidString args as Rust Strings (borrow, no refcount poke).
+//   2. Build a system prompt: function-signature context +
+//      return-type-specific format instruction.
+//   3. Loop up to CORVID_PROMPT_MAX_RETRIES (default 3):
+//      a. Call the adapter via block_on.
+//      b. Parse the response into the typed value.
+//      c. On parse success, return.
+//      d. On parse failure, capture last response for next retry's
+//         stronger system prompt.
+//   4. After max retries, panic with a clear message including the
+//      last LLM response — compiled binary aborts with stderr trail
+//      so the user can see what went wrong.
+//
+// String returns skip the parse-retry loop entirely (a String response
+// is by definition parseable as String). The shape stays uniform so
+// codegen has the same call pattern for every return type.
+//
+// Function-signature context is the inventive piece: the system
+// prompt explicitly tells the LLM "you are a function with signature
+// X — return the appropriate value." Codegen knows the signature at
+// compile time and embeds it as a literal. Same prompt body, much
+// better LLM behavior because the model has the type contract.
+// ------------------------------------------------------------
+
+use crate::llm::LlmRequest;
+
+/// Default retry count when `CORVID_PROMPT_MAX_RETRIES` env is unset.
+const DEFAULT_PROMPT_MAX_RETRIES: u32 = 3;
+
+fn prompt_max_retries() -> u32 {
+    std::env::var("CORVID_PROMPT_MAX_RETRIES")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(DEFAULT_PROMPT_MAX_RETRIES)
+}
+
+/// Read a `CorvidString` as a borrowed UTF-8 string. Same semantics
+/// as `abi::FromCorvidAbi for String` but returns a `Cow` so callers
+/// avoid an unconditional clone when they only need to read.
+unsafe fn read_corvid_string(cs: CorvidString) -> String {
+    use crate::abi::FromCorvidAbi;
+    String::from_corvid_abi(cs)
+}
+
+/// Format-instruction text per return type. Sent in the system prompt.
+fn format_instruction_int() -> &'static str {
+    "Output only a single integer literal — no quotes, no explanation, no formatting, no thousands separators. Examples: 42, -7, 0."
+}
+
+fn format_instruction_bool() -> &'static str {
+    "Output only the word `true` or `false` — lowercase, no quotes, no explanation, no surrounding text."
+}
+
+fn format_instruction_float() -> &'static str {
+    "Output only a single decimal number — no quotes, no explanation, no scientific notation prefix beyond what `f64::parse` accepts. Examples: 3.14, -0.5, 42.0."
+}
+
+/// Build the system prompt sent to the LLM. Encodes the function
+/// signature + return-type instruction + (after retries) escalating
+/// reminders. `attempt` is 0-indexed; `last_failure` is `Some(text)`
+/// on retry attempts and contains the LLM's previous (unparseable)
+/// response.
+fn build_system_prompt(
+    signature: &str,
+    format_instruction: &str,
+    attempt: u32,
+    last_failure: Option<&str>,
+) -> String {
+    let mut sys = format!(
+        "You are a function with signature `{signature}`. The user message contains the rendered prompt body. Compute and return the appropriate value, formatted as follows.\n\nFormat: {format_instruction}"
+    );
+    if attempt > 0 {
+        if let Some(prev) = last_failure {
+            sys.push_str(&format!(
+                "\n\nIMPORTANT: Your previous response `{prev}` could not be parsed. Respond with ONLY the value in the exact format described above — nothing else, no surrounding text, no explanation."
+            ));
+        }
+        if attempt >= 2 {
+            sys.push_str("\n\nThis is your last attempt. The format requirements are absolute.");
+        }
+    }
+    sys
+}
+
+/// Single LLM call within the retry loop. Returns the response text
+/// (not the parsed value — parsing happens per-return-type in each
+/// bridge).
+fn call_llm_once(
+    state: &BridgeState,
+    prompt_name: &str,
+    model: &str,
+    rendered: &str,
+    system_prompt: &str,
+) -> Result<String, String> {
+    let runtime = state.corvid_runtime();
+    let prompt_owned = prompt_name.to_string();
+    let model_owned = model.to_string();
+    // Combine system prompt + user-side rendered prompt with two
+    // newlines. Adapters that have native system-prompt support could
+    // separate these later; for Phase 15 v1 the concat is universal.
+    let combined = format!("{system_prompt}\n\n{rendered}");
+    let req = LlmRequest {
+        prompt: prompt_owned,
+        model: model_owned,
+        rendered: combined,
+        args: Vec::new(),
+        output_schema: None,
+    };
+    let resp = state.tokio_handle().block_on(async move {
+        runtime.call_llm(req).await
+    });
+    match resp {
+        Ok(r) => match r.value {
+            serde_json::Value::String(s) => Ok(s),
+            other => Ok(other.to_string()),
+        },
+        Err(e) => Err(format!("{e}")),
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn corvid_prompt_call_int(
+    prompt_name: CorvidString,
+    signature: CorvidString,
+    rendered: CorvidString,
+    model: CorvidString,
+) -> i64 {
+    let state = bridge();
+    let prompt_name = unsafe { read_corvid_string(prompt_name) };
+    let signature = unsafe { read_corvid_string(signature) };
+    let rendered = unsafe { read_corvid_string(rendered) };
+    let model = unsafe { read_corvid_string(model) };
+
+    let max_retries = prompt_max_retries();
+    let mut last_response: Option<String> = None;
+    for attempt in 0..=max_retries {
+        let sys = build_system_prompt(
+            &signature,
+            format_instruction_int(),
+            attempt,
+            last_response.as_deref(),
+        );
+        match call_llm_once(state, &prompt_name, &model, &rendered, &sys) {
+            Err(e) => {
+                if attempt == max_retries {
+                    panic!(
+                        "corvid prompt `{prompt_name}` (model `{model}`): adapter failed after {} attempts: {e}",
+                        attempt + 1
+                    );
+                }
+                continue;
+            }
+            Ok(text) => match parse_int(&text) {
+                Some(v) => return v,
+                None => last_response = Some(text),
+            },
+        }
+    }
+    panic!(
+        "corvid prompt `{prompt_name}` (model `{model}`): could not parse Int from LLM response after {} attempts. Last response: {:?}",
+        max_retries + 1,
+        last_response.as_deref().unwrap_or("(none)")
+    );
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn corvid_prompt_call_bool(
+    prompt_name: CorvidString,
+    signature: CorvidString,
+    rendered: CorvidString,
+    model: CorvidString,
+) -> bool {
+    let state = bridge();
+    let prompt_name = unsafe { read_corvid_string(prompt_name) };
+    let signature = unsafe { read_corvid_string(signature) };
+    let rendered = unsafe { read_corvid_string(rendered) };
+    let model = unsafe { read_corvid_string(model) };
+
+    let max_retries = prompt_max_retries();
+    let mut last_response: Option<String> = None;
+    for attempt in 0..=max_retries {
+        let sys = build_system_prompt(
+            &signature,
+            format_instruction_bool(),
+            attempt,
+            last_response.as_deref(),
+        );
+        match call_llm_once(state, &prompt_name, &model, &rendered, &sys) {
+            Err(e) => {
+                if attempt == max_retries {
+                    panic!(
+                        "corvid prompt `{prompt_name}`: adapter failed after {} attempts: {e}",
+                        attempt + 1
+                    );
+                }
+                continue;
+            }
+            Ok(text) => match parse_bool(&text) {
+                Some(v) => return v,
+                None => last_response = Some(text),
+            },
+        }
+    }
+    panic!(
+        "corvid prompt `{prompt_name}`: could not parse Bool from LLM response after {} attempts. Last: {:?}",
+        max_retries + 1,
+        last_response.as_deref().unwrap_or("(none)")
+    );
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn corvid_prompt_call_float(
+    prompt_name: CorvidString,
+    signature: CorvidString,
+    rendered: CorvidString,
+    model: CorvidString,
+) -> f64 {
+    let state = bridge();
+    let prompt_name = unsafe { read_corvid_string(prompt_name) };
+    let signature = unsafe { read_corvid_string(signature) };
+    let rendered = unsafe { read_corvid_string(rendered) };
+    let model = unsafe { read_corvid_string(model) };
+
+    let max_retries = prompt_max_retries();
+    let mut last_response: Option<String> = None;
+    for attempt in 0..=max_retries {
+        let sys = build_system_prompt(
+            &signature,
+            format_instruction_float(),
+            attempt,
+            last_response.as_deref(),
+        );
+        match call_llm_once(state, &prompt_name, &model, &rendered, &sys) {
+            Err(e) => {
+                if attempt == max_retries {
+                    panic!(
+                        "corvid prompt `{prompt_name}`: adapter failed after {} attempts: {e}",
+                        attempt + 1
+                    );
+                }
+                continue;
+            }
+            Ok(text) => match parse_float(&text) {
+                Some(v) => return v,
+                None => last_response = Some(text),
+            },
+        }
+    }
+    panic!(
+        "corvid prompt `{prompt_name}`: could not parse Float from LLM response after {} attempts. Last: {:?}",
+        max_retries + 1,
+        last_response.as_deref().unwrap_or("(none)")
+    );
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn corvid_prompt_call_string(
+    prompt_name: CorvidString,
+    signature: CorvidString,
+    rendered: CorvidString,
+    model: CorvidString,
+) -> CorvidString {
+    use crate::abi::IntoCorvidAbi;
+    let state = bridge();
+    let prompt_name = unsafe { read_corvid_string(prompt_name) };
+    let signature = unsafe { read_corvid_string(signature) };
+    let rendered = unsafe { read_corvid_string(rendered) };
+    let model = unsafe { read_corvid_string(model) };
+
+    // String return: no parse-retry loop. Whatever the LLM returns
+    // IS the String. We still call once, and on adapter failure we
+    // panic with a clear message — adapter errors are infrastructure
+    // problems, not response-format problems.
+    let sys = format!(
+        "You are a function with signature `{signature}`. Return the appropriate string value as your full response — no quotes around the value, no explanation, no formatting markers."
+    );
+    match call_llm_once(state, &prompt_name, &model, &rendered, &sys) {
+        Ok(text) => text.into_corvid_abi(),
+        Err(e) => panic!(
+            "corvid prompt `{prompt_name}` (model `{model}`): adapter failed: {e}"
+        ),
+    }
+}
+
+/// Parse helpers — tolerant of common LLM quirks (surrounding quotes,
+/// whitespace, code-fence wrappers).
+fn strip_response(s: &str) -> &str {
+    let t = s.trim();
+    // Strip a single layer of code-fence: ```...```, ```rust...```, ```\n...```
+    if t.starts_with("```") && t.ends_with("```") && t.len() >= 6 {
+        let inner = &t[3..t.len() - 3];
+        // Trim a leading language tag like ```rust\n...
+        let after_lang = inner
+            .find('\n')
+            .map(|nl| &inner[nl + 1..])
+            .unwrap_or(inner);
+        return after_lang.trim();
+    }
+    t
+}
+
+fn parse_int(s: &str) -> Option<i64> {
+    let t = strip_response(s);
+    let t = t.trim_matches(|c: char| c == '"' || c == '\'').trim();
+    t.parse::<i64>().ok()
+}
+
+fn parse_bool(s: &str) -> Option<bool> {
+    let t = strip_response(s).trim().trim_matches(|c: char| c == '"' || c == '\'');
+    match t.to_ascii_lowercase().as_str() {
+        "true" | "1" | "yes" => Some(true),
+        "false" | "0" | "no" => Some(false),
+        _ => None,
+    }
+}
+
+fn parse_float(s: &str) -> Option<f64> {
+    let t = strip_response(s).trim().trim_matches(|c: char| c == '"' || c == '\'');
+    t.parse::<f64>().ok()
+}
+
+// ------------------------------------------------------------
 // Internal helpers (safe Rust, no FFI).
 // ------------------------------------------------------------
 
@@ -400,12 +733,33 @@ fn build_corvid_runtime() -> Runtime {
     if let Ok(model) = std::env::var("CORVID_MODEL") {
         b = b.default_model(&model);
     }
-    if let Ok(key) = std::env::var("ANTHROPIC_API_KEY") {
-        b = b.llm(Arc::new(AnthropicAdapter::new(key)));
+
+    // Phase 15: register every supported LLM adapter unconditionally
+    // so the model-prefix dispatch in `LlmRegistry::call` can route
+    // any `CORVID_MODEL` to its provider. Adapters that need an API
+    // key fall back to an empty string when the env var is missing —
+    // calls then surface as `HTTP 401` from the provider, which is
+    // a clearer failure than silently routing nowhere.
+    //
+    // Test-mode env-var mock takes PRECEDENCE: when
+    // `CORVID_TEST_MOCK_LLM=1`, the mock handles every model spec
+    // (its `handles` returns true unconditionally), avoiding real
+    // API calls in CI even when keys leak into the env.
+    if std::env::var("CORVID_TEST_MOCK_LLM").ok().as_deref() == Some("1") {
+        b = b.llm(Arc::new(EnvVarMockAdapter::from_env()));
     }
-    if let Ok(key) = std::env::var("OPENAI_API_KEY") {
-        b = b.llm(Arc::new(OpenAiAdapter::new(key)));
-    }
+    let anthropic_key = std::env::var("ANTHROPIC_API_KEY").unwrap_or_default();
+    b = b.llm(Arc::new(AnthropicAdapter::new(anthropic_key)));
+    let openai_key = std::env::var("OPENAI_API_KEY").unwrap_or_default();
+    b = b.llm(Arc::new(OpenAiAdapter::new(openai_key)));
+    let gemini_key = std::env::var("GOOGLE_API_KEY")
+        .or_else(|_| std::env::var("GEMINI_API_KEY"))
+        .unwrap_or_default();
+    b = b.llm(Arc::new(GeminiAdapter::new(gemini_key)));
+    // Ollama is local, no key. OpenAI-compat key is optional.
+    b = b.llm(Arc::new(OllamaAdapter::new()));
+    let compat_key = std::env::var("OPENAI_COMPAT_API_KEY").unwrap_or_default();
+    b = b.llm(Arc::new(OpenAiCompatibleAdapter::new(compat_key)));
 
     // Phase 13 test-only mock-tool registration. Format:
     //   CORVID_TEST_MOCK_INT_TOOLS="name1:value1;name2:value2"

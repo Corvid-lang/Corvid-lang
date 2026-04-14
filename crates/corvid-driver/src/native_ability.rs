@@ -27,7 +27,6 @@ pub enum NotNativeReason {
     /// supplies a tools staticlib (`--with-tools-lib`). Without one,
     /// the scan reports this reason and the dispatcher falls back.
     ToolCall { name: String },
-    PromptCall { name: String },
 }
 
 impl std::fmt::Display for NotNativeReason {
@@ -40,10 +39,6 @@ impl std::fmt::Display for NotNativeReason {
             Self::ToolCall { name } => write!(
                 f,
                 "program calls tool `{name}` — pass `--with-tools-lib <path>` pointing at your compiled `#[tool]` staticlib, or let auto-dispatch fall back to the interpreter"
-            ),
-            Self::PromptCall { name } => write!(
-                f,
-                "program calls prompt `{name}` — native prompt dispatch lands in Phase 15"
             ),
         }
     }
@@ -128,9 +123,11 @@ fn scan_expr(expr: &IrExpr) -> Result<(), NotNativeReason> {
                     })
                 }
                 IrCallKind::Prompt { .. } => {
-                    return Err(NotNativeReason::PromptCall {
-                        name: callee_name.clone(),
-                    })
+                    // Phase 15: prompt calls compile + run natively.
+                    // No extra user-provided lib needed (corvid-runtime
+                    // ships the LLM adapters built-in). Runtime errors
+                    // surface if no provider is configured (no API
+                    // key + not Ollama-only).
                 }
                 IrCallKind::Agent { .. }
                 | IrCallKind::StructConstructor { .. }

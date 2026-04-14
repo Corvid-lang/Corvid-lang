@@ -635,7 +635,7 @@ Corvid is single-threaded today. Atomic refcount is cheap insurance for Phase 25
 
 Per [ROADMAP.md](ROADMAP.md):
 
-- **Phase 15** (next) — Native prompt dispatch. Compiled code calls `prompt ... -> T:` declarations against live LLM adapters. Same typed-ABI model as tools (Phase 14), plus JSON-schema derivation from the prompt's declared return type.
+- **Phase 16** (next, kicks off v0.5 → "GP feel") — Methods on types. Dot-syntax `value.method(args)` for associated functions on user types. Single dispatch only, no inheritance. Cheapest, loudest GP-language signal feature.
 - **Slice 12k** — polish, benchmarks, stability guarantees.
 - **Phase 14** — proc-macro `#[tool]` registry, tool/prompt/approve in compiled code.
 - **Phase 16** — effect-tagged `import python "..."` (TypeScript `.d.ts` analog).
@@ -667,6 +667,7 @@ Each user-visible feature lands with a dev-log entry explaining the design decis
 | Phase 12 close-out benchmarks: native is 2.7×–13.6× faster end-to-end | [Day 29](dev-log.md) |
 | Phase 13: tokio + corvid runtime embedded in compiled binaries; native tool dispatch (narrow case) | [Day 30](dev-log.md) |
 | Phase 14: `#[tool]` proc-macro + typed C ABI dispatch + `--with-tools-lib` | [Day 31](dev-log.md) |
+| Phase 15: native prompt dispatch + 5 LLM provider adapters (Anthropic / OpenAI / OpenAI-compat / Ollama / Gemini) | [Day 32](dev-log.md) |
 
 ---
 
