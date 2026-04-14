@@ -64,38 +64,38 @@ pub fn build_native_to_disk(
     bin_path: &Path,
 ) -> Result<PathBuf, CodegenError> {
     let entry = pick_entry_agent(ir)?;
-    // Parameter-less entry only — argv decoding requires `String` and a
-    // shim variant; both arrive together in slice 12h.
-    if !entry.params.is_empty() {
+    // Slice 12i lifted parameter-less + Int/Bool-only restrictions for
+    // the four scalar types. Struct and List at the entry boundary
+    // remain blocked — they need a dedicated serialization slice
+    // (JSON or similar) before they can round-trip through argv /
+    // stdout meaningfully. The codegen-emitted main itself enforces
+    // the same boundary; this guard surfaces the error earlier with
+    // the agent name.
+    for p in &entry.params {
+        if matches!(
+            &p.ty,
+            corvid_types::Type::Struct(_) | corvid_types::Type::List(_)
+        ) {
+            return Err(CodegenError::not_supported(
+                format!(
+                    "entry agent `{}` parameter `{}` is `{}` — slice 12i supports Int/Bool/Float/String at the command-line boundary; structured-input types need a future serialization slice (use a wrapper agent that takes a String and parses internally)",
+                    entry.name,
+                    p.name,
+                    p.ty.display_name()
+                ),
+                p.span,
+            ));
+        }
+    }
+    if matches!(
+        &entry.return_ty,
+        corvid_types::Type::Struct(_) | corvid_types::Type::List(_)
+    ) {
         return Err(CodegenError::not_supported(
             format!(
-                "entry agent `{}` has {} parameter(s); `corvid build --target=native` requires a parameter-less entry — parameterised entries arrive in slice 12h alongside argv handling",
+                "entry agent `{}` returns `{}` — slice 12i supports Int/Bool/Float/String returns; structured-output types need a future serialization slice",
                 entry.name,
-                entry.params.len()
-            ),
-            entry.span,
-        ));
-    }
-    // Float entry-agent returns need a different print format in the C
-    // shim (or a second shim variant). Defer to slice 12i alongside
-    // argv decoding (when the shim already grows).
-    if matches!(&entry.return_ty, corvid_types::Type::Float) {
-        return Err(CodegenError::not_supported(
-            format!(
-                "entry agent `{}` returns `Float` — the C shim's `printf(\"%lld\")` only handles Int/Bool; Float entry returns arrive in slice 12i",
-                entry.name
-            ),
-            entry.span,
-        ));
-    }
-    // String entry-agent returns: the shim can't print a String pointer
-    // meaningfully, and a String return would need its own print path.
-    // Defer to slice 12i alongside argv decoding.
-    if matches!(&entry.return_ty, corvid_types::Type::String) {
-        return Err(CodegenError::not_supported(
-            format!(
-                "entry agent `{}` returns `String` — slice 12i adds the C-shim variant that decodes argv and prints non-Int returns",
-                entry.name
+                entry.return_ty.display_name()
             ),
             entry.span,
         ));

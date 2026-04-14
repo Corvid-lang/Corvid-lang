@@ -31,6 +31,13 @@ pub const STRINGS_SOURCE: &str = include_str!("../runtime/strings.c");
 /// nested List.
 pub const LISTS_SOURCE: &str = include_str!("../runtime/lists.c");
 
+/// Entry-agent helpers: argv decoding (parse_i64/_f64/_bool),
+/// result printing (print_i64/_bool/_f64/_string), arity-mismatch
+/// reporting, and the atexit registration for leak-counter printing.
+/// Linked alongside the rest of the runtime; the codegen-emitted
+/// `main` calls into these helpers per the entry agent's signature.
+pub const ENTRY_SOURCE: &str = include_str!("../runtime/entry.c");
+
 /// Link `object_path` together with the built-in entry shim into an
 /// executable at `output_path`. Creates parent directories as needed.
 /// The object file must export a symbol named `corvid_entry` — the
@@ -56,6 +63,7 @@ pub fn link_binary(
     let alloc_path = shim_dir.path().join("corvid_alloc.c");
     let strings_path = shim_dir.path().join("corvid_strings.c");
     let lists_path = shim_dir.path().join("corvid_lists.c");
+    let entry_path = shim_dir.path().join("corvid_entry.c");
     std::fs::write(&shim_path, ENTRY_SHIM_SOURCE)
         .map_err(|e| CodegenError::io(format!("write shim: {e}")))?;
     std::fs::write(&alloc_path, ALLOC_SOURCE)
@@ -64,6 +72,8 @@ pub fn link_binary(
         .map_err(|e| CodegenError::io(format!("write strings: {e}")))?;
     std::fs::write(&lists_path, LISTS_SOURCE)
         .map_err(|e| CodegenError::io(format!("write lists: {e}")))?;
+    std::fs::write(&entry_path, ENTRY_SOURCE)
+        .map_err(|e| CodegenError::io(format!("write entry: {e}")))?;
 
     let compiler = cc::Build::new()
         .opt_level(2)
@@ -100,16 +110,18 @@ pub fn link_binary(
             .arg(&alloc_path)
             .arg(&strings_path)
             .arg(&lists_path)
+            .arg(&entry_path)
             .arg(object_path)
             .arg(format!("/Fe:{}", output_path.display()));
     } else {
-        // GCC/Clang: cc shim.c alloc.c strings.c lists.c object.o -o output.
+        // GCC/Clang: cc shim.c alloc.c strings.c lists.c entry.c object.o -o output.
         // `-std=c11` enables `<stdatomic.h>` portably.
         cmd.arg("-std=c11")
             .arg(&shim_path)
             .arg(&alloc_path)
             .arg(&strings_path)
             .arg(&lists_path)
+            .arg(&entry_path)
             .arg(object_path)
             .arg("-o")
             .arg(output_path);

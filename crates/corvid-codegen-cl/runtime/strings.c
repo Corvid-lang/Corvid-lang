@@ -93,9 +93,15 @@ long long corvid_string_cmp(void* a_payload, void* b_payload) {
     return 0;
 }
 
-/* Suppress "unused" warnings if the compiled program doesn't reference
- * alloc_string directly (we only use it internally for now).
+/* Wrap a null-terminated C string as a refcounted Corvid String.
+ * Used by the codegen-emitted main to convert argv[i] arguments into
+ * String values for entry agents that take String parameters.
+ * Returns at refcount = 1 — callee takes ownership.
  */
-static void corvid_strings_keep_alloc_string_alive(void) {
-    (void)alloc_string;
+void* corvid_string_from_cstr(const char* s) {
+    if (s == NULL) {
+        return alloc_string("", 0);
+    }
+    long long len = (long long)strlen(s);
+    return alloc_string(s, len);
 }

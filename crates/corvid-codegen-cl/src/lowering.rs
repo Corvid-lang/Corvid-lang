@@ -118,6 +118,100 @@ fn declare_runtime_funcs(
             )
         })?;
 
+    // ---- slice 12i entry helpers ----
+    let void_void_sig = module.make_signature();
+    let entry_init_id = module
+        .declare_function(ENTRY_INIT_SYMBOL, Linkage::Import, &void_void_sig)
+        .map_err(|e| {
+            CodegenError::cranelift(format!("declare corvid_init: {e}"), Span::new(0, 0))
+        })?;
+
+    let mut arity_sig = module.make_signature();
+    arity_sig.params.push(AbiParam::new(I64));
+    arity_sig.params.push(AbiParam::new(I64));
+    let arity_id = module
+        .declare_function(ENTRY_ARITY_MISMATCH_SYMBOL, Linkage::Import, &arity_sig)
+        .map_err(|e| {
+            CodegenError::cranelift(
+                format!("declare arity_mismatch: {e}"),
+                Span::new(0, 0),
+            )
+        })?;
+
+    // parse helpers: (cstr_ptr, argv_index) -> typed value
+    let mut parse_i64_sig = module.make_signature();
+    parse_i64_sig.params.push(AbiParam::new(I64));
+    parse_i64_sig.params.push(AbiParam::new(I64));
+    parse_i64_sig.returns.push(AbiParam::new(I64));
+    let parse_i64_id = module
+        .declare_function(PARSE_I64_SYMBOL, Linkage::Import, &parse_i64_sig)
+        .map_err(|e| {
+            CodegenError::cranelift(format!("declare parse_i64: {e}"), Span::new(0, 0))
+        })?;
+
+    let mut parse_f64_sig = module.make_signature();
+    parse_f64_sig.params.push(AbiParam::new(I64));
+    parse_f64_sig.params.push(AbiParam::new(I64));
+    parse_f64_sig.returns.push(AbiParam::new(F64));
+    let parse_f64_id = module
+        .declare_function(PARSE_F64_SYMBOL, Linkage::Import, &parse_f64_sig)
+        .map_err(|e| {
+            CodegenError::cranelift(format!("declare parse_f64: {e}"), Span::new(0, 0))
+        })?;
+
+    let mut parse_bool_sig = module.make_signature();
+    parse_bool_sig.params.push(AbiParam::new(I64));
+    parse_bool_sig.params.push(AbiParam::new(I64));
+    parse_bool_sig.returns.push(AbiParam::new(I8));
+    let parse_bool_id = module
+        .declare_function(PARSE_BOOL_SYMBOL, Linkage::Import, &parse_bool_sig)
+        .map_err(|e| {
+            CodegenError::cranelift(format!("declare parse_bool: {e}"), Span::new(0, 0))
+        })?;
+
+    // corvid_string_from_cstr(cstr_ptr) -> descriptor
+    let mut from_cstr_sig = module.make_signature();
+    from_cstr_sig.params.push(AbiParam::new(I64));
+    from_cstr_sig.returns.push(AbiParam::new(I64));
+    let from_cstr_id = module
+        .declare_function(STRING_FROM_CSTR_SYMBOL, Linkage::Import, &from_cstr_sig)
+        .map_err(|e| {
+            CodegenError::cranelift(format!("declare string_from_cstr: {e}"), Span::new(0, 0))
+        })?;
+
+    // print helpers
+    let mut print_i64_sig = module.make_signature();
+    print_i64_sig.params.push(AbiParam::new(I64));
+    let print_i64_id = module
+        .declare_function(PRINT_I64_SYMBOL, Linkage::Import, &print_i64_sig)
+        .map_err(|e| {
+            CodegenError::cranelift(format!("declare print_i64: {e}"), Span::new(0, 0))
+        })?;
+
+    let mut print_bool_sig = module.make_signature();
+    print_bool_sig.params.push(AbiParam::new(I64));
+    let print_bool_id = module
+        .declare_function(PRINT_BOOL_SYMBOL, Linkage::Import, &print_bool_sig)
+        .map_err(|e| {
+            CodegenError::cranelift(format!("declare print_bool: {e}"), Span::new(0, 0))
+        })?;
+
+    let mut print_f64_sig = module.make_signature();
+    print_f64_sig.params.push(AbiParam::new(F64));
+    let print_f64_id = module
+        .declare_function(PRINT_F64_SYMBOL, Linkage::Import, &print_f64_sig)
+        .map_err(|e| {
+            CodegenError::cranelift(format!("declare print_f64: {e}"), Span::new(0, 0))
+        })?;
+
+    let mut print_string_sig = module.make_signature();
+    print_string_sig.params.push(AbiParam::new(I64));
+    let print_string_id = module
+        .declare_function(PRINT_STRING_SYMBOL, Linkage::Import, &print_string_sig)
+        .map_err(|e| {
+            CodegenError::cranelift(format!("declare print_string: {e}"), Span::new(0, 0))
+        })?;
+
     Ok(RuntimeFuncs {
         overflow: overflow_func_id,
         retain: retain_id,
@@ -128,6 +222,16 @@ fn declare_runtime_funcs(
         alloc: alloc_id,
         alloc_with_destructor: alloc_dtor_id,
         list_destroy_refcounted: list_destroy_id,
+        entry_init: entry_init_id,
+        entry_arity_mismatch: arity_id,
+        parse_i64: parse_i64_id,
+        parse_f64: parse_f64_id,
+        parse_bool: parse_bool_id,
+        string_from_cstr: from_cstr_id,
+        print_i64: print_i64_id,
+        print_bool: print_bool_id,
+        print_f64: print_f64_id,
+        print_string: print_string_id,
         literal_counter: std::cell::Cell::new(0),
         struct_destructors: HashMap::new(),
         ir_types: HashMap::new(),
@@ -273,6 +377,20 @@ pub const ALLOC_WITH_DESTRUCTOR_SYMBOL: &str = "corvid_alloc_with_destructor";
 /// don't need a destructor at all; they use plain `corvid_alloc`.
 pub const LIST_DESTROY_SYMBOL: &str = "corvid_destroy_list_refcounted";
 
+// Slice 12i — entry-agent helpers (argv decoding, result printing,
+// arity reporting, atexit). Called from the codegen-emitted `main`.
+
+pub const ENTRY_INIT_SYMBOL: &str = "corvid_init";
+pub const ENTRY_ARITY_MISMATCH_SYMBOL: &str = "corvid_arity_mismatch";
+pub const PARSE_I64_SYMBOL: &str = "corvid_parse_i64";
+pub const PARSE_F64_SYMBOL: &str = "corvid_parse_f64";
+pub const PARSE_BOOL_SYMBOL: &str = "corvid_parse_bool";
+pub const STRING_FROM_CSTR_SYMBOL: &str = "corvid_string_from_cstr";
+pub const PRINT_I64_SYMBOL: &str = "corvid_print_i64";
+pub const PRINT_BOOL_SYMBOL: &str = "corvid_print_bool";
+pub const PRINT_F64_SYMBOL: &str = "corvid_print_f64";
+pub const PRINT_STRING_SYMBOL: &str = "corvid_print_string";
+
 /// Per-struct payload uses fixed 8-byte field slots for simple offset
 /// math. Tight packing is a Phase-22 optimization.
 pub const STRUCT_FIELD_SLOT_BYTES: i32 = 8;
@@ -303,6 +421,17 @@ pub struct RuntimeFuncs {
     /// pointer, and `corvid_release` does the per-type cleanup via
     /// each element's own header chain.
     pub list_destroy_refcounted: FuncId,
+    // Slice 12i — entry helpers used by the codegen-emitted `main`.
+    pub entry_init: FuncId,
+    pub entry_arity_mismatch: FuncId,
+    pub parse_i64: FuncId,
+    pub parse_f64: FuncId,
+    pub parse_bool: FuncId,
+    pub string_from_cstr: FuncId,
+    pub print_i64: FuncId,
+    pub print_bool: FuncId,
+    pub print_f64: FuncId,
+    pub print_string: FuncId,
     pub literal_counter: std::cell::Cell<u64>,
     /// Per-struct-type destructors generated in `lower_file` for
     /// structs with at least one refcounted field. Missing entries
@@ -508,76 +637,232 @@ pub fn lower_file(
         let entry_func_id = *func_ids_by_def
             .get(&entry_agent.id)
             .expect("declared in pass 1");
-        let entry_return_ty = cl_type_for(&entry_agent.return_ty, entry_agent.span)?;
-        emit_entry_trampoline(module, entry_func_id, entry_return_ty)?;
+        emit_entry_main(module, entry_agent, entry_func_id, &runtime)?;
     }
 
     Ok(func_ids)
 }
 
-/// Emit `long long corvid_entry(void)` that calls `entry_func_id` and
-/// returns its result. If the entry agent returns an `I8` (Bool), the
-/// trampoline zero-extends to `I64` so the C shim's `long long` ABI is
-/// satisfied on every path.
-fn emit_entry_trampoline(
+/// Emit a signature-aware `int main(int argc, char** argv)` that:
+///
+///   1. Calls `corvid_init()` to register the leak-counter atexit.
+///   2. Verifies `argc - 1 == n_params`, calling `corvid_arity_mismatch`
+///      and aborting if not.
+///   3. For each entry parameter, decodes `argv[i+1]` via the
+///      appropriate parse helper (or `corvid_string_from_cstr` for
+///      String parameters).
+///   4. Calls the entry agent.
+///   5. Prints the result via the matching helper.
+///   6. Returns 0.
+///
+/// Replaces the slice-12a `corvid_entry` trampoline. Now that the
+/// codegen knows the entry signature at emit time, generating `main`
+/// directly avoids the C-shim-with-introspection trap.
+fn emit_entry_main(
     module: &mut ObjectModule,
+    entry_agent: &IrAgent,
     entry_func_id: FuncId,
-    entry_return_ty: clir::Type,
+    runtime: &RuntimeFuncs,
 ) -> Result<(), CodegenError> {
+    use cranelift_codegen::ir::types::I32;
+
+    // Validate that every entry parameter and the return type are
+    // representable at the command-line / stdout boundary. Struct and
+    // List are deliberately excluded — they need a serialization slice.
+    for p in &entry_agent.params {
+        check_entry_boundary_type(&p.ty, p.span, "parameter")?;
+    }
+    check_entry_boundary_type(&entry_agent.return_ty, entry_agent.span, "return")?;
+
+    // main signature: (i32 argc, i64 argv) -> i32
     let mut sig = module.make_signature();
-    sig.returns.push(AbiParam::new(I64));
-    let tramp_id = module
-        .declare_function(ENTRY_TRAMPOLINE_SYMBOL, Linkage::Export, &sig)
+    sig.params.push(AbiParam::new(I32));
+    sig.params.push(AbiParam::new(I64));
+    sig.returns.push(AbiParam::new(I32));
+    let main_id = module
+        .declare_function("main", Linkage::Export, &sig)
         .map_err(|e| {
-            CodegenError::cranelift(
-                format!("declare corvid_entry trampoline: {e}"),
-                Span::new(0, 0),
-            )
+            CodegenError::cranelift(format!("declare main: {e}"), entry_agent.span)
         })?;
 
     let mut ctx = Context::new();
     ctx.func = Function::with_name_signature(
-        UserFuncName::user(0, tramp_id.as_u32()),
-        module
-            .declarations()
-            .get_function_decl(tramp_id)
-            .signature
-            .clone(),
+        UserFuncName::user(0, main_id.as_u32()),
+        module.declarations().get_function_decl(main_id).signature.clone(),
     );
 
-    let mut builder_ctx = FunctionBuilderContext::new();
+    let mut bctx = FunctionBuilderContext::new();
     {
-        let mut builder = FunctionBuilder::new(&mut ctx.func, &mut builder_ctx);
-        let entry = builder.create_block();
-        builder.switch_to_block(entry);
-        builder.seal_block(entry);
-        let callee_ref = module.declare_func_in_func(entry_func_id, builder.func);
-        let call = builder.ins().call(callee_ref, &[]);
-        let results = builder.inst_results(call);
-        let raw = if results.is_empty() {
-            builder.ins().iconst(I64, 0)
-        } else {
-            results[0]
-        };
-        // Widen Bool → I64 for the C shim's `long long` contract.
-        let ret = if entry_return_ty == I8 {
-            builder.ins().uextend(I64, raw)
-        } else {
-            raw
-        };
-        builder.ins().return_(&[ret]);
+        let mut builder = FunctionBuilder::new(&mut ctx.func, &mut bctx);
+        let entry_block = builder.create_block();
+        builder.append_block_params_for_function_params(entry_block);
+        builder.switch_to_block(entry_block);
+        builder.seal_block(entry_block);
+
+        let argc_i32 = builder.block_params(entry_block)[0];
+        let argv = builder.block_params(entry_block)[1];
+
+        // 1. corvid_init() — registers atexit handler.
+        let init_ref = module.declare_func_in_func(runtime.entry_init, builder.func);
+        builder.ins().call(init_ref, &[]);
+
+        // 2. Arity check.
+        let n_params = entry_agent.params.len() as i64;
+        let argc_i64 = builder.ins().sextend(I64, argc_i32);
+        let expected = builder.ins().iconst(I64, n_params + 1);
+        let matches = builder.ins().icmp(IntCC::Equal, argc_i64, expected);
+        let proceed_b = builder.create_block();
+        let mismatch_b = builder.create_block();
+        builder.ins().brif(matches, proceed_b, &[], mismatch_b, &[]);
+
+        // mismatch path: call the helper, trap (it never returns).
+        builder.switch_to_block(mismatch_b);
+        builder.seal_block(mismatch_b);
+        let arity_ref =
+            module.declare_func_in_func(runtime.entry_arity_mismatch, builder.func);
+        let expected_const = builder.ins().iconst(I64, n_params);
+        let got = builder.ins().iadd_imm(argc_i64, -1);
+        builder.ins().call(arity_ref, &[expected_const, got]);
+        builder
+            .ins()
+            .trap(cranelift_codegen::ir::TrapCode::INTEGER_OVERFLOW);
+
+        // 3. Decode each parameter from argv[i+1].
+        builder.switch_to_block(proceed_b);
+        builder.seal_block(proceed_b);
+        let mut decoded_args: Vec<ClValue> = Vec::with_capacity(entry_agent.params.len());
+        let mut decoded_refcounted: Vec<bool> = Vec::with_capacity(entry_agent.params.len());
+        for (i, p) in entry_agent.params.iter().enumerate() {
+            // Load argv[i+1] (a C string pointer).
+            let cstr = builder.ins().load(
+                I64,
+                cranelift_codegen::ir::MemFlags::trusted(),
+                argv,
+                ((i as i32) + 1) * 8,
+            );
+            let argv_index = builder.ins().iconst(I64, (i as i64) + 1);
+            let value = match &p.ty {
+                Type::Int => {
+                    let r =
+                        module.declare_func_in_func(runtime.parse_i64, builder.func);
+                    let c = builder.ins().call(r, &[cstr, argv_index]);
+                    builder.inst_results(c)[0]
+                }
+                Type::Float => {
+                    let r =
+                        module.declare_func_in_func(runtime.parse_f64, builder.func);
+                    let c = builder.ins().call(r, &[cstr, argv_index]);
+                    builder.inst_results(c)[0]
+                }
+                Type::Bool => {
+                    let r =
+                        module.declare_func_in_func(runtime.parse_bool, builder.func);
+                    let c = builder.ins().call(r, &[cstr, argv_index]);
+                    builder.inst_results(c)[0]
+                }
+                Type::String => {
+                    let r = module
+                        .declare_func_in_func(runtime.string_from_cstr, builder.func);
+                    let c = builder.ins().call(r, &[cstr]);
+                    builder.inst_results(c)[0]
+                }
+                _ => {
+                    // Already rejected by check_entry_boundary_type above;
+                    // unreachable in practice.
+                    return Err(CodegenError::cranelift(
+                        format!(
+                            "entry parameter `{}` of type `{}` reached lowering despite the boundary check",
+                            p.name,
+                            p.ty.display_name()
+                        ),
+                        p.span,
+                    ));
+                }
+            };
+            decoded_args.push(value);
+            decoded_refcounted.push(is_refcounted_type(&p.ty));
+        }
+
+        // 4. Call the entry agent.
+        let entry_ref = module.declare_func_in_func(entry_func_id, builder.func);
+        let entry_call = builder.ins().call(entry_ref, &decoded_args);
+        let result = builder.inst_results(entry_call).first().copied();
+
+        // Release each refcounted argument's +1 — the callee took its
+        // own ownership via parameter retain (per the +0 ABI).
+        for (v, is_ref) in decoded_args.iter().zip(decoded_refcounted.iter()) {
+            if *is_ref {
+                emit_release(&mut builder, module, runtime, *v);
+            }
+        }
+
+        // 5. Print the result based on return type.
+        if let Some(result_val) = result {
+            match &entry_agent.return_ty {
+                Type::Int => {
+                    let r = module.declare_func_in_func(runtime.print_i64, builder.func);
+                    builder.ins().call(r, &[result_val]);
+                }
+                Type::Bool => {
+                    let widened = builder.ins().uextend(I64, result_val);
+                    let r =
+                        module.declare_func_in_func(runtime.print_bool, builder.func);
+                    builder.ins().call(r, &[widened]);
+                }
+                Type::Float => {
+                    let r = module.declare_func_in_func(runtime.print_f64, builder.func);
+                    builder.ins().call(r, &[result_val]);
+                }
+                Type::String => {
+                    let r =
+                        module.declare_func_in_func(runtime.print_string, builder.func);
+                    builder.ins().call(r, &[result_val]);
+                    // Release the entry's returned String (Owned +1).
+                    emit_release(&mut builder, module, runtime, result_val);
+                }
+                _ => unreachable!("boundary check rejected non-printable returns"),
+            }
+        }
+
+        // 6. Return 0.
+        let zero = builder.ins().iconst(I32, 0);
+        builder.ins().return_(&[zero]);
         builder.finalize();
     }
 
     module
-        .define_function(tramp_id, &mut ctx)
+        .define_function(main_id, &mut ctx)
         .map_err(|e| {
-            CodegenError::cranelift(
-                format!("define corvid_entry trampoline: {e}"),
-                Span::new(0, 0),
-            )
+            CodegenError::cranelift(format!("define main: {e}"), entry_agent.span)
         })?;
     Ok(())
+}
+
+/// Validate that a type is one of the four supported at the
+/// command-line / stdout boundary. Struct and List need a
+/// dedicated serialization slice; Nothing isn't a sensible
+/// CLI value either.
+fn check_entry_boundary_type(
+    ty: &Type,
+    span: Span,
+    role: &str,
+) -> Result<(), CodegenError> {
+    match ty {
+        Type::Int | Type::Bool | Type::Float | Type::String => Ok(()),
+        Type::Struct(_) | Type::List(_) | Type::Nothing => {
+            Err(CodegenError::not_supported(
+                format!(
+                    "entry agent {role} of type `{}` — slice 12i supports `Int` / `Bool` / `Float` / `String` only at the command-line boundary; structured types arrive in a future serialization slice (use a wrapper agent that converts internally)",
+                    ty.display_name()
+                ),
+                span,
+            ))
+        }
+        Type::Function { .. } | Type::Unknown => Err(CodegenError::cranelift(
+            format!("entry agent {role} has un-printable type `{}`", ty.display_name()),
+            span,
+        )),
+    }
 }
 
 fn reject_unsupported_types(agent: &IrAgent) -> Result<(), CodegenError> {
