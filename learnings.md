@@ -499,16 +499,32 @@ Compiles via the interpreter; raises `NotSupported` in the native compiler. The 
 
 ### Entry agent constraints
 
-Native compile requires the entry agent to take no parameters and return Int or Bool. Wrap a parameterised agent in a thin `main` until slice 12i lifts this:
+Native compile accepts **scalar** entry agents: parameters and return may each be `Int`, `Bool`, `Float`, or `String`. `Struct` and `List` at the entry boundary still raise `NotSupported` — they need a serialization slice before they can round-trip through argv / stdout meaningfully. Wrap a composite-taking agent in a thin `main` that parses a `String`:
 
 ```corvid
-agent process(input: Int) -> Int:
-    return input * 2
+# Native-compile-friendly — argv[1] becomes `name`.
+agent greet(name: String) -> String:
+    return "hi " + name
 
-# For native compile, add a parameter-less main:
-agent main() -> Int:
-    return process(21)
+# Multi-arg entry — argv[1..3] become a, b.
+agent sum(a: Int, b: Int) -> Int:
+    return a + b
 ```
+
+Invoking the binary:
+
+```bash
+corvid build greet.cor --target=native
+./target/bin/greet world            # prints: hi world
+./target/bin/sum 10 32              # prints: 42
+```
+
+Format rules the codegen-emitted `main` uses:
+- `Bool` on the command line is `true` / `false` (case-sensitive). Result printing matches.
+- `Float` is decoded with libc `strtod` and printed with `%.17g` (round-trippable).
+- `Int` is decoded with `strtoll`; overflow or non-numeric input exits non-zero with a slice-specific error (not the overflow handler).
+- `String` is taken verbatim from argv (UTF-8 pass-through — shells handle quoting).
+- Arity mismatch (wrong number of argv args) exits non-zero with a clear message before the agent runs.
 
 ### No multi-threading
 
@@ -520,9 +536,7 @@ Corvid is single-threaded today. Atomic refcount is cheap insurance for Phase 25
 
 Per [ROADMAP.md](ROADMAP.md):
 
-- **Slice 12h** (next) — `List<T>`, `for x in list`, `break`, `continue`. Follows the same memory-management pattern as Struct.
-- **Slice 12i** — parameterised entry agents (argv decoding), non-Int/Bool entry returns (shim print-format dispatch).
-- **Slice 12j** — make native the default for tool-free programs; `corvid run` AOT-compiles and executes when possible.
+- **Slice 12j** (next) — make native the default for tool-free programs; `corvid run` AOT-compiles and executes when possible.
 - **Slice 12k** — polish, benchmarks, stability guarantees.
 - **Phase 14** — proc-macro `#[tool]` registry, tool/prompt/approve in compiled code.
 - **Phase 16** — effect-tagged `import python "..."` (TypeScript `.d.ts` analog).
@@ -549,6 +563,7 @@ Each user-visible feature lands with a dev-log entry explaining the design decis
 | String operations + ownership wiring | [Day 24](dev-log.md) |
 | Struct + constructors + destructors | [Day 25](dev-log.md) |
 | List + `for` + `break` / `continue` | [Day 26](dev-log.md) |
+| Parameterised entry agents + Float/String entry returns | [Day 27](dev-log.md) |
 
 ---
 

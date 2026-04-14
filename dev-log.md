@@ -1221,6 +1221,94 @@ Out: String iteration (future iterator-protocol slice). List mutation (none plan
 
 Slice 12i pre-phase chat. Topic: parameterised entry agents (argv decoding in the C shim so `agent main(greeting: String) -> Int:` works when called as `./program "hello"`) and Float/String-returning entries (shim print-format variants). Should finally make `corvid run` on the refund_bot demo possible without the Rust runner binary shim — a real UX milestone.
 
+---
+
+## Day 27 — Phase 12 slice 12i: parameterised entry agents + Float/String entry returns ✅
+
+Locked this slice to remove the "no params, Int/Bool return only" restriction that had been papered over since 12a. The payoff is concrete: scalar entries (Int/Bool/Float/String at both param and return positions) now compile and run end-to-end. Struct/List at the boundary still raise `NotSupported` pointing at a future serialization slice — deliberately out of scope.
+
+### Shape of the change
+
+Instead of growing the hand-written C shim with more `printf`/`scanf` variants, I moved the per-program main into Cranelift. The generated `main(i32 argc, i64 argv) -> i32` is signature-aware: it emits the argc check, per-parameter decode calls (`corvid_parse_i64` / `_f64` / `_bool` / `corvid_string_from_cstr`), the call to the entry agent, per-type print calls (`corvid_print_i64` / `_bool` / `_f64` / `_string`), and the releases for refcounted args and returns. The C shim shrank to a single function — `corvid_runtime_overflow` — and the runtime gained `runtime/entry.c` with the decode / print / arity-mismatch / init helpers.
+
+### Why not reuse the overflow error path for parse failures
+
+First instinct was "parse error → call `corvid_runtime_overflow` and be done." That would have been a shortcut: the user never wrote an overflowing expression, and conflating "your argv `notanint` isn't a number" with "integer overflow" would confuse them. Dedicated `corvid_parse_i64` / `_f64` / `_bool` helpers with slice-specific messages cost one extra line each and keep diagnostics honest. A parity fixture asserts the parse-error stderr does NOT contain "overflow".
+
+### Ownership on the boundary
+
+Every String argv gets a fresh refcount-1 descriptor via `corvid_string_from_cstr`. The entry agent is called under the standard +0 ABI — callee takes its own ownership via retain — so after the call, main releases its copies. Return Strings come back with +1 refcount; main prints then releases. The leak detector (`CORVID_DEBUG_ALLOC=1`) asserts `ALLOCS == RELEASES` on every fixture, including the String-param/String-return round-trip — zero leaks.
+
+### Print formats
+
+- `Int` via `%lld` (unchanged).
+- `Bool` prints `true` / `false` (NOT `0` / `1`). Matches Corvid's source-level syntax and the interpreter's `Debug` for `Value::Bool`. The parity harness's `assert_parity_bool` helper accepts either format for resilience.
+- `Float` via `%.17g` — shortest round-trippable decimal. NaN prints as `nan` (libc-dependent case), so the NaN fixture normalises to lowercase before asserting.
+- `String` via raw byte write from the descriptor — no escape handling, UTF-8 passes through unchanged.
+
+### Scope honestly held
+
+In: Int/Bool/Float/String at param + return positions; `corvid_init` / `atexit(corvid_on_exit)` preserving the leak-counter output; arity check + parse-error reporting before the agent runs.
+
+Out: Struct/List at the entry boundary (future serialization slice — blocked with a clear `NotSupported` message that names the type and points at the fix). Rich formatting (`%.2f` etc.) — out of scope; the current formats are the round-trippable defaults.
+
+### Tests
+
+11 new parity fixtures land on top of 12h's 74, for **85 parity fixtures** total. Each covers a distinct boundary: `int_param_doubles`, `two_int_params_sum`, `bool_param_inverts` (both true and false), `float_param_doubled_returns_float`, `float_return_nan_round_trips`, `string_param_echoes`, `string_return_from_concat_with_param` (leak-detector-audited), `float_return_no_params`, `string_return_no_params`, `arity_mismatch_exits_nonzero`, `parse_error_on_bad_int_argv_exits_nonzero`. The `struct_entry_return_is_blocked_with_clear_error` fixture (repurposed from the old float-block fixture — Float is no longer blocked) confirms the Struct/List driver guard still fires with a serialization-slice pointer.
+
+Workspace total:
+
+| Crate | Tests |
+|---|---|
+| corvid-ast | 13 |
+| corvid-ir | 37 |
+| corvid-resolve | 14 |
+| corvid-types | 75 |
+| corvid-syntax | 18 |
+| corvid-runtime | 12 |
+| corvid-runtime (integration) | 6 |
+| corvid-vm | 35 |
+| corvid-codegen-py | 13 |
+| **corvid-codegen-cl (parity)** | **85 (was 74)** |
+| corvid-driver | 12 |
+| Python runtime | 10 |
+
+**Total: ~314 tests, all green.**
+
+### Verified live
+
+```sh
+$ corvid build examples/greet.cor --target=native
+built: examples/greet.cor -> examples\target\bin\greet.exe
+
+$ ./examples/target/bin/greet.exe world
+hi world
+
+$ ./examples/target/bin/greet.exe "Corvid Team"
+hi Corvid Team
+
+$ corvid build examples/sum_args.cor --target=native
+built: examples/sum_args.cor -> examples\target\bin\sum_args.exe
+
+$ ./examples/target/bin/sum_args.exe 10 32
+42
+
+$ ./examples/target/bin/sum_args.exe 10     # arity mismatch
+corvid: program expects 2 argument(s), got 1
+$ echo $?
+2
+```
+
+Program: `agent greet(name: String) -> String: return "hi " + name`. Real argv decoding. Real String concat. Real String return on stdout. No Rust runner shim.
+
+### `learnings.md` updated per the discipline
+
+Replaced the "entry agent must be parameter-less" section with the new scalar boundary rules (argv formats, exit-code conventions, wrap-for-Struct pattern). Cross-reference table got a Day 27 row.
+
+### Next
+
+Slice 12j pre-phase chat. Topic: make native the default for tool-free programs — `corvid run hello.cor` begins AOT-compiling + executing instead of interpreting. The entry boundary now supports enough types (every scalar) that most programs users write today fit. The decision point will be how `corvid run` detects tool-free code and what the fallback looks like when it can't.
+
 
 
 
