@@ -1392,6 +1392,131 @@ Phase 13 pre-phase chat. Topic: Native async runtime. Tokio embedded in compiled
 
 ---
 
+## Day 30 — Phase 13: Native async runtime ✅
+
+Tokio + the Corvid runtime now live inside every compiled Corvid binary that needs them. Compiled agents can call tools through the async runtime end-to-end; the parity harness exercises this with six new fixtures that dispatch through the live bridge.
+
+### Pre-phase chat locked four big decisions
+
+1. **Async model: sync Cranelift functions with `block_on` at each async call site** (Option B). Rejected Option A (hand-rolled async state machines) as massive scope that doesn't serve v0.4 — Cranelift has no native async and there's no concurrency primitive in Corvid to benefit from it yet. Option B is simple, correct, and doesn't close the door on Option A later.
+2. **Runtime access: global `AtomicPtr` published by eager init** (not thread-local, not explicit handle threaded through signatures). A single runtime per process is the real constraint; any other shape would be making up complexity for no payoff.
+3. **Link the Rust runtime as a staticlib into every compiled binary.** The alternative (write a minimal C async runtime) is premature-optimization scope creep. Binary size cost accepted for v0.4; strip + LTO tuning moves to Phase 33 launch polish.
+4. **Multi-thread tokio, not current-thread.** User called this one — GP-class positioning demands a production-grade runtime from day one. I pushed back once with the measurement-based case for current-thread (~5-10 ms startup tax with no concurrency to benefit from in Phase 13). User stood by multi-thread. Final design: multi-thread runtime, but conditional init — only programs that actually use the runtime pay the startup tax, so tool-free programs preserve slice 12k's benchmark numbers.
+
+### Also locked: no lazy semantics anywhere
+
+User's standing discipline rule applied: no `OnceCell`, no `Lazy`, no "init on first access." The bridge uses `AtomicPtr` published via `Box::leak` in an explicit `corvid_runtime_init()` call. Readers panic loudly if init hasn't run rather than silently initialising. Eager throughout — every lifetime is explicit, every state transition named.
+
+### Shape of the change
+
+Four files did most of the work:
+
+- **`corvid-runtime/Cargo.toml`:** `crate-type = ["lib", "staticlib"]`. Rust crates still depend on the rlib; compiled Corvid binaries link the staticlib.
+- **`corvid-runtime/src/ffi_bridge.rs`:** the C-ABI surface. Four exported functions: `corvid_runtime_probe` (diagnostic), `corvid_runtime_init` (eager init), `corvid_runtime_shutdown` (idempotent teardown), `corvid_tool_call_sync_int` (narrow-case tool dispatch). `deny(unsafe_code)` at the crate root; `ffi_bridge` opts in with a written rationale. Every `unsafe` block carries a SAFETY comment naming the caller contract.
+- **`corvid-codegen-cl/build.rs` + `src/link.rs`:** build script emits `CORVID_STATICLIB_DIR` at build time so link.rs can find the artifact without runtime discovery. Link flow adds the staticlib + the native system libs tokio/reqwest/rustls need (bcrypt, advapi32, kernel32, ntdll, userenv, ws2_32, dbghelp, legacy_stdio_definitions on MSVC; -lpthread -ldl -lm + macOS frameworks on Unix).
+- **`corvid-codegen-cl/src/lowering.rs`:** `IrCallKind::Tool` lowering for the `() -> Int` case emits a call to the bridge. `emit_cstr_bytes` emits raw UTF-8 bytes to `.rodata` so the tool name can be passed as a `(ptr, len)` pair. `emit_entry_main` conditionally emits `corvid_runtime_init()` + `atexit(corvid_runtime_shutdown)` based on `ir_uses_runtime(ir)` so pure-computation programs skip the runtime tax.
+
+### Env-var mock-tool hook
+
+Parity-harness testing needed a way to get a mock tool into the compiled binary's process. The binary runs as a separate OS process from the harness; in-process Rust-side mock registration in the harness doesn't reach across the process boundary. Solution: `CORVID_TEST_MOCK_INT_TOOLS="name:value;name2:value2"` env var. `corvid_runtime_init` parses it during runtime construction and registers each as a tool that ignores args and returns the given Int. Harness sets the env var before spawning the binary. Test-only convention; users never set this variable.
+
+Considered alternatives and their shortcuts:
+
+- **Bake a `__corvid_mock_int` tool into production code.** Smelly — mixes test tooling into prod.
+- **Have the harness write a custom C main that registers mocks before calling the agent.** Would require a second codegen path (test-mode main). Complex.
+- **Defer all tool testing to Phase 14.** Would ship Phase 13 with the bridge code path untested end-to-end. Rejected per the discipline rule.
+
+### Driver-level user behaviour: unchanged
+
+The `corvid-driver`'s `native_ability::NotNativeReason::ToolCall` scan still refuses tool-using programs on the `corvid run --target=auto|native` path. Users writing `tool lookup() -> Int` and `corvid run`'ing it still get the interpreter-fallback notice. The codegen can compile tool calls; the driver doesn't expose that support to users yet. Phase 14 lifts the driver gate when it wires the proc-macro registry.
+
+### Tests
+
+**91 parity tests pass** (85 previous + 6 new Phase 13). New fixtures:
+
+- `tool_returns_int_directly` — baseline: entry agent calls one tool, returns its result.
+- `tool_result_in_arithmetic` — tool result composes into `v * 2 + 5`.
+- `tool_result_in_conditional` / `tool_result_in_conditional_false_branch` — tool result drives an `if` branch on both paths.
+- `two_tools_added` — env-var parser handles two mocks cleanly.
+- `tool_called_from_helper_agent` — agent → helper agent → tool chain, verifies bridge works through agent-to-agent calls.
+
+Plus a dedicated FFI contract test at `crates/corvid-codegen-cl/tests/ffi_bridge_smoke.rs` — hand-written C program calls the full bridge surface (probe, init, tool call with mock, shutdown, idempotent second shutdown, error-sentinel check for unknown tool). One test, runs in 1.2 s, catches every linker / FFI-drift regression before the parity harness would.
+
+Every fixture runs under `CORVID_DEBUG_ALLOC=1` with the leak detector. ALLOCS == RELEASES on every program — the bridge's ownership model (runtime clones the tool registry's `Arc<Runtime>`, futures borrow nothing from the bridge) is leak-clean.
+
+Workspace total:
+
+| Crate | Tests |
+|---|---|
+| corvid-ast | 13 |
+| corvid-ir | 38 |
+| corvid-resolve | 14 |
+| corvid-types | 75 |
+| corvid-syntax | 18 |
+| corvid-runtime | 12 |
+| corvid-runtime (integration) | 6 |
+| corvid-vm | 35 |
+| corvid-codegen-py | 13 |
+| **corvid-codegen-cl (parity)** | **91 (was 85)** |
+| **corvid-codegen-cl (ffi_bridge_smoke)** | **1 (new)** |
+| corvid-driver | 22 |
+| Python runtime | 10 |
+
+**Total: ~348 tests, all green.**
+
+### Verified live
+
+```sh
+$ cargo test -p corvid-codegen-cl --release --test parity
+test result: ok. 91 passed; 0 failed; 0 ignored; finished in 113.79s
+
+$ cargo test -p corvid-codegen-cl --release --test ffi_bridge_smoke
+test result: ok. 1 passed; 0 failed; 0 ignored; finished in 1.37s
+
+$ cargo test --workspace --release
+# ~348 tests green across 12+ crates
+```
+
+The smoke test C program (excerpt):
+
+```c
+extern int corvid_runtime_init(void);
+extern long long corvid_tool_call_sync_int(const char*, size_t);
+extern void corvid_runtime_shutdown(void);
+
+int main(void) {
+    corvid_runtime_init();
+    long long r = corvid_tool_call_sync_int("smoke_answer", 12);
+    /* r == 42 via the mock registered from CORVID_TEST_MOCK_INT_TOOLS */
+    corvid_runtime_shutdown();
+    return 0;
+}
+```
+
+That's a plain C program linked against the 44 MB Rust staticlib, invoking multi-thread tokio via block_on to dispatch through the Corvid runtime. Every layer works.
+
+### Scope honestly held
+
+In: staticlib plumbing, eager init/shutdown, multi-thread tokio, tool-call bridge (narrow case), env-var mock hook, Cranelift lowering for `IrCallKind::Tool () -> Int`, conditional runtime init based on `ir_uses_runtime`, 6 parity fixtures, 1 FFI contract test, link flow updates for native system libs.
+
+Out (deliberately, pointing at the right phase):
+- **User-declared tools via proc-macro registry** → Phase 14.
+- **Generalised `corvid_tool_call_sync` with full JSON marshalling** → Phase 14.
+- **Prompt calls** → Phase 15.
+- **Python FFI via PyO3** → Phase 30.
+- **Concurrent agents (spawn, join)** → Phase 25 post-v1.0.
+- **Binary size reduction** → Phase 33 launch polish. Compiled binaries are ~30 MB stripped today; tokio + rustls + reqwest dominate. Accepted for v0.4.
+
+### `learnings.md` updated per the discipline
+
+Cross-reference table got a Day 30 row. "Next" section updated to point at Phase 14.
+
+### Next
+
+Phase 14 pre-phase chat. Topic: Native tool dispatch — the proc-macro `#[tool]` registry + generalised `corvid_tool_call_sync` + lifting the driver's `NotNativeReason::ToolCall` gate. Decisions to lock: `inventory` crate mechanics for symbol collection, JSON marshalling for args + returns, approve-token runtime propagation, whether Phase 14 also handles tools with Struct/List arguments or defers to Phase 15 when prompts land alongside them.
+
+---
+
 ## Day 28 — Phase 12 slice 12j: native is the default tier ✅
 
 Locked this slice to make `corvid run` transparently AOT-compile + execute when the program is native-able, falling back to the interpreter with a one-line notice when not. The payoff: users who write tool-free programs now get the Phase 12 speed win without opting in with `--target=native`. That's what turns "native compilation exists" into "native is how Corvid runs."

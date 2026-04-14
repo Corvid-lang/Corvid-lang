@@ -573,7 +573,7 @@ Corvid is single-threaded today. Atomic refcount is cheap insurance for Phase 25
 
 Per [ROADMAP.md](ROADMAP.md):
 
-- **Phase 13** (next) — Native async runtime. Tokio embedded in compiled binaries. Prerequisite for Phase 14 (tool dispatch) and Phase 15 (prompt dispatch) — together these complete the "native tier actually useful for real programs" story at v0.4.
+- **Phase 14** (next) — Native tool dispatch. Proc-macro `#[tool]` registry (`inventory`-backed). Phase 13 shipped the tokio runtime in compiled binaries + a narrow `() -> Int` bridge for testing; Phase 14 generalises it to user-declared tools of any signature, calling through the same runtime.
 - **Slice 12k** — polish, benchmarks, stability guarantees.
 - **Phase 14** — proc-macro `#[tool]` registry, tool/prompt/approve in compiled code.
 - **Phase 16** — effect-tagged `import python "..."` (TypeScript `.d.ts` analog).
@@ -603,6 +603,7 @@ Each user-visible feature lands with a dev-log entry explaining the design decis
 | Parameterised entry agents + Float/String entry returns | [Day 27](dev-log.md) |
 | Native as the default tier for tool-free programs + compile cache | [Day 28](dev-log.md) |
 | Phase 12 close-out benchmarks: native is 2.7×–13.6× faster end-to-end | [Day 29](dev-log.md) |
+| Phase 13: tokio + corvid runtime embedded in compiled binaries; native tool dispatch (narrow case) | [Day 30](dev-log.md) |
 
 ---
 

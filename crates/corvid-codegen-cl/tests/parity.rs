@@ -32,6 +32,30 @@ fn run_with_leak_detector(bin: &std::path::Path) -> (String, String, std::proces
     (stdout, stderr, output.status)
 }
 
+/// Like `run_with_leak_detector`, but passes Phase 13's mock-tool env
+/// var so the compiled binary's `corvid_runtime_init` registers the
+/// named zero-arg Int-returning tools before the entry agent runs.
+/// `mocks` is a list of `(tool_name, int_value)` pairs.
+fn run_with_leak_detector_and_mocks(
+    bin: &std::path::Path,
+    mocks: &[(&str, i64)],
+) -> (String, String, std::process::ExitStatus) {
+    let spec = mocks
+        .iter()
+        .map(|(name, value)| format!("{name}:{value}"))
+        .collect::<Vec<_>>()
+        .join(";");
+    let output = Command::new(bin)
+        .env("CORVID_DEBUG_ALLOC", "1")
+        .env("CORVID_TEST_MOCK_INT_TOOLS", &spec)
+        .env("CORVID_APPROVE_AUTO", "1")
+        .output()
+        .expect("run compiled binary");
+    let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+    (stdout, stderr, output.status)
+}
+
 /// Parse `ALLOCS=N` and `RELEASES=N` from the stderr output the shim
 /// emits when `CORVID_DEBUG_ALLOC=1`. Asserts they are equal — any
 /// mismatch means the codegen forgot a `corvid_release` somewhere.
@@ -1357,4 +1381,145 @@ fn agent_with_param_uses_local_alongside_param() {
         })
         .expect("interp");
     assert_eq!(v, Value::Int(41));
+}
+
+// ============================================================
+// Phase 13 fixtures: native-tier `tool` calls dispatched through
+// the async runtime bridge.
+//
+// Each fixture registers its zero-arg Int-returning mocks in both
+// tiers:
+//   - Interpreter: via `Runtime::builder().tool(...)` before run.
+//   - Native: via the CORVID_TEST_MOCK_INT_TOOLS env var which the
+//     codegen-emitted main's `corvid_runtime_init` call reads during
+//     runtime construction (see corvid-runtime's ffi_bridge.rs).
+//
+// Phase 14 ships the user-facing proc-macro registry and generalises
+// the bridge to arbitrary arg + return types; these fixtures exercise
+// only the narrow `() -> Int` shape slice 13c supports.
+// ============================================================
+
+/// Parity harness variant that pre-registers mock zero-arg Int tools in
+/// both tiers before running. `expected` is the entry agent's return
+/// value (always Int in these fixtures). Leak-detector still runs.
+#[track_caller]
+fn assert_parity_with_mock_tools(src: &str, mocks: &[(&str, i64)], expected: i64) {
+    let ir = ir_of(src);
+
+    // --- Interpreter tier with mocks registered ---
+    let mut builder = Runtime::builder().approver(Arc::new(ProgrammaticApprover::always_yes()));
+    for (name, value) in mocks {
+        let v = *value;
+        let name_owned = name.to_string();
+        builder = builder.tool(name_owned, move |_args| async move {
+            Ok(serde_json::json!(v))
+        });
+    }
+    let runtime = builder.build();
+    let interp_value = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(async { corvid_vm::run_agent(&ir, entry_name(&ir), vec![], &runtime).await })
+        .expect("interpreter run");
+    assert_eq!(
+        interp_value,
+        Value::Int(expected),
+        "interpreter result mismatch for source:\n{src}"
+    );
+
+    // --- Compiled binary tier with mocks passed via env var ---
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let bin_path = tmp.path().join("prog");
+    let produced = build_native_to_disk(&ir, "corvid_parity_test", &bin_path)
+        .expect("compile + link");
+
+    let (stdout, stderr, status) = run_with_leak_detector_and_mocks(&produced, mocks);
+    assert!(
+        status.success(),
+        "compiled binary exited non-zero: status={:?} stderr={stderr} stdout={stdout} src=\n{src}",
+        status.code()
+    );
+    let compiled_value: i64 = stdout
+        .trim()
+        .lines()
+        .next()
+        .unwrap_or("")
+        .parse()
+        .unwrap_or_else(|e| panic!("parse stdout `{stdout}` as i64: {e}; src=\n{src}"));
+    assert_eq!(
+        compiled_value, expected,
+        "compiled result mismatch for source:\n{src}\nstderr: {stderr}"
+    );
+    assert_no_leaks(&stderr, src);
+}
+
+#[test]
+fn tool_returns_int_directly() {
+    // The simplest tool-dispatch shape: entry agent calls one tool,
+    // returns its result. Exercises: Cranelift lowering emits the
+    // call to corvid_tool_call_sync_int, runtime init+shutdown wired
+    // into main, env-var mock registration round-trip.
+    assert_parity_with_mock_tools(
+        "tool answer() -> Int\n\nagent main() -> Int:\n    return answer()\n",
+        &[("answer", 42)],
+        42,
+    );
+}
+
+#[test]
+fn tool_result_in_arithmetic() {
+    // Tool result is used in an arithmetic expression — verifies
+    // the bridge result is a plain Int ClValue usable in downstream
+    // codegen (not a special wrapper type).
+    assert_parity_with_mock_tools(
+        "tool base() -> Int\n\nagent main() -> Int:\n    return base() * 2 + 5\n",
+        &[("base", 10)],
+        25,
+    );
+}
+
+#[test]
+fn tool_result_in_conditional() {
+    // Tool result drives an if branch — verifies the bridge plays
+    // nicely with the existing control-flow codegen.
+    assert_parity_with_mock_tools(
+        "tool flag() -> Int\n\nagent main() -> Int:\n    f = flag()\n    if f > 0:\n        return 100\n    return 200\n",
+        &[("flag", 7)],
+        100,
+    );
+}
+
+#[test]
+fn tool_result_in_conditional_false_branch() {
+    // Same structure as above but the tool returns a value that
+    // hits the other branch. Confirms we didn't accidentally hardcode
+    // a branch direction.
+    assert_parity_with_mock_tools(
+        "tool flag() -> Int\n\nagent main() -> Int:\n    f = flag()\n    if f > 0:\n        return 100\n    return 200\n",
+        &[("flag", -1)],
+        200,
+    );
+}
+
+#[test]
+fn two_tools_added() {
+    // Two distinct tools; the env-var parser correctly registers both.
+    assert_parity_with_mock_tools(
+        "tool a() -> Int\ntool b() -> Int\n\nagent main() -> Int:\n    return a() + b()\n",
+        &[("a", 30), ("b", 12)],
+        42,
+    );
+}
+
+#[test]
+fn tool_called_from_helper_agent() {
+    // Agent -> helper agent -> tool. Exercises that the runtime bridge
+    // works through the agent-to-agent call path, not just from the
+    // entry agent directly.
+    assert_parity_with_mock_tools(
+        "tool leaf() -> Int\n\nagent helper() -> Int:\n    return leaf() + 1\n\nagent main() -> Int:\n    return helper() * 10\n",
+        &[("leaf", 4)],
+        50,
+    );
 }

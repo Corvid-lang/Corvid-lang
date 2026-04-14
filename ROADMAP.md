@@ -238,20 +238,24 @@ Ordering principles (applied without exception):
 
 ---
 
-### Phase 13 — Native async runtime (~4–6 weeks)
+### Phase 13 ✅ — Native async runtime (Day 30)
 
-**Goal.** Tokio embedded in compiled binaries so generated code can `.await`. Prerequisite for every subsequent "native tier actually useful" phase.
+**Hard dep:** Phase 12 (native codegen). **Hard deps on this:** Phases 14, 15, 30.
 
-**Hard dep:** Phase 12 (native codegen).
-**Hard deps on this:** Phases 14, 15, 30.
+- [x] `corvid-runtime` emits a staticlib (`crate-type = ["lib", "staticlib"]`) that `corvid-codegen-cl` links into every compiled Corvid binary. Produces a self-contained executable — no separate runtime file to ship.
+- [x] `ffi_bridge` module in `corvid-runtime` exposes the C-ABI surface: `corvid_runtime_probe`, `corvid_runtime_init`, `corvid_runtime_shutdown`, `corvid_tool_call_sync_int`. `deny(unsafe_code)` at crate level; `ffi_bridge` opts in explicitly with a written rationale. Every `unsafe` block carries a SAFETY comment.
+- [x] **Eager-init globals, no lazy semantics.** `corvid_runtime_init()` constructs the tokio Runtime + the `Arc<corvid_runtime::Runtime>` and publishes both via `Box::leak` behind an `AtomicPtr`. Readers panic loudly if init hasn't run — no "lazy first-use" branches anywhere.
+- [x] **Multi-thread tokio runtime.** `tokio::runtime::Builder::new_multi_thread().enable_all().build()`. Picked multi-thread (not current-thread) at the pre-phase chat: GP-class positioning demands a production-grade runtime from day one; the ~5-10 ms startup tax only applies to programs that actually use the runtime (pure-computation programs skip init entirely — see `ir_uses_runtime` in codegen-cl). `CORVID_TOKIO_WORKERS` env override respected.
+- [x] Codegen-emitted main (`emit_entry_main`) conditionally calls `corvid_runtime_init` + registers `corvid_runtime_shutdown` via `atexit` when `ir_uses_runtime(ir)` returns true. Tool-free programs preserve slice 12k's benchmark numbers — no runtime tax paid for what isn't used.
+- [x] `IrCallKind::Tool` lowering in `lowering.rs`: for the narrow `() -> Int` signature, emits a call to `corvid_tool_call_sync_int(name_ptr, name_len)` where `name_ptr` is a `.rodata` byte-array emitted by the new `emit_cstr_bytes` helper. Any other tool signature still raises `NotSupported` pointing at Phase 14. `IrCallKind::Prompt` stays pointing at Phase 15.
+- [x] Env-var-based mock-tool hook for the parity harness: `CORVID_TEST_MOCK_INT_TOOLS="name1:v1;name2:v2"` registers zero-arg Int-returning mocks during `corvid_runtime_init`. Test-only convention; users never set this env var.
+- [x] `tests/ffi_bridge_smoke.rs` — FFI contract test. Hand-written C program that calls `corvid_runtime_probe` / `_init` / `_tool_call_sync_int` / `_shutdown` end-to-end, linked against the staticlib via the same cc-crate pipeline `link.rs` uses. Idempotent shutdown verified; unknown-tool error sentinel verified.
+- [x] 6 new parity fixtures (total 91): tool returns Int directly, tool result in arithmetic, tool result drives conditional (both branches), two distinct tools added, agent-to-helper-agent-to-tool chain. Every fixture runs under `CORVID_DEBUG_ALLOC=1` — `ALLOCS == RELEASES` confirms no bridge-induced leaks.
+- [x] Link flow handles the `+44 MB` staticlib + native system libs (bcrypt / advapi32 / kernel32 / ntdll / userenv / ws2_32 / dbghelp / legacy_stdio_definitions on MSVC; -lpthread -ldl -lm + macOS frameworks on Unix). `build.rs` in corvid-codegen-cl emits `CORVID_STATICLIB_DIR` at build time so link.rs finds the artifact without runtime discovery.
 
-**Scope:**
-- Codegen emits a `#[tokio::main]`-equivalent entry shim into the binary (wraps the codegen-emitted `main` from slice 12i).
-- IR-level `await` (added to `IrExpr` in this phase) lowers to a call through a `corvid_runtime_await` trampoline that hands the future to the embedded Tokio executor.
-- `corvid-runtime`'s `Runtime` type becomes `Send + Sync` and reachable from compiled code via an opaque handle (`*const CorvidRuntime`) injected at `corvid_init`.
-- Parity harness gains an async fixture category: small agents that call a mock async tool implementation provided by the test (via a new "host-provided async tool" hook used only in the harness, not yet user-facing — user-facing tool registry is Phase 14).
+**Non-scope (deliberate):** User-declared tools via proc-macro registry — Phase 14. Prompt calls — Phase 15. Python FFI — Phase 30. Generalised tool-call bridge (non-Int returns, multi-arg) — Phase 14 extends `corvid_tool_call_sync_int` into a full JSON-marshalling `corvid_tool_call_sync`. True concurrent agents — Phase 25 post-v1.0. Binary size optimization (compiled binaries are ~30 MB stripped after Phase 13) — Phase 33 launch polish.
 
-**Non-scope:** User-declared tools (Phase 14). Prompt calls (Phase 15). Python FFI (Phase 30).
+**Driver-level user-visible behavior:** unchanged in Phase 13. `corvid run <file>` with a tool-using program still falls back to the interpreter via `native_ability::NotNativeReason::ToolCall` — Phase 14 updates the driver to allow tool-using programs to run natively once the proc-macro registry is wired. Phase 13's codegen supports tools; Phase 13's driver doesn't expose that support to users. Parity harness tests it directly.
 
 ### Phase 14 — Native tool dispatch (~4–6 weeks)
 

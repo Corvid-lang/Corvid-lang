@@ -8,7 +8,7 @@
 
 use crate::errors::CodegenError;
 use cranelift_codegen::ir::condcodes::{FloatCC, IntCC};
-use cranelift_codegen::ir::types::{F64, I64, I8};
+use cranelift_codegen::ir::types::{F64, I32, I64, I8};
 use cranelift_codegen::ir::{
     self as clir, AbiParam, Function, InstBuilder, MemFlags, Signature, UserFuncName,
     Value as ClValue,
@@ -212,6 +212,46 @@ fn declare_runtime_funcs(
             CodegenError::cranelift(format!("declare print_string: {e}"), Span::new(0, 0))
         })?;
 
+    // Phase 13 bridge imports.
+    let mut tool_call_sync_int_sig = module.make_signature();
+    tool_call_sync_int_sig.params.push(AbiParam::new(I64)); // name_ptr
+    tool_call_sync_int_sig.params.push(AbiParam::new(I64)); // name_len
+    tool_call_sync_int_sig.returns.push(AbiParam::new(I64)); // i64 result
+    let tool_call_sync_int_id = module
+        .declare_function(
+            TOOL_CALL_SYNC_INT_SYMBOL,
+            Linkage::Import,
+            &tool_call_sync_int_sig,
+        )
+        .map_err(|e| {
+            CodegenError::cranelift(
+                format!("declare tool_call_sync_int: {e}"),
+                Span::new(0, 0),
+            )
+        })?;
+
+    let mut runtime_init_sig = module.make_signature();
+    runtime_init_sig.returns.push(AbiParam::new(I32));
+    let runtime_init_id = module
+        .declare_function(RUNTIME_INIT_SYMBOL, Linkage::Import, &runtime_init_sig)
+        .map_err(|e| {
+            CodegenError::cranelift(format!("declare runtime_init: {e}"), Span::new(0, 0))
+        })?;
+
+    let runtime_shutdown_sig = module.make_signature();
+    let runtime_shutdown_id = module
+        .declare_function(
+            RUNTIME_SHUTDOWN_SYMBOL,
+            Linkage::Import,
+            &runtime_shutdown_sig,
+        )
+        .map_err(|e| {
+            CodegenError::cranelift(
+                format!("declare runtime_shutdown: {e}"),
+                Span::new(0, 0),
+            )
+        })?;
+
     Ok(RuntimeFuncs {
         overflow: overflow_func_id,
         retain: retain_id,
@@ -232,6 +272,9 @@ fn declare_runtime_funcs(
         print_bool: print_bool_id,
         print_f64: print_f64_id,
         print_string: print_string_id,
+        tool_call_sync_int: tool_call_sync_int_id,
+        runtime_init: runtime_init_id,
+        runtime_shutdown: runtime_shutdown_id,
         literal_counter: std::cell::Cell::new(0),
         struct_destructors: HashMap::new(),
         ir_types: HashMap::new(),
@@ -391,6 +434,21 @@ pub const PRINT_BOOL_SYMBOL: &str = "corvid_print_bool";
 pub const PRINT_F64_SYMBOL: &str = "corvid_print_f64";
 pub const PRINT_STRING_SYMBOL: &str = "corvid_print_string";
 
+// Phase 13 — async tool dispatch bridge. Signature in Rust:
+//   corvid_tool_call_sync_int(name_ptr: *const u8, name_len: usize) -> i64
+// Returns i64::MIN on error (tool-not-found, tool-errored, non-integer
+// return). Phase 13 only supports the `() -> Int` tool signature;
+// Phase 14 ships the generalised bridge with full JSON arg + return
+// marshalling.
+pub const TOOL_CALL_SYNC_INT_SYMBOL: &str = "corvid_tool_call_sync_int";
+
+// Phase 13 — runtime bridge init/shutdown called from `corvid_init`
+// at the start of codegen-emitted `main` when the program uses any
+// tool/prompt/approve construct. Tool-free programs skip these
+// calls to preserve slice 12k's startup benchmark numbers.
+pub const RUNTIME_INIT_SYMBOL: &str = "corvid_runtime_init";
+pub const RUNTIME_SHUTDOWN_SYMBOL: &str = "corvid_runtime_shutdown";
+
 /// Per-struct payload uses fixed 8-byte field slots for simple offset
 /// math. Tight packing is a Phase-22 optimization.
 pub const STRUCT_FIELD_SLOT_BYTES: i32 = 8;
@@ -432,6 +490,10 @@ pub struct RuntimeFuncs {
     pub print_bool: FuncId,
     pub print_f64: FuncId,
     pub print_string: FuncId,
+    // Phase 13 — async tool bridge + runtime init/shutdown.
+    pub tool_call_sync_int: FuncId,
+    pub runtime_init: FuncId,
+    pub runtime_shutdown: FuncId,
     pub literal_counter: std::cell::Cell<u64>,
     /// Per-struct-type destructors generated in `lower_file` for
     /// structs with at least one refcounted field. Missing entries
@@ -637,10 +699,79 @@ pub fn lower_file(
         let entry_func_id = *func_ids_by_def
             .get(&entry_agent.id)
             .expect("declared in pass 1");
-        emit_entry_main(module, entry_agent, entry_func_id, &runtime)?;
+        // Phase 13: codegen-emitted main calls `corvid_runtime_init()`
+        // and registers `corvid_runtime_shutdown` via atexit ONLY if the
+        // program actually uses the async runtime. Pure-computation
+        // programs skip these calls to preserve the slice 12k startup
+        // benchmark numbers — multi-thread tokio startup is ~5-10ms on
+        // Windows, which would otherwise regress every tool-free
+        // `corvid run` invocation.
+        let uses_runtime = ir_uses_runtime(ir);
+        emit_entry_main(
+            module,
+            entry_agent,
+            entry_func_id,
+            &runtime,
+            uses_runtime,
+        )?;
     }
 
     Ok(func_ids)
+}
+
+/// Does this IR contain any construct that needs the async runtime
+/// bridge at execution time? Tool calls, prompt calls, and approve
+/// statements all route through the tokio runtime.
+fn ir_uses_runtime(ir: &IrFile) -> bool {
+    ir.agents.iter().any(|a| block_uses_runtime(&a.body))
+}
+
+fn block_uses_runtime(block: &IrBlock) -> bool {
+    block.stmts.iter().any(stmt_uses_runtime)
+}
+
+fn stmt_uses_runtime(stmt: &IrStmt) -> bool {
+    match stmt {
+        IrStmt::Let { value, .. } => expr_uses_runtime(value),
+        IrStmt::Return { value: Some(e), .. } => expr_uses_runtime(e),
+        IrStmt::Return { value: None, .. } => false,
+        IrStmt::If {
+            cond,
+            then_block,
+            else_block,
+            ..
+        } => {
+            expr_uses_runtime(cond)
+                || block_uses_runtime(then_block)
+                || else_block
+                    .as_ref()
+                    .map(block_uses_runtime)
+                    .unwrap_or(false)
+        }
+        IrStmt::For { iter, body, .. } => expr_uses_runtime(iter) || block_uses_runtime(body),
+        IrStmt::Approve { .. } => true,
+        IrStmt::Expr { expr, .. } => expr_uses_runtime(expr),
+        IrStmt::Break { .. } | IrStmt::Continue { .. } | IrStmt::Pass { .. } => false,
+    }
+}
+
+fn expr_uses_runtime(expr: &IrExpr) -> bool {
+    match &expr.kind {
+        IrExprKind::Literal(_) | IrExprKind::Local { .. } | IrExprKind::Decl { .. } => false,
+        IrExprKind::Call { kind, args, .. } => {
+            let self_needs = matches!(kind, IrCallKind::Tool { .. } | IrCallKind::Prompt { .. });
+            self_needs || args.iter().any(expr_uses_runtime)
+        }
+        IrExprKind::FieldAccess { target, .. } => expr_uses_runtime(target),
+        IrExprKind::Index { target, index } => {
+            expr_uses_runtime(target) || expr_uses_runtime(index)
+        }
+        IrExprKind::BinOp { left, right, .. } => {
+            expr_uses_runtime(left) || expr_uses_runtime(right)
+        }
+        IrExprKind::UnOp { operand, .. } => expr_uses_runtime(operand),
+        IrExprKind::List { items } => items.iter().any(expr_uses_runtime),
+    }
 }
 
 /// Emit a signature-aware `int main(int argc, char** argv)` that:
@@ -663,8 +794,14 @@ fn emit_entry_main(
     entry_agent: &IrAgent,
     entry_func_id: FuncId,
     runtime: &RuntimeFuncs,
+    // Phase 13: emit `corvid_runtime_init()` + `atexit(corvid_runtime_shutdown)`
+    // only if the program actually needs the async runtime. Passing `false`
+    // keeps compiled binaries as small + fast-starting as they were in
+    // slice 12k.
+    uses_runtime: bool,
 ) -> Result<(), CodegenError> {
-    use cranelift_codegen::ir::types::I32;
+    // I32 is imported at file scope since Phase 13 needs it in
+    // `declare_runtime_funcs` too.
 
     // Validate that every entry parameter and the return type are
     // representable at the command-line / stdout boundary. Struct and
@@ -702,9 +839,41 @@ fn emit_entry_main(
         let argc_i32 = builder.block_params(entry_block)[0];
         let argv = builder.block_params(entry_block)[1];
 
-        // 1. corvid_init() — registers atexit handler.
+        // 1. corvid_init() — registers atexit handler for leak counters.
         let init_ref = module.declare_func_in_func(runtime.entry_init, builder.func);
         builder.ins().call(init_ref, &[]);
+
+        // 1a. (Phase 13) If the program uses the async runtime, build
+        // the tokio + corvid runtime globals NOW, eagerly. Shutdown is
+        // registered via `atexit` so worker threads join cleanly at
+        // exit. Shutdown runs BEFORE the leak-counter atexit (atexit
+        // is LIFO), so any refcount activity from the runtime settles
+        // before the counter prints — that's the intended ordering.
+        if uses_runtime {
+            let rt_init_ref =
+                module.declare_func_in_func(runtime.runtime_init, builder.func);
+            builder.ins().call(rt_init_ref, &[]);
+
+            // Register corvid_runtime_shutdown via libc atexit. atexit
+            // itself isn't in RuntimeFuncs because nothing else needs
+            // it; declare it inline. Signature: int atexit(void (*)(void)).
+            let mut atexit_sig = module.make_signature();
+            atexit_sig.params.push(AbiParam::new(I64));
+            atexit_sig.returns.push(AbiParam::new(I32));
+            let atexit_id = module
+                .declare_function("atexit", Linkage::Import, &atexit_sig)
+                .map_err(|e| {
+                    CodegenError::cranelift(
+                        format!("declare atexit: {e}"),
+                        entry_agent.span,
+                    )
+                })?;
+            let atexit_ref = module.declare_func_in_func(atexit_id, builder.func);
+            let shutdown_ref =
+                module.declare_func_in_func(runtime.runtime_shutdown, builder.func);
+            let shutdown_addr = builder.ins().func_addr(I64, shutdown_ref);
+            builder.ins().call(atexit_ref, &[shutdown_addr]);
+        }
 
         // 2. Arity check.
         let n_params = entry_agent.params.len() as i64;
@@ -1355,8 +1524,54 @@ fn lower_expr(
                 }
                 Ok(result)
             }
-            IrCallKind::Tool { .. } | IrCallKind::Prompt { .. } => Err(CodegenError::not_supported(
-                "tool / prompt calls in compiled code — Phase 14 adds them",
+            IrCallKind::Tool { .. } => {
+                // Phase 13 narrow support: zero-arg tool returning Int.
+                // Phase 14 generalises to full JSON-arg tool dispatch
+                // with arbitrary return types.
+                if !args.is_empty() {
+                    return Err(CodegenError::not_supported(
+                        format!(
+                            "tool `{callee_name}` has {} argument(s) — Phase 13 supports only zero-arg tools; Phase 14 adds the generalised bridge",
+                            args.len()
+                        ),
+                        expr.span,
+                    ));
+                }
+                if !matches!(expr.ty, Type::Int) {
+                    return Err(CodegenError::not_supported(
+                        format!(
+                            "tool `{callee_name}` returns `{}` — Phase 13 supports only Int-returning tools; Phase 14 adds the generalised bridge",
+                            expr.ty.display_name()
+                        ),
+                        expr.span,
+                    ));
+                }
+                // Emit the tool name as a `.rodata` byte array and get
+                // a pointer to it. The bridge takes (ptr, len); no
+                // descriptor header needed, this is raw UTF-8 bytes.
+                let name_ptr = emit_cstr_bytes(
+                    builder, module, runtime, callee_name, expr.span,
+                )?;
+                let name_len = builder
+                    .ins()
+                    .iconst(I64, callee_name.as_bytes().len() as i64);
+                let fref = module
+                    .declare_func_in_func(runtime.tool_call_sync_int, builder.func);
+                let call = builder.ins().call(fref, &[name_ptr, name_len]);
+                let results = builder.inst_results(call);
+                if results.len() != 1 {
+                    return Err(CodegenError::cranelift(
+                        format!(
+                            "tool_call_sync_int returned {} values; expected 1",
+                            results.len()
+                        ),
+                        expr.span,
+                    ));
+                }
+                Ok(results[0])
+            }
+            IrCallKind::Prompt { .. } => Err(CodegenError::not_supported(
+                "prompt calls in compiled code — Phase 15 adds them",
                 expr.span,
             )),
             IrCallKind::StructConstructor { def_id } => {
@@ -2014,6 +2229,46 @@ fn lower_struct_constructor(
 /// Lower a String literal into a static `.rodata` block and return the
 /// descriptor pointer (the value the runtime expects).
 ///
+/// Emit raw UTF-8 bytes as a `.rodata` symbol and return a Cranelift
+/// `ClValue` that is the pointer to the first byte.
+///
+/// Used by Phase 13's tool-call bridge lowering: the `corvid_tool_call_sync_int`
+/// signature takes `(name_ptr, name_len)` where `name_ptr` is a raw
+/// byte pointer (no descriptor header). Separate from `lower_string_literal`
+/// because Corvid Strings wrap the bytes in a refcount header + length
+/// descriptor; the bridge wants just the bytes + a separate length arg.
+fn emit_cstr_bytes(
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    runtime: &RuntimeFuncs,
+    s: &str,
+    span: Span,
+) -> Result<ClValue, CodegenError> {
+    let id = runtime.next_literal_id();
+    let symbol_name = format!("corvid_cstr_{id}");
+    let bytes = s.as_bytes();
+    // Null-terminate for easy interop with any future C callers that
+    // might prefer strlen over an explicit length; bridge uses explicit
+    // length so the NUL is belt-and-braces.
+    let mut data = Vec::with_capacity(bytes.len() + 1);
+    data.extend_from_slice(bytes);
+    data.push(0);
+
+    let data_id = module
+        .declare_data(&symbol_name, Linkage::Local, false, false)
+        .map_err(|e| {
+            CodegenError::cranelift(format!("declare cstr `{symbol_name}`: {e}"), span)
+        })?;
+    let mut desc = DataDescription::new();
+    desc.set_align(1);
+    desc.define(data.into_boxed_slice());
+    module
+        .define_data(data_id, &desc)
+        .map_err(|e| CodegenError::cranelift(format!("define cstr `{symbol_name}`: {e}"), span))?;
+    let gv = module.declare_data_in_func(data_id, builder.func);
+    Ok(builder.ins().symbol_value(I64, gv))
+}
+
 /// Layout (single allocation):
 /// ```text
 ///   offset 0:  refcount (8) = i64::MIN  (immortal sentinel)

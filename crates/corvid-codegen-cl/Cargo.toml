@@ -10,6 +10,12 @@ corvid-ast      = { workspace = true }
 corvid-ir       = { workspace = true }
 corvid-resolve  = { workspace = true }
 corvid-types    = { workspace = true }
+# Regular dep (not dev-dep) so Cargo builds corvid-runtime's staticlib
+# variant whenever this crate is built — the `link.rs` step needs the
+# .lib / .a file on disk to link into every emitted Corvid binary.
+# Rlib side effect on this crate is ignorable; codegen-cl doesn't use
+# corvid-runtime's Rust surface, only its staticlib artifact.
+corvid-runtime  = { workspace = true }
 
 cranelift-codegen  = "0.116"
 cranelift-frontend = "0.116"
@@ -23,10 +29,13 @@ tempfile = "3"
 
 [dev-dependencies]
 corvid-syntax = { workspace = true }
-corvid-runtime = { workspace = true }
-corvid-vm      = { workspace = true }
-tokio          = { workspace = true }
-criterion      = "0.5"
+corvid-vm     = { workspace = true }
+tokio         = { workspace = true }
+criterion     = "0.5"
+# Used by Phase 13 parity fixtures to construct mock-tool return values
+# (`serde_json::json!`). corvid-runtime already pulls it in transitively
+# but we depend on it explicitly so the `json!` macro is reachable.
+serde_json    = { workspace = true }
 
 [[bench]]
 name = "phase12_benchmarks"

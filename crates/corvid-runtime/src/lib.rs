@@ -19,12 +19,20 @@
 //!
 //! See `ARCHITECTURE.md` §6.
 
-#![forbid(unsafe_code)]
+// Phase 13 (native async runtime) introduces a C-ABI bridge module
+// (`ffi_bridge`) that compiled Corvid binaries call into. That module must
+// use `unsafe` to handle raw pointers across the FFI boundary — it's the
+// only place in the crate where unsafe is allowed. Every other module
+// must stay unsafe-free; the file-level `#![deny(unsafe_code)]` enforces
+// that, and `ffi_bridge` opts in explicitly with a module-level allow
+// alongside a written rationale.
+#![deny(unsafe_code)]
 #![allow(dead_code)]
 
 pub mod approvals;
 pub mod env;
 pub mod errors;
+pub mod ffi_bridge;
 pub mod llm;
 pub mod redact;
 pub mod runtime;
