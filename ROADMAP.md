@@ -195,8 +195,14 @@ Originally scoped as "Memory foundation + String"; user split into 12e (foundati
 - [x] 11 new parity fixtures (total 85): int/two-int/bool/float/string param echoing, float + string returns (with and without params), NaN round-trip, arity-mismatch exits non-zero, parse-error exits non-zero with slice-specific message (verified NOT reusing the overflow message)
 - [x] Every fixture runs under `CORVID_DEBUG_ALLOC=1` — `ALLOCS == RELEASES` confirms refcounted argv descriptors and String returns are released exactly once
 
-#### Slice 12j — Make native the default for tool-free programs
-(`corvid run` begins AOT-compiling + executing instead of interpreting where possible)
+#### Slice 12j ✅ — Make native the default for tool-free programs (Day 28)
+
+- [x] `native_ability(ir)` pre-flight scan in `corvid-driver` returns structured `NotNativeReason` (`ToolCall` / `PromptCall` / `Approve` / `PythonImport`). Names the native-ability rule explicitly; no codegen-internal errors bubble up.
+- [x] Compile cache at `<project>/target/cache/native/<fnv1a64-hex>[.exe]` keyed on source + `corvid-codegen-cl` pkg version + every C runtime shim (`shim.c` / `entry.c` / `alloc.c` / `strings.c` / `lists.c`). Second run of an unchanged file skips codegen + link entirely — measured ~15× speedup on `examples/answer.cor` (1.15s → 0.08s).
+- [x] `RunTarget::{Auto, Native, Interpreter}` + `run_with_target(path, target)` entry point. Auto picks native when native-able, falls back to interpreter with a one-line stderr notice ("↻ running via interpreter: <reason>"). Native refuses with a clean error naming the phase that would lift the restriction. Interpreter forces the old path.
+- [x] CLI flag: `corvid run <file> [--target=auto|native|interpreter]`, default `auto`. `corvid run` by itself now AOT-compiles + executes when possible.
+- [x] 7 new driver tests: native-able program passes scan, tool-using / python-import / prompt-using programs fail scan with the right `NotNativeReason`, cache hits on second call (mtime-verified), auto dispatch populates the cache, `--target=native` on a tool-using program exits non-zero.
+- [x] Smoke-tested on `examples/answer.cor` (auto → native, cached on second run) and `examples/hello.cor` (auto → fallback with notice, `--target=native` → clean error).
 
 #### Slice 12k — Polish + benchmarks
 (stability guarantees, perf measurements vs interpreter and vs hand-written Rust)

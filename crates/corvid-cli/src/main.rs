@@ -15,7 +15,7 @@ use clap::{Parser, Subcommand};
 #[allow(unused_imports)]
 use corvid_driver::{
     build_native_to_disk, build_to_disk, compile, load_dotenv_walking, render_all_pretty,
-    run_native, scaffold_new,
+    run_native, run_with_target, scaffold_new, RunTarget,
 };
 
 #[derive(Parser)]
@@ -39,8 +39,19 @@ enum Command {
         #[arg(long, default_value = "python")]
         target: String,
     },
-    /// Build a Corvid source file and run the generated Python.
-    Run { file: PathBuf },
+    /// Build and run a Corvid source file. Picks the native AOT tier
+    /// when the program uses only native-able features (Phase 12i
+    /// surface); falls back to the interpreter otherwise with a one-line
+    /// notice. Override with `--target`.
+    Run {
+        file: PathBuf,
+        /// Execution tier. `auto` (default) tries native first, falls
+        /// back to interpreter when a feature isn't native-able yet.
+        /// `native` requires native and errors out otherwise. `interp`
+        /// / `interpreter` forces the interpreter tier.
+        #[arg(long, default_value = "auto")]
+        target: String,
+    },
     /// Run tests (not yet implemented).
     Test,
     /// Check the local environment for required tools.
@@ -54,7 +65,7 @@ fn main() -> ExitCode {
         Some(Command::New { name }) => cmd_new(&name),
         Some(Command::Check { file }) => cmd_check(&file),
         Some(Command::Build { file, target }) => cmd_build(&file, &target),
-        Some(Command::Run { file }) => cmd_run(&file),
+        Some(Command::Run { file, target }) => cmd_run(&file, &target),
         Some(Command::Test) => {
             eprintln!("`corvid test` is not implemented yet (v0.2).");
             Ok(0)
@@ -135,13 +146,20 @@ fn cmd_build(file: &Path, target: &str) -> Result<u8> {
     }
 }
 
-fn cmd_run(file: &Path) -> Result<u8> {
-    // Native dispatch via the interpreter + corvid-runtime — Python is no
-    // longer on the path. Tools and prompts that need handlers must be
-    // registered through a runner binary that calls `run_with_runtime`;
-    // see `examples/refund_bot_demo/runner.rs`. `corvid run` itself uses
-    // an empty runtime suitable for tool-free agents.
-    run_native(file)
+fn cmd_run(file: &Path, target: &str) -> Result<u8> {
+    let rt = match target {
+        "auto" => RunTarget::Auto,
+        "native" => RunTarget::Native,
+        "interp" | "interpreter" => RunTarget::Interpreter,
+        other => anyhow::bail!(
+            "unknown target `{other}`; valid: `auto` (default), `native`, `interpreter`"
+        ),
+    };
+    // Auto: native AOT tier when the IR is tool-free + scalar-boundary,
+    // interpreter otherwise (with a stderr notice). Native-required and
+    // interpreter-forced are the explicit overrides. See `RunTarget`
+    // docs in corvid-driver for the exact semantics.
+    run_with_target(file, rt)
         .with_context(|| format!("failed to run `{}`", file.display()))
 }
 

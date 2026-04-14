@@ -1309,6 +1309,110 @@ Replaced the "entry agent must be parameter-less" section with the new scalar bo
 
 Slice 12j pre-phase chat. Topic: make native the default for tool-free programs — `corvid run hello.cor` begins AOT-compiling + executing instead of interpreting. The entry boundary now supports enough types (every scalar) that most programs users write today fit. The decision point will be how `corvid run` detects tool-free code and what the fallback looks like when it can't.
 
+---
+
+## Day 28 — Phase 12 slice 12j: native is the default tier ✅
+
+Locked this slice to make `corvid run` transparently AOT-compile + execute when the program is native-able, falling back to the interpreter with a one-line notice when not. The payoff: users who write tool-free programs now get the Phase 12 speed win without opting in with `--target=native`. That's what turns "native compilation exists" into "native is how Corvid runs."
+
+### The three shortcuts I caught in the pre-phase chat
+
+The user's standing instruction — *which one is the shortcut?* — forced me to re-examine my first draft of this slice. Three things I'd quietly defaulted to that were each a shortcut dressed as simplicity:
+
+1. **Try-compile-first** instead of a pre-flight IR scan. "Let codegen raise `NotSupported` and catch it" hides the native-ability rule inside codegen's guards. Rewriting it as an explicit `native_ability(&ir) -> Result<(), NotNativeReason>` names the rule, makes it testable and documentable, and produces driver-level error messages instead of codegen-internal ones.
+2. **Asking the user whether the fallback notice should be quiet or verbose.** That was me pushing a decision onto the user instead of committing. Correct answer: *always* print one short line. Users need to know which tier ran because tier affects performance, error surfaces, and whether the leak detector runs.
+3. **Deferring compile caching to 12k polish.** This one almost slipped past. Without caching, `corvid run foo.cor` re-compiles + re-links on every call — `cl.exe` alone costs ~1 second even for trivial programs. "Native is the default" with zero caching produces a *worse* interactive experience than the interpreter, which destroys the slice's own goal. Caching had to be in scope.
+
+After naming those, the brief stabilised: pre-flight scan + always-on notice + in-slice caching. Everything else followed.
+
+### Shape of the change
+
+`corvid-driver` gets two new modules and one new entry point:
+
+- **`native_ability.rs`.** Walks every statement and expression in the IR, returns `Ok(())` or the first `NotNativeReason` it finds. Four rejection categories, each naming the phase that lifts the restriction: `ToolCall` and `PromptCall` → Phase 14, `Approve` → Phase 14, `PythonImport` → Phase 16. Early exit — finding the first reason is enough to route the caller away from native.
+- **`native_cache.rs`.** FNV-1a-64 over source bytes + `corvid-codegen-cl` pkg version + the five C runtime shim sources (`shim.c` / `entry.c` / `alloc.c` / `strings.c` / `lists.c`). Cache lives at `<project>/target/cache/native/<hex>[.exe]`. FNV-1a is deterministic and collision-resistant-enough for a build cache; a full SHA-256 would be correct but buys nothing measurable here. `cargo clean` sweeps the cache with the rest of `target/`.
+- **`RunTarget` + `run_with_target`.** Three-way dispatch: `Auto` (try native, fall back with stderr notice), `Native` (require native, error on fail), `Interpreter` (force interpreter, skip native entirely). `run_native(path)` stays as `run_with_target(path, Auto)` for backcompat with the existing `cmd_run` path.
+
+The native tier itself is minimal: call `build_or_get_cached_native()`, spawn the binary with inherited stdio, forward the exit code. Slice 12i's codegen-emitted `main` already handles argv decoding + result printing, so there's nothing for the driver to layer on top.
+
+### Caching math (verified live)
+
+```sh
+$ time corvid run examples/answer.cor    # cold
+42
+real    0m1.149s                          # codegen + link via cl.exe
+
+$ time corvid run examples/answer.cor    # cached
+42
+real    0m0.076s                          # 15× faster
+```
+
+1.15 s → 0.08 s is the difference between "native is the default" being a real UX win and being a regression. Worth the scope creep on caching.
+
+### What the user sees
+
+```sh
+$ corvid run examples/answer.cor                   # pure computation
+42                                                 # [native, cached after first run]
+
+$ corvid run examples/hello.cor                    # uses `prompt`
+↻ running via interpreter: program calls prompt `greet` — native prompt dispatch lands in Phase 14
+<interpreter output>
+
+$ corvid run examples/hello.cor --target=native    # forced
+error: `--target=native` refused: program calls prompt `greet` — native prompt dispatch lands in Phase 14. Run without `--target` to fall back to the interpreter.
+# exit 1
+```
+
+The notice names the specific construct *and* the phase that will lift it — both for the user and as future documentation of the slice order.
+
+### Tests
+
+7 new driver tests added (22 total, was 15):
+
+- `native_ability_accepts_pure_computation` — baseline: a program with only arithmetic + agent calls passes.
+- `native_ability_rejects_tool_call` — verifies the exact `NotNativeReason::ToolCall { name: "lookup" }` variant.
+- `native_ability_rejects_python_import` — `import python "math"` → `PythonImport { module: "math" }`.
+- `native_ability_rejects_prompt_call` — prompt declaration + call → `PromptCall { name: "greet" }`.
+- `native_cache_hits_on_second_call` — compile a pure program; compile again; verify `from_cache == true` and mtime unchanged.
+- `run_with_target_auto_uses_native_for_pure_program` — end-to-end: spawn the binary, exit 0, cache dir populated.
+- `run_with_target_native_required_errors_on_tool_use` — `--target=native` on a tool-using program exits 1.
+
+Plus 3 new unit tests in `native_cache.rs` for the hash function itself (determinism + hex-16 format).
+
+### Scope honestly held
+
+In: auto dispatch, fallback notice, compile cache, `--target` flag, seven driver tests, smoke tests on real examples.
+
+Out: **Passing argv args through `corvid run foo.cor arg1 arg2`** — tempting but scope creep. Today `corvid run` can't supply args to a parameterised agent in either tier, so parameterised programs fail consistently in both. Adding trailing-args support is a clean future slice (probably 12k or 13a). **Compile-cache eviction / size cap** — also 12k. **Timing breakdown reports** (`compiled in 1.2s, cached in 0.08s, ran in 0.03s`) — 12k polish.
+
+### Tests (workspace-wide)
+
+| Crate | Count |
+|---|---|
+| corvid-ast | 13 |
+| corvid-ir | 37 |
+| corvid-resolve | 14 |
+| corvid-types | 75 |
+| corvid-syntax | 18 |
+| corvid-runtime | 12 |
+| corvid-runtime (integration) | 6 |
+| corvid-vm | 35 |
+| corvid-codegen-py | 13 |
+| corvid-codegen-cl (parity) | 85 |
+| **corvid-driver** | **22 (was 15)** |
+| Python runtime | 10 |
+
+**Total: ~340 tests, all green.**
+
+### `learnings.md` updated per the discipline
+
+New "Running Corvid code" section in learnings.md explains auto / native / interpreter targets, where the cache lives, and when to use which override. Cross-reference table got a Day 28 row.
+
+### Next
+
+Slice 12k pre-phase chat. Topic: Phase 12 polish — benchmarks vs the interpreter (is native actually faster for non-trivial programs, by how much?), stability guarantees on the ABI between codegen + the C shim (what breaks a cached binary from a prior compiler version?), possibly compile-cache eviction if the cache grows unbounded in practice. Then Phase 13 (strings, structs, lists in *native* code — completing the composite-type story that 12f/g/h started) OR one of the Phase 15.5 GP-table-stakes items (methods on types, REPL). The positioning shift from earlier this week puts Phase 15.5 items genuinely on the table; the order-of-operations question gets its own chat.
+
 
 
 

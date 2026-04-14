@@ -497,6 +497,27 @@ x = 5
 
 Compiles via the interpreter; raises `NotSupported` in the native compiler. The fix is either a shared iterator protocol or a String-specific lowering path — neither is on the immediate roadmap. Use `for x in list` when you're writing native-targeted code.
 
+### Running Corvid code
+
+`corvid run <file>` picks the right execution tier automatically:
+
+- **Native AOT** when the program uses only native-able features (arithmetic, Bool, Float, String, struct, list, agent-to-agent calls). First run compiles and caches; subsequent runs of the same source skip codegen entirely (≈15× faster). Cache lives at `<project>/target/cache/native/<hash>[.exe]` and is swept by `cargo clean`.
+- **Interpreter** when the program uses anything that needs the async runtime (tool calls, prompt calls, `approve`, `import python`). Auto-fallback announces itself with one stderr line naming the specific construct and the phase that will lift the restriction:
+
+```
+↻ running via interpreter: program calls prompt `greet` — native prompt dispatch lands in Phase 14
+```
+
+Explicit overrides:
+
+```bash
+corvid run foo.cor                         # auto (default)
+corvid run foo.cor --target=native         # require native; error if not possible
+corvid run foo.cor --target=interpreter    # force interpreter, even when native works
+```
+
+Use `--target=native` when you want to catch a regression the moment a change introduces an un-native-able feature. Use `--target=interpreter` when you need traces, the mock LLM runtime, or tool handlers that the native tier can't load yet.
+
 ### Entry agent constraints
 
 Native compile accepts **scalar** entry agents: parameters and return may each be `Int`, `Bool`, `Float`, or `String`. `Struct` and `List` at the entry boundary still raise `NotSupported` — they need a serialization slice before they can round-trip through argv / stdout meaningfully. Wrap a composite-taking agent in a thin `main` that parses a `String`:
@@ -536,7 +557,7 @@ Corvid is single-threaded today. Atomic refcount is cheap insurance for Phase 25
 
 Per [ROADMAP.md](ROADMAP.md):
 
-- **Slice 12j** (next) — make native the default for tool-free programs; `corvid run` AOT-compiles and executes when possible.
+- **Slice 12k** (next) — Phase 12 polish: benchmarks vs interpreter, cache-eviction policy, stability guarantees between cached binaries and future compiler versions.
 - **Slice 12k** — polish, benchmarks, stability guarantees.
 - **Phase 14** — proc-macro `#[tool]` registry, tool/prompt/approve in compiled code.
 - **Phase 16** — effect-tagged `import python "..."` (TypeScript `.d.ts` analog).
@@ -564,6 +585,7 @@ Each user-visible feature lands with a dev-log entry explaining the design decis
 | Struct + constructors + destructors | [Day 25](dev-log.md) |
 | List + `for` + `break` / `continue` | [Day 26](dev-log.md) |
 | Parameterised entry agents + Float/String entry returns | [Day 27](dev-log.md) |
+| Native as the default tier for tool-free programs + compile cache | [Day 28](dev-log.md) |
 
 ---
 

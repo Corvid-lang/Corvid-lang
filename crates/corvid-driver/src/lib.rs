@@ -7,8 +7,11 @@
 
 #![allow(dead_code)]
 
+mod native_ability;
+mod native_cache;
 mod render;
 
+pub use native_ability::{native_ability, NotNativeReason};
 pub use render::{render_all_pretty, render_pretty};
 
 // Re-export the runtime + interpreter surface so consumers (CLI, demo
@@ -502,25 +505,87 @@ pub async fn run_ir_with_runtime(
         .map_err(RunError::Interp)
 }
 
-/// `corvid run <file>` entry point. Loads `.env` (walking from the
-/// source's project root), opens a default runtime with stdin approver,
-/// JSONL trace under `<project>/target/trace/`, and any LLM adapter the
-/// environment signals: Anthropic when `ANTHROPIC_API_KEY` is set,
-/// OpenAI when `OPENAI_API_KEY` is set. Trace events get the
-/// `RedactionSet::from_env()` applied so secrets stay out of the file.
+/// Which execution tier `corvid run` should use.
 ///
-/// Tool-using agents still need a runner binary — `corvid run` cannot
-/// load user tool implementations yet (see Phase 14). Prompt-only
-/// agents work end-to-end as long as the matching API key is present.
+/// - `Auto` (default): try the native AOT tier; fall back to the
+///   interpreter when the program uses features native doesn't support
+///   yet (tool calls, prompts, `approve`, Python imports). A one-line
+///   stderr message announces the fallback so the user can reason about
+///   which tier actually ran.
+/// - `Native`: require the native tier. Programs that need the
+///   interpreter fail with a clean error naming the missing feature and
+///   the phase that would lift it.
+/// - `Interpreter`: force the interpreter, even when native would work.
+///   Useful for debugging, trace capture, and comparing tiers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RunTarget {
+    Auto,
+    Native,
+    Interpreter,
+}
+
+/// `corvid run <file>` with auto-dispatch — native tier where possible,
+/// interpreter fallback with an announced-on-stderr reason otherwise.
+/// Equivalent to `run_with_target(path, RunTarget::Auto)`.
 pub fn run_native(path: &Path) -> Result<u8, anyhow::Error> {
-    // Load `.env` from the source file's neighborhood. Real env vars
-    // win, so this only fills in unset values.
+    run_with_target(path, RunTarget::Auto)
+}
+
+/// `corvid run <file> [--target=...]` entry point. Dispatches by tier
+/// per `target`; see `RunTarget` for semantics.
+///
+/// Common setup (env, tracer config) lives in the per-tier helpers
+/// since only the interpreter needs the async runtime.
+pub fn run_with_target(path: &Path, target: RunTarget) -> Result<u8, anyhow::Error> {
+    // Env is loaded for both tiers: the native binary may read it via
+    // libc `getenv` (the entry shim's leak-counter toggle does), and the
+    // interpreter needs API keys from it.
     if let Some(parent) = path.parent() {
         let _ = load_dotenv_walking(parent);
     }
-    // Also try the cwd in case the source path is bare.
     let _ = load_dotenv_walking(&std::env::current_dir().unwrap_or_else(|_| Path::new(".").into()));
 
+    let source = match std::fs::read_to_string(path) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("error: cannot read `{}`: {e}", path.display());
+            return Ok(1);
+        }
+    };
+    let ir = match compile_to_ir(&source) {
+        Ok(ir) => ir,
+        Err(diags) => {
+            eprint!("{}", render_all_pretty(&diags, path, &source));
+            return Ok(1);
+        }
+    };
+
+    match target {
+        RunTarget::Native => match native_ability(&ir) {
+            Ok(()) => run_via_native_tier(path, &source, &ir),
+            Err(reason) => {
+                eprintln!(
+                    "error: `--target=native` refused: {reason}. Run without `--target` to fall back to the interpreter."
+                );
+                Ok(1)
+            }
+        },
+        RunTarget::Interpreter => run_via_interpreter_tier(path, &ir),
+        RunTarget::Auto => match native_ability(&ir) {
+            Ok(()) => run_via_native_tier(path, &source, &ir),
+            Err(reason) => {
+                eprintln!("↻ running via interpreter: {reason}");
+                run_via_interpreter_tier(path, &ir)
+            }
+        },
+    }
+}
+
+/// Interpreter tier: build a `Runtime` with stdin approver + env-driven
+/// LLM adapters + JSONL tracer, run the entry agent under the async
+/// interpreter, print its return value. Matches prior `run_native`
+/// semantics exactly — this is the only path that existed before 12j.
+fn run_via_interpreter_tier(path: &Path, ir: &IrFile) -> Result<u8, anyhow::Error> {
     let trace_dir = trace_dir_for(path);
     let tracer = Tracer::open(&trace_dir, corvid_runtime::fresh_run_id())
         .with_redaction(RedactionSet::from_env());
@@ -543,7 +608,7 @@ pub fn run_native(path: &Path) -> Result<u8, anyhow::Error> {
     let tokio_rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()?;
-    let result = tokio_rt.block_on(run_with_runtime(path, None, vec![], &rt));
+    let result = tokio_rt.block_on(run_ir_with_runtime(ir, None, vec![], &rt));
 
     match result {
         Ok(value) => {
@@ -560,6 +625,73 @@ pub fn run_native(path: &Path) -> Result<u8, anyhow::Error> {
             Ok(1)
         }
     }
+}
+
+/// Native tier: produce a binary (via cache when possible) and exec it.
+/// The codegen-emitted `main` handles argv decoding + result printing
+/// per slice 12i, so we inherit stdin/stdout/stderr and let the binary
+/// own the user interaction directly.
+fn run_via_native_tier(
+    path: &Path,
+    source: &str,
+    ir: &IrFile,
+) -> Result<u8, anyhow::Error> {
+    let binary = build_or_get_cached_native(path, source, ir)?.path;
+    let status = std::process::Command::new(&binary)
+        .status()
+        .map_err(|e| anyhow::anyhow!("spawn native binary `{}`: {e}", binary.display()))?;
+    Ok(status.code().unwrap_or(1) as u8)
+}
+
+/// Result of asking the cache for a compiled binary — used by tests to
+/// verify cache hits without re-timing the whole pipeline.
+#[derive(Debug, Clone)]
+pub struct CachedNativeBinary {
+    pub path: PathBuf,
+    /// `true` if the binary already existed in the cache (no recompile
+    /// happened this call); `false` if we compiled it now.
+    pub from_cache: bool,
+}
+
+/// Core compile-or-reuse path. Hashes the inputs to pick a cache slot,
+/// uses the existing binary if it's there, otherwise invokes codegen
+/// + link and stores the result keyed by that hash.
+///
+/// Does NOT run the binary — that's the caller's job. Exposed as `pub`
+/// so tests + future `corvid build --cache` tooling can observe the
+/// cache state without executing.
+pub fn build_or_get_cached_native(
+    path: &Path,
+    source: &str,
+    ir: &IrFile,
+) -> anyhow::Result<CachedNativeBinary> {
+    let cache_dir = native_cache::cache_dir_for(path);
+    let key = native_cache::cache_key(source);
+    let cached = native_cache::cached_binary_path(&cache_dir, &key);
+    if cached.exists() {
+        return Ok(CachedNativeBinary {
+            path: cached,
+            from_cache: true,
+        });
+    }
+    std::fs::create_dir_all(&cache_dir)
+        .map_err(|e| anyhow::anyhow!("create cache dir `{}`: {e}", cache_dir.display()))?;
+    // `build_native_to_disk` takes the final bin_path and derives parent
+    // + stem from it — passing `<cache_dir>/<key>` produces
+    // `<cache_dir>/<key>[.exe]` which is exactly where we want it.
+    let stem = path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("program")
+        .to_string();
+    let module_name = format!("corvid_native_{key}");
+    let target_bin = cache_dir.join(&key);
+    let produced = corvid_codegen_cl::build_native_to_disk(ir, &module_name, &target_bin)
+        .map_err(|e| anyhow::anyhow!("native codegen failed for `{stem}`: {e}"))?;
+    Ok(CachedNativeBinary {
+        path: produced,
+        from_cache: false,
+    })
 }
 
 /// Pick a trace directory next to the source file's project root.
@@ -871,5 +1003,135 @@ agent refund_bot(ticket: Ticket) -> Decision:
             }
             other => panic!("expected NeedsArgs, got {other:?}"),
         }
+    }
+
+    // ========================================================
+    // Slice 12j: native-tier dispatch + compile cache.
+    // ========================================================
+
+    const NATIVE_ABLE_SRC: &str = "agent main() -> Int:\n    return 7 * 6\n";
+
+    const TOOL_USING_SRC: &str = r#"
+tool lookup(id: String) -> Int
+agent main(id: String) -> Int:
+    return lookup(id)
+"#;
+
+    const PYTHON_IMPORT_SRC: &str = r#"
+import python "math" as math
+
+agent main() -> Int:
+    return 1
+"#;
+
+    const PROMPT_USING_SRC: &str = r#"
+prompt greet(name: String) -> String:
+    """
+    Say hi to {name}.
+    """
+
+agent main() -> String:
+    return greet("world")
+"#;
+
+    #[test]
+    fn native_ability_accepts_pure_computation() {
+        let ir = compile_to_ir(NATIVE_ABLE_SRC).expect("compile");
+        assert!(native_ability(&ir).is_ok());
+    }
+
+    #[test]
+    fn native_ability_rejects_tool_call() {
+        let ir = compile_to_ir(TOOL_USING_SRC).expect("compile");
+        match native_ability(&ir) {
+            Err(NotNativeReason::ToolCall { name }) => assert_eq!(name, "lookup"),
+            other => panic!("expected ToolCall rejection, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn native_ability_rejects_python_import() {
+        let ir = compile_to_ir(PYTHON_IMPORT_SRC).expect("compile");
+        match native_ability(&ir) {
+            Err(NotNativeReason::PythonImport { module }) => assert_eq!(module, "math"),
+            other => panic!("expected PythonImport rejection, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn native_ability_rejects_prompt_call() {
+        let ir = compile_to_ir(PROMPT_USING_SRC).expect("compile");
+        match native_ability(&ir) {
+            Err(NotNativeReason::PromptCall { name }) => assert_eq!(name, "greet"),
+            other => panic!("expected PromptCall rejection, got {other:?}"),
+        }
+    }
+
+    /// Second compilation of the same source hits the cache: no
+    /// recompile, binary is the same path, mtime doesn't advance.
+    #[test]
+    fn native_cache_hits_on_second_call() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let src_path = tmp.path().join("hello.cor");
+        std::fs::write(&src_path, NATIVE_ABLE_SRC).expect("write");
+        let ir = compile_to_ir(NATIVE_ABLE_SRC).expect("compile");
+
+        let first = build_or_get_cached_native(&src_path, NATIVE_ABLE_SRC, &ir).expect("first");
+        assert!(!first.from_cache, "first call must compile (not cached yet)");
+        assert!(first.path.exists(), "first build should produce a binary");
+        let first_mtime = std::fs::metadata(&first.path).unwrap().modified().unwrap();
+
+        let second = build_or_get_cached_native(&src_path, NATIVE_ABLE_SRC, &ir).expect("second");
+        assert!(second.from_cache, "second call must reuse cached binary");
+        assert_eq!(first.path, second.path, "same cache key => same path");
+        let second_mtime = std::fs::metadata(&second.path).unwrap().modified().unwrap();
+        assert_eq!(
+            first_mtime, second_mtime,
+            "cache hit must not rewrite the binary"
+        );
+    }
+
+    /// Auto-dispatch on a native-able program runs via native and
+    /// produces the binary under `target/cache/native/`. The exit code
+    /// from `run_with_target` comes from the spawned binary itself.
+    #[test]
+    fn run_with_target_auto_uses_native_for_pure_program() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let src_path = tmp.path().join("pure.cor");
+        std::fs::write(&src_path, NATIVE_ABLE_SRC).expect("write");
+
+        let code = run_with_target(&src_path, RunTarget::Auto).expect("run");
+        assert_eq!(code, 0, "pure program should exit 0");
+        // Cache populated under <tmpdir>/target/cache/native/.
+        let cache_dir = tmp.path().join("target").join("cache").join("native");
+        assert!(
+            cache_dir.exists(),
+            "native cache dir should exist after auto-run, got missing: {}",
+            cache_dir.display()
+        );
+        let entries: Vec<_> = std::fs::read_dir(&cache_dir).unwrap().collect();
+        assert!(
+            !entries.is_empty(),
+            "native cache dir should contain at least one binary"
+        );
+    }
+
+    /// `--target=native` on a tool-using program must NOT silently fall
+    /// back — it must exit non-zero with the reason printed to stderr.
+    /// Verified by checking `run_with_target` returns exit 1 and the
+    /// program never runs. We don't capture stderr here (Rust tests
+    /// don't expose a clean way without a process boundary), but the
+    /// exit code is the contract this slice promises.
+    #[test]
+    fn run_with_target_native_required_errors_on_tool_use() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let src_path = tmp.path().join("tooly.cor");
+        std::fs::write(&src_path, TOOL_USING_SRC).expect("write");
+
+        let code = run_with_target(&src_path, RunTarget::Native).expect("run");
+        assert_eq!(
+            code, 1,
+            "native-required on a tool-using program must exit 1"
+        );
     }
 }
