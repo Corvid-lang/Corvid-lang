@@ -4,6 +4,31 @@
 > For feature definitions see [`FEATURES.md`](./FEATURES.md).
 > For architecture see [`ARCHITECTURE.md`](./ARCHITECTURE.md).
 
+**Positioning.** Corvid is a **general-purpose AI-native language**, not an agent-only DSL. Ambition: be the default choice for the widest possible range of applications. "Best at everything" is a trap that has killed every language that tried it (PL/I, Ada, early Scala); the honest version is **narrow excellence on the moat, broad competence on table stakes, disqualified on nothing.**
+
+### Moat — dimensions Corvid is built to genuinely win on
+
+1. **Safety for AI-shaped software.** Effect checker, approve-before-dangerous, compile-time cost bounds, contract verification. Nobody else is competing here.
+2. **AI-native ergonomics.** `agent` / `tool` / `prompt` / `approve` as keywords; replay, grounding contracts, cost budgets as language constructs. Structurally impossible to match without owning the whole pipeline.
+3. **Readability for human + LLM.** Pythonic surface, shallow hierarchies, no pointer aliasing, explicit effects. The language machines both read and *write* best.
+
+### Table stakes — top-tier, competitive with best in category (not best overall)
+
+- **Performance.** Go / Swift class. Fast startup (Phase 12 native AOT), throughput where compute rarely bottlenecks real applications.
+- **Memory.** Refcount + cycle collector (Phase 15.5). Predictable release without Java pauses.
+- **Deployment.** Single native binary + WASM (Phase 27, candidate for earlier) + C ABI embedding (Phase 15.5).
+- **Tooling.** LSP (Phase 29), formatter, package manager (Phase 28), REPL (Phase 15.5). Polished, not novel.
+- **Cross-platform.** macOS + Linux + Windows all first-class by v1.0 (Phase 32).
+
+### Deliberately not competing
+
+- Systems-level control — Rust / Zig win. No pointer arithmetic, no manual allocators.
+- Raw hot-loop numerics — C++ / Fortran win. FFI for the ~1% of apps that need it.
+- Dynamic metaprogramming — Ruby / Lisp win. Opposite trade-off to compile-time checking.
+- Ecosystem size at launch — Python / JS have 20-year head starts. Python FFI (Phase 16) closes the gap.
+
+**The test applied to every proposed feature:** does it strengthen a moat dimension, or bring us to parity on a table-stakes dimension where we're below the floor? If yes, build it. If it moves neither bar, defer.
+
 Every phase has:
 - A pre-phase chat (concepts, decisions, success criteria) before any code.
 - Tests green at the phase boundary.
@@ -58,9 +83,6 @@ Carry-overs explicitly tracked elsewhere:
 ---
 
 ## In progress
-
-### Phase 12 — Cranelift scaffolding (~2 months)
-Goal: compile trivial IR to native code and prove parity with the interpreter.
 
 ### Phase 12 — Cranelift scaffolding (~2 months)
 Goal: compile typed IR to native machine code via Cranelift. Interpreter and compiled binary produce the same answer on every fixture — the oracle parity the async-interpreter decision was defending.
@@ -198,6 +220,16 @@ Tools registered via Rust proc macro compile directly into generated code.
 ### Phase 15 — Native async runtime (~1–2 months)
 Tokio integration. Compiled agents use Tokio's executor for LLM and tool I/O.
 
+### Phase 15.5 — General-purpose table stakes (~2–3 months, may split across multiple phases)
+
+Positioning demands that Corvid hold its own as a general-purpose language, not just "a great language for agents." These are the GP features users expect and will reject the language for lacking. Split into explicit slices below; exact phase numbering will firm up at the pre-phase chat.
+
+- **Methods on types.** Dot-syntax `value.method()` where `method` is an associated function on `type T`. No inheritance, no late binding, no `this` — just sugar over free functions with a named receiver. The existing `type` + `agent` model stays; methods are purely ergonomic. Closes the "Corvid doesn't even have methods?" objection without the complexity Java/Python inheritance brings. Pre-phase chat must decide: single dispatch only? trait-like interfaces for abstraction? syntax for the receiver (`self`, `this`, positional)?
+- **Cycle collector on top of refcount.** Current model (refcount + deterministic destructors) is correct but leaks on cycles. Python's model — refcount primary, tracing cycle collector as backstop — preserves deterministic release for the common case while handling cycles. The collector runs only when allocation pressure suggests cycles may exist. Keeps the "tools/files/LLM-sessions release promptly" property users will depend on. Out of scope: full generational tracing GC (wrong trade-off for Corvid).
+- **C ABI + library mode.** Compile `.cor` code to `.so` / `.dll` / `.dylib` with a stable C-callable surface. Enables embedding Corvid in Rust, Python, Node, Go hosts. Requires: `pub extern "c"` annotation or equivalent, calling-convention choice, header generation, ownership-at-boundary rules (who frees what). The embedding story is what turns Corvid from "a tool you invoke" into "a component you ship."
+- **REPL.** Interactive `corvid repl` — evaluate expressions and statements in a persistent session, redefine agents on the fly, inspect values. Sits on top of the interpreter; the AOT tier doesn't need to change. Pairs with the Phase 24 replay work — the REPL becomes the natural surface for `replay` / `step` / `inspect`.
+- **Pull WASM target earlier.** Currently Phase 27; a GP language needs it sooner as both a deployment target (browsers, edge) and an embedding format. Re-slot around Phase 18–20 if scheduling allows. Pre-phase chat decides exact ordering.
+
 ### Phase 16 — Python FFI via PyO3, effect-tagged (~1 month)
 `import python "..."` works in both interpreter and native backends. Lazy CPython load. **Imports declare effects at the import site** (`import python "requests" as requests effects: network`); untagged imports are rejected by the checker. `effects: unsafe` is the opt-in escape hatch and is flagged for review. This is the TypeScript `.d.ts` analog: the compiler trusts declared effects, and untagged Python usage cannot be introduced by accident.
 
@@ -281,12 +313,18 @@ That discipline is what makes the 24 months possible.
 
 ## Non-goals
 
-Explicitly not on the roadmap:
+Red lines — features explicitly rejected, not merely deferred:
 
-- Replacing Python as a general-purpose language.
-- Rust-speed competition for non-AI workloads.
-- Supporting every LLM provider at launch — Anthropic first, others follow.
-- Windows + Linux + macOS day-one. Start on one OS (macOS), add others in Phase 32.
+- **Raw pointer arithmetic + manual allocators.** Pointer aliasing is one of the hardest things for any reasoner (human or LLM) to track, and readability-for-LLM-generated-code is a first-class design goal. Narrow `@unsafe` FFI shim for C interop is allowed; pervasive pointers are a hard no. Rust and Zig own that niche — Corvid doesn't compete there.
+- **Classical OOP inheritance.** `type` + methods + interfaces/traits (Phase 15.5) are the model. Subclassing, `this`, virtual dispatch, and deep hierarchies are not. Modern GP consensus (Go, Rust, Swift, Kotlin) agrees composition + methods beat inheritance.
+- **Rust/C++-level control for systems work.** Corvid aims for Go / Swift class performance. Fast enough that compute rarely bottlenecks AI-shaped software (where LLM latency dominates by three orders of magnitude), but not competing on hot-loop throughput.
+
+Deferred, not rejected:
+
+- **Every LLM provider at launch.** Anthropic + OpenAI ship first; Google, Ollama, and others follow in Phase 18.
+- **Windows + Linux + macOS day-one.** Start on one OS (macOS), add the others in Phase 32.
+
+What is *not* a non-goal, despite earlier framings: **being a general-purpose language.** Corvid must be one. The only question is which GP features ship when — the answer lives in the Phase 15.5 slate and the "table stakes" list in the positioning section above.
 
 ---
 
