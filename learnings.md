@@ -559,6 +559,50 @@ Tools must be `async fn`. Wrap a sync body in `async { ... }` if you don't need 
 
 Without `--with-tools-lib`, programs that call user tools fall back to the interpreter (auto) or error out (`--target=native`). The interpreter tier needs tool implementations registered separately via `Runtime::builder().tool(...)` in a runner binary — that pattern is unchanged.
 
+### Methods on types (`extend T:` blocks)
+
+Phase 16 attaches methods to user-declared types via `extend T:` blocks. Methods can be ANY declaration kind — agent, prompt, or tool — and all dispatch through the same dot-syntax. The receiver is an explicit first parameter (no `self` keyword); the typechecker and IR rewrite `value.method(args)` into a regular call with the receiver prepended.
+
+```corvid
+type Order:
+    amount: Int
+    tax: Int
+
+extend Order:
+    public agent total(o: Order) -> Int:
+        return o.amount + o.tax
+
+    public prompt summarize(o: Order) -> String:
+        "Summarize this order: amount {o.amount}, tax {o.tax}"
+
+    public tool fetch_status(o: Order) -> Status dangerous
+
+    agent compute_internal(o: Order) -> Int:    # private (default)
+        return o.amount / 10
+```
+
+Call sites:
+
+```corvid
+agent process(o: Order) -> Int:
+    t = o.total()              # pure agent call
+    pitch = o.summarize()      # LLM dispatch through Phase 15 bridge
+    s = o.fetch_status()       # tool dispatch through Phase 14 bridge
+    return t
+```
+
+Visibility:
+- Default is **private** — callable only from code in the same file.
+- `public` makes the method callable from anywhere the type is visible.
+- `public(package)` reserves package-scoped visibility for Phase 25's package-manager work; syntactically accepted now so user code doesn't need re-annotation later.
+- `public(effect: ...)` is the syntactic slot reserved for Phase 20's effect-scoped visibility.
+
+Method-name rules:
+- Two methods with the same name on the same type → compile error.
+- A method whose name collides with a field on the same type → compile error.
+- Methods with the same name on different types coexist (`Order.total`, `Line.total`).
+- Methods on built-in types (Int, String, List) defer to a future phase to avoid orphan-rule complexity.
+
 ### Performance — when native wins
 
 Phase 12 closed with published numbers (ARCHITECTURE.md §18). End-to-end wall-clock on three representative workloads:
@@ -635,7 +679,7 @@ Corvid is single-threaded today. Atomic refcount is cheap insurance for Phase 25
 
 Per [ROADMAP.md](ROADMAP.md):
 
-- **Phase 16** (next, kicks off v0.5 → "GP feel") — Methods on types. Dot-syntax `value.method(args)` for associated functions on user types. Single dispatch only, no inheritance. Cheapest, loudest GP-language signal feature.
+- **Phase 17** (next) — Cycle collector on top of refcount. Backstops the refcount runtime against reference cycles using a stop-the-world mark-sweep collector triggered by allocation pressure. Closes the "deterministic destructors leak on cycles" hole without giving up Phase 12g/h's prompt-release property.
 - **Slice 12k** — polish, benchmarks, stability guarantees.
 - **Phase 14** — proc-macro `#[tool]` registry, tool/prompt/approve in compiled code.
 - **Phase 16** — effect-tagged `import python "..."` (TypeScript `.d.ts` analog).
@@ -668,6 +712,7 @@ Each user-visible feature lands with a dev-log entry explaining the design decis
 | Phase 13: tokio + corvid runtime embedded in compiled binaries; native tool dispatch (narrow case) | [Day 30](dev-log.md) |
 | Phase 14: `#[tool]` proc-macro + typed C ABI dispatch + `--with-tools-lib` | [Day 31](dev-log.md) |
 | Phase 15: native prompt dispatch + 5 LLM provider adapters (Anthropic / OpenAI / OpenAI-compat / Ollama / Gemini) | [Day 32](dev-log.md) |
+| Phase 16: methods on types (`extend T:` blocks, mixed agent/prompt/tool, public visibility) | [Day 33](dev-log.md) |
 
 ---
 

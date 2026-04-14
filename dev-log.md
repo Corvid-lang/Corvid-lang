@@ -1392,6 +1392,80 @@ Phase 13 pre-phase chat. Topic: Native async runtime. Tokio embedded in compiled
 
 ---
 
+## Day 33 — Phase 16: Methods on types ✅ — kicks off v0.5
+
+Phase 16 ships methods on user types via `extend T:` blocks. The phase that landed is materially more inventive than the one I first proposed because the user pushed back on three lazy choices in my brief.
+
+### The three reshapes (user pushback worked)
+
+**1. Methods can be ANY declaration kind, not just functions.** My first brief said "methods are agents" and treated that as a minor semantic muddiness. User asked: "How can we make them innovative, inventive and powerful?" The honest answer was hiding in plain sight — `extend T:` blocks should hold tools and prompts too, not just agents. So `order.summarize()` dispatches to an LLM, `order.fetch_status()` dispatches through the tool registry, `order.total()` is a pure agent call. **Same dot-syntax, three architectural layers, one type owns them all.** No other language does this — for an AI-native language it makes "AI is a method on your type" syntactic, not aspirational.
+
+**2. Effect inference instead of a `function` keyword.** First plan was to introduce a fourth top-level keyword (`function`) for pure code, distinct from `agent`. User pushback prompted a re-audit: Corvid already has effect inference machinery from the type+effect checker (Phase 5). Agents that don't trigger effects naturally get an empty effect row. Adding `function` would have been keyword proliferation for no gain. Dropped it; effect inference handles the semantic distinction transparently.
+
+**3. Visibility shipped now, not deferred to "Phase 22+".** I'd tried to defer the visibility decision. User correctly identified this as a one-way door — public-by-default with retrofit later is breaking for every existing impl block. Shipped `public` keyword (full word, not `pub` — matches Corvid's keyword style) with parens-extension `public(package)` reserved for Phase 25 and `public(effect: ...)` reserved for Phase 20. Default visibility is private (file-scoped). The annotation noise is small, the safety against API drift is large.
+
+### Naming choices (small but honest)
+
+- **`extend T:`** not `impl T:` — matches Corvid's full-word keyword style (`agent`, `tool`, `prompt`, `approve`, `dangerous`, `type`); reads as English; doesn't carry Rust's "implementation of an interface" baggage that we don't have until Phase 20 traits.
+- **`public` not `pub`** — same full-word reasoning. `pub` would be the only abbreviation in the language.
+- **No `self` keyword** — the receiver is an explicit first parameter. Methods being agents-with-a-receiver is more honest than introducing a special-case keyword for parameter-zero ergonomics.
+
+### Implementation shape
+
+Phase 16 has the pleasing property that **codegen needs zero new variants**. Method calls compile to ordinary `IrCallKind::Agent` / `Prompt` / `Tool` calls with the receiver prepended as the first argument. The Cranelift backend (Phase 12+), the Python transpile backend (Phase 7), and any future WASM backend (Phase 23) all reuse their existing call-dispatch paths.
+
+Five slices landed:
+
+- **16a — Parser + AST.** New `Decl::Extend(ExtendDecl)` variant; `ExtendDecl { type_name, methods: Vec<ExtendMethod>, span }`; `ExtendMethod { visibility, kind: ExtendMethodKind }` where `ExtendMethodKind` is one of Tool/Prompt/Agent. New keywords: `extend`, `public`, `package`. 5 new parser tests.
+- **16b — Resolver.** Per-type method side-table `(type_def_id, method_name) → MethodEntry` on `Resolved`. `MethodEntry { def_id, kind, visibility, span }` where DefId is allocated outside the by-name namespace (multiple types can share method names). Validates target-type-exists, no duplicate methods on same type, no method/field name collision. 5 new resolver tests.
+- **16c — Typechecker + IR rewrite.** `check_call` recognises `Expr::Call { callee: Expr::FieldAccess { ... } }` as a method call; looks up the receiver's type via the type side-table; finds the method via the resolver's side-table; dispatches via the existing tool/prompt/agent paths with the receiver prepended. The IR's `lower_call` does the same rewrite at lowering time so downstream phases see ordinary calls.
+- **16d — (Effect inference: existing default-Safe behaviour sufficient for v0.5).** Agents inherit their effect rows from their bodies via the existing checker. No new pass needed.
+- **16e — Cranelift symbol disambiguation.** `mangle_agent_symbol(name, def_id)` includes the DefId so two `total` methods on different types get distinct internal symbols. Otherwise codegen unchanged.
+
+### Tests
+
+| Crate | Tests |
+|---|---|
+| corvid-ast | 13 |
+| corvid-ir | 38 |
+| **corvid-resolve** | **19 (was 14 — 5 new method tests)** |
+| corvid-types | 75 (lib subset: 18; remaining via integration) |
+| **corvid-syntax** | **80 (was 75 — 5 new extend parser tests)** |
+| corvid-runtime | 49 |
+| corvid-runtime (integration) | 6 |
+| corvid-vm | 35 |
+| corvid-codegen-py | 13 |
+| **corvid-codegen-cl (parity)** | **105 (was 99 — 6 new method fixtures)** |
+| corvid-codegen-cl (ffi_bridge_smoke) | 1 |
+| corvid-macros | 4 |
+| corvid-driver | 22 |
+| Python runtime | 10 |
+
+**Total: ~378 tests, all green.**
+
+### One bug caught + fixed during fixture work
+
+The first time `methods_with_same_name_on_different_types` ran, Cranelift refused with "Duplicate definition of identifier: corvid_agent_total" — the existing symbol mangler used only the user-visible name. Fix: include `DefId` in the mangled symbol. Five-line change. Symbols are `Linkage::Local` so the suffix never escapes into a public ABI.
+
+### Scope honestly held
+
+In: parser, AST, resolver side-table, typechecker dispatch, IR lowering, codegen symbol disambig, 16 new tests across 3 crates, ROADMAP + learnings + dev-log updates.
+
+Out (deliberately, named in ROADMAP):
+- **`self` keyword** — explicit first param model.
+- **Static methods** (`Type.factory()`) — free agents serve the role.
+- **Methods on built-in types** — orphan rule design with Phase 25 package manager.
+- **Method overloading** — Rust + Go thrive without it.
+- **Multi-file `extend` blocks** — Phase 25.
+- **Trait/interface system** — Phase 20 (`extend T as Trait:` syntactic slot reserved).
+- **Effect-scoped visibility** — Phase 20 (`public(effect: ...)` syntactic slot reserved).
+
+### Next
+
+Phase 17 pre-phase chat — cycle collector on the refcount runtime. Backstops the existing slice 12e refcount machinery against reference cycles using a stop-the-world mark-sweep collector triggered by allocation pressure. Closes the "deterministic destructors leak on cycles" hole without giving up Phase 12g/h's prompt-release property that Phase 22 (C ABI) and Phase 24 (LSP) downstream consumers depend on.
+
+---
+
 ## Day 32 — Phase 15: Native prompt dispatch ✅ — v0.4 cut
 
 User pushback during the pre-phase chat caught two latent shortcuts in the original brief — provider coverage limited to Anthropic + OpenAI (insufficient for AI-native positioning), and naive text-then-parse with no retry (brittle by design). Both got rewritten before any code shipped. The phase that landed is materially more inventive than the one I first proposed.

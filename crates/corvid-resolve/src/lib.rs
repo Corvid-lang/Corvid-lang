@@ -301,4 +301,126 @@ agent echo(x: String) -> String:
             r.bindings.len()
         );
     }
+
+    // ============================================================
+    // Phase 16 — `extend T:` method side-table tests
+    // ============================================================
+
+    #[test]
+    fn extend_block_registers_methods_in_side_table() {
+        let src = "\
+type Order:
+    amount: Int
+
+extend Order:
+    public agent total(o: Order) -> Int:
+        return o.amount
+";
+        let r = resolve_src(src);
+        assert!(r.errors.is_empty(), "errors: {:?}", r.errors);
+        let order_id = r
+            .symbols
+            .lookup_def("Order")
+            .expect("Order must be in symbols");
+        let methods = r
+            .methods
+            .get(&order_id)
+            .expect("Order must have a method table");
+        assert!(methods.contains_key("total"));
+        assert_eq!(
+            methods["total"].kind,
+            resolver::MethodKind::Agent
+        );
+    }
+
+    #[test]
+    fn extend_targeting_unknown_type_errors() {
+        let src = "\
+extend Nonexistent:
+    public agent foo(x: Nonexistent) -> Int:
+        return 0
+";
+        let r = resolve_src(src);
+        assert!(
+            r.errors.iter().any(|e| matches!(
+                e.kind,
+                ResolveErrorKind::ExtendTargetNotAType(ref n) if n == "Nonexistent"
+            )),
+            "expected ExtendTargetNotAType, got: {:?}",
+            r.errors
+        );
+    }
+
+    #[test]
+    fn duplicate_methods_on_same_type_errors() {
+        let src = "\
+type Order:
+    amount: Int
+
+extend Order:
+    public agent total(o: Order) -> Int:
+        return o.amount
+    public agent total(o: Order) -> Int:
+        return o.amount
+";
+        let r = resolve_src(src);
+        assert!(
+            r.errors.iter().any(|e| matches!(
+                e.kind,
+                ResolveErrorKind::DuplicateMethod { ref method_name, .. } if method_name == "total"
+            )),
+            "expected DuplicateMethod, got: {:?}",
+            r.errors
+        );
+    }
+
+    #[test]
+    fn method_field_collision_errors() {
+        let src = "\
+type Order:
+    total: Int
+
+extend Order:
+    public agent total(o: Order) -> Int:
+        return o.total
+";
+        let r = resolve_src(src);
+        assert!(
+            r.errors.iter().any(|e| matches!(
+                e.kind,
+                ResolveErrorKind::MethodFieldCollision { ref method_name, .. }
+                    if method_name == "total"
+            )),
+            "expected MethodFieldCollision, got: {:?}",
+            r.errors
+        );
+    }
+
+    #[test]
+    fn methods_with_same_name_on_different_types_coexist() {
+        let src = "\
+type Order:
+    amount: Int
+
+type Line:
+    amount: Int
+
+extend Order:
+    public agent total(o: Order) -> Int:
+        return o.amount
+
+extend Line:
+    public agent total(l: Line) -> Int:
+        return l.amount
+";
+        let r = resolve_src(src);
+        assert!(r.errors.is_empty(), "errors: {:?}", r.errors);
+        let order_id = r.symbols.lookup_def("Order").unwrap();
+        let line_id = r.symbols.lookup_def("Line").unwrap();
+        assert_ne!(
+            r.methods[&order_id]["total"].def_id,
+            r.methods[&line_id]["total"].def_id,
+            "different types' methods should have distinct DefIds"
+        );
+    }
 }

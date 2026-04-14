@@ -10,10 +10,13 @@
 use crate::errors::{TypeError, TypeErrorKind};
 use crate::types::Type;
 use corvid_ast::{
-    AgentDecl, BinaryOp, Block, Decl, Effect, Expr, File, Ident, Literal, Param, PromptDecl, Span,
-    Stmt, ToolDecl, TypeDecl, TypeRef, UnaryOp,
+    AgentDecl, BinaryOp, Block, Decl, Effect, Expr, ExtendMethodKind, File, Ident, Literal, Param,
+    PromptDecl, Span, Stmt, ToolDecl, TypeDecl, TypeRef, UnaryOp,
 };
-use corvid_resolve::{Binding, BuiltIn, DeclKind, DefId, LocalId, Resolved, SymbolTable};
+use corvid_resolve::{
+    resolver::{MethodEntry, MethodKind},
+    Binding, BuiltIn, DeclKind, DefId, LocalId, Resolved, SymbolTable,
+};
 use std::collections::HashMap;
 
 /// Output of the type checker.
@@ -40,11 +43,20 @@ struct Checker<'a> {
     types: HashMap<Span, Type>,
     errors: Vec<TypeError>,
 
-    /// Indexed declarations for O(1) lookup by DefId.
+    /// Indexed declarations for O(1) lookup by DefId. Phase 16
+    /// methods get inserted here too — a method `extend Order: agent
+    /// total(o: Order) -> Int` indexes into `agents_by_id` under the
+    /// method's allocated DefId, alongside file-level free agents.
     tools_by_id: HashMap<DefId, &'a ToolDecl>,
     prompts_by_id: HashMap<DefId, &'a PromptDecl>,
     agents_by_id: HashMap<DefId, &'a AgentDecl>,
     types_by_id: HashMap<DefId, &'a TypeDecl>,
+
+    /// Phase 16 — per-receiver-type method side-table from the
+    /// resolver. Method calls (`x.foo(args)`) look up `x`'s declared
+    /// type then this map to find the method's `DefId`, after which
+    /// dispatch reuses the existing tool / prompt / agent call paths.
+    methods: &'a HashMap<DefId, HashMap<String, MethodEntry>>,
 
     /// Type of each local binding, populated as we enter scopes.
     local_types: HashMap<LocalId, Type>,
@@ -96,6 +108,38 @@ impl<'a> Checker<'a> {
                     }
                 }
                 Decl::Import(_) => {}
+                Decl::Extend(ext) => {
+                    // Phase 16 slice 16c — index method decls by
+                    // their allocated DefIds (from the resolver's
+                    // method side-table) into the same per-kind
+                    // tables free decls use, so call-resolution can
+                    // dispatch uniformly.
+                    let Some(type_def_id) =
+                        resolved.symbols.lookup_def(&ext.type_name.name)
+                    else {
+                        continue;
+                    };
+                    let Some(method_table) = resolved.methods.get(&type_def_id) else {
+                        continue;
+                    };
+                    for method in &ext.methods {
+                        let name = method.name().name.as_str();
+                        let Some(entry) = method_table.get(name) else {
+                            continue;
+                        };
+                        match &method.kind {
+                            ExtendMethodKind::Tool(t) => {
+                                tools.insert(entry.def_id, t);
+                            }
+                            ExtendMethodKind::Prompt(p) => {
+                                prompts.insert(entry.def_id, p);
+                            }
+                            ExtendMethodKind::Agent(a) => {
+                                agents.insert(entry.def_id, a);
+                            }
+                        }
+                    }
+                }
             }
         }
 
@@ -108,6 +152,7 @@ impl<'a> Checker<'a> {
             prompts_by_id: prompts,
             agents_by_id: agents,
             types_by_id: types,
+            methods: &resolved.methods,
             local_types: HashMap::new(),
             current_return: None,
             approvals: Vec::new(),
@@ -125,6 +170,23 @@ impl<'a> Checker<'a> {
                 Decl::Prompt(_) | Decl::Tool(_) | Decl::Type(_) | Decl::Import(_) => {
                     // No body to check. Signatures are already well-formed
                     // by the parser, and the resolver has vetted their names.
+                }
+                Decl::Extend(ext) => {
+                    // Phase 16 slice 16c: typecheck agent method
+                    // bodies the same way free agents are checked.
+                    // Tool methods have no body. Prompt methods
+                    // have a template (not a code block) — its
+                    // typecheck is the same as a free prompt's.
+                    for method in &ext.methods {
+                        match &method.kind {
+                            ExtendMethodKind::Agent(a) => self.check_agent(a),
+                            ExtendMethodKind::Tool(_) | ExtendMethodKind::Prompt(_) => {
+                                // No body / template-only; signature
+                                // already validated by the parser
+                                // and the resolver vetted the names.
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -403,6 +465,15 @@ impl<'a> Checker<'a> {
     }
 
     fn check_call(&mut self, callee: &Expr, args: &[Expr], span: Span) -> Type {
+        // Phase 16: a callee of shape `target.field` is a method call.
+        // Lower it: typecheck the receiver, look up the method by
+        // (receiver_type_def_id, method_name), validate args (with
+        // the receiver implicitly prepended), reuse the appropriate
+        // tool / prompt / agent dispatch path.
+        if let Expr::FieldAccess { target, field, .. } = callee {
+            return self.check_method_call(target, field, args, span);
+        }
+
         // Identify what's being called by looking at the callee's binding.
         let Expr::Ident { name, .. } = callee else {
             // Indirect or chained callee — typecheck args and give up.
@@ -509,6 +580,95 @@ impl<'a> Checker<'a> {
             .expect("agent DefId not indexed");
         self.check_args_against_params(name, &agent.params, args);
         self.type_ref_to_type(&agent.return_ty)
+    }
+
+    /// Phase 16 — `target.method(args)` rewritten to a regular
+    /// function call with the receiver as the first argument. The
+    /// receiver's type is looked up in the methods side-table to
+    /// pick the matching method DefId; from there we reuse the
+    /// existing tool / prompt / agent dispatch.
+    ///
+    /// Errors:
+    ///   - receiver isn't a struct (no methods on built-ins yet).
+    ///   - method name doesn't exist on the type.
+    ///   - arity mismatch (argv vs declared params, accounting for
+    ///     receiver-as-first-param).
+    fn check_method_call(
+        &mut self,
+        target: &Expr,
+        method_name: &Ident,
+        args: &[Expr],
+        span: Span,
+    ) -> Type {
+        // 1. Typecheck the receiver and require a struct type.
+        let recv_ty = self.check_expr(target);
+        let recv_def_id = match recv_ty {
+            Type::Struct(id) => id,
+            other => {
+                self.errors.push(TypeError::new(
+                    TypeErrorKind::NotCallable {
+                        got: format!(
+                            "method `{}` on receiver of type `{}` — Phase 16 supports methods only on user-declared types (struct types). Methods on built-ins arrive in a later phase.",
+                            method_name.name,
+                            other.display_name()
+                        ),
+                    },
+                    target.span(),
+                ));
+                // Still typecheck remaining args for diagnostics.
+                for a in args {
+                    let _ = self.check_expr(a);
+                }
+                return Type::Unknown;
+            }
+        };
+
+        // 2. Look up the method.
+        let method = match self
+            .methods
+            .get(&recv_def_id)
+            .and_then(|m| m.get(&method_name.name))
+        {
+            Some(m) => m.clone(),
+            None => {
+                let type_name = self.symbols.get(recv_def_id).name.clone();
+                self.errors.push(TypeError::new(
+                    TypeErrorKind::NotCallable {
+                        got: format!(
+                            "no method `{}` on type `{type_name}`",
+                            method_name.name
+                        ),
+                    },
+                    method_name.span,
+                ));
+                for a in args {
+                    let _ = self.check_expr(a);
+                }
+                return Type::Unknown;
+            }
+        };
+
+        // 3. Build the effective argument list: receiver prepended.
+        //    Then dispatch by method kind, reusing the existing
+        //    free-call paths.
+        let mut effective_args: Vec<Expr> = Vec::with_capacity(args.len() + 1);
+        effective_args.push(target.clone());
+        effective_args.extend_from_slice(args);
+
+        match method.kind {
+            MethodKind::Tool => self.check_tool_call(
+                method.def_id,
+                &method_name.name,
+                &effective_args,
+                span,
+            ),
+            MethodKind::Prompt => {
+                self.check_prompt_call(method.def_id, &method_name.name, &effective_args)
+            }
+            MethodKind::Agent => {
+                self.check_agent_call(method.def_id, &method_name.name, &effective_args)
+            }
+        }
     }
 
     /// `TypeName(field0, field1, ...)` — construct a struct. Field

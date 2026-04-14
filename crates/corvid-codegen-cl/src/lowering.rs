@@ -35,8 +35,15 @@ fn lowered_outcome_placeholder() -> BlockOutcome {
 
 /// Mangle a user agent's name into a link-safe symbol. Prevents
 /// collisions with C runtime symbols (`main`, `printf`, `malloc`, ...).
-fn mangle_agent_symbol(user_name: &str) -> String {
-    format!("corvid_agent_{user_name}")
+///
+/// Phase 16 includes the agent's `DefId` in the symbol because methods
+/// declared inside `extend T:` blocks share their unmangled names
+/// across types (`Order.total`, `Line.total` both get the AST name
+/// `total`). Including the DefId disambiguates without changing the
+/// emitted .obj's user-visible behavior — symbols are internal-only
+/// (`Linkage::Local`) so the suffix never leaks into a public API.
+fn mangle_agent_symbol(user_name: &str, def_id: DefId) -> String {
+    format!("corvid_agent_{user_name}_{}", def_id.0)
 }
 
 /// Declare the imported runtime helpers (retain, release, string
@@ -792,7 +799,7 @@ pub fn lower_file(
         }
         sig.returns
             .push(AbiParam::new(cl_type_for(&agent.return_ty, agent.span)?));
-        let mangled = mangle_agent_symbol(&agent.name);
+        let mangled = mangle_agent_symbol(&agent.name, agent.id);
         let id = module
             .declare_function(&mangled, Linkage::Local, &sig)
             .map_err(|e| {

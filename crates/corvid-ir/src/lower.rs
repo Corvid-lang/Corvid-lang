@@ -5,10 +5,12 @@
 
 use crate::types::*;
 use corvid_ast::{
-    AgentDecl, Block, Decl, Effect, Expr, File, Ident, ImportDecl, ImportSource, Literal, Param,
-    PromptDecl, Span, Stmt, ToolDecl, TypeDecl, TypeRef,
+    AgentDecl, Block, Decl, Effect, Expr, ExtendMethodKind, File, Ident, ImportDecl,
+    ImportSource, Literal, Param, PromptDecl, Span, Stmt, ToolDecl, TypeDecl, TypeRef,
 };
-use corvid_resolve::{Binding, BuiltIn, DeclKind, DefId, LocalId, Resolved, SymbolTable};
+use corvid_resolve::{
+    resolver::MethodEntry, Binding, BuiltIn, DeclKind, DefId, LocalId, Resolved, SymbolTable,
+};
 use corvid_types::{Checked, Type};
 use std::collections::HashMap;
 
@@ -22,6 +24,11 @@ struct Lowerer<'a> {
     symbols: &'a SymbolTable,
     bindings: &'a HashMap<Span, Binding>,
     types: &'a HashMap<Span, Type>,
+    /// Phase 16 — per-receiver-type method side-table from the
+    /// resolver. `lower_file` walks `Decl::Extend` blocks and looks
+    /// up each method's allocated DefId here so the IR emits methods
+    /// alongside free decls in the per-kind vectors.
+    methods: &'a HashMap<DefId, HashMap<String, MethodEntry>>,
 }
 
 impl<'a> Lowerer<'a> {
@@ -30,6 +37,7 @@ impl<'a> Lowerer<'a> {
             symbols: &resolved.symbols,
             bindings: &resolved.bindings,
             types: &checked.types,
+            methods: &resolved.methods,
         }
     }
 
@@ -47,6 +55,37 @@ impl<'a> Lowerer<'a> {
                 Decl::Tool(t) => tools.push(self.lower_tool(t)),
                 Decl::Prompt(p) => prompts.push(self.lower_prompt(p)),
                 Decl::Agent(a) => agents.push(self.lower_agent(a)),
+                Decl::Extend(ext) => {
+                    // Phase 16 slice 16c — lower each method into the
+                    // appropriate per-kind IR vector. Methods get
+                    // their `DefId` from the resolver's method side
+                    // table (NOT the by-name namespace, since two
+                    // types can share method names like `total`).
+                    let Some(type_def_id) =
+                        self.symbols.lookup_def(&ext.type_name.name)
+                    else {
+                        continue;
+                    };
+                    let Some(method_table) = self.methods.get(&type_def_id) else {
+                        continue;
+                    };
+                    for method in &ext.methods {
+                        let Some(entry) = method_table.get(&method.name().name) else {
+                            continue;
+                        };
+                        match &method.kind {
+                            ExtendMethodKind::Tool(t) => {
+                                tools.push(self.lower_tool_with_id(t, entry.def_id));
+                            }
+                            ExtendMethodKind::Prompt(p) => {
+                                prompts.push(self.lower_prompt_with_id(p, entry.def_id));
+                            }
+                            ExtendMethodKind::Agent(a) => {
+                                agents.push(self.lower_agent_with_id(a, entry.def_id));
+                            }
+                        }
+                    }
+                }
             }
         }
 
@@ -105,6 +144,14 @@ impl<'a> Lowerer<'a> {
             .symbols
             .lookup_def(&t.name.name)
             .expect("tool missing from symbol table");
+        self.lower_tool_with_id(t, id)
+    }
+
+    /// Phase 16: lower a tool decl whose DefId was allocated outside
+    /// the by-name namespace (i.e. it's a method inside an `extend`
+    /// block, looked up via the methods side-table rather than by
+    /// name).
+    fn lower_tool_with_id(&self, t: &ToolDecl, id: DefId) -> IrTool {
         IrTool {
             id,
             name: t.name.name.clone(),
@@ -120,6 +167,10 @@ impl<'a> Lowerer<'a> {
             .symbols
             .lookup_def(&p.name.name)
             .expect("prompt missing from symbol table");
+        self.lower_prompt_with_id(p, id)
+    }
+
+    fn lower_prompt_with_id(&self, p: &PromptDecl, id: DefId) -> IrPrompt {
         IrPrompt {
             id,
             name: p.name.name.clone(),
@@ -135,6 +186,10 @@ impl<'a> Lowerer<'a> {
             .symbols
             .lookup_def(&a.name.name)
             .expect("agent missing from symbol table");
+        self.lower_agent_with_id(a, id)
+    }
+
+    fn lower_agent_with_id(&self, a: &AgentDecl, id: DefId) -> IrAgent {
         IrAgent {
             id,
             name: a.name.name.clone(),
@@ -314,6 +369,21 @@ impl<'a> Lowerer<'a> {
     }
 
     fn lower_call(&self, callee: &Expr, args: &[Expr]) -> IrExprKind {
+        // Phase 16: `target.method(args)` rewrites to a regular call
+        // with the receiver prepended. Method DefId comes from the
+        // resolver's per-type method side-table; the caller's type
+        // is read from the type checker's per-expression side table.
+        if let Expr::Call { .. } = callee {
+            // (no-op: shouldn't happen — Call's callee is an Expr,
+            // never another Call directly. Keeps the match arm
+            // catchall narrower below.)
+        }
+        if let Expr::FieldAccess { target, field, .. } = callee {
+            if let Some(rewrite) = self.try_method_call(target, field, args) {
+                return rewrite;
+            }
+        }
+
         let (kind, callee_name) = match callee {
             Expr::Ident { name, .. } => match self.bindings.get(&name.span) {
                 Some(Binding::Decl(def_id)) => {
@@ -345,6 +415,51 @@ impl<'a> Lowerer<'a> {
             callee_name,
             args: args.iter().map(|a| self.lower_expr(a)).collect(),
         }
+    }
+
+    /// Phase 16: detect + lower a `target.method(args)` call. Returns
+    /// `Some(IrExprKind::Call { ... })` with the receiver prepended
+    /// when `target`'s type matches a registered method. Returns
+    /// `None` when the call doesn't resolve to a method (caller
+    /// falls back to the regular field-access-of-a-fn path, which
+    /// produces `IrCallKind::Unknown` and lets later phases error).
+    fn try_method_call(
+        &self,
+        target: &Expr,
+        field: &Ident,
+        args: &[Expr],
+    ) -> Option<IrExprKind> {
+        // Receiver type lives on the type-checker's side-table.
+        let recv_ty = self.types.get(&target.span())?;
+        let recv_def_id = match recv_ty {
+            Type::Struct(id) => *id,
+            _ => return None,
+        };
+        let entry = self.methods.get(&recv_def_id)?.get(&field.name)?;
+        let kind = match entry.kind {
+            corvid_resolve::resolver::MethodKind::Tool => IrCallKind::Tool {
+                def_id: entry.def_id,
+                // Method-tool effects: Phase 16 keeps Safe as the
+                // conservative default; the IR's IrTool carries the
+                // declared effect once `define_tool` lowers it.
+                effect: Effect::Safe,
+            },
+            corvid_resolve::resolver::MethodKind::Prompt => IrCallKind::Prompt {
+                def_id: entry.def_id,
+            },
+            corvid_resolve::resolver::MethodKind::Agent => IrCallKind::Agent {
+                def_id: entry.def_id,
+            },
+        };
+        // Receiver becomes the first argument.
+        let mut lowered_args: Vec<IrExpr> = Vec::with_capacity(args.len() + 1);
+        lowered_args.push(self.lower_expr(target));
+        lowered_args.extend(args.iter().map(|a| self.lower_expr(a)));
+        Some(IrExprKind::Call {
+            kind,
+            callee_name: field.name.clone(),
+            args: lowered_args,
+        })
     }
 
     fn type_ref_to_type(&self, tr: &TypeRef) -> Type {

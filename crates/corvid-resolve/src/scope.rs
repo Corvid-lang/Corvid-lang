@@ -108,6 +108,30 @@ impl SymbolTable {
         Ok(id)
     }
 
+    /// Allocate a fresh `DefId` for a declaration that lives in a
+    /// scoped table (NOT the file-level by-name namespace). Used for
+    /// Phase 16 methods inside `extend T:` blocks — they share names
+    /// across types (`Point.distance`, `Line.distance`) so they can't
+    /// go in the global by-name table, but they still need stable
+    /// identity for downstream IR + diagnostics. Caller is responsible
+    /// for storing the (scope, name) → DefId mapping in their own
+    /// side table.
+    pub fn allocate_def(
+        &mut self,
+        name: &str,
+        kind: DeclKind,
+        span: Span,
+    ) -> DefId {
+        let id = DefId(self.entries.len() as u32);
+        self.entries.push(DeclEntry {
+            id,
+            name: name.to_string(),
+            kind,
+            span,
+        });
+        id
+    }
+
     pub fn lookup(&self, name: &str) -> Option<Binding> {
         if let Some(&id) = self.by_name.get(name) {
             return Some(Binding::Decl(id));

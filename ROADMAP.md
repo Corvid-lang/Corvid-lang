@@ -315,20 +315,33 @@ User pushback during pre-phase chat caught two latent shortcuts in the original 
 
 ---
 
-### Phase 16 — Methods on types (~2 weeks)
+### Phase 16 ✅ — Methods on types (Day 33)
 
-**Goal.** `value.method(args)` syntax for associated functions on user types. Cheapest, loudest GP-signal feature.
+**Hard dep:** frontend (✅), IR (✅). Single Cranelift-symbol disambiguation needed (DefId-suffixed); otherwise codegen unchanged.
 
-**Hard dep:** frontend (✅), IR (✅). Zero codegen changes required — methods lower to free functions.
+Pre-phase chat caught two limiting shortcuts in my brief and reshaped the phase substantially. The shipped form:
 
-**Scope:**
-- Parser extension: **`impl T:` block** holding method declarations, separate from the `type T:` declaration. Matches Rust / Swift; keeps `type` declarations compact and data-focused; methods cluster visually; ordering independent (methods can live in a different file, enabling future package-level extension methods). Pre-phase chat revisits only if a concrete blocker surfaces.
-- Resolver: dotted-method lookup resolves to the declared method's `DefId`.
-- Typechecker: call-site `v.m(args)` typechecks as `m(v, args)` with `v` bound to the first parameter.
-- Single dispatch only. No inheritance, no late binding, no virtual tables.
-- IR: `value.method(args)` lowers to an ordinary agent/function call — no new IR variants.
+- [x] **Syntax: `extend T:` block** (not Rust's `impl T:`). Full word matches Corvid's keyword style (`agent`, `tool`, `prompt`, `approve`, `dangerous`, `type`); reads as English ("extend Order with these methods"); leaves room for Phase 20 traits via `extend T as Serializable:` without retroactive renaming. `type T:` stays purely structural — better for LLM readability.
+- [x] **Methods can be ANY decl kind** — `extend T:` blocks hold a mix of `agent`, `prompt`, `tool` declarations. Same dot-syntax dispatches all of them: `order.total()` is a pure-function call, `order.summarize()` is an LLM call, `order.fetch_status()` is a tool call, `order.process()` is an effectful agent. **No other language unifies prompts, tools, and pure code under a single typed dot-syntax** — for an AI-native language this turns "AI is a method on your type" from positioning into syntax.
+- [x] **Effect inference handles purity** — no `function` keyword introduced. Agents inherit their effect rows from their bodies (which already worked via the existing checker). A method that doesn't call any effectful primitive has no effect row; replay/cost-budget machinery (Phases 20–21) won't track it. Avoids fourth-keyword proliferation; keeps the moat phase's effect-row work simple.
+- [x] **`public` / private visibility shipped now**, with parens-extension reserved for Phase 20 effect-scoped variants. Default visibility is private (file-scoped). `public` and `public(package)` are the Phase 16 surface; `public(effect: audited)` lands in Phase 20 without breaking syntax. Decision motivated by: public-by-default is a one-way door for API stability; retrofitting visibility post-v1.0 would be a breaking change every existing impl block has to absorb.
+- [x] **Receiver as explicit first parameter** — no `self` keyword. `extend Order: agent total(o: Order) -> Int` makes the receiver a parameter like any other. Mental model matches "methods are agents with a receiver"; Pythonic users adapt instantly. Less special-casing than Rust's `self`.
+- [x] **Receiver-type-keyed method lookup.** Resolver builds a per-type method side-table `(type_def_id, method_name) -> DefId`. Multiple types can share method names (`Order.total`, `Line.total`) without collision. Field/method name collisions on the same type are compile-time errors.
+- [x] **Cranelift symbol mangling** updated to include the agent's `DefId` so `extend Order: agent total` and `extend Line: agent total` get distinct internal symbols. Symbols are `Linkage::Local`; the suffix never leaks into a public API.
+- [x] **6 new parity fixtures** (total: 105) — receiver-only method, multi-arg method, method-calls-method, methods-with-same-name-on-different-types (verifies receiver-type dispatch), method on a struct with a refcounted `String` field (leak-detector-audited).
+- [x] **5 new resolver tests** (total: 19) — extend registers methods, extend on unknown type errors, duplicate methods error, method/field name collision error, methods on different types coexist.
+- [x] **5 new parser tests** (total: 80 → 85) — `extend` blocks parse, mixed decl kinds, default + `public` + `public(package)` visibility, malformed `public(...)` rejected.
 
-**Non-scope:** Interfaces / traits (deferred; revisit at Phase 20 if the moat phase actually needs polymorphism).
+**Non-scope (deliberate, named for future phases):**
+- **`self` keyword** — explicit first param model is the answer; revisit only if a real foot-gun surfaces.
+- **Static methods** (`Type.factory()`) — free agents serve the role today; non-breaking to add later.
+- **Methods on built-in types** (Int, String, List) — orphan-rule design must come with Phase 25's package manager. Phase 30+ stdlib decides.
+- **Method overloading** — duplicate names on a type are compile errors. Rust + Go thrive without overloading; not adding it.
+- **Multi-file `extend` blocks** (one type extended in many files) — Phase 25.
+- **Trait/interface system** — Phase 20 (moat). The `extend T as TraitName:` syntactic slot is reserved.
+- **Effect-scoped visibility** (`public(effect: audited)`) — Phase 20.
+
+**Architecturally important:** Phase 16 introduces NO new IR variants. Method calls compile to ordinary `IrCallKind::Agent` / `Prompt` / `Tool` calls with the receiver prepended as the first argument. Codegen (Cranelift, Python transpile, future WASM) needs no per-method handling — methods are agents/prompts/tools with a different declaration syntax and a different lookup path.
 
 ### Phase 17 — Cycle collector (~4–6 weeks)
 

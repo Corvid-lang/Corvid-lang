@@ -7,9 +7,10 @@
 //! Undefined names are reported; resolution continues.
 
 use crate::errors::{ResolveError, ResolveErrorKind};
-use crate::scope::{Binding, DeclKind, LocalId, LocalScope, SymbolTable};
+use crate::scope::{Binding, DefId, DeclKind, LocalId, LocalScope, SymbolTable};
 use corvid_ast::{
-    AgentDecl, Block, Decl, Expr, File, Ident, PromptDecl, Span, Stmt, ToolDecl, TypeDecl, TypeRef,
+    AgentDecl, Block, Decl, Expr, ExtendDecl, ExtendMethodKind, File, Ident, PromptDecl, Span,
+    Stmt, ToolDecl, TypeDecl, TypeRef, Visibility,
 };
 use std::collections::HashMap;
 
@@ -20,16 +21,51 @@ pub struct Resolved {
     pub symbols: SymbolTable,
     pub bindings: HashMap<Span, Binding>,
     pub errors: Vec<ResolveError>,
+    /// Phase 16 method side-table — per-receiver-type registry of
+    /// methods declared in `extend T:` blocks. Outer key is the type's
+    /// `DefId`; inner map is keyed by method name. Methods don't
+    /// collide across types (`Point.distance` and `Line.distance`
+    /// coexist) but must be unique within a single type.
+    pub methods: HashMap<DefId, HashMap<String, MethodEntry>>,
+}
+
+/// One method's resolution metadata. The actual method body lives in
+/// the AST under `Decl::Extend(ext).methods[i]`; this entry is the
+/// side-table indexable handle.
+#[derive(Debug, Clone)]
+pub struct MethodEntry {
+    /// Fresh `DefId` allocated for this method. Distinct from any
+    /// top-level decl's DefId because methods aren't in the file's
+    /// by-name namespace (multiple types can share a method name).
+    pub def_id: DefId,
+    /// Tool / prompt / agent kind, mirroring the `ExtendMethodKind`
+    /// at the AST level. Tells the typechecker which dispatch path
+    /// to use when rewriting the call.
+    pub kind: MethodKind,
+    /// Visibility from the extend block. Phase 16 stores it; Phase 25
+    /// (package manager) gives it cross-file enforcement teeth.
+    pub visibility: Visibility,
+    /// Span of the declaration for diagnostics.
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MethodKind {
+    Tool,
+    Prompt,
+    Agent,
 }
 
 pub fn resolve(file: &File) -> Resolved {
     let mut r = Resolver::new();
     r.collect_decls(file);
+    r.collect_methods(file);
     r.resolve_file(file);
     Resolved {
         symbols: r.symbols,
         bindings: r.bindings,
         errors: r.errors,
+        methods: r.methods,
     }
 }
 
@@ -42,6 +78,10 @@ struct Resolver {
     /// bindings share the function scope).
     scopes: Vec<LocalScope>,
     next_local_id: u32,
+    /// Phase 16 method side-table. Populated in `collect_methods` after
+    /// `collect_decls` has run (so type DefIds are known before we look
+    /// up `extend T:` targets).
+    methods: HashMap<DefId, HashMap<String, MethodEntry>>,
 }
 
 impl Resolver {
@@ -52,6 +92,7 @@ impl Resolver {
             errors: Vec::new(),
             scopes: Vec::new(),
             next_local_id: 0,
+            methods: HashMap::new(),
         }
     }
 
@@ -97,6 +138,120 @@ impl Resolver {
         }
     }
 
+    // ---------------- pass 1.5 (Phase 16): collect methods ----------------
+
+    /// Walk every `extend T:` block, validate the target is a known
+    /// type, and register each contained method in the per-type method
+    /// side-table. Runs after `collect_decls` so type DefIds are
+    /// already in the symbol table — we look them up by name.
+    fn collect_methods(&mut self, file: &File) {
+        for decl in &file.decls {
+            let Decl::Extend(ext) = decl else { continue };
+            self.collect_one_extend(ext, file);
+        }
+    }
+
+    fn collect_one_extend(&mut self, ext: &ExtendDecl, file: &File) {
+        // 1. Resolve the target type by name. Must exist + be a Type.
+        let type_def_id = match self.symbols.lookup_def(&ext.type_name.name) {
+            Some(id) => {
+                let entry = self.symbols.get(id);
+                if entry.kind != DeclKind::Type {
+                    self.errors.push(ResolveError {
+                        kind: ResolveErrorKind::ExtendTargetNotAType(ext.type_name.name.clone()),
+                        span: ext.type_name.span,
+                    });
+                    return;
+                }
+                id
+            }
+            None => {
+                self.errors.push(ResolveError {
+                    kind: ResolveErrorKind::ExtendTargetNotAType(ext.type_name.name.clone()),
+                    span: ext.type_name.span,
+                });
+                return;
+            }
+        };
+
+        // 2. Build a quick set of field names on this type so we can
+        //    catch method/field collisions cheaply. Source of truth
+        //    is the AST `TypeDecl` we find by walking `file.decls`
+        //    once. v0.1 has no per-type field index in the resolver;
+        //    Phase 16 stays cheap rather than building one for one
+        //    use site.
+        let type_decl = file.decls.iter().find_map(|d| match d {
+            Decl::Type(t) if t.name.name == ext.type_name.name => Some(t),
+            _ => None,
+        });
+        let field_spans: HashMap<&str, Span> = type_decl
+            .map(|t| {
+                t.fields
+                    .iter()
+                    .map(|f| (f.name.name.as_str(), f.span))
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        // 3. Walk the methods. Each one allocates a fresh DefId and
+        //    lands in the per-type method-name table.
+        let entry_table = self.methods.entry(type_def_id).or_default();
+        for method in &ext.methods {
+            let name = method.name().name.clone();
+            let span = method.span();
+
+            // Collision: method vs field on same type.
+            if let Some(&field_span) = field_spans.get(name.as_str()) {
+                self.errors.push(ResolveError {
+                    kind: ResolveErrorKind::MethodFieldCollision {
+                        type_name: ext.type_name.name.clone(),
+                        method_name: name,
+                        field_span,
+                    },
+                    span,
+                });
+                continue;
+            }
+
+            // Collision: duplicate method on same type.
+            if let Some(existing) = entry_table.get(&name) {
+                self.errors.push(ResolveError {
+                    kind: ResolveErrorKind::DuplicateMethod {
+                        type_name: ext.type_name.name.clone(),
+                        method_name: name,
+                        first_span: existing.span,
+                    },
+                    span,
+                });
+                continue;
+            }
+
+            let kind = match &method.kind {
+                ExtendMethodKind::Tool(_) => MethodKind::Tool,
+                ExtendMethodKind::Prompt(_) => MethodKind::Prompt,
+                ExtendMethodKind::Agent(_) => MethodKind::Agent,
+            };
+            // Allocate a DefId scoped to the method side-table —
+            // intentionally NOT in the file's by-name namespace
+            // (multiple types can share method names).
+            let decl_kind = match kind {
+                MethodKind::Tool => DeclKind::Tool,
+                MethodKind::Prompt => DeclKind::Prompt,
+                MethodKind::Agent => DeclKind::Agent,
+            };
+            let def_id = self.symbols.allocate_def(&name, decl_kind, span);
+            entry_table.insert(
+                name,
+                MethodEntry {
+                    def_id,
+                    kind,
+                    visibility: method.visibility.clone(),
+                    span,
+                },
+            );
+        }
+    }
+
     // ---------------- pass 2 ----------------
 
     fn resolve_file(&mut self, file: &File) {
@@ -107,10 +262,20 @@ impl Resolver {
                 Decl::Tool(t) => self.resolve_tool_decl(t),
                 Decl::Prompt(p) => self.resolve_prompt_decl(p),
                 Decl::Agent(a) => self.resolve_agent_decl(a),
-                Decl::Extend(_) => {
-                    // Phase 16 slice 16b will resolve method bodies +
-                    // build the (type, method_name) → DefId side table.
-                    // Slice 16a just parses the syntax.
+                Decl::Extend(ext) => {
+                    // Phase 16 slice 16b: resolve each method body
+                    // the same way free agents/prompts/tools are
+                    // resolved. Method bodies see the same scoping
+                    // rules — there's no implicit `self` (the
+                    // receiver is just the explicit first parameter,
+                    // bound like any other param).
+                    for method in &ext.methods {
+                        match &method.kind {
+                            ExtendMethodKind::Agent(a) => self.resolve_agent_decl(a),
+                            ExtendMethodKind::Prompt(p) => self.resolve_prompt_decl(p),
+                            ExtendMethodKind::Tool(t) => self.resolve_tool_decl(t),
+                        }
+                    }
                 }
             }
         }
