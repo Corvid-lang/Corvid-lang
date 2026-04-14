@@ -75,6 +75,15 @@ impl Resolver {
                 Decl::Tool(t) => (t.name.name.clone(), DeclKind::Tool, t.span),
                 Decl::Prompt(p) => (p.name.name.clone(), DeclKind::Prompt, p.span),
                 Decl::Agent(a) => (a.name.name.clone(), DeclKind::Agent, a.span),
+                Decl::Extend(_) => {
+                    // Phase 16 slice 16a: parser accepts `extend T:`
+                    // blocks; method registration into a per-type
+                    // method table lands in slice 16b. For now the
+                    // extend decl contributes no top-level symbols
+                    // (methods are scoped to the receiver type, not
+                    // to the file's symbol namespace).
+                    continue;
+                }
             };
             if let Err(first_span) = self.symbols.declare(&name, kind, span) {
                 self.errors.push(ResolveError {
@@ -98,6 +107,11 @@ impl Resolver {
                 Decl::Tool(t) => self.resolve_tool_decl(t),
                 Decl::Prompt(p) => self.resolve_prompt_decl(p),
                 Decl::Agent(a) => self.resolve_agent_decl(a),
+                Decl::Extend(_) => {
+                    // Phase 16 slice 16b will resolve method bodies +
+                    // build the (type, method_name) → DefId side table.
+                    // Slice 16a just parses the syntax.
+                }
             }
         }
     }

@@ -8,8 +8,9 @@
 use crate::errors::{ParseError, ParseErrorKind};
 use crate::token::{TokKind, Token};
 use corvid_ast::{
-    AgentDecl, BinaryOp, Block, Decl, Effect, Expr, Field, File, Ident, ImportDecl, ImportSource,
-    Literal, Param, PromptDecl, Span, Stmt, ToolDecl, TypeDecl, TypeRef, UnaryOp,
+    AgentDecl, BinaryOp, Block, Decl, Effect, Expr, ExtendDecl, ExtendMethod, ExtendMethodKind,
+    Field, File, Ident, ImportDecl, ImportSource, Literal, Param, PromptDecl, Span, Stmt,
+    ToolDecl, TypeDecl, TypeRef, UnaryOp, Visibility,
 };
 
 /// Parse a full expression from a token stream.
@@ -763,6 +764,7 @@ impl<'a> Parser<'a> {
                 | TokKind::KwTool
                 | TokKind::KwPrompt
                 | TokKind::KwAgent
+                | TokKind::KwExtend
                 | TokKind::Eof => return,
                 _ => {
                     self.bump();
@@ -778,10 +780,11 @@ impl<'a> Parser<'a> {
             TokKind::KwTool => self.parse_tool_decl().map(Decl::Tool),
             TokKind::KwPrompt => self.parse_prompt_decl().map(Decl::Prompt),
             TokKind::KwAgent => self.parse_agent_decl().map(Decl::Agent),
+            TokKind::KwExtend => self.parse_extend_decl().map(Decl::Extend),
             other => Err(ParseError {
                 kind: ParseErrorKind::UnexpectedToken {
                     got: describe_token(other),
-                    expected: "a top-level declaration (agent, tool, prompt, type, import)".into(),
+                    expected: "a top-level declaration (agent, tool, prompt, type, import, extend)".into(),
                 },
                 span: self.peek_span(),
             }),
@@ -1009,6 +1012,109 @@ impl<'a> Parser<'a> {
             body,
             span: start.merge(end),
         })
+    }
+
+    // -- extend (Phase 16 methods) ------------------------------
+
+    /// Parse an `extend TypeName:` block. The body is an indented
+    /// list of tool / prompt / agent declarations, each optionally
+    /// prefixed with `public` or `public(package)`.
+    ///
+    /// ```text
+    /// extend Order:
+    ///     public agent total(o: Order) -> Int:
+    ///         return o.amount + o.tax
+    ///     public prompt summarize(o: Order) -> String:
+    ///         "..."
+    ///     public tool fetch_status(o: Order) -> Status dangerous
+    ///     agent compute_tax(o: Order) -> Int:   # private
+    ///         return o.amount / 10
+    /// ```
+    fn parse_extend_decl(&mut self) -> Result<ExtendDecl, ParseError> {
+        let start = self.peek_span();
+        self.bump(); // extend
+
+        let (name, name_span) = self.expect_ident()?;
+        self.expect(TokKind::Colon, "`:` after extend target")?;
+        self.expect_newline()?;
+        self.expect(TokKind::Indent, "indented block of methods")?;
+
+        let mut methods: Vec<ExtendMethod> = Vec::new();
+        while !matches!(self.peek(), TokKind::Dedent | TokKind::Eof) {
+            let visibility = self.parse_optional_visibility()?;
+            let method_kind = match self.peek() {
+                TokKind::KwAgent => {
+                    let d = self.parse_agent_decl()?;
+                    ExtendMethodKind::Agent(d)
+                }
+                TokKind::KwPrompt => {
+                    let d = self.parse_prompt_decl()?;
+                    ExtendMethodKind::Prompt(d)
+                }
+                TokKind::KwTool => {
+                    let d = self.parse_tool_decl()?;
+                    ExtendMethodKind::Tool(d)
+                }
+                other => {
+                    return Err(ParseError {
+                        kind: ParseErrorKind::UnexpectedToken {
+                            got: describe_token(other),
+                            expected: "agent / prompt / tool declaration inside `extend` block".into(),
+                        },
+                        span: self.peek_span(),
+                    });
+                }
+            };
+            methods.push(ExtendMethod {
+                visibility,
+                kind: method_kind,
+            });
+        }
+
+        let end_span = self.peek_span();
+        self.expect(
+            TokKind::Dedent,
+            "end of indented `extend` block (dedent)",
+        )?;
+
+        Ok(ExtendDecl {
+            type_name: Ident::new(name, name_span),
+            methods,
+            span: start.merge(end_span),
+        })
+    }
+
+    /// Parse an optional visibility prefix: `public`, `public(package)`,
+    /// or nothing (returning `Visibility::Private`). Consumes the
+    /// tokens on success; leaves them alone if no `public` keyword.
+    fn parse_optional_visibility(&mut self) -> Result<Visibility, ParseError> {
+        if !matches!(self.peek(), TokKind::KwPublic) {
+            return Ok(Visibility::Private);
+        }
+        self.bump(); // public
+        if matches!(self.peek(), TokKind::LParen) {
+            self.bump(); // (
+            // Only `package` is accepted inside public(...) at Phase
+            // 16. Phase 20 extends with effect-scoped variants.
+            match self.peek() {
+                TokKind::KwPackage => {
+                    self.bump();
+                }
+                other => {
+                    return Err(ParseError {
+                        kind: ParseErrorKind::UnexpectedToken {
+                            got: describe_token(other),
+                            expected: "`package` inside `public(...)` (the only variant Phase 16 supports)".into(),
+                        },
+                        span: self.peek_span(),
+                    });
+                }
+            }
+            self.expect(TokKind::RParen, "`)` after `public(package)`")?;
+            Ok(Visibility::PublicPackage)
+        } else {
+            Ok(Visibility::Public)
+        }
     }
 
     // -- shared helpers -----------------------------------------
@@ -1877,5 +1983,79 @@ agent good(x: String) -> String:
     fn reports_error_on_unknown_import_source() {
         let (_file, errs) = parse_file_errs(r#"import ruby "foo""#);
         assert!(!errs.is_empty());
+    }
+
+    // -----------------------------------------------------------------
+    // Phase 16 — `extend T:` block + visibility parsing
+    // -----------------------------------------------------------------
+
+    use corvid_ast::{ExtendDecl, ExtendMethodKind, Visibility};
+
+    fn first_extend(file: &File) -> &ExtendDecl {
+        file.decls
+            .iter()
+            .find_map(|d| match d {
+                Decl::Extend(e) => Some(e),
+                _ => None,
+            })
+            .expect("expected an `extend` decl in the file")
+    }
+
+    #[test]
+    fn parses_extend_with_one_agent_method() {
+        let file = parse_file_src(
+            "type Order:\n    amount: Int\n\nextend Order:\n    public agent total(o: Order) -> Int:\n        return o.amount\n",
+        );
+        let ext = first_extend(&file);
+        assert_eq!(ext.type_name.name.as_str(), "Order");
+        assert_eq!(ext.methods.len(), 1);
+        let m = &ext.methods[0];
+        assert_eq!(m.visibility, Visibility::Public);
+        assert!(matches!(m.kind, ExtendMethodKind::Agent(_)));
+        assert_eq!(m.name().name.as_str(), "total");
+    }
+
+    #[test]
+    fn parses_extend_default_visibility_is_private() {
+        let file = parse_file_src(
+            "type Order:\n    amount: Int\n\nextend Order:\n    agent total(o: Order) -> Int:\n        return o.amount\n",
+        );
+        let ext = first_extend(&file);
+        assert_eq!(ext.methods[0].visibility, Visibility::Private);
+    }
+
+    #[test]
+    fn parses_extend_public_package_visibility() {
+        let file = parse_file_src(
+            "type Order:\n    amount: Int\n\nextend Order:\n    public(package) agent total(o: Order) -> Int:\n        return o.amount\n",
+        );
+        let ext = first_extend(&file);
+        assert_eq!(ext.methods[0].visibility, Visibility::PublicPackage);
+    }
+
+    #[test]
+    fn parses_extend_with_mixed_decl_kinds() {
+        // The whole point of Phase 16's "methods can be any decl kind"
+        // — verify the parser accepts a mix of agent / prompt / tool
+        // inside one `extend` block.
+        let file = parse_file_src(
+            "type Order:\n    amount: Int\n\nextend Order:\n    public agent total(o: Order) -> Int:\n        return o.amount\n    public prompt summarize(o: Order) -> String:\n        \"Summarize this order\"\n    public tool fetch_status(o: Order) -> Status dangerous\n",
+        );
+        let ext = first_extend(&file);
+        assert_eq!(ext.methods.len(), 3);
+        assert!(matches!(ext.methods[0].kind, ExtendMethodKind::Agent(_)));
+        assert!(matches!(ext.methods[1].kind, ExtendMethodKind::Prompt(_)));
+        assert!(matches!(ext.methods[2].kind, ExtendMethodKind::Tool(_)));
+    }
+
+    #[test]
+    fn rejects_public_with_unknown_inner_keyword() {
+        let (_file, errs) = parse_file_errs(
+            "type Order:\n    amount: Int\n\nextend Order:\n    public(secret) agent total(o: Order) -> Int:\n        return o.amount\n",
+        );
+        assert!(
+            !errs.is_empty(),
+            "expected parse error for `public(secret)` — only `public(package)` is valid in Phase 16"
+        );
     }
 }

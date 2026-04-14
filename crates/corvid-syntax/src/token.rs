@@ -26,6 +26,17 @@ pub enum TokKind {
     KwType,
     KwImport,
     KwAs,
+    /// `extend T:` — Phase 16 method-attachment block.
+    KwExtend,
+    /// `public` — Phase 16 visibility modifier on methods inside
+    /// `extend` blocks. Default without the keyword is private
+    /// (file-scoped).
+    KwPublic,
+    /// `package` — used inside `public(package)` to scope visibility
+    /// to the declaring package. Phase 25's package manager gives
+    /// this the formal boundary; Phase 16 ships the syntax so code
+    /// doesn't need a breaking re-annotation later.
+    KwPackage,
 
     // --- keywords: effect system ---
     KwApprove,
@@ -100,6 +111,9 @@ impl TokKind {
             "type" => TokKind::KwType,
             "import" => TokKind::KwImport,
             "as" => TokKind::KwAs,
+            "extend" => TokKind::KwExtend,
+            "public" => TokKind::KwPublic,
+            "package" => TokKind::KwPackage,
             "approve" => TokKind::KwApprove,
             "dangerous" => TokKind::KwDangerous,
             "if" => TokKind::KwIf,
