@@ -1885,6 +1885,65 @@ New "Running Corvid code" section in learnings.md explains auto / native / inter
 Slice 12k pre-phase chat. Topic: Phase 12 polish — benchmarks vs the interpreter (is native actually faster for non-trivial programs, by how much?), stability guarantees on the ABI between codegen + the C shim (what breaks a cached binary from a prior compiler version?), possibly compile-cache eviction if the cache grows unbounded in practice. Then Phase 13 (strings, structs, lists in *native* code — completing the composite-type story that 12f/g/h started) OR one of the Phase 15.5 GP-table-stakes items (methods on types, REPL). The positioning shift from earlier this week puts Phase 15.5 items genuinely on the table; the order-of-operations question gets its own chat.
 
 
+---
+
+## Day 16 — 2026-04-14 — Slice 17a: typed heap headers + per-type typeinfo
+
+### What landed
+
+Phase 17 (cycle collector) started with a slice that re-architects the heap header. Every refcounted allocation now carries a pointer to a per-type metadata block — `corvid_typeinfo` — emitted in `.rodata` with relocations to destroy_fn + trace_fn. The previous "reserved slot holds a destructor fn pointer" design collapses: destroy_fn and trace_fn both live on the typeinfo, and `corvid_release` dispatches through it.
+
+**Big design turns in the pre-phase chat that shaped this slice:**
+
+1. **First-pass 17a was re-cut as a shortcut.** The initial plan mirrored slice 12g (per-struct destructor pattern) to emit per-type trace functions in isolation. User caught the shortcut: the code would be dead for 6-10 weeks waiting for 17d to consume it, and the generic "list trace" I was waving at would have mis-traced `List<Int>` (I64 slots of integer values interpreted as pointers). Re-cut as an atomic unit: typeinfo blocks + heap header change + destroy + trace + live consumer, all in one slice.
+
+2. **Non-atomic refcount.** Pre-17a used `_Atomic long long` as future-proofing for Phase 25 multi-agent. Audited as a shortcut — paying a LOCK-prefixed RMW on every retain/release forever for a "binaries in the wild" migration cost that doesn't exist (Corvid is pre-release). Dropped `_Atomic`, `<stdatomic.h>`, and the MSVC `/experimental:c11atomics` flag. Phase 25 will get a proper multi-threaded RC design (biased RC, per-arena locks, or deferred RC) — not blanket atomics.
+
+3. **Refcount bit-packing for future GC state.** Steal bits 61 (mark) and 62 (color) from the refcount word. Bit 63 kept clean for `INT64_MIN` immortal sentinel. `corvid_release` masks with `0x1FFFFFFFFFFFFFFFLL` before comparing to 1 so 17d's collector can set the mark bit without affecting release logic. New tracer test pins this: `retain_release_preserves_high_bits` sets bit 61 externally and asserts retain/release don't clobber it.
+
+4. **17b renamed.** Slice 17b was "per-task arena allocator." Redefined as **effect-typed memory model** — region inference + Perceus-style linearity (zero-RC on provably-unique values) + in-place reuse + non-atomic RC. The type-info `flags` field reserves `LINEAR_CAPABLE`, `REGION_ALLOCATABLE`, `REUSE_SHAPE_HINT` bits for this slice. Corvid's typed effects give the compiler information no other GP language has (which values escape a scope at compile time); 17b-prime leverages it to make the refcount path the minority case.
+
+### Why the typed header matters
+
+Three concrete payoffs:
+
+- **`List<Int>` no longer mis-traces.** Pre-typed-header, a generic "walk element pointers" tracer couldn't distinguish primitive-element lists from refcounted-element lists at trace time — only at destroy time (via `reserved = 0`). With typeinfo, `elem_typeinfo = NULL` is the universal "don't trace these slots" signal. `corvid_trace_list` checks it and no-ops. Pinned by the `trace_list_primitive_elements_no_ops` test.
+
+- **Uniform dispatch for 17d.** Every heap object has the same header shape: refcount + typeinfo ptr. The mark phase dispatches through `typeinfo->trace_fn(payload, marker, ctx)` for *every* object — no per-type switch in the collector, no "is this a struct or a list" branch. String is a leaf: its trace_fn is an empty body emitted once and referenced from the built-in `corvid_typeinfo_String`.
+
+- **Non-atomic refcount on hot paths.** Every retain/release is a plain inc/dec. Measured cost reduction vs atomic (x86): ~10-50x per op. Hot paths (string concat inside loops, list traversal, struct field stores) all benefit uniformly.
+
+### Codegen emission
+
+- Per struct: destroy_fn (only if refcounted fields — existing from 12g), trace_fn (new — empty body for structs with no refcounted fields, walks fields for the rest), typeinfo data symbol with fn-pointer relocations.
+- Per concrete `List<T>`: typeinfo data symbol with `elem_typeinfo` pointing at the element's typeinfo (`corvid_typeinfo_String` for `List<String>`, struct typeinfo for `List<SomeStruct>`, nested list typeinfo for `List<List<T>>`). Element types emit first so outer lists can reference them.
+- Built-in `corvid_typeinfo_String` lives in the runtime (`alloc.c`) — string-less programs don't pay for a codegen-emitted stray typeinfo block.
+- Static string literals get a relocation at header offset 8 pointing at `corvid_typeinfo_String`. Immortal strings (refcount = `INT64_MIN`) now dispatch through typeinfo like every other object.
+- Runtime's `corvid_destroy_list` + `corvid_trace_list` are shared across every concrete list type; the per-list typeinfo just carries the element-typeinfo pointer.
+
+### Tests
+
+**Existing 105 parity tests: all green.** The typed-header migration is behavior-preserving end-to-end. Structs with strings, concat-in-loops, list literals, tool return values through the refcount path — nothing regressed.
+
+**New: 6 runtime tracer tests** (`crates/corvid-runtime/tests/typeinfo_tracer.rs`):
+
+- `string_typeinfo_has_expected_shape` — built-in layout matches what codegen will reference
+- `alloc_typed_then_release_runs_destructor` — destroy_fn fires exactly once on rc→0
+- `retain_defers_destruction_until_final_release` — rc>1 correctly skips destructor
+- `trace_list_primitive_elements_no_ops` — **the `List<Int>` mis-trace bug is gone by design**
+- `trace_list_refcounted_elements_invokes_marker` — ctx is threaded through per-element
+- `retain_release_preserves_high_bits` — bit-packing safe for 17d mark bit
+
+### Trait derive widening
+
+`Type`, `Effect`, `DefId` all got `Eq + Hash + PartialOrd + Ord` derives so `HashMap<Type, DataId>` and `BTreeSet<Type>` work in the codegen (for list-type dedup + ordering). Zero behavioral change; purely capability widening.
+
+### Next
+
+Slice 17b pre-phase chat. Topic: the effect-typed memory model — region inference + Perceus linearity + in-place reuse + non-atomic RC. This is the extraordinary design the user pushed for: rather than bolting on arenas, use Corvid's typed effects to make most allocations bump-allocate in a per-scope arena, RC only the escapees, and skip RC entirely on provably-unique values. 17a's typeinfo `flags` field is already shaped for it.
+
+
+
 
 
 

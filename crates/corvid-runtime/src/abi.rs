@@ -149,9 +149,13 @@ pub struct CorvidString {
 }
 
 // SAFETY: CorvidString is a pointer to refcounted memory. Crossing a
-// tokio task boundary is safe because the refcount itself is atomic
-// (see runtime/alloc.c) and the payload bytes are immutable after
-// construction. Strings are effectively shared-immutable.
+// tokio task boundary is safe in 17a because Corvid program code runs
+// single-threaded (tools dispatch through the tokio runtime but the
+// Corvid values themselves are owned by one Rust task at a time). The
+// payload bytes are immutable after construction; Strings are shared-
+// immutable. Phase 25 multi-agent will revisit this with a proper
+// multi-threaded refcount design (biased RC / per-arena locks); the
+// Send/Sync impls here are 17a-scoped.
 unsafe impl Send for CorvidString {}
 unsafe impl Sync for CorvidString {}
 

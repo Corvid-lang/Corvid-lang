@@ -15,7 +15,7 @@
 ### Table stakes — top-tier, competitive with best in category (not best overall)
 
 - **Performance.** Go / Swift class. Fast startup (Phase 12 native AOT), throughput where compute rarely bottlenecks real applications.
-- **Memory.** Refcount + cycle collector (Phase 17). Predictable release without Java pauses.
+- **Memory.** Refcount + cycle collector + effect-typed memory model (Phase 17). Region inference + Perceus linearity means most allocations never pay refcount; cycles caught without per-object tracing overhead. Predictable release without Java pauses.
 - **Deployment.** Single native binary + WASM (Phase 23) + C ABI embedding (Phase 22).
 - **Tooling.** LSP (Phase 24), formatter, package manager (Phase 25), REPL (Phase 19). Polished, not novel.
 - **Cross-platform.** macOS + Linux + Windows all first-class by v1.0 (Phase 33).
@@ -343,18 +343,25 @@ Pre-phase chat caught two limiting shortcuts in my brief and reshaped the phase 
 
 **Architecturally important:** Phase 16 introduces NO new IR variants. Method calls compile to ordinary `IrCallKind::Agent` / `Prompt` / `Tool` calls with the receiver prepended as the first argument. Codegen (Cranelift, Python transpile, future WASM) needs no per-method handling — methods are agents/prompts/tools with a different declaration syntax and a different lookup path.
 
-### Phase 17 — Cycle collector (~4–6 weeks)
+### Phase 17 — Cycle collector + effect-typed memory model (~10–14 weeks)
 
-**Goal.** Backstop the refcount runtime against reference cycles. Deterministic destructor release stays the fast path; the cycle collector only catches what refcount misses.
+**Goal.** Backstop refcount against cycles AND lift the memory model to take advantage of Corvid's typed effects. Most allocations should never see refcount at all; the ones that do should rarely be atomic; cycles should be caught without per-allocation tracing overhead.
 
 **Hard dep:** Phase 12 (refcount runtime + native codegen).
 
-**Scope:**
-- Stop-the-world mark-and-sweep in the refcount runtime (single-threaded collection; Corvid is single-threaded through v1.0). Triggered by allocation-pressure heuristic: object-count threshold and/or bytes-allocated-since-last-collection, tunable via env var.
-- Roots are live locals on the current Tokio task stacks plus runtime-owned caches. Compiler cooperation: codegen emits stack-map metadata per function (Cranelift supports this natively).
-- Parity harness gains a cycle fixture: a cyclic data structure that today leaks under `CORVID_DEBUG_ALLOC=1`; after Phase 17, the collector sweeps it and the leak-counter returns to zero.
+**Slice plan:**
 
-**Non-scope:** Generational GC. Concurrent collection (mutator-collector concurrency via write barriers — post-v1.0 if multi-threaded Corvid ever becomes a direction).
+- [x] **17a — typed heap headers + per-type typeinfo** *(landed 2026-04-14)*. Every refcounted allocation carries a `corvid_typeinfo*` pointer in its 16-byte header. Per-type metadata (destroy_fn, trace_fn, flags, elem_typeinfo) lives in `.rodata`. Refcount dropped `_Atomic` (Phase 25 will do proper multi-threaded RC, not blanket atomics). Bits 61-62 reserved for 17d mark + 17h color. `List<Int>` mis-trace bug eliminated by design (`elem_typeinfo = NULL` sentinel). 6 new runtime tracer tests, all 105 parity tests still green.
+- [ ] **17b — effect-typed memory model.** Region inference from typed effects: most allocations bump-allocate in a per-scope arena, dropped whole at scope exit. Refcount only for escaping values. Perceus-style linearity: provably-unique values skip RC ops entirely. In-place reuse: when an object of compatible shape is about to be allocated as another is freed, reuse the memory in-place (Koka-published, deployed). Typeinfo `flags` bits `LINEAR_CAPABLE`, `REGION_ALLOCATABLE`, `REUSE_SHAPE_HINT` already reserved in 17a.
+- [ ] **17c — Cranelift safepoint emission + stack maps.** Per-function safepoint records so 17d's mark phase can find live roots on the Tokio task stacks. Cranelift supports stack maps natively.
+- [ ] **17d — LLM-call-piggyback incremental cycle collector.** Mark-sweep over the refcount heap. Triggered during LLM/tool wait windows (which Corvid's effect system makes visible to the collector — no other GP language has this). Dispatches through `typeinfo->trace_fn` per object — uniform, no per-type switch.
+- [ ] **17e — effect-typed scope reduction.** The `CYCLIC_CAPABLE` flag tells the collector which subgraphs can possibly contain cycles. Non-cyclic types (most leaves) skip tracing entirely. Computed by static cycle analysis at compile time.
+- [ ] **17f — replay-deterministic GC triggers.** GC fires on deterministic events, not heap-pressure heuristics. Same input → same collection points → reproducible memory traces for debugging.
+- [ ] **17g — `Weak<T>` user-facing type.** Typeinfo's `weak_fn` slot (reserved NULL in 17a) gets populated. Weak refs participate in marking but don't keep alive.
+- [ ] **17h — interpreter-side cycle collector.** Bacon-Rajan over `Arc` for the interpreter tier. Uses bit 62 (color) of the refcount word that 17a already reserved.
+- [ ] **17i — tests + close-out.** Cyclic-data parity fixture: data structure that today leaks under `CORVID_DEBUG_ALLOC=1`; after Phase 17 the leak-counter returns to zero. Benchmark deltas vs pre-Phase-17 (the per-RC-op speedup from non-atomic + region elision should be measurable on hot paths).
+
+**Non-scope:** generational GC. Concurrent collection (mutator-collector concurrency via write barriers — post-v1.0 if multi-threaded Corvid ever becomes a direction).
 
 ### Phase 18 — Result + Option + retry policies (~4 weeks)
 

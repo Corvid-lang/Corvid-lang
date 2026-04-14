@@ -26,7 +26,13 @@
 
 #define CORVID_HEADER_BYTES 16
 
-extern void* corvid_alloc(long long payload_bytes);
+/* Typeinfo block forward-declaration — the definition lives in alloc.c
+ * (`corvid_typeinfo_String`). Every runtime-internal string allocation
+ * tags its header with this block so Phase 17d's tracer can dispatch. */
+struct corvid_typeinfo;
+extern const struct corvid_typeinfo corvid_typeinfo_String;
+extern void* corvid_alloc_typed(long long payload_bytes,
+                                const struct corvid_typeinfo* typeinfo);
 
 typedef struct {
     const char* bytes_ptr;
@@ -40,7 +46,8 @@ typedef struct {
  */
 static void* alloc_string(const char* src, long long len) {
     /* descriptor (16 bytes) + bytes (len) in one alloc block */
-    void* payload = corvid_alloc(sizeof(corvid_string) + len);
+    void* payload = corvid_alloc_typed(sizeof(corvid_string) + len,
+                                       &corvid_typeinfo_String);
     corvid_string* desc = (corvid_string*)payload;
     char* bytes = (char*)payload + sizeof(corvid_string);
     if (len > 0 && src != NULL) {
@@ -58,7 +65,8 @@ void* corvid_string_concat(void* a_payload, void* b_payload) {
     corvid_string* a = (corvid_string*)a_payload;
     corvid_string* b = (corvid_string*)b_payload;
     long long total = a->length + b->length;
-    void* payload = corvid_alloc(sizeof(corvid_string) + total);
+    void* payload = corvid_alloc_typed(sizeof(corvid_string) + total,
+                                       &corvid_typeinfo_String);
     corvid_string* desc = (corvid_string*)payload;
     char* bytes = (char*)payload + sizeof(corvid_string);
     if (a->length > 0) memcpy(bytes, a->bytes_ptr, (size_t)a->length);

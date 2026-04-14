@@ -713,8 +713,26 @@ Each user-visible feature lands with a dev-log entry explaining the design decis
 | Phase 14: `#[tool]` proc-macro + typed C ABI dispatch + `--with-tools-lib` | [Day 31](dev-log.md) |
 | Phase 15: native prompt dispatch + 5 LLM provider adapters (Anthropic / OpenAI / OpenAI-compat / Ollama / Gemini) | [Day 32](dev-log.md) |
 | Phase 16: methods on types (`extend T:` blocks, mixed agent/prompt/tool, public visibility) | [Day 33](dev-log.md) |
+| Slice 17a: typed heap headers + per-type typeinfo + non-atomic refcount | [Day 16](dev-log.md) |
 
 ---
+
+## Slice 17a — typed heap headers (what it means for users)
+
+**Nothing to change in your Corvid code.** Slice 17a is infrastructure for the upcoming cycle collector (Phase 17d) and the effect-typed memory model (slice 17b). It's behavior-preserving end-to-end — all 105 codegen parity tests pass unchanged.
+
+What changed under the hood:
+
+- **Every refcounted allocation now carries a per-type metadata pointer** (`corvid_typeinfo`) in its 16-byte header. The collector (17d) and the dump/debug tooling (later) both dispatch through this block rather than hardcoding per-type knowledge in the runtime.
+- **Refcount is no longer atomic.** Corvid is single-threaded, so the atomic ops were paying a per-retain/release cost (~10-50× vs non-atomic on x86) for a multi-threaded scenario that doesn't exist yet. Phase 25 multi-agent will bring a proper multi-threaded RC design — biased RC or deferred RC, not blanket atomics.
+- **`List<Int>`-style primitive lists no longer mis-trace.** The old design couldn't tell at trace time whether a list held pointers or integers; the new typeinfo's `elem_typeinfo = NULL` sentinel is explicit. Compiled programs with `List<Int>` now carry a typeinfo that says "don't chase these slots."
+- **Refcount bit-packing.** Top bits of the refcount word are reserved for the cycle collector's mark/color state (17d, 17h). Retain/release preserve those bits under an externally-set mark — pinned by a new runtime test.
+
+What becomes possible next:
+
+- Slice 17b (renamed from "per-task arena"): the effect-typed memory model. Most allocations bump-allocate in a per-scope arena driven by static escape analysis; the compiler elides RC ops entirely on provably-unique values (Perceus-style); in-place reuse converts functional-style updates into bump-free mutations.
+- Slice 17d: the cycle collector dispatches through each object's typeinfo during the mark phase. No per-type switch in the collector.
+- Slice 17g: `Weak<T>` slots in the typeinfo's reserved `weak_fn` field.
 
 ## Contributing / feedback
 

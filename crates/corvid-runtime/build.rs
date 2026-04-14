@@ -28,10 +28,10 @@ fn main() {
         .file(runtime_dir.join("shim.c"))
         .opt_level(2);
 
-    // C standard: `<stdatomic.h>` requires C11. MSVC's preview support
-    // for C11 atomics needs an explicit flag.
+    // C standard: C11 kept for designated initializers in static
+    // typeinfo blocks (corvid_typeinfo_String in alloc.c).
     if cc::Build::new().get_compiler().is_like_msvc() {
-        build.flag("/std:c11").flag("/experimental:c11atomics");
+        build.flag("/std:c11");
     } else {
         build.flag("-std=c11");
     }

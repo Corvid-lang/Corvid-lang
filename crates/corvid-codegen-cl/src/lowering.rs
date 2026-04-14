@@ -91,29 +91,20 @@ fn declare_runtime_funcs(
         .declare_function(STRING_CMP_SYMBOL, Linkage::Import, &cmp_sig)
         .map_err(|e| CodegenError::cranelift(format!("declare string_cmp: {e}"), Span::new(0, 0)))?;
 
-    // corvid_alloc(i64) -> i64
-    let mut alloc_sig = module.make_signature();
-    alloc_sig.params.push(AbiParam::new(I64));
-    alloc_sig.returns.push(AbiParam::new(I64));
-    let alloc_id = module
-        .declare_function(ALLOC_SYMBOL, Linkage::Import, &alloc_sig)
-        .map_err(|e| CodegenError::cranelift(format!("declare alloc: {e}"), Span::new(0, 0)))?;
-
-    // corvid_alloc_with_destructor(i64, fn_ptr) -> i64
-    let mut alloc_dtor_sig = module.make_signature();
-    alloc_dtor_sig.params.push(AbiParam::new(I64));
-    alloc_dtor_sig.params.push(AbiParam::new(I64));
-    alloc_dtor_sig.returns.push(AbiParam::new(I64));
-    let alloc_dtor_id = module
-        .declare_function(ALLOC_WITH_DESTRUCTOR_SYMBOL, Linkage::Import, &alloc_dtor_sig)
+    // corvid_alloc_typed(size: i64, typeinfo: i64) -> i64
+    let mut alloc_typed_sig = module.make_signature();
+    alloc_typed_sig.params.push(AbiParam::new(I64));
+    alloc_typed_sig.params.push(AbiParam::new(I64));
+    alloc_typed_sig.returns.push(AbiParam::new(I64));
+    let alloc_typed_id = module
+        .declare_function(ALLOC_TYPED_SYMBOL, Linkage::Import, &alloc_typed_sig)
         .map_err(|e| {
-            CodegenError::cranelift(
-                format!("declare alloc_with_destructor: {e}"),
-                Span::new(0, 0),
-            )
+            CodegenError::cranelift(format!("declare alloc_typed: {e}"), Span::new(0, 0))
         })?;
 
-    // corvid_destroy_list_refcounted(payload) -> void
+    // corvid_destroy_list(payload) -> void — installed in every
+    // refcounted-element list's typeinfo, referenced from the data
+    // emission via write_function_addr.
     let mut list_destroy_sig = module.make_signature();
     list_destroy_sig.params.push(AbiParam::new(I64));
     let list_destroy_id = module
@@ -121,6 +112,34 @@ fn declare_runtime_funcs(
         .map_err(|e| {
             CodegenError::cranelift(
                 format!("declare list destroy: {e}"),
+                Span::new(0, 0),
+            )
+        })?;
+
+    // corvid_trace_list(payload, marker, ctx) -> void — installed in
+    // every list's typeinfo (primitive-element included; the fn
+    // no-ops when elem_typeinfo is NULL).
+    let mut list_trace_sig = module.make_signature();
+    list_trace_sig.params.push(AbiParam::new(I64));
+    list_trace_sig.params.push(AbiParam::new(I64));
+    list_trace_sig.params.push(AbiParam::new(I64));
+    let list_trace_id = module
+        .declare_function(LIST_TRACE_SYMBOL, Linkage::Import, &list_trace_sig)
+        .map_err(|e| {
+            CodegenError::cranelift(
+                format!("declare list trace: {e}"),
+                Span::new(0, 0),
+            )
+        })?;
+
+    // corvid_typeinfo_String — runtime-provided data symbol. Declared
+    // here so codegen can reference it from static string literal
+    // descriptors and from List<String>'s elem_typeinfo slot.
+    let string_typeinfo_id = module
+        .declare_data(STRING_TYPEINFO_SYMBOL, Linkage::Import, false, false)
+        .map_err(|e| {
+            CodegenError::cranelift(
+                format!("declare String typeinfo: {e}"),
                 Span::new(0, 0),
             )
         })?;
@@ -333,9 +352,10 @@ fn declare_runtime_funcs(
         string_concat: concat_id,
         string_eq: eq_id,
         string_cmp: cmp_id,
-        alloc: alloc_id,
-        alloc_with_destructor: alloc_dtor_id,
-        list_destroy_refcounted: list_destroy_id,
+        alloc_typed: alloc_typed_id,
+        list_destroy: list_destroy_id,
+        list_trace: list_trace_id,
+        string_typeinfo: string_typeinfo_id,
         entry_init: entry_init_id,
         entry_arity_mismatch: arity_id,
         parse_i64: parse_i64_id,
@@ -358,6 +378,9 @@ fn declare_runtime_funcs(
         prompt_call_string: prompt_call_string_id,
         literal_counter: std::cell::Cell::new(0),
         struct_destructors: HashMap::new(),
+        struct_traces: HashMap::new(),
+        struct_typeinfos: HashMap::new(),
+        list_typeinfos: HashMap::new(),
         ir_types: HashMap::new(),
         ir_tools: HashMap::new(),
         tool_wrapper_ids: std::cell::RefCell::new(HashMap::new()),
@@ -427,6 +450,392 @@ fn define_struct_destructor(
     Ok(func_id)
 }
 
+/// Phase 17a — emit `corvid_trace_<TypeName>(payload, marker, ctx)` for
+/// a refcounted struct type. Mirrors `define_struct_destructor` but
+/// dispatches through an indirect marker function pointer on each
+/// refcounted field instead of releasing it.
+///
+/// Trace fns are emitted for every refcounted struct — including
+/// structs with zero refcounted fields — so the future (17d) mark
+/// phase can dispatch uniformly without a per-object NULL check.
+/// The linker folds duplicate empty bodies, so the cost is ~zero.
+///
+/// Marker signature: `fn(obj: i64, ctx: i64) -> ()`. Context-passing
+/// (rather than stateless) so 17d's collector can thread a worklist
+/// pointer through the walk without TLS or globals.
+fn define_struct_trace(
+    module: &mut ObjectModule,
+    ty: &corvid_ir::IrType,
+) -> Result<FuncId, CodegenError> {
+    let mut sig = module.make_signature();
+    sig.params.push(AbiParam::new(I64)); // payload
+    sig.params.push(AbiParam::new(I64)); // marker fn ptr
+    sig.params.push(AbiParam::new(I64)); // ctx
+
+    let symbol = format!("corvid_trace_{}", ty.name);
+    let func_id = module
+        .declare_function(&symbol, Linkage::Local, &sig)
+        .map_err(|e| {
+            CodegenError::cranelift(format!("declare trace `{symbol}`: {e}"), ty.span)
+        })?;
+
+    let mut ctx = Context::new();
+    ctx.func = Function::with_name_signature(
+        UserFuncName::user(0, func_id.as_u32()),
+        module.declarations().get_function_decl(func_id).signature.clone(),
+    );
+    let mut bctx = FunctionBuilderContext::new();
+    {
+        let mut builder = FunctionBuilder::new(&mut ctx.func, &mut bctx);
+
+        // Marker signature: fn(obj: i64, ctx: i64) -> ()
+        let mut marker_sig = Signature::new(module.isa().default_call_conv());
+        marker_sig.params.push(AbiParam::new(I64));
+        marker_sig.params.push(AbiParam::new(I64));
+        let marker_sigref = builder.import_signature(marker_sig);
+
+        let entry = builder.create_block();
+        builder.append_block_params_for_function_params(entry);
+        builder.switch_to_block(entry);
+        builder.seal_block(entry);
+        let payload = builder.block_params(entry)[0];
+        let marker = builder.block_params(entry)[1];
+        let marker_ctx = builder.block_params(entry)[2];
+
+        for (i, field) in ty.fields.iter().enumerate() {
+            if is_refcounted_type(&field.ty) {
+                let offset = (i as i32) * STRUCT_FIELD_SLOT_BYTES;
+                let v = builder.ins().load(
+                    I64,
+                    cranelift_codegen::ir::MemFlags::trusted(),
+                    payload,
+                    offset,
+                );
+                builder.ins().call_indirect(marker_sigref, marker, &[v, marker_ctx]);
+            }
+        }
+
+        builder.ins().return_(&[]);
+        builder.finalize();
+    }
+
+    module
+        .define_function(func_id, &mut ctx)
+        .map_err(|e| {
+            CodegenError::cranelift(format!("define trace `{symbol}`: {e}"), ty.span)
+        })?;
+    Ok(func_id)
+}
+
+/// Phase 17a — on-disk typeinfo block layout. Must match exactly the
+/// `corvid_typeinfo` struct in `crates/corvid-runtime/runtime/alloc.c`.
+///
+/// ```text
+/// offset  0: u32 size               (payload size hint; 0 for variable)
+/// offset  4: u32 flags              (CORVID_TI_* bits)
+/// offset  8: fn_ptr destroy_fn      (8B — NULL if no refcounted children)
+/// offset 16: fn_ptr trace_fn        (8B)
+/// offset 24: fn_ptr weak_fn         (8B — NULL in 17a, reserved for 17g)
+/// offset 32: data_ptr elem_typeinfo (8B — NULL for non-lists)
+/// offset 40: data_ptr name          (8B — NULL in 17a; 17d will fill for dump_graph)
+/// total:     48 bytes, 8-byte aligned
+/// ```
+const TYPEINFO_BYTES: usize = 48;
+const TYPEINFO_OFF_SIZE: u32 = 0;
+const TYPEINFO_OFF_FLAGS: u32 = 4;
+const TYPEINFO_OFF_DESTROY_FN: u32 = 8;
+const TYPEINFO_OFF_TRACE_FN: u32 = 16;
+#[allow(dead_code)]
+const TYPEINFO_OFF_WEAK_FN: u32 = 24;
+const TYPEINFO_OFF_ELEM_TYPEINFO: u32 = 32;
+#[allow(dead_code)]
+const TYPEINFO_OFF_NAME: u32 = 40;
+
+/// Typeinfo flags — must match `CORVID_TI_*` in alloc.c. Bits beyond
+/// IS_LIST are reserved for the 17b-prime effect-typed memory model
+/// (region inference + Perceus linearity + in-place reuse); defining
+/// them now locks the type-info layout so future slices don't force
+/// another migration.
+#[allow(dead_code)]
+const TYPEINFO_FLAG_CYCLIC_CAPABLE: u32 = 0x01;
+#[allow(dead_code)]
+const TYPEINFO_FLAG_HAS_WEAK_REFS: u32 = 0x02;
+const TYPEINFO_FLAG_IS_LIST: u32 = 0x04;
+#[allow(dead_code)]
+const TYPEINFO_FLAG_LINEAR_CAPABLE: u32 = 0x08;
+#[allow(dead_code)]
+const TYPEINFO_FLAG_REGION_ALLOCATABLE: u32 = 0x10;
+#[allow(dead_code)]
+const TYPEINFO_FLAG_REUSE_SHAPE_HINT: u32 = 0x20;
+
+/// Emit `corvid_typeinfo_<TypeName>` as a .rodata data symbol with
+/// function-pointer relocations to the type's destroy_fn (if any)
+/// and trace_fn. Returns the DataId so allocations can reference it.
+fn emit_struct_typeinfo(
+    module: &mut ObjectModule,
+    ty: &corvid_ir::IrType,
+    destroy_fn: Option<FuncId>,
+    trace_fn: FuncId,
+) -> Result<cranelift_module::DataId, CodegenError> {
+    let symbol = format!("corvid_typeinfo_{}", ty.name);
+    let data_id = module
+        .declare_data(&symbol, Linkage::Local, false, false)
+        .map_err(|e| {
+            CodegenError::cranelift(format!("declare typeinfo `{symbol}`: {e}"), ty.span)
+        })?;
+
+    let mut desc = DataDescription::new();
+    desc.set_align(8);
+    let mut bytes = vec![0u8; TYPEINFO_BYTES];
+
+    // size: 8 bytes per refcounted field slot (payload is N*8).
+    // Matches struct_payload_bytes().
+    let payload_size = (ty.fields.len() as u32) * (STRUCT_FIELD_SLOT_BYTES as u32);
+    bytes[TYPEINFO_OFF_SIZE as usize..(TYPEINFO_OFF_SIZE + 4) as usize]
+        .copy_from_slice(&payload_size.to_le_bytes());
+
+    // flags: 0 in 17a (17e will set CYCLIC_CAPABLE for structs that
+    // transitively self-reach; 17g will set HAS_WEAK_REFS).
+    let flags: u32 = 0;
+    bytes[TYPEINFO_OFF_FLAGS as usize..(TYPEINFO_OFF_FLAGS + 4) as usize]
+        .copy_from_slice(&flags.to_le_bytes());
+
+    desc.define(bytes.into_boxed_slice());
+
+    // Function-pointer relocations. destroy_fn stays NULL (all-zero
+    // bytes already written) if the struct has no refcounted fields.
+    if let Some(dtor) = destroy_fn {
+        let dtor_ref = module.declare_func_in_data(dtor, &mut desc);
+        desc.write_function_addr(TYPEINFO_OFF_DESTROY_FN, dtor_ref);
+    }
+    let trace_ref = module.declare_func_in_data(trace_fn, &mut desc);
+    desc.write_function_addr(TYPEINFO_OFF_TRACE_FN, trace_ref);
+
+    module
+        .define_data(data_id, &desc)
+        .map_err(|e| {
+            CodegenError::cranelift(format!("define typeinfo `{symbol}`: {e}"), ty.span)
+        })?;
+    Ok(data_id)
+}
+
+/// Phase 17a — emit `corvid_typeinfo_List_<elem>` for a concrete list
+/// element type. Uses the runtime's shared `corvid_destroy_list` and
+/// `corvid_trace_list` rather than per-type functions; the element
+/// layout info lives entirely in `elem_typeinfo`.
+///
+/// `elem_typeinfo_data_id` is None for primitive-element lists
+/// (List<Int>, List<Bool>, List<Float>); the runtime tracer checks
+/// NULL and no-ops. Also sets destroy_fn=NULL for such lists —
+/// `corvid_release` skips dispatch.
+fn emit_list_typeinfo(
+    module: &mut ObjectModule,
+    elem_ty: &Type,
+    elem_typeinfo_data_id: Option<cranelift_module::DataId>,
+    runtime: &RuntimeFuncs,
+) -> Result<cranelift_module::DataId, CodegenError> {
+    let symbol = format!("corvid_typeinfo_List_{}", mangle_type_name(elem_ty));
+    let data_id = module
+        .declare_data(&symbol, Linkage::Local, false, false)
+        .map_err(|e| {
+            CodegenError::cranelift(
+                format!("declare list typeinfo `{symbol}`: {e}"),
+                Span::new(0, 0),
+            )
+        })?;
+
+    let mut desc = DataDescription::new();
+    desc.set_align(8);
+    let mut bytes = vec![0u8; TYPEINFO_BYTES];
+
+    // size: 0 (variable-length)
+    // flags: IS_LIST
+    let flags: u32 = TYPEINFO_FLAG_IS_LIST;
+    bytes[TYPEINFO_OFF_FLAGS as usize..(TYPEINFO_OFF_FLAGS + 4) as usize]
+        .copy_from_slice(&flags.to_le_bytes());
+
+    desc.define(bytes.into_boxed_slice());
+
+    // destroy_fn: corvid_destroy_list, but only for refcounted-element
+    // lists. Primitive-element lists leave it NULL so corvid_release
+    // skips dispatch (matches the pre-17a plain-alloc behavior).
+    if elem_typeinfo_data_id.is_some() {
+        let dtor_ref = module.declare_func_in_data(runtime.list_destroy, &mut desc);
+        desc.write_function_addr(TYPEINFO_OFF_DESTROY_FN, dtor_ref);
+    }
+
+    // trace_fn: corvid_trace_list — always set. No-ops on primitive-
+    // element lists because the fn checks elem_typeinfo at runtime.
+    let trace_ref = module.declare_func_in_data(runtime.list_trace, &mut desc);
+    desc.write_function_addr(TYPEINFO_OFF_TRACE_FN, trace_ref);
+
+    // elem_typeinfo: for refcounted-element lists, point at the
+    // element's typeinfo (String built-in, struct typeinfo, or nested
+    // list typeinfo). For primitive elements, stays NULL.
+    if let Some(elem_ti_id) = elem_typeinfo_data_id {
+        let elem_gv = module.declare_data_in_data(elem_ti_id, &mut desc);
+        desc.write_data_addr(TYPEINFO_OFF_ELEM_TYPEINFO, elem_gv, 0);
+    }
+
+    module
+        .define_data(data_id, &desc)
+        .map_err(|e| {
+            CodegenError::cranelift(
+                format!("define list typeinfo `{symbol}`: {e}"),
+                Span::new(0, 0),
+            )
+        })?;
+    Ok(data_id)
+}
+
+/// Stable, link-safe string from a Corvid `Type` for use in typeinfo
+/// symbol names. `List<List<String>>` → `List_List_String`, etc.
+fn mangle_type_name(ty: &Type) -> String {
+    match ty {
+        Type::Int => "Int".into(),
+        Type::Float => "Float".into(),
+        Type::Bool => "Bool".into(),
+        Type::String => "String".into(),
+        Type::Nothing => "Nothing".into(),
+        Type::List(inner) => format!("List_{}", mangle_type_name(inner)),
+        Type::Struct(def_id) => format!("Struct_{}", def_id.0),
+        Type::Function { .. } => "Function".into(),
+        Type::Unknown => "Unknown".into(),
+    }
+}
+
+/// Phase 17a — walk every `Type::List(_)` the IR mentions (agent sigs,
+/// struct fields, tool/prompt sigs, expression types) and produce the
+/// set of unique list element types in a dependency-friendly order:
+/// element types come before lists that contain them.
+///
+/// The returned `Vec<Type>` holds the *element* type of each list
+/// (not the `List<T>` type itself). Emission iterates this vec
+/// creating one `corvid_typeinfo_List_<elem>` per entry.
+fn collect_list_element_types(ir: &IrFile) -> Vec<Type> {
+    use std::collections::BTreeSet;
+    let mut seen: BTreeSet<Type> = BTreeSet::new();
+    let mut order: Vec<Type> = Vec::new();
+
+    fn visit(ty: &Type, seen: &mut BTreeSet<Type>, order: &mut Vec<Type>) {
+        match ty {
+            Type::List(inner) => {
+                // Recurse first so inner list types get their
+                // typeinfo emitted BEFORE the outer list references
+                // them via elem_typeinfo relocation.
+                visit(inner, seen, order);
+                let elem = (**inner).clone();
+                if seen.insert(elem.clone()) {
+                    order.push(elem);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    for agent in &ir.agents {
+        for param in &agent.params {
+            visit(&param.ty, &mut seen, &mut order);
+        }
+        visit(&agent.return_ty, &mut seen, &mut order);
+        visit_block_types(&agent.body, &mut seen, &mut order, &visit);
+    }
+    for ty in &ir.types {
+        for field in &ty.fields {
+            visit(&field.ty, &mut seen, &mut order);
+        }
+    }
+    for tool in &ir.tools {
+        for param in &tool.params {
+            visit(&param.ty, &mut seen, &mut order);
+        }
+        visit(&tool.return_ty, &mut seen, &mut order);
+    }
+    for prompt in &ir.prompts {
+        for param in &prompt.params {
+            visit(&param.ty, &mut seen, &mut order);
+        }
+        visit(&prompt.return_ty, &mut seen, &mut order);
+    }
+
+    order
+}
+
+/// Walk an `IrBlock` and visit every expression's `ty` through the
+/// caller's closure. Catches list literals and other list-producing
+/// expressions that don't surface in signatures.
+fn visit_block_types(
+    block: &IrBlock,
+    seen: &mut std::collections::BTreeSet<Type>,
+    order: &mut Vec<Type>,
+    visit: &dyn Fn(&Type, &mut std::collections::BTreeSet<Type>, &mut Vec<Type>),
+) {
+    for stmt in &block.stmts {
+        match stmt {
+            IrStmt::Let { value, ty, .. } => {
+                visit(ty, seen, order);
+                visit_expr_types(value, seen, order, visit);
+            }
+            IrStmt::Expr { expr, .. } => visit_expr_types(expr, seen, order, visit),
+            IrStmt::Return { value: Some(e), .. } => visit_expr_types(e, seen, order, visit),
+            IrStmt::Return { value: None, .. } => {}
+            IrStmt::If { cond, then_block, else_block, .. } => {
+                visit_expr_types(cond, seen, order, visit);
+                visit_block_types(then_block, seen, order, visit);
+                if let Some(eb) = else_block {
+                    visit_block_types(eb, seen, order, visit);
+                }
+            }
+            IrStmt::For { iter, body, .. } => {
+                visit_expr_types(iter, seen, order, visit);
+                visit_block_types(body, seen, order, visit);
+            }
+            IrStmt::Approve { args, .. } => {
+                for a in args {
+                    visit_expr_types(a, seen, order, visit);
+                }
+            }
+            IrStmt::Break { .. } | IrStmt::Continue { .. } | IrStmt::Pass { .. } => {}
+        }
+    }
+}
+
+fn visit_expr_types(
+    e: &IrExpr,
+    seen: &mut std::collections::BTreeSet<Type>,
+    order: &mut Vec<Type>,
+    visit: &dyn Fn(&Type, &mut std::collections::BTreeSet<Type>, &mut Vec<Type>),
+) {
+    visit(&e.ty, seen, order);
+    match &e.kind {
+        IrExprKind::Literal(_) | IrExprKind::Local { .. } | IrExprKind::Decl { .. } => {}
+        IrExprKind::BinOp { left, right, .. } => {
+            visit_expr_types(left, seen, order, visit);
+            visit_expr_types(right, seen, order, visit);
+        }
+        IrExprKind::UnOp { operand, .. } => {
+            visit_expr_types(operand, seen, order, visit);
+        }
+        IrExprKind::Call { args, .. } => {
+            for a in args {
+                visit_expr_types(a, seen, order, visit);
+            }
+        }
+        IrExprKind::FieldAccess { target, .. } => {
+            visit_expr_types(target, seen, order, visit);
+        }
+        IrExprKind::Index { target, index } => {
+            visit_expr_types(target, seen, order, visit);
+            visit_expr_types(index, seen, order, visit);
+        }
+        IrExprKind::List { items } => {
+            for el in items {
+                visit_expr_types(el, seen, order, visit);
+            }
+        }
+    }
+}
+
 /// Helper: emit `corvid_retain(value)` if the value is refcounted
 /// (i.e., non-immortal at runtime). Caller decides whether the value
 /// needs ownership at this point — the helper just emits the call.
@@ -485,24 +894,33 @@ pub const STRING_EQ_SYMBOL: &str = "corvid_string_eq";
 /// `long long corvid_string_cmp(void* a, void* b)` — bytewise compare.
 pub const STRING_CMP_SYMBOL: &str = "corvid_string_cmp";
 
-/// `void* corvid_alloc(long long payload_bytes)` — heap-allocate an
-/// N-byte payload behind the 16-byte refcount header. Used by Struct
-/// types that have no refcounted fields (no destructor needed).
-pub const ALLOC_SYMBOL: &str = "corvid_alloc";
+/// `void* corvid_alloc_typed(long long payload_bytes, const corvid_typeinfo* ti)`
+/// — heap-allocate an N-byte payload behind a 16-byte typed header.
+/// Phase 17a collapsed the old `corvid_alloc` + `corvid_alloc_with_destructor`
+/// pair: every allocation now carries a typeinfo pointer, and
+/// `corvid_release` dispatches through `typeinfo->destroy_fn` (NULL
+/// = no refcounted children, equivalent to the old plain-alloc case).
+pub const ALLOC_TYPED_SYMBOL: &str = "corvid_alloc_typed";
 
-/// `void* corvid_alloc_with_destructor(long long size, void(*dtor)(void*))`
-/// — like `corvid_alloc` but stores a destructor function pointer in
-/// the header's `reserved` slot. Used by Struct types that have at
-/// least one refcounted field; the destructor releases those fields
-/// before the block is freed.
-pub const ALLOC_WITH_DESTRUCTOR_SYMBOL: &str = "corvid_alloc_with_destructor";
+/// `void corvid_destroy_list(void* payload)` — shared runtime
+/// destructor installed in every refcounted-element list type's
+/// typeinfo. Walks length at offset 0 and `corvid_release`s each
+/// element. Primitive-element lists leave `destroy_fn` NULL.
+pub const LIST_DESTROY_SYMBOL: &str = "corvid_destroy_list";
 
-/// `void corvid_destroy_list_refcounted(void* payload)` — the shared
-/// runtime destructor for all refcounted-element list types. Walks
-/// the length at offset 0 of the payload and calls `corvid_release`
-/// on each element. Non-refcounted-element lists (List<Int> etc.)
-/// don't need a destructor at all; they use plain `corvid_alloc`.
-pub const LIST_DESTROY_SYMBOL: &str = "corvid_destroy_list_refcounted";
+/// `void corvid_trace_list(void*, void(*)(void*, void*), void*)` —
+/// shared runtime tracer installed in every list type's typeinfo.
+/// Reads its own typeinfo's `elem_typeinfo` to decide whether to
+/// walk elements (NULL = primitive elements = no-op). Phase 17a
+/// emits it for every list; 17d's mark phase will invoke it.
+pub const LIST_TRACE_SYMBOL: &str = "corvid_trace_list";
+
+/// Built-in `corvid_typeinfo_String` — the runtime provides this
+/// symbol in `alloc.c`. Static string literals in `.rodata` and
+/// runtime-internal String allocations both reference it so the
+/// codegen doesn't have to emit a stray typeinfo per compilation
+/// for string-less programs.
+pub const STRING_TYPEINFO_SYMBOL: &str = "corvid_typeinfo_String";
 
 // Slice 12i — entry-agent helpers (argv decoding, result printing,
 // arity reporting, atexit). Called from the codegen-emitted `main`.
@@ -574,13 +992,21 @@ pub struct RuntimeFuncs {
     pub string_concat: FuncId,
     pub string_eq: FuncId,
     pub string_cmp: FuncId,
-    pub alloc: FuncId,
-    pub alloc_with_destructor: FuncId,
-    /// Shared destructor for refcounted-element lists. One function
-    /// handles all such lists at runtime — each element is an I64
-    /// pointer, and `corvid_release` does the per-type cleanup via
-    /// each element's own header chain.
-    pub list_destroy_refcounted: FuncId,
+    /// Phase 17a: single typed allocator replaces the pre-17a
+    /// `alloc`/`alloc_with_destructor` pair. Signature:
+    /// `(size: i64, typeinfo_ptr: i64) -> i64`.
+    pub alloc_typed: FuncId,
+    /// Phase 17a: shared runtime destructor installed in every
+    /// refcounted-element list type's typeinfo. Replaces the
+    /// pre-17a `list_destroy_refcounted`.
+    pub list_destroy: FuncId,
+    /// Phase 17a: shared runtime tracer installed in every list's
+    /// typeinfo; 17d's mark phase will invoke it.
+    pub list_trace: FuncId,
+    /// Phase 17a: runtime-provided `corvid_typeinfo_String` data
+    /// symbol. Imported so codegen can relocate its address into
+    /// static string literals and List<String>'s elem_typeinfo slot.
+    pub string_typeinfo: cranelift_module::DataId,
     // Slice 12i — entry helpers used by the codegen-emitted `main`.
     pub entry_init: FuncId,
     pub entry_arity_mismatch: FuncId,
@@ -608,9 +1034,25 @@ pub struct RuntimeFuncs {
     pub literal_counter: std::cell::Cell<u64>,
     /// Per-struct-type destructors generated in `lower_file` for
     /// structs with at least one refcounted field. Missing entries
-    /// mean the struct has no refcounted fields (uses plain
-    /// `corvid_alloc` at construction time, no destructor invocation).
+    /// mean the struct has no refcounted fields (typeinfo.destroy_fn
+    /// stays NULL; corvid_release skips dispatch).
     pub struct_destructors: HashMap<DefId, FuncId>,
+    /// Phase 17a — per-struct-type trace fns. Emitted for every
+    /// refcounted struct type (including those with no refcounted
+    /// fields — those trace fns are empty bodies, kept for uniform
+    /// dispatch in 17d's mark phase without a per-object NULL check).
+    pub struct_traces: HashMap<DefId, FuncId>,
+    /// Phase 17a — per-struct-type typeinfo data symbols. Every
+    /// refcounted struct allocation references its block via
+    /// `corvid_alloc_typed(size, &typeinfo)`.
+    pub struct_typeinfos: HashMap<DefId, cranelift_module::DataId>,
+    /// Phase 17a — per-concrete-list-type typeinfo data symbols,
+    /// keyed by the element `Type` (so `List<Int>` maps on `Type::Int`,
+    /// `List<List<String>>` maps on `Type::List(Box::new(Type::String))`).
+    /// Populated in `lower_file` by walking every `Type::List(_)` the
+    /// IR mentions before agent bodies are lowered — so expression-
+    /// level list literals just look up by element type.
+    pub list_typeinfos: HashMap<Type, cranelift_module::DataId>,
     /// Owned copy of the IR's struct type metadata, keyed by `DefId`.
     /// Cloned into `RuntimeFuncs` in `lower_file` so the per-agent
     /// lowering functions can resolve struct layouts (for field
@@ -776,15 +1218,69 @@ pub fn lower_file(
         runtime.ir_prompts.insert(prompt.id, prompt.clone());
     }
 
-    // Declare and define per-struct-type destructors for every user
-    // struct with at least one refcounted field. These must land
-    // before agent bodies are lowered so `IrCallKind::StructConstructor`
-    // can reference them via `runtime.struct_destructors`.
+    // Phase 17a — emit per-type metadata in dependency order:
+    //
+    //   1. Struct destructors (existing): release refcounted fields
+    //      when rc→0. Only for structs with refcounted fields.
+    //   2. Struct trace fns (new in 17a): walk refcounted fields for
+    //      17d's mark phase. Emitted for every refcounted struct —
+    //      even ones with no refcounted fields get an empty-body
+    //      trace so dispatch is uniform (linker folds duplicates).
+    //   3. Struct typeinfo blocks (new): .rodata record referenced
+    //      from the allocation header. Relocations point at the
+    //      destructor + trace fns emitted above.
+    //   4. List typeinfo blocks (new): one per concrete List<T> type
+    //      walked out of the IR. Element-types emit first so outer
+    //      list typeinfos can reference them via elem_typeinfo.
+    //
+    // All must land before agent bodies are lowered so
+    // IrCallKind::StructConstructor and IrExprKind::List have
+    // typeinfos to reference at allocation sites.
+
+    // Structs: destructors (only for refcounted fields), traces
+    // (every struct, empty body if no refcounted fields — linker
+    // folds duplicates), typeinfos (every struct, uniform allocation
+    // path). The pre-17a "primitive-only structs skip typeinfo"
+    // short-circuit is gone — uniformity means 17d doesn't need a
+    // special case for them in the mark phase.
     for ty in &ir.types {
-        if ty.fields.iter().any(|f| is_refcounted_type(&f.ty)) {
-            let dtor_id = define_struct_destructor(module, ty, &runtime)?;
-            runtime.struct_destructors.insert(ty.id, dtor_id);
-        }
+        let has_refcounted_field = ty.fields.iter().any(|f| is_refcounted_type(&f.ty));
+        let destroy_id = if has_refcounted_field {
+            let id = define_struct_destructor(module, ty, &runtime)?;
+            runtime.struct_destructors.insert(ty.id, id);
+            Some(id)
+        } else {
+            None
+        };
+        let trace_id = define_struct_trace(module, ty)?;
+        runtime.struct_traces.insert(ty.id, trace_id);
+        let typeinfo_id = emit_struct_typeinfo(module, ty, destroy_id, trace_id)?;
+        runtime.struct_typeinfos.insert(ty.id, typeinfo_id);
+    }
+
+    // Lists: collect every concrete element type the IR mentions, in
+    // dependency order (inner before outer), then emit one typeinfo
+    // per concrete list type. For refcounted element types the
+    // elem_typeinfo slot gets a relocation to the element's typeinfo
+    // (String built-in, struct, or nested list).
+    let list_elem_types = collect_list_element_types(ir);
+    for elem_ty in list_elem_types {
+        let elem_typeinfo_data_id = match &elem_ty {
+            Type::String => Some(runtime.string_typeinfo),
+            Type::Struct(def_id) => runtime.struct_typeinfos.get(def_id).copied(),
+            Type::List(inner_inner) => {
+                // Nested list: look up the already-emitted typeinfo
+                // for the inner list's element type.
+                runtime.list_typeinfos.get(&(**inner_inner)).copied()
+            }
+            // Primitive elements: NULL elem_typeinfo means "don't
+            // trace" — prevents List<Int>'s Int slots from being
+            // mis-interpreted as pointers.
+            _ => None,
+        };
+        let list_ti_id =
+            emit_list_typeinfo(module, &elem_ty, elem_typeinfo_data_id, &runtime)?;
+        runtime.list_typeinfos.insert(elem_ty, list_ti_id);
     }
 
     // Pass 1: declare every agent. Signatures are Int + Bool only for
@@ -1964,24 +2460,33 @@ fn lower_expr(
                     ));
                 }
             };
-            let elem_refcounted = is_refcounted_type(&elem_ty);
+            let _elem_refcounted = is_refcounted_type(&elem_ty);
             // Allocation size: 8 (length) + 8 * N (elements).
             let total_bytes = 8 + 8 * items.len() as i64;
             let size_val = builder.ins().iconst(I64, total_bytes);
-            // Choose allocator: with destructor if elements are refcounted.
-            let list_ptr = if elem_refcounted {
-                let alloc_ref =
-                    module.declare_func_in_func(runtime.alloc_with_destructor, builder.func);
-                let dtor_ref = module
-                    .declare_func_in_func(runtime.list_destroy_refcounted, builder.func);
-                let dtor_addr = builder.ins().func_addr(I64, dtor_ref);
-                let call = builder.ins().call(alloc_ref, &[size_val, dtor_addr]);
-                builder.inst_results(call)[0]
-            } else {
-                let alloc_ref = module.declare_func_in_func(runtime.alloc, builder.func);
-                let call = builder.ins().call(alloc_ref, &[size_val]);
-                builder.inst_results(call)[0]
-            };
+            // Phase 17a: single typed allocator. The typeinfo block
+            // (pre-emitted in lower_file) carries destroy_fn
+            // (corvid_destroy_list for refcounted elements, NULL
+            // otherwise) and trace_fn (corvid_trace_list always).
+            let list_ti_id = runtime
+                .list_typeinfos
+                .get(&elem_ty)
+                .copied()
+                .ok_or_else(|| {
+                    CodegenError::cranelift(
+                        format!(
+                            "no typeinfo pre-emitted for List<{}> — collect_list_element_types missed this site",
+                            mangle_type_name(&elem_ty)
+                        ),
+                        expr.span,
+                    )
+                })?;
+            let list_ti_gv = module.declare_data_in_func(list_ti_id, builder.func);
+            let ti_addr = builder.ins().symbol_value(I64, list_ti_gv);
+            let alloc_ref =
+                module.declare_func_in_func(runtime.alloc_typed, builder.func);
+            let call = builder.ins().call(alloc_ref, &[size_val, ti_addr]);
+            let list_ptr = builder.inst_results(call)[0];
             // Store length at offset 0.
             let length_val = builder.ins().iconst(I64, items.len() as i64);
             builder.ins().store(
@@ -2442,20 +2947,30 @@ fn lower_struct_constructor(
     let size = builder
         .ins()
         .iconst(I64, struct_payload_bytes(ty.fields.len()));
-    // Pick the allocator based on whether this struct has a destructor.
-    let struct_ptr = if let Some(&dtor_id) = runtime.struct_destructors.get(&ty.id) {
-        let alloc_ref = module.declare_func_in_func(runtime.alloc_with_destructor, builder.func);
-        let dtor_ref = module.declare_func_in_func(dtor_id, builder.func);
-        let sig = module.declarations().get_function_decl(dtor_id).signature.clone();
-        let sig_ref = builder.func.import_signature(sig);
-        let dtor_addr = builder.ins().func_addr(I64, dtor_ref);
-        let _ = sig_ref; // not strictly needed — we pass dtor as an opaque i64 pointer
-        let call = builder.ins().call(alloc_ref, &[size, dtor_addr]);
+    // Phase 17a: structs with refcounted fields use the typeinfo-
+    // driven allocator. Structs with no refcounted fields currently
+    // skip typeinfo entirely (lower_file bypasses emission for them)
+    // — they allocate with NULL destroy_fn via a runtime-owned
+    // empty typeinfo? For 17a we keep the pre-typed behavior for
+    // these: only emit typed allocation when the struct actually
+    // has refcounted fields requiring dispatch. Non-refcounted
+    // structs remain on the old path *only temporarily* — slice
+    // 17a's follow-up will uniformize this once 17d needs every
+    // heap object traceable. Tracked as a TODO in ROADMAP.
+    let struct_ptr = if let Some(&ti_id) = runtime.struct_typeinfos.get(&ty.id) {
+        let ti_gv = module.declare_data_in_func(ti_id, builder.func);
+        let ti_addr = builder.ins().symbol_value(I64, ti_gv);
+        let alloc_ref = module.declare_func_in_func(runtime.alloc_typed, builder.func);
+        let call = builder.ins().call(alloc_ref, &[size, ti_addr]);
         builder.inst_results(call)[0]
     } else {
-        let alloc_ref = module.declare_func_in_func(runtime.alloc, builder.func);
-        let call = builder.ins().call(alloc_ref, &[size]);
-        builder.inst_results(call)[0]
+        return Err(CodegenError::cranelift(
+            format!(
+                "struct `{}` has no typeinfo emitted — 17a should cover every refcounted struct; is this a non-refcounted struct that still hits this path?",
+                ty.name
+            ),
+            span,
+        ));
     };
 
     // Store each field at offset i * STRUCT_FIELD_SLOT_BYTES. Each
@@ -2836,7 +3351,10 @@ fn lower_string_literal(
     let mut data = vec![0u8; total];
     // refcount = i64::MIN (immortal)
     data[0..8].copy_from_slice(&i64::MIN.to_le_bytes());
-    // reserved = 0 (already zeroed)
+    // typeinfo_ptr (offset 8) — relocation below points it at
+    // `corvid_typeinfo_String` so runtime tracers can dispatch
+    // uniformly through the same typeinfo path as heap-allocated
+    // strings.
     // bytes_ptr placeholder at offset 16 — written by the relocation
     // length at offset 24
     data[24..32].copy_from_slice(&len.to_le_bytes());
@@ -2853,6 +3371,9 @@ fn lower_string_literal(
     let mut desc = DataDescription::new();
     desc.set_align(8);
     desc.define(data.into_boxed_slice());
+    // typeinfo_ptr at offset 8 → &corvid_typeinfo_String
+    let ti_gv = module.declare_data_in_data(runtime.string_typeinfo, &mut desc);
+    desc.write_data_addr(8, ti_gv, 0);
     // Self-relative relocation: at offset 16, write the address of
     // (this same symbol + 32) so `bytes_ptr` points at the inline bytes.
     let self_gv = module.declare_data_in_data(data_id, &mut desc);

@@ -20,24 +20,20 @@
  */
 
 #include <errno.h>
-#include <stdatomic.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
-extern _Atomic long long corvid_alloc_count;
-extern _Atomic long long corvid_release_count;
+extern long long corvid_alloc_count;
+extern long long corvid_release_count;
 
 /* ---- exit-time leak counters (registered via corvid_init) ---------- */
 
 void corvid_on_exit(void) {
     if (getenv("CORVID_DEBUG_ALLOC")) {
-        long long allocs =
-            atomic_load_explicit(&corvid_alloc_count, memory_order_relaxed);
-        long long releases =
-            atomic_load_explicit(&corvid_release_count, memory_order_relaxed);
-        fprintf(stderr, "ALLOCS=%lld\nRELEASES=%lld\n", allocs, releases);
+        fprintf(stderr, "ALLOCS=%lld\nRELEASES=%lld\n",
+                corvid_alloc_count, corvid_release_count);
     }
 }
 

@@ -6,7 +6,7 @@
 use corvid_ast::Effect;
 use corvid_resolve::DefId;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Type {
     // Primitives
     Int,
