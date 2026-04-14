@@ -15,17 +15,17 @@
 ### Table stakes — top-tier, competitive with best in category (not best overall)
 
 - **Performance.** Go / Swift class. Fast startup (Phase 12 native AOT), throughput where compute rarely bottlenecks real applications.
-- **Memory.** Refcount + cycle collector (Phase 15.5). Predictable release without Java pauses.
-- **Deployment.** Single native binary + WASM (Phase 27, candidate for earlier) + C ABI embedding (Phase 15.5).
-- **Tooling.** LSP (Phase 29), formatter, package manager (Phase 28), REPL (Phase 15.5). Polished, not novel.
-- **Cross-platform.** macOS + Linux + Windows all first-class by v1.0 (Phase 32).
+- **Memory.** Refcount + cycle collector (Phase 17). Predictable release without Java pauses.
+- **Deployment.** Single native binary + WASM (Phase 23) + C ABI embedding (Phase 22).
+- **Tooling.** LSP (Phase 24), formatter, package manager (Phase 25), REPL (Phase 19). Polished, not novel.
+- **Cross-platform.** macOS + Linux + Windows all first-class by v1.0 (Phase 33).
 
 ### Deliberately not competing
 
 - Systems-level control — Rust / Zig win. No pointer arithmetic, no manual allocators.
 - Raw hot-loop numerics — C++ / Fortran win. FFI for the ~1% of apps that need it.
 - Dynamic metaprogramming — Ruby / Lisp win. Opposite trade-off to compile-time checking.
-- Ecosystem size at launch — Python / JS have 20-year head starts. Python FFI (Phase 16) closes the gap.
+- Ecosystem size at launch — Python / JS have 20-year head starts. Python FFI (Phase 30) closes the gap.
 
 **The test applied to every proposed feature:** does it strengthen a moat dimension, or bring us to parity on a table-stakes dimension where we're below the floor? If yes, build it. If it moves neither bar, defer.
 
@@ -74,11 +74,13 @@ Ariadne multi-line error rendering. Error codes. README. Offline demo.
 Tree-walking interpreter (`corvid-vm`), async end-to-end. Native runtime (`corvid-runtime`) with `ToolRegistry`, `Approver` trait, `MockAdapter`, `AnthropicAdapter`, `OpenAiAdapter`, JSONL tracing with secret redaction, `.env` loading via `dotenvy`. `corvid run` dispatches natively — no Python on the path. Done-when met: refund_bot demo runs end-to-end with Python uninstalled; `cargo run -p openai_hello` / `anthropic_hello` make real provider calls. Test count grew from 134 (v0.1) to ~219 across the workspace.
 
 Carry-overs explicitly tracked elsewhere:
-- Effect-tagged `import python` → Phase 16
 - Proc-macro `#[tool]` + `corvid run` user-tool loading → Phase 14
-- Google / Ollama adapters → Phase 18
-- Streaming `Stream<T>` → Phase 22
-- Async-native concurrent multi-agent execution → revisit when Phase 25 demands it
+- Streaming `Stream<T>` → Phase 20 (moat phase)
+- Google / Ollama adapters → Phase 31
+- Effect-tagged `import python` → Phase 30
+- Async-native concurrent multi-agent execution → Post-v1.0 (deliberately out of pre-v1.0 scope; see bottom of this file)
+
+**v0.2 complete. ~219 tests green.**
 
 ---
 
@@ -142,7 +144,7 @@ Originally scoped as "Memory foundation + String"; user split into 12e (foundati
 - [x] `cl_type_for(String) → I64` (descriptor pointer); `is_refcounted_type` helper; runtime helper symbol constants (`RETAIN_SYMBOL` / `RELEASE_SYMBOL` / `STRING_CONCAT_SYMBOL` / `STRING_EQ_SYMBOL` / `STRING_CMP_SYMBOL`)
 - [x] All 52 existing parity fixtures still green with the new C runtime linked into every binary
 
-**Pre-phase decisions locked**: 16-byte header (preserves payload alignment + reserves a future-use word), atomic refcount (Phase 25 multi-agent will need it; cheap insurance now), scope-driven release insertion (correct now, liveness-driven optimisation is Phase 22), combined slice (foundation + String) — then split mid-session into 12e (foundation) + 12f (String) once the String integration revealed itself as a slice's worth of work on its own.
+**Pre-phase decisions locked**: 16-byte header (preserves payload alignment + reserves a future-use word), atomic refcount (post-v1.0 multi-agent work will need it; cheap insurance now), scope-driven release insertion (correct now, liveness-driven optimisation is Phase 20 — moat phase), combined slice (foundation + String) — then split mid-session into 12e (foundation) + 12f (String) once the String integration revealed itself as a slice's worth of work on its own.
 
 #### Slice 12f ✅ — `String` operations + ownership wiring (Day 24)
 - [x] `RuntimeFuncs` struct (FuncIds for retain / release / concat / eq / cmp + `Cell<u64>` literal counter), declared once per module in `lower_file`, threaded through every lowering function
@@ -204,116 +206,438 @@ Originally scoped as "Memory foundation + String"; user split into 12e (foundati
 - [x] 7 new driver tests: native-able program passes scan, tool-using / python-import / prompt-using programs fail scan with the right `NotNativeReason`, cache hits on second call (mtime-verified), auto dispatch populates the cache, `--target=native` on a tool-using program exits non-zero.
 - [x] Smoke-tested on `examples/answer.cor` (auto → native, cached on second run) and `examples/hello.cor` (auto → fallback with notice, `--target=native` → clean error).
 
-#### Slice 12k — Polish + benchmarks
-(stability guarantees, perf measurements vs interpreter and vs hand-written Rust)
+#### Slice 12k — Phase 12 close-out benchmarks
+
+Concrete scope — no polish-shaped hand-waves:
+
+- [ ] Micro-benchmark harness in `crates/corvid-codegen-cl/benches/` (criterion). Three representative programs: a hot arithmetic loop (`list_literal_sum_via_for` shape), a String-concat loop, a struct-heavy field-access workload.
+- [ ] Measure native vs interpreter wall-clock + allocations per run. Publish the numbers in ARCHITECTURE.md §5 as the Phase 12 claim of record.
+- [ ] If any native workload is slower than the interpreter on a fair comparison, fix the regression before declaring Phase 12 closed. Don't ship a native tier that's faster only in marketing.
+- [ ] Document the known native-tier non-goals that Phase 12 deliberately leaves on the table (see "Out of Phase 12" below).
+
+Cache-eviction policy, stability guarantees across compiler versions, and cross-compilation all move to Phase 33 (launch polish) — none are load-bearing for development work while there are no external users.
 
 **Out of Phase 12 (deliberately):**
-- Cross-compilation to non-host targets (Phase 32)
-- Tool / prompt / approve calls in compiled code (Phase 14, needs proc-macro registry)
-- WASM target (Phase 27)
-- `@wrapping` annotation for opt-out overflow checks (Phase 22 alongside `@budget($)`)
+- Tool / prompt / `approve` calls in compiled code — Phases 13–15.
+- WASM target — Phase 23.
+- C ABI + library mode — Phase 22.
+- `@wrapping` annotation for opt-out overflow checks — Phase 20 (moat phase, alongside `@budget($)`).
+- Cross-compilation to non-host targets — Phase 33 (launch polish).
+
+**v0.3 cuts here** (Phase 12 close-out). Native AOT is the default tier for tool-free programs, cached between runs, benchmarked against the interpreter.
 
 ---
 
 ## Upcoming
 
-### Phase 13 — Strings, structs, lists in native code (~1 month)
-Memory representation for composite values in compiled output.
+Ordering principles (applied without exception):
 
-### Phase 14 — Native tool dispatch (~2–3 weeks)
-Tools registered via Rust proc macro compile directly into generated code.
+1. **Hard dependencies drive sequence.** If B needs A's output, B comes after A. Every phase below names its dep as either **Hard** (can't ship without it) or **Soft** (release-narrative pairing, technically decoupled). No soft deps dressed as hard to make an order look forced.
+2. **Themed releases, not feature-soup versions.** Each version has a narrative — v0.4 is "native tier useful," v0.5 is "GP feel," v0.6 is "moat + replay," v0.7 is "embed + deploy." Users upgrade for a coherent story per cut, not a grab-bag of unrelated features. Mixing moat and table stakes inside one version fragments the upgrade pitch.
+3. **Moat lands early relative to the total roadmap.** Phase 20 is the mid-point of pre-v1.0, not the end. Every phase after Phase 20 inherits the moat and strengthens it rather than being moat-less GP-polish work that ships without Corvid-ness.
+4. **Version cut-lines are explicit.** Every phase is tagged to the version it ships in. `v1.0` is a calendar commitment, not a feature list.
+5. **Speculative scope moved post-v1.0.** Features that are "enterprise maturity" or "optimization on top of v1.0 capability" (multi-agent durable execution, hot reload, prompt-aware compilation optimization) do not sit in the pre-v1.0 critical path.
 
-### Phase 15 — Native async runtime (~1–2 months)
-Tokio integration. Compiled agents use Tokio's executor for LLM and tool I/O.
+---
 
-### Phase 15.5 — General-purpose table stakes (~2–3 months, may split across multiple phases)
+### Phase 13 — Native async runtime (~4–6 weeks)
 
-Positioning demands that Corvid hold its own as a general-purpose language, not just "a great language for agents." These are the GP features users expect and will reject the language for lacking. Split into explicit slices below; exact phase numbering will firm up at the pre-phase chat.
+**Goal.** Tokio embedded in compiled binaries so generated code can `.await`. Prerequisite for every subsequent "native tier actually useful" phase.
 
-- **Methods on types.** Dot-syntax `value.method()` where `method` is an associated function on `type T`. No inheritance, no late binding, no `this` — just sugar over free functions with a named receiver. The existing `type` + `agent` model stays; methods are purely ergonomic. Closes the "Corvid doesn't even have methods?" objection without the complexity Java/Python inheritance brings. Pre-phase chat must decide: single dispatch only? trait-like interfaces for abstraction? syntax for the receiver (`self`, `this`, positional)?
-- **Cycle collector on top of refcount.** Current model (refcount + deterministic destructors) is correct but leaks on cycles. Python's model — refcount primary, tracing cycle collector as backstop — preserves deterministic release for the common case while handling cycles. The collector runs only when allocation pressure suggests cycles may exist. Keeps the "tools/files/LLM-sessions release promptly" property users will depend on. Out of scope: full generational tracing GC (wrong trade-off for Corvid).
-- **C ABI + library mode.** Compile `.cor` code to `.so` / `.dll` / `.dylib` with a stable C-callable surface. Enables embedding Corvid in Rust, Python, Node, Go hosts. Requires: `pub extern "c"` annotation or equivalent, calling-convention choice, header generation, ownership-at-boundary rules (who frees what). The embedding story is what turns Corvid from "a tool you invoke" into "a component you ship."
-- **REPL.** Interactive `corvid repl` — evaluate expressions and statements in a persistent session, redefine agents on the fly, inspect values. Sits on top of the interpreter; the AOT tier doesn't need to change. Pairs with the Phase 24 replay work — the REPL becomes the natural surface for `replay` / `step` / `inspect`.
-- **Pull WASM target earlier.** Currently Phase 27; a GP language needs it sooner as both a deployment target (browsers, edge) and an embedding format. Re-slot around Phase 18–20 if scheduling allows. Pre-phase chat decides exact ordering.
+**Hard dep:** Phase 12 (native codegen).
+**Hard deps on this:** Phases 14, 15, 30.
 
-### Phase 16 — Python FFI via PyO3, effect-tagged (~1 month)
-`import python "..."` works in both interpreter and native backends. Lazy CPython load. **Imports declare effects at the import site** (`import python "requests" as requests effects: network`); untagged imports are rejected by the checker. `effects: unsafe` is the opt-in escape hatch and is flagged for review. This is the TypeScript `.d.ts` analog: the compiler trusts declared effects, and untagged Python usage cannot be introduced by accident.
+**Scope:**
+- Codegen emits a `#[tokio::main]`-equivalent entry shim into the binary (wraps the codegen-emitted `main` from slice 12i).
+- IR-level `await` (added to `IrExpr` in this phase) lowers to a call through a `corvid_runtime_await` trampoline that hands the future to the embedded Tokio executor.
+- `corvid-runtime`'s `Runtime` type becomes `Send + Sync` and reachable from compiled code via an opaque handle (`*const CorvidRuntime`) injected at `corvid_init`.
+- Parity harness gains an async fixture category: small agents that call a mock async tool implementation provided by the test (via a new "host-provided async tool" hook used only in the harness, not yet user-facing — user-facing tool registry is Phase 14).
 
-### Phase 17 — Testing primitives (~3 weeks)
-`test`, `mock`, `fixture` as language features.
+**Non-scope:** User-declared tools (Phase 14). Prompt calls (Phase 15). Python FFI (Phase 30).
 
-### Phase 18 — Multi-provider LLM adapters (~2 weeks)
-OpenAI, Google, Ollama adapters in `corvid-runtime`.
+### Phase 14 — Native tool dispatch (~4–6 weeks)
 
-### Phase 19 — Memory primitives (~1 month)
-`session`, `memory` as typed, SQLite-backed stores.
+**Goal.** User-written tool implementations callable from compiled Corvid code.
 
-### Phase 20 — Error handling + retry (~1 month)
-`Result` / `Option` types; retry policies as syntax.
+**Hard dep:** Phase 13 (async — tools are fundamentally I/O-bound).
 
-### Phase 21 — HITL expansion (~2 weeks)
-`ask(...)`, `choose(...)`, richer approval UI.
+**Scope:**
+- Proc-macro `#[tool(name = "...")]` in a user Rust crate registers the implementation. **Registry mechanism: `inventory` crate.** Battle-tested (used by `rstest`, `iota`, many Rust frameworks), no linker-script tricks (unlike `linkme`), works uniformly across Linux / macOS / Windows / MSVC / GCC / Clang. Pre-phase chat revisits only if a concrete blocker surfaces.
+- `corvid build --target=native` accepts a `--with-tools <crate>` flag; the tools crate is linked into the binary. Generated code emits a dispatch call through the runtime's `ToolRegistry`.
+- `approve` tokens flow through at runtime. Runtime verifies the token matches the call site before the tool body runs. Effect checker continues to enforce that `approve` precedes the call statically; Phase 14 ensures the runtime check can't be bypassed.
+- Slice 12j's `NotNativeReason::ToolCall` is lifted — tool-using programs start running native.
 
-### Phase 22 — Effect rigor + grounding + uncertainty + cost + streaming (~3 months)
+**Non-scope:** Prompt calls (Phase 15). Python-backed tools (Phase 30 completes that story).
 
-The moat phase. All compile-time, all language-level.
+### Phase 15 — Native prompt dispatch (~3 weeks)
 
-- **Custom effects + effect rows.** User-declared `effect Name` beyond `safe`/`dangerous` (`retrieves`, `spends`, `reads_pii`, `mutates_db`, `cites`, ...). Tool and agent signatures carry effect rows; body verified against declaration. Data-flow tracking propagates effects across calls; per-effect approval policies declarable. Revisits the Day-4 `Safe | Dangerous` decision now that the frontend is stable — additive, no breaking change.
-- **Grounding + citation contracts** (`std.rag` language half).
-  - `grounds_on ctx` annotation on prompts; template must reference `ctx` or `E0201`.
-  - `cites ctx` effect; return type must be `Grounded<T>` or `E0202`; template must request citations or `E0203`.
-  - `cites ctx strictly` for runtime verification failure.
-  - `Grounded<T>` compiler-known stdlib type; unwrap via `.unwrap_discarding_sources()`.
-  - Retriever tools carry the `retrieves` effect; agents propagate it.
-  - The runtime substrate (sqlite-vec, document loaders, chunking, embedder) ships as the separate `corvid-rag` package and is out of scope here.
-- **`eval ... assert ...` language syntax.** First-class evaluation declarations. Parsed, typechecked, lowered. The CLI runner and reports land in Phase 31.
-- **Uncertainty, budgets, streaming.** `T?confidence`, `@budget($)`, `Stream<T>`.
-- **Property-based bypass tests.** Prove the effect checker cannot be circumvented via FFI, generics, or indirect calls.
-- **Written effect-system specification.** 20–40 pages: syntax, typing rules, worked examples, FFI/async/generics interactions. Related work: Koka, Eff, Frank, Haskell effect libs, Rust `unsafe`, capability systems. Ships at the phase boundary alongside the code.
+**Goal.** `prompt ... -> T:` declarations callable from compiled Corvid code, talking to the LLM adapters live.
 
-### Phase 23 — Prompt-aware compilation (~1 month)
-Schema caching, TOON compression, template deduplication.
+**Hard dep:** Phase 13 (async).
 
-### Phase 24 — Replay (~3 weeks)
-`corvid replay <trace>` primitive; every run replayable by construction.
+**Scope:**
+- Codegen lowers `IrCallKind::Prompt` to a runtime call that (a) serialises the prompt template with interpolated args, (b) requests structured output matching the declared return type, (c) deserialises and returns.
+- Return-type JSON schema derived automatically from the declared Type. No user-registry needed — prompts live in source.
+- Slice 12j's `NotNativeReason::PromptCall` is lifted. Combined with Phase 14, every program from the `examples/` directory runs natively end-to-end.
+- Refund-bot demo running with `corvid run examples/refund_bot_demo/src/main.cor --target=native` is the phase-boundary verification.
 
-### Phase 25 — Multi-agent + durable execution (~2 months)
-Crash-safe agents; recursion/composition with automatic trace merging.
+**Non-scope:** Multi-provider adapters beyond Anthropic + OpenAI (Phase 31).
 
-### Phase 26 — Hot reload (~2 weeks)
-In-flight runs keep version; new runs use new code.
+**v0.4 cuts here.** Native tier is actually useful for real programs.
 
-### Phase 27 — WASM target (~2 months)
-`corvid-codegen-wasm` reads the same IR; browsers + edge.
+---
 
-### Phase 28 — Package manager (~1–2 months)
-`corvid add <pkg>`, lockfile, registry.
+### Phase 16 — Methods on types (~2 weeks)
 
-### Phase 29 — LSP + IDE (~1–2 months)
-`corvid-lsp`, VS Code extension, hover/completion/go-to-def.
+**Goal.** `value.method(args)` syntax for associated functions on user types. Cheapest, loudest GP-signal feature.
 
-### Phase 30 — Standard library (~2 months)
-Common agent patterns as stdlib.
+**Hard dep:** frontend (✅), IR (✅). Zero codegen changes required — methods lower to free functions.
 
-### Phase 31 — Eval tooling (~1 month)
-`corvid eval` CLI, terminal + HTML reports, regression detection, CI exit-code contract. The `eval ... assert ...` syntax already landed in Phase 22; this phase is runner, report, and wiring — not language.
+**Scope:**
+- Parser extension: **`impl T:` block** holding method declarations, separate from the `type T:` declaration. Matches Rust / Swift; keeps `type` declarations compact and data-focused; methods cluster visually; ordering independent (methods can live in a different file, enabling future package-level extension methods). Pre-phase chat revisits only if a concrete blocker surfaces.
+- Resolver: dotted-method lookup resolves to the declared method's `DefId`.
+- Typechecker: call-site `v.m(args)` typechecks as `m(v, args)` with `v` bound to the first parameter.
+- Single dispatch only. No inheritance, no late binding, no virtual tables.
+- IR: `value.method(args)` lowers to an ordinary agent/function call — no new IR variants.
 
-### Phase 32 — Polish for launch (~2 months)
-Stability guarantees, docs, installer, site, GIF/video, HN launch.
+**Non-scope:** Interfaces / traits (deferred; revisit at Phase 20 if the moat phase actually needs polymorphism).
+
+### Phase 17 — Cycle collector (~4–6 weeks)
+
+**Goal.** Backstop the refcount runtime against reference cycles. Deterministic destructor release stays the fast path; the cycle collector only catches what refcount misses.
+
+**Hard dep:** Phase 12 (refcount runtime + native codegen).
+
+**Scope:**
+- Stop-the-world mark-and-sweep in the refcount runtime (single-threaded collection; Corvid is single-threaded through v1.0). Triggered by allocation-pressure heuristic: object-count threshold and/or bytes-allocated-since-last-collection, tunable via env var.
+- Roots are live locals on the current Tokio task stacks plus runtime-owned caches. Compiler cooperation: codegen emits stack-map metadata per function (Cranelift supports this natively).
+- Parity harness gains a cycle fixture: a cyclic data structure that today leaks under `CORVID_DEBUG_ALLOC=1`; after Phase 17, the collector sweeps it and the leak-counter returns to zero.
+
+**Non-scope:** Generational GC. Concurrent collection (mutator-collector concurrency via write barriers — post-v1.0 if multi-threaded Corvid ever becomes a direction).
+
+### Phase 18 — Result + Option + retry policies (~4 weeks)
+
+**Goal.** Language-native error handling. `Result<T, E>`, `Option<T>`, propagation (`?`), retry syntax.
+
+**Hard dep:** typechecker extension for generic types (moderate work — the type system already has `List<T>` machinery, `Result<T, E>` extends the same path).
+
+**Scope:**
+- `Result<T, E>` and `Option<T>` as compiler-known stdlib types. Codegen lowers as tagged unions (discriminant + payload).
+- `?` operator: `expr?` short-circuits the enclosing function with the error if `Err`, unwraps the value if `Ok`.
+- Retry syntax: `try <expr> on error retry N times backoff { linear ms | exponential ms }`. Desugars to a loop over the expression with sleep between attempts.
+- Effect integration: tool calls that can fail return `Result` by default; `dangerous` tools return `Result` whose error type includes an `ApprovalDenied` variant.
+
+**Non-scope:** User-defined error enums with payloads beyond simple variants — that's Phase 20's job with effect rows and richer types.
+
+### Phase 19 — REPL (~3 weeks)
+
+**Goal.** `corvid repl` interactive shell. How users learn Corvid.
+
+**Hard dep:** interpreter (✅).
+
+**Scope:**
+- Persistent session: locals, imports, agent declarations live across inputs.
+- Redefine an agent mid-session; later calls use the new definition (no state migration — a fresh session is cheap).
+- Pretty-printing of return values, including structs (field-by-field) and lists (with length).
+- readline-class editing (history, ctrl-r search, multiline input with indent-aware continuation).
+- `:help`, `:type <expr>`, `:reset`, `:quit` meta-commands.
+
+**Non-scope:** Native-tier REPL. LSP integration (Phase 24 owns that).
+
+**v0.5 cuts here.** Methods + cycle collector + Result + REPL make Corvid feel like a modern GP language.
+
+---
+
+### Phase 20 — Effect rigor + grounding + cost + streaming (~14–16 weeks) — **THE MOAT PHASE**
+
+**Goal.** The phase that defines what makes Corvid Corvid. All compile-time, all language-level. Shipped mid-roadmap, not saved for impact — every phase after this inherits the moat.
+
+**Hard dep:** typechecker + effect checker (✅ baseline from Phase 5). Methods (Phase 16, for the `Grounded<T>.unwrap_*` methods).
+
+This phase is too large to ship atomically without splitting. Nine substantial deliverables; no single landing of the whole thing. Slice breakdown mirrors Phase 12's pattern — each slice ships, tests, commits, and updates the dev-log independently, and the phase is only "closed" when every slice is green.
+
+#### Slice 20a — Custom effects + effect rows (~3 weeks)
+- [ ] Parser: `effect Name` top-level declaration. Effect rows on tool + agent signatures (`fn foo() -> T uses reads_pii, cites`).
+- [ ] Resolver + typechecker: effect rows flow through the call graph. Body verified against declared effects (raising an effect not in the row = compile error). Per-effect approval policies declarable in `corvid.toml`.
+- [ ] Revisits the Day-4 `Safe | Dangerous` decision — additive, no breaking change to existing code.
+
+#### Slice 20b — Grounding + citation contracts (~2 weeks)
+- [ ] `grounds_on ctx` annotation on prompts; template must reference `ctx` or raise `E0201`.
+- [ ] `cites ctx` effect; return type must be `Grounded<T>` or `E0202`; template must request citations or `E0203`.
+- [ ] `Grounded<T>` compiler-known stdlib type; unwrap via the `.unwrap_discarding_sources()` method (uses Phase 16 methods machinery).
+- [ ] `cites ctx strictly` for runtime verification failure (code compiles; runtime checks citations against retrieved context and raises if they don't match).
+
+#### Slice 20c — `eval ... assert ...` language syntax (~2 weeks)
+- [ ] Parser + typechecker + lowering for `eval name: body ... assert expr` declarations.
+- [ ] IR node `IrEval` alongside `IrAgent`.
+- [ ] Runner CLI is out of scope — ships in Phase 27. This slice is language only.
+
+#### Slice 20d — `@budget($)` cost annotations (~3 weeks)
+- [ ] `@budget($0.10) agent name():` annotation parsed + typechecked.
+- [ ] Compile-time upper-bound analysis over LLM + retrieval calls in the agent body. Each prompt declaration carries an estimated-cost bound; analysis sums over control-flow paths.
+- [ ] Refuses to compile (`E0250`) if worst-case cost > budget. Warns (`W0251`) when the analysis can't prove a bound (e.g., unbounded recursion).
+- [ ] Also ships the `@wrapping` annotation for opt-out overflow checks deferred from Phase 12.
+
+#### Slice 20e — Uncertainty types `T?confidence` (~2 weeks)
+- [ ] Syntax: `T?confidence` — `T` with a `f64` confidence tracked through expressions.
+- [ ] Combining rule: confidence of `f(a?c1, b?c2)` = `min(c1, c2)` by default, overridable with `@combine_confidence fn(a, b) -> f64`.
+- [ ] Runtime carries the confidence value; prompts returning `T?confidence` parse a model-reported confidence from the LLM response.
+
+#### Slice 20f — `Stream<T>` (~2 weeks)
+- [ ] `Stream<T>` as compiler-known stdlib type. Prompts + tools can declare streaming returns.
+- [ ] `for x in stream:` consumes the stream. `yield` in agent bodies produces streams.
+- [ ] Integrates with Phase 13's native async runtime — streams back-pressure via Tokio channels under the hood.
+
+#### Slice 20g — Bypass tests + effect-system specification (~2 weeks)
+- [ ] Property-based bypass tests proving the effect checker cannot be circumvented via FFI, generics, or indirect calls. `proptest`-driven.
+- [ ] Written effect-system specification (20–40 pages): syntax, typing rules, worked examples, FFI / async / generics interactions. Related-work section covering Koka, Eff, Frank, Haskell effect libs, Rust `unsafe`, capability systems. Lives in `docs/effects-spec.md`; ships at the phase boundary alongside the code.
+
+**Non-scope:** Runtime eval tooling CLI (Phase 27). RAG runtime infrastructure (Phase 32's `std.rag`). Custom effect annotations on Python FFI imports richer than `effects: <name>` (Phase 30 ships basic; richer stays here).
+
+### Phase 21 — Replay (~4–5 weeks) — **THE FLAGSHIP WOW**
+
+**Goal.** Every run replayable by construction. The feature that ships in the v1.0 demo video.
+
+**Hard dep:** Phases 14–15 (tool + prompt calls must exist to be worth recording). Runtime tracing infrastructure (✅ baseline from Phase 11).
+**Soft dep:** Phase 20. Replay doesn't structurally depend on custom effects — it records tool / prompt / approve / seed / time calls regardless of effect category. Paired with Phase 20 at v0.6 for release-narrative reasons: "the moat you can reason about PLUS the moat you can replay" ships as one cut.
+
+**Scope:**
+- Runtime records every LLM call, tool call, approve decision, random seed, time-source read into a structured trace.
+- `corvid replay <trace-id>` re-executes the program substituting recorded responses for live calls. Deterministic — given the same trace, replay produces byte-identical state transitions.
+- Replay works in both interpreter and native tiers (shared recording format). WASM replay lands alongside WASM in Phase 23.
+- Cost-zero re-runs: replaying 10,000 times costs $0 in LLM spend.
+- Command-line UX ships in this phase: `corvid replay <trace>` deterministic re-run. Scrub-backward / step-forward interactive UX is a followup in the post-v1.0 bucket (uses the same infrastructure).
+
+**Non-scope:** Scrub-backward interactive debugger (post-v1.0). Trace visualization UI (post-v1.0). WASM replay (deferred to Phase 23's WASM scope — same recording format, needs host-function bindings).
+
+**v0.6 cuts here.** Moat phase + flagship wow feature land together. Corvid becomes unignorably different.
+
+---
+
+### Phase 22 — C ABI + library mode (~6–8 weeks)
+
+**Goal.** Embed Corvid in Rust, Python, Node, Go hosts. Corvid becomes a component, not only a tool.
+
+**Hard dep:** Phase 12 (native codegen).
+**Soft dep:** Phase 17 (cycle collector). C ABI without the cycle collector means embedders who build cyclic data across the boundary leak — exactly the same behaviour every pre-Phase-17 Corvid program has. Not a compilation blocker, but pairing with Phase 17 at the same release is the honest story: the v0.7 pitch is "Corvid ships as a library" and shipping a leaking library would undercut that.
+
+**Scope:**
+- `pub extern "c"` annotation on agent declarations. Codegen emits C-callable wrappers with stable calling conventions.
+- `corvid build --target=cdylib` produces `.so` / `.dll` / `.dylib`. `--target=staticlib` produces `.a` / `.lib`.
+- `corvid embed --header` generates a C header describing the exported surface.
+- Ownership-at-boundary rules documented: who frees what, who retains what. Enforced at compile time (effect-checker-adjacent analysis on extern signatures).
+- Reference host bindings land in-tree for Rust + Python (Python via CPython's C API, not PyO3 — PyO3 integration is Phase 30's separate problem).
+
+**Non-scope:** WASM (Phase 23). Language-level FFI imports of other languages.
+
+### Phase 23 — WASM target (~8–10 weeks)
+
+**Goal.** Deploy Corvid to browsers and edge runtimes.
+
+**Hard dep:** IR (✅). Parallel codegen backend to Cranelift-native; does not depend on it.
+
+**Scope:**
+- New `corvid-codegen-wasm` crate using `cranelift-wasm` (same Cranelift you've already shipped, different output target).
+- `corvid build --target=wasm` emits `.wasm` + an ES module loader + TypeScript types.
+- Runtime: the wasm module imports host functions for LLM calls + tool dispatch + approval UI + replay recording (host provides them — same pattern as JavaScript environments that delegate I/O).
+- **Replay in WASM**: host functions that record tool + prompt + approve calls write to a JS-side trace store compatible with Phase 21's format. `corvid replay <trace>` on a WASM module runs via the same host-function contract, substituting recorded responses. Shared recording format means a trace captured from native can be replayed under WASM and vice versa — a property worth preserving from the start.
+- wasmtime / wasmer harness tests running the same IR-level programs the native parity harness runs.
+- Browser smoke test: a small Corvid program compiled to wasm and loaded in a web page.
+
+**Non-scope:** Wasm-specific optimizations (post-v1.0). Wasm-side cycle collection (wasm's own GC proposal is stabilising; use it once available, fall back to host-delegated collection via exported functions in the interim).
+
+**v0.7 cuts here.** Corvid ships as a library + a wasm module. Real deployment story.
+
+---
+
+### Phase 24 — LSP + IDE (~6–8 weeks)
+
+**Goal.** Editor support worthy of a real GP language. Users need this to write serious Corvid — must land before the moat features are worth using daily.
+
+**Hard dep:** frontend (✅). Types stable enough that LSP doesn't churn when language evolves.
+
+**Scope:**
+- `corvid-lsp` crate implementing the Language Server Protocol. Backend-agnostic (same LSP serves native + interpreter + wasm users).
+- VS Code extension as the reference client.
+- Features: diagnostics (live), hover with inferred types, completion, go-to-def, find-references, rename, inline-documentation.
+- Effect rows shown in hover. `@budget($)` overruns shown as squigglies with the worst-case cost.
+- Debugging attach point wired even if debugger UI is post-v1.0 — protocol contract stable.
+
+**Non-scope:** Other editors (vim / emacs / JetBrains) — users can use the LSP via any LSP-compatible client, but official extensions are post-v1.0.
+
+### Phase 25 — Package manager (~6–8 weeks)
+
+**Goal.** Users can share Corvid code. Table stakes for any language anyone takes seriously.
+
+**Hard dep:** nothing internal. Major external work: registry hosting.
+
+**Scope:**
+- `corvid add <pkg>`, `corvid remove`, `corvid update` CLI.
+- `Corvid.lock` lockfile with exact resolved versions + content hashes.
+- Registry service: stateless HTTP API + CDN for package tarballs. Hosting at `registry.corvid.dev`.
+- SemVer-based resolution with conflict detection.
+- `corvid.toml` `[dependencies]` section wired through the driver.
+
+**Non-scope:** Private registries (post-v1.0). Binary package distribution (post-v1.0 — all v1.0 packages are source).
+
+### Phase 26 — Testing primitives (~4 weeks)
+
+**Goal.** `test`, `mock`, `fixture` as language features. Users can't ship production Corvid without first-class tests.
+
+**Hard dep:** typechecker extension for `test`/`mock` decls.
+**Soft dep:** Phase 25 (package manager). Shared fixtures can distribute as packages eventually, but in-repo fixtures work without the package manager — not a blocker.
+
+**Scope:**
+- `test name: body` declaration. Discovered automatically; run by `corvid test`.
+- `mock tool_name: body` overrides a tool implementation within a test's scope.
+- `fixture name: body` for reusable test data; resolved by `corvid test` at run time.
+- Snapshot testing primitive — `assert_snapshot expr` writes the first run's value to a file, compares on subsequent runs.
+- Interop with Phase 20's `eval ... assert ...` syntax (evals are tests, tests aren't necessarily evals — eval is statistical assertions over LLM behaviour).
+
+### Phase 27 — Eval tooling CLI (~3 weeks)
+
+**Goal.** Turn Phase 20's `eval ... assert ...` syntax into a usable dev + CI workflow.
+
+**Hard dep:** Phase 20 slice 20c (eval syntax — nothing to run without it).
+**Soft dep:** Phase 26 (testing primitives). Eval tooling could have its own runner + discovery, but reusing Phase 26's infrastructure avoids duplication; the sequencing here is "ship tests first, build eval on top."
+
+**Scope:**
+- `corvid eval <file>` runs all `eval` blocks; produces terminal report + HTML report.
+- Regression detection against prior eval results (stored under `target/eval/`).
+- CI exit-code contract: non-zero if any `assert` fails or regression threshold crossed.
+- Prompt-diff report: when a prompt body changed between runs, show before/after + delta in grounding / cost / assert pass-rates.
+
+**v0.8 cuts here.** Full developer workflow: write in LSP, share via package manager, test + eval in CI.
+
+---
+
+### Phase 28 — HITL expansion (~3 weeks)
+
+**Goal.** `ask`, `choose`, rich approval UI. Completes the human-in-the-loop surface.
+
+**Hard dep:** runtime (✅).
+
+**Scope:**
+- `ask(prompt, Type)` — structured input from the human. Returns `Type`. Ties into the approval runtime.
+- `choose(options: [T]) -> T` — pick one. UI presents options; user selects.
+- Rich `approve` UI: show context (why approval requested), diff preview (what will change), arguments inspection.
+- CLI + web-UI implementations; approval tokens same regardless of UI.
+
+### Phase 29 — Memory primitives (~4–5 weeks)
+
+**Goal.** `session` and `memory` as typed, SQLite-backed stores. Core to how AI applications handle state.
+
+**Hard dep:** Phase 18 (Result — `session.get()` returns `Result<T, StoreError>`). SQLite (external).
+
+**Scope:**
+- `session { ... }` block declares per-conversation state. Compiler generates typed accessors.
+- `memory { ... }` block declares long-lived state (survives process restarts).
+- Both backed by SQLite (native) and IndexedDB (wasm).
+- Effect-tagged: `reads_session` / `writes_session` / `reads_memory` / `writes_memory`. Integrate with Phase 20's effect rows.
+
+### Phase 30 — Python FFI via PyO3 (~5–6 weeks)
+
+**Goal.** `import python "..."` works in compiled code. Closes the "but Python has the ecosystem" gap.
+
+**Hard dep:** Phase 13 (async — PyO3's GIL-aware runtime needs async context).
+**Soft dep:** Phase 20 slice 20a (effect rows). Python imports declare effects at the import site — the basic `effects: network` / `effects: unsafe` syntax works against the existing `safe` / `dangerous` split; richer user-declared effects via 20a's effect rows make the story better but aren't a compilation blocker.
+
+**Scope:**
+- PyO3 integration in `corvid-runtime`. Lazy CPython load.
+- `import python "requests" as requests effects: network` — untagged imports rejected by the effect checker. `effects: unsafe` is the opt-in escape hatch and is flagged for review.
+- Error marshalling: Python exceptions become Corvid `Result::Err` with preserved traceback.
+- Type marshalling: Python dicts ↔ Corvid structs (when schema known), lists ↔ lists, scalars ↔ scalars.
+- Interpreter tier gets the same FFI surface so both tiers behave identically.
+
+### Phase 31 — Multi-provider LLM adapters (~2 weeks)
+
+**Goal.** Google Gemini + Ollama + any other adapter users request.
+
+**Hard dep:** runtime adapter trait (✅).
+
+**Scope:**
+- `GoogleAdapter` in `corvid-runtime`. API compatibility with existing AnthropicAdapter + OpenAiAdapter surface.
+- `OllamaAdapter` for local-first Corvid.
+- Provider selection via `CORVID_MODEL` env var (existing convention).
+
+### Phase 32 — Standard library (~8 weeks)
+
+**Goal.** Batteries included. Common patterns available without a package install.
+
+**Hard dep:** everything language-core stable.
+
+**Scope:**
+- `std.rag` runtime pieces: sqlite-vec, document loaders (pdf / md / html), chunking, embedder trait with reference OpenAI + Ollama impls. Pairs with Phase 20's grounding-contract language half.
+- `std.http` — typed HTTP client with effect tags.
+- `std.io` — structured file I/O, streaming, path manipulation.
+- `std.agent` — common patterns: classification, extraction, summarization, ranking.
+- Everything in `std.*` effect-tagged so users get the moat's benefits from day one.
+
+**v0.9 cuts here.** Language feature-complete: HITL, memory, Python FFI, multi-provider LLMs, stdlib. Only polish remaining.
+
+---
+
+### Phase 33 — Polish for launch (~6–10 weeks)
+
+**Goal.** v1.0. Stable, documented, installable by a stranger on any OS.
+
+**Hard dep:** everything.
+
+**Scope:**
+- Stability guarantees on the language surface: documented SemVer contract for syntax, type system, stdlib.
+- Windows + Linux + macOS all first-class (`corvid doctor` passes, installer works, parity harness green on all three).
+- Installer: `curl -fsSL corvid.dev/install.sh | sh` on Unix, PowerShell equivalent on Windows. Corresponding `cargo install` flow.
+- Website: landing page, live playground (runs the wasm target from Phase 23), docs site, blog, benchmarks page.
+- Documentation rewrite: reference, tutorial, cookbook, migration-from-Python guide.
+- Launch materials: 2-minute GIF/video showing the time-travel replay moment + effect-checker catching a bug + compile-time cost budget. HN + Reddit + ProductHunt announcement drafts reviewed with 3 external readers.
+- Beta round: 20 external developers build something real in Corvid; their feedback gates the final cut.
+
+**v1.0 cuts here. Launch day.**
+
+---
+
+## Post-v1.0 roadmap
+
+Scoped-out of the pre-v1.0 critical path. Not abandoned — explicitly planned, with honest reasoning for why they're not in v1.0.
+
+- **Multi-agent + durable execution.** Crash-safe agents, recursion / composition with automatic trace merging. Enterprise-maturity feature; most v1.0 users write single-agent applications. Ship when real user pull for it is measurable. Uses the replay infrastructure from Phase 21.
+- **Hot reload.** In-flight runs keep version; new runs use new code. Production-runtime concern for always-on services. Most v1.0 users ship scripts + CLIs + embedded apps where restart-is-cheap. Ship when the production-service user segment is sized.
+- **Prompt-aware compilation.** Schema caching, TOON compression, template deduplication. Performance optimization on top of v1.0 capability — measurable once cost data from real users shows where to target. Builds on Phase 20's cost model.
+- **Interactive time-travel debugger UI.** Phase 21 ships deterministic replay; the scrub-backward / step-forward UI is a followup using the same infrastructure.
+- **Generational GC, concurrent cycle collection.** Phase 17's cycle collector is good enough; generational + concurrent are post-v1.0 if allocation benchmarks ever justify the complexity.
+- **Private package registries, binary packages.** Phase 25 ships the OSS registry + source packages; enterprise and binary distribution are post-v1.0.
+- **Other editors (vim / emacs / JetBrains official extensions).** Phase 24 ships VS Code + the LSP; the LSP works with any client, but branded extensions are post-v1.0.
 
 ---
 
 ## Total estimated effort
 
-**~18–24 months of focused solo work** from today to v1.0 public launch.
+**~27 months of focused solo work** from today to v1.0 public launch, summed from the per-phase estimates above:
+
+| Release | Phases | Bottom-up estimate |
+|---|---|---|
+| v0.3 (close Phase 12) | 12k | ~2 weeks |
+| v0.4 (native tier useful) | 13, 14, 15 | ~3 months |
+| v0.5 (GP feel) | 16, 17, 18, 19 | ~3 months |
+| v0.6 (moat + replay) | 20 (7 slices), 21 | ~5 months |
+| v0.7 (embed + deploy) | 22, 23 | ~4 months |
+| v0.8 (dev workflow) | 24, 25, 26, 27 | ~5 months |
+| v0.9 (feature-complete) | 28, 29, 30, 31, 32 | ~5 months |
+| v1.0 (launch polish) | 33 | ~2 months |
+
+Bottom-up sums to **~27 months** — over the 18–24 originally quoted because the bottom-up is pessimistic per phase and because Phase 20's honest slice breakdown pushed its estimate up (7 slices × ~2 weeks each vs. the earlier 12–14-week monolith). Real slip will come from Phase 20 unknowns (slice 20d's cost-analysis is novel research; slice 20e's `T?confidence` interaction with the type system is unpredictable), Phase 24 (LSP — scope tends to grow), and Phase 33 (launch polish — always longer than estimated). Build schedule with a 20% buffer; re-plan quarterly.
+
+The original "~18–24 months" quote is not preserved above because preserving it would be dishonest — the honest plan sums to more. Quoting 24 months and planning 27 is the shortcut; quoting what the plan actually sums to is the non-shortcut.
 
 The dates aren't the point. The point is that each phase has:
-- A clear goal.
+- A clear goal with a named hard dependency, not a vibe sequence.
+- A concrete scope list — no "TBD" or "polish" stand-ins.
+- A version cut-line saying which release it ships in.
 - A pre-phase brief before code.
-- Tests at the boundary.
+- Tests green at the boundary.
 - A dev-log entry.
 
-That discipline is what makes the 24 months possible.
+That discipline is what makes the 27 months possible. Without it, the plan slips to 40+ and v1.0 becomes aspirational rather than a calendar commitment.
 
 ---
 
@@ -322,25 +646,28 @@ That discipline is what makes the 24 months possible.
 Red lines — features explicitly rejected, not merely deferred:
 
 - **Raw pointer arithmetic + manual allocators.** Pointer aliasing is one of the hardest things for any reasoner (human or LLM) to track, and readability-for-LLM-generated-code is a first-class design goal. Narrow `@unsafe` FFI shim for C interop is allowed; pervasive pointers are a hard no. Rust and Zig own that niche — Corvid doesn't compete there.
-- **Classical OOP inheritance.** `type` + methods + interfaces/traits (Phase 15.5) are the model. Subclassing, `this`, virtual dispatch, and deep hierarchies are not. Modern GP consensus (Go, Rust, Swift, Kotlin) agrees composition + methods beat inheritance.
+- **Classical OOP inheritance.** `type` + methods (Phase 16) + (post-v1.0) interfaces are the model. Subclassing, `this`, virtual dispatch, and deep hierarchies are not. Modern GP consensus (Go, Rust, Swift, Kotlin) agrees composition + methods beat inheritance.
 - **Rust/C++-level control for systems work.** Corvid aims for Go / Swift class performance. Fast enough that compute rarely bottlenecks AI-shaped software (where LLM latency dominates by three orders of magnitude), but not competing on hot-loop throughput.
 
 Deferred, not rejected:
 
-- **Every LLM provider at launch.** Anthropic + OpenAI ship first; Google, Ollama, and others follow in Phase 18.
-- **Windows + Linux + macOS day-one.** Start on one OS (macOS), add the others in Phase 32.
+- **Every LLM provider at launch.** Anthropic + OpenAI ship first; Google, Ollama, and others follow in Phase 31.
+- **Windows + Linux + macOS day-one.** Start on one OS (macOS); add the others in Phase 33 (v1.0 pre-launch polish).
 
-What is *not* a non-goal, despite earlier framings: **being a general-purpose language.** Corvid must be one. The only question is which GP features ship when — the answer lives in the Phase 15.5 slate and the "table stakes" list in the positioning section above.
+What is *not* a non-goal, despite earlier framings: **being a general-purpose language.** Corvid must be one. The pre-v1.0 phases above ship every GP table-stakes feature (methods, cycle collector, Result, REPL, C ABI, WASM, LSP, package manager, testing) alongside the moat work — not as a bundle, not behind the moat, interleaved so every release is coherently Corvid.
 
 ---
 
 ## Velocity markers
 
-To keep momentum honest, ship these at the phase boundaries:
+To keep momentum honest, ship one observable artefact at every phase boundary. Every entry below is a live-demoable thing, not a completion-percent.
 
-- End of Phase 11: a `corvid run` that doesn't need Python.
-- End of Phase 12: a compiled binary for `hello.cor`.
-- End of Phase 16: full interpreter + compiler parity on `refund_bot.cor`.
-- End of Phase 20: production-grade error handling.
-- End of Phase 25: multi-agent demo.
-- End of Phase 32: v1.0 public release.
+- **End of Phase 11** ✅ — `corvid run` dispatches through the interpreter + runtime with no Python on the path.
+- **End of Phase 12** ✅ — `corvid run foo.cor` AOT-compiles + executes, caches on the second call. ~15× speedup measured. (v0.3)
+- **End of Phase 15** — `corvid run examples/refund_bot_demo/src/main.cor --target=native` runs end-to-end: tool dispatch, prompt dispatch, approve tokens all working natively. (v0.4)
+- **End of Phase 19** — `corvid repl` session demonstrates redefining an agent mid-session + inspecting struct values + calling a method on a user type. (v0.5)
+- **End of Phase 21** — Demo video: write an agent with a `@budget($0.10)` annotation, make it exceed, compiler refuses; then `corvid replay <trace-id>` rewinds a recorded run and re-executes deterministically with zero LLM spend. (v0.6)
+- **End of Phase 23** — Corvid program embedded in a Rust host (`cargo add` the cdylib) AND the same program compiled to wasm and running in a browser page. One source, two deployment targets. (v0.7)
+- **End of Phase 27** — Full developer workflow demo: write in VS Code with live type hints, `corvid add` a registry package, `corvid test` runs, `corvid eval` produces the HTML report. (v0.8)
+- **End of Phase 32** — Feature-complete: agents ask/choose humans, sessions persist to SQLite, Python libs import effect-tagged, Google + Ollama + Anthropic + OpenAI all work, `std.*` batteries included. (v0.9)
+- **End of Phase 33** — v1.0 public release: installer, website, beta-tester feedback incorporated, launch GIF, announcement.
