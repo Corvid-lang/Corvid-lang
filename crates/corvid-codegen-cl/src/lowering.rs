@@ -106,6 +106,18 @@ fn declare_runtime_funcs(
             )
         })?;
 
+    // corvid_destroy_list_refcounted(payload) -> void
+    let mut list_destroy_sig = module.make_signature();
+    list_destroy_sig.params.push(AbiParam::new(I64));
+    let list_destroy_id = module
+        .declare_function(LIST_DESTROY_SYMBOL, Linkage::Import, &list_destroy_sig)
+        .map_err(|e| {
+            CodegenError::cranelift(
+                format!("declare list destroy: {e}"),
+                Span::new(0, 0),
+            )
+        })?;
+
     Ok(RuntimeFuncs {
         overflow: overflow_func_id,
         retain: retain_id,
@@ -115,6 +127,7 @@ fn declare_runtime_funcs(
         string_cmp: cmp_id,
         alloc: alloc_id,
         alloc_with_destructor: alloc_dtor_id,
+        list_destroy_refcounted: list_destroy_id,
         literal_counter: std::cell::Cell::new(0),
         struct_destructors: HashMap::new(),
         ir_types: HashMap::new(),
@@ -214,7 +227,7 @@ fn emit_release(
 /// Slice 12e: only `String` is refcounted. Future slices add `Struct`
 /// (12f), `List` (12g) — both will return true here.
 fn is_refcounted_type(ty: &Type) -> bool {
-    matches!(ty, Type::String | Type::Struct(_))
+    matches!(ty, Type::String | Type::Struct(_) | Type::List(_))
 }
 
 // ---- runtime helper symbols ----
@@ -253,6 +266,13 @@ pub const ALLOC_SYMBOL: &str = "corvid_alloc";
 /// before the block is freed.
 pub const ALLOC_WITH_DESTRUCTOR_SYMBOL: &str = "corvid_alloc_with_destructor";
 
+/// `void corvid_destroy_list_refcounted(void* payload)` — the shared
+/// runtime destructor for all refcounted-element list types. Walks
+/// the length at offset 0 of the payload and calls `corvid_release`
+/// on each element. Non-refcounted-element lists (List<Int> etc.)
+/// don't need a destructor at all; they use plain `corvid_alloc`.
+pub const LIST_DESTROY_SYMBOL: &str = "corvid_destroy_list_refcounted";
+
 /// Per-struct payload uses fixed 8-byte field slots for simple offset
 /// math. Tight packing is a Phase-22 optimization.
 pub const STRUCT_FIELD_SLOT_BYTES: i32 = 8;
@@ -278,6 +298,11 @@ pub struct RuntimeFuncs {
     pub string_cmp: FuncId,
     pub alloc: FuncId,
     pub alloc_with_destructor: FuncId,
+    /// Shared destructor for refcounted-element lists. One function
+    /// handles all such lists at runtime — each element is an I64
+    /// pointer, and `corvid_release` does the per-type cleanup via
+    /// each element's own header chain.
+    pub list_destroy_refcounted: FuncId,
     pub literal_counter: std::cell::Cell<u64>,
     /// Per-struct-type destructors generated in `lower_file` for
     /// structs with at least one refcounted field. Missing entries
@@ -299,6 +324,22 @@ impl RuntimeFuncs {
         self.literal_counter.set(n + 1);
         n
     }
+}
+
+/// Loop context entry recorded on the `loop_stack` at `for` entry,
+/// consumed by `break` / `continue` statements nested inside.
+#[derive(Clone, Copy)]
+pub struct LoopCtx {
+    /// Block that increments the index counter and jumps to the loop
+    /// header. `continue` jumps here.
+    pub step_block: clir::Block,
+    /// Block that the loop exits to. `break` jumps here.
+    pub exit_block: clir::Block,
+    /// `scope_stack.len()` at the point the loop was entered, BEFORE
+    /// the loop body pushed its own scope. `break` / `continue` walk
+    /// scopes from the current depth down to (but not including) this
+    /// value, releasing refcounted locals as they go.
+    pub scope_depth_at_entry: usize,
 }
 
 /// Per-agent mutable state: the `LocalId → Variable` map, the
@@ -582,10 +623,10 @@ fn cl_type_for(ty: &Type, span: Span) -> Result<clir::Type, CodegenError> {
         // I64 in registers/env. The actual layout lives behind the
         // refcount header: `[header (16) | field0 (8) | ... | fieldN (8)]`.
         Type::Struct(_) => Ok(I64),
-        Type::List(_) => Err(CodegenError::not_supported(
-            "`List` — slice 12d adds lists",
-            span,
-        )),
+        // List values are descriptor pointers (like String, Struct) —
+        // single I64 pointing at `[length (8) | elements...]` after the
+        // 16-byte refcount header.
+        Type::List(_) => Ok(I64),
         Type::Nothing => Err(CodegenError::not_supported(
             "`Nothing` — slice 12d pairs it with bare `return`",
             span,
@@ -628,6 +669,10 @@ fn define_agent(
         // does NOT push its own scope (it would double-push); this is
         // it. Branch blocks inside `if`/`else` push/pop their own.
         let mut scope_stack: Vec<Vec<(LocalId, Variable)>> = vec![Vec::new()];
+        // Loop context stack — empty at function entry. `for` pushes
+        // on entry, `break`/`continue` consult the top entry, `for`
+        // pops on exit.
+        let mut loop_stack: Vec<LoopCtx> = Vec::new();
 
         for (i, p) in agent.params.iter().enumerate() {
             let block_arg = builder.block_params(entry)[i];
@@ -652,6 +697,7 @@ fn define_agent(
             &mut env,
             &mut var_idx,
             &mut scope_stack,
+            &mut loop_stack,
             func_ids_by_def,
             module,
             runtime,
@@ -710,6 +756,7 @@ fn lower_block(
     env: &mut HashMap<LocalId, (Variable, clir::Type)>,
     var_idx: &mut usize,
     scope_stack: &mut Vec<Vec<(LocalId, Variable)>>,
+    loop_stack: &mut Vec<LoopCtx>,
     func_ids_by_def: &HashMap<DefId, FuncId>,
     module: &mut ObjectModule,
     runtime: &RuntimeFuncs,
@@ -721,6 +768,7 @@ fn lower_block(
             env,
             var_idx,
             scope_stack,
+            loop_stack,
             func_ids_by_def,
             module,
             runtime,
@@ -738,6 +786,7 @@ fn lower_stmt(
     env: &mut HashMap<LocalId, (Variable, clir::Type)>,
     var_idx: &mut usize,
     scope_stack: &mut Vec<Vec<(LocalId, Variable)>>,
+    loop_stack: &mut Vec<LoopCtx>,
     func_ids_by_def: &HashMap<DefId, FuncId>,
     module: &mut ObjectModule,
     runtime: &RuntimeFuncs,
@@ -849,23 +898,54 @@ fn lower_stmt(
             env,
             var_idx,
             scope_stack,
+            loop_stack,
             func_ids_by_def,
             module,
             runtime,
         ),
-        IrStmt::For { span, .. } => Err(CodegenError::not_supported(
-            "`for` loops — slice 12c adds them",
+        IrStmt::For {
+            var_local,
+            iter,
+            body,
+            span,
+            ..
+        } => lower_for(
+            builder,
+            *var_local,
+            iter,
+            body,
             *span,
-        )),
+            env,
+            var_idx,
+            scope_stack,
+            loop_stack,
+            func_ids_by_def,
+            module,
+            runtime,
+        ),
         IrStmt::Approve { span, .. } => Err(CodegenError::not_supported(
             "`approve` in compiled code — Phase 14 adds it alongside the tool registry",
             *span,
         )),
         IrStmt::Pass { .. } => Ok(BlockOutcome::Normal),
-        IrStmt::Break { span } | IrStmt::Continue { span } => Err(CodegenError::not_supported(
-            "`break` / `continue` — slice 12d adds them alongside `for` and `List`",
+        IrStmt::Break { span } => lower_break_or_continue(
+            builder,
+            true,
             *span,
-        )),
+            scope_stack,
+            loop_stack,
+            module,
+            runtime,
+        ),
+        IrStmt::Continue { span } => lower_break_or_continue(
+            builder,
+            false,
+            *span,
+            scope_stack,
+            loop_stack,
+            module,
+            runtime,
+        ),
     }
 }
 
@@ -1066,14 +1146,117 @@ fn lower_expr(
             emit_release(builder, module, runtime, struct_ptr);
             Ok(field_val)
         }
-        IrExprKind::Index { .. } => Err(CodegenError::not_supported(
-            "list indexing — slice 12d adds lists",
-            expr.span,
-        )),
-        IrExprKind::List { .. } => Err(CodegenError::not_supported(
-            "list literals — slice 12d adds lists",
-            expr.span,
-        )),
+        IrExprKind::Index { target, index } => {
+            // Element type from the Index expression's annotated type
+            // (the type checker attaches the element type).
+            let elem_ty = expr.ty.clone();
+            let elem_cl_ty = cl_type_for(&elem_ty, expr.span)?;
+            let elem_refcounted = is_refcounted_type(&elem_ty);
+
+            let list_ptr = lower_expr(builder, target, env, func_ids_by_def, module, runtime)?;
+            let idx_val = lower_expr(builder, index, env, func_ids_by_def, module, runtime)?;
+
+            // Bounds check: trap if `idx_val >= length` or `idx_val < 0`.
+            let length = builder.ins().load(
+                I64,
+                cranelift_codegen::ir::MemFlags::trusted(),
+                list_ptr,
+                0,
+            );
+            let in_range_hi =
+                builder.ins().icmp(IntCC::SignedLessThan, idx_val, length);
+            let zero = builder.ins().iconst(I64, 0);
+            let in_range_lo =
+                builder.ins().icmp(IntCC::SignedGreaterThanOrEqual, idx_val, zero);
+            let in_range = builder.ins().band(in_range_hi, in_range_lo);
+            let trap_block = builder.create_block();
+            let cont_block = builder.create_block();
+            builder
+                .ins()
+                .brif(in_range, cont_block, &[], trap_block, &[]);
+            builder.switch_to_block(trap_block);
+            builder.seal_block(trap_block);
+            let callee_ref =
+                module.declare_func_in_func(runtime.overflow, builder.func);
+            builder.ins().call(callee_ref, &[]);
+            builder
+                .ins()
+                .trap(cranelift_codegen::ir::TrapCode::INTEGER_OVERFLOW);
+            builder.switch_to_block(cont_block);
+            builder.seal_block(cont_block);
+
+            // Element address = list_ptr + 8 + idx * 8.
+            let offset = builder.ins().imul_imm(idx_val, 8);
+            let base = builder.ins().iadd_imm(list_ptr, 8);
+            let elem_addr = builder.ins().iadd(base, offset);
+            let elem_val = builder.ins().load(
+                elem_cl_ty,
+                cranelift_codegen::ir::MemFlags::trusted(),
+                elem_addr,
+                0,
+            );
+            if elem_refcounted {
+                emit_retain(builder, module, runtime, elem_val);
+            }
+            // Release the temp +1 on the list pointer (caller's Owned
+            // reference obtained from lower_expr of the target).
+            emit_release(builder, module, runtime, list_ptr);
+            Ok(elem_val)
+        }
+        IrExprKind::List { items } => {
+            // Element type taken from the List's annotated type.
+            let elem_ty = match &expr.ty {
+                Type::List(elem) => (**elem).clone(),
+                other => {
+                    return Err(CodegenError::cranelift(
+                        format!(
+                            "list literal has non-list type `{other:?}` — typecheck should have caught this"
+                        ),
+                        expr.span,
+                    ));
+                }
+            };
+            let elem_refcounted = is_refcounted_type(&elem_ty);
+            // Allocation size: 8 (length) + 8 * N (elements).
+            let total_bytes = 8 + 8 * items.len() as i64;
+            let size_val = builder.ins().iconst(I64, total_bytes);
+            // Choose allocator: with destructor if elements are refcounted.
+            let list_ptr = if elem_refcounted {
+                let alloc_ref =
+                    module.declare_func_in_func(runtime.alloc_with_destructor, builder.func);
+                let dtor_ref = module
+                    .declare_func_in_func(runtime.list_destroy_refcounted, builder.func);
+                let dtor_addr = builder.ins().func_addr(I64, dtor_ref);
+                let call = builder.ins().call(alloc_ref, &[size_val, dtor_addr]);
+                builder.inst_results(call)[0]
+            } else {
+                let alloc_ref = module.declare_func_in_func(runtime.alloc, builder.func);
+                let call = builder.ins().call(alloc_ref, &[size_val]);
+                builder.inst_results(call)[0]
+            };
+            // Store length at offset 0.
+            let length_val = builder.ins().iconst(I64, items.len() as i64);
+            builder.ins().store(
+                cranelift_codegen::ir::MemFlags::trusted(),
+                length_val,
+                list_ptr,
+                0,
+            );
+            // Store each element at offset 8 + i * 8. The element's
+            // Owned +1 transfers into the list.
+            for (i, item) in items.iter().enumerate() {
+                let item_val =
+                    lower_expr(builder, item, env, func_ids_by_def, module, runtime)?;
+                let offset = 8 + (i as i32) * 8;
+                builder.ins().store(
+                    cranelift_codegen::ir::MemFlags::trusted(),
+                    item_val,
+                    list_ptr,
+                    offset,
+                );
+            }
+            Ok(list_ptr)
+        }
     }
 }
 
@@ -1251,6 +1434,232 @@ fn lower_string_binop(
         ),
         BinaryOp::And | BinaryOp::Or => unreachable!("and/or short-circuited upstream"),
     }
+}
+
+/// Lower a `for x in iter: body` loop. Expects `iter` to be a List.
+///
+/// Block layout:
+/// ```text
+///   entry:   init i=0, loop-var=0; jump header
+///   header:  brif (i < length) → body : exit
+///   body:    load element[i]; release-on-rebind loop-var; retain if
+///            refcounted; def_var(loop-var, element); lower body;
+///            on fallthrough → jump step
+///   step:    increment i; jump header
+///   exit:    after the loop
+/// ```
+/// `continue` jumps to `step`, `break` jumps to `exit`. Both release
+/// any refcounted locals deeper than the scope depth recorded at loop
+/// entry.
+#[allow(clippy::too_many_arguments)]
+fn lower_for(
+    builder: &mut FunctionBuilder,
+    var_local: LocalId,
+    iter: &IrExpr,
+    body: &IrBlock,
+    span: Span,
+    env: &mut HashMap<LocalId, (Variable, clir::Type)>,
+    var_idx: &mut usize,
+    scope_stack: &mut Vec<Vec<(LocalId, Variable)>>,
+    loop_stack: &mut Vec<LoopCtx>,
+    func_ids_by_def: &HashMap<DefId, FuncId>,
+    module: &mut ObjectModule,
+    runtime: &RuntimeFuncs,
+) -> Result<BlockOutcome, CodegenError> {
+    // Element type comes from the iterator's list type.
+    let elem_ty = match &iter.ty {
+        Type::List(elem) => (**elem).clone(),
+        Type::String => {
+            return Err(CodegenError::not_supported(
+                "`for c in string` iteration in native code — future slice (needs iterator \
+                 protocol or string-specific lowering)",
+                span,
+            ));
+        }
+        other => {
+            return Err(CodegenError::cranelift(
+                format!(
+                    "`for` iterator has non-list type `{other:?}` — typecheck should have caught this"
+                ),
+                span,
+            ));
+        }
+    };
+    let elem_cl_ty = cl_type_for(&elem_ty, span)?;
+    let elem_refcounted = is_refcounted_type(&elem_ty);
+
+    // Lower the iterator expression — Owned +1 if refcounted list.
+    let list_ptr = lower_expr(builder, iter, env, func_ids_by_def, module, runtime)?;
+
+    // Load length from offset 0 of the list payload.
+    let length = builder.ins().load(
+        I64,
+        cranelift_codegen::ir::MemFlags::trusted(),
+        list_ptr,
+        0,
+    );
+
+    // Declare + init loop variable. Starts at 0 (null if refcounted)
+    // so the release-on-rebind on the first iteration is a no-op.
+    let loop_var = Variable::from_u32(*var_idx as u32);
+    *var_idx += 1;
+    builder.declare_var(loop_var, elem_cl_ty);
+    let zero_elem = builder.ins().iconst(elem_cl_ty, 0);
+    builder.def_var(loop_var, zero_elem);
+    env.insert(var_local, (loop_var, elem_cl_ty));
+    // Track the loop variable in the enclosing (not yet pushed) body
+    // scope's sibling — the CURRENT scope, so it releases when the
+    // enclosing block exits. That ensures the final iteration's value
+    // gets released.
+    if elem_refcounted {
+        if let Some(top) = scope_stack.last_mut() {
+            top.push((var_local, loop_var));
+        }
+    }
+
+    // Declare + init index counter.
+    let i_var = Variable::from_u32(*var_idx as u32);
+    *var_idx += 1;
+    builder.declare_var(i_var, I64);
+    let zero_i = builder.ins().iconst(I64, 0);
+    builder.def_var(i_var, zero_i);
+
+    // Create the four blocks.
+    let header_b = builder.create_block();
+    let body_b = builder.create_block();
+    let step_b = builder.create_block();
+    let exit_b = builder.create_block();
+
+    // Record the loop context so break/continue can find their targets.
+    let scope_depth_at_entry = scope_stack.len();
+    loop_stack.push(LoopCtx {
+        step_block: step_b,
+        exit_block: exit_b,
+        scope_depth_at_entry,
+    });
+
+    builder.ins().jump(header_b, &[]);
+
+    // --- header ---
+    builder.switch_to_block(header_b);
+    let i_now = builder.use_var(i_var);
+    let keep_going = builder.ins().icmp(IntCC::SignedLessThan, i_now, length);
+    builder.ins().brif(keep_going, body_b, &[], exit_b, &[]);
+
+    // --- body ---
+    builder.switch_to_block(body_b);
+    builder.seal_block(body_b);
+    // Compute element address: list_ptr + 8 + i * 8.
+    let offset = builder.ins().imul_imm(i_now, 8);
+    let base = builder.ins().iadd_imm(list_ptr, 8);
+    let elem_addr = builder.ins().iadd(base, offset);
+    let elem_val = builder.ins().load(
+        elem_cl_ty,
+        cranelift_codegen::ir::MemFlags::trusted(),
+        elem_addr,
+        0,
+    );
+    // Rebind loop-var: release old value (null-safe), retain new if
+    // refcounted, def_var.
+    if elem_refcounted {
+        let old = builder.use_var(loop_var);
+        emit_release(builder, module, runtime, old);
+        emit_retain(builder, module, runtime, elem_val);
+    }
+    builder.def_var(loop_var, elem_val);
+
+    // Push body scope so body-local Lets get released at end of each
+    // iteration (or on break/continue/return from inside body).
+    scope_stack.push(Vec::new());
+    let body_outcome = lower_block(
+        builder,
+        body,
+        env,
+        var_idx,
+        scope_stack,
+        loop_stack,
+        func_ids_by_def,
+        module,
+        runtime,
+    )?;
+    match body_outcome {
+        BlockOutcome::Normal => {
+            // Release body-scope locals before jumping to step.
+            let body_scope = scope_stack.pop().unwrap_or_default();
+            for (_, v) in body_scope.iter().rev() {
+                let x = builder.use_var(*v);
+                emit_release(builder, module, runtime, x);
+            }
+            builder.ins().jump(step_b, &[]);
+        }
+        BlockOutcome::Terminated => {
+            // Body returned — the return already emitted releases for
+            // all live scopes. Just pop the body scope.
+            scope_stack.pop();
+        }
+    }
+
+    // --- step ---
+    builder.switch_to_block(step_b);
+    builder.seal_block(step_b);
+    let i_next = builder.ins().iadd_imm(i_now, 1);
+    builder.def_var(i_var, i_next);
+    builder.ins().jump(header_b, &[]);
+
+    // Now both predecessors of header_b (entry + step) have been
+    // emitted, so we can seal it.
+    builder.seal_block(header_b);
+
+    // --- exit ---
+    builder.switch_to_block(exit_b);
+    builder.seal_block(exit_b);
+    loop_stack.pop();
+
+    // Release the list pointer we retained at the top (lower_expr
+    // returned an Owned ref if refcounted).
+    if is_refcounted_type(&iter.ty) {
+        emit_release(builder, module, runtime, list_ptr);
+    }
+    Ok(BlockOutcome::Normal)
+}
+
+/// Release refcounted locals deeper than `floor_depth`, then jump to
+/// the given block. Shared by `break` and `continue`.
+fn lower_break_or_continue(
+    builder: &mut FunctionBuilder,
+    is_break: bool,
+    span: Span,
+    scope_stack: &mut Vec<Vec<(LocalId, Variable)>>,
+    loop_stack: &mut Vec<LoopCtx>,
+    module: &mut ObjectModule,
+    runtime: &RuntimeFuncs,
+) -> Result<BlockOutcome, CodegenError> {
+    let ctx = loop_stack.last().ok_or_else(|| {
+        CodegenError::cranelift(
+            format!(
+                "`{}` outside of a loop — typecheck or parser should have caught this",
+                if is_break { "break" } else { "continue" }
+            ),
+            span,
+        )
+    })?;
+    // Walk scopes deeper than `scope_depth_at_entry`, releasing
+    // refcounted locals. Don't pop — the lower_block that created
+    // those scopes is still on the stack above us.
+    for depth in (ctx.scope_depth_at_entry..scope_stack.len()).rev() {
+        let scope = &scope_stack[depth];
+        for (_, v) in scope.iter().rev() {
+            let x = builder.use_var(*v);
+            emit_release(builder, module, runtime, x);
+        }
+    }
+    let target = if is_break {
+        ctx.exit_block
+    } else {
+        ctx.step_block
+    };
+    builder.ins().jump(target, &[]);
+    Ok(BlockOutcome::Terminated)
 }
 
 /// Lower a struct constructor: allocate, store each field at its
@@ -1517,6 +1926,7 @@ fn lower_if(
     env: &mut HashMap<LocalId, (Variable, clir::Type)>,
     var_idx: &mut usize,
     scope_stack: &mut Vec<Vec<(LocalId, Variable)>>,
+    loop_stack: &mut Vec<LoopCtx>,
     func_ids_by_def: &HashMap<DefId, FuncId>,
     module: &mut ObjectModule,
     runtime: &RuntimeFuncs,
@@ -1549,6 +1959,7 @@ fn lower_if(
         env,
         var_idx,
         scope_stack,
+        loop_stack,
         func_ids_by_def,
         module,
         runtime,
@@ -1579,6 +1990,7 @@ fn lower_if(
             env,
             var_idx,
             scope_stack,
+            loop_stack,
             func_ids_by_def,
             module,
             runtime,

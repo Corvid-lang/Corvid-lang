@@ -151,6 +151,36 @@ Memory: each struct is a single heap allocation laid out as `[header | field0 | 
 
 Struct semantics + constructor syntax landed in [dev-log Day 25](dev-log.md).
 
+### `List<T>` — ordered collections
+
+Declare with a bracketed literal; index with `[i]`; iterate with `for`:
+
+```corvid
+agent sum() -> Int:
+    total = 0
+    for x in [1, 2, 3, 4, 5]:
+        total = total + x
+    return total      # 15
+
+agent third_item() -> Int:
+    xs = [10, 20, 30]
+    return xs[1]      # 20
+
+agent matches(needle: String, haystack: List[String]) -> Bool:
+    for s in haystack:
+        if s == needle:
+            return true
+    return false
+```
+
+Lists are **immutable** — no `.push` / `.append` / `list[i] = v`. Build a new list instead.
+
+Memory: each list is one heap allocation laid out as `[header | length | element_0 | element_1 | ...]` with 8 bytes per element. Lists with refcounted elements (Strings, Structs, nested Lists) use a shared runtime destructor that walks the length and releases each element — the destructor doesn't need to know the element type because at the runtime level every refcounted element is an I64 pointer. Nested cleanup cascades naturally through each element's own header chain.
+
+**Bounds checking is enforced at runtime.** `xs[5]` on a 3-element list traps with the same error path as integer overflow — exits non-zero with a stderr message. No silent out-of-range reads.
+
+List semantics landed in [dev-log Day 26](dev-log.md).
+
 ---
 
 ## Local bindings
@@ -232,7 +262,28 @@ agent noop_check(x: Int) -> Int:
 
 ### `for` / `break` / `continue`
 
-Not yet in the native compiler. Planned for slice 12h. Works in the interpreter today (`corvid run <file>` uses the interpreter).
+Iterate over a list with `for x in list:`. Escape with `break`; skip to the next iteration with `continue`:
+
+```corvid
+agent first_even(xs: List[Int]) -> Int:
+    for x in xs:
+        if x % 2 == 0:
+            return x
+        continue         # explicit — `continue` is also fine
+    return 0             # no even number found
+
+agent sum_until_negative(xs: List[Int]) -> Int:
+    total = 0
+    for x in xs:
+        if x < 0:
+            break
+        total = total + x
+    return total
+```
+
+`break` and `continue` respect the nearest enclosing loop. Loop variables (`x` above) are typed to the list's element type automatically — no need to write `x: Int`.
+
+Loop control landed in [dev-log Day 26](dev-log.md).
 
 ---
 
@@ -442,9 +493,9 @@ x = 5
 
 `s.len` and `s[0]` aren't supported yet. Planned for Phase 22+.
 
-### No `for` in the native compiler yet
+### `for c in string` not yet in native code
 
-Works in the interpreter; compiled path raises `NotSupported` pointing at slice 12h (next slice).
+Compiles via the interpreter; raises `NotSupported` in the native compiler. The fix is either a shared iterator protocol or a String-specific lowering path — neither is on the immediate roadmap. Use `for x in list` when you're writing native-targeted code.
 
 ### Entry agent constraints
 
@@ -497,6 +548,7 @@ Each user-visible feature lands with a dev-log entry explaining the design decis
 | Memory management foundation (refcount + leak detector) | [Day 23](dev-log.md) |
 | String operations + ownership wiring | [Day 24](dev-log.md) |
 | Struct + constructors + destructors | [Day 25](dev-log.md) |
+| List + `for` + `break` / `continue` | [Day 26](dev-log.md) |
 
 ---
 

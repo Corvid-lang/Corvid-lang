@@ -213,11 +213,18 @@ impl<'a> Checker<'a> {
                 }
             }
             Stmt::For { var, iter, body, .. } => {
-                let _iter_ty = self.check_expr(iter);
-                // For loop variable: leave as Unknown in v0.1 (no full
-                // inference of iterable element types yet).
+                let iter_ty = self.check_expr(iter);
+                // Derive the loop variable's type from the iterable.
+                // Lists iterate their element type; Strings iterate
+                // chars (which Corvid currently models as String).
+                let var_ty = match &iter_ty {
+                    Type::List(elem) => (**elem).clone(),
+                    Type::String => Type::String,
+                    Type::Unknown => Type::Unknown,
+                    _other => Type::Unknown,
+                };
                 if let Some(Binding::Local(local_id)) = self.bindings.get(&var.span) {
-                    self.local_types.insert(*local_id, Type::Unknown);
+                    self.local_types.insert(*local_id, var_ty);
                 }
                 self.check_block(body);
             }
@@ -263,18 +270,71 @@ impl<'a> Checker<'a> {
             Expr::Ident { name, .. } => self.type_of_ident(name),
             Expr::Call { callee, args, span } => self.check_call(callee, args, *span),
             Expr::FieldAccess { target, field, span } => self.check_field(target, field, *span),
-            Expr::Index { target, index, .. } => {
-                let _ = self.check_expr(target);
-                let _ = self.check_expr(index);
-                Type::Unknown // list/map element typing deferred
+            Expr::Index { target, index, span } => {
+                let target_ty = self.check_expr(target);
+                let index_ty = self.check_expr(index);
+                // Index must be Int.
+                if !matches!(index_ty, Type::Int | Type::Unknown) {
+                    self.errors.push(TypeError::new(
+                        TypeErrorKind::TypeMismatch {
+                            expected: "Int".into(),
+                            got: index_ty.display_name(),
+                            context: "list index".into(),
+                        },
+                        index.span(),
+                    ));
+                }
+                match target_ty {
+                    Type::List(elem) => (*elem).clone(),
+                    Type::Unknown => Type::Unknown,
+                    other => {
+                        self.errors.push(TypeError::new(
+                            TypeErrorKind::TypeMismatch {
+                                expected: "List".into(),
+                                got: other.display_name(),
+                                context: "indexed value".into(),
+                            },
+                            *span,
+                        ));
+                        Type::Unknown
+                    }
+                }
             }
             Expr::BinOp { op, left, right, span } => self.check_binop(*op, left, right, *span),
             Expr::UnOp { op, operand, .. } => self.check_unop(*op, operand),
-            Expr::List { items, .. } => {
-                for item in items {
-                    let _ = self.check_expr(item);
+            Expr::List { items, span } => {
+                // Infer element type from the first item; every other
+                // item must be assignable to it.
+                let mut elem_ty = Type::Unknown;
+                for (i, item) in items.iter().enumerate() {
+                    let item_ty = self.check_expr(item);
+                    if i == 0 {
+                        elem_ty = item_ty;
+                    } else if !item_ty.is_assignable_to(&elem_ty)
+                        && !matches!(elem_ty, Type::Unknown)
+                        && !matches!(item_ty, Type::Unknown)
+                    {
+                        // Allow Int → Float promotion (matching binop rule).
+                        if !(matches!(elem_ty, Type::Int) && matches!(item_ty, Type::Float)
+                            || matches!(elem_ty, Type::Float)
+                                && matches!(item_ty, Type::Int))
+                        {
+                            self.errors.push(TypeError::new(
+                                TypeErrorKind::TypeMismatch {
+                                    expected: elem_ty.display_name(),
+                                    got: item_ty.display_name(),
+                                    context: format!("list element {}", i + 1),
+                                },
+                                item.span(),
+                            ));
+                        } else if matches!(elem_ty, Type::Int) && matches!(item_ty, Type::Float) {
+                            // Promote list to Float.
+                            elem_ty = Type::Float;
+                        }
+                    }
                 }
-                Type::Unknown // homogeneity check deferred
+                let _ = span;
+                Type::List(Box::new(elem_ty))
             }
         };
         self.types.insert(e.span(), ty.clone());

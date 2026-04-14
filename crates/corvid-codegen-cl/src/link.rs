@@ -25,6 +25,12 @@ pub const ALLOC_SOURCE: &str = include_str!("../runtime/alloc.c");
 /// Linked alongside the allocator.
 pub const STRINGS_SOURCE: &str = include_str!("../runtime/strings.c");
 
+/// List runtime helpers (`corvid_destroy_list_refcounted`). One shared
+/// destructor for every refcounted-element list type — operating on
+/// raw pointers, it doesn't care whether T is String, Struct, or
+/// nested List.
+pub const LISTS_SOURCE: &str = include_str!("../runtime/lists.c");
+
 /// Link `object_path` together with the built-in entry shim into an
 /// executable at `output_path`. Creates parent directories as needed.
 /// The object file must export a symbol named `corvid_entry` — the
@@ -49,12 +55,15 @@ pub fn link_binary(
     let shim_path = shim_dir.path().join("corvid_shim.c");
     let alloc_path = shim_dir.path().join("corvid_alloc.c");
     let strings_path = shim_dir.path().join("corvid_strings.c");
+    let lists_path = shim_dir.path().join("corvid_lists.c");
     std::fs::write(&shim_path, ENTRY_SHIM_SOURCE)
         .map_err(|e| CodegenError::io(format!("write shim: {e}")))?;
     std::fs::write(&alloc_path, ALLOC_SOURCE)
         .map_err(|e| CodegenError::io(format!("write alloc: {e}")))?;
     std::fs::write(&strings_path, STRINGS_SOURCE)
         .map_err(|e| CodegenError::io(format!("write strings: {e}")))?;
+    std::fs::write(&lists_path, LISTS_SOURCE)
+        .map_err(|e| CodegenError::io(format!("write lists: {e}")))?;
 
     let compiler = cc::Build::new()
         .opt_level(2)
@@ -90,15 +99,17 @@ pub fn link_binary(
             .arg(&shim_path)
             .arg(&alloc_path)
             .arg(&strings_path)
+            .arg(&lists_path)
             .arg(object_path)
             .arg(format!("/Fe:{}", output_path.display()));
     } else {
-        // GCC/Clang: cc shim.c alloc.c strings.c object.o -o output.
+        // GCC/Clang: cc shim.c alloc.c strings.c lists.c object.o -o output.
         // `-std=c11` enables `<stdatomic.h>` portably.
         cmd.arg("-std=c11")
             .arg(&shim_path)
             .arg(&alloc_path)
             .arg(&strings_path)
+            .arg(&lists_path)
             .arg(object_path)
             .arg("-o")
             .arg(output_path);

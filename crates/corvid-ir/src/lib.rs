@@ -85,10 +85,13 @@ agent do_it(to: String) -> Nothing:
 
     #[test]
     fn break_continue_pass_lower_to_dedicated_variants() {
+        // Slice 12h typechecker: the loop var `x` gets a real type
+        // (String, for String iteration), so `if x:` is now a Bool
+        // mismatch. Use an explicit comparison.
         let src = "\
 agent loop_stuff(xs: String) -> String:
     for x in xs:
-        if x:
+        if x == \"a\":
             break
         continue
     pass

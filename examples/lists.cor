@@ -1,0 +1,8 @@
+agent main() -> Int:
+    scores = [87, 92, 45, 78, 95, 52]
+    passed = 0
+    for s in scores:
+        if s < 60:
+            continue
+        passed = passed + 1
+    return passed

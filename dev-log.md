@@ -1127,6 +1127,100 @@ Out (deferred): List + for + break/continue → 12h. Parameterised entries / non
 
 Slice 12h pre-phase chat. Topic: `List<T>` memory representation (heap-allocated array behind the refcount header, length inline), `for x in list: body` loop lowering, `break` / `continue` control flow, List destructor (calls release on each element if element type is refcounted), element access via subscript. Builds directly on slice 12g's patterns (refcount header, per-type destructor, ownership wiring).
 
+---
+
+## Day 26 — Phase 12 slice 12h: `List<T>` + `for` + `break` / `continue` ✅
+
+**Corvid compiles List programs with for-loops natively.** `for x in [87, 92, 45, 78, 95, 52]: if x < 60: continue; passed = passed + 1` becomes a real binary that prints `4` and leaks zero bytes. Every refcounted-element list type (List<String>, List<Struct>, List<List>) cleans up via one shared runtime destructor. Bounds-checked subscript access; `break` / `continue` release body-scope locals correctly before jumping.
+
+### Pre-phase decisions (audited for shortcuts, all confirmed)
+
+1. **One shared runtime destructor**, not per-T codegen generation. Every refcounted element is an I64 needing `corvid_release`; per-T would produce functionally identical functions per type. `corvid_destroy_list_refcounted(payload)` lives in `runtime/lists.c` and handles every refcounted-element list type.
+2. **Index-based `for` iteration**, not iterator protocol. Slice 12h supports `for x in list` only; `for c in string` raises `NotSupported` pointing at a future iterator-protocol slice (no user programs depend on it today).
+3. **Loop context stack for break/continue**: `LoopCtx { step_block, exit_block, scope_depth_at_entry }` recorded per-loop; break/continue walk scopes deeper than the recorded depth, release refcounted locals, then jump.
+4. **Single allocation per list**, inline elements. Lists are immutable by language design; separate descriptor + element buffer would be pure overhead.
+
+Additional locked:
+- 8-byte element slots (same as struct fields; tight packing is Phase 22).
+- Length stored at payload offset 0; elements at offsets 8, 16, 24, ...
+- Bounds check on subscript (traps on out-of-range via the existing runtime-overflow path).
+
+### What landed
+
+**`corvid-codegen-cl/runtime/lists.c`** (new)
+- `corvid_destroy_list_refcounted(payload)` — walks `length` at offset 0, releases each element. The shared destructor for every refcounted-element list type. Non-refcounted-element lists (List<Int> etc.) keep `reserved = 0` and never invoke this.
+
+**`link.rs`**
+- Compiles + links `lists.c` alongside `shim.c` / `alloc.c` / `strings.c`.
+
+**`corvid-codegen-cl/src/lowering.rs`**
+- `LIST_DESTROY_SYMBOL` constant + FuncId on `RuntimeFuncs` (declared in `declare_runtime_funcs`).
+- `cl_type_for(List) → I64`; `is_refcounted_type(List) → true`.
+- New `LoopCtx` struct + `loop_stack: Vec<LoopCtx>` threaded through `define_agent` → `lower_block` → `lower_stmt` → `lower_if`.
+- `IrExprKind::List` arm: alloc (choosing `corvid_alloc` or `corvid_alloc_with_destructor` based on element refcountedness); store length at offset 0; store each element at `8 + i * 8`. Element's Owned +1 transfers into the list.
+- `IrExprKind::Index` arm: bounds check via compare + brif + trap on violation; compute address `list_ptr + 8 + idx * 8`; load element with the right Cranelift width; retain if refcounted; release the temp list pointer.
+- New `lower_for` function: four-block pattern. Initialises the loop var to 0 (null-safe for refcounted types so the first iteration's release-on-rebind is a no-op). Index counter starts at 0. Header checks `i < length`; body loads + rebinds + lowers body; step increments + jumps back to header; exit continues after loop. Loop variable tracked in enclosing scope so the final iteration's value gets released at scope exit.
+- New `lower_break_or_continue` function: walks scopes deeper than `LoopCtx::scope_depth_at_entry`, releases refcounted locals, jumps to `step_block` (continue) or `exit_block` (break).
+
+**`corvid-types/src/checker.rs`** (typechecker expansion)
+- `Expr::List` previously returned `Type::Unknown` ("homogeneity check deferred"). Now infers the element type from the first item; subsequent items must be assignable, with Int→Float promotion matching the arithmetic widening rule.
+- `Expr::Index` previously returned `Type::Unknown`. Now requires the target to be `List<T>` and returns `T`; enforces `Int` index with a clear error if not.
+- `Stmt::For`'s loop variable previously got `Type::Unknown`. Now gets the list's element type (or `String` for String iteration, even though that path doesn't compile natively yet).
+
+### Bugs caught during the slice
+
+1. **Typechecker returned `Unknown` for List literals and Index expressions.** Slice 12g's typechecker was lenient about these (v0.1-era "deferred" placeholders). Native codegen hit `Cranelift("encountered Unknown type...")` on the first List fixture. Fix: proper inference for `Expr::List`, `Expr::Index`, and `Stmt::For`'s loop var — the typechecker expansion described above.
+2. **Pre-existing tests used `if x:` on String loop vars.** Two tests (`corvid-codegen-py::emits_break_continue_pass` and `corvid-ir::break_continue_pass_lower_to_dedicated_variants`) were passing only because the typechecker wasn't previously inferring loop var types — `if x:` with a String was quietly `Unknown` propagating through. Slice 12h's stricter inference correctly rejects this. Fixed both tests to use `if x == "a":` — a valid comparison that exercises the same codegen path.
+
+Real bugs: the pre-existing tests were semantically wrong (testing behavior that only passed via a lenient typechecker). Exposing them was slice 12h doing its job, not breaking anything users rely on.
+
+### Test counts
+
+| Crate | Tests |
+|---|---|
+| corvid-ast | 3 |
+| corvid-syntax | 75 |
+| corvid-resolve | 14 |
+| corvid-types | 18 |
+| corvid-ir | 6 |
+| corvid-runtime (unit) | 37 |
+| corvid-runtime (integration) | 6 |
+| corvid-vm | 35 |
+| corvid-codegen-py | 13 |
+| **corvid-codegen-cl (parity)** | **74 (was 66)** |
+| corvid-driver | 12 |
+| Python runtime | 10 |
+
+**Total: ~303 tests, all green.** Slice 12h added 8 parity fixtures.
+
+### Verified live
+
+```sh
+$ corvid build --target=native examples/lists.cor
+built: examples/lists.cor -> examples\target\bin\lists.exe
+
+$ CORVID_DEBUG_ALLOC=1 ./examples/target/bin/lists.exe
+ALLOCS=1
+RELEASES=1
+4
+```
+
+Program: `scores = [87, 92, 45, 78, 95, 52]; for s in scores: if s < 60: continue; passed = passed + 1` — counts scores ≥ 60. Real for-loop, real `continue`, real list literal. `ALLOCS=1 RELEASES=1` — the list is the only allocation; the scalar Ints are stored inline.
+
+### `learnings.md` updated per the new discipline
+
+Three sections added: `List<T>`, `for` / `break` / `continue`, and updated the gotcha about `for c in string`. Cross-reference table got a new row. doc-and-feature land together (per the new memory rule from the start of this session).
+
+### Scope honestly held
+
+In: List literal, subscript with bounds check, `for`, `break`, `continue`, shared destructor for refcounted-element lists, typechecker expansion for all of the above.
+
+Out: String iteration (future iterator-protocol slice). List mutation (none planned — immutable). Ranges / generators / comprehensions (later, if ever).
+
+### Next
+
+Slice 12i pre-phase chat. Topic: parameterised entry agents (argv decoding in the C shim so `agent main(greeting: String) -> Int:` works when called as `./program "hello"`) and Float/String-returning entries (shim print-format variants). Should finally make `corvid run` on the refund_bot demo possible without the Rust runner binary shim — a real UX milestone.
+
 
 
 
