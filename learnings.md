@@ -497,6 +497,22 @@ x = 5
 
 Compiles via the interpreter; raises `NotSupported` in the native compiler. The fix is either a shared iterator protocol or a String-specific lowering path — neither is on the immediate roadmap. Use `for x in list` when you're writing native-targeted code.
 
+### Performance — when native wins
+
+Phase 12 closed with published numbers (ARCHITECTURE.md §18). End-to-end wall-clock on three representative workloads:
+
+| Workload | Interpreter | Native | Ratio |
+|---|---|---|---|
+| 500k Int arithmetic ops | 256 ms | 19 ms | 13.6× |
+| 50k String concatenations | 48 ms | 18 ms | 2.7× |
+| 100k struct alloc + field reads | 74 ms | 21 ms | 3.5× |
+
+**Spawn-tax crossover:** on Windows, every `corvid run` in native mode pays ~11 ms of OS-level process-spawn cost. For programs whose interpreter run-time is under ~5 ms, that tax outweighs the codegen speedup and interpreter wins end-to-end. Above ~20 ms of interpreter compute, native wins decisively. In between, measure.
+
+Auto dispatch (`corvid run` default) still picks native for tool-free programs because the compile cache makes re-runs near-instant and real agent workloads exceed the crossover. Override with `--target=interpreter` for tiny programs where the spawn tax matters.
+
+Reproduce locally: `cargo bench -p corvid-codegen-cl --bench phase12_benchmarks`.
+
 ### Running Corvid code
 
 `corvid run <file>` picks the right execution tier automatically:
@@ -557,7 +573,7 @@ Corvid is single-threaded today. Atomic refcount is cheap insurance for Phase 25
 
 Per [ROADMAP.md](ROADMAP.md):
 
-- **Slice 12k** (next) — Phase 12 polish: benchmarks vs interpreter, cache-eviction policy, stability guarantees between cached binaries and future compiler versions.
+- **Phase 13** (next) — Native async runtime. Tokio embedded in compiled binaries. Prerequisite for Phase 14 (tool dispatch) and Phase 15 (prompt dispatch) — together these complete the "native tier actually useful for real programs" story at v0.4.
 - **Slice 12k** — polish, benchmarks, stability guarantees.
 - **Phase 14** — proc-macro `#[tool]` registry, tool/prompt/approve in compiled code.
 - **Phase 16** — effect-tagged `import python "..."` (TypeScript `.d.ts` analog).
@@ -586,6 +602,7 @@ Each user-visible feature lands with a dev-log entry explaining the design decis
 | List + `for` + `break` / `continue` | [Day 26](dev-log.md) |
 | Parameterised entry agents + Float/String entry returns | [Day 27](dev-log.md) |
 | Native as the default tier for tool-free programs + compile cache | [Day 28](dev-log.md) |
+| Phase 12 close-out benchmarks: native is 2.7×–13.6× faster end-to-end | [Day 29](dev-log.md) |
 
 ---
 

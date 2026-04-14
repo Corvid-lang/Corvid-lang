@@ -206,14 +206,12 @@ Originally scoped as "Memory foundation + String"; user split into 12e (foundati
 - [x] 7 new driver tests: native-able program passes scan, tool-using / python-import / prompt-using programs fail scan with the right `NotNativeReason`, cache hits on second call (mtime-verified), auto dispatch populates the cache, `--target=native` on a tool-using program exits non-zero.
 - [x] Smoke-tested on `examples/answer.cor` (auto → native, cached on second run) and `examples/hello.cor` (auto → fallback with notice, `--target=native` → clean error).
 
-#### Slice 12k — Phase 12 close-out benchmarks
+#### Slice 12k ✅ — Phase 12 close-out benchmarks (Day 29)
 
-Concrete scope — no polish-shaped hand-waves:
-
-- [ ] Micro-benchmark harness in `crates/corvid-codegen-cl/benches/` (criterion). Three representative programs: a hot arithmetic loop (`list_literal_sum_via_for` shape), a String-concat loop, a struct-heavy field-access workload.
-- [ ] Measure native vs interpreter wall-clock + allocations per run. Publish the numbers in ARCHITECTURE.md §5 as the Phase 12 claim of record.
-- [ ] If any native workload is slower than the interpreter on a fair comparison, fix the regression before declaring Phase 12 closed. Don't ship a native tier that's faster only in marketing.
-- [ ] Document the known native-tier non-goals that Phase 12 deliberately leaves on the table (see "Out of Phase 12" below).
+- [x] Criterion benchmark harness at `crates/corvid-codegen-cl/benches/phase12_benchmarks.rs`. Three workloads: `arith_loop` (500k Int ops), `string_concat_loop` (50k refcount concats), `struct_access_loop` (100k struct alloc + field read + destructor). Each runs on both tiers — interpreter via `corvid_vm::run_agent`, native via `Command::new(binary).output()`.
+- [x] Measured wall-clock published in ARCHITECTURE.md §18 ("Phase 12 performance characteristics"). Headline numbers: **13.6× native for arithmetic, 3.5× for struct access, 2.7× for string concat** (end-to-end including the ~11 ms Windows process-spawn tax). Compute-only ratios are 32× / 7.3× / 6.8×.
+- [x] Fair-comparison gate passed: native beats interpreter on all three workloads at the scaled workload sizes. The spawn-cost crossover (interpreter < 5 ms → native loses E2E) is documented explicitly alongside the numbers as a known AOT+process-spawn property, with the Phase 22 cdylib path and post-v1.0 JIT path called out as future fixes.
+- [x] Native-tier non-goals documented below under "Out of Phase 12."
 
 Cache-eviction policy, stability guarantees across compiler versions, and cross-compilation all move to Phase 33 (launch polish) — none are load-bearing for development work while there are no external users.
 

@@ -536,3 +536,56 @@ Books:
 - *Crafting Interpreters* — Bob Nystrom (start here)
 - *Types and Programming Languages* — Benjamin Pierce (reference)
 - *Engineering a Compiler* — Cooper & Torczon (advanced)
+
+---
+
+## 18. Phase 12 performance characteristics
+
+Closing Phase 12 required a real measurement — "native is faster than the interpreter" is not a claim the roadmap gets to make without numbers. Slice 12k ships a criterion benchmark harness at `crates/corvid-codegen-cl/benches/phase12_benchmarks.rs` with three representative workloads, each measured end-to-end on both tiers.
+
+### Methodology
+
+- **Harness:** `criterion` 0.5, 15 samples, 1 s warmup, 5 s measurement window per benchmark.
+- **Both tiers start warm.** Interpreter: IR lowered once per benchmark group, tokio runtime + `corvid-runtime` built once; only `corvid_vm::run_agent` is inside the measured loop. Native: codegen + link done once per benchmark group via `build_native_to_disk`; only `std::process::Command::new(binary).output()` is inside the measured loop (spawn + execute + exit).
+- **Compiler:** MSVC `cl.exe` (Windows 11, Phase 12 development host).
+- **End-to-end measurement.** Native numbers include the ~11 ms Windows process-spawn tax that every `corvid run` invocation pays. That overhead is real user-facing cost, not an unfair handicap — but it dominates tiny workloads and is called out in the numbers below.
+- **Workload shape.** Each program does an outer repetition loop around an inner measured workload. Inner data (list of ints / strings / structs) is hoisted above the outer loop so allocation is paid once per program invocation — matches how real agent code works.
+
+### Results (Phase 12 claim of record)
+
+| Workload | Interpreter | Native (E2E) | Ratio | Note |
+|---|---|---|---|---|
+| `arith_loop` — 500k `Int` arithmetic ops | 255.7 ms | 18.8 ms | **13.6× native** | Cranelift emits tight machine-code loops; best codegen wins. |
+| `string_concat_loop` — 50k refcount allocations + concats | 47.5 ms | 17.8 ms | **2.7× native** | Concat is a real heap alloc in both tiers; the refcount runtime is already efficient. |
+| `struct_access_loop` — 100k struct alloc + field read + destructor | 73.5 ms | 20.9 ms | **3.5× native** | Slice 12g's per-type destructors + slice 12h's list iteration pay off. |
+
+Native-tier compute (subtracting the ~11 ms spawn) is roughly:
+
+| Workload | Native compute only | Compute-only ratio |
+|---|---|---|
+| `arith_loop` | ~8 ms | ~32× native |
+| `string_concat_loop` | ~7 ms | ~6.8× native |
+| `struct_access_loop` | ~10 ms | ~7.3× native |
+
+### Known crossover (the spawn tax)
+
+Native is **slower** than the interpreter for very small programs, because the ~11 ms Windows process-spawn cost dominates compute. Empirically, the crossover is around **~5 ms of interpreter compute**:
+
+- Programs whose interpreter run-time is < 5 ms → native-tier E2E is slower.
+- Programs whose interpreter run-time is > 20 ms → native-tier E2E is clearly faster.
+- In between, measure case by case.
+
+Phase 12 doesn't fix this — it's inherent to AOT + process-spawn. Two future paths out:
+
+1. **Phase 22 (C ABI + library mode).** Programs embedded via `cdylib` don't pay the spawn tax — they're loaded once, called many times. This is the right home for latency-sensitive cases.
+2. **Post-v1.0 in-process JIT via cranelift-jit.** Not on the roadmap today (Phase 12 locked on AOT-first) but the technical path is clear.
+
+Slice 12j's auto-dispatch (`corvid run`'s `RunTarget::Auto`) still picks native by default for tool-free programs because (a) the compile cache makes re-runs near-instant, (b) for programs whose workload exceeds ~20 ms — which is most real agent code — native wins decisively, and (c) users running microsecond programs aren't optimizing for 10 ms.
+
+### How to re-run
+
+```sh
+cargo bench -p corvid-codegen-cl --bench phase12_benchmarks -- --sample-size 15
+```
+
+Numbers above are from the Phase 12 close-out run. Future optimization work (e.g., post-v1.0 JIT, or liveness-driven refcount elision from the moat phase) should update this table.

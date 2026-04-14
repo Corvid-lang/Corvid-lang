@@ -26,3 +26,8 @@ corvid-syntax = { workspace = true }
 corvid-runtime = { workspace = true }
 corvid-vm      = { workspace = true }
 tokio          = { workspace = true }
+criterion      = "0.5"
+
+[[bench]]
+name = "phase12_benchmarks"
+harness = false

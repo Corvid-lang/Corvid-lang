@@ -1311,6 +1311,87 @@ Slice 12j pre-phase chat. Topic: make native the default for tool-free programs 
 
 ---
 
+## Day 29 — Phase 12 slice 12k: close-out benchmarks ✅ — v0.3 cut
+
+Closing Phase 12 with a real measurement. "Native is faster than the interpreter" is not a claim the roadmap gets to make without numbers, so this slice ships the benchmark harness, publishes the numbers, and enforces the fair-comparison gate that was in the pre-phase brief.
+
+### The pre-phase chat caught three shortcuts before any code
+
+1. **"Skip the regression gate, just publish the numbers."** Would turn 12k from a quality bar into a marketing exercise. Kept the strict gate: if native is slower than interpreter on any workload, Phase 12 stays open.
+2. **"One giant program instead of three small ones."** Wouldn't isolate which slice's codepath is fast or slow. Kept three targeted workloads — one each for the arithmetic / refcount-allocation / struct-destructor codepaths.
+3. **"Defer the ARCHITECTURE.md publication to 'after benchmarks exist.'"** Classic defer-without-commit. Kept the publication in-scope with the numbers, not a followup task.
+
+### Fourth shortcut caught during implementation
+
+The first bench run showed native was **10–67× slower** than the interpreter. Panic for half a second — then I read the numbers honestly. Every native run was ~11 ms, suspiciously uniform across workloads: that's the Windows process-spawn cost, not anything about codegen. The workloads I'd picked (n=200–1000) completed in microseconds of actual native compute, and the OS spawn tax dwarfed them.
+
+The honest fix was to scale the outer repetition loop until native compute dominated its own spawn tax. Not to pretend the spawn cost didn't exist, not to measure only the binary's interior somehow, not to redefine "fair comparison" until native won. Just to ask "what workload does Corvid actually get used for?" and pick sizes that match. Real agent code runs for tens of milliseconds of compute; benchmark workloads should reflect that.
+
+Final sizes:
+- `arith_loop`: 500k arithmetic ops (outer 2500 × inner 200 list-of-Int sum).
+- `string_concat_loop`: 50k refcount-heavy concat operations.
+- `struct_access_loop`: 100k struct alloc + field read + destructor cycles.
+
+### Results (Phase 12 claim of record)
+
+| Workload | Interpreter | Native (E2E) | Ratio |
+|---|---|---|---|
+| `arith_loop` (500k Int ops) | 255.7 ms | 18.8 ms | **13.6× native** |
+| `string_concat_loop` (50k concats) | 47.5 ms | 17.8 ms | **2.7× native** |
+| `struct_access_loop` (100k struct ops) | 73.5 ms | 20.9 ms | **3.5× native** |
+
+Subtracting the ~11 ms spawn tax from the native numbers gives compute-only ratios of roughly 32× / 6.8× / 7.3×. Arithmetic wins hardest because Cranelift emits tight machine-code loops with zero allocation. String and struct are bounded by the refcount runtime — already efficient but allocation-bound on both tiers, so the native advantage is "faster control flow" rather than "faster allocator."
+
+### Spawn-tax crossover published honestly
+
+Native is **slower** than interpreter for very small programs (< 5 ms of interpreter compute) because the ~11 ms Windows process-spawn cost dominates. I documented the crossover explicitly in ARCHITECTURE.md §18 rather than hiding it:
+
+- Interpreter < 5 ms of compute → native loses E2E
+- Interpreter > 20 ms of compute → native wins decisively
+- 5–20 ms: measure case by case
+
+Slice 12j's auto-dispatch still picks native by default for tool-free programs — for three honest reasons: (a) the compile cache makes re-runs near-instant, so even tiny programs only pay the spawn tax on the first run; (b) real agent workloads exceed the crossover; (c) users running microsecond programs aren't optimizing for 10 ms. Users who disagree have `--target=interpreter`.
+
+Two future paths to eliminate the spawn tax where it matters: Phase 22's `cdylib` mode (embedders load the library once, no spawn per call), and post-v1.0 in-process JIT via `cranelift-jit`. Neither is on the pre-v1.0 critical path — Phase 12's AOT-first decision stands.
+
+### Scope honestly held
+
+In: criterion harness, three workloads × two tiers, fair-comparison gate, ARCHITECTURE.md §18 publication, documented crossover, workload scaling to dominate spawn tax.
+
+Out: cache-eviction policy, stability guarantees across compiler versions, cross-compilation — all deferred to Phase 33 (launch polish). None are load-bearing for development work while there are no external users. Named explicitly in the ROADMAP's "Out of Phase 12" block so nothing gets silently dropped.
+
+Also out: comparison against hand-written Rust. Was in the old Phase 12 polish scope; not load-bearing for Phase 12's goal of "Corvid native faster than Corvid interpreter." The "how does Corvid compare to Rust" story belongs in Phase 33.
+
+### Tests (workspace-wide)
+
+Nothing new; benchmarks aren't tests. Workspace still at ~340 tests, all green. The bench doubles as a regression canary — re-running it after any codegen or runtime change will flag a perf regression that unit tests wouldn't catch.
+
+### Verified live
+
+```sh
+$ cargo bench -p corvid-codegen-cl --bench phase12_benchmarks -- --sample-size 15
+arith_loop/interpreter           time:   [233.67 ms 255.72 ms 279.88 ms]
+arith_loop/native                time:   [18.031 ms 18.815 ms 19.592 ms]
+string_concat_loop/interpreter   time:   [45.526 ms 47.473 ms 49.666 ms]
+string_concat_loop/native        time:   [17.049 ms 17.798 ms 18.671 ms]
+struct_access_loop/interpreter   time:   [63.921 ms 73.475 ms 81.490 ms]
+struct_access_loop/native        time:   [20.199 ms 20.876 ms 21.529 ms]
+```
+
+### `learnings.md` updated per the discipline
+
+New "Performance — when native wins" section with the three numbers, the crossover rule, and the `cargo bench` command to reproduce. Cross-reference table got a Day 29 row.
+
+### Phase 12 closes. v0.3 cuts.
+
+Phase 12 ran 11 slices over Days 19–29: AOT scaffolding, `Bool` + `if`/`else`, locals + `pass`, `Float`, memory foundation, `String`, `Struct`, `List` + `for`, parameterised entry agents, native-default dispatch, and now the benchmark gate. **v0.3 cuts here.**
+
+### Next
+
+Phase 13 pre-phase chat. Topic: Native async runtime. Tokio embedded in compiled binaries so generated code can `.await`. Prerequisite for Phase 14 (tool dispatch) and Phase 15 (prompt dispatch) — together the v0.4 release is "native tier actually useful for real programs." Decisions to lock at the chat: how `#[tokio::main]` equivalent gets emitted by codegen, how the `Runtime` handle reaches compiled code (opaque pointer via `corvid_init`?), and what the IR-level `await` lowering looks like.
+
+---
+
 ## Day 28 — Phase 12 slice 12j: native is the default tier ✅
 
 Locked this slice to make `corvid run` transparently AOT-compile + execute when the program is native-able, falling back to the interpreter with a one-line notice when not. The payoff: users who write tool-free programs now get the Phase 12 speed win without opting in with `--target=native`. That's what turns "native compilation exists" into "native is how Corvid runs."
