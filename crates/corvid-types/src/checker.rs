@@ -24,6 +24,8 @@ use std::collections::HashMap;
 pub struct Checked {
     /// Type assigned to each expression, keyed by the expression's span.
     pub types: HashMap<Span, Type>,
+    /// Type assigned to each local binding visible in the checked file.
+    pub local_types: HashMap<LocalId, Type>,
     /// All errors found. Reporting continues past each error.
     pub errors: Vec<TypeError>,
 }
@@ -33,6 +35,7 @@ pub fn typecheck(file: &File, resolved: &Resolved) -> Checked {
     c.check_file(file);
     Checked {
         types: c.types,
+        local_types: c.local_types,
         errors: c.errors,
     }
 }

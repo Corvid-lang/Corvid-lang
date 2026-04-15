@@ -11,7 +11,7 @@ pub mod token;
 
 pub use errors::{LexError, LexErrorKind, ParseError, ParseErrorKind};
 pub use lexer::lex;
-pub use parser::{parse_block, parse_expr, parse_file};
+pub use parser::{parse_block, parse_expr, parse_file, parse_repl_input, ReplItem};
 pub use token::{TokKind, Token};
 
 #[cfg(test)]

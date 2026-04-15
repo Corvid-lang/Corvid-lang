@@ -169,7 +169,7 @@ impl SymbolTable {
 }
 
 /// Lexical scope of local bindings (parameters and `x = ...`).
-#[derive(Debug, Default)]
+#[derive(Debug, Clone, Default)]
 pub struct LocalScope {
     locals: HashMap<String, LocalId>,
 }

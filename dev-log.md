@@ -2530,6 +2530,69 @@ Phase 17's floor (correctness) is done. Remaining 17 slices are optimization + t
 18d/18e now unblocked (Dev B can resume Phase 18 codegen + retry runtime once they're ready). My next slice: per the CTO framing earlier this session, the moat layer — 17f replay-deterministic execution — is the highest-leverage single bet. Pre-phase chat when resuming.
 
 
+---
+
+## Day 27 [B] — 2026-04-15 — Slice 19e: interactive REPL shell polish
+
+### What landed
+
+Phase 19's core REPL session (19a-19d) existed locally before this slice; 19e turns it into a real shell:
+
+- `corvid repl` now chooses a **TTY path** when stdin/stdout are terminals and a **pipe-friendly fallback** otherwise.
+- The TTY path uses `rustyline` for line editing.
+- **History persists** across sessions:
+  - Unix: `$XDG_DATA_HOME/corvid/history`, fallback `~/.local/share/corvid/history`
+  - Windows: `%APPDATA%\corvid\history`
+- **Multiline mode** works for `:`-headed blocks with the `... ` continuation prompt.
+- **Ctrl-D** exits cleanly.
+- **Ctrl-C** cancels the current in-flight turn and returns to the prompt without committing any turn state.
+
+The underlying execution model from 19c/19d stays intact: each REPL turn compiles to a synthetic one-turn agent over the current top-level locals, executes only that turn, then commits updated locals back into session state. No replay of earlier statements, no duplicated side effects.
+
+### Pre-phase decisions (the ones actually shipped)
+
+- Parsing/classification remains **first-token lookahead**, not try-all-three.
+- Session state remains **mutable (`&mut`)**, with rollback on any failed turn.
+- Tokio runtime is **one per REPL process**, created at startup and reused.
+- Imports in the REPL remain **unsupported for now** — clean error, no fake runtime-loading story.
+- Value display uses a **depth guard of 32** (`<...>`) plus a structural revisit guard for composite values.
+- `rustyline` chosen over `reedline` — simpler fit for the classic REPL surface and fine Windows support.
+
+### Mid-slice discovery
+
+The non-interactive stdin path and the interactive TTY path have different needs around blank lines:
+
+- outside replay / multiline, blank input should mostly be ignored
+- inside multiline, a blank line terminates the block
+- later replay mode will want bare Enter to mean "advance one step"
+
+So the shell loop was kept split into:
+- a line-editor-backed interactive reader
+- a buffered stdin reader for tests and pipes
+
+That keeps the current behavior correct without painting replay stepping into a corner.
+
+### Test evidence
+
+Green:
+
+```bash
+cargo test -p corvid-repl -p corvid-cli
+cargo test -p corvid-syntax -p corvid-resolve -p corvid-types -p corvid-ir -p corvid-vm -p corvid-repl -p corvid-cli
+```
+
+Coverage added:
+
+- REPL unit tests for persistent values across turns
+- REPL unit tests for type-aware display formatting
+- REPL unit tests for history-path resolution and directory creation
+- CLI smoke test for non-interactive `corvid repl`
+
+### Next
+
+Replay in the REPL, but not as guessed "turns" over the current raw JSONL. The next slice must add a replay-grade loader/model first so `:replay <trace>` is built on explicit recorded structure rather than inference.
+
+
 
 
 

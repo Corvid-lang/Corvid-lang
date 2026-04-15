@@ -33,6 +33,17 @@ pub async fn run_agent(
     args: Vec<Value>,
     runtime: &Runtime,
 ) -> Result<Value, InterpError> {
+    run_agent_with_env(ir, agent_name, args, runtime)
+        .await
+        .map(|(value, _env)| value)
+}
+
+pub async fn run_agent_with_env(
+    ir: &IrFile,
+    agent_name: &str,
+    args: Vec<Value>,
+    runtime: &Runtime,
+) -> Result<(Value, Env), InterpError> {
     let agent = ir
         .agents
         .iter()
@@ -55,7 +66,7 @@ pub async fn run_agent(
     let mut interp = Interpreter::new(ir, runtime);
     let bind_result = interp.bind_params(agent, args);
     let outcome = match bind_result {
-        Ok(()) => interp.run_body(agent).await,
+        Ok(()) => interp.run_body(agent).await.map(|value| (value, interp.env.clone())),
         Err(e) => Err(e),
     };
 

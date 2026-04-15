@@ -13,6 +13,13 @@ use corvid_ast::{
     Span, Stmt, ToolDecl, TypeDecl, TypeRef, UnaryOp, Visibility,
 };
 
+#[derive(Debug, Clone, PartialEq)]
+pub enum ReplItem {
+    Decl(Decl),
+    Stmt(Stmt),
+    Expr(Expr),
+}
+
 /// Parse a full expression from a token stream.
 ///
 /// The token stream is typically produced by [`crate::lex`]. Structural
@@ -32,6 +39,33 @@ pub fn parse_file(tokens: &[Token]) -> (File, Vec<ParseError>) {
     let mut p = Parser::new(tokens);
     let file = p.parse_file_inner();
     (file, p.errors)
+}
+
+/// Parse a single REPL turn as either a declaration, a statement, or
+/// an expression. Classification uses first-token lookahead so errors
+/// stay local and predictable.
+pub fn parse_repl_input(tokens: &[Token]) -> Result<ReplItem, Vec<ParseError>> {
+    let mut p = Parser::new(tokens);
+    p.skip_newlines();
+    let item = match p.parse_repl_item() {
+        Ok(item) => item,
+        Err(err) => return Err(vec![err]),
+    };
+    p.skip_newlines();
+    if !matches!(p.peek(), TokKind::Eof) {
+        p.errors.push(ParseError {
+            kind: ParseErrorKind::UnexpectedToken {
+                got: describe_token(p.peek()),
+                expected: "end of input".into(),
+            },
+            span: p.peek_span(),
+        });
+    }
+    if p.errors.is_empty() {
+        Ok(item)
+    } else {
+        Err(p.errors)
+    }
 }
 
 /// Parse a top-level block (expects `Indent`, statements, `Dedent`).
@@ -830,6 +864,45 @@ impl<'a> Parser<'a> {
         }
     }
 
+    fn parse_repl_item(&mut self) -> Result<ReplItem, ParseError> {
+        if matches!(
+            self.peek(),
+            TokKind::KwImport
+                | TokKind::KwType
+                | TokKind::KwTool
+                | TokKind::KwPrompt
+                | TokKind::KwAgent
+                | TokKind::KwExtend
+        ) {
+            return self.parse_decl().map(ReplItem::Decl);
+        }
+
+        if self.starts_stmt() {
+            return self.parse_stmt().map(ReplItem::Stmt);
+        }
+
+        let expr = self.parse_expr()?;
+        self.expect_newline()?;
+        Ok(ReplItem::Expr(expr))
+    }
+
+    fn starts_stmt(&self) -> bool {
+        match self.peek() {
+            TokKind::KwReturn
+            | TokKind::KwIf
+            | TokKind::KwFor
+            | TokKind::KwApprove
+            | TokKind::KwBreak
+            | TokKind::KwContinue
+            | TokKind::KwPass => true,
+            TokKind::Ident(_) => matches!(
+                self.tokens.get(self.pos + 1).map(|t| &t.kind),
+                Some(TokKind::Assign)
+            ),
+            _ => false,
+        }
+    }
+
     /// Skip tokens until we reach a token that could start a declaration
     /// (or EOF). Used after a parse error at the top level.
     fn sync_to_next_decl(&mut self) {
@@ -1289,6 +1362,11 @@ mod tests {
         parse_expr(&tokens)
     }
 
+    fn parse_repl(src: &str) -> ReplItem {
+        let tokens = lex(src).expect("lex failed");
+        parse_repl_input(&tokens).expect("repl parse failed")
+    }
+
     // -------------------- literals --------------------
 
     #[test]
@@ -1588,6 +1666,30 @@ mod tests {
     fn rejects_retry_without_backoff_policy_kind() {
         let err = try_parse("try fetch() on error retry 2 times backoff 100").unwrap_err();
         assert!(matches!(err.kind, ParseErrorKind::UnexpectedToken { .. }));
+    }
+
+    #[test]
+    fn repl_classifies_decl_by_leading_keyword() {
+        let item = parse_repl("tool greet(name: String) -> String\n");
+        assert!(matches!(item, ReplItem::Decl(Decl::Tool(_))));
+    }
+
+    #[test]
+    fn repl_classifies_assignment_as_stmt() {
+        let item = parse_repl("x = 1\n");
+        assert!(matches!(item, ReplItem::Stmt(Stmt::Let { .. })));
+    }
+
+    #[test]
+    fn repl_classifies_control_flow_as_stmt() {
+        let item = parse_repl("return 1\n");
+        assert!(matches!(item, ReplItem::Stmt(Stmt::Return { .. })));
+    }
+
+    #[test]
+    fn repl_classifies_other_input_as_expr() {
+        let item = parse_repl("greet(name)\n");
+        assert!(matches!(item, ReplItem::Expr(Expr::Call { .. })));
     }
 
     // -------------------- realistic agent snippets --------------------

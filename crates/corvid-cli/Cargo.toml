@@ -11,5 +11,6 @@ path = "src/main.rs"
 
 [dependencies]
 corvid-driver = { workspace = true }
+corvid-repl = { workspace = true }
 clap = { workspace = true }
 anyhow = { workspace = true }

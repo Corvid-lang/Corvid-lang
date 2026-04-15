@@ -11,10 +11,12 @@
 
 pub mod checker;
 pub mod errors;
+pub mod repl;
 pub mod types;
 
 pub use checker::{typecheck, Checked};
 pub use errors::{TypeError, TypeErrorKind};
+pub use repl::{CheckedTurn, ReplLocal, ReplSession, ReplTurnBuild, REPL_RESULT_NAME};
 pub use types::Type;
 
 #[cfg(test)]

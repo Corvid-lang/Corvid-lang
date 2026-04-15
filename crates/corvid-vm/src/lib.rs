@@ -22,13 +22,15 @@ pub mod conv;
 pub mod env;
 pub mod errors;
 pub mod interp;
+pub mod repl_display;
 pub mod schema;
 pub mod value;
 
 pub use conv::{json_to_value, value_to_json, ConvError};
 pub use env::Env;
 pub use errors::{InterpError, InterpErrorKind};
-pub use interp::{bind_and_run_agent, build_struct, run_agent};
+pub use interp::{bind_and_run_agent, build_struct, run_agent, run_agent_with_env};
+pub use repl_display::render_value;
 pub use schema::schema_for;
 pub use value::{StructValue, Value};
 

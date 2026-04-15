@@ -5,6 +5,7 @@
 //!   corvid check <file>       type-check a source file
 //!   corvid build <file>       compile to target/py/<name>.py
 //!   corvid run <file>         build + invoke python on the output
+//!   corvid repl               start the interactive REPL
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -61,6 +62,8 @@ enum Command {
     },
     /// Run tests (not yet implemented).
     Test,
+    /// Start the interactive Corvid REPL.
+    Repl,
     /// Check the local environment for required tools.
     Doctor,
 }
@@ -81,6 +84,7 @@ fn main() -> ExitCode {
             eprintln!("`corvid test` is not implemented yet (v0.2).");
             Ok(0)
         }
+        Some(Command::Repl) => cmd_repl(),
         Some(Command::Doctor) => cmd_doctor(),
         None => {
             println!("corvid — the AI-native language compiler");
@@ -181,6 +185,11 @@ fn cmd_run(file: &Path, target: &str, tools_lib: Option<&Path>) -> Result<u8> {
     // `RunTarget` docs in corvid-driver for the exact semantics.
     run_with_target(file, rt, tools_lib)
         .with_context(|| format!("failed to run `{}`", file.display()))
+}
+
+fn cmd_repl() -> Result<u8> {
+    corvid_repl::Repl::run_stdio().context("failed to run `corvid repl`")?;
+    Ok(0)
 }
 
 // ------------------------------------------------------------

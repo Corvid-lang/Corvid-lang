@@ -9,12 +9,14 @@
 #![allow(dead_code)]
 
 pub mod errors;
+pub mod repl;
 pub mod resolver;
 pub mod scope;
 
 pub use errors::{ResolveError, ResolveErrorKind};
+pub use repl::{ReplResolveSession, ResolvedTurn};
 pub use resolver::{resolve, Resolved};
-pub use scope::{Binding, BuiltIn, DeclEntry, DeclKind, DefId, LocalId, SymbolTable};
+pub use scope::{Binding, BuiltIn, DeclEntry, DeclKind, DefId, LocalId, LocalScope, SymbolTable};
 
 #[cfg(test)]
 mod tests {
