@@ -43,12 +43,20 @@ void corvid_on_exit(void) {
     }
 }
 
+extern void corvid_stack_maps_dump(void);
+extern int corvid_stack_maps_should_dump(void);
+
 /* Called as the first instruction of generated main. Registers the
  * exit handler so leak counters get printed regardless of how main
- * eventually returns.
+ * eventually returns. Phase 17c — also dumps the stack-map table
+ * when CORVID_DEBUG_STACK_MAPS is set, so the integration test can
+ * inspect what codegen emitted.
  */
 void corvid_init(void) {
     atexit(corvid_on_exit);
+    if (corvid_stack_maps_should_dump()) {
+        corvid_stack_maps_dump();
+    }
 }
 
 /* ---- arity check -------------------------------------------------- */

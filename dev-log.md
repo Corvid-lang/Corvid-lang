@@ -2366,6 +2366,82 @@ The next real work is **17c (Cranelift safepoints + stack maps)** followed by **
 When this session resumes, step one is the pre-phase chat for slice 17c. No more 17b work until 17d lands.
 
 
+---
+
+## Day 25 — 2026-04-15 — Slice 17c: Cranelift safepoints + stack map table
+
+### What landed
+
+End-to-end infrastructure for the 17d cycle collector's mark phase: Cranelift-emitted user stack maps extracted at codegen time, written into a `corvid_stack_maps` data symbol with function-pointer relocations, and looked up at runtime by a `corvid_stack_maps_find(return_pc)` helper that 17d will call when walking task stacks.
+
+Six concrete pieces, each load-bearing:
+
+1. **`declare_value_needs_stack_map` at refcounted Value production sites.** In `lowering.rs`, every refcounted `IrExprKind::Local`-flow Value (parameter entry, Let-binding, for-loop element) is registered with Cranelift's safepoint-liveness pass. The pass spills these Values to known stack slots before any non-tail call and records their SP-relative offsets in a per-function `UserStackMap`.
+
+2. **`define_function_with_stack_maps` helper** — replaces the four `module.define_function` call sites in `lowering.rs` (struct destructor, struct trace fn, entry trampoline, agent bodies) with a pattern that replicates `cranelift-object`'s internal two-step flow (`ctx.compile` → `define_function_bytes`) while intercepting `user_stack_maps()` in between. This rescues the stack-map data that `ObjectModule::define_function` otherwise silently discards.
+
+3. **`RuntimeFuncs.stack_maps`** — `RefCell<HashMap<FuncId, Vec<(CodeOffset, u32, UserStackMap)>>>` accumulator populated by the helper, read at end of `lower_file`.
+
+4. **`emit_stack_map_table`** — declares + defines the `corvid_stack_maps` data symbol with binary layout matching a C struct in `stack_maps.c`:
+
+    ```text
+        [0..8]   u64  entry_count
+        [8..16]  u64  reserved
+        entries[entry_count] — each 32 bytes:
+            +0   const void* fn_start     (reloc'd via write_function_addr)
+            +8   u32 pc_offset
+            +12  u32 frame_bytes
+            +16  u32 ref_count
+            +20  u32 _pad
+            +24  const u32* ref_offsets   (self-data-reloc'd into refs pool)
+        refs pool: flat u32 array, each an SP-relative byte offset of a
+                   live refcounted pointer at the corresponding safepoint
+    ```
+
+    Emitted every build (even when empty) so downstream consumers never fail with unresolved-symbol errors on Corvid programs that have no refcounted values.
+
+5. **Runtime C helper `corvid_stack_maps_find(return_pc)`** in new `crates/corvid-runtime/runtime/stack_maps.c`. Linear scan — acceptable for v0.1 (<1000 entries); upgradeable to binary search later. Plus `corvid_stack_maps_dump()` + `corvid_stack_maps_entry_count` + `corvid_stack_maps_entry_at` for the integration test and future debug builds. Wired into `corvid_init` (entry.c) to fire when `CORVID_DEBUG_STACK_MAPS=1`.
+
+6. **4 integration tests in `tests/stack_maps.rs`:**
+   - `primitive_only_program_emits_empty_table` — load-bearing invariant (symbol exists on all programs)
+   - `refcounted_local_across_call_emits_entries` — non-zero entries with plausible fn_start, pc_offset, frame_bytes, ref_count, ref_offsets values
+   - `multiple_refcounted_locals_emit_multiple_entries` — distinct call sites produce distinct entries
+   - `parser_handles_empty_refs_brackets` — unit test on the test's dump-parser for the `refs=[]` edge case
+
+    Each test compiles a Corvid program, runs the binary with `CORVID_DEBUG_STACK_MAPS=1`, parses the emitted `STACK_MAP_ENTRY` lines, and asserts the table's shape is correct end-to-end. If any relocation (function-pointer or self-data) is broken, `fn_start` becomes NULL or `ref_offsets` becomes wild and the tests catch it.
+
+### Parallel coordination with Developer B (Phase 18a/18b/18c)
+
+This slice shipped in parallel with Dev B's Phase 18 work (Result/Option/`?`/try-retry — parser, AST, resolver, typechecker, IR variants, interpreter, schema). Their IR additions (six new `IrExprKind` variants + two new `Type` variants) forced corresponding match-arm additions in files I own:
+
+- `crates/corvid-codegen-cl/src/lowering.rs` — four match sites (lower_expr, visit_expr_types, expr_uses_runtime, check_entry_boundary_type, cl_type_for, mangle_type_name). Each new variant returns a clean `CodegenError::not_supported` pointing at slice 18d / 18e as where the real handling lands.
+- `crates/corvid-codegen-cl/src/ownership.rs` — two borrow-inference match sites. Recurse into sub-expressions so sub-refs are still analyzed.
+- `crates/corvid-codegen-py/src/codegen.rs` — Python transpile tier. Same pattern: emit a Python-invalid `NotImplementedError`-raising generator expression so transpiled programs fail loudly at runtime rather than produce subtly-wrong Python.
+- `crates/corvid-driver/src/native_ability.rs` — added `NotNativeReason::Phase18Unfinished` so the auto-dispatcher routes Phase-18-using programs to the interpreter tier automatically.
+- `crates/corvid-codegen-cl/tests/parity.rs` — `struct_with_bool_field` renamed field `on` → `enabled`. Dev B's 18a parser promoted `on` to a hard keyword (part of `try...on error retry` syntax), breaking programs that used it as a struct-field identifier. **Flagged as a backward-compat issue** — a future 18-polish slice should consider making `on` a context-sensitive soft keyword to unbreak existing code.
+
+### Per the no-shortcuts rule (#8): discoveries mid-implementation
+
+Two discoveries surfaced and were implemented end-to-end rather than stubbed:
+
+1. **`ObjectModule::define_function` discards stack maps.** The rescue pattern via `define_function_bytes` was real work (~80 lines of helper + four call-site rewrites), not a workaround.
+2. **Dev B's parallel work broke workspace compile.** The conflict-resolution pattern (add proper match arms with clean errors in all four consumer files — codegen-cl, codegen-py, driver, ownership pass) was done across every affected crate, not just the one where my tests run. Flagging the `on`-keyword BC issue for Dev B rather than silently papering over it.
+
+### Test evidence
+
+Full codegen-cl suite: **116 tests, zero failures.** Breakdown:
+- 105 parity tests
+- 6 baseline RC counts (Phase 17b reductions preserved)
+- 4 stack_maps integration tests (new)
+- 1 ffi_bridge_smoke
+
+Workspace-wide `cargo build --release` clean. `ALLOCS == RELEASES` holds on every parity fixture.
+
+### Next
+
+Slice 17d — the cycle collector itself. 17c's typeinfo `trace_fn` (from 17a) + stack map table (from 17c) are the two inputs 17d needs for mark phase: walk the task stack, look up each return PC via `corvid_stack_maps_find`, mark the refcounted pointers at the recorded SP-relative offsets, recursively mark through `trace_fn`. Sweep phase frees unreachable objects. Pre-phase chat when resuming.
+
+
 
 
 

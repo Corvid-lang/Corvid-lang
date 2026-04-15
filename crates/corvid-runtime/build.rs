@@ -26,6 +26,7 @@ fn main() {
         .file(runtime_dir.join("lists.c"))
         .file(runtime_dir.join("entry.c"))
         .file(runtime_dir.join("shim.c"))
+        .file(runtime_dir.join("stack_maps.c"))
         .opt_level(2);
 
     // C standard: C11 kept for designated initializers in static
@@ -74,5 +75,6 @@ fn main() {
     println!("cargo:rerun-if-changed=runtime/lists.c");
     println!("cargo:rerun-if-changed=runtime/entry.c");
     println!("cargo:rerun-if-changed=runtime/shim.c");
+    println!("cargo:rerun-if-changed=runtime/stack_maps.c");
     println!("cargo:rerun-if-changed=build.rs");
 }

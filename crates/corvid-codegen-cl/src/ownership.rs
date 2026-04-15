@@ -327,6 +327,18 @@ fn expr_consumes_target(
             }
             false
         }
+        // Phase 18 IR variants — Result/Option construction stores
+        // the inner value into a tagged-union payload (consuming
+        // position). `?` propagation conditionally returns the
+        // value; if `target` is referenced inside, it's consumed
+        // along the propagation path. `try ... retry` likewise
+        // consumes the body's value on each iteration.
+        IrExprKind::ResultOk { inner }
+        | IrExprKind::ResultErr { inner }
+        | IrExprKind::OptionSome { inner }
+        | IrExprKind::TryPropagate { inner } => expr_references(inner, target),
+        IrExprKind::OptionNone => false,
+        IrExprKind::TryRetry { body, .. } => expr_references(body, target),
     }
 }
 
@@ -346,6 +358,13 @@ fn expr_references(expr: &IrExpr, target: LocalId) -> bool {
         }
         IrExprKind::List { items } => items.iter().any(|i| expr_references(i, target)),
         IrExprKind::Call { args, .. } => args.iter().any(|a| expr_references(a, target)),
+        // Phase 18 IR variants — recurse into sub-expressions.
+        IrExprKind::ResultOk { inner }
+        | IrExprKind::ResultErr { inner }
+        | IrExprKind::OptionSome { inner }
+        | IrExprKind::TryPropagate { inner } => expr_references(inner, target),
+        IrExprKind::OptionNone => false,
+        IrExprKind::TryRetry { body, .. } => expr_references(body, target),
     }
 }
 

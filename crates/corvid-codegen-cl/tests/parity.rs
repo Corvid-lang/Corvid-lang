@@ -909,15 +909,20 @@ agent main() -> Int:
 
 #[test]
 fn struct_with_bool_field() {
+    // Phase 18 promoted `on` to a hard keyword (used by
+    // `try ... on error retry ...` syntax). The field was renamed
+    // `enabled` to unbreak this test. TODO (Dev B or 18-polish
+    // slice): consider making `on` a context-sensitive / soft
+    // keyword so user identifiers with that name keep working.
     assert_parity_bool(
         "\
 type Flag:
-    on: Bool
+    enabled: Bool
     code: Int
 
 agent main() -> Bool:
     f = Flag(true, 42)
-    return f.on
+    return f.enabled
 ",
         true,
     );

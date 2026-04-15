@@ -282,6 +282,38 @@ impl Codegen {
                 self.emit_expr_list(items);
                 self.out.write("]");
             }
+            // Phase 18 IR variants — Result/Option construction +
+            // ? / try-retry control flow. The Python transpile tier
+            // gets full Result/Option support in slice 18d (likely
+            // emitting `Ok(x)` / `Err(e)` / `Some(x)` / `None` as
+            // small Python wrapper classes, or as 2-tuples; design
+            // decision in 18d's pre-phase chat).
+            //
+            // Until then this tier emits a marker that's invalid
+            // Python on purpose — programs using these features
+            // simply don't transpile, with a clear error in the
+            // generated source. The interpreter tier handles them
+            // fully (Dev B's 18a-18c work).
+            IrExprKind::ResultOk { .. } | IrExprKind::ResultErr { .. } => {
+                self.out.write(
+                    "(_ for _ in ()).throw(NotImplementedError(\"Result codegen lands in 18d-py\"))",
+                );
+            }
+            IrExprKind::OptionSome { .. } | IrExprKind::OptionNone => {
+                self.out.write(
+                    "(_ for _ in ()).throw(NotImplementedError(\"Option codegen lands in 18d-py\"))",
+                );
+            }
+            IrExprKind::TryPropagate { .. } => {
+                self.out.write(
+                    "(_ for _ in ()).throw(NotImplementedError(\"`?` codegen lands in 18d-py\"))",
+                );
+            }
+            IrExprKind::TryRetry { .. } => {
+                self.out.write(
+                    "(_ for _ in ()).throw(NotImplementedError(\"`try ... retry` codegen lands in 18e-py\"))",
+                );
+            }
         }
     }
 
@@ -374,6 +406,12 @@ fn python_type_hint_of(ty: &corvid_types::Type) -> String {
         T::Bool => "bool".into(),
         T::Nothing => "None".into(),
         T::Struct(_) | T::Function { .. } | T::List(_) | T::Unknown => "object".into(),
+        // Phase 18 — emitting "object" here is a safe approximation
+        // until 18d-py decides on Python's representation
+        // (wrapper classes vs typing.Optional[T] vs plain T-or-Exception
+        // patterns). Result types likely render as `object` (union
+        // type) in Python 3.10+ or `typing.Union[...]` for older.
+        T::Result(_, _) | T::Option(_) => "object".into(),
     }
 }
 

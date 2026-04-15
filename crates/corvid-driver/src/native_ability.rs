@@ -27,6 +27,12 @@ pub enum NotNativeReason {
     /// supplies a tools staticlib (`--with-tools-lib`). Without one,
     /// the scan reports this reason and the dispatcher falls back.
     ToolCall { name: String },
+    /// Phase 18 language features (Result/Option/`?`/`try-retry`)
+    /// parse, typecheck, and interpret fully today. Native codegen
+    /// for tagged-union layout and retry desugaring lands in slices
+    /// 18d / 18e. Until then the dispatcher routes Phase-18-using
+    /// programs to the interpreter tier.
+    Phase18Unfinished,
 }
 
 impl std::fmt::Display for NotNativeReason {
@@ -39,6 +45,10 @@ impl std::fmt::Display for NotNativeReason {
             Self::ToolCall { name } => write!(
                 f,
                 "program calls tool `{name}` — pass `--with-tools-lib <path>` pointing at your compiled `#[tool]` staticlib, or let auto-dispatch fall back to the interpreter"
+            ),
+            Self::Phase18Unfinished => write!(
+                f,
+                "program uses `Result` / `Option` / `?` / `try ... retry` — native codegen for tagged unions + retry desugaring lands in slices 18d / 18e. Interpreter tier handles it fully today."
             ),
         }
     }
@@ -156,6 +166,25 @@ fn scan_expr(expr: &IrExpr) -> Result<(), NotNativeReason> {
                 scan_expr(it)?;
             }
             Ok(())
+        }
+        // Phase 18 IR variants — Result/Option/?/try-retry. Until
+        // slice 18d lands native codegen for these, the native-
+        // ability check routes programs that use them to the
+        // interpreter tier. Recurse into sub-expressions so any
+        // nested tool/prompt calls inside still get flagged
+        // correctly (their non-native reasons take precedence over
+        // the Phase-18 gap).
+        IrExprKind::ResultOk { inner }
+        | IrExprKind::ResultErr { inner }
+        | IrExprKind::OptionSome { inner }
+        | IrExprKind::TryPropagate { inner } => {
+            scan_expr(inner)?;
+            Err(NotNativeReason::Phase18Unfinished)
+        }
+        IrExprKind::OptionNone => Err(NotNativeReason::Phase18Unfinished),
+        IrExprKind::TryRetry { body, .. } => {
+            scan_expr(body)?;
+            Err(NotNativeReason::Phase18Unfinished)
         }
     }
 }
