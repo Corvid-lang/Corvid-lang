@@ -2958,8 +2958,19 @@ fn lower_for(
     let elem_cl_ty = cl_type_for(&elem_ty, span)?;
     let elem_refcounted = is_refcounted_type(&elem_ty);
 
-    // Lower the iterator expression — Owned +1 if refcounted list.
-    let list_ptr = lower_expr(builder, iter, env, func_ids_by_def, module, runtime)?;
+    // Phase 17b-1b.4 peephole: iter-as-bare-Local borrow. Same
+    // correctness argument as 17b-1b.3's FieldAccess/Index — the
+    // loop's use of `list_ptr` (length load + per-element load +
+    // bounds arithmetic) only READS the list's memory; never
+    // mutates the list's refcount or escapes the pointer. If iter
+    // is a bare Local of the enclosing scope, we can borrow it:
+    // skip the ownership-conversion retain at lower_expr time AND
+    // skip the paired release at loop exit. The Local's binding
+    // stays Live in its enclosing scope, governed by the usual
+    // scope-exit release.
+    let (list_ptr, list_borrowed) = lower_container_maybe_borrowed(
+        builder, iter, env, func_ids_by_def, module, runtime,
+    )?;
 
     // Load length from offset 0 of the list payload.
     let length = builder.ins().load(
@@ -3085,9 +3096,10 @@ fn lower_for(
     builder.seal_block(exit_b);
     loop_stack.pop();
 
-    // Release the list pointer we retained at the top (lower_expr
-    // returned an Owned ref if refcounted).
-    if is_refcounted_type(&iter.ty) {
+    // Release the list pointer we retained at the top — only if we
+    // actually produced a +1 (non-borrowed path). When iter was a
+    // bare Local we borrowed it and there's nothing to release.
+    if is_refcounted_type(&iter.ty) && !list_borrowed {
         emit_release(builder, module, runtime, list_ptr);
     }
     Ok(BlockOutcome::Normal)

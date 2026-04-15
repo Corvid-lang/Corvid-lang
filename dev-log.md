@@ -2206,6 +2206,48 @@ Still higher-leverage peephole targets unclaimed:
 The full use-list + Dup/Drop insertion pass (now 17b-1b.6 in the naming scheme) remains the eventual landing for everything the peepholes don't cleanly cover. But Phase 17b is already delivering substantial wins via incremental small-commit peepholes without taking the monolithic-rewrite risk.
 
 
+---
+
+## Day 22 — 2026-04-15 — Slice 17b-1b.4: for-loop iter-Local borrow
+
+### What landed
+
+Applied the borrow-at-use-site peephole to `lower_for`'s iter expression — the fourth member of the peephole family (after string BinOp, FieldAccess, Index). When a `for s in xs` loop's iterator (`xs`) is a bare `IrExprKind::Local`, we read the Variable directly with no ownership-conversion retain, and skip the symmetric post-loop release. Same correctness argument: the loop's length-load + per-element-load only reads the list's memory; never mutates the list's refcount or escapes the pointer. The Local binding stays Live in the enclosing scope, governed by its scope-exit release.
+
+One-line change in `lower_for`: swap `lower_expr(iter)` for `lower_container_maybe_borrowed(iter)`, conditionally skip the post-loop `emit_release` when `list_borrowed == true`.
+
+### Measured reduction
+
+`list_of_strings_iter`: **4 / 12 → 3 / 11** (save 1 retain + 1 release on the iter). Cumulative from 17b-0: 22 → 14 ops = **36%**.
+
+| Workload | 17b-0 | 17b-1b.3 | 17b-1b.4 | Total Δ |
+|---|---|---|---|---|
+| `list_of_strings_iter` | 7/15 = 22 | 4/12 = 16 | **3/11 = 14** | **36%** |
+
+### What's still on the for-loop table (deferred)
+
+The bigger for-loop win — eliminating the per-iteration retain+release pair on the loop-variable rebind — needs use-list analysis of the body ("is `s` destructively used anywhere?"). For `list_of_strings_iter`'s body (`if s == "beta": n = n + 1`), `s` only appears in a borrow-peephole-eligible position, so the loop-var retain + rebind-release pair is pure overhead: 3 retains + 3 releases (×3 iterations). Skipping that would drop the workload to ~0 retain / ~8 release.
+
+But this requires a mini-analysis pass (walk the body, classify each `IrExprKind::Local{s}` use as destructive or borrow-eligible), which is the right shape for the full `ownership::transform_agent` pass. Scoped into 17b-1b.6. Conservative in this slice — no body analysis, no risk of mis-classifying a consuming use as a borrow.
+
+### Parity + correctness
+
+105 parity tests green. 6 runtime tracer tests green. 5 baselines at updated numbers. Full workspace ~370 tests, zero failures. `ALLOCS == RELEASES` on every run.
+
+### Cumulative Phase 17b reduction table
+
+| Workload | 17b-0 baseline | Current | Cumulative Δ |
+|---|---|---|---|
+| `primitive_loop` (control) | 0 / 1 | 0 / 1 | — |
+| `string_concat_chain` | 1 / 11 = 12 | 0 / 10 | 8% |
+| `struct_build_and_destructure` | 5 / 9 = 14 | 2 / 6 = 8 | 43% |
+| `list_of_strings_iter` | 7 / 15 = 22 | **3 / 11 = 14** | **36%** |
+| `passthrough_agent` | 5 / 8 = 13 | 2 / 5 = 7 | 46% |
+
+Phase 17b has shipped **4 slices** (17b-1a scaffolding + 17b-1b.1 borrow inference + 17b-1b.2 string-BinOp peephole + 17b-1b.3 FieldAccess/Index peephole + 17b-1b.4 for-loop iter peephole) for cumulative 8%-46% reductions across the non-control baselines. The remaining budget lives in call-arg caller-side borrow (17b-1b.5), the loop-var body-analysis peephole, and eventually the full monolithic ownership pass (17b-1b.6).
+
+
+
 
 
 

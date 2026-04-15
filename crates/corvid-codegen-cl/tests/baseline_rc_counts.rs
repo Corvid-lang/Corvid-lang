@@ -208,10 +208,13 @@ agent list_of_strings_iter() -> Int:
     eprintln!("BASELINE list_of_strings_iter: {c:?}");
     assert_eq!(c.allocs, 1, "list_of_strings_iter allocs");
     // 17b-1b.2 peephole: 3 iterations × `s == "beta"` where s is
-    // a bare Local — saves 3 retains + 3 releases.
-    // Pre-17b-1b.2: 7 / 15. Post: 4 / 12.
-    assert_eq!(c.retain_calls, 4, "list_of_strings_iter retain_calls");
-    assert_eq!(c.release_calls, 12, "list_of_strings_iter release_calls");
+    //   a bare Local — saves 3 retains + 3 releases.
+    // 17b-1b.4 peephole: `for s in xs` where xs is a bare Local —
+    //   iter is borrowed, saving the iter-retain + loop-exit-release
+    //   pair (1 retain + 1 release).
+    // Pre-17b-1b: 7/15. Post-17b-1b.2: 4/12. Post-17b-1b.4: 3/11.
+    assert_eq!(c.retain_calls, 3, "list_of_strings_iter retain_calls");
+    assert_eq!(c.release_calls, 11, "list_of_strings_iter release_calls");
 }
 
 #[test]
