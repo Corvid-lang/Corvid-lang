@@ -218,6 +218,42 @@ agent list_of_strings_iter() -> Int:
 }
 
 #[test]
+fn local_arg_to_borrowed_callee_baseline() {
+    // 17b-1b.5 target pattern: a bare Local arg passed to a callee
+    // whose borrow_sig says Borrowed. Without the caller-side
+    // peephole, each such call pays a retain (ownership-conversion
+    // on Local read) + a release (post-call cleanup of caller's +1).
+    // With the peephole: both elided — the callee receives the
+    // Local's value as a borrow, and since the callee's borrow
+    // inference already elides its entry-retain + scope-exit
+    // release (17b-1b.1), the whole retain/release pair on both
+    // sides collapses.
+    let src = r#"
+agent echo(s: String) -> String:
+    return s
+
+agent main() -> Int:
+    x = "shared"
+    a = echo(x)
+    b = echo(x)
+    if a == "shared":
+        return 1
+    return 0
+"#;
+    let c = run_and_count(src);
+    eprintln!("BASELINE local_arg_to_borrowed_callee: {c:?}");
+    assert_eq!(c.allocs, 0, "local_arg_to_borrowed_callee allocs");
+    // Two echo(x) calls where x is a Local + echo.borrow_sig[0] =
+    // Borrowed. Caller-side peephole skips the pre-call retain AND
+    // post-call release for each call; callee-side (17b-1b.1) skips
+    // entry-retain + scope-exit release. Both sides collapse — the
+    // retain/release traffic on x's refcount nets to zero across
+    // the call boundary.
+    assert_eq!(c.retain_calls, 2, "local_arg_to_borrowed_callee retain_calls");
+    assert_eq!(c.release_calls, 4, "local_arg_to_borrowed_callee release_calls");
+}
+
+#[test]
 fn passthrough_agent_baseline() {
     let src = r#"
 agent echo(s: String) -> String:

@@ -385,6 +385,7 @@ fn declare_runtime_funcs(
         ir_tools: HashMap::new(),
         tool_wrapper_ids: std::cell::RefCell::new(HashMap::new()),
         ir_prompts: HashMap::new(),
+        agent_borrow_sigs: HashMap::new(),
     })
 }
 
@@ -1073,6 +1074,14 @@ pub struct RuntimeFuncs {
     /// each prompt's params + template + return type to emit
     /// signature-aware bridge calls.
     pub ir_prompts: HashMap<DefId, corvid_ir::IrPrompt>,
+    /// Phase 17b-1b.5 — per-agent borrow signature, populated from
+    /// `IrAgent.borrow_sig` during `lower_file`. Consumed at
+    /// `IrCallKind::Agent` call sites to decide per-arg whether to
+    /// apply the caller-side borrow peephole: if the callee slot
+    /// is `Borrowed` AND the argument expression is a bare Local,
+    /// skip the pre-call retain (via `lower_expr`) AND the post-call
+    /// release.
+    pub agent_borrow_sigs: HashMap<DefId, Vec<corvid_ir::ParamBorrow>>,
 }
 
 impl RuntimeFuncs {
@@ -1217,6 +1226,16 @@ pub fn lower_file(
     // emit signature-aware bridge calls.
     for prompt in &ir.prompts {
         runtime.ir_prompts.insert(prompt.id, prompt.clone());
+    }
+
+    // Phase 17b-1b.5 — capture per-agent borrow_sig into the runtime
+    // table so call-site lowering can consult it without threading
+    // `&IrFile` through every function. Agents with `borrow_sig =
+    // None` fall through to the pre-17b behavior (all params Owned).
+    for agent in &ir.agents {
+        if let Some(sig) = &agent.borrow_sig {
+            runtime.agent_borrow_sigs.insert(agent.id, sig.clone());
+        }
     }
 
     // Phase 17a — emit per-type metadata in dependency order:
@@ -2250,24 +2269,61 @@ fn lower_expr(
                     )
                 })?;
                 let callee_ref = module.declare_func_in_func(*callee_id, builder.func);
-                // Lower arguments. Each refcounted arg comes back from
-                // `lower_expr` as Owned (+1). Per +0 ABI: caller does
-                // not pre-bump when passing; callee retains on entry.
-                // After the call returns, our caller's +1 is no longer
-                // needed (the callee owns its own copy now), so we
-                // release each refcounted arg.
+                // Phase 17b-1b.5 — caller-side borrow peephole. For
+                // each refcounted arg whose callee slot is Borrowed
+                // (per the callee's `borrow_sig` populated by the
+                // ownership pass) AND whose argument expression is a
+                // bare `IrExprKind::Local`, we lower the Local
+                // directly from its Variable without a retain, and
+                // skip the paired post-call release. The callee
+                // already skips its entry-retain + scope-exit release
+                // for Borrowed params (17b-1b.1), so the whole
+                // retain/release pair collapses on both sides.
+                //
+                // For Owned callee slots OR non-bare-Local args, the
+                // original +0 ABI applies: lower_expr produces a +1
+                // Owned, callee retains on entry (17b-1b.1 keeps this
+                // for Owned), caller releases its +1 after the call.
+                let callee_sig = runtime.agent_borrow_sigs.get(def_id);
                 let mut arg_vals = Vec::with_capacity(args.len());
-                let mut arg_refcounted: Vec<bool> = Vec::with_capacity(args.len());
-                for a in args {
-                    arg_vals.push(lower_expr(
+                // `needs_post_release[i]` = true iff the caller
+                // produced a +1 that must be released post-call
+                // (false when borrow peephole applies).
+                let mut needs_post_release: Vec<bool> = Vec::with_capacity(args.len());
+                for (i, a) in args.iter().enumerate() {
+                    let is_ref = is_refcounted_type(&a.ty);
+                    let callee_borrowed = callee_sig
+                        .and_then(|s| s.get(i).copied())
+                        .map(|b| matches!(b, corvid_ir::ParamBorrow::Borrowed))
+                        .unwrap_or(false);
+                    let arg_is_bare_local =
+                        matches!(&a.kind, IrExprKind::Local { .. });
+                    if is_ref && callee_borrowed && arg_is_bare_local {
+                        // Borrow path: read the Variable directly, no retain.
+                        if let IrExprKind::Local { local_id, name } = &a.kind {
+                            let (var, _ty) = env.get(local_id).ok_or_else(|| {
+                                CodegenError::cranelift(
+                                    format!("no variable for local `{name}` — compiler bug"),
+                                    a.span,
+                                )
+                            })?;
+                            let v = builder.use_var(*var);
+                            arg_vals.push(v);
+                            needs_post_release.push(false);
+                            continue;
+                        }
+                    }
+                    // Normal path: +1 Owned, caller releases after call.
+                    let v = lower_expr(
                         builder,
                         a,
                         env,
                         func_ids_by_def,
                         module,
                         runtime,
-                    )?);
-                    arg_refcounted.push(is_refcounted_type(&a.ty));
+                    )?;
+                    arg_vals.push(v);
+                    needs_post_release.push(is_ref);
                 }
                 let call = builder.ins().call(callee_ref, &arg_vals);
                 let results = builder.inst_results(call);
@@ -2281,10 +2337,8 @@ fn lower_expr(
                     ));
                 }
                 let result = results[0];
-                // Release each refcounted arg's +1 (the callee took its
-                // own ownership via parameter retain).
-                for (v, is_ref) in arg_vals.iter().zip(arg_refcounted.iter()) {
-                    if *is_ref {
+                for (v, needs) in arg_vals.iter().zip(needs_post_release.iter()) {
+                    if *needs {
                         emit_release(builder, module, runtime, *v);
                     }
                 }

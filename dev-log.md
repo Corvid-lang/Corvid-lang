@@ -2247,6 +2247,71 @@ But this requires a mini-analysis pass (walk the body, classify each `IrExprKind
 Phase 17b has shipped **4 slices** (17b-1a scaffolding + 17b-1b.1 borrow inference + 17b-1b.2 string-BinOp peephole + 17b-1b.3 FieldAccess/Index peephole + 17b-1b.4 for-loop iter peephole) for cumulative 8%-46% reductions across the non-control baselines. The remaining budget lives in call-arg caller-side borrow (17b-1b.5), the loop-var body-analysis peephole, and eventually the full monolithic ownership pass (17b-1b.6).
 
 
+---
+
+## Day 23 — 2026-04-15 — Slice 17b-1b.5: call-arg caller-side borrow
+
+### What landed
+
+Completes the caller/callee borrow story. Callee-side borrow (17b-1b.1) skipped entry-retain + scope-exit release for refcounted parameters whose body doesn't consume them. Caller side was still paying the pre-call retain + post-call release — which is pure overhead when the callee doesn't actually take ownership.
+
+Now both sides collapse: when a bare `IrExprKind::Local` arg is passed to a callee slot whose `borrow_sig[i] = Borrowed`, the caller reads the Local's Variable directly (no retain) AND skips the post-call release. The Local's refcount crosses the call boundary as a borrow with zero RC traffic in either direction.
+
+Implementation:
+- New field `RuntimeFuncs.agent_borrow_sigs: HashMap<DefId, Vec<ParamBorrow>>` populated in `lower_file` from each `IrAgent.borrow_sig`.
+- `IrCallKind::Agent` call-site lowering reshaped: per-arg, check `(is_refcounted && callee_borrowed && arg_is_bare_local)`. If all three, bypass `lower_expr` and `emit_release` entirely. Otherwise fall through to the original +0 ABI (lower_expr produces +1, release after call).
+- Existing baselines unchanged — none pass bare-Locals to callees whose `borrow_sig = Borrowed`. A new baseline workload was added to specifically exercise this pattern and lock in the measured win.
+
+### Measured reduction (new baseline)
+
+New workload `local_arg_to_borrowed_callee`:
+
+```corvid
+agent echo(s: String) -> String:
+    return s
+
+agent main() -> Int:
+    x = "shared"
+    a = echo(x)
+    b = echo(x)
+    if a == "shared":
+        return 1
+    return 0
+```
+
+`echo.borrow_sig[0] = Borrowed` (no consumer of `s`). Each `echo(x)` call exercises the peephole: x is a bare Local, callee slot is Borrowed, both sides skip RC. Final measured: **2 retain / 4 release**.
+
+Without 17b-1b.5 (caller-side only): each call would have paid 1 retain (lower_expr on Local) + 1 release (post-call cleanup), so **2 echo calls would add 2 retains + 2 releases** on top of the 2/4 we actually measured. The caller-side borrow peephole net saves 4 RC ops across this workload's 2 call sites.
+
+### Architecture implication for future slices
+
+17b-1b.5 is the first slice where the ownership-analysis output (borrow_sigs) is consumed by call-site codegen. That's the infrastructure shape 17b-1c (whole-program retain/release pair elimination using function summaries) will extend. The `agent_borrow_sigs` HashMap will gain siblings for `may_retain` / `may_release` / `borrows_param` when that slice lands.
+
+### Parity + correctness
+
+105 parity tests green. 6 runtime tracer tests green. 6 baselines (including the new `local_arg_to_borrowed_callee`) pass. Full workspace ~370 tests, zero failures. `ALLOCS == RELEASES` on every run.
+
+### Remaining peephole budget
+
+- **Loop-var body analysis** — the biggest unclaimed win. Would drop `list_of_strings_iter` by ~6 ops if the pass can prove the loop variable is never destructively used in the body.
+- **List literal item Locals** — genuinely consuming (items are stored into the list). Different semantics; needs different treatment.
+- **Scope-exit Drop redundancy** — some scope-exit releases are provably redundant given move-at-last-use in the enclosing block. Needs use-list analysis.
+
+All three land in the monolithic ownership pass (17b-1b.6). The incremental peephole series (17b-1b.1 through .5) is effectively complete for the call-boundary and read-position patterns it targeted.
+
+### Phase 17b running scoreboard
+
+| Workload | 17b-0 baseline | Current | Cumulative Δ |
+|---|---|---|---|
+| `primitive_loop` (control) | 0/1 | 0/1 | — |
+| `string_concat_chain` | 1/11 = 12 | 0/10 | 8% |
+| `struct_build_and_destructure` | 5/9 = 14 | 2/6 = 8 | 43% |
+| `list_of_strings_iter` | 7/15 = 22 | 3/11 = 14 | 36% |
+| `passthrough_agent` | 5/8 = 13 | 2/5 = 7 | 46% |
+| `local_arg_to_borrowed_callee` | n/a (new) | 2/4 = 6 | new peak |
+
+
+
 
 
 
