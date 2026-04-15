@@ -2716,6 +2716,84 @@ Coverage added:
 
 The broad package test command surfaces two failing cycle-collector tests in `crates/corvid-runtime/tests/cycle_collector.rs`. Those failures are outside this slice's claimed surface and were already present in the active Phase 17 collector workstream. I did not touch the runtime C collector files or try to fold that unrelated work into this slice.
 
+---
+
+## Day 28 — Slice 17f++: replay-deterministic GC trigger log + shadow-count refcount verifier
+
+### Pre-phase commitments
+
+Before code, picked the powerful framing for each axis (no shortcuts):
+
+- **Trigger counter**: safepoint-count beats alloc-count for optimizer invariance — 17b elides allocations but doesn't move safepoints. Wired the runtime infrastructure (`corvid_safepoint_count`, `corvid_safepoint_notify`) but deferred codegen emission of the notify call to a future micro-slice; no behavior depends on it yet.
+- **Verifier semantics**: full shadow-count (β), not the cheap reachability-implies-nonzero (α). (α) catches under-counts only. The whole point of running the verifier is to audit the ownership optimizer for both directions of drift, so (β) is the only honest choice.
+- **Gating**: `CORVID_GC_VERIFY=off|warn|abort`. `off` is default, zero cost (single branch on a global int that's almost always 0). `warn` for CI, `abort` for fuzzing.
+- **Blame**: PCs stamped on every retain/release via `_ReturnAddress()` (MSVC) / `__builtin_return_address(0)` (GCC). Drift reports localize the bug to source via the stack-map table emitted by 17c.
+- **Determinism**: not about the counter — about *recording trigger points*. Every GC cycle appends `(alloc_count, safepoint_count, cycle_index)` to a trigger log. Phase 19 replay can read the log and replay GC at identical logical points across runs even if the optimizer changes alloc patterns. Recording side ships now; replay-side consume hooks slot in when Phase 19's replay-stream format lands.
+
+### Implementation
+
+Six files touched:
+
+1. `crates/corvid-runtime/runtime/verify.c` (new). Open-addressed shadow-count map keyed by block address; second open-addressed visited-set to drive recursion. Walks reachable graph from mark-bit-set blocks (collector pre-marked them) plus any explicit roots, accumulating expected refcount per block. Diffs against actual; reports drift with full blame.
+2. `crates/corvid-runtime/runtime/alloc.c`. Tracking-node prefix gained two pointer fields: `last_retain_pc`, `last_release_pc`. Stamped by `corvid_retain` / `corvid_release` via the return-address intrinsics. Initial alloc stamps `last_retain_pc` to the alloc caller (it owns the initial refcount-of-1). Also added `corvid_safepoint_count` global + `corvid_safepoint_notify` exported function.
+3. `crates/corvid-runtime/runtime/collector.c`. Trigger-log append at the top of both `corvid_gc` and `corvid_gc_from_roots`. Verifier invocation between mark and sweep (both paths) when `corvid_gc_verify_mode != 0`. Tracking-node struct mirrored to match alloc.c's extension. C-visible accessors `corvid_gc_trigger_log_length` / `corvid_gc_trigger_log_at`.
+4. `crates/corvid-runtime/runtime/entry.c`. Parses `CORVID_GC_VERIFY` env var (`warn|1` → 1, `abort|2` → 2, anything else → 0). Exit-time summary: if any drift was reported during the run, prints the cumulative count to stderr.
+5. `crates/corvid-runtime/build.rs`. Wired `verify.c` into the cc build + rerun-if-changed.
+6. `crates/corvid-runtime/tests/gc_verify.rs` (new). Three integration tests: clean graph reports zero drift, deliberately corrupted refcount is detected with non-null blame PCs, trigger-log grows monotonically per GC cycle.
+
+### Discoveries during implementation
+
+1. **Visit-bit can't squat in the refcount word.** First draft tried to use bit 60 of `refcount_word` as a verifier "visited" flag, but bit 60 is part of the count space (bits 0..60). Switched to a separate open-addressed visited-set. Cleaner anyway — verifier state stays out of the GC's bit-budget.
+2. **Stack-rooted blocks need to be counted as one incoming edge.** During the verifier traversal, I almost forgot that a block held only on the stack still has refcount 1. Added an explicit bump for marked-but-not-edge-reached blocks during the marked-list scan. The collector marked them; the verifier needs to know "the stack contributes one edge." Now the invariant holds: refcount = edges from reachable graph + edges from stack roots.
+3. **Drift report must include a diagnosis hint.** Raw "expected vs actual" forces the user to think about what direction means what. Added a one-liner: under-count ⇒ missing retain (UAF risk), over-count ⇒ missing release (leak). Costs nothing, halves the time-to-bug for a developer reading the report.
+
+### Test evidence
+
+```
+cargo test -p corvid-runtime --test gc_verify
+running 3 tests
+test trigger_log_grows_per_cycle ... ok
+test verifier_clean_graph_no_drift ... ok
+test verifier_catches_injected_drift ... ok
+test result: ok. 3 passed; 0 failed
+```
+
+The drift-detection test produces the designed report verbatim:
+
+```
+CORVID_GC_VERIFY: refcount drift
+  block:          0x... typeinfo=Cell
+  expected_rc:    1
+  actual_rc:      3
+  diagnosis:      over-count (missing release; leak)
+  last_retain_pc: 0x7ff6d5462cb2
+  last_release_pc:0x0
+```
+
+`cycle_collector.rs` — all three 17d tests still pass with the alloc.c tracking-node extension. Full workspace `cargo test --workspace` clean: zero failures across all packages.
+
+### Phase 17 status after this slice
+
+- ✅ 17a typed heap headers
+- ✅ 17b ownership-pass series (peephole subset; monolithic 17b-1b still deferred)
+- ✅ 17c safepoints + stack maps
+- ✅ 17d cycle collector
+- ✅ 17f++ verifier + trigger log
+
+What remains for the phase: 17e effect-typed scope reduction; 17g Weak<T>; 17h interpreter-side Bacon-Rajan; 17i close-out + benchmarks. Plus the deferred 17b-1b monolithic ownership pass and its 17b-1c..17b-7 follow-ons.
+
+### What this gets us
+
+Three claims now defensible:
+
+1. The ownership optimizer's correctness is **runtime-verifiable** on every program run with `CORVID_GC_VERIFY=warn`. Other refcount languages (Swift, Rust's `Rc`, Koka) don't ship this.
+2. Refcount miscompilations carry **source-locating blame** instead of presenting as silent corruption.
+3. GC trigger points are **explicit data the runtime exposes**, not a hidden side-effect of allocation pressure — which is the foundation for replay-time reproduction once Phase 19's replay stream is wired through.
+
+### Next direction
+
+Either 17g (Weak<T> with effect-typed lifetime bounds — the "powerful" framing from pre-phase chat) or 17e (effect-typed scope reduction). Open question for next session.
+
 
 
 

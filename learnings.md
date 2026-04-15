@@ -714,6 +714,9 @@ Each user-visible feature lands with a dev-log entry explaining the design decis
 | Phase 15: native prompt dispatch + 5 LLM provider adapters (Anthropic / OpenAI / OpenAI-compat / Ollama / Gemini) | [Day 32](dev-log.md) |
 | Phase 16: methods on types (`extend T:` blocks, mixed agent/prompt/tool, public visibility) | [Day 33](dev-log.md) |
 | Slice 17a: typed heap headers + per-type typeinfo + non-atomic refcount | [Day 16](dev-log.md) |
+| Slice 17c: Cranelift safepoints + emitted stack-map table | [Day 25](dev-log.md) |
+| Slice 17d: cycle collector — mark-sweep over the refcount heap | [Day 26](dev-log.md) |
+| Slice 17f++: replay-deterministic GC trigger log + shadow-count refcount verifier with PC blame | [Day 27](dev-log.md) |
 
 ---
 
@@ -733,6 +736,58 @@ What becomes possible next:
 - Slice 17b (renamed from "per-task arena"): the effect-typed memory model. Most allocations bump-allocate in a per-scope arena driven by static escape analysis; the compiler elides RC ops entirely on provably-unique values (Perceus-style); in-place reuse converts functional-style updates into bump-free mutations.
 - Slice 17d: the cycle collector dispatches through each object's typeinfo during the mark phase. No per-type switch in the collector.
 - Slice 17g: `Weak<T>` slots in the typeinfo's reserved `weak_fn` field.
+
+## Slice 17d — cycle collector (what it means for users)
+
+**Nothing to change in your Corvid code.** Slice 17d closes Phase 17's correctness promise: refcount handles the acyclic case in the fast path; a stop-the-world mark-sweep collector reclaims unreachable cycles.
+
+What changed under the hood:
+
+- **Hidden tracking-node prefix** before every refcounted allocation. The user-visible 16-byte header (refcount + typeinfo) is unchanged; the runtime now allocates a 24-byte prefix in front of it that links every live block into a global doubly-linked list. Static-literal codegen is untouched — the prefix is invisible to anything that reads through the public `corvid_alloc_typed` interface.
+- **Mark phase walks the RBP chain.** Cranelift's `preserve_frame_pointers` flag is now on, so every Corvid-compiled frame has a standard `[rbp+0]=prev_rbp, rbp+8=return_pc` layout. The collector chases that chain, looks up each return PC in `corvid_stack_maps` (emitted by 17c), and marks every refcounted pointer at the recorded SP-relative offsets.
+- **Two-pass sweep.** Pass 1 traces every unmarked block's children with a decrement-only marker so refcount bookkeeping stays consistent for any reachable children that an unreachable block referenced. Pass 2 frees the unmarked blocks and clears mark bits on survivors. The split avoids `destroy_fn` recursion during collection.
+- **Allocation-pressure trigger.** `corvid_alloc_typed` fires the collector every `CORVID_GC_TRIGGER` allocations (default 10_000, set via env var; `0` disables auto-GC). Tests use `corvid_gc_from_roots` for deterministic, stack-walk-free invocation.
+
+How to interact with it:
+
+- `CORVID_GC_TRIGGER=N` — fire automatic GC every N allocations. Set to `0` to disable.
+- `CORVID_DEBUG_ALLOC=1` — print alloc/release counters at exit (existing knob, still works).
+
+## Slice 17f++ — refcount verifier + GC trigger log (what it means for users)
+
+This is Corvid-specific infrastructure that turns the cycle collector into **a runtime checker for the ownership optimizer (17b)**. Every GC cycle, the verifier traverses the reachable graph, computes the expected refcount of each block from its incoming edges, and diffs against the actual refcount. Drift means a miscompile.
+
+How to use it:
+
+- `CORVID_GC_VERIFY=warn` — verifier runs each GC cycle, prints a drift report to stderr if anything diverges, execution continues. Recommended for CI.
+- `CORVID_GC_VERIFY=abort` — same, but `abort()` on any drift. Recommended for fuzzing / bug-hunting.
+- `CORVID_GC_VERIFY=off` (default) — verifier skipped. Zero cost on the fast path.
+
+Drift reports include:
+
+```
+CORVID_GC_VERIFY: refcount drift
+  block:           0x... typeinfo=<name>
+  expected_rc:     <count from reachability>
+  actual_rc:       <count from refcount word>
+  diagnosis:       under-count (missing retain; UAF risk) | over-count (missing release; leak)
+  last_retain_pc:  <PC of most recent corvid_retain on this block>
+  last_release_pc: <PC of most recent corvid_release, or 0 if never released>
+```
+
+The blame PCs are stamped by `corvid_retain` / `corvid_release` via compiler return-address intrinsics — they cost a single store on the already-dirty cache line, no observable overhead in the fast path.
+
+The slice also lays the foundation for **replay-deterministic GC**:
+
+- Every GC cycle appends a record to a trigger log: `(alloc_count, safepoint_count, cycle_index)`.
+- A new `corvid_safepoint_count` global plus `corvid_safepoint_notify()` C entry are exposed for codegen / latency-aware triggers (17b-7) to drive collection at compiler-invariant points.
+- Phase 19 replay infrastructure can read the log via `corvid_gc_trigger_log_length` / `corvid_gc_trigger_log_at` accessors and replay GC at the same logical points across runs, even if the optimizer changes allocation patterns.
+
+What this gets Corvid:
+
+1. The ownership optimizer (17b) is runtime-verified on every program you run with `VERIFY=1`. No other refcount language ships this — they don't have the typed-graph traversal infrastructure to do it cheaply.
+2. Refcount miscompilations carry source-locating blame instead of presenting as silent corruption later.
+3. GC trigger points are explicit data the runtime exposes, not a hidden side-effect of allocation pressure — which is what makes replay-time reproduction possible.
 
 ## Phase 19 — REPL and replay (how to use it)
 

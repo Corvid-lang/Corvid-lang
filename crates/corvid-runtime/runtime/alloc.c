@@ -59,6 +59,14 @@
 #include <string.h>
 #include <inttypes.h>
 
+#if defined(_MSC_VER)
+#pragma intrinsic(_ReturnAddress)
+void* _ReturnAddress(void);
+#define CORVID_CALLER_PC() _ReturnAddress()
+#else
+#define CORVID_CALLER_PC() __builtin_return_address(0)
+#endif
+
 #define CORVID_HEADER_BYTES 16
 
 /* Sentinel marking a "never collect" allocation — used by static literals. */
@@ -105,6 +113,12 @@ typedef struct {
 typedef struct corvid_tracking_node {
     struct corvid_tracking_node* next;
     struct corvid_tracking_node* prev;
+    /* Phase 17f++ — blame PCs for the verifier. Stamped by the most
+     * recent retain/release call via return-address intrinsic. When
+     * CORVID_GC_VERIFY detects refcount drift on this block, these
+     * PCs localize the bug to the last RC operation that touched it. */
+    const void* last_retain_pc;
+    const void* last_release_pc;
     /* 16-byte header follows (refcount_word + typeinfo_ptr); payload
      * follows that. Total prefix = sizeof(tracking_node) +
      * CORVID_HEADER_BYTES. */
@@ -145,6 +159,22 @@ long long corvid_alloc_count = 0;
 long long corvid_release_count = 0;
 long long corvid_retain_call_count = 0;
 long long corvid_release_call_count = 0;
+
+/* Phase 17f++ — safepoint counter. Optimizer-invariant trigger
+ * candidate: a safepoint is a codegen-emitted point where the stack
+ * map is valid; ownership optimizations (17b) elide retain/release
+ * but don't change safepoint placement, so count advances the same
+ * way across optimizer versions. Incremented by `corvid_safepoint_notify`
+ * calls that codegen may emit; also usable by 17b-7 latency-aware
+ * RC triggers in the future.
+ *
+ * Not wired from codegen yet — exposed so Phase 19 replay and future
+ * codegen slices can call it without breaking ABI. */
+long long corvid_safepoint_count = 0;
+
+void corvid_safepoint_notify(void) {
+    corvid_safepoint_count++;
+}
 
 /* Phase 17d — GC trigger. Allocation-pressure threshold: fire a
  * collection every N allocations. Tunable via `CORVID_GC_TRIGGER`
@@ -192,6 +222,13 @@ void* corvid_alloc_typed(long long payload_bytes,
     h->refcount_word = 1;
     h->typeinfo = typeinfo;
 
+    /* Phase 17f++ — initialize blame PCs. `last_retain_pc` starts at
+     * the caller of corvid_alloc_typed (the site that owns the
+     * initial refcount of 1); `last_release_pc` is NULL until a
+     * release actually fires. */
+    node->last_retain_pc = CORVID_CALLER_PC();
+    node->last_release_pc = NULL;
+
     /* Link into the live-block list head (O(1)). */
     node->next = corvid_live_head;
     node->prev = NULL;
@@ -236,18 +273,29 @@ void corvid_free_block(corvid_header* h) {
 }
 
 void corvid_retain(void* payload) {
+    const void* caller_pc = CORVID_CALLER_PC();
     corvid_retain_call_count++;
     if (payload == NULL) return;
     corvid_header* h = (corvid_header*)((char*)payload - CORVID_HEADER_BYTES);
     if (h->refcount_word == CORVID_REFCOUNT_IMMORTAL) return;
     h->refcount_word++;
+    /* Phase 17f++ blame stamp. No cost when verifier is off — the
+     * write is cheap and the cache line is already dirty from the
+     * refcount update. */
+    corvid_tracking_node* node = (corvid_tracking_node*)(
+        (char*)h - CORVID_TRACKING_BYTES);
+    node->last_retain_pc = caller_pc;
 }
 
 void corvid_release(void* payload) {
+    const void* caller_pc = CORVID_CALLER_PC();
     corvid_release_call_count++;
     if (payload == NULL) return;
     corvid_header* h = (corvid_header*)((char*)payload - CORVID_HEADER_BYTES);
     if (h->refcount_word == CORVID_REFCOUNT_IMMORTAL) return;
+    corvid_tracking_node* node = (corvid_tracking_node*)(
+        (char*)h - CORVID_TRACKING_BYTES);
+    node->last_release_pc = caller_pc;
     long long previous = h->refcount_word;
     h->refcount_word = previous - 1;
     long long prev_rc = previous & CORVID_RC_MASK;

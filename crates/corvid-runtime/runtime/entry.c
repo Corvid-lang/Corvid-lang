@@ -35,6 +35,12 @@ extern long long corvid_release_call_count;
  * alloc.c reads this to decide when to auto-collect. */
 extern long long corvid_gc_trigger_threshold;
 
+/* Phase 17f++ — verifier mode, set by corvid_init based on
+ * CORVID_GC_VERIFY env var. 0=off, 1=warn, 2=abort. verify.c reads
+ * this at every GC cycle. */
+extern int corvid_gc_verify_mode;
+extern long long corvid_gc_verify_drift_count;
+
 /* ---- exit-time leak + RC-op counters (registered via corvid_init) --- */
 
 void corvid_on_exit(void) {
@@ -45,6 +51,13 @@ void corvid_on_exit(void) {
                 corvid_release_count,
                 corvid_retain_call_count,
                 corvid_release_call_count);
+    }
+    /* Phase 17f++ — if the verifier ran and caught drift, surface
+     * the total at exit even under warn mode so CI can pick it up. */
+    if (corvid_gc_verify_mode != 0 && corvid_gc_verify_drift_count > 0) {
+        fprintf(stderr,
+                "CORVID_GC_VERIFY: %lld total drift report(s) this run\n",
+                corvid_gc_verify_drift_count);
     }
 }
 
@@ -79,6 +92,18 @@ void corvid_init(void) {
         corvid_gc_trigger_threshold = (n >= 0 && end != v) ? n : 10000;
     } else {
         corvid_gc_trigger_threshold = 10000;
+    }
+
+    /* Phase 17f++ — verifier mode. off|warn|abort. */
+    const char* vv = getenv("CORVID_GC_VERIFY");
+    if (vv != NULL) {
+        if (strcmp(vv, "warn") == 0 || strcmp(vv, "1") == 0) {
+            corvid_gc_verify_mode = 1;
+        } else if (strcmp(vv, "abort") == 0 || strcmp(vv, "2") == 0) {
+            corvid_gc_verify_mode = 2;
+        } else {
+            corvid_gc_verify_mode = 0;
+        }
     }
 }
 

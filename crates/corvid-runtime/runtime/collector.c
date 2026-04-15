@@ -109,6 +109,8 @@ typedef struct {
 typedef struct corvid_tracking_node {
     struct corvid_tracking_node* next;
     struct corvid_tracking_node* prev;
+    const void* last_retain_pc;
+    const void* last_release_pc;
 } corvid_tracking_node;
 
 #define CORVID_TRACKING_BYTES (sizeof(corvid_tracking_node))
@@ -130,6 +132,56 @@ typedef struct corvid_stack_map_entry {
 
 extern const corvid_stack_map_entry*
 corvid_stack_maps_find(const void* return_pc);
+
+/* Phase 17f++ verifier + replay-determinism hooks (verify.c). */
+extern int corvid_gc_verify_mode;
+extern void corvid_gc_verify(void** roots, size_t n_roots);
+
+/* Phase 17f++ — trigger-point log. Every GC cycle appends one entry
+ * so record/replay can reproduce trigger points across runs even if
+ * the optimizer changes allocation patterns. Replay-side consumes
+ * this under Phase 19. For now: record only, readable via the
+ * `corvid_gc_trigger_log_*` accessors exposed below. */
+typedef struct {
+    long long alloc_count;
+    long long safepoint_count;
+    long long cycle_index;
+} corvid_gc_trigger_record;
+
+extern long long corvid_alloc_count;
+extern long long corvid_safepoint_count;
+
+#define CORVID_GC_TRIGGER_LOG_CAP 1024
+static corvid_gc_trigger_record corvid_gc_trigger_log[CORVID_GC_TRIGGER_LOG_CAP];
+static long long corvid_gc_trigger_log_len = 0;
+static long long corvid_gc_cycle_count = 0;
+
+/* C-visible accessors. Tests + Phase 19 replay infrastructure read
+ * through these rather than touching the static array directly. */
+long long corvid_gc_trigger_log_length(void) {
+    return corvid_gc_trigger_log_len;
+}
+
+int corvid_gc_trigger_log_at(long long index,
+                             long long* out_alloc,
+                             long long* out_safepoint,
+                             long long* out_cycle) {
+    if (index < 0 || index >= corvid_gc_trigger_log_len) return 0;
+    const corvid_gc_trigger_record* r = &corvid_gc_trigger_log[index];
+    if (out_alloc) *out_alloc = r->alloc_count;
+    if (out_safepoint) *out_safepoint = r->safepoint_count;
+    if (out_cycle) *out_cycle = r->cycle_index;
+    return 1;
+}
+
+static void corvid_gc_record_trigger(void) {
+    if (corvid_gc_trigger_log_len >= CORVID_GC_TRIGGER_LOG_CAP) return;
+    corvid_gc_trigger_record* r =
+        &corvid_gc_trigger_log[corvid_gc_trigger_log_len++];
+    r->alloc_count = corvid_alloc_count;
+    r->safepoint_count = corvid_safepoint_count;
+    r->cycle_index = corvid_gc_cycle_count++;
+}
 
 /* ---- frame-pointer walk -------------------------------------------- */
 
@@ -368,8 +420,18 @@ void corvid_gc(void) {
     if (corvid_gc_running) return;
     corvid_gc_running = 1;
 
+    corvid_gc_record_trigger();
+
     void* base_rbp = corvid_gc_capture_rbp();
     corvid_gc_mark_stack(base_rbp);
+
+    /* Phase 17f++ verifier runs BEFORE sweep so it sees the
+     * mark-bit-set reachable set. Passes no explicit roots — the
+     * verifier walks from mark-bit-set blocks. */
+    if (corvid_gc_verify_mode != 0) {
+        corvid_gc_verify(NULL, 0);
+    }
+
     corvid_gc_sweep();
 
     corvid_gc_running = 0;
@@ -396,11 +458,20 @@ void corvid_gc_from_roots(void** roots, size_t n_roots) {
     if (corvid_gc_running) return;
     corvid_gc_running = 1;
 
+    corvid_gc_record_trigger();
+
     for (size_t i = 0; i < n_roots; i++) {
         if (roots[i] != NULL) {
             corvid_gc_mark_marker(roots[i], NULL);
         }
     }
+
+    /* Phase 17f++ verifier — uses the now-marked set plus the given
+     * explicit roots as edge sources. */
+    if (corvid_gc_verify_mode != 0) {
+        corvid_gc_verify(roots, n_roots);
+    }
+
     corvid_gc_sweep();
 
     corvid_gc_running = 0;

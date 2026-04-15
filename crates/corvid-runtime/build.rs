@@ -29,6 +29,7 @@ fn main() {
         .file(runtime_dir.join("stack_maps.c"))
         .file(runtime_dir.join("stack_maps_fallback.c"))
         .file(runtime_dir.join("collector.c"))
+        .file(runtime_dir.join("verify.c"))
         .opt_level(2);
 
     // C standard: C11 kept for designated initializers in static
@@ -80,5 +81,6 @@ fn main() {
     println!("cargo:rerun-if-changed=runtime/stack_maps.c");
     println!("cargo:rerun-if-changed=runtime/stack_maps_fallback.c");
     println!("cargo:rerun-if-changed=runtime/collector.c");
+    println!("cargo:rerun-if-changed=runtime/verify.c");
     println!("cargo:rerun-if-changed=build.rs");
 }
