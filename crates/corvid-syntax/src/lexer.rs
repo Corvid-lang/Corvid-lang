@@ -372,6 +372,7 @@ impl<'a> Lexer<'a> {
             b':' => (TokKind::Colon, 1),
             b',' => (TokKind::Comma, 1),
             b'.' => (TokKind::Dot, 1),
+            b'?' => (TokKind::Question, 1),
             b'+' => (TokKind::Plus, 1),
             b'*' => (TokKind::Star, 1),
             b'/' => (TokKind::Slash, 1),

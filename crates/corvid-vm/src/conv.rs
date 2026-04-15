@@ -36,6 +36,10 @@ pub fn value_to_json(v: &Value) -> serde_json::Value {
         Value::List(items) => {
             serde_json::Value::Array(items.iter().map(value_to_json).collect())
         }
+        Value::ResultOk(v) => serde_json::json!({ "tag": "ok", "ok": value_to_json(v) }),
+        Value::ResultErr(v) => serde_json::json!({ "tag": "err", "err": value_to_json(v) }),
+        Value::OptionSome(v) => serde_json::json!({ "tag": "some", "value": value_to_json(v) }),
+        Value::OptionNone => serde_json::json!({ "tag": "none" }),
     }
 }
 
@@ -81,6 +85,42 @@ pub fn json_to_value(
                 out.push(json_to_value(item, elem_ty, types_by_id)?);
             }
             Ok(Value::List(Arc::new(out)))
+        }
+        (Type::Option(inner_ty), J::Object(map)) => match map.get("tag").and_then(|v| v.as_str()) {
+            Some("some") => {
+                let raw = map.get("value").cloned().ok_or_else(|| ConvError::TypeMismatch {
+                    expected: "Option::Some payload".into(),
+                    got: "missing `value` field".into(),
+                })?;
+                Ok(Value::OptionSome(Arc::new(json_to_value(raw, inner_ty, types_by_id)?)))
+            }
+            Some("none") => Ok(Value::OptionNone),
+            _ => Err(ConvError::TypeMismatch {
+                expected: type_label(expected),
+                got: "object".into(),
+            }),
+        },
+        (Type::Result(ok_ty, err_ty), J::Object(map)) => {
+            match map.get("tag").and_then(|v| v.as_str()) {
+                Some("ok") => {
+                    let raw = map.get("ok").cloned().ok_or_else(|| ConvError::TypeMismatch {
+                        expected: "Result::Ok payload".into(),
+                        got: "missing `ok` field".into(),
+                    })?;
+                    Ok(Value::ResultOk(Arc::new(json_to_value(raw, ok_ty, types_by_id)?)))
+                }
+                Some("err") => {
+                    let raw = map.get("err").cloned().ok_or_else(|| ConvError::TypeMismatch {
+                        expected: "Result::Err payload".into(),
+                        got: "missing `err` field".into(),
+                    })?;
+                    Ok(Value::ResultErr(Arc::new(json_to_value(raw, err_ty, types_by_id)?)))
+                }
+                _ => Err(ConvError::TypeMismatch {
+                    expected: type_label(expected),
+                    got: "object".into(),
+                }),
+            }
         }
         (Type::Struct(def_id), J::Object(map)) => {
             let ir_type = types_by_id
@@ -149,7 +189,9 @@ fn type_label(t: &Type) -> String {
         Type::Bool => "Bool".into(),
         Type::Nothing => "Nothing".into(),
         Type::Struct(_) => "struct".into(),
-        Type::List(elem) => format!("List[{}]", type_label(elem)),
+        Type::List(elem) => format!("List<{}>", type_label(elem)),
+        Type::Result(ok, err) => format!("Result<{}, {}>", type_label(ok), type_label(err)),
+        Type::Option(inner) => format!("Option<{}>", type_label(inner)),
         Type::Function { .. } => "function".into(),
         Type::Unknown => "<unknown>".into(),
     }

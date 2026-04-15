@@ -3,7 +3,7 @@
 //! A flatter, normalized form of the typed AST. References are already
 //! resolved to `DefId`/`LocalId`; every expression carries its `Type`.
 
-use corvid_ast::{BinaryOp, Effect, Span, UnaryOp};
+use corvid_ast::{Backoff, BinaryOp, Effect, Span, UnaryOp};
 use corvid_resolve::{DefId, LocalId};
 use corvid_types::Type;
 
@@ -241,6 +241,17 @@ pub enum IrExprKind {
     },
 
     List { items: Vec<IrExpr> },
+
+    ResultOk { inner: Box<IrExpr> },
+    ResultErr { inner: Box<IrExpr> },
+    OptionSome { inner: Box<IrExpr> },
+    OptionNone,
+    TryPropagate { inner: Box<IrExpr> },
+    TryRetry {
+        body: Box<IrExpr>,
+        attempts: u64,
+        backoff: Backoff,
+    },
 }
 
 #[derive(Debug, Clone)]

@@ -16,7 +16,7 @@ pub use types::*;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use corvid_ast::Effect;
+    use corvid_ast::{Backoff, Effect};
     use corvid_resolve::resolve;
     use corvid_syntax::{lex, parse_file};
     use corvid_types::typecheck;
@@ -209,6 +209,79 @@ agent refund_bot(ticket: Ticket) -> Decision:
                 other => panic!("expected Approve, got {other:?}"),
             }
             assert!(matches!(then_block.stmts[1], IrStmt::Expr { .. }));
+        }
+    }
+
+    #[test]
+    fn lowers_result_option_constructors_and_none() {
+        let src = "\
+agent build(flag: Bool) -> Result<Option<String>, String>:
+    if flag:
+        return Ok(Some(\"hi\"))
+    return Ok(None)
+";
+        let ir = lower_src(src);
+        let agent = &ir.agents[0];
+        match &agent.body.stmts[0] {
+            IrStmt::If {
+                then_block,
+                else_block: None,
+                ..
+            } => match &then_block.stmts[0] {
+                IrStmt::Return { value: Some(expr), .. } => match &expr.kind {
+                    IrExprKind::ResultOk { inner } => match &inner.kind {
+                        IrExprKind::OptionSome { .. } => {}
+                        other => panic!("expected OptionSome, got {other:?}"),
+                    },
+                    other => panic!("expected ResultOk, got {other:?}"),
+                },
+                other => panic!("expected Return, got {other:?}"),
+            },
+            other => panic!("expected If, got {other:?}"),
+        }
+        match &agent.body.stmts[1] {
+            IrStmt::Return { value: Some(expr), .. } => match &expr.kind {
+                IrExprKind::ResultOk { inner } => {
+                    assert!(matches!(inner.kind, IrExprKind::OptionNone));
+                }
+                other => panic!("expected ResultOk, got {other:?}"),
+            },
+            other => panic!("expected Return, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn lowers_try_propagate_and_retry() {
+        let src = "\
+tool fetch(id: String) -> Result<String, String>
+tool lookup(id: String) -> String
+
+agent load(id: String) -> Result<String, String>:
+    value = fetch(id)?
+    stable = try lookup(id) on error retry 3 times backoff exponential 40
+    return Ok(value + stable)
+";
+        let ir = lower_src(src);
+        let agent = &ir.agents[0];
+        match &agent.body.stmts[0] {
+            IrStmt::Let { value, .. } => {
+                assert!(matches!(value.kind, IrExprKind::TryPropagate { .. }));
+            }
+            other => panic!("expected Let, got {other:?}"),
+        }
+        match &agent.body.stmts[1] {
+            IrStmt::Let { value, .. } => match &value.kind {
+                IrExprKind::TryRetry {
+                    attempts,
+                    backoff,
+                    ..
+                } => {
+                    assert_eq!(*attempts, 3);
+                    assert_eq!(*backoff, Backoff::Exponential(40));
+                }
+                other => panic!("expected TryRetry, got {other:?}"),
+            },
+            other => panic!("expected Let, got {other:?}"),
         }
     }
 }

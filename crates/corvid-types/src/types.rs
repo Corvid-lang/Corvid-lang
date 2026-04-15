@@ -28,6 +28,12 @@ pub enum Type {
     /// A list of homogeneous elements.
     List(Box<Type>),
 
+    /// Compiler-known `Result<T, E>`.
+    Result(Box<Type>, Box<Type>),
+
+    /// Compiler-known `Option<T>`.
+    Option(Box<Type>),
+
     /// Placeholder when the checker can't determine a precise type.
     /// Propagates without cascading errors.
     Unknown,
@@ -44,7 +50,11 @@ impl Type {
             Type::Nothing => "Nothing".into(),
             Type::Struct(_) => "struct".into(),
             Type::Function { .. } => "function".into(),
-            Type::List(inner) => format!("List[{}]", inner.display_name()),
+            Type::List(inner) => format!("List<{}>", inner.display_name()),
+            Type::Result(ok, err) => {
+                format!("Result<{}, {}>", ok.display_name(), err.display_name())
+            }
+            Type::Option(inner) => format!("Option<{}>", inner.display_name()),
             Type::Unknown => "<unknown>".into(),
         }
     }
@@ -58,6 +68,11 @@ impl Type {
         match (self, other) {
             (Type::Unknown, _) | (_, Type::Unknown) => true,
             (Type::Int, Type::Float) => true, // widening
+            (Type::List(a), Type::List(b)) => a.is_assignable_to(b),
+            (Type::Option(a), Type::Option(b)) => a.is_assignable_to(b),
+            (Type::Result(ok_a, err_a), Type::Result(ok_b, err_b)) => {
+                ok_a.is_assignable_to(ok_b) && err_a.is_assignable_to(err_b)
+            }
             (a, b) => a == b,
         }
     }

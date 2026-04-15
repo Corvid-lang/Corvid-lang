@@ -56,6 +56,8 @@ mod tests {
     fn lexes_all_keywords() {
         // Smoke test — verify every v0.1 keyword parses as its own TokKind.
         let src = "agent tool prompt type import as \
+                   extend public package \
+                   try on error retry times backoff linear exponential \
                    approve dangerous \
                    if else for in return break continue pass \
                    true false nothing \
@@ -68,6 +70,17 @@ mod tests {
             TokKind::KwType,
             TokKind::KwImport,
             TokKind::KwAs,
+            TokKind::KwExtend,
+            TokKind::KwPublic,
+            TokKind::KwPackage,
+            TokKind::KwTry,
+            TokKind::KwOn,
+            TokKind::KwError,
+            TokKind::KwRetry,
+            TokKind::KwTimes,
+            TokKind::KwBackoff,
+            TokKind::KwLinear,
+            TokKind::KwExponential,
             TokKind::KwApprove,
             TokKind::KwDangerous,
             TokKind::KwIf,
@@ -190,7 +203,7 @@ mod tests {
 
     #[test]
     fn lexes_all_operators() {
-        let src = "( ) [ ] : , . -> = == != < <= > >= + - * / %";
+        let src = "( ) [ ] : , . -> ? = == != < <= > >= + - * / %";
         let toks = kinds(src);
         let expected = vec![
             TokKind::LParen,
@@ -201,6 +214,7 @@ mod tests {
             TokKind::Comma,
             TokKind::Dot,
             TokKind::Arrow,
+            TokKind::Question,
             TokKind::Assign,
             TokKind::Eq,
             TokKind::NotEq,

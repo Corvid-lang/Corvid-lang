@@ -119,6 +119,21 @@ enum Flow {
     Continue,
 }
 
+#[derive(Debug, Clone)]
+enum ExprFlow {
+    Value(Value),
+    Propagate(Value),
+}
+
+impl ExprFlow {
+    fn into_value(self) -> Result<Value, Value> {
+        match self {
+            ExprFlow::Value(v) => Ok(v),
+            ExprFlow::Propagate(v) => Err(v),
+        }
+    }
+}
+
 struct Interpreter<'ir> {
     ir: &'ir IrFile,
     env: Env,
@@ -200,13 +215,18 @@ impl<'ir> Interpreter<'ir> {
     async fn eval_stmt(&mut self, stmt: &'ir IrStmt) -> Result<Flow, InterpError> {
         match stmt {
             IrStmt::Let { local_id, value, .. } => {
-                let v = self.eval_expr(value).await?;
+                let v = match self.eval_expr(value).await?.into_value() {
+                    Ok(v) => v,
+                    Err(v) => return Ok(Flow::Return(v)),
+                };
                 self.env.bind(*local_id, v);
                 Ok(Flow::Normal)
             }
             IrStmt::Return { value, .. } => {
                 let v = match value {
-                    Some(e) => self.eval_expr(e).await?,
+                    Some(e) => match self.eval_expr(e).await?.into_value() {
+                        Ok(v) | Err(v) => v,
+                    },
                     None => Value::Nothing,
                 };
                 Ok(Flow::Return(v))
@@ -217,7 +237,10 @@ impl<'ir> Interpreter<'ir> {
                 else_block,
                 ..
             } => {
-                let c = self.eval_expr(cond).await?;
+                let c = match self.eval_expr(cond).await?.into_value() {
+                    Ok(v) => v,
+                    Err(v) => return Ok(Flow::Return(v)),
+                };
                 let take_then = match c {
                     Value::Bool(b) => b,
                     other => {
@@ -245,7 +268,10 @@ impl<'ir> Interpreter<'ir> {
                 span,
                 ..
             } => {
-                let iter_val = self.eval_expr(iter).await?;
+                let iter_val = match self.eval_expr(iter).await?.into_value() {
+                    Ok(v) => v,
+                    Err(v) => return Ok(Flow::Return(v)),
+                };
                 let items = match iter_val {
                     Value::List(items) => items,
                     Value::String(s) => {
@@ -278,7 +304,10 @@ impl<'ir> Interpreter<'ir> {
             IrStmt::Approve { label, args, span } => {
                 let mut json_args = Vec::with_capacity(args.len());
                 for a in args {
-                    let v = self.eval_expr(a).await?;
+                    let v = match self.eval_expr(a).await?.into_value() {
+                        Ok(v) => v,
+                        Err(v) => return Ok(Flow::Return(v)),
+                    };
                     json_args.push(value_to_json(&v));
                 }
                 self.runtime
@@ -288,7 +317,9 @@ impl<'ir> Interpreter<'ir> {
                 Ok(Flow::Normal)
             }
             IrStmt::Expr { expr, .. } => {
-                let _ = self.eval_expr(expr).await?;
+                if let Err(v) = self.eval_expr(expr).await?.into_value() {
+                    return Ok(Flow::Return(v));
+                }
                 Ok(Flow::Normal)
             }
             IrStmt::Break { .. } => Ok(Flow::Break),
@@ -303,12 +334,12 @@ impl<'ir> Interpreter<'ir> {
     }
 
     #[async_recursion]
-    async fn eval_expr(&mut self, expr: &'ir IrExpr) -> Result<Value, InterpError> {
+    async fn eval_expr(&mut self, expr: &'ir IrExpr) -> Result<ExprFlow, InterpError> {
         match &expr.kind {
-            IrExprKind::Literal(lit) => Ok(eval_literal(lit)),
+            IrExprKind::Literal(lit) => Ok(ExprFlow::Value(eval_literal(lit))),
 
             IrExprKind::Local { local_id, .. } => {
-                self.env.lookup(*local_id).ok_or_else(|| {
+                self.env.lookup(*local_id).map(ExprFlow::Value).ok_or_else(|| {
                     InterpError::new(
                         InterpErrorKind::UndefinedLocal(*local_id),
                         expr.span,
@@ -329,9 +360,12 @@ impl<'ir> Interpreter<'ir> {
             }
 
             IrExprKind::FieldAccess { target, field } => {
-                let t = self.eval_expr(target).await?;
+                let t = match self.eval_expr(target).await?.into_value() {
+                    Ok(v) => v,
+                    Err(v) => return Ok(ExprFlow::Propagate(v)),
+                };
                 match t {
-                    Value::Struct(s) => s.fields.get(field).cloned().ok_or_else(|| {
+                    Value::Struct(s) => s.fields.get(field).cloned().map(ExprFlow::Value).ok_or_else(|| {
                         InterpError::new(
                             InterpErrorKind::UnknownField {
                                 struct_name: s.type_name.clone(),
@@ -351,8 +385,14 @@ impl<'ir> Interpreter<'ir> {
             }
 
             IrExprKind::Index { target, index } => {
-                let t = self.eval_expr(target).await?;
-                let i = self.eval_expr(index).await?;
+                let t = match self.eval_expr(target).await?.into_value() {
+                    Ok(v) => v,
+                    Err(v) => return Ok(ExprFlow::Propagate(v)),
+                };
+                let i = match self.eval_expr(index).await?.into_value() {
+                    Ok(v) => v,
+                    Err(v) => return Ok(ExprFlow::Propagate(v)),
+                };
                 match (t, i) {
                     (Value::List(items), Value::Int(idx)) => {
                         let len = items.len();
@@ -363,7 +403,7 @@ impl<'ir> Interpreter<'ir> {
                                 expr.span,
                             ));
                         }
-                        Ok(items[idx as usize].clone())
+                        Ok(ExprFlow::Value(items[idx as usize].clone()))
                     }
                     (other, _) => Err(InterpError::new(
                         InterpErrorKind::TypeMismatch {
@@ -383,43 +423,140 @@ impl<'ir> Interpreter<'ir> {
                 // `true` instead of raising.
                 match op {
                     BinaryOp::And => {
-                        let l = self.eval_expr(left).await?;
+                        let l = match self.eval_expr(left).await?.into_value() {
+                            Ok(v) => v,
+                            Err(v) => return Ok(ExprFlow::Propagate(v)),
+                        };
                         let lb = require_bool(&l, left.span, "left operand of `and`")?;
                         if !lb {
-                            return Ok(Value::Bool(false));
+                            return Ok(ExprFlow::Value(Value::Bool(false)));
                         }
-                        let r = self.eval_expr(right).await?;
+                        let r = match self.eval_expr(right).await?.into_value() {
+                            Ok(v) => v,
+                            Err(v) => return Ok(ExprFlow::Propagate(v)),
+                        };
                         let rb = require_bool(&r, right.span, "right operand of `and`")?;
-                        return Ok(Value::Bool(rb));
+                        return Ok(ExprFlow::Value(Value::Bool(rb)));
                     }
                     BinaryOp::Or => {
-                        let l = self.eval_expr(left).await?;
+                        let l = match self.eval_expr(left).await?.into_value() {
+                            Ok(v) => v,
+                            Err(v) => return Ok(ExprFlow::Propagate(v)),
+                        };
                         let lb = require_bool(&l, left.span, "left operand of `or`")?;
                         if lb {
-                            return Ok(Value::Bool(true));
+                            return Ok(ExprFlow::Value(Value::Bool(true)));
                         }
-                        let r = self.eval_expr(right).await?;
+                        let r = match self.eval_expr(right).await?.into_value() {
+                            Ok(v) => v,
+                            Err(v) => return Ok(ExprFlow::Propagate(v)),
+                        };
                         let rb = require_bool(&r, right.span, "right operand of `or`")?;
-                        return Ok(Value::Bool(rb));
+                        return Ok(ExprFlow::Value(Value::Bool(rb)));
                     }
                     _ => {}
                 }
-                let l = self.eval_expr(left).await?;
-                let r = self.eval_expr(right).await?;
-                eval_binop(*op, l, r, expr.span)
+                let l = match self.eval_expr(left).await?.into_value() {
+                    Ok(v) => v,
+                    Err(v) => return Ok(ExprFlow::Propagate(v)),
+                };
+                let r = match self.eval_expr(right).await?.into_value() {
+                    Ok(v) => v,
+                    Err(v) => return Ok(ExprFlow::Propagate(v)),
+                };
+                Ok(ExprFlow::Value(eval_binop(*op, l, r, expr.span)?))
             }
 
             IrExprKind::UnOp { op, operand } => {
-                let v = self.eval_expr(operand).await?;
-                eval_unop(*op, v, expr.span)
+                let v = match self.eval_expr(operand).await?.into_value() {
+                    Ok(v) => v,
+                    Err(v) => return Ok(ExprFlow::Propagate(v)),
+                };
+                Ok(ExprFlow::Value(eval_unop(*op, v, expr.span)?))
             }
 
             IrExprKind::List { items } => {
                 let mut out = Vec::with_capacity(items.len());
                 for it in items {
-                    out.push(self.eval_expr(it).await?);
+                    match self.eval_expr(it).await?.into_value() {
+                        Ok(v) => out.push(v),
+                        Err(v) => return Ok(ExprFlow::Propagate(v)),
+                    }
                 }
-                Ok(Value::List(Arc::new(out)))
+                Ok(ExprFlow::Value(Value::List(Arc::new(out))))
+            }
+
+            IrExprKind::ResultOk { inner } => {
+                let v = match self.eval_expr(inner).await?.into_value() {
+                    Ok(v) => v,
+                    Err(v) => return Ok(ExprFlow::Propagate(v)),
+                };
+                Ok(ExprFlow::Value(Value::ResultOk(Arc::new(v))))
+            }
+
+            IrExprKind::ResultErr { inner } => {
+                let v = match self.eval_expr(inner).await?.into_value() {
+                    Ok(v) => v,
+                    Err(v) => return Ok(ExprFlow::Propagate(v)),
+                };
+                Ok(ExprFlow::Value(Value::ResultErr(Arc::new(v))))
+            }
+
+            IrExprKind::OptionSome { inner } => {
+                let v = match self.eval_expr(inner).await?.into_value() {
+                    Ok(v) => v,
+                    Err(v) => return Ok(ExprFlow::Propagate(v)),
+                };
+                Ok(ExprFlow::Value(Value::OptionSome(Arc::new(v))))
+            }
+
+            IrExprKind::OptionNone => Ok(ExprFlow::Value(Value::OptionNone)),
+
+            IrExprKind::TryPropagate { inner } => {
+                let inner = match self.eval_expr(inner).await? {
+                    ExprFlow::Value(v) => v,
+                    ExprFlow::Propagate(v) => return Ok(ExprFlow::Propagate(v)),
+                };
+                match inner {
+                    Value::ResultOk(v) => Ok(ExprFlow::Value((*v).clone())),
+                    Value::ResultErr(v) => Ok(ExprFlow::Propagate(Value::ResultErr(v))),
+                    Value::OptionSome(v) => Ok(ExprFlow::Value((*v).clone())),
+                    Value::OptionNone => Ok(ExprFlow::Propagate(Value::OptionNone)),
+                    other => Err(InterpError::new(
+                        InterpErrorKind::TypeMismatch {
+                            expected: "Result or Option".into(),
+                            got: other.type_name(),
+                        },
+                        expr.span,
+                    )),
+                }
+            }
+
+            IrExprKind::TryRetry {
+                body,
+                attempts,
+                backoff: _,
+            } => {
+                let total = (*attempts).max(1);
+                let mut last_runtime_error: Option<InterpError> = None;
+                let mut last_result_err: Option<Value> = None;
+                for _ in 0..total {
+                    match self.eval_expr(body).await {
+                        Ok(ExprFlow::Value(Value::ResultErr(err))) => {
+                            last_result_err = Some(Value::ResultErr(err));
+                        }
+                        Ok(ExprFlow::Value(v)) => return Ok(ExprFlow::Value(v)),
+                        Ok(ExprFlow::Propagate(v)) => return Ok(ExprFlow::Propagate(v)),
+                        Err(err) => last_runtime_error = Some(err),
+                    }
+                }
+                if let Some(v) = last_result_err {
+                    Ok(ExprFlow::Value(v))
+                } else if let Some(err) = last_runtime_error {
+                    Err(err)
+                } else {
+                    Ok(ExprFlow::Value(Value::Nothing))
+                }
             }
         }
     }
@@ -434,11 +571,14 @@ impl<'ir> Interpreter<'ir> {
         args: &'ir [IrExpr],
         result_ty: &Type,
         span: Span,
-    ) -> Result<Value, InterpError> {
+    ) -> Result<ExprFlow, InterpError> {
         // Evaluate args eagerly (left to right) before any external call.
         let mut arg_values = Vec::with_capacity(args.len());
         for a in args {
-            arg_values.push(self.eval_expr(a).await?);
+            match self.eval_expr(a).await?.into_value() {
+                Ok(v) => arg_values.push(v),
+                Err(v) => return Ok(ExprFlow::Propagate(v)),
+            }
         }
 
         match kind {
@@ -458,7 +598,9 @@ impl<'ir> Interpreter<'ir> {
                     .call_tool(callee_name, json_args)
                     .await
                     .map_err(|e| InterpError::new(InterpErrorKind::Runtime(e), span))?;
-                json_to_value(result, &tool.return_ty, &self.types_by_id).map_err(|e| {
+                json_to_value(result, &tool.return_ty, &self.types_by_id)
+                    .map(ExprFlow::Value)
+                    .map_err(|e| {
                     InterpError::new(
                         InterpErrorKind::Marshal(format!("tool `{callee_name}`: {e}")),
                         span,
@@ -491,16 +633,16 @@ impl<'ir> Interpreter<'ir> {
                     .call_llm(req)
                     .await
                     .map_err(|e| InterpError::new(InterpErrorKind::Runtime(e), span))?;
-                json_to_value(resp.value, &prompt.return_ty, &self.types_by_id).map_err(
-                    |e| {
+                json_to_value(resp.value, &prompt.return_ty, &self.types_by_id)
+                    .map(ExprFlow::Value)
+                    .map_err(|e| {
                         InterpError::new(
                             InterpErrorKind::Marshal(format!(
                                 "prompt `{callee_name}`: {e}"
                             )),
                             span,
                         )
-                    },
-                )
+                    })
             }
             IrCallKind::Agent { def_id } => {
                 let agent = self.agents_by_id.get(def_id).copied().ok_or_else(|| {
@@ -513,7 +655,7 @@ impl<'ir> Interpreter<'ir> {
                 })?;
                 let mut sub = Interpreter::new(self.ir, self.runtime);
                 sub.bind_params(agent, arg_values)?;
-                sub.run_body(agent).await
+                sub.run_body(agent).await.map(ExprFlow::Value)
             }
             IrCallKind::StructConstructor { def_id } => {
                 // Build a `Value::Struct` from the constructor args, in
@@ -543,11 +685,11 @@ impl<'ir> Interpreter<'ir> {
                     .zip(arg_values.into_iter())
                     .map(|(f, v)| (f.name.clone(), v))
                     .collect();
-                Ok(Value::Struct(std::sync::Arc::new(crate::value::StructValue {
+                Ok(ExprFlow::Value(Value::Struct(std::sync::Arc::new(crate::value::StructValue {
                     type_id: ir_type.id,
                     type_name: ir_type.name.clone(),
                     fields,
-                })))
+                }))))
             }
             IrCallKind::Unknown => {
                 let _ = result_ty;

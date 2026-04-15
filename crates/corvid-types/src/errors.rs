@@ -65,6 +65,23 @@ pub enum TypeErrorKind {
     /// E.g. `x = get_order` instead of `x = get_order(id)`.
     BareFunctionReference { name: String },
 
+    /// `expr?` was used on a value that is neither `Result` nor `Option`.
+    InvalidTryPropagate { got: String },
+
+    /// `expr?` was used in a function whose return type cannot absorb the
+    /// propagated error/none branch.
+    TryPropagateReturnMismatch {
+        expected: String,
+        got: String,
+    },
+
+    /// A compiler-known generic received the wrong number of type arguments.
+    GenericArityMismatch {
+        name: String,
+        expected: usize,
+        got: usize,
+    },
+
     /// The return type declared doesn't match what the body returns.
     ReturnTypeMismatch {
         expected: String,
@@ -111,6 +128,19 @@ impl TypeErrorKind {
             Self::BareFunctionReference { name } => {
                 format!("`{name}` is a function; call it with `()` to use its result")
             }
+            Self::InvalidTryPropagate { got } => {
+                format!("`?` can only be used on `Result` or `Option`, got `{got}`")
+            }
+            Self::TryPropagateReturnMismatch { expected, got } => {
+                format!(
+                    "`?` return context mismatch: expected enclosing return type `{expected}`, got `{got}`"
+                )
+            }
+            Self::GenericArityMismatch { name, expected, got } => {
+                format!(
+                    "wrong number of type arguments for `{name}`: expected {expected}, got {got}"
+                )
+            }
             Self::ReturnTypeMismatch { expected, got } => {
                 format!(
                     "return type mismatch: declared `{expected}`, but the body returns `{got}`"
@@ -146,6 +176,16 @@ impl TypeErrorKind {
             Self::BareFunctionReference { name } => {
                 Some(format!("did you mean `{name}(...)` ?"))
             }
+            Self::InvalidTryPropagate { .. } => Some(
+                "apply `?` only to `Result<T, E>` or `Option<T>` values".into(),
+            ),
+            Self::TryPropagateReturnMismatch { expected, .. } => Some(format!(
+                "change the enclosing return type to `{expected}`, or remove `?`"
+            )),
+            Self::GenericArityMismatch { name, expected, .. } => Some(format!(
+                "`{name}` requires {expected} type argument{}",
+                if *expected == 1 { "" } else { "s" }
+            )),
             Self::ReturnTypeMismatch { expected, .. } => Some(format!(
                 "change the final `return` to produce a `{expected}`, or update the declared return type"
             )),

@@ -50,6 +50,20 @@ pub enum Expr {
 
     /// List literal: `[1, 2, 3]`.
     List { items: Vec<Expr>, span: Span },
+
+    /// Postfix propagation: `expr?`.
+    TryPropagate {
+        inner: Box<Expr>,
+        span: Span,
+    },
+
+    /// Retry wrapper: `try expr on error retry N times backoff linear 100`.
+    TryRetry {
+        body: Box<Expr>,
+        attempts: u64,
+        backoff: Backoff,
+        span: Span,
+    },
 }
 
 impl Expr {
@@ -62,9 +76,17 @@ impl Expr {
             | Expr::Index { span, .. }
             | Expr::BinOp { span, .. }
             | Expr::UnOp { span, .. }
-            | Expr::List { span, .. } => *span,
+            | Expr::List { span, .. }
+            | Expr::TryPropagate { span, .. }
+            | Expr::TryRetry { span, .. } => *span,
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Backoff {
+    Linear(u64),
+    Exponential(u64),
 }
 
 /// A constant value literal.

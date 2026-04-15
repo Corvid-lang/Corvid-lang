@@ -398,6 +398,8 @@ impl<'a> Checker<'a> {
                 let _ = span;
                 Type::List(Box::new(elem_ty))
             }
+            Expr::TryPropagate { inner, span } => self.check_try_propagate(inner, *span),
+            Expr::TryRetry { body, .. } => self.check_expr(body),
         };
         self.types.insert(e.span(), ty.clone());
         ty
@@ -422,7 +424,9 @@ impl<'a> Checker<'a> {
                 | BuiltIn::Float
                 | BuiltIn::String
                 | BuiltIn::Bool
-                | BuiltIn::Nothing => {
+                | BuiltIn::Nothing
+                | BuiltIn::Result
+                | BuiltIn::Option => {
                     self.errors.push(TypeError::new(
                         TypeErrorKind::TypeAsValue {
                             name: id.name.clone(),
@@ -431,6 +435,16 @@ impl<'a> Checker<'a> {
                     ));
                     Type::Unknown
                 }
+                BuiltIn::Ok | BuiltIn::Err | BuiltIn::Some => {
+                    self.errors.push(TypeError::new(
+                        TypeErrorKind::BareFunctionReference {
+                            name: id.name.clone(),
+                        },
+                        id.span,
+                    ));
+                    Type::Unknown
+                }
+                BuiltIn::None => Type::Option(Box::new(Type::Unknown)),
                 BuiltIn::Break | BuiltIn::Continue | BuiltIn::Pass => Type::Nothing,
             },
         }
@@ -492,30 +506,36 @@ impl<'a> Checker<'a> {
             return Type::Unknown;
         };
 
-        let Binding::Decl(def_id) = binding else {
-            self.errors.push(TypeError::new(
-                TypeErrorKind::NotCallable {
-                    got: "<local value>".into(),
-                },
-                callee.span(),
-            ));
-            return Type::Unknown;
-        };
-
-        let def_id = *def_id;
-        let entry = self.symbols.get(def_id);
-
-        match entry.kind {
-            DeclKind::Tool => self.check_tool_call(def_id, &name.name, args, span),
-            DeclKind::Prompt => self.check_prompt_call(def_id, &name.name, args),
-            DeclKind::Agent => self.check_agent_call(def_id, &name.name, args),
-            DeclKind::Import => {
+        match binding {
+            Binding::Decl(def_id) => {
+                let def_id = *def_id;
+                let entry = self.symbols.get(def_id);
+                match entry.kind {
+                    DeclKind::Tool => self.check_tool_call(def_id, &name.name, args, span),
+                    DeclKind::Prompt => self.check_prompt_call(def_id, &name.name, args),
+                    DeclKind::Agent => self.check_agent_call(def_id, &name.name, args),
+                    DeclKind::Import => {
+                        for a in args {
+                            let _ = self.check_expr(a);
+                        }
+                        Type::Unknown
+                    }
+                    DeclKind::Type => self.check_struct_constructor(def_id, &name.name, args),
+                }
+            }
+            Binding::BuiltIn(builtin) => self.check_builtin_constructor_call(*builtin, name, args),
+            Binding::Local(_) => {
+                self.errors.push(TypeError::new(
+                    TypeErrorKind::NotCallable {
+                        got: "<local value>".into(),
+                    },
+                    callee.span(),
+                ));
                 for a in args {
                     let _ = self.check_expr(a);
                 }
                 Type::Unknown
             }
-            DeclKind::Type => self.check_struct_constructor(def_id, &name.name, args),
         }
     }
 
@@ -580,6 +600,101 @@ impl<'a> Checker<'a> {
             .expect("agent DefId not indexed");
         self.check_args_against_params(name, &agent.params, args);
         self.type_ref_to_type(&agent.return_ty)
+    }
+
+    fn check_builtin_constructor_call(
+        &mut self,
+        builtin: BuiltIn,
+        name: &Ident,
+        args: &[Expr],
+    ) -> Type {
+        match builtin {
+            BuiltIn::Ok => {
+                if args.len() != 1 {
+                    self.errors.push(TypeError::new(
+                        TypeErrorKind::ArityMismatch {
+                            callee: name.name.clone(),
+                            expected: 1,
+                            got: args.len(),
+                        },
+                        name.span,
+                    ));
+                    for arg in args {
+                        let _ = self.check_expr(arg);
+                    }
+                    return Type::Result(Box::new(Type::Unknown), Box::new(Type::Unknown));
+                }
+                let ok_ty = self.check_expr(&args[0]);
+                let err_ty = match &self.current_return {
+                    Some(Type::Result(_, err)) => (**err).clone(),
+                    _ => Type::Unknown,
+                };
+                Type::Result(Box::new(ok_ty), Box::new(err_ty))
+            }
+            BuiltIn::Err => {
+                if args.len() != 1 {
+                    self.errors.push(TypeError::new(
+                        TypeErrorKind::ArityMismatch {
+                            callee: name.name.clone(),
+                            expected: 1,
+                            got: args.len(),
+                        },
+                        name.span,
+                    ));
+                    for arg in args {
+                        let _ = self.check_expr(arg);
+                    }
+                    return Type::Result(Box::new(Type::Unknown), Box::new(Type::Unknown));
+                }
+                let err_ty = self.check_expr(&args[0]);
+                let ok_ty = match &self.current_return {
+                    Some(Type::Result(ok, _)) => (**ok).clone(),
+                    _ => Type::Unknown,
+                };
+                Type::Result(Box::new(ok_ty), Box::new(err_ty))
+            }
+            BuiltIn::Some => {
+                if args.len() != 1 {
+                    self.errors.push(TypeError::new(
+                        TypeErrorKind::ArityMismatch {
+                            callee: name.name.clone(),
+                            expected: 1,
+                            got: args.len(),
+                        },
+                        name.span,
+                    ));
+                    for arg in args {
+                        let _ = self.check_expr(arg);
+                    }
+                    return Type::Option(Box::new(Type::Unknown));
+                }
+                Type::Option(Box::new(self.check_expr(&args[0])))
+            }
+            BuiltIn::None => {
+                self.errors.push(TypeError::new(
+                    TypeErrorKind::NotCallable {
+                        got: "Option".into(),
+                    },
+                    name.span,
+                ));
+                for arg in args {
+                    let _ = self.check_expr(arg);
+                }
+                Type::Unknown
+            }
+            _ => {
+                self.errors.push(TypeError::new(
+                    TypeErrorKind::NotCallable {
+                        got: name.name.clone(),
+                    },
+                    name.span,
+                ));
+                for arg in args {
+                    let _ = self.check_expr(arg);
+                }
+                Type::Unknown
+            }
+        }
     }
 
     /// Phase 16 — `target.method(args)` rewritten to a regular
@@ -904,14 +1019,109 @@ impl<'a> Checker<'a> {
         }
     }
 
+    fn check_try_propagate(&mut self, inner: &Expr, span: Span) -> Type {
+        let inner_ty = self.check_expr(inner);
+        match inner_ty {
+            Type::Result(ok, err) => {
+                self.ensure_try_return_context(
+                    &Type::Result(Box::new(Type::Unknown), err.clone()),
+                    span,
+                );
+                (*ok).clone()
+            }
+            Type::Option(inner) => {
+                self.ensure_try_return_context(&Type::Option(Box::new(Type::Unknown)), span);
+                (*inner).clone()
+            }
+            Type::Unknown => Type::Unknown,
+            other => {
+                self.errors.push(TypeError::new(
+                    TypeErrorKind::InvalidTryPropagate {
+                        got: other.display_name(),
+                    },
+                    span,
+                ));
+                Type::Unknown
+            }
+        }
+    }
+
+    fn ensure_try_return_context(&mut self, required: &Type, span: Span) {
+        match &self.current_return {
+            Some(current) if required.is_assignable_to(current) => {}
+            Some(current) => self.errors.push(TypeError::new(
+                TypeErrorKind::TryPropagateReturnMismatch {
+                    expected: required.display_name(),
+                    got: current.display_name(),
+                },
+                span,
+            )),
+            None => self.errors.push(TypeError::new(
+                TypeErrorKind::TryPropagateReturnMismatch {
+                    expected: required.display_name(),
+                    got: "no enclosing return type".into(),
+                },
+                span,
+            )),
+        }
+    }
+
     // ------------------------------------------------------------
     // Type-reference resolution (TypeRef → Type).
     // ------------------------------------------------------------
 
-    fn type_ref_to_type(&self, tr: &TypeRef) -> Type {
+    fn type_ref_to_type(&mut self, tr: &TypeRef) -> Type {
         match tr {
             TypeRef::Named { name, .. } => self.named_type_to_type(&name.name),
-            TypeRef::Generic { .. } | TypeRef::Function { .. } => Type::Unknown,
+            TypeRef::Generic { name, args, span } => match name.name.as_str() {
+                "List" => {
+                    if args.len() != 1 {
+                        self.errors.push(TypeError::new(
+                            TypeErrorKind::GenericArityMismatch {
+                                name: name.name.clone(),
+                                expected: 1,
+                                got: args.len(),
+                            },
+                            *span,
+                        ));
+                        return Type::Unknown;
+                    }
+                    Type::List(Box::new(self.type_ref_to_type(&args[0])))
+                }
+                "Option" => {
+                    if args.len() != 1 {
+                        self.errors.push(TypeError::new(
+                            TypeErrorKind::GenericArityMismatch {
+                                name: name.name.clone(),
+                                expected: 1,
+                                got: args.len(),
+                            },
+                            *span,
+                        ));
+                        return Type::Unknown;
+                    }
+                    Type::Option(Box::new(self.type_ref_to_type(&args[0])))
+                }
+                "Result" => {
+                    if args.len() != 2 {
+                        self.errors.push(TypeError::new(
+                            TypeErrorKind::GenericArityMismatch {
+                                name: name.name.clone(),
+                                expected: 2,
+                                got: args.len(),
+                            },
+                            *span,
+                        ));
+                        return Type::Unknown;
+                    }
+                    Type::Result(
+                        Box::new(self.type_ref_to_type(&args[0])),
+                        Box::new(self.type_ref_to_type(&args[1])),
+                    )
+                }
+                _ => Type::Unknown,
+            },
+            TypeRef::Function { .. } => Type::Unknown,
         }
     }
 

@@ -426,4 +426,90 @@ agent refund_bot(ticket: Ticket) -> Decision:
         let hint = unapproved[0].hint().unwrap();
         assert!(hint.contains("approve IssueRefund"), "hint was: {hint}");
     }
+
+    #[test]
+    fn result_and_option_annotations_resolve_to_known_types() {
+        let src = "\
+tool fetch(id: String) -> Result<Option<String>, String>
+
+agent load(id: String) -> Result<Option<String>, String>:
+    return fetch(id)
+";
+        let c = check(src);
+        assert!(c.errors.is_empty(), "errors: {:?}", c.errors);
+    }
+
+    #[test]
+    fn question_unwraps_result_in_matching_return_context() {
+        let src = "\
+tool fetch(id: String) -> Result<String, String>
+
+agent load(id: String) -> Result<String, String>:
+    value = fetch(id)?
+    return Ok(value)
+";
+        let c = check(src);
+        assert!(c.errors.is_empty(), "errors: {:?}", c.errors);
+    }
+
+    #[test]
+    fn question_unwraps_option_in_matching_return_context() {
+        let src = "\
+tool maybe_name(id: String) -> Option<String>
+
+agent load(id: String) -> Option<String>:
+    value = maybe_name(id)?
+    return Some(value)
+";
+        let c = check(src);
+        assert!(c.errors.is_empty(), "errors: {:?}", c.errors);
+    }
+
+    #[test]
+    fn question_on_non_result_option_errors_cleanly() {
+        let src = "\
+agent bad(x: String) -> String:
+    return x?
+";
+        let c = check(src);
+        assert!(
+            c.errors
+                .iter()
+                .any(|e| matches!(e.kind, TypeErrorKind::InvalidTryPropagate { .. })),
+            "got: {:?}",
+            c.errors
+        );
+    }
+
+    #[test]
+    fn question_with_mismatched_return_context_errors_cleanly() {
+        let src = "\
+tool fetch(id: String) -> Result<String, String>
+
+agent bad(id: String) -> String:
+    return fetch(id)?
+";
+        let c = check(src);
+        assert!(
+            c.errors.iter().any(|e| matches!(
+                e.kind,
+                TypeErrorKind::TryPropagateReturnMismatch { .. }
+            )),
+            "got: {:?}",
+            c.errors
+        );
+    }
+
+    #[test]
+    fn retry_expression_has_inner_type() {
+        let src = "\
+tool fetch_name(id: String) -> String
+
+agent load(id: String) -> String:
+    value = try fetch_name(id) on error retry 3 times backoff linear 25
+    return value
+";
+        let c = check(src);
+        assert!(c.errors.is_empty(), "errors: {:?}", c.errors);
+    }
 }

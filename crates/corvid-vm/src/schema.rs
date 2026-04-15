@@ -39,6 +39,49 @@ fn schema_for_inner(
             "type": "array",
             "items": schema_for_inner(elem, types_by_id, visiting),
         }),
+        Type::Option(inner) => json!({
+            "oneOf": [
+                {
+                    "type": "object",
+                    "properties": {
+                        "tag": { "const": "some" },
+                        "value": schema_for_inner(inner, types_by_id, visiting),
+                    },
+                    "required": ["tag", "value"],
+                    "additionalProperties": false,
+                },
+                {
+                    "type": "object",
+                    "properties": {
+                        "tag": { "const": "none" },
+                    },
+                    "required": ["tag"],
+                    "additionalProperties": false,
+                }
+            ]
+        }),
+        Type::Result(ok, err) => json!({
+            "oneOf": [
+                {
+                    "type": "object",
+                    "properties": {
+                        "tag": { "const": "ok" },
+                        "ok": schema_for_inner(ok, types_by_id, visiting),
+                    },
+                    "required": ["tag", "ok"],
+                    "additionalProperties": false,
+                },
+                {
+                    "type": "object",
+                    "properties": {
+                        "tag": { "const": "err" },
+                        "err": schema_for_inner(err, types_by_id, visiting),
+                    },
+                    "required": ["tag", "err"],
+                    "additionalProperties": false,
+                }
+            ]
+        }),
         Type::Struct(def_id) => {
             // Cycle guard: if we're already building this struct's schema
             // higher up the stack, emit an empty object placeholder. The

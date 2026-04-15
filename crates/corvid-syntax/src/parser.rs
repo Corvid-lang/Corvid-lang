@@ -8,9 +8,9 @@
 use crate::errors::{ParseError, ParseErrorKind};
 use crate::token::{TokKind, Token};
 use corvid_ast::{
-    AgentDecl, BinaryOp, Block, Decl, Effect, Expr, ExtendDecl, ExtendMethod, ExtendMethodKind,
-    Field, File, Ident, ImportDecl, ImportSource, Literal, Param, PromptDecl, Span, Stmt,
-    ToolDecl, TypeDecl, TypeRef, UnaryOp, Visibility,
+    AgentDecl, Backoff, BinaryOp, Block, Decl, Effect, Expr, ExtendDecl, ExtendMethod,
+    ExtendMethodKind, Field, File, Ident, ImportDecl, ImportSource, Literal, Param, PromptDecl,
+    Span, Stmt, ToolDecl, TypeDecl, TypeRef, UnaryOp, Visibility,
 };
 
 /// Parse a full expression from a token stream.
@@ -89,6 +89,14 @@ impl<'a> Parser<'a> {
     fn peek_span(&self) -> Span {
         self.tokens
             .get(self.pos)
+            .map(|t| t.span)
+            .unwrap_or(Span::new(0, 0))
+    }
+
+    fn prev_span(&self) -> Span {
+        self.pos
+            .checked_sub(1)
+            .and_then(|idx| self.tokens.get(idx))
             .map(|t| t.span)
             .unwrap_or(Span::new(0, 0))
     }
@@ -331,6 +339,15 @@ impl<'a> Parser<'a> {
                         span,
                     };
                 }
+                TokKind::Question => {
+                    let question_span = self.peek_span();
+                    let target_span = target.span();
+                    self.bump();
+                    target = Expr::TryPropagate {
+                        inner: Box::new(target),
+                        span: target_span.merge(question_span),
+                    };
+                }
                 _ => return Ok(target),
             }
         }
@@ -382,6 +399,7 @@ impl<'a> Parser<'a> {
                     span: start_span,
                 })
             }
+            TokKind::KwTry => self.parse_try_retry_expr(),
             TokKind::Ident(name) => {
                 self.bump();
                 Ok(Expr::Ident {
@@ -438,6 +456,64 @@ impl<'a> Parser<'a> {
                     expected: "an expression".into(),
                 },
                 span: start_span,
+            }),
+        }
+    }
+
+    fn parse_try_retry_expr(&mut self) -> Result<Expr, ParseError> {
+        let start = self.peek_span();
+        self.bump(); // try
+        let body = self.parse_expr()?;
+        self.expect(TokKind::KwOn, "`on` after `try` body")?;
+        self.expect(TokKind::KwError, "`error` after `on` in retry expression")?;
+        self.expect(TokKind::KwRetry, "`retry` in retry expression")?;
+        let attempts = self.parse_u64_literal("retry attempt count")?;
+        self.expect(TokKind::KwTimes, "`times` after retry count")?;
+        self.expect(TokKind::KwBackoff, "`backoff` after retry count")?;
+
+        let backoff = match self.peek() {
+            TokKind::KwLinear => {
+                self.bump();
+                Backoff::Linear(self.parse_u64_literal("linear backoff delay in ms")?)
+            }
+            TokKind::KwExponential => {
+                self.bump();
+                Backoff::Exponential(
+                    self.parse_u64_literal("exponential backoff base delay in ms")?,
+                )
+            }
+            other => {
+                return Err(ParseError {
+                    kind: ParseErrorKind::UnexpectedToken {
+                        got: describe_token(other),
+                        expected: "`linear <ms>` or `exponential <ms>`".into(),
+                    },
+                    span: self.peek_span(),
+                });
+            }
+        };
+
+        Ok(Expr::TryRetry {
+            body: Box::new(body),
+            attempts,
+            backoff,
+            span: start.merge(self.prev_span()),
+        })
+    }
+
+    fn parse_u64_literal(&mut self, description: &str) -> Result<u64, ParseError> {
+        let span = self.peek_span();
+        match self.peek().clone() {
+            TokKind::Int(value) if value >= 0 => {
+                self.bump();
+                Ok(value as u64)
+            }
+            other => Err(ParseError {
+                kind: ParseErrorKind::UnexpectedToken {
+                    got: describe_token(&other),
+                    expected: description.into(),
+                },
+                span,
             }),
         }
     }
@@ -1157,14 +1233,31 @@ impl<'a> Parser<'a> {
         })
     }
 
-    /// Parse a type reference. v0.1 supports only `Named` types.
-    /// Generic syntax `List[T]` deferred to v0.2.
     fn parse_type_ref(&mut self) -> Result<TypeRef, ParseError> {
-        let span = self.peek_span();
         let (name, name_span) = self.expect_ident()?;
-        Ok(TypeRef::Named {
-            name: Ident::new(name, name_span),
-            span,
+        let name_ident = Ident::new(name, name_span);
+        if !matches!(self.peek(), TokKind::Lt) {
+            return Ok(TypeRef::Named {
+                name: name_ident,
+                span: name_span,
+            });
+        }
+
+        self.bump(); // <
+        let mut args = Vec::new();
+        if !matches!(self.peek(), TokKind::Gt) {
+            args.push(self.parse_type_ref()?);
+            while matches!(self.peek(), TokKind::Comma) {
+                self.bump();
+                args.push(self.parse_type_ref()?);
+            }
+        }
+        let end_span = self.peek_span();
+        self.expect(TokKind::Gt, "`>` to close generic type arguments")?;
+        Ok(TypeRef::Generic {
+            name: name_ident,
+            args,
+            span: name_span.merge(end_span),
         })
     }
 }
@@ -1420,6 +1513,51 @@ mod tests {
         }
     }
 
+    #[test]
+    fn parses_postfix_try_propagate() {
+        let e = parse("load_order()?");
+        match e {
+            Expr::TryPropagate { inner, .. } => {
+                assert!(matches!(*inner, Expr::Call { .. }));
+            }
+            other => panic!("expected TryPropagate, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_try_retry_with_linear_backoff() {
+        let e = parse("try fetch_order(id) on error retry 3 times backoff linear 50");
+        match e {
+            Expr::TryRetry {
+                body,
+                attempts,
+                backoff,
+                ..
+            } => {
+                assert_eq!(attempts, 3);
+                assert_eq!(backoff, Backoff::Linear(50));
+                assert!(matches!(*body, Expr::Call { .. }));
+            }
+            other => panic!("expected TryRetry, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_try_retry_with_exponential_backoff() {
+        let e = parse("try maybe_send() on error retry 5 times backoff exponential 125");
+        match e {
+            Expr::TryRetry {
+                attempts,
+                backoff,
+                ..
+            } => {
+                assert_eq!(attempts, 5);
+                assert_eq!(backoff, Backoff::Exponential(125));
+            }
+            other => panic!("expected TryRetry, got {other:?}"),
+        }
+    }
+
     // -------------------- errors --------------------
 
     #[test]
@@ -1444,6 +1582,12 @@ mod tests {
     fn rejects_empty_input() {
         let err = try_parse("").unwrap_err();
         assert!(matches!(err.kind, ParseErrorKind::UnexpectedEof));
+    }
+
+    #[test]
+    fn rejects_retry_without_backoff_policy_kind() {
+        let err = try_parse("try fetch() on error retry 2 times backoff 100").unwrap_err();
+        assert!(matches!(err.kind, ParseErrorKind::UnexpectedToken { .. }));
     }
 
     // -------------------- realistic agent snippets --------------------
@@ -1758,6 +1902,35 @@ type Ticket:
                 assert_eq!(t.fields[0].name.name, "order_id");
             }
             other => panic!("expected Type, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_result_and_option_type_refs() {
+        let src = "\
+agent load(id: String) -> Result<Option<Order>, String>:
+    return fetch(id)
+";
+        let file = parse_file_src(src);
+        let agent = match &file.decls[0] {
+            Decl::Agent(a) => a,
+            other => panic!("expected Agent, got {other:?}"),
+        };
+        match &agent.return_ty {
+            TypeRef::Generic { name, args, .. } => {
+                assert_eq!(name.name, "Result");
+                assert_eq!(args.len(), 2);
+                assert!(matches!(
+                    &args[0],
+                    TypeRef::Generic { name, args, .. }
+                    if name.name == "Option" && args.len() == 1
+                ));
+                assert!(matches!(
+                    &args[1],
+                    TypeRef::Named { name, .. } if name.name == "String"
+                ));
+            }
+            other => panic!("expected generic Result return type, got {other:?}"),
         }
     }
 

@@ -35,6 +35,10 @@ pub enum Value {
     /// A list of homogeneous values. Homogeneity isn't enforced at runtime
     /// in v0.5 — the type checker already rejects heterogeneous literals.
     List(Arc<Vec<Value>>),
+    ResultOk(Arc<Value>),
+    ResultErr(Arc<Value>),
+    OptionSome(Arc<Value>),
+    OptionNone,
 }
 
 /// A struct instance.
@@ -56,6 +60,8 @@ impl Value {
             Value::Nothing => "Nothing".into(),
             Value::Struct(s) => s.type_name.clone(),
             Value::List(_) => "List".into(),
+            Value::ResultOk(_) | Value::ResultErr(_) => "Result".into(),
+            Value::OptionSome(_) | Value::OptionNone => "Option".into(),
         }
     }
 
@@ -106,6 +112,10 @@ impl fmt::Display for Value {
                 }
                 write!(f, "]")
             }
+            Value::ResultOk(v) => write!(f, "Ok({v})"),
+            Value::ResultErr(v) => write!(f, "Err({v})"),
+            Value::OptionSome(v) => write!(f, "Some({v})"),
+            Value::OptionNone => write!(f, "None"),
         }
     }
 }
@@ -140,6 +150,10 @@ impl PartialEq for Value {
                 a.type_id == b.type_id && a.fields == b.fields
             }
             (Value::List(a), Value::List(b)) => a == b,
+            (Value::ResultOk(a), Value::ResultOk(b)) => a == b,
+            (Value::ResultErr(a), Value::ResultErr(b)) => a == b,
+            (Value::OptionSome(a), Value::OptionSome(b)) => a == b,
+            (Value::OptionNone, Value::OptionNone) => true,
             _ => false,
         }
     }

@@ -339,6 +339,19 @@ impl<'a> Lowerer<'a> {
             Expr::List { items, .. } => IrExprKind::List {
                 items: items.iter().map(|i| self.lower_expr(i)).collect(),
             },
+            Expr::TryPropagate { inner, .. } => IrExprKind::TryPropagate {
+                inner: Box::new(self.lower_expr(inner)),
+            },
+            Expr::TryRetry {
+                body,
+                attempts,
+                backoff,
+                ..
+            } => IrExprKind::TryRetry {
+                body: Box::new(self.lower_expr(body)),
+                attempts: *attempts,
+                backoff: *backoff,
+            },
         };
         IrExpr {
             kind,
@@ -357,14 +370,11 @@ impl<'a> Lowerer<'a> {
                 def_id: *def_id,
                 name: id.name.clone(),
             },
-            Some(Binding::BuiltIn(_)) => {
-                // Built-ins in expression position should have been caught by
-                // the type checker. Fall through as Local sentinel.
-                IrExprKind::Local {
-                    local_id: LocalId(u32::MAX),
-                    name: id.name.clone(),
-                }
-            }
+            Some(Binding::BuiltIn(BuiltIn::None)) => IrExprKind::OptionNone,
+            Some(Binding::BuiltIn(_)) => IrExprKind::Local {
+                local_id: LocalId(u32::MAX),
+                name: id.name.clone(),
+            },
             None => IrExprKind::Local {
                 local_id: LocalId(u32::MAX),
                 name: id.name.clone(),
@@ -390,6 +400,46 @@ impl<'a> Lowerer<'a> {
 
         let (kind, callee_name) = match callee {
             Expr::Ident { name, .. } => match self.bindings.get(&name.span) {
+                Some(Binding::BuiltIn(BuiltIn::Ok)) => {
+                    let inner = args
+                        .first()
+                        .map(|arg| self.lower_expr(arg))
+                        .unwrap_or_else(|| IrExpr {
+                            kind: IrExprKind::OptionNone,
+                            ty: Type::Unknown,
+                            span: name.span,
+                        });
+                    return IrExprKind::ResultOk {
+                        inner: Box::new(inner),
+                    };
+                }
+                Some(Binding::BuiltIn(BuiltIn::Err)) => {
+                    let inner = args
+                        .first()
+                        .map(|arg| self.lower_expr(arg))
+                        .unwrap_or_else(|| IrExpr {
+                            kind: IrExprKind::OptionNone,
+                            ty: Type::Unknown,
+                            span: name.span,
+                        });
+                    return IrExprKind::ResultErr {
+                        inner: Box::new(inner),
+                    };
+                }
+                Some(Binding::BuiltIn(BuiltIn::Some)) => {
+                    let inner = args
+                        .first()
+                        .map(|arg| self.lower_expr(arg))
+                        .unwrap_or_else(|| IrExpr {
+                            kind: IrExprKind::OptionNone,
+                            ty: Type::Unknown,
+                            span: name.span,
+                        });
+                    return IrExprKind::OptionSome {
+                        inner: Box::new(inner),
+                    };
+                }
+                Some(Binding::BuiltIn(BuiltIn::None)) => return IrExprKind::OptionNone,
                 Some(Binding::Decl(def_id)) => {
                     let entry = self.symbols.get(*def_id);
                     let kind = match entry.kind {
@@ -479,7 +529,18 @@ impl<'a> Lowerer<'a> {
                     None => Type::Unknown,
                 },
             },
-            _ => Type::Unknown,
+            TypeRef::Generic { name, args, .. } => match name.name.as_str() {
+                "List" if args.len() == 1 => Type::List(Box::new(self.type_ref_to_type(&args[0]))),
+                "Option" if args.len() == 1 => {
+                    Type::Option(Box::new(self.type_ref_to_type(&args[0])))
+                }
+                "Result" if args.len() == 2 => Type::Result(
+                    Box::new(self.type_ref_to_type(&args[0])),
+                    Box::new(self.type_ref_to_type(&args[1])),
+                ),
+                _ => Type::Unknown,
+            },
+            TypeRef::Function { .. } => Type::Unknown,
         }
     }
 }

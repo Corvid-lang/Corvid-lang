@@ -37,6 +37,14 @@ pub enum TokKind {
     /// this the formal boundary; Phase 16 ships the syntax so code
     /// doesn't need a breaking re-annotation later.
     KwPackage,
+    KwTry,
+    KwOn,
+    KwError,
+    KwRetry,
+    KwTimes,
+    KwBackoff,
+    KwLinear,
+    KwExponential,
 
     // --- keywords: effect system ---
     KwApprove,
@@ -71,6 +79,7 @@ pub enum TokKind {
     Comma,    // ,
     Dot,      // .
     Arrow,    // ->
+    Question, // ?
 
     // --- operators ---
     Assign,  // =
@@ -114,6 +123,14 @@ impl TokKind {
             "extend" => TokKind::KwExtend,
             "public" => TokKind::KwPublic,
             "package" => TokKind::KwPackage,
+            "try" => TokKind::KwTry,
+            "on" => TokKind::KwOn,
+            "error" => TokKind::KwError,
+            "retry" => TokKind::KwRetry,
+            "times" => TokKind::KwTimes,
+            "backoff" => TokKind::KwBackoff,
+            "linear" => TokKind::KwLinear,
+            "exponential" => TokKind::KwExponential,
             "approve" => TokKind::KwApprove,
             "dangerous" => TokKind::KwDangerous,
             "if" => TokKind::KwIf,

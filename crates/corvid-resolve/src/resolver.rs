@@ -445,6 +445,8 @@ impl Resolver {
                     self.resolve_expr(item);
                 }
             }
+            Expr::TryPropagate { inner, .. } => self.resolve_expr(inner),
+            Expr::TryRetry { body, .. } => self.resolve_expr(body),
         }
     }
 

@@ -32,6 +32,12 @@ pub enum BuiltIn {
     String,
     Bool,
     Nothing,
+    Result,
+    Option,
+    Ok,
+    Err,
+    Some,
+    None,
     // Structural sentinels (surface as Idents today; real variants later).
     Break,
     Continue,
@@ -78,6 +84,12 @@ impl SymbolTable {
         self.builtins.insert("String".into(), BuiltIn::String);
         self.builtins.insert("Bool".into(), BuiltIn::Bool);
         self.builtins.insert("Nothing".into(), BuiltIn::Nothing);
+        self.builtins.insert("Result".into(), BuiltIn::Result);
+        self.builtins.insert("Option".into(), BuiltIn::Option);
+        self.builtins.insert("Ok".into(), BuiltIn::Ok);
+        self.builtins.insert("Err".into(), BuiltIn::Err);
+        self.builtins.insert("Some".into(), BuiltIn::Some);
+        self.builtins.insert("None".into(), BuiltIn::None);
         self.builtins.insert("break".into(), BuiltIn::Break);
         self.builtins.insert("continue".into(), BuiltIn::Continue);
         self.builtins.insert("pass".into(), BuiltIn::Pass);
