@@ -156,8 +156,14 @@ agent string_concat_chain() -> Int:
     let c = run_and_count(src);
     eprintln!("BASELINE string_concat_chain: {c:?}");
     assert_eq!(c.allocs, 4, "string_concat_chain allocs");
-    assert_eq!(c.retain_calls, 1, "string_concat_chain retain_calls");
-    assert_eq!(c.release_calls, 11, "string_concat_chain release_calls");
+    // 17b-1b.2 peephole (borrow-at-use-site for string BinOps):
+    // the `s == "abcde"` comparison reads `s` directly from its
+    // Variable (no ownership-conversion retain) and the eq helper
+    // only reads its operands, so the post-op release is skipped
+    // for the borrowed operand. Saves 1 retain + 1 release.
+    // Pre-17b-1b.2: 1 / 11. Post: 0 / 10.
+    assert_eq!(c.retain_calls, 0, "string_concat_chain retain_calls");
+    assert_eq!(c.release_calls, 10, "string_concat_chain release_calls");
 }
 
 #[test]
@@ -178,8 +184,11 @@ agent struct_build_and_destructure() -> Int:
     let c = run_and_count(src);
     eprintln!("BASELINE struct_build_and_destructure: {c:?}");
     assert_eq!(c.allocs, 1, "struct_build_and_destructure allocs");
-    assert_eq!(c.retain_calls, 5, "struct_build_and_destructure retain_calls");
-    assert_eq!(c.release_calls, 9, "struct_build_and_destructure release_calls");
+    // 17b-1b.2 peephole: `l == "hello"` where l is a bare Local —
+    // skip ownership-conversion retain + post-op release.
+    // Pre-17b-1b.2: 5 / 9. Post: 4 / 8.
+    assert_eq!(c.retain_calls, 4, "struct_build_and_destructure retain_calls");
+    assert_eq!(c.release_calls, 8, "struct_build_and_destructure release_calls");
 }
 
 #[test]
@@ -196,8 +205,11 @@ agent list_of_strings_iter() -> Int:
     let c = run_and_count(src);
     eprintln!("BASELINE list_of_strings_iter: {c:?}");
     assert_eq!(c.allocs, 1, "list_of_strings_iter allocs");
-    assert_eq!(c.retain_calls, 7, "list_of_strings_iter retain_calls");
-    assert_eq!(c.release_calls, 15, "list_of_strings_iter release_calls");
+    // 17b-1b.2 peephole: 3 iterations × `s == "beta"` where s is
+    // a bare Local — saves 3 retains + 3 releases.
+    // Pre-17b-1b.2: 7 / 15. Post: 4 / 12.
+    assert_eq!(c.retain_calls, 4, "list_of_strings_iter retain_calls");
+    assert_eq!(c.release_calls, 12, "list_of_strings_iter release_calls");
 }
 
 #[test]
@@ -228,6 +240,9 @@ agent main() -> Int:
     // Pre-17b-1b.1: 5 retain / 8 release.
     // Post-17b-1b.1: committed below.
     assert_eq!(c.allocs, 0, "passthrough_agent allocs (all strings are literals)");
-    assert_eq!(c.retain_calls, 3, "passthrough_agent retain_calls");
-    assert_eq!(c.release_calls, 6, "passthrough_agent release_calls");
+    // 17b-1b.2 peephole: `a == "one"` where a is a bare Local.
+    // Saves 1 retain + 1 release.
+    // Pre-17b-1b.2: 3 / 6. Post: 2 / 5.
+    assert_eq!(c.retain_calls, 2, "passthrough_agent retain_calls");
+    assert_eq!(c.release_calls, 5, "passthrough_agent release_calls");
 }

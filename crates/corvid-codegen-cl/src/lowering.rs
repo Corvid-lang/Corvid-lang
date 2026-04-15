@@ -2206,10 +2206,32 @@ fn lower_expr(
             // and have their own ownership semantics (release inputs
             // after the helper call). Dispatch here so we have access
             // to the IR type information.
+            //
+            // Phase 17b-1b.2 peephole — borrow-at-use-site for
+            // consuming string BinOps. If an operand is a bare
+            // `IrExprKind::Local` of a refcounted String, we lower
+            // the Local WITHOUT emitting the ownership-conversion
+            // retain, and correspondingly skip the post-op release.
+            // The comparison/concat runtime helpers only read their
+            // inputs (they don't mutate the operand's refcount or
+            // store the pointer), so reading the Variable directly
+            // is semantically equivalent to retain-then-release with
+            // zero observable refcount net effect. The Local's
+            // binding remains Live in its scope, governed by the
+            // scope-exit release that's already in place.
+            //
+            // Non-bare-Local operands (literals, nested expressions,
+            // call results) still produce an Owned +1 and are
+            // released by the helper as before — the original
+            // ownership contract.
             if matches!(&left.ty, Type::String) && matches!(&right.ty, Type::String) {
-                let l = lower_expr(builder, left, env, func_ids_by_def, module, runtime)?;
-                let r = lower_expr(builder, right, env, func_ids_by_def, module, runtime)?;
-                return lower_string_binop(builder, *op, l, r, expr.span, module, runtime);
+                let (l, l_borrowed) =
+                    lower_string_operand_maybe_borrowed(builder, left, env, func_ids_by_def, module, runtime)?;
+                let (r, r_borrowed) =
+                    lower_string_operand_maybe_borrowed(builder, right, env, func_ids_by_def, module, runtime)?;
+                return lower_string_binop_with_ownership(
+                    builder, *op, l, r, l_borrowed, r_borrowed, expr.span, module, runtime,
+                );
             }
             let l = lower_expr(builder, left, env, func_ids_by_def, module, runtime)?;
             let r = lower_expr(builder, right, env, func_ids_by_def, module, runtime)?;
@@ -2705,45 +2727,94 @@ enum ArithDomain {
     Float,
 }
 
-/// String operators: `+` (concat), `==` / `!=`, `<` / `<=` / `>` / `>=`.
-/// Both operands arrive as Owned String pointers (per the three-state
-/// ownership model). The runtime helpers read but don't retain; we
-/// release each input after the call.
-fn lower_string_binop(
+/// Phase 17b-1b.2 — lower a string-typed operand in a borrow position
+/// (e.g. an operand of a consuming String BinOp: concat, equality, or
+/// ordering compare). Returns `(value, borrowed)`:
+///
+///   * `borrowed = true` iff the operand was a bare `IrExprKind::Local`
+///     — in that case we skip the ownership-conversion retain that
+///     `lower_expr` would normally emit, and the caller must NOT
+///     release the value afterward. The returned `ClValue` is a
+///     borrow of the binding's current refcount (caller's scope
+///     still governs the Drop).
+///   * `borrowed = false` for every other expression shape — the
+///     value is a fresh Owned +1 produced by `lower_expr`, and the
+///     caller is responsible for the corresponding release.
+///
+/// Safe because the String runtime helpers (`corvid_string_concat`,
+/// `corvid_string_eq`, `corvid_string_cmp`) only read their inputs —
+/// they never mutate the operand refcount nor store the pointer. So
+/// passing a borrow vs. an Owned +1 is indistinguishable from the
+/// helper's perspective; the only observable difference is the net
+/// zero retain/release pair we eliminated.
+fn lower_string_operand_maybe_borrowed(
+    builder: &mut FunctionBuilder,
+    expr: &IrExpr,
+    env: &HashMap<LocalId, (Variable, clir::Type)>,
+    func_ids_by_def: &HashMap<DefId, FuncId>,
+    module: &mut ObjectModule,
+    runtime: &RuntimeFuncs,
+) -> Result<(ClValue, bool), CodegenError> {
+    if let IrExprKind::Local { local_id, name } = &expr.kind {
+        let (var, _ty) = env.get(local_id).ok_or_else(|| {
+            CodegenError::cranelift(
+                format!("no variable for local `{name}` — compiler bug"),
+                expr.span,
+            )
+        })?;
+        let v = builder.use_var(*var);
+        return Ok((v, true));
+    }
+    let v = lower_expr(builder, expr, env, func_ids_by_def, module, runtime)?;
+    Ok((v, false))
+}
+
+/// Phase 17b-1b.2 — lower a string BinOp whose operands may be borrowed
+/// rather than Owned. Mirrors `lower_string_binop` but conditionally
+/// skips the post-op release for any operand that was passed as a
+/// borrow (no +1 was produced; nothing to release).
+#[allow(clippy::too_many_arguments)]
+fn lower_string_binop_with_ownership(
     builder: &mut FunctionBuilder,
     op: BinaryOp,
     l: ClValue,
     r: ClValue,
+    l_borrowed: bool,
+    r_borrowed: bool,
     span: Span,
     module: &mut ObjectModule,
     runtime: &RuntimeFuncs,
 ) -> Result<ClValue, CodegenError> {
     match op {
         BinaryOp::Add => {
-            // Concat returns +1 from `corvid_alloc` inside the helper.
             let callee = module.declare_func_in_func(runtime.string_concat, builder.func);
             let call = builder.ins().call(callee, &[l, r]);
             let result = builder.inst_results(call)[0];
-            // Release the input Owned references.
-            emit_release(builder, module, runtime, l);
-            emit_release(builder, module, runtime, r);
+            if !l_borrowed {
+                emit_release(builder, module, runtime, l);
+            }
+            if !r_borrowed {
+                emit_release(builder, module, runtime, r);
+            }
             Ok(result)
         }
         BinaryOp::Eq | BinaryOp::NotEq => {
             let callee = module.declare_func_in_func(runtime.string_eq, builder.func);
             let call = builder.ins().call(callee, &[l, r]);
             let eq_i64 = builder.inst_results(call)[0];
-            // Narrow i64 (0/1) → i8 (0/1) to match Bool's Cranelift width.
             let eq_i8 = builder.ins().ireduce(I8, eq_i64);
             let result = if matches!(op, BinaryOp::Eq) {
                 eq_i8
             } else {
-                // != : flip 0↔1.
                 let zero = builder.ins().iconst(I8, 0);
                 builder.ins().icmp(IntCC::Equal, eq_i8, zero)
             };
-            emit_release(builder, module, runtime, l);
-            emit_release(builder, module, runtime, r);
+            if !l_borrowed {
+                emit_release(builder, module, runtime, l);
+            }
+            if !r_borrowed {
+                emit_release(builder, module, runtime, r);
+            }
             Ok(result)
         }
         BinaryOp::Lt | BinaryOp::LtEq | BinaryOp::Gt | BinaryOp::GtEq => {
@@ -2759,8 +2830,12 @@ fn lower_string_binop(
                 _ => unreachable!(),
             };
             let result = builder.ins().icmp(cc, cmp_i64, zero);
-            emit_release(builder, module, runtime, l);
-            emit_release(builder, module, runtime, r);
+            if !l_borrowed {
+                emit_release(builder, module, runtime, l);
+            }
+            if !r_borrowed {
+                emit_release(builder, module, runtime, r);
+            }
             Ok(result)
         }
         BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div | BinaryOp::Mod => Err(
@@ -2769,7 +2844,9 @@ fn lower_string_binop(
                 span,
             ),
         ),
-        BinaryOp::And | BinaryOp::Or => unreachable!("and/or short-circuited upstream"),
+        BinaryOp::And | BinaryOp::Or => {
+            unreachable!("and/or is short-circuited upstream and never reaches string BinOp")
+        }
     }
 }
 

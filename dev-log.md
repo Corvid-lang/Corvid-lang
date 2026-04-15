@@ -2106,6 +2106,64 @@ All 105 parity tests pass. All 6 runtime tracer tests pass. All 5 baselines pass
 5. Baselines on the remaining workloads should drop significantly (list iteration, struct destructuring, concat chain).
 
 
+---
+
+## Day 20 — 2026-04-15 — Slice 17b-1b.2: borrow-at-use-site peephole for string BinOps
+
+### Scope decision — peephole, not monolithic rewrite
+
+The originally-committed 17b-1b.2 scope (full use-list + CFG-aware last-use + branch-asymmetric Drop placement + deletion of all ~40 scattered `emit_retain`/`emit_release` sites) is a multi-day surgical operation with high risk of silent leak/double-free bugs. Re-scoping: the peephole that achieves most of the same measurable reduction on the 17b-0 baselines without the sweeping rewrite.
+
+**The peephole:** when a string BinOp (`+`, `==`, `!=`, `<`, `<=`, `>`, `>=`) has an operand that's a bare `IrExprKind::Local`, we lower that operand to a borrow — reading the `Variable` directly without the ownership-conversion retain that `lower_expr` normally emits — and skip the corresponding post-op release. The runtime helpers (`corvid_string_concat`, `corvid_string_eq`, `corvid_string_cmp`) only read their inputs (never mutate refcount, never store the pointer), so a borrow is indistinguishable from an Owned +1 at the helper boundary. The Local's binding stays Live, governed by the scope-exit release already in place.
+
+Load-bearing correctness argument: the current codegen retains on `Local` read *solely* to produce an Owned +1 for the consumer to release. For consumers that don't modify or store the operand's refcount — which is every string BinOp helper — the retain/release pair nets to zero observable effect. Eliminating both preserves refcount exactly.
+
+### Measured reduction
+
+| Workload | Pre-17b-1b.2 | Post-17b-1b.2 | Reduction | Cumulative from 17b-0 |
+|---|---|---|---|---|
+| `primitive_loop` (control) | 0 / 1 | 0 / 1 | — | — |
+| `string_concat_chain` | 1 / 11 | **0 / 10** | 8% | 8% |
+| `struct_build_and_destructure` | 5 / 9 | **4 / 8** | 14% | 14% |
+| `list_of_strings_iter` | 7 / 15 | **4 / 12** | 27% | 27% |
+| `passthrough_agent` | 3 / 6 | **2 / 5** | 22% | **46%** (from 13 → 7) |
+
+The `list_of_strings_iter` case is where this peephole really shines: 3 iterations × `s == "beta"` × (1 retain + 1 release saved per iteration) = 6 ops eliminated. `passthrough_agent`'s cumulative 46% reduction (from the original 17b-0 baseline through two sub-slices) is the largest single-workload win so far.
+
+### Implementation
+
+Two new helpers in `lowering.rs`, scoped to string BinOp:
+
+- `lower_string_operand_maybe_borrowed(expr, ...) -> (ClValue, is_borrowed)` — if `expr` is a bare `IrExprKind::Local`, read the `Variable` directly with no retain, return `(value, true)`. Otherwise fall through to normal `lower_expr` (+1 Owned) and return `(value, false)`.
+- `lower_string_binop_with_ownership(op, l, r, l_borrowed, r_borrowed, ...)` — mirror of the old `lower_string_binop` but skips `emit_release` per operand based on the `*_borrowed` flags.
+
+The old `lower_string_binop` is deleted (was unreferenced after the BinOp dispatch switch).
+
+The BinOp dispatch in `lower_expr` now routes string-typed operand pairs through `lower_string_operand_maybe_borrowed` + `lower_string_binop_with_ownership` instead of two `lower_expr` calls + `lower_string_binop`.
+
+### What's still deferred
+
+The peephole doesn't cover:
+- Local reads in `FieldAccess` target / `Index` target positions (field/element extract patterns)
+- Local reads in `List` literal item slots (list construction — these are genuinely consuming stores)
+- Local reads in `Call` argument positions (needs call-site caller-side borrow, coordinated with callee's `borrow_sig`)
+- Local reads that ARE final-use in a non-consuming expression (move elision proper)
+- Scope-exit Drop redundancy elimination (current code emits them conservatively)
+
+Each of these is a future incremental peephole or — the right long-term answer — subsumed by the full use-list + Dup/Drop insertion pass that `ownership::transform_agent` will eventually implement.
+
+### Parity + correctness
+
+All 105 codegen parity tests pass (interpreter matches compiled output). All 6 runtime tracer tests pass. All 5 baselines pass with the new (lower) numbers. Full workspace ~370 tests, zero failures. `ALLOCS == RELEASES` on every run.
+
+### Next
+
+17b-1c — whole-program retain/release pair elimination using the function summaries that 17b-1b.1 populates. Or incremental peepholes — next-highest-leverage target is the `FieldAccess` pattern (field-extract retain + struct-container release), which appears in `struct_build_and_destructure`'s 4 remaining retains.
+
+Running total across Phase 17b so far: 31% + 46% cumulative on the hottest workloads. Still well short of Perceus-published numbers (2-10× on rbtree-class workloads), but Corvid's baselines are much smaller than Koka's — 13 ops vs hundreds — so absolute-count reductions quickly dominate.
+
+
+
 
 
 
