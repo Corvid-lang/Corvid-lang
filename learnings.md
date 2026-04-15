@@ -734,6 +734,120 @@ What becomes possible next:
 - Slice 17d: the cycle collector dispatches through each object's typeinfo during the mark phase. No per-type switch in the collector.
 - Slice 17g: `Weak<T>` slots in the typeinfo's reserved `weak_fn` field.
 
+## Phase 19 — REPL and replay (how to use it)
+
+Corvid now has an interactive REPL:
+
+```bash
+corvid repl
+```
+
+The REPL keeps successful declarations and locals across turns. That means you can declare a type, construct a value later, and inspect fields after that in separate inputs.
+
+Example:
+
+```text
+>>> type Point:
+...     x: Int
+...     y: Int
+...
+>>> p = Point(1, 2)
+>>> p.x
+2
+```
+
+### Multi-line input
+
+If the first line of a turn ends with `:`, the REPL enters multi-line mode and keeps reading with the `... ` prompt until you submit a blank line.
+
+Use this for:
+
+- `type` declarations
+- `extend T:` blocks
+- multi-line `if` / `for`
+- multi-line `try ... on error retry ...` expressions or statements
+
+### What persists across turns
+
+Successful turns commit.
+Failed turns roll back.
+
+That applies to:
+
+- declarations
+- top-level locals
+- the top-level type environment
+
+So a parse/type/runtime error in turn `N` does not poison the session state from turns `1..N-1`.
+
+### Result / Option / `?` / retry in the REPL
+
+The Phase 18 surfaces work directly in `corvid repl`:
+
+```text
+>>> Ok(Some("hi"))
+Ok(Some("hi"))
+```
+
+```text
+>>> try flaky_call() on error retry 3 times backoff linear 250
+...
+```
+
+The REPL prints expression results with type-aware rendering for:
+
+- `Result`
+- `Option`
+- `Struct`
+- `List`
+- `String`
+
+Recursive composite values are guarded:
+
+- repeated structural revisits print as `<cycle>`
+- overly deep recursion prints as `<...>`
+
+### History and shell behavior
+
+- `Ctrl-D` exits cleanly
+- `Ctrl-C` cancels the current in-flight turn
+- history persists across sessions
+
+History file location:
+
+- Unix: `$XDG_DATA_HOME/corvid/history`
+- Unix fallback: `~/.local/share/corvid/history`
+- Windows: `%APPDATA%\\corvid\\history`
+
+### Replay stepping
+
+The REPL can load an existing JSONL runtime trace and step through it:
+
+```text
+>>> :replay target/trace/run-1713199999999.jsonl
+loaded replay `target/trace/run-1713199999999.jsonl` [run run-1713199999999]: 5 step(s), 70 ms, final status: OK
+```
+
+Replay commands:
+
+- `:step` or `:s` advances one recorded step
+- bare `Enter` in replay mode also advances one step
+- `:step N` advances `N` steps
+- `:run` plays to the end
+- `:show` reprints the current step
+- `:where` shows the current position
+- `:quit` or `:q` leaves replay mode and returns to the normal REPL
+
+Replay output shows the recorded data, not reconstructed guesses:
+
+- run start inputs
+- tool call args and recorded results
+- LLM prompt name, model, rendered prompt text, args, and recorded result
+- approval request args and recorded decision
+- final run result or error
+
+If a trace is incomplete, replay reports `TRUNCATED` and still shows the recorded prefix. If the file is malformed or not a valid Corvid trace, the REPL prints a clear error and stays in normal mode.
+
 ## Contributing / feedback
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). The rules of the road are: pre-phase chat before code, per-slice commits at every boundary, dev-log entry for every session, no shortcuts. The `learnings.md` file you're reading gets updated when each slice ships a user-visible feature.

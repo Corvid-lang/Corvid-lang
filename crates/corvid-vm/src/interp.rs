@@ -61,6 +61,7 @@ pub async fn run_agent_with_env(
         ts_ms: corvid_runtime::now_ms(),
         run_id: runtime.tracer().run_id().to_string(),
         agent: agent_name.to_string(),
+        args: args.iter().map(value_to_json).collect(),
     });
 
     let mut interp = Interpreter::new(ir, runtime);
@@ -74,6 +75,11 @@ pub async fn run_agent_with_env(
         ts_ms: corvid_runtime::now_ms(),
         run_id: runtime.tracer().run_id().to_string(),
         ok: outcome.is_ok(),
+        result: outcome
+            .as_ref()
+            .ok()
+            .map(|(value, _env)| value_to_json(value)),
+        error: outcome.as_ref().err().map(|error| error.to_string()),
     });
     outcome
 }

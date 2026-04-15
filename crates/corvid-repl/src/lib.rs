@@ -1,5 +1,7 @@
 //! Interactive Corvid REPL.
 
+mod replay;
+
 use std::collections::HashSet;
 use std::io::IsTerminal;
 use std::io::{self, BufRead, Write};
@@ -12,6 +14,7 @@ use corvid_runtime::Runtime;
 use corvid_syntax::{lex, parse_repl_input, ReplItem};
 use corvid_types::{Checked, ReplLocal, ReplSession, Type};
 use corvid_vm::{render_value, run_agent_with_env, Env, InterpError, InterpErrorKind, Value};
+use replay::ReplaySession;
 use rustyline::error::ReadlineError;
 use rustyline::DefaultEditor;
 
@@ -33,6 +36,7 @@ pub struct Repl {
     locals: Vec<StoredLocal>,
     runtime: Runtime,
     tokio: tokio::runtime::Runtime,
+    replay: Option<ReplayState>,
 }
 
 enum ReadTurn {
@@ -47,6 +51,12 @@ enum TurnEval {
     Error(InterpError),
 }
 
+struct ReplayState {
+    session: ReplaySession,
+    current: Option<usize>,
+    next: usize,
+}
+
 impl Repl {
     pub fn new() -> io::Result<Self> {
         let tokio = tokio::runtime::Builder::new_multi_thread()
@@ -59,6 +69,7 @@ impl Repl {
             locals: Vec::new(),
             runtime: Runtime::builder().build(),
             tokio,
+            replay: None,
         })
     }
 
@@ -138,7 +149,7 @@ impl Repl {
                 return Ok(Some(source));
             }
 
-            if source.is_empty() && line.trim().is_empty() {
+            if source.is_empty() && line.trim().is_empty() && self.replay.is_none() {
                 continue;
             }
 
@@ -163,7 +174,7 @@ impl Repl {
             match editor.readline(prompt) {
                 Ok(line) => {
                     let is_blank = line.trim().is_empty();
-                    if source.is_empty() && is_blank {
+                    if source.is_empty() && is_blank && self.replay.is_none() {
                         continue;
                     }
 
@@ -200,6 +211,14 @@ impl Repl {
         output: &mut W,
         allow_interrupt: bool,
     ) -> io::Result<()> {
+        if self.try_handle_command(source, output)? {
+            return Ok(());
+        }
+        if self.replay.is_some() {
+            writeln!(output, "replay mode accepts only :step, :run, :show, :where, and :quit")?;
+            output.flush()?;
+            return Ok(());
+        }
         if source.trim().is_empty() {
             return Ok(());
         }
@@ -211,6 +230,63 @@ impl Repl {
             Err(errors) => self.write_errors(errors, output)?,
         }
         Ok(())
+    }
+
+    fn try_handle_command<W: Write>(&mut self, source: &str, output: &mut W) -> io::Result<bool> {
+        let trimmed = source.trim();
+
+        if self.replay.is_some() && trimmed.is_empty() {
+            self.step_replay(1, output)?;
+            return Ok(true);
+        }
+
+        if !trimmed.starts_with(':') {
+            return Ok(false);
+        }
+
+        let mut parts = trimmed.split_whitespace();
+        let command = parts.next().unwrap_or_default();
+        match command {
+            ":replay" => {
+                let path = trimmed[command.len()..].trim();
+                if path.is_empty() {
+                    writeln!(output, "usage: :replay <trace-path>")?;
+                    output.flush()?;
+                    return Ok(true);
+                }
+                self.enter_replay(path, output)?;
+                Ok(true)
+            }
+            ":step" | ":s" => {
+                let rest = trimmed[command.len()..].trim();
+                let count = if rest.is_empty() {
+                    1
+                } else {
+                    rest.parse::<usize>().map_err(|_| {
+                        io::Error::new(io::ErrorKind::InvalidInput, "invalid step count")
+                    })?
+                };
+                self.step_replay(count, output)?;
+                Ok(true)
+            }
+            ":run" => {
+                self.run_replay(output)?;
+                Ok(true)
+            }
+            ":show" => {
+                self.show_replay(output)?;
+                Ok(true)
+            }
+            ":where" => {
+                self.where_replay(output)?;
+                Ok(true)
+            }
+            ":quit" | ":q" => {
+                self.quit_replay(output)?;
+                Ok(true)
+            }
+            _ => Ok(false),
+        }
     }
 
     fn handle_item<W: Write>(
@@ -450,6 +526,107 @@ impl Repl {
     {
         for error in errors {
             writeln!(output, "{error}")?;
+        }
+        output.flush()
+    }
+
+    fn enter_replay<W: Write>(&mut self, path: &str, output: &mut W) -> io::Result<()> {
+        match ReplaySession::load(path) {
+            Ok(session) => {
+                writeln!(output, "{}", session.summary_line())?;
+                output.flush()?;
+                self.replay = Some(ReplayState {
+                    session,
+                    current: None,
+                    next: 0,
+                });
+            }
+            Err(error) => {
+                writeln!(output, "{error}")?;
+                output.flush()?;
+            }
+        }
+        Ok(())
+    }
+
+    fn step_replay<W: Write>(&mut self, count: usize, output: &mut W) -> io::Result<()> {
+        let Some(replay) = self.replay.as_mut() else {
+            writeln!(output, "replay mode is not active")?;
+            output.flush()?;
+            return Ok(());
+        };
+
+        if replay.next >= replay.session.steps.len() {
+            writeln!(output, "end of replay ({})", replay.session.final_status)?;
+            output.flush()?;
+            return Ok(());
+        }
+
+        let total = replay.session.steps.len();
+        for _ in 0..count.max(1) {
+            if replay.next >= total {
+                break;
+            }
+            let index = replay.next;
+            let step = &replay.session.steps[index];
+            writeln!(output, "[step {}/{}] {}", index + 1, total, step.title())?;
+            writeln!(output, "{}", step.render())?;
+            replay.current = Some(index);
+            replay.next += 1;
+        }
+        if replay.next >= total {
+            writeln!(output, "end of replay ({})", replay.session.final_status)?;
+        }
+        output.flush()
+    }
+
+    fn run_replay<W: Write>(&mut self, output: &mut W) -> io::Result<()> {
+        let remaining = self
+            .replay
+            .as_ref()
+            .map(|replay| replay.session.steps.len().saturating_sub(replay.next))
+            .unwrap_or(0);
+        self.step_replay(remaining.max(1), output)
+    }
+
+    fn show_replay<W: Write>(&mut self, output: &mut W) -> io::Result<()> {
+        let Some(replay) = self.replay.as_ref() else {
+            writeln!(output, "replay mode is not active")?;
+            output.flush()?;
+            return Ok(());
+        };
+        match replay.current.and_then(|index| replay.session.steps.get(index)) {
+            Some(step) => {
+                writeln!(output, "{}", step.render())?;
+            }
+            None => {
+                writeln!(output, "replay is loaded but no step has been shown yet")?;
+            }
+        }
+        output.flush()
+    }
+
+    fn where_replay<W: Write>(&mut self, output: &mut W) -> io::Result<()> {
+        let Some(replay) = self.replay.as_ref() else {
+            writeln!(output, "replay mode is not active")?;
+            output.flush()?;
+            return Ok(());
+        };
+        let current = replay.current.map(|index| index + 1).unwrap_or(0);
+        writeln!(
+            output,
+            "replay position: {}/{}",
+            current,
+            replay.session.steps.len()
+        )?;
+        output.flush()
+    }
+
+    fn quit_replay<W: Write>(&mut self, output: &mut W) -> io::Result<()> {
+        if self.replay.take().is_some() {
+            writeln!(output, "left replay mode")?;
+        } else {
+            writeln!(output, "replay mode is not active")?;
         }
         output.flush()
     }

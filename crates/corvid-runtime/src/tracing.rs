@@ -17,47 +17,57 @@ use std::time::{SystemTime, UNIX_EPOCH};
 #[serde(rename_all = "snake_case", tag = "kind")]
 pub enum TraceEvent {
     RunStarted {
-        ts_ms: u128,
+        ts_ms: u64,
         run_id: String,
         agent: String,
+        #[serde(default)]
+        args: Vec<serde_json::Value>,
     },
     RunCompleted {
-        ts_ms: u128,
+        ts_ms: u64,
         run_id: String,
         ok: bool,
+        #[serde(default)]
+        result: Option<serde_json::Value>,
+        #[serde(default)]
+        error: Option<String>,
     },
     ToolCall {
-        ts_ms: u128,
+        ts_ms: u64,
         run_id: String,
         tool: String,
         args: Vec<serde_json::Value>,
     },
     ToolResult {
-        ts_ms: u128,
+        ts_ms: u64,
         run_id: String,
         tool: String,
         result: serde_json::Value,
     },
     LlmCall {
-        ts_ms: u128,
+        ts_ms: u64,
         run_id: String,
         prompt: String,
         model: Option<String>,
+        #[serde(default)]
+        rendered: Option<String>,
+        #[serde(default)]
+        args: Vec<serde_json::Value>,
     },
     LlmResult {
-        ts_ms: u128,
+        ts_ms: u64,
         run_id: String,
         prompt: String,
         result: serde_json::Value,
     },
     ApprovalRequest {
-        ts_ms: u128,
+        ts_ms: u64,
         run_id: String,
         label: String,
         args: Vec<serde_json::Value>,
     },
     ApprovalResponse {
-        ts_ms: u128,
+        ts_ms: u64,
         run_id: String,
         label: String,
         approved: bool,
@@ -186,6 +196,30 @@ impl Tracer {
                 tool,
                 args: r.redact_args(args),
             },
+            TraceEvent::RunStarted {
+                ts_ms,
+                run_id,
+                agent,
+                args,
+            } => TraceEvent::RunStarted {
+                ts_ms,
+                run_id,
+                agent,
+                args: r.redact_args(args),
+            },
+            TraceEvent::RunCompleted {
+                ts_ms,
+                run_id,
+                ok,
+                result,
+                error,
+            } => TraceEvent::RunCompleted {
+                ts_ms,
+                run_id,
+                ok,
+                result: result.map(|value| r.redact(value)),
+                error,
+            },
             TraceEvent::ToolResult {
                 ts_ms,
                 run_id,
@@ -208,6 +242,21 @@ impl Tracer {
                 prompt,
                 result: r.redact(result),
             },
+            TraceEvent::LlmCall {
+                ts_ms,
+                run_id,
+                prompt,
+                model,
+                rendered,
+                args,
+            } => TraceEvent::LlmCall {
+                ts_ms,
+                run_id,
+                prompt,
+                model,
+                rendered: rendered.map(|s| redact_string(&r.redact(serde_json::Value::String(s)))),
+                args: r.redact_args(args),
+            },
             TraceEvent::ApprovalRequest {
                 ts_ms,
                 run_id,
@@ -224,11 +273,18 @@ impl Tracer {
     }
 }
 
+fn redact_string(value: &serde_json::Value) -> String {
+    match value {
+        serde_json::Value::String(s) => s.clone(),
+        other => other.to_string(),
+    }
+}
+
 /// Wall-clock millisecond timestamp. Used by event constructors.
-pub fn now_ms() -> u128 {
+pub fn now_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_millis())
+        .map(|d| d.as_millis() as u64)
         .unwrap_or(0)
 }
 
@@ -251,6 +307,7 @@ mod tests {
             ts_ms: 1,
             run_id: "run-test".into(),
             agent: "demo".into(),
+            args: vec![json!("arg")],
         });
         tracer.emit(TraceEvent::ToolCall {
             ts_ms: 2,
@@ -274,6 +331,8 @@ mod tests {
             ts_ms: 1,
             run_id: "x".into(),
             ok: true,
+            result: None,
+            error: None,
         });
         // No panic, no file. Success.
     }
@@ -288,6 +347,7 @@ mod tests {
             ts_ms: 0,
             run_id: "z".into(),
             agent: "a".into(),
+            args: vec![],
         });
     }
 }

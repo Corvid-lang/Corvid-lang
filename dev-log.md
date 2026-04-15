@@ -2592,6 +2592,130 @@ Coverage added:
 
 Replay in the REPL, but not as guessed "turns" over the current raw JSONL. The next slice must add a replay-grade loader/model first so `:replay <trace>` is built on explicit recorded structure rather than inference.
 
+## Day 28 [B] — 2026-04-15 — Slice 19f: REPL replay stepping
+
+### Goal
+
+Make replay visible at the terminal surface, not just hidden in the runtime: `:replay <trace>` should load a recorded run, let the user step through it deterministically, and show the exact recorded inputs, effect/tool activity, and outputs.
+
+### Pre-phase answers
+
+Before coding, I checked where replayable data already existed.
+
+- Trace data already lives in [`crates/corvid-runtime/src/tracing.rs`](crates/corvid-runtime/src/tracing.rs) as JSONL `TraceEvent`s.
+- The runtime and VM emit those events from:
+  - [`crates/corvid-runtime/src/runtime.rs`](crates/corvid-runtime/src/runtime.rs)
+  - [`crates/corvid-vm/src/interp.rs`](crates/corvid-vm/src/interp.rs)
+- The existing format was an event log, not a replay session model:
+  - no explicit "turn" boundary object
+  - no recorded agent args on `run_started`
+  - no recorded final result / error payload on `run_completed`
+  - no recorded rendered prompt text / prompt args on `llm_call`
+
+That meant the no-shortcuts path was not "guess turns later in the REPL." The right move was to strengthen the trace schema first and then build the REPL loader on top of that richer recorded data.
+
+### What shipped
+
+#### 1. Replay-grade trace payloads
+
+Extended `TraceEvent` so the runtime now records the payloads a human actually needs to inspect:
+
+- `run_started` includes `args`
+- `run_completed` includes `result` and `error`
+- `llm_call` includes `rendered` and `args`
+
+The redaction path was updated so these new fields still respect secret redaction.
+
+#### 2. Typed replay loader
+
+Added [`crates/corvid-repl/src/replay.rs`](crates/corvid-repl/src/replay.rs):
+
+- parses JSONL trace files into a typed `ReplaySession`
+- groups paired runtime events into replay steps:
+  - run start
+  - tool call/result
+  - llm call/result
+  - approval request/response
+  - run complete
+- detects truncated traces
+- rejects malformed or shape-invalid traces with a clear error instead of entering replay mode
+
+The REPL still does **not** invent new trace formats. It consumes the runtime's JSONL trace output directly.
+
+#### 3. REPL replay commands
+
+Added command handling in [`crates/corvid-repl/src/lib.rs`](crates/corvid-repl/src/lib.rs):
+
+- `:replay <path>`
+- `:step`
+- `:s`
+- bare `Enter` while in replay mode
+- `:step N`
+- `:run`
+- `:show`
+- `:where`
+- `:quit`
+- `:q`
+
+Replay mode is read-only. It prints recorded inputs and recorded outputs; it does not resume live execution.
+
+### Mid-slice discovery
+
+`serde_json` deserialization over the trace file rejected `u128` timestamps with:
+
+`u128 is not supported`
+
+This was a real schema problem, not a one-off test quirk. Milliseconds-since-epoch do not need `u128`, and keeping them there would make replay fragile for any downstream JSON consumer. I changed the trace timestamp type from `u128` to `u64` across the tracing and replay layers. That is the correct durability fix.
+
+### Command surface
+
+Example:
+
+```text
+$ corvid repl
+>>> :replay target/trace/run-1713199999999.jsonl
+loaded replay `target/trace/run-1713199999999.jsonl` [run run-1713199999999]: 5 step(s), 70 ms, final status: OK
+>>> :step
+[step 1/5] run start: refund_bot
+run start
+  ts    : 1000
+  agent : refund_bot
+  inputs: [{"order_id":"ord_42","reason":"damaged"}]
+>>> 
+[step 2/5] tool: get_order
+tool call
+  ts    : 1010 -> 1020 (10 ms)
+  tool  : get_order
+  inputs: ["ord_42"]
+  output: {"amount":49.99,"id":"ord_42"}
+>>> :where
+replay position: 2/5
+>>> :run
+...
+end of replay (OK)
+>>> :q
+left replay mode
+```
+
+### Test evidence
+
+Green touched-set verification:
+
+```bash
+cargo test -p corvid-repl --test replay -p corvid-cli --test repl_smoke
+cargo test -p corvid-runtime -p corvid-vm -p corvid-repl -p corvid-cli
+```
+
+Coverage added:
+
+- valid replay stepping over a sample trace
+- malformed replay file rejection without leaving normal REPL mode
+- truncated replay reporting as `TRUNCATED`
+
+### Notes
+
+The broad package test command surfaces two failing cycle-collector tests in `crates/corvid-runtime/tests/cycle_collector.rs`. Those failures are outside this slice's claimed surface and were already present in the active Phase 17 collector workstream. I did not touch the runtime C collector files or try to fold that unrelated work into this slice.
+
 
 
 

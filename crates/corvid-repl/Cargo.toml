@@ -14,4 +14,5 @@ corvid-syntax = { workspace = true }
 corvid-types = { workspace = true }
 corvid-vm = { workspace = true }
 rustyline = { version = "17.0.2", features = ["with-file-history"] }
+serde_json = { workspace = true }
 tokio = { workspace = true }

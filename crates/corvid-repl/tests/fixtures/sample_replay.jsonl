@@ -1,0 +1,8 @@
+{"kind":"run_started","ts_ms":1000,"run_id":"run-test","agent":"refund_bot","args":[{"order_id":"ord_42","reason":"damaged"}]}
+{"kind":"tool_call","ts_ms":1010,"run_id":"run-test","tool":"get_order","args":["ord_42"]}
+{"kind":"tool_result","ts_ms":1020,"run_id":"run-test","tool":"get_order","result":{"id":"ord_42","amount":49.99}}
+{"kind":"llm_call","ts_ms":1030,"run_id":"run-test","prompt":"decide_refund","model":"mock-1","rendered":"Decide whether to refund damaged order ord_42.","args":[{"order_id":"ord_42","reason":"damaged"},{"id":"ord_42","amount":49.99}]}
+{"kind":"llm_result","ts_ms":1040,"run_id":"run-test","prompt":"decide_refund","result":{"should_refund":true}}
+{"kind":"approval_request","ts_ms":1050,"run_id":"run-test","label":"IssueRefund","args":["ord_42",49.99]}
+{"kind":"approval_response","ts_ms":1060,"run_id":"run-test","label":"IssueRefund","approved":true}
+{"kind":"run_completed","ts_ms":1070,"run_id":"run-test","ok":true,"result":{"should_refund":true},"error":null}

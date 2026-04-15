@@ -1,0 +1,4 @@
+{"kind":"run_started","ts_ms":2000,"run_id":"run-truncated","agent":"repair_bot","args":[{"ticket":"t-7"}]}
+{"kind":"tool_call","ts_ms":2010,"run_id":"run-truncated","tool":"lookup_ticket","args":["t-7"]}
+{"kind":"tool_result","ts_ms":2020,"run_id":"run-truncated","tool":"lookup_ticket","result":{"ticket":"t-7","priority":"high"}}
+{"kind":"llm_call","ts_ms":2030,"run_id":"run-truncated","prompt":"triage_ticket","model":"mock-1","rendered":"Triage ticket t-7.","args":[{"ticket":"t-7","priority":"high"}]}

@@ -80,6 +80,8 @@ impl Runtime {
             } else {
                 Some(req.model.clone())
             },
+            rendered: Some(req.rendered.clone()),
+            args: req.args.clone(),
         });
         let resp = self.llms.call(&req).await?;
         self.tracer.emit(TraceEvent::LlmResult {
