@@ -233,6 +233,9 @@ impl Codegen {
             IrStmt::Break { .. } => self.out.writeln("break"),
             IrStmt::Continue { .. } => self.out.writeln("continue"),
             IrStmt::Pass { .. } => self.out.writeln("pass"),
+            // Phase 17b: Python transpile ignores ownership ops —
+            // CPython handles refcount itself.
+            IrStmt::Dup { .. } | IrStmt::Drop { .. } => {}
         }
     }
 

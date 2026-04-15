@@ -79,6 +79,36 @@ pub struct IrAgent {
     pub return_ty: Type,
     pub body: IrBlock,
     pub span: Span,
+    /// Phase 17b — per-parameter ownership at the callee ABI.
+    /// `None` = ownership analysis hasn't run on this agent (every
+    /// parameter is treated as Owned, matching pre-17b behavior).
+    /// `Some(v)` with `v.len() == params.len()` — each entry matches
+    /// the parameter at the same index.
+    ///
+    /// Populated by `corvid-codegen-cl`'s ownership pass after IR
+    /// lowering and before Cranelift codegen. The interpreter tier
+    /// (`corvid-vm`) ignores this field — refcount there is via `Arc`
+    /// and has no ABI distinction.
+    pub borrow_sig: Option<Vec<ParamBorrow>>,
+}
+
+/// Callee-side ABI for a refcounted parameter. Non-refcounted params
+/// (Int, Float, Bool) have no RC ABI decision — this enum describes
+/// them as `Owned` trivially (no retain/release either way).
+///
+/// Defined in corvid-ir rather than corvid-codegen-cl so the
+/// interpreter crate can see it (and explicitly ignore it) without a
+/// cross-crate cycle.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ParamBorrow {
+    /// Caller transfers a +1 on the argument; callee is responsible
+    /// for eventual drop. Matches pre-17b behavior for all parameters.
+    Owned,
+    /// Caller does not transfer a +1; callee must NOT drop and must
+    /// emit `Dup` locally before storing the value into a long-lived
+    /// location or returning it. Saves one retain at the caller + one
+    /// release at the callee when the body is read-only on the param.
+    Borrowed,
 }
 
 #[derive(Debug, Clone)]
@@ -143,6 +173,22 @@ pub enum IrStmt {
     Break { span: Span },
     Continue { span: Span },
     Pass { span: Span },
+
+    /// Phase 17b — increment a refcounted local's refcount.
+    /// Inserted by the ownership analysis pass at non-final uses of a
+    /// binding. Codegen lowers this as a single `corvid_retain` call.
+    /// The interpreter ignores it (Arc handles refcount implicitly).
+    ///
+    /// `Dup` on a non-refcounted local is a no-op — the analysis pass
+    /// emits it only for refcounted types, but the codegen double-
+    /// checks via the local's declared type before emitting.
+    Dup { local_id: LocalId, span: Span },
+
+    /// Phase 17b — release a refcounted local's refcount.
+    /// Inserted at final use (unless the use is a consume/move) or at
+    /// scope exit for any still-owned bindings. Codegen lowers this as
+    /// a single `corvid_release` call. The interpreter ignores it.
+    Drop { local_id: LocalId, span: Span },
 }
 
 #[derive(Debug, Clone)]

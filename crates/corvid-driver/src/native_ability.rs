@@ -105,6 +105,9 @@ fn scan_stmt(stmt: &IrStmt) -> Result<(), NotNativeReason> {
         }
         IrStmt::Expr { expr, .. } => scan_expr(expr),
         IrStmt::Break { .. } | IrStmt::Continue { .. } | IrStmt::Pass { .. } => Ok(()),
+        // Phase 17b: ownership ops contain no user expressions; they
+        // don't change whether this agent can run natively.
+        IrStmt::Dup { .. } | IrStmt::Drop { .. } => Ok(()),
     }
 }
 

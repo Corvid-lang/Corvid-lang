@@ -197,6 +197,10 @@ impl<'a> Lowerer<'a> {
             return_ty: self.type_ref_to_type(&a.return_ty),
             body: self.lower_block(&a.body),
             span: a.span,
+            // Phase 17b — populated by corvid-codegen-cl's ownership
+            // pass. None at lowering time means "every parameter is
+            // Owned" at codegen (matches pre-17b semantics).
+            borrow_sig: None,
         }
     }
 

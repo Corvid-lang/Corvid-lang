@@ -796,6 +796,7 @@ fn visit_block_types(
                 }
             }
             IrStmt::Break { .. } | IrStmt::Continue { .. } | IrStmt::Pass { .. } => {}
+            IrStmt::Dup { .. } | IrStmt::Drop { .. } => {}
         }
     }
 }
@@ -1386,6 +1387,10 @@ fn stmt_uses_runtime(stmt: &IrStmt) -> bool {
         IrStmt::Approve { .. } => true,
         IrStmt::Expr { expr, .. } => expr_uses_runtime(expr),
         IrStmt::Break { .. } | IrStmt::Continue { .. } | IrStmt::Pass { .. } => false,
+        // Dup/Drop emit direct runtime calls (corvid_retain/release)
+        // but those don't need the async bridge — runtime is a C ABI
+        // library linked in regardless.
+        IrStmt::Dup { .. } | IrStmt::Drop { .. } => false,
     }
 }
 
@@ -2060,6 +2065,64 @@ fn lower_stmt(
             module,
             runtime,
         ),
+        // Phase 17b-1a — Dup/Drop as first-class IR operations. In
+        // slice 17b-1a the ownership analysis pass hasn't been
+        // written yet, so these variants never appear in the IR
+        // codegen receives (only `None` borrow_sigs and no
+        // Dup/Drop statements — all ownership is still handled by
+        // the scattered `emit_retain`/`emit_release` calls in the
+        // expression lowerings). 17b-1b replaces that with the
+        // analysis pass that actually emits these. For forward
+        // compatibility the handlers are present and correct today:
+        // each lowers to a single runtime call on the variable's
+        // current value, with a type-based no-op for non-refcounted
+        // locals.
+        IrStmt::Dup { local_id, span } => {
+            let (var, cl_ty) = *env.get(local_id).ok_or_else(|| {
+                CodegenError::cranelift(
+                    format!("Dup references unknown local {:?}", local_id),
+                    *span,
+                )
+            })?;
+            // Non-refcounted locals use I64/F64/I8 for primitives;
+            // only I64 values that point at refcounted payloads need
+            // retain. The analysis pass is responsible for only
+            // emitting Dup on refcounted locals — if a non-I64
+            // slipped through, that's a bug in the analysis, not
+            // a silent no-op here.
+            if cl_ty != I64 {
+                return Err(CodegenError::cranelift(
+                    format!(
+                        "Dup on non-I64 local (cl_ty={cl_ty:?}) — analysis \
+                         should have filtered this out"
+                    ),
+                    *span,
+                ));
+            }
+            let v = builder.use_var(var);
+            emit_retain(builder, module, runtime, v);
+            Ok(BlockOutcome::Normal)
+        }
+        IrStmt::Drop { local_id, span } => {
+            let (var, cl_ty) = *env.get(local_id).ok_or_else(|| {
+                CodegenError::cranelift(
+                    format!("Drop references unknown local {:?}", local_id),
+                    *span,
+                )
+            })?;
+            if cl_ty != I64 {
+                return Err(CodegenError::cranelift(
+                    format!(
+                        "Drop on non-I64 local (cl_ty={cl_ty:?}) — analysis \
+                         should have filtered this out"
+                    ),
+                    *span,
+                ));
+            }
+            let v = builder.use_var(var);
+            emit_release(builder, module, runtime, v);
+            Ok(BlockOutcome::Normal)
+        }
     }
 }
 

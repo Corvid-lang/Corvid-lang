@@ -2004,6 +2004,51 @@ Slice 17b-1 brief + implementation. The pass needs to:
 Pre-phase chat for 17b-1 next session.
 
 
+---
+
+## Day 18 — 2026-04-15 — Slice 17b-1a: Dup/Drop IR infrastructure
+
+### What landed
+
+Scaffolding for the 17b-1b ownership analysis pass. Purely behavior-preserving — every existing test passes with identical RC op counts. The slice adds:
+
+- `IrStmt::Dup { local_id, span }` and `IrStmt::Drop { local_id, span }` as first-class IR statement variants. Dup → `corvid_retain`; Drop → `corvid_release` at codegen time.
+- `ParamBorrow { Owned, Borrowed }` enum in `corvid-ir` — the callee-side ABI decision for a refcounted parameter. `Owned` matches pre-17b behavior; `Borrowed` saves one retain at the caller and one release at the callee when the body is read-only.
+- `IrAgent.borrow_sig: Option<Vec<ParamBorrow>>` field. `None` = "analysis hasn't run; treat all params as Owned" (semantically identical to pre-17b). 17b-1b will populate it.
+- All IR consumers updated to handle the new variants: interpreter ignores them (Arc handles refcount), Python transpile ignores them (CPython handles refcount), native codegen lowers them to `corvid_retain`/`corvid_release`, driver's native-ability check ignores them (they don't affect "can this run natively?").
+
+### Why this shipped as its own sub-slice
+
+The principle that lands a consumer in the same slice as the feature ("load-bearing the day it lands" — the 17a lesson) applies here too. 17b-1a's consumer is the codegen — it now handles Dup/Drop end-to-end, so the IR variants aren't dead variants waiting for a writer. What 17b-1a *doesn't* have: any code that actually emits Dup/Drop into the IR. That's 17b-1b.
+
+Shipping 17b-1a + 17b-1b as a single slice would have been a much larger diff (adding the IR variants, adding the consumers, writing the analysis pass, rewiring the scattered `emit_retain`/`emit_release` calls, updating baselines — all in one commit). Splitting keeps each half auditable: 17b-1a is a pure scaffolding change with provable no-op behavior (baselines unchanged); 17b-1b is where the semantic change lands.
+
+### Test evidence
+
+All 370+ workspace tests pass. Specifically:
+- 105 parity tests (codegen output identical to interpreter)
+- 5 baseline RC counts (exact-match assertions on the pre-17b numbers — proves no RC op count changed)
+- 6 runtime tracer tests
+- 22 IR tests
+- 35 syntax tests
+- 80 runtime unit tests
+
+The baseline_rc_counts.rs tests are the load-bearing evidence: if 17b-1a accidentally inserted any Dup/Drop during IR lowering, those counts would change and the tests would fail.
+
+### Next
+
+17b-1b pre-phase chat. The analysis pass needs to:
+1. Walk each agent body per scope, tracking which bindings are refcounted.
+2. Per refcounted binding, compute use-list (every site the local is read).
+3. Per use site, decide: Dup (non-final use) or Move (final use that transfers ownership).
+4. At scope exit, Drop every still-owned binding that wasn't moved.
+5. Per-callee borrow inference: a parameter is borrowed iff the body has no store-into-heap-location AND no return-of-parameter-without-prior-Dup. Conservative two-pass for recursive callees (assume all-owned, refine to borrowed).
+6. At call sites: respect callee's BorrowSig — Dup the argument only if the callee takes it owned.
+
+After 17b-1b lands, update baselines in `baseline_rc_counts.rs` with the new (lower) numbers. The diff is the receipt of the reduction.
+
+
+
 
 
 

@@ -216,6 +216,7 @@ agent pick(flag: Bool) -> Int:
                 span: sp,
             },
             span: sp,
+            borrow_sig: None,
         };
         let ir = IrFile {
             imports: vec![],
