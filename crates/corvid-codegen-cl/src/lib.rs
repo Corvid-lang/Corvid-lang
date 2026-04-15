@@ -22,6 +22,7 @@
 #![forbid(unsafe_code)]
 
 pub mod dataflow;
+pub mod dup_drop;
 pub mod errors;
 pub mod link;
 pub mod lowering;

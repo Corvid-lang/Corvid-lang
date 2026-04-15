@@ -144,6 +144,29 @@ pub enum ReadKind {
 // Ownership plan — what .6b will consume
 // ---------------------------------------------------------------------------
 
+/// One navigation step from an `IrAgent.body` root down to a specific
+/// nested statement. Used by 17b-1b.6b to translate `ProgramPoint`
+/// coordinates (which live in the flattened CFG) back into mutable
+/// positions in the original IR tree.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub enum IrNavStep {
+    /// Index into the current block's `stmts` vector. Always the LAST
+    /// step in any path (final statement coordinate).
+    Stmt(usize),
+    /// Descend into the `then_block` of an `IrStmt::If` at the
+    /// position given by the immediately preceding `Stmt` step.
+    IfThen,
+    /// Descend into the `else_block` of an `IrStmt::If`. Only valid
+    /// if the `If` has an else branch.
+    IfElse,
+    /// Descend into the `body` of an `IrStmt::For`.
+    ForBody,
+}
+
+/// A navigation path: a sequence of steps from the agent body root
+/// to one specific statement. Always ends with a `Stmt(idx)`.
+pub type IrPath = Vec<IrNavStep>;
+
 /// The output of this slice. Per agent, lists every Dup/Drop the
 /// future .6b pass should insert into the IR.
 ///
@@ -157,6 +180,10 @@ pub enum ReadKind {
 ///     that never reach a use, or for the cleanup at the end of `if`
 ///     branches when the local has different last-uses on different
 ///     paths).
+///   - `ir_paths[(block, pos)]` — the IR-tree coordinate that maps
+///     this CFG `ProgramPoint` to a mutable position in
+///     `agent.body`. Populated by `analyze_agent`. Slice 17b-1b.6b
+///     consumes this to insert `IrStmt::Dup`/`IrStmt::Drop`.
 ///
 /// Determinism: BTreeMap/BTreeSet throughout. Pass output is stable
 /// across runs and across compiler versions — the 17f++ trigger-log
@@ -166,6 +193,7 @@ pub struct OwnershipPlan {
     pub dups: BTreeMap<ProgramPoint, BTreeSet<LocalId>>,
     pub drops_after: BTreeMap<ProgramPoint, BTreeSet<LocalId>>,
     pub drops_at_block_exit: BTreeMap<BlockId, BTreeSet<LocalId>>,
+    pub ir_paths: BTreeMap<ProgramPoint, IrPath>,
 }
 
 impl OwnershipPlan {
@@ -196,8 +224,9 @@ impl OwnershipPlan {
 pub fn analyze_agent(agent: &IrAgent) -> (Cfg, OwnershipPlan) {
     let mut builder = CfgBuilder::new();
     let entry = builder.alloc_block();
-    builder.lower_block(&agent.body, entry);
+    builder.lower_block(&agent.body, entry, Vec::new());
     let cfg = Cfg { blocks: builder.blocks, entry };
+    let ir_paths = builder.ir_paths;
 
     // Parameters are defined at function entry. Refcounted parameters
     // start owned (for now — borrow-sig-driven parameter elision is
@@ -211,7 +240,8 @@ pub fn analyze_agent(agent: &IrAgent) -> (Cfg, OwnershipPlan) {
     }
 
     let liveness = compute_liveness(&cfg, &param_locals);
-    let plan = build_plan(&cfg, &liveness, &param_locals);
+    let mut plan = build_plan(&cfg, &liveness, &param_locals);
+    plan.ir_paths = ir_paths;
     (cfg, plan)
 }
 
@@ -221,10 +251,14 @@ pub fn analyze_agent(agent: &IrAgent) -> (Cfg, OwnershipPlan) {
 
 struct CfgBuilder {
     blocks: Vec<CfgBlock>,
+    /// Maps each CFG `ProgramPoint` to the IR-tree path that produced
+    /// it. Populated as `lower_block` walks; consumed by
+    /// `analyze_agent` and merged into the returned `OwnershipPlan`.
+    ir_paths: BTreeMap<ProgramPoint, IrPath>,
 }
 
 impl CfgBuilder {
-    fn new() -> Self { Self { blocks: Vec::new() } }
+    fn new() -> Self { Self { blocks: Vec::new(), ir_paths: BTreeMap::new() } }
 
     fn alloc_block(&mut self) -> BlockId {
         let id = self.blocks.len();
@@ -232,8 +266,10 @@ impl CfgBuilder {
         id
     }
 
-    fn push_stmt(&mut self, b: BlockId, s: CfgStmt) {
+    fn push_stmt(&mut self, b: BlockId, s: CfgStmt, ir_path: IrPath) {
+        let pos = self.blocks[b].stmts.len();
         self.blocks[b].stmts.push(s);
+        self.ir_paths.insert((b, pos), ir_path);
     }
 
     fn add_succ(&mut self, from: BlockId, to: BlockId) {
@@ -246,9 +282,21 @@ impl CfgBuilder {
     /// the block id where control flow rests after the block (for
     /// chaining with subsequent siblings). Returns `None` if control
     /// definitely exits (the block ends in `Return`).
-    fn lower_block(&mut self, block: &IrBlock, current: BlockId) -> Option<BlockId> {
+    ///
+    /// `parent_path` is the navigation path from `agent.body` down to
+    /// (but not including) the statements being lowered now. Each
+    /// statement's full path is `parent_path ++ [Stmt(idx)]` for the
+    /// statement at index `idx` within `block.stmts`.
+    fn lower_block(
+        &mut self,
+        block: &IrBlock,
+        current: BlockId,
+        parent_path: IrPath,
+    ) -> Option<BlockId> {
         let mut cur = current;
-        for stmt in &block.stmts {
+        for (ir_idx, stmt) in block.stmts.iter().enumerate() {
+            let mut my_path = parent_path.clone();
+            my_path.push(IrNavStep::Stmt(ir_idx));
             match stmt {
                 IrStmt::Let { local_id, value, ty, .. } => {
                     let reads = collect_reads(value, true);
@@ -256,27 +304,29 @@ impl CfgBuilder {
                         lhs: *local_id,
                         lhs_ty: ty.clone(),
                         reads,
-                    });
+                    }, my_path);
                 }
                 IrStmt::Expr { expr, .. } => {
                     let reads = collect_reads(expr, true);
-                    self.push_stmt(cur, CfgStmt::Expr { reads });
+                    self.push_stmt(cur, CfgStmt::Expr { reads }, my_path);
                 }
                 IrStmt::Return { value, .. } => {
                     let reads = match value {
                         Some(e) => collect_reads(e, true),
                         None => Vec::new(),
                     };
-                    self.push_stmt(cur, CfgStmt::Return { reads });
+                    self.push_stmt(cur, CfgStmt::Return { reads }, my_path);
                     // No successor — return exits.
                     return None;
                 }
                 IrStmt::If { cond, then_block, else_block, .. } => {
                     let cond_reads = collect_reads(cond, false);
-                    self.push_stmt(cur, CfgStmt::Branch { reads: cond_reads });
+                    self.push_stmt(cur, CfgStmt::Branch { reads: cond_reads }, my_path.clone());
                     let then_id = self.alloc_block();
                     self.add_succ(cur, then_id);
-                    let after_then = self.lower_block(then_block, then_id);
+                    let mut then_parent = my_path.clone();
+                    then_parent.push(IrNavStep::IfThen);
+                    let after_then = self.lower_block(then_block, then_id, then_parent);
 
                     let join = self.alloc_block();
                     if let Some(at) = after_then {
@@ -285,7 +335,9 @@ impl CfgBuilder {
                     if let Some(eb) = else_block {
                         let else_id = self.alloc_block();
                         self.add_succ(cur, else_id);
-                        let after_else = self.lower_block(eb, else_id);
+                        let mut else_parent = my_path.clone();
+                        else_parent.push(IrNavStep::IfElse);
+                        let after_else = self.lower_block(eb, else_id, else_parent);
                         if let Some(ae) = after_else {
                             self.add_succ(ae, join);
                         }
@@ -301,14 +353,16 @@ impl CfgBuilder {
                         var: *var_local,
                         var_ty: iter_element_type(iter),
                         reads: iter_reads,
-                    });
+                    }, my_path.clone());
                     let body_id = self.alloc_block();
                     let after_loop = self.alloc_block();
                     // Loop edges: head → body, body → head (back-edge),
                     // head → after_loop (exit on iterator empty).
                     self.add_succ(cur, body_id);
                     self.add_succ(cur, after_loop);
-                    let after_body = self.lower_block(body, body_id);
+                    let mut body_parent = my_path.clone();
+                    body_parent.push(IrNavStep::ForBody);
+                    let after_body = self.lower_block(body, body_id, body_parent);
                     if let Some(ab) = after_body {
                         self.add_succ(ab, cur);
                     }
@@ -319,12 +373,12 @@ impl CfgBuilder {
                     for a in args {
                         reads.extend(collect_reads(a, false));
                     }
-                    self.push_stmt(cur, CfgStmt::Other { reads });
+                    self.push_stmt(cur, CfgStmt::Other { reads }, my_path);
                 }
                 IrStmt::Break { .. }
                 | IrStmt::Continue { .. }
                 | IrStmt::Pass { .. } => {
-                    self.push_stmt(cur, CfgStmt::Other { reads: Vec::new() });
+                    self.push_stmt(cur, CfgStmt::Other { reads: Vec::new() }, my_path);
                 }
                 // Dup/Drop should not appear in input IR for .6a — the
                 // pass that inserts them is .6b, which hasn't run yet.
@@ -332,7 +386,7 @@ impl CfgBuilder {
                 // can run the analysis on its own output for
                 // verification without crashing).
                 IrStmt::Dup { .. } | IrStmt::Drop { .. } => {
-                    self.push_stmt(cur, CfgStmt::Other { reads: Vec::new() });
+                    self.push_stmt(cur, CfgStmt::Other { reads: Vec::new() }, my_path);
                 }
             }
         }
