@@ -21,6 +21,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod dataflow;
 pub mod errors;
 pub mod link;
 pub mod lowering;

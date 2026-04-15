@@ -9,7 +9,7 @@ use std::collections::HashMap;
 pub struct DefId(pub u32);
 
 /// Stable ID of a local binding (parameter or `x = ...`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct LocalId(pub u32);
 
 /// A reference produced by the resolver for each identifier use.
