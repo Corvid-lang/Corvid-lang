@@ -25,10 +25,15 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include <stdlib.h>
+
 extern long long corvid_alloc_count;
 extern long long corvid_release_count;
 extern long long corvid_retain_call_count;
 extern long long corvid_release_call_count;
+/* Phase 17d — set by corvid_init based on CORVID_GC_TRIGGER env var.
+ * alloc.c reads this to decide when to auto-collect. */
+extern long long corvid_gc_trigger_threshold;
 
 /* ---- exit-time leak + RC-op counters (registered via corvid_init) --- */
 
@@ -44,7 +49,7 @@ void corvid_on_exit(void) {
 }
 
 extern void corvid_stack_maps_dump(void);
-extern int corvid_stack_maps_should_dump(void);
+extern int corvid_stack_maps_dump_requested;
 
 /* Called as the first instruction of generated main. Registers the
  * exit handler so leak counters get printed regardless of how main
@@ -54,8 +59,26 @@ extern int corvid_stack_maps_should_dump(void);
  */
 void corvid_init(void) {
     atexit(corvid_on_exit);
-    if (corvid_stack_maps_should_dump()) {
+    /* Phase 17c — dump-on-start if requested. The flag is a simple
+     * int (not a getenv call here) so stack_maps.o doesn't need
+     * getenv, keeping the minimal-CRT test link simple. */
+    corvid_stack_maps_dump_requested =
+        (getenv("CORVID_DEBUG_STACK_MAPS") != NULL) ? 1 : 0;
+    if (corvid_stack_maps_dump_requested) {
         corvid_stack_maps_dump();
+    }
+    /* Phase 17d — parse CORVID_GC_TRIGGER here rather than in
+     * alloc.c; keeps strtoll/getenv out of alloc.o so the minimal-
+     * CRT tests (ffi_bridge_smoke) can link corvid_c_runtime without
+     * dragging in full stdlib. Default: 10_000 allocations between
+     * automatic GC cycles. Set to 0 to disable auto-GC. */
+    const char* v = getenv("CORVID_GC_TRIGGER");
+    if (v != NULL) {
+        char* end = NULL;
+        long long n = strtoll(v, &end, 10);
+        corvid_gc_trigger_threshold = (n >= 0 && end != v) ? n : 10000;
+    } else {
+        corvid_gc_trigger_threshold = 10000;
     }
 }
 

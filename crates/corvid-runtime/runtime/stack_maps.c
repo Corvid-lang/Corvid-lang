@@ -124,15 +124,16 @@ void corvid_stack_maps_dump(void) {
                 (unsigned)e->frame_bytes,
                 (unsigned)e->ref_count);
         for (uint32_t j = 0; j < e->ref_count; j++) {
-            if (j > 0) fputc(',', stderr);
+            if (j > 0) fprintf(stderr, ",");
             fprintf(stderr, "%u", (unsigned)e->ref_offsets[j]);
         }
-        fputs("]\n", stderr);
+        fprintf(stderr, "]\n");
     }
 }
 
-/* Returns 1 if the env var requests the dump, 0 otherwise. Lifted
- * out of `corvid_init` so the call site stays simple. */
-int corvid_stack_maps_should_dump(void) {
-    return getenv("CORVID_DEBUG_STACK_MAPS") != NULL;
-}
+/* Phase 17d — moved env-var parsing to entry.c to keep getenv out
+ * of stack_maps.o. The minimal-CRT ffi_bridge_smoke test links
+ * corvid_c_runtime without a full stdlib; pulling in getenv via
+ * stack_maps.o would break its link. entry.c's corvid_init sets
+ * this flag at program start. */
+int corvid_stack_maps_dump_requested = 0;

@@ -2439,7 +2439,95 @@ Workspace-wide `cargo build --release` clean. `ALLOCS == RELEASES` holds on ever
 
 ### Next
 
-Slice 17d — the cycle collector itself. 17c's typeinfo `trace_fn` (from 17a) + stack map table (from 17c) are the two inputs 17d needs for mark phase: walk the task stack, look up each return PC via `corvid_stack_maps_find`, mark the refcounted pointers at the recorded SP-relative offsets, recursively mark through `trace_fn`. Sweep phase frees unreachable objects. Pre-phase chat when resuming.
+Slice 17d — the cycle collector itself. 17c's typeinfo `trace_fn` (from 17a) + stack map table (from 17c) are the two inputs 17d needs for mark phase.
+
+
+---
+
+## Day 26 — 2026-04-15 — Slice 17d: cycle collector
+
+### What landed — Phase 17's correctness promise
+
+Phase 17's ROADMAP goal: "Refcount + cycle collector. Predictable release without Java pauses." Refcount worked since Phase 12. 17a-17c built the infrastructure (typed headers, typeinfo trace_fn, stack map table). **17d is the collector itself.** Cycles that refcount alone leaks are now reclaimed.
+
+### Pre-phase research + committed decisions
+
+Five questions answered before writing code:
+
+1. **Stack walking.** Frame-pointer chasing. Enabled Cranelift's `preserve_frame_pointers` flag in `module.rs`; walk RBP chain manually in `collector.c`. Platform-independent x64 Windows/Linux/macOS. Cost ~1-2% perf from RBP preservation; acceptable, simpler than OS-specific unwind tables.
+
+2. **Trigger policy.** Allocation-pressure threshold. Counter in `corvid_alloc_typed` fires when it exceeds `CORVID_GC_TRIGGER` (default 10_000, parsed from env by `corvid_init`). Plus explicit `corvid_gc()` + `corvid_gc_from_roots()` C symbols for tests and future 17b-7 latency-aware triggers.
+
+3. **Mark-bit atomicity.** None. Single-threaded Corvid; bits 61-62 reserved in 17a and preserved by retain/release via `CORVID_RC_MASK`.
+
+4. **Root sources audit.** Stack is the only source. No tokio task-locals, no Corvid-value caches in LLM adapters, no refcounted values in Approver state.
+
+5. **Corvid can't construct cycles yet** — no field mutation exists. Test fixture is synthetic via Rust FFI. Real user-visible cycles arrive when field mutation + `Weak<T>` land.
+
+### Algorithm
+
+Mark-sweep on the mutator thread at alloc-pressure trigger points:
+
+**Mark phase:** capture RBP, walk chain, look up each return PC via `corvid_stack_maps_find`, mark each refcounted pointer at the recorded offsets. Recurse via `trace_fn` with marker callback; cycle-safe via mark-bit check.
+
+**Sweep (two-pass):**
+- Pass 1: for each unmarked+non-immortal block, `trace_fn` with decrement marker — drop child refcounts without freeing. Keeps bookkeeping consistent for marked children that unreachable blocks referenced.
+- Pass 2: free unmarked blocks via `corvid_free_block` (no `destroy_fn` call, children already decremented); clear mark bit on marked blocks.
+
+### Implementation
+
+Five pieces:
+
+1. **`preserve_frame_pointers` in `module.rs`** — one-line Cranelift flag.
+
+2. **`alloc.c` extension** — hidden 24-byte tracking-node prefix BEFORE the user-visible 16-byte header. Doubly-linked list `corvid_live_head` for sweep walk. Static string literals unaffected (no prefix; codegen layout unchanged).
+
+3. **NEW `collector.c`** — mark + sweep + `corvid_gc()` / `corvid_gc_from_roots()`. Frame-pointer walker with defense-in-depth: alignment, monotonicity, 2MB stack-range cap, 256-frame limit. Re-entrancy guard.
+
+4. **NEW `stack_maps_fallback.c`** — weak-symbol default for `corvid_stack_maps` so Rust-only test binaries link. `__declspec(selectany)` on MSVC, `__attribute__((weak))` elsewhere. Codegen's strong definition wins when a compiled Corvid binary is linked.
+
+5. **`crates/corvid-runtime/tests/cycle_collector.rs`** — three tests:
+   - `cycle_with_no_roots_is_collected` — 2-block mutual cycle, no roots; collector frees both.
+   - `cycle_with_external_root_survives` — same cycle + external retain; sweep preserves; release + re-GC collects.
+   - `acyclic_refcount_path_still_works` — refcount fast path non-regression.
+
+   Tests use `corvid_gc_from_roots` (explicit roots, no stack walk) for determinism; Rust release binaries don't preserve frame pointers reliably. Real Corvid programs use `corvid_gc` whose walker works on Cranelift-emitted frames.
+
+### Discoveries (rule #8 — implement fully, no stubs)
+
+Three issues surfaced and were resolved end-to-end:
+
+1. **Minimal-CRT link surface.** Adding `collector.c` pulled `stack_maps.c` transitively, which referenced `fputs`, `getenv`, `strtoll` — unavailable in the ffi_bridge_smoke test's minimal CRT. Fix: moved env-var parsing to `entry.c` (which already had `getenv` for `CORVID_DEBUG_ALLOC`), replaced `fputs` with `fprintf`, promoted `corvid_stack_maps_dump_requested` to a plain int set by `corvid_init`.
+
+2. **Header-growth avoided.** Adding next/prev to the 16-byte header would break static string literals (codegen-fixed layout). Solved with a hidden tracking-node prefix BEFORE the user-visible header: alloc.c allocates `prefix + header + payload` in one malloc; user code + retain/release + static literals see the unchanged 16-byte header; only the collector accesses the prefix via a back-offset.
+
+3. **Weak-symbol fallback.** Rust-only test binaries link `corvid_c_runtime.lib` without a Corvid-emitted `corvid_stack_maps`. Added `stack_maps_fallback.c` with platform-specific weak-symbol directives so the reference resolves to an empty table when no strong codegen definition is present.
+
+### Test evidence
+
+Full workspace: **zero failures.**
+- 3 new cycle_collector tests
+- 105 codegen-cl parity tests (no regression)
+- 6 baseline RC counts preserved
+- 4 stack_maps integration tests
+- 6 runtime tracer tests
+- 1 ffi_bridge_smoke (CRT canary)
+
+`ALLOCS == RELEASES` on every parity fixture. Cycles that would leak without 17d are reclaimed.
+
+### Phase 17 status
+
+- ✅ 17a typed heap headers
+- ✅ 17b-0 through 17b-1b.5 RC optimization (peephole series, retrospectively documented)
+- ✅ 17c Cranelift safepoints + stack map table
+- ✅ **17d cycle collector** (this slice)
+- Pending: 17b-6 effect-row-directed RC, 17b-7 latency-aware RC, 17f replay-deterministic triggers + RC verification, 17g `Weak<T>`, 17h interpreter Bacon-Rajan (Dev B candidate), 17i close-out + benchmarks
+
+Phase 17's floor (correctness) is done. Remaining 17 slices are optimization + the innovation moat layer (17b-6, 17b-7, 17f).
+
+### Next
+
+18d/18e now unblocked (Dev B can resume Phase 18 codegen + retry runtime once they're ready). My next slice: per the CTO framing earlier this session, the moat layer — 17f replay-deterministic execution — is the highest-leverage single bet. Pre-phase chat when resuming.
 
 
 

@@ -16,30 +16,41 @@
  *
  *   typeinfo_ptr (const corvid_typeinfo*):
  *     points at a per-type metadata block emitted in .rodata by the
- *     codegen (or the runtime for built-ins like String). The block
- *     holds destroy_fn, trace_fn, size, flags, and (for list types)
- *     elem_typeinfo. `corvid_release` dispatches through destroy_fn;
- *     17d's mark phase dispatches through trace_fn.
+ *     codegen (or the runtime for built-ins like String).
  *
- * Non-atomic refcount: Corvid is single-threaded today. The pre-17a
- * design used `_Atomic long long` as future-proofing for Phase 25
- * multi-agent concurrency, paying a LOCK-prefixed RMW on every
- * retain/release forever in exchange for an expected re-migration
- * cost that never actually lands (pre-release project, no binaries
- * in the wild). Phase 25 will bring *proper* multi-threaded RC —
- * biased RC, per-arena locks, or deferred RC — none of which are
- * "sprinkle _Atomic everywhere." Doing non-atomic now buys ~10-50x
- * per-op speedup on hot paths with zero real cost.
+ * Phase 17d extension — intrusive tracking-node prefix for cycle
+ * collection:
+ *
+ * Heap allocations actually allocate 24 bytes of hidden prefix BEFORE
+ * the user-visible 16-byte header:
+ *
+ *   [ tracking_node (24) ][ refcount_word (8) | typeinfo_ptr (8) ][ payload ]
+ *                         ^-- what user/retain/release see as "header"
+ *                                              ^-- payload pointer returned
+ *
+ * The tracking node links every heap allocation into a global
+ * doubly-linked list that the sweep phase walks to find unmarked
+ * (unreachable) objects. Static-literal strings (in .rodata) have no
+ * tracking prefix because they're never collected — the immortal
+ * refcount sentinel short-circuits retain/release before any header
+ * access, and the collector skips them by design (they're not on
+ * g_live_head). User code and codegen see only the 16-byte visible
+ * header, so this extension is invisible to `lower_string_literal`
+ * et al.
+ *
+ * Non-atomic refcount: Corvid is single-threaded today. Phase 25 will
+ * bring a proper multi-threaded RC design (biased RC, per-arena
+ * locks, or deferred RC) — not blanket atomics.
  *
  * Immortal sentinel: static literals (descriptors emitted in .rodata)
  * have refcount = INT64_MIN. retain/release short-circuit on this
- * value. The sentinel sits in bit 63 alone — does not overlap with
- * 17d mark bit (61) or 17h color bit (62), so GC state on an
- * immortal is unambiguous.
+ * value. Sentinel sits in bit 63 alone — doesn't overlap with 17d
+ * mark bit (61) or 17h color bit (62); GC state on an immortal is
+ * unambiguous (immortals are never marked, never collected).
  *
- * Leak detector: two counters track total allocations and total
- * releases. The shim prints them on exit when CORVID_DEBUG_ALLOC is
- * set. Parity tests assert the two are equal.
+ * Leak detector + RC op counters: four counters track allocs,
+ * releases, retain calls, release calls. Printed at exit under
+ * CORVID_DEBUG_ALLOC. Parity tests assert ALLOCS == RELEASES.
  */
 
 #include <stdint.h>
@@ -56,36 +67,61 @@
 /* Mask isolating the refcount bits from mark/color/sign. */
 #define CORVID_RC_MASK 0x1FFFFFFFFFFFFFFFLL
 
+/* Phase 17d — mark bit (bit 61) for the cycle collector's mark phase.
+ * Set during mark, cleared at end of sweep. Never touched by user
+ * code; retain/release use CORVID_RC_MASK when comparing refcount to
+ * avoid clobbering. */
+#define CORVID_MARK_BIT (1LL << 61)
+
 /* ---- type-info block ----------------------------------------------- */
 
 typedef struct corvid_typeinfo {
-    uint32_t size;                     /* payload size hint; 0 = variable */
-    uint32_t flags;                    /* CORVID_TI_* bits below */
-    void (*destroy_fn)(void*);         /* release refcounted children; NULL if none */
+    uint32_t size;
+    uint32_t flags;
+    void (*destroy_fn)(void*);
     void (*trace_fn)(void*,
                      void (*marker)(void*, void*),
                      void*);
-    void (*weak_fn)(void*);            /* reserved for 17g Weak<T>; NULL in 17a */
-    const struct corvid_typeinfo* elem_typeinfo; /* list element type; NULL for non-lists */
-    const char* name;                  /* type name, for debugging */
+    void (*weak_fn)(void*);
+    const struct corvid_typeinfo* elem_typeinfo;
+    const char* name;
 } corvid_typeinfo;
 
-/* flags bits — mirrored in corvid-codegen-cl/src/lowering.rs. */
-#define CORVID_TI_CYCLIC_CAPABLE   0x01u  /* can participate in cycles (17e) */
-#define CORVID_TI_HAS_WEAK_REFS    0x02u  /* at least one Weak<T> field (17g) */
-#define CORVID_TI_IS_LIST          0x04u  /* list type — walker uses elem_typeinfo */
-#define CORVID_TI_LINEAR_CAPABLE   0x08u  /* Perceus can elide RC ops (17b-prime) */
-#define CORVID_TI_REGION_ALLOCATABLE 0x10u /* escape analysis can arena-allocate (17b-prime) */
-#define CORVID_TI_REUSE_SHAPE_HINT 0x20u  /* shape compatible with in-place reuse (17b-prime) */
+#define CORVID_TI_CYCLIC_CAPABLE   0x01u
+#define CORVID_TI_HAS_WEAK_REFS    0x02u
+#define CORVID_TI_IS_LIST          0x04u
+#define CORVID_TI_LINEAR_CAPABLE   0x08u
+#define CORVID_TI_REGION_ALLOCATABLE 0x10u
+#define CORVID_TI_REUSE_SHAPE_HINT 0x20u
 
 typedef struct {
-    long long refcount_word;           /* packed: see header comment */
+    long long refcount_word;
     const corvid_typeinfo* typeinfo;
 } corvid_header;
 
-/* Built-in String typeinfo — lives with the runtime so string-less
- * programs don't pay for a codegen-emitted block. Leaf type: empty
- * trace, no destroy_fn, no elem_typeinfo. */
+/* Phase 17d — the hidden tracking node sitting BEFORE the user-visible
+ * header for every heap allocation. Links into g_live_head.
+ */
+typedef struct corvid_tracking_node {
+    struct corvid_tracking_node* next;
+    struct corvid_tracking_node* prev;
+    /* 16-byte header follows (refcount_word + typeinfo_ptr); payload
+     * follows that. Total prefix = sizeof(tracking_node) +
+     * CORVID_HEADER_BYTES. */
+} corvid_tracking_node;
+
+#define CORVID_TRACKING_BYTES (sizeof(corvid_tracking_node))
+
+/* Global head of the live-heap-block list. The sweep phase walks it
+ * forward; free unlinks. Exposed (non-static) so collector.c can
+ * access directly.
+ *
+ * Single-threaded access — Phase 25 multi-agent will need a real
+ * concurrency story (probably: per-task list merged at safepoints).
+ */
+corvid_tracking_node* corvid_live_head = NULL;
+
+/* ---- built-in String typeinfo ------------------------------------- */
 
 static void corvid_trace_String_fn(void* payload,
                                    void (*marker)(void*, void*),
@@ -107,18 +143,27 @@ const corvid_typeinfo corvid_typeinfo_String = {
 
 long long corvid_alloc_count = 0;
 long long corvid_release_count = 0;
-
-/* Phase 17b baseline instrumentation: count every retain/release call
- * (not just the ones that free). These counters are the load-bearing
- * metric for 17b-1's dup/drop insertion pass — the slice's success
- * criterion is a measurable reduction in these numbers across the
- * same workloads. Printed at exit alongside alloc/release counts when
- * CORVID_DEBUG_ALLOC is set.
- *
- * Non-atomic by the same reasoning as refcount itself — Corvid is
- * single-threaded; Phase 25 revisits the whole RC concurrency story. */
 long long corvid_retain_call_count = 0;
 long long corvid_release_call_count = 0;
+
+/* Phase 17d — GC trigger. Allocation-pressure threshold: fire a
+ * collection every N allocations. Tunable via `CORVID_GC_TRIGGER`
+ * env var (parsed in entry.c's corvid_init, not here — avoids
+ * pulling stdlib CRT symbols like strtoll/getenv into the minimal
+ * tests that link corvid_c_runtime without a full CRT).
+ *
+ * 0 disables automatic GC (tests use `corvid_gc()` directly).
+ * Default is set by entry.c; if entry.c never ran (test-only
+ * linkage), threshold stays 0 = auto-GC off, which is the correct
+ * safe default for non-Corvid-main binaries.
+ */
+long long corvid_gc_trigger_threshold = 0;
+static long long corvid_allocs_since_gc = 0;
+
+/* Forward decl — implemented in collector.c. Extern rather than
+ * static so `corvid_gc()` is a public C symbol the test + future
+ * 17b-7 latency-aware triggers can call directly. */
+void corvid_gc(void);
 
 /* ---- runtime API exposed to compiled code -------------------------- */
 
@@ -133,17 +178,61 @@ void* corvid_alloc_typed(long long payload_bytes,
         fprintf(stderr, "corvid: corvid_alloc_typed called with NULL typeinfo\n");
         exit(1);
     }
-    char* block = (char*)malloc(CORVID_HEADER_BYTES + (size_t)payload_bytes);
-    if (block == NULL) {
+    size_t total = CORVID_TRACKING_BYTES + CORVID_HEADER_BYTES
+                   + (size_t)payload_bytes;
+    char* raw = (char*)malloc(total);
+    if (raw == NULL) {
         fprintf(stderr, "corvid: out of memory (requested %lld bytes)\n",
                 payload_bytes);
         exit(1);
     }
-    corvid_header* h = (corvid_header*)block;
+    corvid_tracking_node* node = (corvid_tracking_node*)raw;
+    corvid_header* h = (corvid_header*)(raw + CORVID_TRACKING_BYTES);
+
     h->refcount_word = 1;
     h->typeinfo = typeinfo;
+
+    /* Link into the live-block list head (O(1)). */
+    node->next = corvid_live_head;
+    node->prev = NULL;
+    if (corvid_live_head != NULL) {
+        corvid_live_head->prev = node;
+    }
+    corvid_live_head = node;
+
     corvid_alloc_count++;
-    return (void*)(block + CORVID_HEADER_BYTES);
+    corvid_allocs_since_gc++;
+
+    /* GC trigger: fire at allocation-pressure threshold. Threshold
+     * value 0 disables auto-GC (tests explicitly call `corvid_gc()`;
+     * binaries without corvid_init never set the threshold, so they
+     * also default to no auto-GC). Collector lives in collector.c. */
+    if (corvid_gc_trigger_threshold > 0
+        && corvid_allocs_since_gc >= corvid_gc_trigger_threshold) {
+        corvid_allocs_since_gc = 0;
+        corvid_gc();
+    }
+
+    return (void*)((char*)h + CORVID_HEADER_BYTES);
+}
+
+/* Phase 17d — internal helper used by both corvid_release (when
+ * refcount hits 0) and the sweep phase of corvid_gc. Unlinks the
+ * tracking node from the live list and frees the combined raw block.
+ * The caller is responsible for having run destroy_fn if required.
+ */
+void corvid_free_block(corvid_header* h) {
+    corvid_tracking_node* node = (corvid_tracking_node*)(
+        (char*)h - CORVID_TRACKING_BYTES);
+    if (node->prev != NULL) {
+        node->prev->next = node->next;
+    } else {
+        corvid_live_head = node->next;
+    }
+    if (node->next != NULL) {
+        node->next->prev = node->prev;
+    }
+    free((void*)node);
 }
 
 void corvid_retain(void* payload) {
@@ -167,7 +256,7 @@ void corvid_release(void* payload) {
             h->typeinfo->destroy_fn(payload);
         }
         corvid_release_count++;
-        free((void*)h);
+        corvid_free_block(h);
     } else if (prev_rc <= 0) {
         fprintf(stderr,
                 "corvid: corvid_release on already-freed allocation (refcount was %lld)\n",

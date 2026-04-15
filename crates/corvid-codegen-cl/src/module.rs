@@ -26,6 +26,26 @@ pub fn make_host_object_module(module_name: &str) -> Result<ObjectModule, Codege
     flag_builder
         .set("enable_verifier", "true")
         .map_err(|e| CodegenError::cranelift(format!("settings enable_verifier: {e}"), span()))?;
+    // Phase 17d — preserve frame pointers so the cycle collector's
+    // mark phase can walk the stack by chasing RBP without needing
+    // OS-specific unwind info (.pdata on Windows, .eh_frame on
+    // Linux/macOS). Every refcounted-value-holding frame ends up
+    // in the RBP chain, and for each frame we look up its return
+    // PC in `corvid_stack_maps` (17c) to find live GC roots.
+    //
+    // Cost: ~1-2% runtime overhead from reserving RBP as the frame
+    // pointer (Cranelift otherwise uses it as GPR). Acceptable
+    // given the alternative (emitting + registering OS unwind info
+    // at every function define) is a large scope expansion. A
+    // future perf slice can revisit once measurements warrant it.
+    flag_builder
+        .set("preserve_frame_pointers", "true")
+        .map_err(|e| {
+            CodegenError::cranelift(
+                format!("settings preserve_frame_pointers: {e}"),
+                span(),
+            )
+        })?;
 
     let flags = settings::Flags::new(flag_builder);
     let isa_builder = isa::lookup(target_lexicon::Triple::host())
