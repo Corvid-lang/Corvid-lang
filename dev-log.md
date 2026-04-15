@@ -2163,6 +2163,49 @@ All 105 codegen parity tests pass (interpreter matches compiled output). All 6 r
 Running total across Phase 17b so far: 31% + 46% cumulative on the hottest workloads. Still well short of Perceus-published numbers (2-10× on rbtree-class workloads), but Corvid's baselines are much smaller than Koka's — 13 ops vs hundreds — so absolute-count reductions quickly dominate.
 
 
+---
+
+## Day 21 — 2026-04-15 — Slice 17b-1b.3: FieldAccess / Index borrow peephole
+
+### What landed
+
+Extended the borrow-at-use-site peephole from 17b-1b.2 to `FieldAccess` and `Index` expressions. Same correctness argument: when the *target* of a field access or index is a bare `IrExprKind::Local`, the load that reads the field/element doesn't mutate the container's refcount or escape the pointer. The ownership-conversion retain on the Local read and the post-extract release of the container cancel — both can be skipped without changing observable behavior. The Local binding stays Live, governed by its scope-exit release.
+
+Two changes in `lowering.rs`:
+
+- New helper `lower_container_maybe_borrowed(expr) -> (ClValue, is_borrowed)` — bare Local returns the Variable value directly, no retain; all other shapes fall through to `lower_expr` + `false`.
+- `FieldAccess` and `Index` call the new helper in place of `lower_expr(target)`, and conditionally skip the post-extract release per the returned `borrowed` flag.
+
+### Measured reduction (cumulative across 17b-0 → 17b-1b.3)
+
+| Workload | 17b-0 baseline | 17b-1b.1 | 17b-1b.2 | 17b-1b.3 | Total Δ |
+|---|---|---|---|---|---|
+| `primitive_loop` | 0 / 1 | 0 / 1 | 0 / 1 | 0 / 1 | — |
+| `string_concat_chain` | 1 / 11 | 1 / 11 | 0 / 10 | 0 / 10 | 8% |
+| `struct_build_and_destructure` | 5 / 9 = 14 | 5 / 9 | 4 / 8 | **2 / 6 = 8** | **43%** |
+| `list_of_strings_iter` | 7 / 15 | 7 / 15 | 4 / 12 | 4 / 12 | 27% |
+| `passthrough_agent` | 5 / 8 = 13 | 3 / 6 | 2 / 5 | 2 / 5 | 46% |
+
+`struct_build_and_destructure`'s 43% cumulative reduction is the new leader — two `FieldAccess` patterns each saved 1 retain + 1 release (4 ops total).
+
+`list_of_strings_iter` is unchanged by 17b-1b.3 because its refcount traffic is in the for-loop's per-iteration mechanics (element retain, loop-var rebind release, scope-exit release), not in explicit `Index` expressions.
+
+### Parity + correctness
+
+105 parity tests green. 6 runtime tracer tests green. 5 baselines at updated numbers. ~370 workspace tests, zero failures.
+
+### What remains on the Phase 17b table
+
+Still higher-leverage peephole targets unclaimed:
+
+- **For-loop iteration mechanics** (loop-var rebind retain/release). `list_of_strings_iter` has ~6 ops here that a "loop-var never read destructively in body" analysis could eliminate. Target for 17b-1b.4.
+- **Call-arg caller-side borrow** coordinated with callee `borrow_sig`. When callee says `Borrowed` AND caller arg is a bare Local, caller can skip the pre-call retain AND post-call release. Target for 17b-1b.5.
+- **List literal item Locals** (genuinely consuming — needs different handling).
+- **Scope-exit Drop redundancy** — current code emits scope-exit releases conservatively; some are provably redundant given move-at-last-use.
+
+The full use-list + Dup/Drop insertion pass (now 17b-1b.6 in the naming scheme) remains the eventual landing for everything the peepholes don't cleanly cover. But Phase 17b is already delivering substantial wins via incremental small-commit peepholes without taking the monolithic-rewrite risk.
+
+
 
 
 

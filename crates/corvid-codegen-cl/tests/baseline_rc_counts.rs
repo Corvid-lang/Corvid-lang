@@ -184,11 +184,13 @@ agent struct_build_and_destructure() -> Int:
     let c = run_and_count(src);
     eprintln!("BASELINE struct_build_and_destructure: {c:?}");
     assert_eq!(c.allocs, 1, "struct_build_and_destructure allocs");
-    // 17b-1b.2 peephole: `l == "hello"` where l is a bare Local —
-    // skip ownership-conversion retain + post-op release.
-    // Pre-17b-1b.2: 5 / 9. Post: 4 / 8.
-    assert_eq!(c.retain_calls, 4, "struct_build_and_destructure retain_calls");
-    assert_eq!(c.release_calls, 8, "struct_build_and_destructure release_calls");
+    // 17b-1b.2 peephole: `l == "hello"` where l is a bare Local.
+    // 17b-1b.3 peephole: `p.left` and `p.right` where p is a bare
+    //   Local — FieldAccess target is borrowed, saving 1 retain +
+    //   1 release per field access (×2 accesses = 4 ops).
+    // Pre-17b-1b: 5 / 9. Post-17b-1b.2: 4 / 8. Post-17b-1b.3: 2 / 6.
+    assert_eq!(c.retain_calls, 2, "struct_build_and_destructure retain_calls");
+    assert_eq!(c.release_calls, 6, "struct_build_and_destructure release_calls");
 }
 
 #[test]

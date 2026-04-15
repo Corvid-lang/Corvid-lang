@@ -2479,8 +2479,16 @@ fn lower_expr(
             let offset = (i as i32) * STRUCT_FIELD_SLOT_BYTES;
             let field_cl_ty = cl_type_for(&field_meta.ty, field_meta.span)?;
 
-            let struct_ptr =
-                lower_expr(builder, target, env, func_ids_by_def, module, runtime)?;
+            // Phase 17b-1b.3 peephole: if the target is a bare
+            // `IrExprKind::Local`, read the Variable directly with
+            // no ownership-conversion retain, and skip the symmetric
+            // post-extract release of the struct pointer. The load
+            // of the field only reads the struct's memory; we never
+            // mutate the struct's refcount. The Local's binding
+            // stays Live — its scope-exit release handles cleanup.
+            let (struct_ptr, struct_borrowed) = lower_container_maybe_borrowed(
+                builder, target, env, func_ids_by_def, module, runtime,
+            )?;
             let field_val = builder.ins().load(
                 field_cl_ty,
                 cranelift_codegen::ir::MemFlags::trusted(),
@@ -2491,9 +2499,11 @@ fn lower_expr(
             if is_refcounted_type(&field_meta.ty) {
                 emit_retain(builder, module, runtime, field_val);
             }
-            // Release the temp +1 on the struct pointer (the struct
-            // itself remains owned by its binding or deeper expr).
-            emit_release(builder, module, runtime, struct_ptr);
+            // Release the temp +1 on the struct pointer only if we
+            // created one. Borrowed reads have no +1 to release.
+            if !struct_borrowed {
+                emit_release(builder, module, runtime, struct_ptr);
+            }
             Ok(field_val)
         }
         IrExprKind::Index { target, index } => {
@@ -2503,7 +2513,14 @@ fn lower_expr(
             let elem_cl_ty = cl_type_for(&elem_ty, expr.span)?;
             let elem_refcounted = is_refcounted_type(&elem_ty);
 
-            let list_ptr = lower_expr(builder, target, env, func_ids_by_def, module, runtime)?;
+            // Phase 17b-1b.3 peephole: same borrow-at-use-site trick
+            // as FieldAccess — if the list target is a bare Local,
+            // borrow it (no retain) and skip the post-extract release.
+            // The bounds-check + load only read the list's memory;
+            // never mutate its refcount or escape the pointer.
+            let (list_ptr, list_borrowed) = lower_container_maybe_borrowed(
+                builder, target, env, func_ids_by_def, module, runtime,
+            )?;
             let idx_val = lower_expr(builder, index, env, func_ids_by_def, module, runtime)?;
 
             // Bounds check: trap if `idx_val >= length` or `idx_val < 0`.
@@ -2548,9 +2565,11 @@ fn lower_expr(
             if elem_refcounted {
                 emit_retain(builder, module, runtime, elem_val);
             }
-            // Release the temp +1 on the list pointer (caller's Owned
-            // reference obtained from lower_expr of the target).
-            emit_release(builder, module, runtime, list_ptr);
+            // Release the temp +1 on the list pointer only if we
+            // actually took one. Borrowed reads have no +1 to drop.
+            if !list_borrowed {
+                emit_release(builder, module, runtime, list_ptr);
+            }
             Ok(elem_val)
         }
         IrExprKind::List { items } => {
@@ -2725,6 +2744,43 @@ fn lower_binop_strict(
 enum ArithDomain {
     Int,
     Float,
+}
+
+/// Phase 17b-1b.3 — lower a container expression (struct target of a
+/// `FieldAccess`, list target of an `Index`) in a borrow position.
+/// Returns `(value, borrowed)` following the same convention as
+/// `lower_string_operand_maybe_borrowed`:
+///
+///   * bare `IrExprKind::Local` → `(value, true)`, no retain — caller
+///     must NOT release the value afterward.
+///   * any other shape → normal `lower_expr` (+1 Owned), `false` —
+///     caller releases as before.
+///
+/// Safe because the FieldAccess / Index code paths only READ the
+/// container (load + optionally bounds-check) — they never mutate
+/// the container's refcount or escape the pointer elsewhere. The
+/// caller's Local binding keeps the container alive through its
+/// scope-exit release.
+fn lower_container_maybe_borrowed(
+    builder: &mut FunctionBuilder,
+    expr: &IrExpr,
+    env: &HashMap<LocalId, (Variable, clir::Type)>,
+    func_ids_by_def: &HashMap<DefId, FuncId>,
+    module: &mut ObjectModule,
+    runtime: &RuntimeFuncs,
+) -> Result<(ClValue, bool), CodegenError> {
+    if let IrExprKind::Local { local_id, name } = &expr.kind {
+        let (var, _ty) = env.get(local_id).ok_or_else(|| {
+            CodegenError::cranelift(
+                format!("no variable for local `{name}` — compiler bug"),
+                expr.span,
+            )
+        })?;
+        let v = builder.use_var(*var);
+        return Ok((v, true));
+    }
+    let v = lower_expr(builder, expr, env, func_ids_by_def, module, runtime)?;
+    Ok((v, false))
 }
 
 /// Phase 17b-1b.2 — lower a string-typed operand in a borrow position
