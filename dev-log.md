@@ -1943,6 +1943,68 @@ Three concrete payoffs:
 Slice 17b pre-phase chat. Topic: the effect-typed memory model — region inference + Perceus linearity + in-place reuse + non-atomic RC. This is the extraordinary design the user pushed for: rather than bolting on arenas, use Corvid's typed effects to make most allocations bump-allocate in a per-scope arena, RC only the escapees, and skip RC entirely on provably-unique values. 17a's typeinfo `flags` field is already shaped for it.
 
 
+---
+
+## Day 17 — 2026-04-15 — Slice 17b pre-phase research + 17b-0 baseline
+
+### Pre-phase research (Perceus, MLton regions, tokio)
+
+User pushed back hard on the initial 17b plan as full of shortcuts. Did real research before re-committing:
+
+- **Perceus is not region-based.** I had been conflating two orthogonal techniques. Perceus is precise per-value `dup`/`drop` insertion + **drop-specialization** + **reuse analysis** (in-place update when `unique()` runtime check passes). The PLDI 2021 paper's measured 2-10× speedups vs Swift ARC come from reuse and drop-specialization, not regions. Borrow-vs-own is per-parameter at callee signature.
+- **MLton rejected region inference.** Tofte–Talpin region inference is whole-program and effect-driven, but the ML Kit's experience is that "common SML idioms work better under GC than under regions" — pure-stack regions leak in practice, and ML Kit eventually integrated regions *with* GC. Strong negative result that I was ignoring.
+- **Tokio is a non-issue for Corvid specifically.** The runtime is multi-thread but Corvid programs don't spawn tasks — all FFI entry goes through `block_on` on the main thread. The per-task arena machinery I had planned was solving a problem we don't have.
+
+### Slice plan revised
+
+Dropped regions/arenas from 17b entirely. The win-per-implementation-effort ratio is much higher for Perceus pieces and the risk profile is much lower (local IR transformation vs whole-program analysis). Cycle collector (17d) handles what Perceus's "cycle-free assumption" leaves, so the two compose cleanly.
+
+New 17b layout:
+- **17b-0** (today) — retain/release counter instrumentation + recorded baselines on representative workloads
+- **17b-1** — principled `dup`/`drop` insertion pass (replacing ad-hoc codegen-time emission); per-callee borrow inference
+- **17b-2** — drop specialization (inline child-release for known typeinfo; skip no-op drops)
+- **17b-3** — reuse analysis (fuse `drop+alloc` of same size with runtime `unique()` check)
+
+Regions are explicit non-scope; revisit only if post-Perceus measurements show remaining allocation pressure justifies the complexity. ROADMAP updated to reflect this — 17b's entry now reads "principled RC optimization (Perceus) — region inference deferred pending 17b-1/2/3 measurement."
+
+### 17b-0 — what landed today
+
+- **Two new C runtime counters** in [crates/corvid-runtime/runtime/alloc.c](crates/corvid-runtime/runtime/alloc.c): `corvid_retain_call_count` and `corvid_release_call_count`. Non-atomic by the same reasoning as the refcount itself (Corvid is single-threaded). Incremented on every `corvid_retain` / `corvid_release` invocation regardless of whether refcount actually changed.
+- **Exit printer extended** in [crates/corvid-runtime/runtime/entry.c](crates/corvid-runtime/runtime/entry.c): when `CORVID_DEBUG_ALLOC=1`, the shim now also prints `RETAIN_CALLS=N` and `RELEASE_CALLS=N` alongside the existing `ALLOCS=N` / `RELEASES=N`.
+- **New baseline test file** at [crates/corvid-codegen-cl/tests/baseline_rc_counts.rs](crates/corvid-codegen-cl/tests/baseline_rc_counts.rs) — five representative Corvid programs, each with its current RC op counts asserted as exact values. The test will fail when 17b-1 reduces them; the diff is the receipt of the reduction.
+
+### Recorded baselines (the numbers 17b-1/2/3 must beat)
+
+| Workload | ALLOCS | RELEASES | RETAIN_CALLS | RELEASE_CALLS |
+|---|---:|---:|---:|---:|
+| `primitive_loop` (control) | 1 | 1 | **0** | **1** |
+| `string_concat_chain` (`"a"+"b"+"c"+"d"+"e"`) | 4 | 4 | **1** | **11** |
+| `passthrough_agent` (two `echo("...")` calls + compare) | 0 | 0 | **5** | **8** |
+| `struct_build_and_destructure` (build `Pair(s1,s2)`, extract fields, compare) | 1 | 1 | **5** | **9** |
+| `list_of_strings_iter` (`["a","b","c"]`, for-loop, compare element) | 1 | 1 | **7** | **15** |
+
+Observations the design needs to honor:
+- **The `passthrough_agent` ratio (8 releases / 0 allocations) is the most visible win for borrow inference** — `echo` only forwards its parameter to its return slot, no store, no extra consumer. Borrow-passing should drop both retain and release counts here significantly. Target: ≥50% reduction.
+- **`list_of_strings_iter` has 15 releases for a 3-element list iteration with one comparison** — the per-iteration retain/release pair (each loaded element gets retained for the comparison, released at iteration end) is the dominant cost. Drop-specialization + linearity-detection on the comparison receiver should both apply.
+- **`struct_build_and_destructure` has 5 retains** for accessing two fields that are then dropped — drop-specialization will inline the field releases instead of dispatching through `typeinfo->destroy_fn`.
+- **The control case (`primitive_loop`) has zero retain calls today** — confirms the codegen is already correct on the primitive path. Any future regression on this number is the canary that something broke the RC-skip-on-primitives invariant.
+
+### Discipline check on the slice split
+
+User agreed in the pre-phase chat to a 3-sub-slice plan (17b-1, 17b-2, 17b-3). Adding 17b-0 deviates from that. Audited honestly: the deviation is correct — without a recorded baseline before any optimization lands, the "X% reduction" claim is unverifiable from git history alone. Bundling instrumentation into 17b-1 would mean the same commit both adds the counters and changes the values they measure — no clean before/after. So 17b-0 is its own commit by necessity, not by ceremony.
+
+### Next
+
+Slice 17b-1 brief + implementation. The pass needs to:
+1. Walk the IR per agent, identifying every "ownership boundary" (binding, scope exit, parameter pass, return).
+2. Insert precise `dup`/`drop` at each boundary, with knowledge of the value's type (refcounted vs primitive) and whether the receiver borrows or owns.
+3. Per-agent borrow inference: a parameter is borrowed if the body never stores it into a long-lived location and never creates an additional consumer. Otherwise owned.
+4. Replace the current scattered `emit_retain`/`emit_release` calls in `lowering.rs` with codegen that consults the analysis output.
+
+Pre-phase chat for 17b-1 next session.
+
+
+
 
 
 

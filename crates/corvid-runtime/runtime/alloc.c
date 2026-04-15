@@ -103,10 +103,22 @@ const corvid_typeinfo corvid_typeinfo_String = {
     .name = "String",
 };
 
-/* ---- leak detector counters ---------------------------------------- */
+/* ---- leak detector + RC op counters -------------------------------- */
 
 long long corvid_alloc_count = 0;
 long long corvid_release_count = 0;
+
+/* Phase 17b baseline instrumentation: count every retain/release call
+ * (not just the ones that free). These counters are the load-bearing
+ * metric for 17b-1's dup/drop insertion pass — the slice's success
+ * criterion is a measurable reduction in these numbers across the
+ * same workloads. Printed at exit alongside alloc/release counts when
+ * CORVID_DEBUG_ALLOC is set.
+ *
+ * Non-atomic by the same reasoning as refcount itself — Corvid is
+ * single-threaded; Phase 25 revisits the whole RC concurrency story. */
+long long corvid_retain_call_count = 0;
+long long corvid_release_call_count = 0;
 
 /* ---- runtime API exposed to compiled code -------------------------- */
 
@@ -135,6 +147,7 @@ void* corvid_alloc_typed(long long payload_bytes,
 }
 
 void corvid_retain(void* payload) {
+    corvid_retain_call_count++;
     if (payload == NULL) return;
     corvid_header* h = (corvid_header*)((char*)payload - CORVID_HEADER_BYTES);
     if (h->refcount_word == CORVID_REFCOUNT_IMMORTAL) return;
@@ -142,6 +155,7 @@ void corvid_retain(void* payload) {
 }
 
 void corvid_release(void* payload) {
+    corvid_release_call_count++;
     if (payload == NULL) return;
     corvid_header* h = (corvid_header*)((char*)payload - CORVID_HEADER_BYTES);
     if (h->refcount_word == CORVID_REFCOUNT_IMMORTAL) return;

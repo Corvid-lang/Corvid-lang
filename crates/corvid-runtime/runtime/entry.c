@@ -27,13 +27,19 @@
 
 extern long long corvid_alloc_count;
 extern long long corvid_release_count;
+extern long long corvid_retain_call_count;
+extern long long corvid_release_call_count;
 
-/* ---- exit-time leak counters (registered via corvid_init) ---------- */
+/* ---- exit-time leak + RC-op counters (registered via corvid_init) --- */
 
 void corvid_on_exit(void) {
     if (getenv("CORVID_DEBUG_ALLOC")) {
-        fprintf(stderr, "ALLOCS=%lld\nRELEASES=%lld\n",
-                corvid_alloc_count, corvid_release_count);
+        fprintf(stderr,
+                "ALLOCS=%lld\nRELEASES=%lld\nRETAIN_CALLS=%lld\nRELEASE_CALLS=%lld\n",
+                corvid_alloc_count,
+                corvid_release_count,
+                corvid_retain_call_count,
+                corvid_release_call_count);
     }
 }
 
