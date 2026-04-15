@@ -218,7 +218,16 @@ agent main() -> Int:
     // 17b-1's borrow inference should recognize `echo`'s parameter
     // as borrowed (the body only returns it unchanged — no store,
     // no extra consumers). Expect retain_calls to drop noticeably.
+    // 17b-1b.1 (borrow inference for read-only-then-return params):
+    // `echo(s)` body is `return s` — no consuming use of s. σ(echo, 0)
+    // = Borrowed. Callee skips entry-retain + scope-exit release
+    // on s. Caller side unchanged (still retains when producing +1
+    // to pass). Result: 2 fewer retains + 2 fewer releases across
+    // the 2 echo calls.
+    //
+    // Pre-17b-1b.1: 5 retain / 8 release.
+    // Post-17b-1b.1: committed below.
     assert_eq!(c.allocs, 0, "passthrough_agent allocs (all strings are literals)");
-    assert_eq!(c.retain_calls, 5, "passthrough_agent retain_calls");
-    assert_eq!(c.release_calls, 8, "passthrough_agent release_calls");
+    assert_eq!(c.retain_calls, 3, "passthrough_agent retain_calls");
+    assert_eq!(c.release_calls, 6, "passthrough_agent release_calls");
 }

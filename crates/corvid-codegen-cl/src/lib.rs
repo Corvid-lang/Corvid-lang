@@ -25,6 +25,7 @@ pub mod errors;
 pub mod link;
 pub mod lowering;
 pub mod module;
+pub mod ownership;
 
 pub use errors::{CodegenError, CodegenErrorKind};
 
@@ -40,8 +41,15 @@ pub fn compile_to_object(
     object_path: &Path,
     entry_agent_name: Option<&str>,
 ) -> Result<(), CodegenError> {
+    // Phase 17b-1b — run the ownership analysis pass before codegen.
+    // Output is a transformed IrFile with borrow_sig populated on
+    // every agent. Codegen downstream consults borrow_sig at call
+    // sites to skip the callee-entry retain + scope-exit release
+    // pair for Borrowed parameters.
+    let (ir_analyzed, _summaries) = ownership::analyze(ir.clone());
+
     let mut module = module::make_host_object_module(module_name)?;
-    let _func_ids = lowering::lower_file(ir, &mut module, entry_agent_name)?;
+    let _func_ids = lowering::lower_file(&ir_analyzed, &mut module, entry_agent_name)?;
     let product = module.finish();
     let bytes = product
         .emit()

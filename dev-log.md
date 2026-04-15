@@ -2048,6 +2048,65 @@ The baseline_rc_counts.rs tests are the load-bearing evidence: if 17b-1a acciden
 After 17b-1b lands, update baselines in `baseline_rc_counts.rs` with the new (lower) numbers. The diff is the receipt of the reduction.
 
 
+---
+
+## Day 19 — 2026-04-15 — Slice 17b-1b.1: borrow inference + callee-side ABI elision
+
+### Context — why the extensive research
+
+Before writing the analysis, spent four parallel research passes on:
+- State of the art beyond Perceus (Lean 4 "Counting Immutable Beans," Anton Lorenzen's Koka line 2022-2025 including ICFP'22 Frame Limited Reuse, ICFP'23 FIP, ICFP'24 OxCaml Modal Memory Management, OOPSLA'25 Modal Effect Types)
+- Whole-program + uniqueness (Inko's "Ownership You Can Count On," Mojo's last-use ASAP destruction, Roc's Morphic solver for alias-mode specialization, Verona Reggio's region-typed capabilities, Choi's escape analysis)
+- Async-boundary / effect-typed / replay-deterministic RC — three genuine (c)-category gaps with zero prior art: effect-row-directed RC, latency-aware RC across known-slow suspensions, replay-based RC soundness verification
+- Hardware-assisted RC (MTE, LAM, CHERI, rseq, biased RC)
+
+Outcome: ROADMAP expanded with three innovation slices (17b-6, 17b-7, extended 17f) claiming genuinely novel territory plus two future slices for the Lorenzen ceiling (FIP `@fip` keyword, modal memory management). The current slice (17b-1b) keeps the committed foundation — Lean-style borrow inference — but now with a measured research backbone behind it.
+
+### What 17b-1b.1 shipped
+
+A focused first deliverable from the larger 17b-1b analysis pass:
+
+1. **New module `crates/corvid-codegen-cl/src/ownership.rs`** with Lean 4-style monotone fixed-point borrow inference. Per agent, per refcounted parameter, compute `ParamBorrow::Borrowed` vs `Owned` by scanning the body for consumers:
+   - Storage into struct/list/heap location → Owned
+   - Pass to another callee where σ says Owned → Owned
+   - Return as a non-bare expression (e.g. `return x + "!"`) → Owned
+   - **Return as bare `Local{x}` → NOT a consumer** (Perceus semantics: callee emits Dup-before-return, which in Corvid is already present as `lower_expr`'s retain on `IrExprKind::Local` reads). This was the load-bearing insight that let the baseline actually move.
+2. **Wire-in at `lib.rs:compile_to_object`.** `ownership::analyze(ir.clone())` runs before `lowering::lower_file`, producing a transformed IR with `borrow_sig` populated on every agent. Summaries are collected for 17b-1c consumption (but not yet used downstream).
+3. **Codegen consumes `borrow_sig` at parameter entry in `lowering.rs`.** Refcounted params with `ParamBorrow::Borrowed` skip both the entry-retain AND the scope-exit release. Caller side is unchanged in this sub-slice (still produces +1 via `lower_expr` and releases after the call — symmetric caller-side elision lands in 17b-1b.2 alongside the full Dup/Drop pass).
+
+### Measured reduction
+
+Only one baseline workload exercises a callee with a borrowable parameter (`echo(s) -> return s`), and it dropped as expected:
+
+| Workload | Pre-17b-1b.1 | Post-17b-1b.1 | Reduction |
+|---|---|---|---|
+| `primitive_loop` (control) | 0 retain / 1 release | 0 / 1 | — |
+| `string_concat_chain` | 1 / 11 | 1 / 11 | — |
+| `struct_build_and_destructure` | 5 / 9 | 5 / 9 | — |
+| `list_of_strings_iter` | 7 / 15 | 7 / 15 | — |
+| **`passthrough_agent`** | **5 / 8 = 13** | **3 / 6 = 9** | **31%** |
+
+The other workloads don't have borrowable callees — all their RC traffic is within `main` itself on literals and local reads. Those reductions arrive in 17b-1b.2 (full Dup/Drop insertion + last-use elision + scattered-site deletion).
+
+### Correctness
+
+All 105 parity tests pass. All 6 runtime tracer tests pass. All 5 baselines pass with the updated numbers. Full workspace ~370 tests, zero failures. `ALLOCS == RELEASES` on every run.
+
+### What's out of scope for this sub-slice
+
+1b.1 intentionally does NOT replace the scattered `emit_retain`/`emit_release` sites in `lowering.rs`. The `transform_agent` function in `ownership.rs` is a stub that preserves the body unchanged. Full `Dup`/`Drop` insertion lands in 17b-1b.2. The `AgentSummary` returned here has `may_retain = false, may_release = false` — accurate for this sub-slice since no Dup/Drop statements were inserted yet.
+
+### Next
+
+17b-1b.2. That slice:
+1. Implements the full use-list + last-use + branch-aware Dup/Drop insertion inside `ownership.rs::transform_agent`.
+2. Deletes the ~40 scattered `emit_retain`/`emit_release` sites in `lowering.rs`. The `IrStmt::Dup`/`IrStmt::Drop` handlers added in 17b-1a become the sole emission path.
+3. Consumes `borrow_sig` at call sites too (caller side) — for a borrowed arg the caller skips the pre-call retain when the value is already owned at a Live position.
+4. Populates the `AgentSummary` `may_retain`/`may_release`/`borrows_param` fields with real data.
+5. Baselines on the remaining workloads should drop significantly (list iteration, struct destructuring, concat chain).
+
+
+
 
 
 

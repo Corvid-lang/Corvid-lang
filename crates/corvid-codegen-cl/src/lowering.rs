@@ -1775,12 +1775,33 @@ fn define_agent(
             builder.declare_var(var, ty);
             builder.def_var(var, block_arg);
             env.insert(p.local_id, (var, ty));
-            // +0 ABI: caller passed without bumping refcount. Callee
-            // takes ownership by retaining and tracking in the
-            // function-root scope. Symmetric: scope exit releases.
+            // Phase 17b-1b ABI — driven by `agent.borrow_sig`:
+            //   * `ParamBorrow::Owned` (pre-17b default, and what a
+            //      consuming body needs): callee retains on entry,
+            //      tracks in function-root scope for symmetric
+            //      scope-exit release.
+            //   * `ParamBorrow::Borrowed`: caller keeps its +1 and
+            //      the callee does NOT retain nor release — ownership
+            //      doesn't cross the ABI. Saves one retain + one
+            //      release per call site for read-only parameters.
+            //
+            // `borrow_sig = None` means the ownership pass didn't
+            // run on this agent — fall back to Owned (pre-17b
+            // semantics). Keeps parity for code paths that bypass
+            // `ownership::analyze`.
             if is_refcounted_type(&p.ty) {
-                emit_retain(&mut builder, module, runtime, block_arg);
-                scope_stack[0].push((p.local_id, var));
+                let is_borrowed = agent
+                    .borrow_sig
+                    .as_ref()
+                    .and_then(|v| v.get(i).copied())
+                    .map(|b| matches!(b, corvid_ir::ParamBorrow::Borrowed))
+                    .unwrap_or(false);
+                if !is_borrowed {
+                    emit_retain(&mut builder, module, runtime, block_arg);
+                    scope_stack[0].push((p.local_id, var));
+                }
+                // Borrowed: no retain, no scope tracking. Caller's
+                // +1 stays with the caller; the callee just reads.
             }
         }
 
