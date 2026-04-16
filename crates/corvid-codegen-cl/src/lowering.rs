@@ -2016,9 +2016,20 @@ fn emit_entry_main(
 
         // Release each refcounted argument's +1 — the callee took its
         // own ownership via parameter retain (per the +0 ABI).
-        for (v, is_ref) in decoded_args.iter().zip(decoded_refcounted.iter()) {
-            if *is_ref {
-                emit_release(&mut builder, module, runtime, *v);
+        //
+        // Under the .6d unified pass, the callee skips its entry-
+        // retain, meaning the arg's +1 flows straight into the
+        // callee's Variable. When the callee returns a bare param
+        // (echo-style pass-through), the returned value IS that same
+        // +1 — releasing the arg here AND the return below would
+        // double-free. Skip the arg release; entry-main's return-
+        // value release below is sufficient to drop the +1 after
+        // print.
+        if !runtime.dup_drop_enabled {
+            for (v, is_ref) in decoded_args.iter().zip(decoded_refcounted.iter()) {
+                if *is_ref {
+                    emit_release(&mut builder, module, runtime, *v);
+                }
             }
         }
 
@@ -3463,10 +3474,14 @@ fn lower_string_binop_with_ownership(
             let callee = module.declare_func_in_func(runtime.string_concat, builder.func);
             let call = builder.ins().call(callee, &[l, r]);
             let result = builder.inst_results(call)[0];
-            if !runtime.dup_drop_enabled && !l_borrowed {
+            // BinOp consumes its refcounted operands by convention:
+            // the pass's Dup-before-non-last-use supplies the extra
+            // +1 for multi-read Locals; the single +1 flowing in as
+            // each operand is retired here. Under both flag modes.
+            if !l_borrowed {
                 emit_release(builder, module, runtime, l);
             }
-            if !runtime.dup_drop_enabled && !r_borrowed {
+            if !r_borrowed {
                 emit_release(builder, module, runtime, r);
             }
             Ok(result)
@@ -3482,10 +3497,14 @@ fn lower_string_binop_with_ownership(
                 let zero = builder.ins().iconst(I8, 0);
                 builder.ins().icmp(IntCC::Equal, eq_i8, zero)
             };
-            if !runtime.dup_drop_enabled && !l_borrowed {
+            // BinOp consumes its refcounted operands by convention:
+            // the pass's Dup-before-non-last-use supplies the extra
+            // +1 for multi-read Locals; the single +1 flowing in as
+            // each operand is retired here. Under both flag modes.
+            if !l_borrowed {
                 emit_release(builder, module, runtime, l);
             }
-            if !runtime.dup_drop_enabled && !r_borrowed {
+            if !r_borrowed {
                 emit_release(builder, module, runtime, r);
             }
             Ok(result)
@@ -3503,10 +3522,14 @@ fn lower_string_binop_with_ownership(
                 _ => unreachable!(),
             };
             let result = builder.ins().icmp(cc, cmp_i64, zero);
-            if !runtime.dup_drop_enabled && !l_borrowed {
+            // BinOp consumes its refcounted operands by convention:
+            // the pass's Dup-before-non-last-use supplies the extra
+            // +1 for multi-read Locals; the single +1 flowing in as
+            // each operand is retired here. Under both flag modes.
+            if !l_borrowed {
                 emit_release(builder, module, runtime, l);
             }
-            if !runtime.dup_drop_enabled && !r_borrowed {
+            if !r_borrowed {
                 emit_release(builder, module, runtime, r);
             }
             Ok(result)

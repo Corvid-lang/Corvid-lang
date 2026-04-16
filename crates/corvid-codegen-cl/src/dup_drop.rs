@@ -58,6 +58,14 @@ use crate::dataflow::{analyze_agent, IrNavStep, IrPath, OwnershipPlan, ProgramPo
 /// Pure: does not mutate the input. Stable across runs (the plan is
 /// deterministic; insertion order is deterministic within a path).
 pub fn insert_dup_drop(agent: &IrAgent) -> IrAgent {
+    // Diagnostic: when CORVID_DUP_DROP_DRY_RUN=1 is set, the pass
+    // runs as a no-op — useful for bisecting whether a parity
+    // failure is caused by pass-inserted Dup/Drop ops or by an
+    // unguarded scattered emit site in codegen. Silent under
+    // normal operation.
+    if std::env::var("CORVID_DUP_DROP_DRY_RUN").map(|v| v == "1").unwrap_or(false) {
+        return agent.clone();
+    }
     let (_cfg, plan) = analyze_agent(agent);
     apply_plan(agent, &plan)
 }
@@ -89,11 +97,25 @@ pub fn apply_plan(agent: &IrAgent, plan: &OwnershipPlan) -> IrAgent {
     for (pp, locals) in &plan.drops_after {
         if let Some(path) = plan.ir_paths.get(pp) {
             let (parent, idx) = split_path(path);
+            // A drop_after on a Return statement is unreachable at
+            // runtime — the return exits before the drop can fire.
+            // Promote to Before so it runs just before the exit.
+            // Check the target block's statement at this index.
+            let target_block = find_block(&agent.body, &parent);
+            let is_return = target_block
+                .and_then(|b| b.stmts.get(idx))
+                .map(|s| matches!(s, IrStmt::Return { .. }))
+                .unwrap_or(false);
+            let side = if is_return {
+                InsertionSide::Before
+            } else {
+                InsertionSide::After
+            };
             for &l in locals {
                 group.entry(parent.clone()).or_default().push((
                     idx,
                     IrStmt::Drop { local_id: l, span: zero_span() },
-                    InsertionSide::After,
+                    side,
                 ));
             }
         }
@@ -174,6 +196,32 @@ fn split_path(path: &IrPath) -> (IrPath, usize) {
 /// Navigate from the root `IrBlock` down through nested If/For
 /// children to the block containing the target statement. Mutable
 /// reference; caller mutates `target.stmts`.
+/// Read-only analog of `navigate_mut`. Returns None if the path
+/// doesn't match the current IR shape (e.g., caller built the path
+/// from a stale CFG). Callers treat None as "can't determine" and
+/// fall back to the default insertion side.
+fn find_block<'a>(root: &'a IrBlock, parent: &IrPath) -> Option<&'a IrBlock> {
+    let mut current: &'a IrBlock = root;
+    let mut i = 0;
+    while i < parent.len() {
+        let stmt_step = &parent[i];
+        let descend_step = parent.get(i + 1)?;
+        let stmt_idx = match stmt_step {
+            IrNavStep::Stmt(s) => *s,
+            _ => return None,
+        };
+        let stmt = current.stmts.get(stmt_idx)?;
+        current = match (stmt, descend_step) {
+            (IrStmt::If { then_block, .. }, IrNavStep::IfThen) => then_block,
+            (IrStmt::If { else_block: Some(eb), .. }, IrNavStep::IfElse) => eb,
+            (IrStmt::For { body, .. }, IrNavStep::ForBody) => body,
+            _ => return None,
+        };
+        i += 2;
+    }
+    Some(current)
+}
+
 fn navigate_mut<'a>(root: &'a mut IrBlock, parent: &IrPath) -> &'a mut IrBlock {
     let mut current: &'a mut IrBlock = root;
     let mut i = 0;
