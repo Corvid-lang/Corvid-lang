@@ -1,0 +1,125 @@
+{
+  "fixture_version": "1.0",
+  "name": "retry_workflow",
+  "workload_kind": "retry_workflow",
+  "description": "Deterministic retry and backoff workload. Measures orchestration overhead excluding fixed backoff sleep time.",
+  "entry": {
+    "user_input": "Fetch shipment status for order O-991 and retry if the provider is temporarily unavailable.",
+    "context": {
+      "order_id": "O-991"
+    }
+  },
+  "random_seed": 42,
+  "reporting_requirements": {
+    "trace_size_normalization": "bytes_per_logical_step",
+    "allocation_reporting": "host_heap_or_qualitative"
+  },
+  "steps": [
+    {
+      "name": "plan_retrying_lookup",
+      "kind": "prompt",
+      "inputs": {
+        "order_id": "O-991"
+      },
+      "mock_response": "{\"tool_call\":{\"name\":\"fetch_shipment_status\",\"args\":{\"order_id\":\"O-991\"}},\"retry_policy\":{\"attempts\":3,\"backoff\":{\"kind\":\"linear\",\"ms\":50}}}",
+      "mock_output": {
+        "tool_call": {
+          "name": "fetch_shipment_status",
+          "args": {
+            "order_id": "O-991"
+          }
+        },
+        "retry_policy": {
+          "attempts": 3,
+          "backoff": {
+            "kind": "linear",
+            "ms": 50
+          }
+        }
+      },
+      "external_latency_ms": 160
+    },
+    {
+      "name": "fetch_shipment_status_attempt_1",
+      "kind": "tool",
+      "inputs": {
+        "order_id": "O-991",
+        "attempt": 1
+      },
+      "mock_output": {
+        "ok": false,
+        "error": "provider_unavailable"
+      },
+      "external_latency_ms": 25
+    },
+    {
+      "name": "retry_backoff_1",
+      "kind": "retry_sleep",
+      "inputs": {
+        "attempt": 1,
+        "sleep_ms": 50
+      },
+      "mock_output": {
+        "slept_ms": 50
+      },
+      "external_latency_ms": 50
+    },
+    {
+      "name": "fetch_shipment_status_attempt_2",
+      "kind": "tool",
+      "inputs": {
+        "order_id": "O-991",
+        "attempt": 2
+      },
+      "mock_output": {
+        "ok": false,
+        "error": "provider_unavailable"
+      },
+      "external_latency_ms": 25
+    },
+    {
+      "name": "retry_backoff_2",
+      "kind": "retry_sleep",
+      "inputs": {
+        "attempt": 2,
+        "sleep_ms": 50
+      },
+      "mock_output": {
+        "slept_ms": 50
+      },
+      "external_latency_ms": 50
+    },
+    {
+      "name": "fetch_shipment_status_attempt_3",
+      "kind": "tool",
+      "inputs": {
+        "order_id": "O-991",
+        "attempt": 3
+      },
+      "mock_output": {
+        "ok": true,
+        "status": "delivered",
+        "delivered_at": "2026-04-15T16:42:00Z"
+      },
+      "external_latency_ms": 25
+    }
+  ],
+  "expected_final_output": {
+    "order_id": "O-991",
+    "status": "delivered",
+    "attempts": 3,
+    "delivered_at": "2026-04-15T16:42:00Z"
+  },
+  "expected_replay_events": [
+    "prompt:plan_retrying_lookup",
+    "tool:fetch_shipment_status_attempt_1",
+    "retry_sleep:retry_backoff_1",
+    "tool:fetch_shipment_status_attempt_2",
+    "retry_sleep:retry_backoff_2",
+    "tool:fetch_shipment_status_attempt_3"
+  ],
+  "notes": [
+    "Backoff delay belongs in external wait time, not orchestration overhead.",
+    "All implementations must use exactly three attempts and the same fixed 50 ms linear backoff."
+  ]
+}

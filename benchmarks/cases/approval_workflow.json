@@ -1,0 +1,85 @@
+{
+  "fixture_version": "1.0",
+  "name": "approval_workflow",
+  "workload_kind": "approval_workflow",
+  "description": "Approval-gated tool execution. Measures the orchestration cost of a deterministic approval boundary in an AI workflow.",
+  "entry": {
+    "user_input": "Issue a refund for order O-551 if the model determines the amount is below the automatic approval threshold.",
+    "context": {
+      "order_id": "O-551",
+      "threshold_usd": 100
+    }
+  },
+  "random_seed": 42,
+  "reporting_requirements": {
+    "trace_size_normalization": "bytes_per_logical_step",
+    "allocation_reporting": "host_heap_or_qualitative"
+  },
+  "steps": [
+    {
+      "name": "refund_decision",
+      "kind": "prompt",
+      "inputs": {
+        "order_id": "O-551",
+        "threshold_usd": 100
+      },
+      "mock_response": "{\"tool_proposal\":{\"name\":\"issue_refund\",\"args\":{\"order_id\":\"O-551\",\"amount_usd\":73}},\"reason\":\"amount_below_threshold\"}",
+      "mock_output": {
+        "tool_proposal": {
+          "name": "issue_refund",
+          "args": {
+            "order_id": "O-551",
+            "amount_usd": 73
+          }
+        },
+        "reason": "amount below threshold"
+      },
+      "external_latency_ms": 200
+    },
+    {
+      "name": "refund_approval",
+      "kind": "approval",
+      "inputs": {
+        "proposal": {
+          "name": "issue_refund",
+          "args": {
+            "order_id": "O-551",
+            "amount_usd": 73
+          }
+        }
+      },
+      "mock_output": {
+        "decision": "approve"
+      },
+      "approval_outcome": "granted",
+      "external_latency_ms": 15
+    },
+    {
+      "name": "issue_refund",
+      "kind": "tool",
+      "inputs": {
+        "order_id": "O-551",
+        "amount_usd": 73
+      },
+      "mock_output": {
+        "receipt_id": "R-551-73",
+        "status": "refunded"
+      },
+      "external_latency_ms": 30
+    }
+  ],
+  "expected_final_output": {
+    "order_id": "O-551",
+    "amount_usd": 73,
+    "receipt_id": "R-551-73",
+    "status": "refunded"
+  },
+  "expected_replay_events": [
+    "prompt:refund_decision",
+    "approval:refund_approval",
+    "tool:issue_refund"
+  ],
+  "notes": [
+    "Approval is deterministic in the fixture. If a stack supports human-in-the-loop only interactively, its benchmark runner must simulate the same approval decision without adding uncontrolled latency."
+  ]
+}

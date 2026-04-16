@@ -1,0 +1,110 @@
+{
+  "fixture_version": "1.0",
+  "name": "replay_trace",
+  "workload_kind": "replay_trace",
+  "description": "Recorded deterministic multi-step session used to measure record cost, replay cost, and step inspection latency.",
+  "entry": {
+    "user_input": "Look up customer C-220, draft a support reply, and attach the escalation policy.",
+    "context": {
+      "customer_id": "C-220"
+    }
+  },
+  "random_seed": 42,
+  "reporting_requirements": {
+    "trace_size_normalization": "bytes_per_logical_step",
+    "allocation_reporting": "host_heap_or_qualitative"
+  },
+  "steps": [
+    {
+      "name": "support_lookup_plan",
+      "kind": "prompt",
+      "inputs": {
+        "customer_id": "C-220"
+      },
+      "mock_response": "{\"tool_call\":{\"name\":\"lookup_customer_ticket_state\",\"args\":{\"customer_id\":\"C-220\"}}}",
+      "mock_output": {
+        "tool_call": {
+          "name": "lookup_customer_ticket_state",
+          "args": {
+            "customer_id": "C-220"
+          }
+        }
+      },
+      "external_latency_ms": 175
+    },
+    {
+      "name": "lookup_customer_ticket_state",
+      "kind": "tool",
+      "inputs": {
+        "customer_id": "C-220"
+      },
+      "mock_output": {
+        "open_ticket_count": 3,
+        "priority": "high",
+        "last_contact": "2026-04-15T10:00:00Z"
+      },
+      "external_latency_ms": 35
+    },
+    {
+      "name": "draft_reply",
+      "kind": "prompt",
+      "inputs": {
+        "ticket_state": {
+          "open_ticket_count": 3,
+          "priority": "high",
+          "last_contact": "2026-04-15T10:00:00Z"
+        }
+      },
+      "mock_response": "{\"message\":\"We have escalated your case and will update you today.\",\"tool_call\":{\"name\":\"fetch_escalation_policy\",\"args\":{\"priority\":\"high\"}}}",
+      "mock_output": {
+        "message": "We have escalated your case and will update you today.",
+        "tool_call": {
+          "name": "fetch_escalation_policy",
+          "args": {
+            "priority": "high"
+          }
+        }
+      },
+      "external_latency_ms": 190
+    },
+    {
+      "name": "fetch_escalation_policy",
+      "kind": "tool",
+      "inputs": {
+        "priority": "high"
+      },
+      "mock_output": {
+        "policy_id": "P-HIGH",
+        "summary": "High-priority tickets require a same-day follow-up."
+      },
+      "external_latency_ms": 25
+    },
+    {
+      "name": "checkpoint_after_policy",
+      "kind": "replay_checkpoint",
+      "inputs": {
+        "checkpoint": 4
+      },
+      "mock_output": {
+        "label": "after_policy_fetch"
+      },
+      "external_latency_ms": 0
+    }
+  ],
+  "expected_final_output": {
+    "customer_id": "C-220",
+    "reply": "We have escalated your case and will update you today.",
+    "policy_id": "P-HIGH"
+  },
+  "expected_replay_events": [
+    "prompt:support_lookup_plan",
+    "tool:lookup_customer_ticket_state",
+    "prompt:draft_reply",
+    "tool:fetch_escalation_policy",
+    "replay_checkpoint:checkpoint_after_policy"
+  ],
+  "notes": [
+    "Replay-capable implementations must preserve this event order exactly.",
+    "Step-inspection benchmarks should use the replay checkpoint as the canonical mid-trace inspection point."
+  ]
+}

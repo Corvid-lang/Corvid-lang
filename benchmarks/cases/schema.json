@@ -1,0 +1,229 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://corvid-lang.org/benchmarks/ai-workflow-fixture.schema.json",
+  "title": "Corvid AI Workflow Benchmark Fixture",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "fixture_version",
+    "name",
+    "workload_kind",
+    "description",
+    "entry",
+    "random_seed",
+    "steps",
+    "expected_final_output",
+    "reporting_requirements"
+  ],
+  "properties": {
+    "fixture_version": {
+      "type": "string",
+      "pattern": "^1\\.0$"
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1
+    },
+    "workload_kind": {
+      "type": "string",
+      "enum": [
+        "tool_loop",
+        "retry_workflow",
+        "approval_workflow",
+        "replay_trace"
+      ]
+    },
+    "description": {
+      "type": "string",
+      "minLength": 1
+    },
+    "entry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "user_input"
+      ],
+      "properties": {
+        "user_input": {
+          "type": "string"
+        },
+        "context": {
+          "type": "object"
+        }
+      }
+    },
+    "random_seed": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Deterministic seed every runner must use for any randomness such as jitter, UUID generation, or trace IDs."
+    },
+    "steps": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/step"
+      }
+    },
+    "reporting_requirements": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "trace_size_normalization",
+        "allocation_reporting"
+      ],
+      "properties": {
+        "trace_size_normalization": {
+          "type": "string",
+          "enum": [
+            "bytes_per_logical_step"
+          ]
+        },
+        "allocation_reporting": {
+          "type": "string",
+          "enum": [
+            "host_heap_or_qualitative"
+          ]
+        }
+      }
+    },
+    "expected_final_output": {
+      "description": "Canonical semantic output. Compare structurally, not by formatting.",
+      "oneOf": [
+        { "type": "object" },
+        { "type": "array" },
+        { "type": "string" },
+        { "type": "number" },
+        { "type": "boolean" },
+        { "type": "null" }
+      ]
+    },
+    "expected_replay_events": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "notes": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "$defs": {
+    "step": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "kind",
+        "inputs",
+        "mock_output",
+        "external_latency_ms"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "prompt",
+            "tool",
+            "approval",
+            "retry_sleep",
+            "replay_checkpoint"
+          ]
+        },
+        "inputs": {
+          "type": "object"
+        },
+        "mock_response": {
+          "description": "Exact raw mocked response body. Required for prompt steps so all runners consume identical model output.",
+          "oneOf": [
+            { "type": "object" },
+            { "type": "array" },
+            { "type": "string" },
+            { "type": "number" },
+            { "type": "boolean" },
+            { "type": "null" }
+          ]
+        },
+        "mock_output": {
+          "oneOf": [
+            { "type": "object" },
+            { "type": "array" },
+            { "type": "string" },
+            { "type": "number" },
+            { "type": "boolean" },
+            { "type": "null" }
+          ]
+        },
+        "approval_outcome": {
+          "type": "string",
+          "enum": [
+            "granted",
+            "denied"
+          ]
+        },
+        "on_denied": {
+          "type": "string",
+          "enum": [
+            "abort_workflow",
+            "skip_tool_call"
+          ]
+        },
+        "external_latency_ms": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "prompt"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "mock_response"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "approval"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "approval_outcome"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "approval_outcome": {
+                "const": "denied"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "on_denied"
+            ]
+          }
+        }
+      ]
+    }
+  }
+}

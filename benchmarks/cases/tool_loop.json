@@ -1,0 +1,104 @@
+{
+  "fixture_version": "1.0",
+  "name": "tool_loop",
+  "workload_kind": "tool_loop",
+  "description": "Prompt and tool orchestration workload with two model boundaries and two tool boundaries. Measures orchestration cost around repeated AI-tool transitions.",
+  "entry": {
+    "user_input": "Summarize the open orders for customer C-104 and classify whether the account needs manual review.",
+    "context": {
+      "customer_id": "C-104"
+    }
+  },
+  "random_seed": 42,
+  "reporting_requirements": {
+    "trace_size_normalization": "bytes_per_logical_step",
+    "allocation_reporting": "host_heap_or_qualitative"
+  },
+  "steps": [
+    {
+      "name": "plan_lookup",
+      "kind": "prompt",
+      "inputs": {
+        "customer_id": "C-104",
+        "user_request": "Summarize the open orders for customer C-104 and classify whether the account needs manual review."
+      },
+      "mock_response": "{\"tool_call\":{\"name\":\"lookup_customer_profile\",\"args\":{\"customer_id\":\"C-104\"}}}",
+      "mock_output": {
+        "tool_call": {
+          "name": "lookup_customer_profile",
+          "args": {
+            "customer_id": "C-104"
+          }
+        }
+      },
+      "external_latency_ms": 180
+    },
+    {
+      "name": "lookup_customer_profile",
+      "kind": "tool",
+      "inputs": {
+        "customer_id": "C-104"
+      },
+      "mock_output": {
+        "customer_id": "C-104",
+        "account_status": "active",
+        "risk_score": 72,
+        "segment": "enterprise"
+      },
+      "external_latency_ms": 35
+    },
+    {
+      "name": "plan_order_fetch",
+      "kind": "prompt",
+      "inputs": {
+        "profile": {
+          "customer_id": "C-104",
+          "account_status": "active",
+          "risk_score": 72,
+          "segment": "enterprise"
+        }
+      },
+      "mock_response": "{\"tool_call\":{\"name\":\"fetch_open_orders\",\"args\":{\"customer_id\":\"C-104\"}},\"risk_classification\":\"manual_review\"}",
+      "mock_output": {
+        "tool_call": {
+          "name": "fetch_open_orders",
+          "args": {
+            "customer_id": "C-104"
+          }
+        },
+        "risk_classification": "manual_review"
+      },
+      "external_latency_ms": 210
+    },
+    {
+      "name": "fetch_open_orders",
+      "kind": "tool",
+      "inputs": {
+        "customer_id": "C-104"
+      },
+      "mock_output": {
+        "orders": [
+          { "id": "O-771", "amount": 2400, "currency": "USD" },
+          { "id": "O-772", "amount": 980, "currency": "USD" }
+        ]
+      },
+      "external_latency_ms": 40
+    }
+  ],
+  "expected_final_output": {
+    "customer_id": "C-104",
+    "open_order_count": 2,
+    "total_amount_usd": 3380,
+    "review": "manual_review"
+  },
+  "expected_replay_events": [
+    "prompt:plan_lookup",
+    "tool:lookup_customer_profile",
+    "prompt:plan_order_fetch",
+    "tool:fetch_open_orders"
+  ],
+  "notes": [
+    "Runners may compute the final output from the final prompt state plus tool results, but the semantic result must match this structure exactly.",
+    "This workload intentionally isolates repeated AI-tool transitions rather than long compute-heavy pure code."
+  ]
+}
