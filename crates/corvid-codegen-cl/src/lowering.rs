@@ -23,7 +23,7 @@ use corvid_ast::{BinaryOp, Span, UnaryOp};
 use corvid_ir::{IrAgent, IrBlock, IrCallKind, IrExpr, IrExprKind, IrFile, IrLiteral, IrStmt};
 use corvid_resolve::{DefId, LocalId};
 use corvid_types::Type;
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 
 const _: () = {
     // A readable reminder: slice 12a compiles only Int. Type checks
@@ -437,6 +437,7 @@ fn declare_runtime_funcs(
         ir_tools: HashMap::new(),
         tool_wrapper_ids: std::cell::RefCell::new(HashMap::new()),
         ir_prompts: HashMap::new(),
+        prompt_pins: HashMap::new(),
         agent_borrow_sigs: HashMap::new(),
         stack_maps: std::cell::RefCell::new(HashMap::new()),
     })
@@ -1431,6 +1432,7 @@ pub struct RuntimeFuncs {
     /// each prompt's params + template + return type to emit
     /// signature-aware bridge calls.
     pub ir_prompts: HashMap<DefId, corvid_ir::IrPrompt>,
+    pub prompt_pins: HashMap<Span, BTreeSet<LocalId>>,
     /// Phase 17b-1b.5 — per-agent borrow signature, populated from
     /// `IrAgent.borrow_sig` during `lower_file`. Consumed at
     /// `IrCallKind::Agent` call sites to decide per-arg whether to
@@ -1709,8 +1711,12 @@ pub fn lower_file(
             let transformed = crate::pair_elim::eliminate_pairs(crate::dup_drop::insert_dup_drop(agent));
             let effect_info = crate::scope_reduce::analyze_effects(&transformed);
             let transformed = crate::scope_reduce::reduce_scope(transformed, &effect_info);
+            runtime.prompt_pins = crate::latency_rc::analyze_prompt_pins(&transformed)
+                .pinned_by_span()
+                .clone();
             define_agent(module, &transformed, func_id, &func_ids_by_def, &runtime)?;
         } else {
+            runtime.prompt_pins.clear();
             define_agent(module, agent, func_id, &func_ids_by_def, &runtime)?;
         }
     }
@@ -4058,17 +4064,17 @@ fn emit_concat_chain(
     builder: &mut FunctionBuilder,
     module: &mut ObjectModule,
     runtime: &RuntimeFuncs,
-    parts: Vec<ClValue>,
+    parts: Vec<(ClValue, bool)>,
     span: Span,
-) -> Result<ClValue, CodegenError> {
+) -> Result<(ClValue, bool), CodegenError> {
     if parts.is_empty() {
         // Empty rendered prompt — emit an empty literal.
-        return emit_string_const(builder, module, runtime, "", span);
+        return emit_string_const(builder, module, runtime, "", span).map(|v| (v, false));
     }
-    let mut acc = parts[0];
-    let concat_fid =
-        module.declare_func_in_func(runtime.string_concat, builder.func);
-    for next in parts.into_iter().skip(1) {
+    let mut parts = parts.into_iter();
+    let (mut acc, mut acc_borrowed) = parts.next().expect("parts not empty");
+    let concat_fid = module.declare_func_in_func(runtime.string_concat, builder.func);
+    for (next, next_borrowed) in parts {
         let call = builder.ins().call(concat_fid, &[acc, next]);
         let results: Vec<ClValue> =
             builder.inst_results(call).iter().copied().collect();
@@ -4083,11 +4089,16 @@ fn emit_concat_chain(
         // function (from emit_string_const, string_from_*). Those
         // aren't driven by IrStmt-level ownership, so the .6d pass
         // doesn't touch them. Keep the release unconditional.
-        emit_release(builder, module, runtime, acc);
-        emit_release(builder, module, runtime, next);
+        if !acc_borrowed {
+            emit_release(builder, module, runtime, acc);
+        }
+        if !next_borrowed {
+            emit_release(builder, module, runtime, next);
+        }
         acc = new_acc;
+        acc_borrowed = false;
     }
-    Ok(acc)
+    Ok((acc, acc_borrowed))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -4127,11 +4138,28 @@ fn lower_prompt_call(
         ));
     }
 
-    // 1. Lower each arg expression. Refcounted args (Strings) come
-    //    back as Owned (+1).
+    let pinned_locals = runtime.prompt_pins.get(&span);
+
+    // 1. Lower each arg expression. Under the unified ownership pass,
+    //    bare-Local String args at prompt boundaries may already be
+    //    flowing as the binding's existing +1 rather than a fresh temp.
+    //    The prompt-pin analysis marks exactly those locals so the
+    //    prompt concat path can treat them as borrowed boundary inputs
+    //    instead of releasing them like owned temps.
     let mut arg_vals: Vec<ClValue> = Vec::with_capacity(args.len());
+    let mut arg_pinned: Vec<bool> = Vec::with_capacity(args.len());
     for a in args {
-        arg_vals.push(lower_expr(builder, a, env, func_ids_by_def, module, runtime)?);
+        let v = lower_expr(builder, a, env, func_ids_by_def, module, runtime)?;
+        let pinned = matches!(&a.ty, Type::String)
+            && matches!(&a.kind, IrExprKind::Local { .. })
+            && pinned_locals.is_some_and(|set| {
+                matches!(
+                    &a.kind,
+                    IrExprKind::Local { local_id, .. } if set.contains(local_id)
+                )
+            });
+        arg_vals.push(v);
+        arg_pinned.push(pinned);
     }
 
     // 2. Parse the template into segments at codegen time.
@@ -4139,24 +4167,26 @@ fn lower_prompt_call(
 
     // 3. Build the rendered-prompt CorvidString by emitting concat ops
     //    over (literal | stringified arg) parts.
-    let mut parts: Vec<ClValue> = Vec::with_capacity(segments.len());
-    // Track which arg values we used for stringification so we can
-    // release the originals at scope end. Already-Owned values from
-    // lower_expr need their +1 dropped after the call sequence.
+    let mut parts: Vec<(ClValue, bool)> = Vec::with_capacity(segments.len());
     for seg in &segments {
         let part = match seg {
-            TemplateSegment::Literal(text) => {
-                emit_string_const(builder, module, runtime, text, span)?
-            }
+            TemplateSegment::Literal(text) => (
+                emit_string_const(builder, module, runtime, text, span)?,
+                false,
+            ),
             TemplateSegment::Param(idx) => {
                 let av = arg_vals[*idx];
                 let aty = &args[*idx].ty;
-                emit_stringify_arg(builder, module, runtime, av, aty, span)?
+                (
+                    emit_stringify_arg(builder, module, runtime, av, aty, span)?,
+                    arg_pinned[*idx] && matches!(aty, Type::String),
+                )
             }
         };
         parts.push(part);
     }
-    let rendered = emit_concat_chain(builder, module, runtime, parts, span)?;
+    let (rendered, rendered_borrowed) =
+        emit_concat_chain(builder, module, runtime, parts, span)?;
 
     // 4. Build the constant CorvidStrings for prompt name, signature,
     //    and model. The model is left empty so the runtime falls back
@@ -4199,21 +4229,23 @@ fn lower_prompt_call(
     //    is borrow-only on its String args same as #[tool] wrappers).
     emit_release(builder, module, runtime, prompt_name_val);
     emit_release(builder, module, runtime, signature_val);
-    emit_release(builder, module, runtime, rendered);
+    if !rendered_borrowed {
+        emit_release(builder, module, runtime, rendered);
+    }
     emit_release(builder, module, runtime, model_val);
 
     // Release the original arg values (we passed their stringified
     // copies into the rendered prompt, but the originals still hold
-    // the +1 they came back from `lower_expr` with). For String args,
-    // we passed the value through stringify-as-identity, so the +1
-    // already got consumed by `emit_concat_chain`. For non-String,
-    // the original is still held.
+    // the +1 they came back from `lower_expr` with). For String args:
+    //   * pinned bare-locals were borrowed at the prompt boundary and
+    //     intentionally skipped in the concat-chain releases
+    //   * non-pinned String temps flow through stringify-as-identity
+    //     and get consumed by `emit_concat_chain`
+    // Non-String args are scalar and have nothing to release.
     for (v, a) in arg_vals.iter().zip(args.iter()) {
         if is_refcounted_type(&a.ty) {
-            // String args: ownership transferred into the concat
-            // chain (released there). Skip.
+            let _ = v;
         } else {
-            // Non-refcounted (Int/Bool/Float): nothing to release.
             let _ = v;
         }
     }

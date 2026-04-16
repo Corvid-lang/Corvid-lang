@@ -3133,6 +3133,38 @@ Mid-slice measurement note:
 - that is not a credible 17e signal because `17e` only reorders `Drop`s on refcounted paths and cannot plausibly slow primitive-only workloads
 - the benchmark numbers are therefore explicitly held pending a clean rerun under the agreed environment protocol
 
+## Day 34 [B] - 2026-04-16 - Slice 17b-7: latency-aware RC across prompt / LLM boundaries
+
+Shipped prompt-boundary refcount pinning in `crates/corvid-codegen-cl/src/latency_rc.rs`.
+
+What the slice does:
+
+- analyzes each agent after the unified ownership pass, pair elimination, and scope reduction
+- identifies bare-`Local` `String` args at `Prompt` call sites that the ownership analysis already classifies as `Borrowed`
+- threads those pinned locals into prompt lowering by call-site `Span`
+- treats pinned prompt args as borrowed boundary inputs, so prompt-template concatenation stops releasing the binding's structural `+1`
+
+Frozen design decisions preserved in the implementation:
+
+- prompt / LLM boundaries only
+- no runtime deferred-RC queue
+- verifier unchanged
+- prompt-bridge internal temps stay real owned values (`emit_concat_chain` accumulator, stringify temps, prompt metadata strings)
+
+Most important discovery:
+
+- borrowed-local tool boundaries were already flat after `0cc7895`
+- the real remaining boundary RC hotspot was prompt / LLM interpolation of borrowed local `String` values
+- that discovery is now explicit in the architecture story: tool boundaries are not the 17b-7 moat, prompt boundaries are
+
+Verification shipped with the slice:
+
+```bash
+cargo test -p corvid-codegen-cl --lib latency_rc
+cargo test -p corvid-codegen-cl --test dup_drop_pipeline --test pair_elim --test stack_maps --test scope_reduce
+cargo test -p corvid-codegen-cl --test parity
+```
+
 
 
 

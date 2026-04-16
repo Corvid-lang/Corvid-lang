@@ -1173,6 +1173,28 @@ Important honesty note:
 - that is treated as environment noise until proven otherwise and is not folded into the published Phase 17 numbers
 - 17e ships on correctness first; measurement delta is held until a clean rerun
 
+### Latency-aware RC at prompt boundaries
+
+Slice `17b-7` narrowed a broad intuition into a precise optimization target.
+
+The original hypothesis was "AI boundaries are expensive; optimize tool/LLM boundaries." The implementation work showed that this was too coarse:
+
+- borrowed-local tool args were already close to flat after the unified ownership pass became default-on
+- the remaining boundary RC traffic lives in prompt / LLM interpolation, specifically when a borrowed local `String` is threaded through prompt rendering
+
+The shipped pass therefore does one thing on purpose:
+
+- pin borrowed local `String` bindings across prompt lowering so the concat path does not mistakenly release the binding's structural `+1`
+
+What it does **not** do:
+
+- no runtime deferred-RC ledger
+- no verifier bookkeeping change
+- no attempt to optimize prompt-internal owned temps
+- no claim that tool-only workflows materially move from this slice
+
+That is a useful Phase 17 lesson: the moat claim has to follow the measured hotspot, not the broader story we hoped would be true. For Corvid, the differentiated boundary optimization is prompt / LLM lowering, not generic tool dispatch.
+
 ## Contributing / feedback
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). The rules of the road are: pre-phase chat before code, per-slice commits at every boundary, dev-log entry for every session, no shortcuts. The `learnings.md` file you're reading gets updated when each slice ships a user-visible feature.

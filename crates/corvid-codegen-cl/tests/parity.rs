@@ -1811,6 +1811,21 @@ fn prompt_with_string_arg_interpolation() {
 }
 
 #[test]
+fn prompt_with_local_string_arg_interpolation() {
+    // Slice 17b-7: bare-Local String args at prompt boundaries are
+    // pinned as borrowed rather than released like owned temps. This
+    // fixture exercises the local path directly and proves the prompt
+    // boundary doesn't retire the binding's structural +1.
+    assert_parity_with_mock_llm(
+        "prompt classify(message: String) -> Int:\n    \"Classify: {message}\"\n\nagent main() -> Int:\n    msg = \"hello\"\n    return classify(msg)\n",
+        serde_json::json!(1),
+        1,
+        "mock-1",
+        "classify",
+    );
+}
+
+#[test]
 fn approve_before_dangerous_tool_compiles_and_runs() {
     // Phase 14: `approve` is a compile-time-checked no-op in
     // generated code. The effect checker (Phase 5) verifies that

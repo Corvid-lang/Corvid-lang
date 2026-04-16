@@ -24,6 +24,7 @@
 pub mod dataflow;
 pub mod dup_drop;
 pub mod errors;
+pub mod latency_rc;
 pub mod link;
 pub mod lowering;
 pub mod module;
