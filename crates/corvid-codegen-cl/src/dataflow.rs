@@ -248,6 +248,23 @@ impl OwnershipPlan {
 /// Run the .6a analysis on a single agent. Returns the CFG + the
 /// ownership plan. Pure: does not mutate `agent`.
 pub fn analyze_agent(agent: &IrAgent) -> (Cfg, OwnershipPlan) {
+    let (cfg, _liveness, plan) = analyze_agent_full(agent);
+    (cfg, plan)
+}
+
+/// Analysis entry that ALSO returns the `Liveness` result used
+/// during plan construction. Downstream passes (17b-6 effect-row-
+/// directed RC, 17b-7 latency-aware RC) consume this rather than
+/// recomputing. Expected use pattern:
+///
+/// ```ignore
+/// let (cfg, liveness, plan) = analyze_agent_full(&agent);
+/// for block_id in 0..liveness.block_count() {
+///     let live_out = liveness.live_out_at_block(block_id);
+///     // inspect boundary-live refcounted locals...
+/// }
+/// ```
+pub fn analyze_agent_full(agent: &IrAgent) -> (Cfg, Liveness, OwnershipPlan) {
     let mut builder = CfgBuilder::new();
     let entry = builder.alloc_block();
     builder.lower_block(&agent.body, entry, Vec::new());
@@ -270,7 +287,7 @@ pub fn analyze_agent(agent: &IrAgent) -> (Cfg, OwnershipPlan) {
     let mut plan = build_plan(&cfg, &liveness, &param_locals);
     plan.ir_paths = ir_paths;
     plan.branch_drops = build_branch_drops(&cfg, &liveness, &if_cfg_coords, &param_locals);
-    (cfg, plan)
+    (cfg, liveness, plan)
 }
 
 /// Phase 17b-2 — per-If per-branch drop analysis.
@@ -660,12 +677,49 @@ fn walk_expr(expr: &IrExpr, consumed: bool, out: &mut Vec<LocalRead>) {
 /// Per-block live-in / live-out sets for refcounted locals. Used to
 /// classify last-uses: a use of `L` at point P is the last use iff
 /// `L` is not in the live-out set of P.
+/// Per-block live-in / live-out sets for refcounted locals, computed
+/// by the backward-dataflow pass at function granularity. Public so
+/// downstream passes (17b-6 effect-row-directed RC, 17b-7 latency-
+/// aware RC) can consume the same liveness facts instead of
+/// duplicating the analysis.
+///
+/// Use `live_in_at_block(block_id)` / `live_out_at_block(block_id)`
+/// accessors rather than reaching into the fields directly — they
+/// bounds-check the block id and keep the internal vector
+/// representation encapsulated.
 #[derive(Debug, Clone, Default)]
-struct Liveness {
+pub struct Liveness {
     /// For each block, the set of locals live on entry.
     live_in: Vec<BTreeSet<LocalId>>,
     /// For each block, the set of locals live on exit.
     live_out: Vec<BTreeSet<LocalId>>,
+}
+
+impl Liveness {
+    /// Locals that are live AT THE START of block `b` (i.e., some
+    /// path reaches `b` and then uses the local before redefining).
+    /// Returns an empty set for out-of-range block ids.
+    pub fn live_in_at_block(&self, b: BlockId) -> &BTreeSet<LocalId> {
+        static EMPTY: std::sync::OnceLock<BTreeSet<LocalId>> = std::sync::OnceLock::new();
+        self.live_in
+            .get(b)
+            .unwrap_or_else(|| EMPTY.get_or_init(BTreeSet::new))
+    }
+
+    /// Locals that are live AT THE END of block `b` (i.e., some
+    /// successor uses the local before redefining). Returns an
+    /// empty set for out-of-range block ids.
+    pub fn live_out_at_block(&self, b: BlockId) -> &BTreeSet<LocalId> {
+        static EMPTY: std::sync::OnceLock<BTreeSet<LocalId>> = std::sync::OnceLock::new();
+        self.live_out
+            .get(b)
+            .unwrap_or_else(|| EMPTY.get_or_init(BTreeSet::new))
+    }
+
+    /// Number of CFG blocks this liveness was computed over.
+    pub fn block_count(&self) -> usize {
+        self.live_in.len()
+    }
 }
 
 /// Standard iterative backward liveness. Classic Kildall formulation:
