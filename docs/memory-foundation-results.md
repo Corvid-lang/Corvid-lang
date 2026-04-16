@@ -1,11 +1,12 @@
 # Memory Foundation Results
 
-Status: draft close-out. The memory-management foundation is shipped on `main`, including the default-on unified ownership pass (`0cc7895`). Final lock is intentionally held until the remaining foundation-close slices land:
+Status: draft close-out. The memory-management foundation is shipped on `main`, including the default-on unified ownership pass (`0cc7895`), drop specialization (`8c55c3f`), effect-typed scope reduction (`f5a3bce`), and latency-aware RC at prompt boundaries (`6bedbfb`).
 
-- `17b-2` drop specialization
-- `17e` effect-typed scope reduction
-- `17b-6` effect-row-directed RC
-- `17b-7` latency-aware RC across tool / LLM boundaries
+Final lock is intentionally held until the benchmark gate is clean:
+
+- a quiet-host rerun must produce three mutually consistent memory-runtime runs
+- the cross-language workflow runners must be measured on the same host and folded into the published tables
+- the close-out commit must update the roadmap, dev log, learnings, and release tag in one pass
 
 This is Corvid's memory-management foundation:
 
@@ -41,6 +42,13 @@ Baseline references:
 - historical narrative baseline: the earlier native-runtime close-out numbers from `dev-log.md` Day 29
 - code baseline before the memory-foundation work: `ca46e49de7140631c2fb0cb19247f97a9a111227`
 - current post-unified-pass baseline: `0cc7895`
+
+Clean-run artifact discipline:
+
+- raw rerun attempts are archived under `benches/results/YYYY-MM-DD-clean-run/`
+- the current archived session is `benches/results/2026-04-16-clean-run/`
+- that session repaired the harness and preserved six raw runs, but it did **not** clear the publication gate because the machine remained noisy across the full sheet
+- no number from that directory is treated as the canonical published baseline until a quieter rerun reproduces it
 
 ## Act I - Foundation
 
@@ -182,14 +190,36 @@ Headline unlocked:
 
 - Corvid now has an explicit ARC-style pair-elimination stage in the pipeline, even though the current public RC-count fixtures are not yet the workloads that expose its payoff
 
-### Remaining close-of-17 optimization slices
+### Shipped close-of-foundation optimization slices
 
 | Slice | Target benchmark | Expected delta | Status |
 |---|---|---|---|
-| `17b-2` drop specialization | `list_heavy_strings`, verifier list-heavy path | fewer generic drop paths and fewer dynamic checks on composite teardown | pending |
-| `17e` effect-typed scope reduction | allocator hot paths, verifier live-set-sensitive workloads | shorter RC-alive windows in effect-free regions | pending |
-| `17b-6` effect-row-directed RC | verifier `warn/off` on tool/LLM-shaped workloads | fewer RC ops across provably safe effect boundaries | pending |
-| `17b-7` latency-aware RC across tool/LLM boundaries | replay-deterministic audit workloads, verifier overhead in AI-shaped programs | move RC/GC work to compiler-invariant safepoints with better user-visible latency | pending |
+| `17b-2` drop specialization | `list_heavy_strings`, verifier list-heavy path | fewer generic drop paths and fewer dynamic checks on composite teardown | shipped |
+| `17e` effect-typed scope reduction | allocator hot paths, verifier live-set-sensitive workloads | shorter RC-alive windows in effect-free regions | shipped |
+| `17b-7` latency-aware RC across tool/LLM boundaries | replay-deterministic audit workloads, verifier overhead in AI-shaped programs | fewer prompt-boundary RC ops and lower audit pressure around LLM calls | shipped |
+
+### Benchmark runner implementations
+
+The comparative runner surface is now in-repo:
+
+| Implementation | Directory | Status |
+|---|---|---|
+| Corvid native | `benches/corvid/` | shipped |
+| Python stdlib | `benches/python/` | shipped |
+| TypeScript / Node | `benches/typescript/` | shipped |
+
+These runners all consume the canonical fixture set from `benchmarks/cases/` and emit JSONL trial records with:
+
+- `total_wall_ms`
+- `external_wait_ms`
+- `orchestration_overhead_ms`
+- trace size fields
+
+The subtraction rule stays fixed across all three implementations:
+
+> orchestration overhead = measured wall time - fixture-declared external wait
+
+That is the category metric this close-out will publish. It isolates runtime and orchestration cost instead of measuring mocked tool / model sleeps.
 
 ## Act III - Deferred Research And Next Wave
 
@@ -225,15 +255,15 @@ Compiled Corvid binaries still need those native backend slices before the inter
 | `17b-1b.6d-2a` | Entry-main + drop-before-return + BinOp consume | shipped | `520e30b` | transition stage |
 | `17b-1b.6d-2` | Unified ownership pass is the default | shipped | `0cc7895` | current default |
 | `17b-1c` | Whole-program retain/release pair elimination | shipped | `046806d` | Dev B |
-| `17b-2` | Drop specialization | pending | `-` | Dev A next |
+| `17b-2` | Drop specialization | shipped | `8c55c3f` | shipped before close-out lock |
 | `17b-3` | Reuse analysis (Perceus / Koka direction) | deferred research | `-` | research-tier |
 | `17b-4` | Morphic-style alias-mode specialization | deferred research | `-` | research-tier |
 | `17b-5` | Choi-style escape analysis | deferred research | `-` | research-tier |
-| `17b-6` | Effect-row-directed RC | pending | `-` | Dev A, innovation moat |
-| `17b-7` | Latency-aware RC across tool / LLM boundaries | pending | `-` | Dev A, innovation moat |
+| `17b-6` | Effect-row-directed RC | deferred to next wave | `-` | effect system too simple for a sound close-of-foundation slice |
+| `17b-7` | Latency-aware RC across tool / LLM boundaries | shipped | `6bedbfb` | prompt-boundary hotspot, not tool-boundary |
 | `17c` | Cranelift safepoints + emitted stack-map table | shipped | `e55efea` | native GC root discovery |
 | `17d` | Native mark-sweep cycle collector | shipped | `ca428bf` | native tier closes cycles |
-| `17e` | Effect-typed scope reduction | pending | `-` | Dev A |
+| `17e` | Effect-typed scope reduction | shipped | `f5a3bce` | conservative same-block relocation |
 | `17f / 17f++` | Replay-deterministic GC triggers + refcount verifier | shipped | `a3b841d` | shipped as `17f++` |
 | `17g` | `Weak<T>` with effect-typed invalidation | shipped | `ba01e78` | Dev B |
 | `17h.1` | VM-owned heap handles | shipped | `318c892` | VM refactor |
@@ -246,6 +276,7 @@ Compiled Corvid binaries still need those native backend slices before the inter
 - `17b-4` Morphic-style specialization: specialize call sites by alias mode to cut ownership traffic further. Deferred because it is a second-order specialization pass, not required to close the current measured baseline.
 - `17b-5` Choi-style escape analysis: promote non-escaping allocations out of the heap. Deferred because it is a larger interprocedural research slice than the current close window supports.
 - VM collector locality: reduce temporary buffers and traversal cost in the interpreter collector. Deferred because native tier numbers and ownership-pass work are the current close priority.
+- `17b-6` effect-row-directed RC: deferred to the next wave. The current effect system is not yet rich enough to justify a sound compile-time elision pass at the granularity originally proposed for the close.
 
 ### Next Native Backend Wave
 
@@ -257,6 +288,9 @@ This is the next focus after the memory-foundation close. It is intentionally ke
 ## Open lock conditions
 
 This document is not final yet. It locks only when both are true:
+
+- the memory-runtime rerun clears the quiet-host gate and produces three mutually consistent runs
+- the Corvid / Python / TypeScript workflow runners are measured and folded into the comparison tables
 
 1. `17b-2`, `17e`, `17b-6`, and `17b-7` land and the same `memory_runtime` harness is rerun after each meaningful optimization slice
 2. the final numbers are folded into the tables without hedged language

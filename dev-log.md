@@ -3165,6 +3165,39 @@ cargo test -p corvid-codegen-cl --test dup_drop_pipeline --test pair_elim --test
 cargo test -p corvid-codegen-cl --test parity
 ```
 
+## Day 34 [B] - 2026-04-16 - Memory benchmark harness + close-out runners
+
+Repaired the runtime benchmark harness and archived the first honest quiet-run attempt under `benches/results/2026-04-16-clean-run/`.
+
+What shipped:
+
+- `crates/corvid-runtime/benches/memory_runtime.rs` now compiles and runs end-to-end again
+- raw Criterion outputs for six rerun attempts are preserved under `benches/results/2026-04-16-clean-run/`
+- the archive README records hardware, OS, the primitive-control noise gate, and the decision to reject the session as non-publishable
+
+Most important close-out finding:
+
+- the current box is still too noisy for the canonical memory-foundation lock numbers
+- two runs (`run-2`, `run-3`) cluster well, but the session never reached three mutually consistent runs across the full sheet
+- one run (`run-5`) passed the primitive-control gate while still diverging materially on other measurements, so the correct call was to archive the data and keep the lock closed
+
+Shipped the comparative workflow-runner surface in parallel:
+
+- `benches/corvid/` — native Corvid runner
+- `benches/python/` — stdlib Python runner
+- `benches/typescript/` — Node/TypeScript runner
+
+Shared discipline across all three:
+
+- consume the canonical fixtures under `benchmarks/cases/`
+- emit one JSON object per trial
+- report `orchestration_overhead_ms = total_wall_ms - external_wait_ms`
+
+Native Corvid runner note:
+
+- the native path now uses per-prompt canned replies and per-prompt mock latency in the env-backed mock LLM adapter
+- benchmark-only `#[tool]` shims under `benches/corvid/tools/` provide deterministic tool outputs and latencies for the native binaries
+
 
 
 

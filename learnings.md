@@ -1195,6 +1195,37 @@ What it does **not** do:
 
 That is a useful lesson from the memory-foundation work: the moat claim has to follow the measured hotspot, not the broader story we hoped would be true. For Corvid, the differentiated boundary optimization is prompt / LLM lowering, not generic tool dispatch.
 
+### Comparative benchmark runners
+
+The memory-foundation close does not stop at internal microbenchmarks.
+
+Corvid now has a shared AI-workflow fixture set plus three benchmark runner surfaces:
+
+- native Corvid under `benches/corvid/`
+- stdlib Python under `benches/python/`
+- Node/TypeScript under `benches/typescript/`
+
+The key rule is fixed across all three:
+
+- orchestration overhead equals measured wall time minus fixture-declared external wait
+
+That matters because it keeps the claim honest. Corvid is trying to beat orchestration stacks assembled from libraries, not the network. The benchmark suite therefore measures what the runtimes contribute around prompt, tool, approval, retry, and trace boundaries rather than celebrating whichever runner happened to sleep less.
+
+### Clean-run gate discipline
+
+The first close-out rerun for `memory_runtime` was intentionally archived instead of published.
+
+Why:
+
+- the machine produced runs that disagreed across the full sheet, including one run that passed the primitive-control sentinel while still diverging materially elsewhere
+- that is exactly the kind of result that looks tempting in a slide deck and is poisonous in a reproducible benchmark story
+
+So the rule for the close-out is now explicit:
+
+- preserve noisy runs as artifacts
+- document the rejection reason
+- do not promote them into the published results table until the session clears the quiet-host gate
+
 ## Contributing / feedback
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). The rules of the road are: design chat before code, per-scope commits at every boundary, dev-log entry for every session, no shortcuts. The `learnings.md` file you're reading gets updated when each user-visible feature ships.
