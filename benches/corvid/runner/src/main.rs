@@ -129,6 +129,21 @@ fn workspace_root() -> Result<PathBuf> {
 
 fn build_tools_lib(root: &Path) -> Result<PathBuf> {
     let manifest = root.join("benches").join("corvid").join("tools").join("Cargo.toml");
+    let lib_name = if cfg!(windows) {
+        "corvid_bench_tools.lib"
+    } else {
+        "libcorvid_bench_tools.a"
+    };
+    let built = root
+        .join("benches")
+        .join("corvid")
+        .join("tools")
+        .join("target")
+        .join("release")
+        .join(lib_name);
+    if built.exists() {
+        return Ok(built);
+    }
     let status = Command::new("cargo")
         .arg("build")
         .arg("--manifest-path")
@@ -138,12 +153,7 @@ fn build_tools_lib(root: &Path) -> Result<PathBuf> {
     if !status.success() {
         bail!("building benchmark tools failed");
     }
-    let lib_name = if cfg!(windows) {
-        "corvid_bench_tools.lib"
-    } else {
-        "libcorvid_bench_tools.a"
-    };
-    Ok(root.join("benches").join("corvid").join("tools").join("target").join("release").join(lib_name))
+    Ok(built)
 }
 
 fn source_for_fixture(root: &Path, fixture: &str) -> PathBuf {
@@ -201,6 +211,7 @@ fn tool_base_name(name: &str) -> String {
 
 fn expected_stdout(fixture: &Fixture) -> Result<String> {
     match fixture.name.as_str() {
+        "baseline_control" => Ok("1".to_string()),
         "tool_loop" => Ok(fixture_tool_output(fixture, "fetch_open_orders")?),
         "retry_workflow" => Ok(fixture_tool_output(fixture, "fetch_shipment_status_attempt_3")?),
         "approval_workflow" => Ok(fixture_tool_output(fixture, "issue_refund")?),

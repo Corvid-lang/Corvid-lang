@@ -1,0 +1,21 @@
+{
+  "fixture_version": "1.0",
+  "name": "baseline_control",
+  "workload_kind": "baseline_control",
+  "description": "Minimal no-wait control scenario used to disclose host noise in the same-session ratio methodology.",
+  "entry": {
+    "user_input": "Return a fixed control value.",
+    "context": {}
+  },
+  "random_seed": 42,
+  "reporting_requirements": {
+    "trace_size_normalization": "bytes_per_logical_step",
+    "allocation_reporting": "host_heap_or_qualitative"
+  },
+  "steps": [],
+  "expected_final_output": 1,
+  "expected_replay_events": [],
+  "notes": [
+    "This scenario is a host-noise disclosure input, not a product benchmark headline."
+  ]
+}

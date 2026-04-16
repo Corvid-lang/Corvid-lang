@@ -20,9 +20,26 @@ function sleep(ms: number): Promise<void> {
 
 async function runTrial(fixture: Fixture, trial: number) {
   const events: string[] = [];
+  const state: Record<string, unknown> = {};
   const start = performance.now();
   for (const step of fixture.steps) {
     const latencyMs = step.external_latency_ms ?? 0;
+    if (step.kind === "prompt") {
+      const rendered = JSON.stringify((step as any).inputs ?? {});
+      const response = JSON.parse((step as any).mock_response ?? "null");
+      state[step.name] = { rendered, response };
+    } else if (step.kind === "tool") {
+      const request = JSON.stringify((step as any).inputs ?? {});
+      const response = JSON.parse(JSON.stringify((step as any).mock_output ?? null));
+      state[step.name] = { request, response };
+    } else if (step.kind === "approval") {
+      const proposal = JSON.stringify((step as any).inputs ?? {});
+      state[step.name] = { proposal, decision: (step as any).approval_outcome ?? "granted" };
+    } else if (step.kind === "retry_sleep") {
+      state[step.name] = { sleep_ms: latencyMs };
+    } else if (step.kind === "replay_checkpoint") {
+      state[step.name] = { checkpoint: (step as any).mock_output ?? null };
+    }
     if (latencyMs > 0) {
       await sleep(latencyMs);
     }
