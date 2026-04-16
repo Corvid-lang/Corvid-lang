@@ -8,6 +8,7 @@ def run_trial(fixture: dict, trial: int) -> dict:
     events = []
     state = {"outputs": {}}
     start = time.perf_counter()
+    actual_external_wait_ms = 0.0
     for step in fixture["steps"]:
         latency_ms = step.get("external_latency_ms", 0)
         step_kind = step["kind"]
@@ -31,7 +32,9 @@ def run_trial(fixture: dict, trial: int) -> dict:
             state["outputs"][step_name] = {"checkpoint": step.get("mock_output")}
 
         if latency_ms:
+            wait_start = time.perf_counter()
             time.sleep(latency_ms / 1000.0)
+            actual_external_wait_ms += (time.perf_counter() - wait_start) * 1000.0
         events.append(f"{step_kind}:{step_name}")
     elapsed_ms = (time.perf_counter() - start) * 1000.0
     external_wait_ms = sum(step.get("external_latency_ms", 0) for step in fixture["steps"])
@@ -45,6 +48,8 @@ def run_trial(fixture: dict, trial: int) -> dict:
         "stdout_match": final_output == fixture.get("expected_final_output"),
         "total_wall_ms": elapsed_ms,
         "external_wait_ms": external_wait_ms,
+        "actual_external_wait_ms": actual_external_wait_ms,
+        "external_wait_bias_ms": actual_external_wait_ms - external_wait_ms,
         "orchestration_overhead_ms": elapsed_ms - external_wait_ms,
         "trace_size_raw_bytes": trace_bytes,
         "logical_steps_recorded": len(events),

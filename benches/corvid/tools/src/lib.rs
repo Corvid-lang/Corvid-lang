@@ -2,7 +2,7 @@ use corvid_macros::tool;
 use serde_json::Value;
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Mutex, OnceLock};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 type Queues = HashMap<String, VecDeque<String>>;
 type LatencyQueues = HashMap<String, VecDeque<u64>>;
@@ -66,6 +66,10 @@ fn latencies() -> &'static Mutex<LatencyQueues> {
     LATENCIES.get_or_init(|| Mutex::new(parse_latency_queues("CORVID_BENCH_TOOL_LATENCIES_MS")))
 }
 
+fn profile_enabled() -> bool {
+    std::env::var("CORVID_PROFILE_EVENTS").ok().as_deref() == Some("1")
+}
+
 async fn maybe_sleep(tool: &str) {
     let latency = {
         let mut queues = latencies().lock().unwrap();
@@ -75,7 +79,18 @@ async fn maybe_sleep(tool: &str) {
             .unwrap_or(0)
     };
     if latency > 0 {
+        let start = Instant::now();
         tokio::time::sleep(Duration::from_millis(latency)).await;
+        if profile_enabled() {
+            let event = serde_json::json!({
+                "kind": "wait",
+                "source_kind": "tool",
+                "name": tool,
+                "nominal_ms": latency,
+                "actual_ms": start.elapsed().as_secs_f64() * 1000.0,
+            });
+            eprintln!("CORVID_PROFILE_JSON={event}");
+        }
     }
 }
 

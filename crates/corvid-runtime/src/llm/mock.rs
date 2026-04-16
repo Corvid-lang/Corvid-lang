@@ -9,6 +9,25 @@ use crate::llm::{LlmAdapter, LlmRequest, LlmResponse, TokenUsage};
 use futures::future::BoxFuture;
 use std::collections::{HashMap, VecDeque};
 use std::sync::Mutex;
+use std::time::Instant;
+
+fn profile_enabled() -> bool {
+    std::env::var("CORVID_PROFILE_EVENTS").ok().as_deref() == Some("1")
+}
+
+fn emit_wait_profile(kind: &str, name: &str, nominal_ms: u64, actual_ms: f64) {
+    if !profile_enabled() {
+        return;
+    }
+    let event = serde_json::json!({
+        "kind": "wait",
+        "source_kind": kind,
+        "name": name,
+        "nominal_ms": nominal_ms,
+        "actual_ms": actual_ms,
+    });
+    eprintln!("CORVID_PROFILE_JSON={event}");
+}
 
 pub struct MockAdapter {
     name: String,
@@ -153,7 +172,14 @@ impl LlmAdapter for EnvVarMockAdapter {
 
         Box::pin(async move {
             if latency_ms > 0 {
+                let start = Instant::now();
                 tokio::time::sleep(std::time::Duration::from_millis(latency_ms)).await;
+                emit_wait_profile(
+                    "prompt",
+                    &prompt,
+                    latency_ms,
+                    start.elapsed().as_secs_f64() * 1000.0,
+                );
             }
             Ok(LlmResponse {
                 value,

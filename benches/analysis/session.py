@@ -5,6 +5,7 @@ import os
 import pathlib
 import subprocess
 import tempfile
+import time
 
 
 SCENARIOS = [
@@ -17,6 +18,12 @@ SCENARIOS = [
 
 def corvid_cmd(repo: pathlib.Path) -> list[str]:
     manifest = repo / "benches" / "corvid" / "runner" / "Cargo.toml"
+    tools_manifest = repo / "benches" / "corvid" / "tools" / "Cargo.toml"
+    subprocess.run(
+        ["cargo", "build", "--manifest-path", str(tools_manifest), "--release"],
+        cwd=repo,
+        check=True,
+    )
     subprocess.run(
         ["cargo", "build", "--manifest-path", str(manifest)],
         cwd=repo,
@@ -44,20 +51,26 @@ def stacks(repo: pathlib.Path):
         ("typescript", typescript_cmd(repo)),
     ]
 
-
-def run_stack(repo: pathlib.Path, stack: str, base_cmd: list[str], scenario: str):
+def run_stack(repo: pathlib.Path, stack: str, base_cmd: list[str], scenario: str, profile: bool):
     fixture = repo / "benchmarks" / "cases" / f"{scenario}.json"
     with tempfile.TemporaryDirectory() as tmp:
         output = pathlib.Path(tmp) / "trial.jsonl"
         cmd = base_cmd + [str(fixture), "1", str(output)]
-        subprocess.run(cmd, cwd=repo, check=True)
+        env = os.environ.copy()
+        if profile and stack == "corvid":
+            env["CORVID_BENCH_PROFILE"] = "1"
+        start = time.perf_counter()
+        subprocess.run(cmd, cwd=repo, check=True, env=env)
+        launcher_wall_ms = (time.perf_counter() - start) * 1000.0
+        if not output.exists():
+            raise FileNotFoundError(f"{stack} runner did not write {output}")
         record = json.loads(output.read_text(encoding="utf-8").strip())
-    return {
-        "stack": stack,
-        "wall_ms": record["total_wall_ms"],
-        "external_wait_ms": record["external_wait_ms"],
-        "orchestration_ms": record["orchestration_overhead_ms"],
-    }
+    record["stack"] = stack
+    record["wall_ms"] = record["total_wall_ms"]
+    record["orchestration_ms"] = record["orchestration_overhead_ms"]
+    record["launcher_wall_ms"] = launcher_wall_ms
+    record["launcher_overhead_ms"] = launcher_wall_ms - record["total_wall_ms"]
+    return record
 
 
 def main():
@@ -65,6 +78,7 @@ def main():
     parser.add_argument("--output-dir", required=True)
     parser.add_argument("--warmup", type=int, default=3)
     parser.add_argument("--trials", type=int, default=30)
+    parser.add_argument("--profile", action="store_true")
     args = parser.parse_args()
 
     repo = pathlib.Path(__file__).resolve().parents[2]
@@ -78,20 +92,18 @@ def main():
     for scenario in SCENARIOS:
         for _ in range(args.warmup):
             for stack, cmd in stack_cmds:
-                run_stack(repo, stack, cmd, scenario)
+                run_stack(repo, stack, cmd, scenario, args.profile)
         for trial_idx in range(1, args.trials + 1):
             for stack, cmd in stack_cmds:
-                record = run_stack(repo, stack, cmd, scenario)
+                record = run_stack(repo, stack, cmd, scenario, args.profile)
                 records.append(
                     {
                         "scenario": scenario,
                         "stack": stack,
                         "trial_idx": trial_idx,
-                        "wall_ms": record["wall_ms"],
-                        "external_wait_ms": record["external_wait_ms"],
-                        "orchestration_ms": record["orchestration_ms"],
                         "session_id": session_id,
                         "timestamp": dt.datetime.utcnow().isoformat() + "Z",
+                        **record,
                     }
                 )
 

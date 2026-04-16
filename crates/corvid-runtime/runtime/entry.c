@@ -31,6 +31,7 @@ extern long long corvid_alloc_count;
 extern long long corvid_release_count;
 extern long long corvid_retain_call_count;
 extern long long corvid_release_call_count;
+extern long long corvid_safepoint_count;
 /* Set by corvid_init based on CORVID_GC_TRIGGER env var.
  * alloc.c reads this to decide when to auto-collect. */
 extern long long corvid_gc_trigger_threshold;
@@ -40,6 +41,8 @@ extern long long corvid_gc_trigger_threshold;
  * this at every GC cycle. */
 extern int corvid_gc_verify_mode;
 extern long long corvid_gc_verify_drift_count;
+extern long long corvid_gc_trigger_log_length(void);
+extern uint64_t corvid_stack_maps_entry_count(void);
 
 /* ---- exit-time leak + RC-op counters (registered via corvid_init) --- */
 
@@ -57,6 +60,18 @@ void corvid_on_exit(void) {
     if (corvid_gc_verify_mode != 0 && corvid_gc_verify_drift_count > 0) {
         fprintf(stderr,
                 "CORVID_GC_VERIFY: %lld total drift report(s) this run\n",
+                corvid_gc_verify_drift_count);
+    }
+    if (getenv("CORVID_PROFILE_RUNTIME")) {
+        fprintf(stderr,
+                "CORVID_PROFILE_RUNTIME={\"allocs\":%lld,\"releases\":%lld,\"retain_calls\":%lld,\"release_calls\":%lld,\"gc_trigger_count\":%lld,\"safepoint_count\":%lld,\"stack_map_entry_count\":%llu,\"verify_drift_count\":%lld}\n",
+                corvid_alloc_count,
+                corvid_release_count,
+                corvid_retain_call_count,
+                corvid_release_call_count,
+                corvid_gc_trigger_log_length(),
+                corvid_safepoint_count,
+                (unsigned long long)corvid_stack_maps_entry_count(),
                 corvid_gc_verify_drift_count);
     }
 }

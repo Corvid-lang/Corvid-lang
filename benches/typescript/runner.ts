@@ -22,6 +22,7 @@ async function runTrial(fixture: Fixture, trial: number) {
   const events: string[] = [];
   const state: Record<string, unknown> = {};
   const start = performance.now();
+  let actualExternalWaitMs = 0;
   for (const step of fixture.steps) {
     const latencyMs = step.external_latency_ms ?? 0;
     if (step.kind === "prompt") {
@@ -41,7 +42,9 @@ async function runTrial(fixture: Fixture, trial: number) {
       state[step.name] = { checkpoint: (step as any).mock_output ?? null };
     }
     if (latencyMs > 0) {
+      const waitStart = performance.now();
       await sleep(latencyMs);
+      actualExternalWaitMs += performance.now() - waitStart;
     }
     events.push(`${step.kind}:${step.name}`);
   }
@@ -59,6 +62,8 @@ async function runTrial(fixture: Fixture, trial: number) {
     stdout_match: true,
     total_wall_ms: elapsedMs,
     external_wait_ms: externalWaitMs,
+    actual_external_wait_ms: actualExternalWaitMs,
+    external_wait_bias_ms: actualExternalWaitMs - externalWaitMs,
     orchestration_overhead_ms: elapsedMs - externalWaitMs,
     trace_size_raw_bytes: traceBytes,
     logical_steps_recorded: events.length,

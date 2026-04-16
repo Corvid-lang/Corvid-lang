@@ -9,6 +9,9 @@ This directory holds the publication tooling for the memory-foundation close.
 3. `aggregate.py` consumes that JSONL and emits:
    - `ratios.json`
    - `ratios.md`
+4. `investigate.py` consumes the same JSONL and emits:
+   - `investigation.json`
+   - `investigation.md`
 
 ## Protocol encoded here
 
@@ -17,3 +20,15 @@ This directory holds the publication tooling for the memory-foundation close.
 - strict interleaving per scenario:
   - Corvid, Python, TypeScript, repeated by `trial_idx`
 - ratios only; no absolute publication tables
+
+## Investigation mode
+
+Pass `--profile` to `session.py` when the goal is diagnosis rather than
+publication. That enables Corvid's env-gated profiling hooks so the raw
+JSONL captures:
+
+- runner-vs-subprocess timing geometry
+- prompt/tool actual wait times vs nominal fixture wait
+- RC call counts
+- GC trigger counts
+- safepoint and stack-map counts
