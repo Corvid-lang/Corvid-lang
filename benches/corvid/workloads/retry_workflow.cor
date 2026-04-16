@@ -1,0 +1,11 @@
+tool fetch_shipment_status(order_id: String, attempt: Int) -> String
+
+prompt plan_retrying_lookup(order_id: String) -> String:
+    "Plan a retrying shipment lookup for {order_id}."
+
+agent main() -> String:
+    _plan = plan_retrying_lookup("O-991")
+    _attempt1 = fetch_shipment_status("O-991", 1)
+    _attempt2 = fetch_shipment_status("O-991", 2)
+    attempt3 = fetch_shipment_status("O-991", 3)
+    return attempt3

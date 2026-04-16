@@ -1,0 +1,9 @@
+{
+  "name": "corvid-bench-typescript",
+  "private": true,
+  "type": "module",
+  "devDependencies": {
+    "tsx": "^4.19.2",
+    "typescript": "^5.8.3"
+  }
+}

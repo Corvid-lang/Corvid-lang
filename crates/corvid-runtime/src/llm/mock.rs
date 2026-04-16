@@ -1,18 +1,18 @@
 //! Mock LLM adapter. Used by tests and offline demos.
 //!
-//! Configured with a model name and a map of prompt-name → canned
+//! Configured with a model name and a map of prompt-name to canned
 //! response. Calls for unknown prompts return an `AdapterFailed` error so
-//! tests don't silently pass on missing setup.
+//! tests do not silently pass on missing setup.
 
 use crate::errors::RuntimeError;
 use crate::llm::{LlmAdapter, LlmRequest, LlmResponse, TokenUsage};
 use futures::future::BoxFuture;
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::Mutex;
 
 pub struct MockAdapter {
     name: String,
-    /// Prompt name → canned JSON. Behind a Mutex so `reply` can be called
+    /// Prompt name to canned JSON. Behind a Mutex so `reply` can be called
     /// after the adapter has been wrapped in `Arc`.
     replies: Mutex<HashMap<String, serde_json::Value>>,
 }
@@ -74,28 +74,51 @@ impl LlmAdapter for MockAdapter {
     }
 }
 
-/// Test-mode mock that returns the same response for every prompt
-/// call. Configured from a single env var by the runtime's bridge
-/// when `CORVID_TEST_MOCK_LLM=1`. Useful for parity fixtures that
-/// exercise the prompt-dispatch path without needing per-prompt
-/// canned data.
+/// Test-mode mock configured entirely from env vars.
+///
+/// Legacy mode:
+/// - `CORVID_TEST_MOCK_LLM_RESPONSE`: one fallback response for every prompt
+///
+/// Native benchmark mode:
+/// - `CORVID_TEST_MOCK_LLM_REPLIES`: JSON object mapping prompt name to a
+///   JSON value or an array of JSON values consumed in FIFO order
+/// - `CORVID_TEST_MOCK_LLM_LATENCY_MS`: JSON object mapping prompt name to
+///   a sleep duration in milliseconds
 pub struct EnvVarMockAdapter {
     name: String,
-    response: serde_json::Value,
+    fallback: serde_json::Value,
+    replies: Mutex<HashMap<String, VecDeque<serde_json::Value>>>,
+    latencies_ms: HashMap<String, u64>,
 }
 
 impl EnvVarMockAdapter {
-    /// Build from the env. Reads `CORVID_TEST_MOCK_LLM_RESPONSE` for
-    /// the canned response (raw string — adapter wraps it in a
-    /// `serde_json::Value::String` so it round-trips through the
-    /// String path; numeric responses for Int/Bool/Float prompts go
-    /// in the same env var as their textual representation, e.g.
-    /// `"42"` or `"true"`).
     pub fn from_env() -> Self {
         let raw = std::env::var("CORVID_TEST_MOCK_LLM_RESPONSE").unwrap_or_default();
+        let replies = std::env::var("CORVID_TEST_MOCK_LLM_REPLIES")
+            .ok()
+            .and_then(|raw| serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(&raw).ok())
+            .map(|map| {
+                map.into_iter()
+                    .map(|(prompt, value)| {
+                        let queue = match value {
+                            serde_json::Value::Array(values) => values.into_iter().collect(),
+                            other => VecDeque::from([other]),
+                        };
+                        (prompt, queue)
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        let latencies_ms = std::env::var("CORVID_TEST_MOCK_LLM_LATENCY_MS")
+            .ok()
+            .and_then(|raw| serde_json::from_str::<HashMap<String, u64>>(&raw).ok())
+            .unwrap_or_default();
+
         Self {
             name: "env-mock-llm".into(),
-            response: serde_json::Value::String(raw),
+            fallback: serde_json::Value::String(raw),
+            replies: Mutex::new(replies),
+            latencies_ms,
         }
     }
 }
@@ -110,17 +133,28 @@ impl LlmAdapter for EnvVarMockAdapter {
         // every model spec. The bridge only registers it when
         // CORVID_TEST_MOCK_LLM=1, and the registry's first-match
         // dispatch means the env mock takes precedence over real
-        // providers in test mode (intentional: avoids real API
-        // calls in CI even when API keys leak into the env).
+        // providers in test mode.
         true
     }
 
     fn call<'a>(
         &'a self,
-        _req: &'a LlmRequest,
+        req: &'a LlmRequest,
     ) -> BoxFuture<'a, Result<LlmResponse, RuntimeError>> {
-        let value = self.response.clone();
+        let prompt = req.prompt.clone();
+        let value = {
+            let mut replies = self.replies.lock().unwrap();
+            replies
+                .get_mut(&prompt)
+                .and_then(|queue| queue.pop_front())
+                .unwrap_or_else(|| self.fallback.clone())
+        };
+        let latency_ms = self.latencies_ms.get(&prompt).copied().unwrap_or(0);
+
         Box::pin(async move {
+            if latency_ms > 0 {
+                tokio::time::sleep(std::time::Duration::from_millis(latency_ms)).await;
+            }
             Ok(LlmResponse {
                 value,
                 usage: TokenUsage::default(),

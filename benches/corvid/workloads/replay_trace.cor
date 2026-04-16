@@ -1,0 +1,15 @@
+tool lookup_customer_ticket_state(customer_id: String) -> String
+tool fetch_escalation_policy(priority: String) -> String
+
+prompt support_lookup_plan(customer_id: String) -> String:
+    "Plan a support lookup for {customer_id}."
+
+prompt draft_reply(ticket_state: String) -> String:
+    "Draft a reply from ticket state {ticket_state}."
+
+agent main() -> String:
+    _plan = support_lookup_plan("C-220")
+    ticket_state = lookup_customer_ticket_state("C-220")
+    reply = draft_reply(ticket_state)
+    _policy = fetch_escalation_policy("high")
+    return reply

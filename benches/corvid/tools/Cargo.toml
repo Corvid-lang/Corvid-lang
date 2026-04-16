@@ -1,0 +1,15 @@
+[package]
+name = "corvid_bench_tools"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["staticlib"]
+
+[dependencies]
+corvid-macros = { path = "../../../crates/corvid-macros" }
+corvid-runtime = { path = "../../../crates/corvid-runtime" }
+serde_json = "1"
+tokio = { version = "1", features = ["time"] }
+
+[workspace]

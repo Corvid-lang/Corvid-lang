@@ -1,0 +1,10 @@
+tool issue_refund(proposal: String) -> String dangerous
+
+prompt refund_decision(order_id: String, threshold_usd: Int) -> String:
+    "Decide whether refund {order_id} should be issued under threshold {threshold_usd}."
+
+agent main() -> String:
+    proposal = refund_decision("O-551", 100)
+    approve IssueRefund(proposal)
+    receipt = issue_refund(proposal)
+    return receipt

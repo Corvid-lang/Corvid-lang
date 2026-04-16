@@ -1,0 +1,16 @@
+tool lookup_customer_profile(customer_id: String) -> String
+tool fetch_open_orders(customer_id: String) -> String
+
+prompt plan_lookup(customer_id: String, user_request: String) -> String:
+    "Plan the first lookup for {customer_id}. Request: {user_request}"
+
+prompt plan_order_fetch(profile: String) -> String:
+    "Plan the order fetch for {profile}"
+
+agent main() -> String:
+    user_request = "Summarize the open orders for customer C-104 and classify whether the account needs manual review."
+    _plan1 = plan_lookup("C-104", user_request)
+    profile = lookup_customer_profile("C-104")
+    _plan2 = plan_order_fetch(profile)
+    orders = fetch_open_orders("C-104")
+    return orders
