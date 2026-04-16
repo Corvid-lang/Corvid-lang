@@ -4441,10 +4441,15 @@ fn lower_if(
     )?;
     if matches!(then_outcome, BlockOutcome::Normal) {
         // Release branch-scope refcounted locals before jumping to merge.
+        // Under the .6d pass, the analysis handles branch-scope drops
+        // via block-exit drops on locals with different last-use
+        // points across branches — skip the scattered emission.
         let scope = scope_stack.pop().unwrap_or_default();
-        for (_, var) in scope.iter().rev() {
-            let v = builder.use_var(*var);
-            emit_release(builder, module, runtime, v);
+        if !runtime.dup_drop_enabled {
+            for (_, var) in scope.iter().rev() {
+                let v = builder.use_var(*var);
+                emit_release(builder, module, runtime, v);
+            }
         }
         builder.ins().jump(merge_b, &[]);
         any_fell_through = true;
@@ -4472,9 +4477,11 @@ fn lower_if(
         )?;
         if matches!(else_outcome, BlockOutcome::Normal) {
             let scope = scope_stack.pop().unwrap_or_default();
-            for (_, var) in scope.iter().rev() {
-                let v = builder.use_var(*var);
-                emit_release(builder, module, runtime, v);
+            if !runtime.dup_drop_enabled {
+                for (_, var) in scope.iter().rev() {
+                    let v = builder.use_var(*var);
+                    emit_release(builder, module, runtime, v);
+                }
             }
             builder.ins().jump(merge_b, &[]);
             any_fell_through = true;
