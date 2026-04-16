@@ -503,6 +503,43 @@ impl<'ir> Interpreter<'ir> {
                 Ok(ExprFlow::Value(Value::List(Arc::new(out))))
             }
 
+            IrExprKind::WeakNew { strong } => {
+                let strong = match self.eval_expr(strong).await?.into_value() {
+                    Ok(v) => v,
+                    Err(v) => return Ok(ExprFlow::Propagate(v)),
+                };
+                let weak = strong.downgrade().ok_or_else(|| {
+                    InterpError::new(
+                        InterpErrorKind::TypeMismatch {
+                            expected: "String, Struct, or List".into(),
+                            got: strong.type_name(),
+                        },
+                        expr.span,
+                    )
+                })?;
+                Ok(ExprFlow::Value(Value::Weak(weak)))
+            }
+
+            IrExprKind::WeakUpgrade { weak } => {
+                let weak = match self.eval_expr(weak).await?.into_value() {
+                    Ok(v) => v,
+                    Err(v) => return Ok(ExprFlow::Propagate(v)),
+                };
+                match weak {
+                    Value::Weak(weak) => match weak.upgrade() {
+                        Some(value) => Ok(ExprFlow::Value(Value::OptionSome(Arc::new(value)))),
+                        None => Ok(ExprFlow::Value(Value::OptionNone)),
+                    },
+                    other => Err(InterpError::new(
+                        InterpErrorKind::TypeMismatch {
+                            expected: "Weak".into(),
+                            got: other.type_name(),
+                        },
+                        expr.span,
+                    )),
+                }
+            }
+
             IrExprKind::ResultOk { inner } => {
                 let v = match self.eval_expr(inner).await?.into_value() {
                     Ok(v) => v,

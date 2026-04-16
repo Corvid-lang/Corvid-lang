@@ -12,7 +12,8 @@
 //! What's covered:
 //!
 //!   1. `corvid_typeinfo_String` is the built-in symbol, callable,
-//!      empty trace body, NULL destroy/weak/elem.
+//!      empty trace body, NULL destroy/elem, and a non-NULL weak
+//!      clear hook.
 //!   2. `corvid_alloc_typed` + `corvid_release` round-trip invokes
 //!      the typeinfo's destroy_fn exactly once when rc→0.
 //!   3. `corvid_trace_list` walks refcounted-element lists, calling
@@ -78,7 +79,10 @@ fn string_typeinfo_has_expected_shape() {
         assert_eq!(ti.flags, 0, "String is a leaf, no flags set");
         assert!(ti.destroy_fn.is_none(), "String has no refcounted children");
         assert!(ti.trace_fn.is_some(), "String trace_fn is always emitted");
-        assert!(ti.weak_fn.is_none(), "weak_fn reserved for 17g");
+        assert!(
+            ti.weak_fn.is_some(),
+            "String weak_fn clears weak slots before the payload is freed"
+        );
         assert!(ti.elem_typeinfo.is_null(), "String is not a list");
     }
 }

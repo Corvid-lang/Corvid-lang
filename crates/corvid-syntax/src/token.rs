@@ -75,6 +75,8 @@ pub enum TokKind {
     RParen,   // )
     LBracket, // [
     RBracket, // ]
+    LBrace,   // {
+    RBrace,   // }
     Colon,    // :
     Comma,    // ,
     Dot,      // .

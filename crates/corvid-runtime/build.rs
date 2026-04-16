@@ -26,6 +26,7 @@ fn main() {
         .file(runtime_dir.join("lists.c"))
         .file(runtime_dir.join("entry.c"))
         .file(runtime_dir.join("shim.c"))
+        .file(runtime_dir.join("weak.c"))
         .file(runtime_dir.join("stack_maps.c"))
         .file(runtime_dir.join("stack_maps_fallback.c"))
         .file(runtime_dir.join("collector.c"))
@@ -78,6 +79,7 @@ fn main() {
     println!("cargo:rerun-if-changed=runtime/lists.c");
     println!("cargo:rerun-if-changed=runtime/entry.c");
     println!("cargo:rerun-if-changed=runtime/shim.c");
+    println!("cargo:rerun-if-changed=runtime/weak.c");
     println!("cargo:rerun-if-changed=runtime/stack_maps.c");
     println!("cargo:rerun-if-changed=runtime/stack_maps_fallback.c");
     println!("cargo:rerun-if-changed=runtime/collector.c");

@@ -903,6 +903,118 @@ Replay output shows the recorded data, not reconstructed guesses:
 
 If a trace is incomplete, replay reports `TRUNCATED` and still shows the recorded prefix. If the file is malformed or not a valid Corvid trace, the REPL prints a clear error and stays in normal mode.
 
+## Weak References
+
+Phase 17g adds first-class weak references with effect-typed invalidation.
+
+### Basic syntax
+
+`Weak<T>` means "a weak reference to `T`, with runtime checks only."
+
+```corvid
+agent cache(name: String) -> Weak<String>:
+    return Weak::new(name)
+```
+
+`Weak<T, {effects}>` is the powerful form. The effect row says which effects may invalidate the checker’s proof that the weak is still fresh.
+
+```corvid
+agent cache(name: String) -> Weak<String, {tool_call, llm}>:
+    return Weak::new(name)
+```
+
+Supported weak-effect names today:
+
+- `tool_call`
+- `llm`
+- `approve`
+
+### Construction and upgrade
+
+```corvid
+agent load(name: String) -> Option<String>:
+    w = Weak::new(name)
+    return Weak::upgrade(w)
+```
+
+`Weak::new(...)` refreshes the weak at the current effect frontier.
+
+`Weak::upgrade(...)` returns `Option<T>`:
+
+- `Some(value)` if the strong target is still alive
+- `None` if the target has been cleared
+
+### What the checker proves
+
+The checker tracks whether an invalidating effect may have happened since the weak was last refreshed.
+
+This is accepted:
+
+```corvid
+agent make(name: String) -> Weak<String, {tool_call}>:
+    return Weak::new(name)
+
+agent load(name: String) -> Option<String>:
+    w = make(name)
+    return Weak::upgrade(w)
+```
+
+This is rejected:
+
+```corvid
+tool fetch_name(id: String) -> String
+
+agent make(name: String) -> Weak<String, {tool_call}>:
+    return Weak::new(name)
+
+agent load(name: String) -> Option<String>:
+    w = make(name)
+    fetch_name(name)
+    return Weak::upgrade(w)
+```
+
+Why: `tool_call` is in the weak’s effect row, and there was no intervening refresh before the upgrade.
+
+### Refresh rules
+
+- `Weak::new(strong)` refreshes at the current effect frontier.
+- successful `Weak::upgrade(w)` refreshes `w` at the current effect frontier.
+- at control-flow merges, a weak is considered refreshed only if **all** incoming paths refreshed it.
+
+This merge is therefore rejected:
+
+```corvid
+tool fetch_name(id: String) -> String
+
+agent make(name: String) -> Weak<String, {tool_call}>:
+    return Weak::new(name)
+
+agent load(flag: Bool, name: String) -> Option<String>:
+    w = make(name)
+    if flag:
+        Weak::upgrade(w)
+    else:
+        keep = name
+    fetch_name(name)
+    return Weak::upgrade(w)
+```
+
+One path refreshed `w`, one path did not, so after the merge the checker keeps the weaker fact.
+
+### Runtime guarantees
+
+On the native runtime:
+
+- weak slots clear when the strong target’s refcount reaches zero
+- weak slots also clear during GC sweep of unreachable cycles
+- clearing happens before destroy-time re-entrancy can observe a stale pointer
+
+The direct runtime weak tests live in:
+
+- `crates/corvid-runtime/tests/weak.rs`
+
+Current native parity coverage proves the live-upgrade path. A stronger source-level overwrite/drop parity case is still under audit in the native codegen / ownership interaction.
+
 ## Contributing / feedback
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). The rules of the road are: pre-phase chat before code, per-slice commits at every boundary, dev-log entry for every session, no shortcuts. The `learnings.md` file you're reading gets updated when each slice ships a user-visible feature.

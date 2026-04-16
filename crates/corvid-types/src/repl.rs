@@ -139,6 +139,15 @@ fn type_to_type_ref(ty: &Type, symbols: &SymbolTable) -> TypeRef {
         Type::Option(inner) => {
             generic_type("Option", vec![type_to_type_ref(inner, symbols)], span)
         }
+        Type::Weak(inner, effects) => TypeRef::Weak {
+            inner: Box::new(type_to_type_ref(inner, symbols)),
+            effects: if effects.is_any() {
+                None
+            } else {
+                Some(*effects)
+            },
+            span,
+        },
         Type::Function { .. } | Type::Unknown => named_type("Nothing", span),
     }
 }

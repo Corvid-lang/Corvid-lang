@@ -6,6 +6,74 @@
 use crate::span::{Ident, Span};
 use serde::{Deserialize, Serialize};
 
+/// Effect rows attached to `Weak<T, {effects}>`.
+///
+/// These are not the same as tool declaration effects (`safe` /
+/// `dangerous`). They describe which runtime actions invalidate the
+/// compiler's proof that a weak reference is still refresh-valid at a
+/// given program point.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum WeakEffect {
+    ToolCall,
+    Llm,
+    Approve,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct WeakEffectRow {
+    pub tool_call: bool,
+    pub llm: bool,
+    pub approve: bool,
+}
+
+impl WeakEffectRow {
+    pub const fn any() -> Self {
+        Self {
+            tool_call: true,
+            llm: true,
+            approve: true,
+        }
+    }
+
+    pub const fn empty() -> Self {
+        Self {
+            tool_call: false,
+            llm: false,
+            approve: false,
+        }
+    }
+
+    pub fn from_effects(effects: &[WeakEffect]) -> Self {
+        let mut row = Self::empty();
+        for effect in effects {
+            match effect {
+                WeakEffect::ToolCall => row.tool_call = true,
+                WeakEffect::Llm => row.llm = true,
+                WeakEffect::Approve => row.approve = true,
+            }
+        }
+        row
+    }
+
+    pub fn effects(&self) -> Vec<WeakEffect> {
+        let mut effects = Vec::new();
+        if self.tool_call {
+            effects.push(WeakEffect::ToolCall);
+        }
+        if self.llm {
+            effects.push(WeakEffect::Llm);
+        }
+        if self.approve {
+            effects.push(WeakEffect::Approve);
+        }
+        effects
+    }
+
+    pub fn is_any(&self) -> bool {
+        self.tool_call && self.llm && self.approve
+    }
+}
+
 /// A type as the user wrote it in source code.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TypeRef {
@@ -16,6 +84,13 @@ pub enum TypeRef {
     Generic {
         name: Ident,
         args: Vec<TypeRef>,
+        span: Span,
+    },
+
+    /// `Weak<T>` or `Weak<T, {tool_call, llm}>`.
+    Weak {
+        inner: Box<TypeRef>,
+        effects: Option<WeakEffectRow>,
         span: Span,
     },
 
@@ -32,6 +107,7 @@ impl TypeRef {
         match self {
             TypeRef::Named { span, .. }
             | TypeRef::Generic { span, .. }
+            | TypeRef::Weak { span, .. }
             | TypeRef::Function { span, .. } => *span,
         }
     }

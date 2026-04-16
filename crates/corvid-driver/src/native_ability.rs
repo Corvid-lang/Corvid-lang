@@ -167,6 +167,8 @@ fn scan_expr(expr: &IrExpr) -> Result<(), NotNativeReason> {
             }
             Ok(())
         }
+        IrExprKind::WeakNew { strong } => scan_expr(strong),
+        IrExprKind::WeakUpgrade { weak } => scan_expr(weak),
         // Phase 18 IR variants — Result/Option/?/try-retry. Until
         // slice 18d lands native codegen for these, the native-
         // ability check routes programs that use them to the

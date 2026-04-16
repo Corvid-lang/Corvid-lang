@@ -514,4 +514,105 @@ agent load(id: String) -> String:
         let c = check(src);
         assert!(c.errors.is_empty(), "errors: {:?}", c.errors);
     }
+
+    #[test]
+    fn weak_new_is_fresh_immediately_on_construction() {
+        let src = "\
+agent make(name: String) -> Weak<String, {tool_call}>:
+    return Weak::new(name)
+
+agent load(name: String) -> Option<String>:
+    return Weak::upgrade(make(name))
+";
+        let c = check(src);
+        assert!(c.errors.is_empty(), "errors: {:?}", c.errors);
+    }
+
+    #[test]
+    fn weak_upgrade_after_invalidating_effect_is_rejected() {
+        let src = "\
+tool fetch_name(id: String) -> String
+
+agent make(name: String) -> Weak<String, {tool_call}>:
+    return Weak::new(name)
+
+agent load(name: String) -> Option<String>:
+    w = make(name)
+    fetch_name(name)
+    return Weak::upgrade(w)
+";
+        let c = check(src);
+        assert!(
+            c.errors.iter().any(|e| matches!(
+                e.kind,
+                TypeErrorKind::WeakUpgradeAcrossEffects { .. }
+            )),
+            "got: {:?}",
+            c.errors
+        );
+    }
+
+    #[test]
+    fn weak_upgrade_is_allowed_after_refreshing_with_new() {
+        let src = "\
+tool fetch_name(id: String) -> String
+
+agent make(name: String) -> Weak<String, {tool_call}>:
+    return Weak::new(name)
+
+agent load(name: String) -> Option<String>:
+    w = make(name)
+    fetch_name(name)
+    w = make(name)
+    return Weak::upgrade(w)
+";
+        let c = check(src);
+        assert!(c.errors.is_empty(), "errors: {:?}", c.errors);
+    }
+
+    #[test]
+    fn weak_refresh_merges_by_all_paths_not_any_path() {
+        let src = "\
+tool fetch_name(id: String) -> String
+
+agent make(name: String) -> Weak<String, {tool_call}>:
+    return Weak::new(name)
+
+agent load(flag: Bool, name: String) -> Option<String>:
+    w = make(name)
+    if flag:
+        Weak::upgrade(w)
+    else:
+        keep = name
+    fetch_name(name)
+    return Weak::upgrade(w)
+";
+        let c = check(src);
+        assert!(
+            c.errors.iter().any(|e| matches!(
+                e.kind,
+                TypeErrorKind::WeakUpgradeAcrossEffects { .. }
+            )),
+            "expected merge to require refresh on every predecessor; got {:?}",
+            c.errors
+        );
+    }
+
+    #[test]
+    fn weak_type_rejects_non_heap_targets() {
+        let src = "\
+agent bad(x: Int) -> Weak<Int, {tool_call}>:
+    return Weak::new(x)
+";
+        let c = check(src);
+        assert!(
+            c.errors.iter().any(|e| matches!(
+                e.kind,
+                TypeErrorKind::InvalidWeakTargetType { .. }
+                    | TypeErrorKind::InvalidWeakNewTarget { .. }
+            )),
+            "got: {:?}",
+            c.errors
+        );
+    }
 }

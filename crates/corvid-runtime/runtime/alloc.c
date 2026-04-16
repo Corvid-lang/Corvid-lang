@@ -137,6 +137,8 @@ corvid_tracking_node* corvid_live_head = NULL;
 
 /* ---- built-in String typeinfo ------------------------------------- */
 
+extern void corvid_weak_clear_self(void* payload);
+
 static void corvid_trace_String_fn(void* payload,
                                    void (*marker)(void*, void*),
                                    void* ctx) {
@@ -148,7 +150,7 @@ const corvid_typeinfo corvid_typeinfo_String = {
     .flags = 0,
     .destroy_fn = NULL,
     .trace_fn = corvid_trace_String_fn,
-    .weak_fn = NULL,
+    .weak_fn = corvid_weak_clear_self,
     .elem_typeinfo = NULL,
     .name = "String",
 };
@@ -300,6 +302,9 @@ void corvid_release(void* payload) {
     h->refcount_word = previous - 1;
     long long prev_rc = previous & CORVID_RC_MASK;
     if (prev_rc == 1) {
+        if (h->typeinfo != NULL && h->typeinfo->weak_fn != NULL) {
+            h->typeinfo->weak_fn(payload);
+        }
         if (h->typeinfo != NULL && h->typeinfo->destroy_fn != NULL) {
             h->typeinfo->destroy_fn(payload);
         }

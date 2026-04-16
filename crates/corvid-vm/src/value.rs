@@ -8,7 +8,7 @@
 use corvid_resolve::DefId;
 use std::collections::HashMap;
 use std::fmt;
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 
 /// A runtime value. Clone is cheap: primitives copy; composites share via `Arc`.
 #[derive(Clone, Debug)]
@@ -35,10 +35,18 @@ pub enum Value {
     /// A list of homogeneous values. Homogeneity isn't enforced at runtime
     /// in v0.5 — the type checker already rejects heterogeneous literals.
     List(Arc<Vec<Value>>),
+    Weak(WeakValue),
     ResultOk(Arc<Value>),
     ResultErr(Arc<Value>),
     OptionSome(Arc<Value>),
     OptionNone,
+}
+
+#[derive(Clone, Debug)]
+pub enum WeakValue {
+    String(Weak<str>),
+    Struct(Weak<StructValue>),
+    List(Weak<Vec<Value>>),
 }
 
 /// A struct instance.
@@ -60,6 +68,7 @@ impl Value {
             Value::Nothing => "Nothing".into(),
             Value::Struct(s) => s.type_name.clone(),
             Value::List(_) => "List".into(),
+            Value::Weak(_) => "Weak".into(),
             Value::ResultOk(_) | Value::ResultErr(_) => "Result".into(),
             Value::OptionSome(_) | Value::OptionNone => "Option".into(),
         }
@@ -78,6 +87,15 @@ impl Value {
             type_name: type_name.into(),
             fields: fields.into_iter().collect(),
         }))
+    }
+
+    pub fn downgrade(&self) -> Option<WeakValue> {
+        match self {
+            Value::String(s) => Some(WeakValue::String(Arc::downgrade(s))),
+            Value::Struct(s) => Some(WeakValue::Struct(Arc::downgrade(s))),
+            Value::List(items) => Some(WeakValue::List(Arc::downgrade(items))),
+            _ => None,
+        }
     }
 }
 
@@ -112,6 +130,10 @@ impl fmt::Display for Value {
                 }
                 write!(f, "]")
             }
+            Value::Weak(w) => match w.upgrade() {
+                Some(value) => write!(f, "Weak({value})"),
+                None => write!(f, "Weak(<cleared>)"),
+            },
             Value::ResultOk(v) => write!(f, "Ok({v})"),
             Value::ResultErr(v) => write!(f, "Err({v})"),
             Value::OptionSome(v) => write!(f, "Some({v})"),
@@ -150,10 +172,30 @@ impl PartialEq for Value {
                 a.type_id == b.type_id && a.fields == b.fields
             }
             (Value::List(a), Value::List(b)) => a == b,
+            (Value::Weak(a), Value::Weak(b)) => a.ptr_eq(b),
             (Value::ResultOk(a), Value::ResultOk(b)) => a == b,
             (Value::ResultErr(a), Value::ResultErr(b)) => a == b,
             (Value::OptionSome(a), Value::OptionSome(b)) => a == b,
             (Value::OptionNone, Value::OptionNone) => true,
+            _ => false,
+        }
+    }
+}
+
+impl WeakValue {
+    pub fn upgrade(&self) -> Option<Value> {
+        match self {
+            WeakValue::String(value) => value.upgrade().map(Value::String),
+            WeakValue::Struct(value) => value.upgrade().map(Value::Struct),
+            WeakValue::List(value) => value.upgrade().map(Value::List),
+        }
+    }
+
+    fn ptr_eq(&self, other: &WeakValue) -> bool {
+        match (self, other) {
+            (WeakValue::String(a), WeakValue::String(b)) => Weak::ptr_eq(a, b),
+            (WeakValue::Struct(a), WeakValue::Struct(b)) => Weak::ptr_eq(a, b),
+            (WeakValue::List(a), WeakValue::List(b)) => Weak::ptr_eq(a, b),
             _ => false,
         }
     }

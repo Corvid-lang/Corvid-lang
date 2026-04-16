@@ -11,7 +11,7 @@ use crate::errors::{TypeError, TypeErrorKind};
 use crate::types::Type;
 use corvid_ast::{
     AgentDecl, BinaryOp, Block, Decl, Effect, Expr, ExtendMethodKind, File, Ident, Literal, Param,
-    PromptDecl, Span, Stmt, ToolDecl, TypeDecl, TypeRef, UnaryOp,
+    PromptDecl, Span, Stmt, ToolDecl, TypeDecl, TypeRef, UnaryOp, WeakEffect, WeakEffectRow,
 };
 use corvid_resolve::{
     resolver::{MethodEntry, MethodKind},
@@ -71,6 +71,13 @@ struct Checker<'a> {
     /// stack that is truncated back to its parent's length when a block
     /// is exited. This gives block-local effect scoping for free.
     approvals: Vec<Approval>,
+
+    /// Monotonic per-effect epochs used to prove `Weak::upgrade(...)`
+    /// stays ahead of invalidating effects.
+    effect_frontier: EffectFrontier,
+
+    /// Last-refresh snapshot per weak local.
+    weak_refresh: HashMap<LocalId, EffectFrontier>,
 }
 
 #[derive(Debug, Clone)]
@@ -79,6 +86,58 @@ struct Approval {
     label: String,
     /// Number of arguments in the approve.
     arity: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+struct EffectFrontier {
+    tool_call: u64,
+    llm: u64,
+    approve: u64,
+}
+
+impl EffectFrontier {
+    fn bumped(mut self, effect: WeakEffect) -> Self {
+        match effect {
+            WeakEffect::ToolCall => self.tool_call += 1,
+            WeakEffect::Llm => self.llm += 1,
+            WeakEffect::Approve => self.approve += 1,
+        }
+        self
+    }
+
+    fn merge_max(self, other: Self) -> Self {
+        Self {
+            tool_call: self.tool_call.max(other.tool_call),
+            llm: self.llm.max(other.llm),
+            approve: self.approve.max(other.approve),
+        }
+    }
+
+    fn meet_min(self, other: Self) -> Self {
+        Self {
+            tool_call: self.tool_call.min(other.tool_call),
+            llm: self.llm.min(other.llm),
+            approve: self.approve.min(other.approve),
+        }
+    }
+
+    fn invalidating_effects_since(
+        &self,
+        refreshed_at: &EffectFrontier,
+        row: WeakEffectRow,
+    ) -> Vec<String> {
+        let mut effects = Vec::new();
+        if row.tool_call && self.tool_call != refreshed_at.tool_call {
+            effects.push("tool_call".into());
+        }
+        if row.llm && self.llm != refreshed_at.llm {
+            effects.push("llm".into());
+        }
+        if row.approve && self.approve != refreshed_at.approve {
+            effects.push("approve".into());
+        }
+        effects
+    }
 }
 
 impl<'a> Checker<'a> {
@@ -159,6 +218,8 @@ impl<'a> Checker<'a> {
             local_types: HashMap::new(),
             current_return: None,
             approvals: Vec::new(),
+            effect_frontier: EffectFrontier::default(),
+            weak_refresh: HashMap::new(),
         }
     }
 
@@ -213,6 +274,11 @@ impl<'a> Checker<'a> {
         for p in params {
             if let Some(Binding::Local(local_id)) = self.bindings.get(&p.name.span) {
                 let ty = self.type_ref_to_type(&p.ty);
+                if matches!(ty, Type::Weak(_, _)) {
+                    self.weak_refresh.insert(*local_id, self.effect_frontier);
+                } else {
+                    self.weak_refresh.remove(local_id);
+                }
                 self.local_types.insert(*local_id, ty);
             }
         }
@@ -234,18 +300,33 @@ impl<'a> Checker<'a> {
     fn check_stmt(&mut self, s: &Stmt) {
         match s {
             Stmt::Let { name, ty, value, .. } => {
-                let value_ty = self.check_expr(value);
+                let explicit_ty = ty.as_ref().map(|t| self.type_ref_to_type(t));
+                let value_ty = self.check_expr_as(value, explicit_ty.as_ref());
                 let local_ty = match ty {
-                    Some(t) => self.type_ref_to_type(t),
+                    Some(_) => explicit_ty.expect("explicit let type already computed"),
                     None => value_ty.clone(),
                 };
+                if !value_ty.is_assignable_to(&local_ty) {
+                    self.errors.push(TypeError::new(
+                        TypeErrorKind::TypeMismatch {
+                            expected: local_ty.display_name(),
+                            got: value_ty.display_name(),
+                            context: format!("assignment to `{}`", name.name),
+                        },
+                        value.span(),
+                    ));
+                }
                 if let Some(Binding::Local(local_id)) = self.bindings.get(&name.span) {
+                    self.update_weak_local_on_assignment(*local_id, value, &local_ty);
                     self.local_types.insert(*local_id, local_ty);
                 }
             }
             Stmt::Return { value, span } => {
                 let got = match value {
-                    Some(e) => self.check_expr(e),
+                    Some(e) => {
+                        let expected = self.current_return.clone();
+                        self.check_expr_as(e, expected.as_ref())
+                    }
                     None => Type::Nothing,
                 };
                 if let Some(expected) = &self.current_return {
@@ -272,10 +353,30 @@ impl<'a> Checker<'a> {
                         cond.span(),
                     ));
                 }
+                let entry_frontier = self.effect_frontier;
+                let entry_weak_refresh = self.weak_refresh.clone();
+
+                self.effect_frontier = entry_frontier;
+                self.weak_refresh = entry_weak_refresh.clone();
                 self.check_block(then_block);
-                if let Some(b) = else_block {
+                let then_frontier = self.effect_frontier;
+                let then_refresh = self.weak_refresh.clone();
+
+                let (else_frontier, else_refresh) = if let Some(b) = else_block {
+                    self.effect_frontier = entry_frontier;
+                    self.weak_refresh = entry_weak_refresh.clone();
                     self.check_block(b);
-                }
+                    (self.effect_frontier, self.weak_refresh.clone())
+                } else {
+                    (entry_frontier, entry_weak_refresh.clone())
+                };
+
+                self.effect_frontier = then_frontier.merge_max(else_frontier);
+                self.weak_refresh = self.merge_weak_refresh(
+                    &entry_weak_refresh,
+                    &then_refresh,
+                    &else_refresh,
+                );
             }
             Stmt::For { var, iter, body, .. } => {
                 let iter_ty = self.check_expr(iter);
@@ -291,10 +392,21 @@ impl<'a> Checker<'a> {
                 if let Some(Binding::Local(local_id)) = self.bindings.get(&var.span) {
                     self.local_types.insert(*local_id, var_ty);
                 }
+                let entry_frontier = self.effect_frontier;
+                let entry_weak_refresh = self.weak_refresh.clone();
                 self.check_block(body);
+                let body_frontier = self.effect_frontier;
+                let body_refresh = self.weak_refresh.clone();
+                self.effect_frontier = entry_frontier.merge_max(body_frontier);
+                self.weak_refresh = self.merge_weak_refresh(
+                    &entry_weak_refresh,
+                    &entry_weak_refresh,
+                    &body_refresh,
+                );
             }
             Stmt::Approve { action, .. } => {
                 self.check_approve(action);
+                self.bump_effect(WeakEffect::Approve);
             }
             Stmt::Expr { expr, .. } => {
                 let _ = self.check_expr(expr);
@@ -324,6 +436,10 @@ impl<'a> Checker<'a> {
     // ------------------------------------------------------------
 
     fn check_expr(&mut self, e: &Expr) -> Type {
+        self.check_expr_as(e, None)
+    }
+
+    fn check_expr_as(&mut self, e: &Expr, expected: Option<&Type>) -> Type {
         let ty = match e {
             Expr::Literal { value, .. } => match value {
                 Literal::Int(_) => Type::Int,
@@ -333,7 +449,9 @@ impl<'a> Checker<'a> {
                 Literal::Nothing => Type::Nothing,
             },
             Expr::Ident { name, .. } => self.type_of_ident(name),
-            Expr::Call { callee, args, span } => self.check_call(callee, args, *span),
+            Expr::Call { callee, args, span } => {
+                self.check_call(callee, args, *span, expected)
+            }
             Expr::FieldAccess { target, field, span } => self.check_field(target, field, *span),
             Expr::Index { target, index, span } => {
                 let target_ty = self.check_expr(target);
@@ -429,7 +547,8 @@ impl<'a> Checker<'a> {
                 | BuiltIn::Bool
                 | BuiltIn::Nothing
                 | BuiltIn::Result
-                | BuiltIn::Option => {
+                | BuiltIn::Option
+                | BuiltIn::Weak => {
                     self.errors.push(TypeError::new(
                         TypeErrorKind::TypeAsValue {
                             name: id.name.clone(),
@@ -438,7 +557,11 @@ impl<'a> Checker<'a> {
                     ));
                     Type::Unknown
                 }
-                BuiltIn::Ok | BuiltIn::Err | BuiltIn::Some => {
+                BuiltIn::Ok
+                | BuiltIn::Err
+                | BuiltIn::Some
+                | BuiltIn::WeakNew
+                | BuiltIn::WeakUpgrade => {
                     self.errors.push(TypeError::new(
                         TypeErrorKind::BareFunctionReference {
                             name: id.name.clone(),
@@ -481,7 +604,13 @@ impl<'a> Checker<'a> {
         }
     }
 
-    fn check_call(&mut self, callee: &Expr, args: &[Expr], span: Span) -> Type {
+    fn check_call(
+        &mut self,
+        callee: &Expr,
+        args: &[Expr],
+        span: Span,
+        expected: Option<&Type>,
+    ) -> Type {
         // Phase 16: a callee of shape `target.field` is a method call.
         // Lower it: typecheck the receiver, look up the method by
         // (receiver_type_def_id, method_name), validate args (with
@@ -526,7 +655,9 @@ impl<'a> Checker<'a> {
                     DeclKind::Type => self.check_struct_constructor(def_id, &name.name, args),
                 }
             }
-            Binding::BuiltIn(builtin) => self.check_builtin_constructor_call(*builtin, name, args),
+            Binding::BuiltIn(builtin) => {
+                self.check_builtin_constructor_call(*builtin, name, args, expected)
+            }
             Binding::Local(_) => {
                 self.errors.push(TypeError::new(
                     TypeErrorKind::NotCallable {
@@ -574,6 +705,7 @@ impl<'a> Checker<'a> {
             }
         }
 
+        self.bump_effect(WeakEffect::ToolCall);
         self.type_ref_to_type(&tool.return_ty)
     }
 
@@ -588,6 +720,7 @@ impl<'a> Checker<'a> {
             .get(&def_id)
             .expect("prompt DefId not indexed");
         self.check_args_against_params(name, &prompt.params, args);
+        self.bump_effect(WeakEffect::Llm);
         self.type_ref_to_type(&prompt.return_ty)
     }
 
@@ -602,6 +735,9 @@ impl<'a> Checker<'a> {
             .get(&def_id)
             .expect("agent DefId not indexed");
         self.check_args_against_params(name, &agent.params, args);
+        self.bump_effect(WeakEffect::ToolCall);
+        self.bump_effect(WeakEffect::Llm);
+        self.bump_effect(WeakEffect::Approve);
         self.type_ref_to_type(&agent.return_ty)
     }
 
@@ -610,6 +746,7 @@ impl<'a> Checker<'a> {
         builtin: BuiltIn,
         name: &Ident,
         args: &[Expr],
+        expected: Option<&Type>,
     ) -> Type {
         match builtin {
             BuiltIn::Ok => {
@@ -672,6 +809,82 @@ impl<'a> Checker<'a> {
                     return Type::Option(Box::new(Type::Unknown));
                 }
                 Type::Option(Box::new(self.check_expr(&args[0])))
+            }
+            BuiltIn::WeakNew => {
+                if args.len() != 1 {
+                    self.errors.push(TypeError::new(
+                        TypeErrorKind::ArityMismatch {
+                            callee: name.name.clone(),
+                            expected: 1,
+                            got: args.len(),
+                        },
+                        name.span,
+                    ));
+                    for arg in args {
+                        let _ = self.check_expr(arg);
+                    }
+                    return Type::Weak(Box::new(Type::Unknown), WeakEffectRow::any());
+                }
+                let target_ty = self.check_expr(&args[0]);
+                if !is_weakable_type(&target_ty) && !matches!(target_ty, Type::Unknown) {
+                    self.errors.push(TypeError::new(
+                        TypeErrorKind::InvalidWeakNewTarget {
+                            got: target_ty.display_name(),
+                        },
+                        args[0].span(),
+                    ));
+                }
+                let row = match expected {
+                    Some(Type::Weak(_, row)) => *row,
+                    _ => WeakEffectRow::any(),
+                };
+                Type::Weak(Box::new(target_ty), row)
+            }
+            BuiltIn::WeakUpgrade => {
+                if args.len() != 1 {
+                    self.errors.push(TypeError::new(
+                        TypeErrorKind::ArityMismatch {
+                            callee: name.name.clone(),
+                            expected: 1,
+                            got: args.len(),
+                        },
+                        name.span,
+                    ));
+                    for arg in args {
+                        let _ = self.check_expr(arg);
+                    }
+                    return Type::Option(Box::new(Type::Unknown));
+                }
+                let weak_ty = self.check_expr(&args[0]);
+                let refreshed_at = self.refresh_frontier_for_expr(&args[0], &weak_ty);
+                match weak_ty {
+                    Type::Weak(inner, row) => {
+                        let invalidating = self
+                            .effect_frontier
+                            .invalidating_effects_since(&refreshed_at, row);
+                        if !invalidating.is_empty() {
+                            self.errors.push(TypeError::new(
+                                TypeErrorKind::WeakUpgradeAcrossEffects {
+                                    effects: invalidating,
+                                },
+                                args[0].span(),
+                            ));
+                        } else {
+                            self.refresh_after_upgrade(&args[0]);
+                        }
+                        Type::Option(inner)
+                    }
+                    Type::Unknown => Type::Option(Box::new(Type::Unknown)),
+                    other => {
+                        self.errors.push(TypeError::new(
+                            TypeErrorKind::InvalidWeakUpgradeTarget {
+                                got: other.display_name(),
+                            },
+                            args[0].span(),
+                        ));
+                        Type::Option(Box::new(Type::Unknown))
+                    }
+                }
             }
             BuiltIn::None => {
                 self.errors.push(TypeError::new(
@@ -809,9 +1022,9 @@ impl<'a> Checker<'a> {
             ));
         }
         for (i, arg) in args.iter().enumerate() {
-            let arg_ty = self.check_expr(arg);
             if let Some(field) = ty_decl.fields.get(i) {
                 let field_ty = self.type_ref_to_type(&field.ty);
+                let arg_ty = self.check_expr_as(arg, Some(&field_ty));
                 if !arg_ty.is_assignable_to(&field_ty) {
                     self.errors.push(TypeError::new(
                         TypeErrorKind::TypeMismatch {
@@ -822,6 +1035,8 @@ impl<'a> Checker<'a> {
                         arg.span(),
                     ));
                 }
+            } else {
+                let _ = self.check_expr(arg);
             }
         }
         Type::Struct(def_id)
@@ -846,9 +1061,9 @@ impl<'a> Checker<'a> {
             ));
         }
         for (i, arg) in args.iter().enumerate() {
-            let arg_ty = self.check_expr(arg);
             if let Some(param) = params.get(i) {
                 let param_ty = self.type_ref_to_type(&param.ty);
+                let arg_ty = self.check_expr_as(arg, Some(&param_ty));
                 if !arg_ty.is_assignable_to(&param_ty) {
                     self.errors.push(TypeError::new(
                         TypeErrorKind::TypeMismatch {
@@ -862,8 +1077,72 @@ impl<'a> Checker<'a> {
                         arg.span(),
                     ));
                 }
+            } else {
+                let _ = self.check_expr(arg);
             }
         }
+    }
+
+    fn bump_effect(&mut self, effect: WeakEffect) {
+        self.effect_frontier = self.effect_frontier.bumped(effect);
+    }
+
+    fn update_weak_local_on_assignment(
+        &mut self,
+        local_id: LocalId,
+        value: &Expr,
+        local_ty: &Type,
+    ) {
+        match local_ty {
+            Type::Weak(_, _) => {
+                let refreshed = self.refresh_frontier_for_expr(value, local_ty);
+                self.weak_refresh.insert(local_id, refreshed);
+            }
+            _ => {
+                self.weak_refresh.remove(&local_id);
+            }
+        }
+    }
+
+    fn refresh_frontier_for_expr(&self, expr: &Expr, ty: &Type) -> EffectFrontier {
+        match expr {
+            Expr::Ident { name, .. } => match self.bindings.get(&name.span) {
+                Some(Binding::Local(local_id)) if matches!(ty, Type::Weak(_, _)) => self
+                    .weak_refresh
+                    .get(local_id)
+                    .copied()
+                    .unwrap_or(self.effect_frontier),
+                _ => self.effect_frontier,
+            },
+            _ => self.effect_frontier,
+        }
+    }
+
+    fn refresh_after_upgrade(&mut self, expr: &Expr) {
+        if let Expr::Ident { name, .. } = expr {
+            if let Some(Binding::Local(local_id)) = self.bindings.get(&name.span) {
+                self.weak_refresh.insert(*local_id, self.effect_frontier);
+            }
+        }
+    }
+
+    fn merge_weak_refresh(
+        &self,
+        entry: &HashMap<LocalId, EffectFrontier>,
+        left: &HashMap<LocalId, EffectFrontier>,
+        right: &HashMap<LocalId, EffectFrontier>,
+    ) -> HashMap<LocalId, EffectFrontier> {
+        let mut merged = HashMap::new();
+        for (local_id, ty) in &self.local_types {
+            if !matches!(ty, Type::Weak(_, _)) {
+                continue;
+            }
+            let entry_state = entry.get(local_id).copied().unwrap_or_default();
+            let left_state = left.get(local_id).copied().unwrap_or(entry_state);
+            let right_state = right.get(local_id).copied().unwrap_or(entry_state);
+            merged.insert(*local_id, left_state.meet_min(right_state));
+        }
+        merged
     }
 
     fn check_field(&mut self, target: &Expr, field: &Ident, span: Span) -> Type {
@@ -1124,6 +1403,22 @@ impl<'a> Checker<'a> {
                 }
                 _ => Type::Unknown,
             },
+            TypeRef::Weak { inner, effects, span } => {
+                let inner_ty = self.type_ref_to_type(inner);
+                if !is_weakable_type(&inner_ty) && !matches!(inner_ty, Type::Unknown) {
+                    self.errors.push(TypeError::new(
+                        TypeErrorKind::InvalidWeakTargetType {
+                            got: inner_ty.display_name(),
+                        },
+                        *span,
+                    ));
+                    return Type::Weak(Box::new(Type::Unknown), effects.unwrap_or_else(WeakEffectRow::any));
+                }
+                Type::Weak(
+                    Box::new(inner_ty),
+                    effects.unwrap_or_else(WeakEffectRow::any),
+                )
+            }
             TypeRef::Function { .. } => Type::Unknown,
         }
     }
@@ -1141,6 +1436,10 @@ impl<'a> Checker<'a> {
             },
         }
     }
+}
+
+fn is_weakable_type(ty: &Type) -> bool {
+    matches!(ty, Type::String | Type::Struct(_) | Type::List(_))
 }
 
 // ------------------------------------------------------------

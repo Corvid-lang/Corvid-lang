@@ -440,6 +440,32 @@ impl<'a> Lowerer<'a> {
                     };
                 }
                 Some(Binding::BuiltIn(BuiltIn::None)) => return IrExprKind::OptionNone,
+                Some(Binding::BuiltIn(BuiltIn::WeakNew)) => {
+                    let strong = args
+                        .first()
+                        .map(|arg| self.lower_expr(arg))
+                        .unwrap_or_else(|| IrExpr {
+                            kind: IrExprKind::Literal(IrLiteral::Nothing),
+                            ty: Type::Unknown,
+                            span: name.span,
+                        });
+                    return IrExprKind::WeakNew {
+                        strong: Box::new(strong),
+                    };
+                }
+                Some(Binding::BuiltIn(BuiltIn::WeakUpgrade)) => {
+                    let weak = args
+                        .first()
+                        .map(|arg| self.lower_expr(arg))
+                        .unwrap_or_else(|| IrExpr {
+                            kind: IrExprKind::Literal(IrLiteral::Nothing),
+                            ty: Type::Unknown,
+                            span: name.span,
+                        });
+                    return IrExprKind::WeakUpgrade {
+                        weak: Box::new(weak),
+                    };
+                }
                 Some(Binding::Decl(def_id)) => {
                     let entry = self.symbols.get(*def_id);
                     let kind = match entry.kind {
@@ -540,6 +566,10 @@ impl<'a> Lowerer<'a> {
                 ),
                 _ => Type::Unknown,
             },
+            TypeRef::Weak { inner, effects, .. } => Type::Weak(
+                Box::new(self.type_ref_to_type(inner)),
+                effects.unwrap_or_else(corvid_ast::WeakEffectRow::any),
+            ),
             TypeRef::Function { .. } => Type::Unknown,
         }
     }

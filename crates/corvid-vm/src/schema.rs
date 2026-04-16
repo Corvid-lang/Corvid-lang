@@ -82,6 +82,15 @@ fn schema_for_inner(
                 }
             ]
         }),
+        Type::Weak(inner, _) => json!({
+            "type": "object",
+            "properties": {
+                "tag": { "const": "weak" },
+                "value": schema_for_inner(inner, types_by_id, visiting),
+            },
+            "required": ["tag", "value"],
+            "additionalProperties": false,
+        }),
         Type::Struct(def_id) => {
             // Cycle guard: if we're already building this struct's schema
             // higher up the stack, emit an empty object placeholder. The

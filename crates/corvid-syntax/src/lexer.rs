@@ -369,6 +369,8 @@ impl<'a> Lexer<'a> {
                 self.bracket_depth -= 1;
                 (TokKind::RBracket, 1)
             }
+            b'{' => (TokKind::LBrace, 1),
+            b'}' => (TokKind::RBrace, 1),
             b':' => (TokKind::Colon, 1),
             b',' => (TokKind::Comma, 1),
             b'.' => (TokKind::Dot, 1),

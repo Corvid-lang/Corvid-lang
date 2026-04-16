@@ -82,6 +82,19 @@ pub enum TypeErrorKind {
         got: usize,
     },
 
+    /// `Weak<T>` was declared over a non-heap-backed target type.
+    InvalidWeakTargetType { got: String },
+
+    /// `Weak::new(value)` only accepts heap-backed strong values.
+    InvalidWeakNewTarget { got: String },
+
+    /// `Weak::upgrade(value)` requires a weak reference.
+    InvalidWeakUpgradeTarget { got: String },
+
+    /// The checker cannot prove that `upgrade()` happens before an
+    /// invalidating effect in the weak's effect row.
+    WeakUpgradeAcrossEffects { effects: Vec<String> },
+
     /// The return type declared doesn't match what the body returns.
     ReturnTypeMismatch {
         expected: String,
@@ -141,6 +154,21 @@ impl TypeErrorKind {
                     "wrong number of type arguments for `{name}`: expected {expected}, got {got}"
                 )
             }
+            Self::InvalidWeakTargetType { got } => {
+                format!("`Weak<T>` requires a heap-backed target type, got `{got}`")
+            }
+            Self::InvalidWeakNewTarget { got } => {
+                format!("`Weak::new(...)` requires a heap-backed strong value, got `{got}`")
+            }
+            Self::InvalidWeakUpgradeTarget { got } => {
+                format!("`Weak::upgrade(...)` requires a `Weak<T>` value, got `{got}`")
+            }
+            Self::WeakUpgradeAcrossEffects { effects } => {
+                format!(
+                    "`Weak::upgrade(...)` is not provably valid here: {} may have invalidated this weak since its last refresh",
+                    effects.join(", ")
+                )
+            }
             Self::ReturnTypeMismatch { expected, got } => {
                 format!(
                     "return type mismatch: declared `{expected}`, but the body returns `{got}`"
@@ -185,6 +213,19 @@ impl TypeErrorKind {
             Self::GenericArityMismatch { name, expected, .. } => Some(format!(
                 "`{name}` requires {expected} type argument{}",
                 if *expected == 1 { "" } else { "s" }
+            )),
+            Self::InvalidWeakTargetType { .. } => Some(
+                "use `Weak<T>` only with heap-backed types like String, user-declared types, or List<T>".into(),
+            ),
+            Self::InvalidWeakNewTarget { .. } => Some(
+                "pass a String, user-declared type, or List<T> value to `Weak::new(...)`".into(),
+            ),
+            Self::InvalidWeakUpgradeTarget { .. } => Some(
+                "call `Weak::upgrade(...)` only on a value whose type is `Weak<T>`".into(),
+            ),
+            Self::WeakUpgradeAcrossEffects { effects } => Some(format!(
+                "refresh the weak with a new `Weak::new(...)` or an earlier `Weak::upgrade(...)`, and avoid `{}` on every path before this call",
+                effects.join(", ")
             )),
             Self::ReturnTypeMismatch { expected, .. } => Some(format!(
                 "change the final `return` to produce a `{expected}`, or update the declared return type"

@@ -134,6 +134,31 @@ fn declare_runtime_funcs(
             )
         })?;
 
+    let mut weak_unary_sig = module.make_signature();
+    weak_unary_sig.params.push(AbiParam::new(I64));
+    weak_unary_sig.returns.push(AbiParam::new(I64));
+    let weak_new_id = module
+        .declare_function(WEAK_NEW_SYMBOL, Linkage::Import, &weak_unary_sig)
+        .map_err(|e| {
+            CodegenError::cranelift(format!("declare weak_new: {e}"), Span::new(0, 0))
+        })?;
+    let weak_upgrade_id = module
+        .declare_function(WEAK_UPGRADE_SYMBOL, Linkage::Import, &weak_unary_sig)
+        .map_err(|e| {
+            CodegenError::cranelift(format!("declare weak_upgrade: {e}"), Span::new(0, 0))
+        })?;
+
+    let mut weak_clear_sig = module.make_signature();
+    weak_clear_sig.params.push(AbiParam::new(I64));
+    let weak_clear_self_id = module
+        .declare_function(WEAK_CLEAR_SELF_SYMBOL, Linkage::Import, &weak_clear_sig)
+        .map_err(|e| {
+            CodegenError::cranelift(
+                format!("declare weak_clear_self: {e}"),
+                Span::new(0, 0),
+            )
+        })?;
+
     // corvid_typeinfo_String — runtime-provided data symbol. Declared
     // here so codegen can reference it from static string literal
     // descriptors and from List<String>'s elem_typeinfo slot.
@@ -142,6 +167,14 @@ fn declare_runtime_funcs(
         .map_err(|e| {
             CodegenError::cranelift(
                 format!("declare String typeinfo: {e}"),
+                Span::new(0, 0),
+            )
+        })?;
+    let weak_box_typeinfo_id = module
+        .declare_data(WEAK_BOX_TYPEINFO_SYMBOL, Linkage::Import, false, false)
+        .map_err(|e| {
+            CodegenError::cranelift(
+                format!("declare WeakBox typeinfo: {e}"),
                 Span::new(0, 0),
             )
         })?;
@@ -357,7 +390,11 @@ fn declare_runtime_funcs(
         alloc_typed: alloc_typed_id,
         list_destroy: list_destroy_id,
         list_trace: list_trace_id,
+        weak_new: weak_new_id,
+        weak_upgrade: weak_upgrade_id,
+        weak_clear_self: weak_clear_self_id,
         string_typeinfo: string_typeinfo_id,
+        weak_box_typeinfo: weak_box_typeinfo_id,
         entry_init: entry_init_id,
         entry_arity_mismatch: arity_id,
         parse_i64: parse_i64_id,
@@ -798,6 +835,7 @@ fn emit_struct_typeinfo(
     ty: &corvid_ir::IrType,
     destroy_fn: Option<FuncId>,
     trace_fn: FuncId,
+    runtime: &RuntimeFuncs,
 ) -> Result<cranelift_module::DataId, CodegenError> {
     let symbol = format!("corvid_typeinfo_{}", ty.name);
     let data_id = module
@@ -816,9 +854,10 @@ fn emit_struct_typeinfo(
     bytes[TYPEINFO_OFF_SIZE as usize..(TYPEINFO_OFF_SIZE + 4) as usize]
         .copy_from_slice(&payload_size.to_le_bytes());
 
-    // flags: 0 in 17a (17e will set CYCLIC_CAPABLE for structs that
-    // transitively self-reach; 17g will set HAS_WEAK_REFS).
-    let flags: u32 = 0;
+    // Struct payloads can be weak targets on the native heap, so we
+    // install HAS_WEAK_REFS from 17g even if the struct itself does
+    // not contain weak fields.
+    let flags: u32 = TYPEINFO_FLAG_HAS_WEAK_REFS;
     bytes[TYPEINFO_OFF_FLAGS as usize..(TYPEINFO_OFF_FLAGS + 4) as usize]
         .copy_from_slice(&flags.to_le_bytes());
 
@@ -832,6 +871,8 @@ fn emit_struct_typeinfo(
     }
     let trace_ref = module.declare_func_in_data(trace_fn, &mut desc);
     desc.write_function_addr(TYPEINFO_OFF_TRACE_FN, trace_ref);
+    let weak_ref = module.declare_func_in_data(runtime.weak_clear_self, &mut desc);
+    desc.write_function_addr(TYPEINFO_OFF_WEAK_FN, weak_ref);
 
     module
         .define_data(data_id, &desc)
@@ -872,7 +913,7 @@ fn emit_list_typeinfo(
 
     // size: 0 (variable-length)
     // flags: IS_LIST
-    let flags: u32 = TYPEINFO_FLAG_IS_LIST;
+    let flags: u32 = TYPEINFO_FLAG_IS_LIST | TYPEINFO_FLAG_HAS_WEAK_REFS;
     bytes[TYPEINFO_OFF_FLAGS as usize..(TYPEINFO_OFF_FLAGS + 4) as usize]
         .copy_from_slice(&flags.to_le_bytes());
 
@@ -890,6 +931,8 @@ fn emit_list_typeinfo(
     // element lists because the fn checks elem_typeinfo at runtime.
     let trace_ref = module.declare_func_in_data(runtime.list_trace, &mut desc);
     desc.write_function_addr(TYPEINFO_OFF_TRACE_FN, trace_ref);
+    let weak_ref = module.declare_func_in_data(runtime.weak_clear_self, &mut desc);
+    desc.write_function_addr(TYPEINFO_OFF_WEAK_FN, weak_ref);
 
     // elem_typeinfo: for refcounted-element lists, point at the
     // element's typeinfo (String built-in, struct typeinfo, or nested
@@ -908,6 +951,20 @@ fn emit_list_typeinfo(
             )
         })?;
     Ok(data_id)
+}
+
+fn typeinfo_data_for_refcounted_payload(
+    ty: &Type,
+    runtime: &RuntimeFuncs,
+) -> Option<cranelift_module::DataId> {
+    match ty {
+        Type::String => Some(runtime.string_typeinfo),
+        Type::Struct(def_id) => runtime.struct_typeinfos.get(def_id).copied(),
+        Type::List(inner_inner) => runtime.list_typeinfos.get(&(**inner_inner)).copied(),
+        Type::Weak(_, _) => Some(runtime.weak_box_typeinfo),
+        Type::Option(inner) => typeinfo_data_for_refcounted_payload(inner, runtime),
+        _ => None,
+    }
 }
 
 /// Stable, link-safe string from a Corvid `Type` for use in typeinfo
@@ -934,6 +991,22 @@ fn mangle_type_name(ty: &Type) -> String {
             mangle_type_name(err)
         ),
         Type::Option(inner) => format!("Option_{}", mangle_type_name(inner)),
+        Type::Weak(inner, effects) => {
+            if effects.is_any() {
+                format!("Weak_{}", mangle_type_name(inner))
+            } else {
+                let suffix: Vec<&'static str> = effects
+                    .effects()
+                    .into_iter()
+                    .map(|effect| match effect {
+                        corvid_ast::WeakEffect::ToolCall => "tool_call",
+                        corvid_ast::WeakEffect::Llm => "llm",
+                        corvid_ast::WeakEffect::Approve => "approve",
+                    })
+                    .collect();
+                format!("Weak_{}_{}", mangle_type_name(inner), suffix.join("_"))
+            }
+        }
         Type::Unknown => "Unknown".into(),
     }
 }
@@ -1074,7 +1147,9 @@ fn visit_expr_types(
         // element positions in 17c (their codegen lands in 18d),
         // but we still recurse into their sub-expressions so any
         // List<T> *nested* inside them is still seen.
-        IrExprKind::ResultOk { inner }
+        IrExprKind::WeakNew { strong: inner }
+        | IrExprKind::WeakUpgrade { weak: inner }
+        | IrExprKind::ResultOk { inner }
         | IrExprKind::ResultErr { inner }
         | IrExprKind::OptionSome { inner }
         | IrExprKind::TryPropagate { inner } => {
@@ -1118,7 +1193,11 @@ fn emit_release(
 /// Slice 12e: only `String` is refcounted. Future slices add `Struct`
 /// (12f), `List` (12g) — both will return true here.
 fn is_refcounted_type(ty: &Type) -> bool {
-    matches!(ty, Type::String | Type::Struct(_) | Type::List(_))
+    match ty {
+        Type::String | Type::Struct(_) | Type::List(_) | Type::Weak(_, _) => true,
+        Type::Option(inner) => is_refcounted_type(inner),
+        _ => false,
+    }
 }
 
 // ---- runtime helper symbols ----
@@ -1165,6 +1244,10 @@ pub const LIST_DESTROY_SYMBOL: &str = "corvid_destroy_list";
 /// walk elements (NULL = primitive elements = no-op). Phase 17a
 /// emits it for every list; 17d's mark phase will invoke it.
 pub const LIST_TRACE_SYMBOL: &str = "corvid_trace_list";
+pub const WEAK_NEW_SYMBOL: &str = "corvid_weak_new";
+pub const WEAK_UPGRADE_SYMBOL: &str = "corvid_weak_upgrade";
+pub const WEAK_CLEAR_SELF_SYMBOL: &str = "corvid_weak_clear_self";
+pub const WEAK_BOX_TYPEINFO_SYMBOL: &str = "corvid_typeinfo_WeakBox";
 
 /// Built-in `corvid_typeinfo_String` — the runtime provides this
 /// symbol in `alloc.c`. Static string literals in `.rodata` and
@@ -1254,10 +1337,14 @@ pub struct RuntimeFuncs {
     /// Phase 17a: shared runtime tracer installed in every list's
     /// typeinfo; 17d's mark phase will invoke it.
     pub list_trace: FuncId,
+    pub weak_new: FuncId,
+    pub weak_upgrade: FuncId,
+    pub weak_clear_self: FuncId,
     /// Phase 17a: runtime-provided `corvid_typeinfo_String` data
     /// symbol. Imported so codegen can relocate its address into
     /// static string literals and List<String>'s elem_typeinfo slot.
     pub string_typeinfo: cranelift_module::DataId,
+    pub weak_box_typeinfo: cranelift_module::DataId,
     // Slice 12i — entry helpers used by the codegen-emitted `main`.
     pub entry_init: FuncId,
     pub entry_arity_mismatch: FuncId,
@@ -1541,7 +1628,7 @@ pub fn lower_file(
         };
         let trace_id = define_struct_trace(module, ty, &runtime)?;
         runtime.struct_traces.insert(ty.id, trace_id);
-        let typeinfo_id = emit_struct_typeinfo(module, ty, destroy_id, trace_id)?;
+        let typeinfo_id = emit_struct_typeinfo(module, ty, destroy_id, trace_id, &runtime)?;
         runtime.struct_typeinfos.insert(ty.id, typeinfo_id);
     }
 
@@ -1552,19 +1639,7 @@ pub fn lower_file(
     // (String built-in, struct, or nested list).
     let list_elem_types = collect_list_element_types(ir);
     for elem_ty in list_elem_types {
-        let elem_typeinfo_data_id = match &elem_ty {
-            Type::String => Some(runtime.string_typeinfo),
-            Type::Struct(def_id) => runtime.struct_typeinfos.get(def_id).copied(),
-            Type::List(inner_inner) => {
-                // Nested list: look up the already-emitted typeinfo
-                // for the inner list's element type.
-                runtime.list_typeinfos.get(&(**inner_inner)).copied()
-            }
-            // Primitive elements: NULL elem_typeinfo means "don't
-            // trace" — prevents List<Int>'s Int slots from being
-            // mis-interpreted as pointers.
-            _ => None,
-        };
+        let elem_typeinfo_data_id = typeinfo_data_for_refcounted_payload(&elem_ty, &runtime);
         let list_ti_id =
             emit_list_typeinfo(module, &elem_ty, elem_typeinfo_data_id, &runtime)?;
         runtime.list_typeinfos.insert(elem_ty, list_ti_id);
@@ -1706,7 +1781,9 @@ fn expr_uses_runtime(expr: &IrExpr) -> bool {
         // Phase 18 IR variants — recurse into sub-expressions. The
         // wrappers themselves don't use the async runtime, but a
         // `?`-propagated tool call inside `inner` still does.
-        IrExprKind::ResultOk { inner }
+        IrExprKind::WeakNew { strong: inner }
+        | IrExprKind::WeakUpgrade { weak: inner }
+        | IrExprKind::ResultOk { inner }
         | IrExprKind::ResultErr { inner }
         | IrExprKind::OptionSome { inner }
         | IrExprKind::TryPropagate { inner } => expr_uses_runtime(inner),
@@ -1963,10 +2040,10 @@ fn check_entry_boundary_type(
     match ty {
         Type::Int | Type::Bool | Type::Float | Type::String => Ok(()),
         Type::Struct(_) | Type::List(_) | Type::Nothing
-        | Type::Result(_, _) | Type::Option(_) => {
+        | Type::Result(_, _) | Type::Option(_) | Type::Weak(_, _) => {
             Err(CodegenError::not_supported(
                 format!(
-                    "entry agent {role} of type `{}` — slice 12i supports `Int` / `Bool` / `Float` / `String` only at the command-line boundary; structured types (including Result / Option from Phase 18) arrive in a future serialization slice (use a wrapper agent that converts internally)",
+                    "entry agent {role} of type `{}` — slice 12i supports `Int` / `Bool` / `Float` / `String` only at the command-line boundary; structured types (including Result / Option from Phase 18 and Weak from slice 17g) arrive in a future serialization slice (use a wrapper agent that converts internally)",
                     ty.display_name()
                 ),
                 span,
@@ -2026,6 +2103,9 @@ fn cl_type_for(ty: &Type, span: Span) -> Result<clir::Type, CodegenError> {
         // single I64 pointing at `[length (8) | elements...]` after the
         // 16-byte refcount header.
         Type::List(_) => Ok(I64),
+        // Weak values are pointer-sized heap-managed slot boxes.
+        Type::Weak(_, _) => Ok(I64),
+        Type::Option(inner) if is_refcounted_type(inner) => Ok(I64),
         Type::Nothing => Err(CodegenError::not_supported(
             "`Nothing` — slice 12d pairs it with bare `return`",
             span,
@@ -2047,7 +2127,7 @@ fn cl_type_for(ty: &Type, span: Span) -> Result<clir::Type, CodegenError> {
             span,
         )),
         Type::Option(_) => Err(CodegenError::not_supported(
-            "`Option<T>` — native codegen lands in slice 18d (tagged union layout); use the interpreter tier (`corvid run --tier interp`) until then",
+            "`Option<T>` with non-refcounted payload — native codegen currently supports nullable-pointer `Option<T>` only when `T` is refcounted (the path weak upgrade uses); wider tagged-union Option codegen lands in slice 18d",
             span,
         )),
         Type::Unknown => Err(CodegenError::cranelift(
@@ -3019,6 +3099,27 @@ fn lower_expr(
             }
             Ok(list_ptr)
         }
+        IrExprKind::WeakNew { strong } => {
+            let strong_val = lower_expr(builder, strong, env, func_ids_by_def, module, runtime)?;
+            let weak_new_ref = module.declare_func_in_func(runtime.weak_new, builder.func);
+            let call = builder.ins().call(weak_new_ref, &[strong_val]);
+            let weak_ptr = builder.inst_results(call)[0];
+            if is_refcounted_type(&strong.ty) {
+                emit_release(builder, module, runtime, strong_val);
+            }
+            Ok(weak_ptr)
+        }
+        IrExprKind::WeakUpgrade { weak } => {
+            let weak_val = lower_expr(builder, weak, env, func_ids_by_def, module, runtime)?;
+            let weak_upgrade_ref =
+                module.declare_func_in_func(runtime.weak_upgrade, builder.func);
+            let call = builder.ins().call(weak_upgrade_ref, &[weak_val]);
+            let upgraded = builder.inst_results(call)[0];
+            if is_refcounted_type(&weak.ty) {
+                emit_release(builder, module, runtime, weak_val);
+            }
+            Ok(upgraded)
+        }
         // Phase 18 IR variants — Result/Option construction and
         // ? / try-retry control flow. The interpreter tier handles
         // these end-to-end (Dev B's 18a-18c work). Native codegen
@@ -3038,11 +3139,18 @@ fn lower_expr(
                 expr.span,
             ))
         }
-        IrExprKind::OptionSome { .. } | IrExprKind::OptionNone => {
-            Err(CodegenError::not_supported(
-                "`Option<T>` construction (`Some(...)` / `None`) — native codegen lands in slice 18d; use the interpreter tier (`corvid run --tier interp`) until then",
-                expr.span,
-            ))
+        IrExprKind::OptionSome { inner } => {
+            if is_refcounted_type(&expr.ty) {
+                lower_expr(builder, inner, env, func_ids_by_def, module, runtime)
+            } else {
+                Err(CodegenError::not_supported(
+                    "`Some(...)` with non-refcounted payload — native codegen currently supports nullable-pointer `Option<T>` only when `T` is refcounted",
+                    expr.span,
+                ))
+            }
+        }
+        IrExprKind::OptionNone => {
+            Ok(builder.ins().iconst(I64, 0))
         }
         IrExprKind::TryPropagate { .. } => {
             Err(CodegenError::not_supported(

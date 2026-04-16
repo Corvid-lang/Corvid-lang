@@ -333,7 +333,9 @@ fn expr_consumes_target(
         // value; if `target` is referenced inside, it's consumed
         // along the propagation path. `try ... retry` likewise
         // consumes the body's value on each iteration.
-        IrExprKind::ResultOk { inner }
+        IrExprKind::WeakNew { strong: inner }
+        | IrExprKind::WeakUpgrade { weak: inner }
+        | IrExprKind::ResultOk { inner }
         | IrExprKind::ResultErr { inner }
         | IrExprKind::OptionSome { inner }
         | IrExprKind::TryPropagate { inner } => expr_references(inner, target),
@@ -359,7 +361,9 @@ fn expr_references(expr: &IrExpr, target: LocalId) -> bool {
         IrExprKind::List { items } => items.iter().any(|i| expr_references(i, target)),
         IrExprKind::Call { args, .. } => args.iter().any(|a| expr_references(a, target)),
         // Phase 18 IR variants — recurse into sub-expressions.
-        IrExprKind::ResultOk { inner }
+        IrExprKind::WeakNew { strong: inner }
+        | IrExprKind::WeakUpgrade { weak: inner }
+        | IrExprKind::ResultOk { inner }
         | IrExprKind::ResultErr { inner }
         | IrExprKind::OptionSome { inner }
         | IrExprKind::TryPropagate { inner } => expr_references(inner, target),

@@ -10,7 +10,7 @@ use crate::token::{TokKind, Token};
 use corvid_ast::{
     AgentDecl, Backoff, BinaryOp, Block, Decl, Effect, Expr, ExtendDecl, ExtendMethod,
     ExtendMethodKind, Field, File, Ident, ImportDecl, ImportSource, Literal, Param, PromptDecl,
-    Span, Stmt, ToolDecl, TypeDecl, TypeRef, UnaryOp, Visibility,
+    Span, Stmt, ToolDecl, TypeDecl, TypeRef, UnaryOp, Visibility, WeakEffect, WeakEffectRow,
 };
 
 #[derive(Debug, Clone, PartialEq)]
@@ -436,6 +436,7 @@ impl<'a> Parser<'a> {
             TokKind::KwTry => self.parse_try_retry_expr(),
             TokKind::Ident(name) => {
                 self.bump();
+                let name = self.parse_namespaced_ident_from(name)?;
                 Ok(Expr::Ident {
                     name: Ident::new(name, start_span),
                     span: start_span,
@@ -1317,6 +1318,23 @@ impl<'a> Parser<'a> {
         }
 
         self.bump(); // <
+        if name_ident.name == "Weak" {
+            let inner = self.parse_type_ref()?;
+            let effects = if matches!(self.peek(), TokKind::Comma) {
+                self.bump();
+                Some(self.parse_weak_effect_row()?)
+            } else {
+                None
+            };
+            let end_span = self.peek_span();
+            self.expect(TokKind::Gt, "`>` to close Weak type arguments")?;
+            return Ok(TypeRef::Weak {
+                inner: Box::new(inner),
+                effects,
+                span: name_span.merge(end_span),
+            });
+        }
+
         let mut args = Vec::new();
         if !matches!(self.peek(), TokKind::Gt) {
             args.push(self.parse_type_ref()?);
@@ -1332,6 +1350,80 @@ impl<'a> Parser<'a> {
             args,
             span: name_span.merge(end_span),
         })
+    }
+
+    fn parse_weak_effect_row(&mut self) -> Result<WeakEffectRow, ParseError> {
+        let start = self.peek_span();
+        self.expect(TokKind::LBrace, "`{` to start Weak effect row")?;
+        let mut effects = Vec::new();
+        if !matches!(self.peek(), TokKind::RBrace) {
+            effects.push(self.parse_weak_effect_name()?);
+            while matches!(self.peek(), TokKind::Comma) {
+                self.bump();
+                effects.push(self.parse_weak_effect_name()?);
+            }
+        }
+        let end = self.peek_span();
+        self.expect(TokKind::RBrace, "`}` to close Weak effect row")?;
+        let row = WeakEffectRow::from_effects(&effects);
+        if row == WeakEffectRow::empty() {
+            return Err(ParseError {
+                kind: ParseErrorKind::UnexpectedToken {
+                    got: "empty effect row".into(),
+                    expected: "one or more Weak effects".into(),
+                },
+                span: start.merge(end),
+            });
+        }
+        Ok(row)
+    }
+
+    fn parse_weak_effect_name(&mut self) -> Result<WeakEffect, ParseError> {
+        let span = self.peek_span();
+        match self.peek().clone() {
+            TokKind::Ident(name) => {
+                self.bump();
+                match name.as_str() {
+                    "tool_call" => Ok(WeakEffect::ToolCall),
+                    "llm" => Ok(WeakEffect::Llm),
+                    "approve" => Ok(WeakEffect::Approve),
+                    _ => Err(ParseError {
+                        kind: ParseErrorKind::UnexpectedToken {
+                            got: format!("identifier `{name}`"),
+                            expected: "`tool_call`, `llm`, or `approve`".into(),
+                        },
+                        span,
+                    }),
+                }
+            }
+            other => Err(ParseError {
+                kind: ParseErrorKind::UnexpectedToken {
+                    got: describe_token(&other),
+                    expected: "a Weak effect name".into(),
+                },
+                span,
+            }),
+        }
+    }
+
+    fn parse_namespaced_ident_from(
+        &mut self,
+        mut name: String,
+    ) -> Result<String, ParseError> {
+        if !matches!(self.peek(), TokKind::Colon) {
+            return Ok(name);
+        }
+        let saved_pos = self.pos;
+        self.bump();
+        if !matches!(self.peek(), TokKind::Colon) {
+            self.pos = saved_pos;
+            return Ok(name);
+        }
+        self.bump();
+        let (suffix, _) = self.expect_ident()?;
+        name.push_str("::");
+        name.push_str(&suffix);
+        Ok(name)
     }
 }
 
@@ -2033,6 +2125,58 @@ agent load(id: String) -> Result<Option<Order>, String>:
                 ));
             }
             other => panic!("expected generic Result return type, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_weak_type_ref_with_effect_row() {
+        let src = "\
+agent watch(name: String) -> Weak<String, {tool_call, llm}>:
+    return Weak::new(name)
+";
+        let file = parse_file_src(src);
+        let agent = match &file.decls[0] {
+            Decl::Agent(a) => a,
+            other => panic!("expected Agent, got {other:?}"),
+        };
+        match &agent.return_ty {
+            TypeRef::Weak {
+                inner,
+                effects: Some(effects),
+                ..
+            } => {
+                assert!(matches!(
+                    inner.as_ref(),
+                    TypeRef::Named { name, .. } if name.name == "String"
+                ));
+                assert!(effects.tool_call);
+                assert!(effects.llm);
+                assert!(!effects.approve);
+            }
+            other => panic!("expected Weak return type, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_weak_builtin_calls() {
+        let e = parse("Weak::upgrade(Weak::new(name))");
+        match e {
+            Expr::Call { callee, args, .. } => {
+                assert!(matches!(
+                    callee.as_ref(),
+                    Expr::Ident { name, .. } if name.name == "Weak::upgrade"
+                ));
+                assert_eq!(args.len(), 1);
+                assert!(matches!(
+                    &args[0],
+                    Expr::Call { callee, .. }
+                    if matches!(
+                        callee.as_ref(),
+                        Expr::Ident { name, .. } if name.name == "Weak::new"
+                    )
+                ));
+            }
+            other => panic!("expected Weak builtin call, got {other:?}"),
         }
     }
 

@@ -282,6 +282,11 @@ impl Codegen {
                 self.emit_expr_list(items);
                 self.out.write("]");
             }
+            IrExprKind::WeakNew { .. } | IrExprKind::WeakUpgrade { .. } => {
+                self.out.write(
+                    "(_ for _ in ()).throw(NotImplementedError(\"Weak codegen lands in 17g-py\"))",
+                );
+            }
             // Phase 18 IR variants — Result/Option construction +
             // ? / try-retry control flow. The Python transpile tier
             // gets full Result/Option support in slice 18d (likely
@@ -411,7 +416,7 @@ fn python_type_hint_of(ty: &corvid_types::Type) -> String {
         // (wrapper classes vs typing.Optional[T] vs plain T-or-Exception
         // patterns). Result types likely render as `object` (union
         // type) in Python 3.10+ or `typing.Union[...]` for older.
-        T::Result(_, _) | T::Option(_) => "object".into(),
+        T::Result(_, _) | T::Option(_) | T::Weak(_, _) => "object".into(),
     }
 }
 

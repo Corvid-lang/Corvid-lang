@@ -36,6 +36,10 @@ pub fn value_to_json(v: &Value) -> serde_json::Value {
         Value::List(items) => {
             serde_json::Value::Array(items.iter().map(value_to_json).collect())
         }
+        Value::Weak(w) => match w.upgrade() {
+            Some(value) => serde_json::json!({ "tag": "weak", "value": value_to_json(&value) }),
+            None => serde_json::json!({ "tag": "weak", "value": serde_json::Value::Null }),
+        },
         Value::ResultOk(v) => serde_json::json!({ "tag": "ok", "ok": value_to_json(v) }),
         Value::ResultErr(v) => serde_json::json!({ "tag": "err", "err": value_to_json(v) }),
         Value::OptionSome(v) => serde_json::json!({ "tag": "some", "value": value_to_json(v) }),
@@ -192,6 +196,22 @@ fn type_label(t: &Type) -> String {
         Type::List(elem) => format!("List<{}>", type_label(elem)),
         Type::Result(ok, err) => format!("Result<{}, {}>", type_label(ok), type_label(err)),
         Type::Option(inner) => format!("Option<{}>", type_label(inner)),
+        Type::Weak(inner, effects) => {
+            if effects.is_any() {
+                format!("Weak<{}>", type_label(inner))
+            } else {
+                let effect_names: Vec<&'static str> = effects
+                    .effects()
+                    .into_iter()
+                    .map(|effect| match effect {
+                        corvid_ast::WeakEffect::ToolCall => "tool_call",
+                        corvid_ast::WeakEffect::Llm => "llm",
+                        corvid_ast::WeakEffect::Approve => "approve",
+                    })
+                    .collect();
+                format!("Weak<{}, {{{}}}>", type_label(inner), effect_names.join(", "))
+            }
+        }
         Type::Function { .. } => "function".into(),
         Type::Unknown => "<unknown>".into(),
     }

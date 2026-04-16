@@ -65,6 +65,10 @@ fn render_value_inner(
             visited.remove(&key);
             format!("[{rendered}]")
         }
+        Value::Weak(weak) => match weak.upgrade() {
+            Some(value) => format!("Weak({})", render_value_inner(&value, depth + 1, visited)),
+            None => "Weak(<cleared>)".to_string(),
+        },
         Value::ResultOk(inner) => {
             let key = Arc::as_ptr(inner) as usize;
             if !visited.insert(key) {

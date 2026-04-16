@@ -242,6 +242,8 @@ pub enum IrExprKind {
 
     List { items: Vec<IrExpr> },
 
+    WeakNew { strong: Box<IrExpr> },
+    WeakUpgrade { weak: Box<IrExpr> },
     ResultOk { inner: Box<IrExpr> },
     ResultErr { inner: Box<IrExpr> },
     OptionSome { inner: Box<IrExpr> },

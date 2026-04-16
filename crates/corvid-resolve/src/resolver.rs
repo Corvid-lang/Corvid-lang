@@ -331,6 +331,9 @@ impl Resolver {
                     self.resolve_type_ref(arg);
                 }
             }
+            TypeRef::Weak { inner, .. } => {
+                self.resolve_type_ref(inner);
+            }
             TypeRef::Function { params, ret, .. } => {
                 for p in params {
                     self.resolve_type_ref(p);

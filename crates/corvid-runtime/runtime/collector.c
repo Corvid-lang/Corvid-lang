@@ -390,6 +390,9 @@ static void corvid_gc_sweep(void) {
                 /* Unreachable. No destroy_fn call — its children
                  * were already decremented in pass 1, and any
                  * unmarked children are in this same sweep. */
+                if (h->typeinfo != NULL && h->typeinfo->weak_fn != NULL) {
+                    h->typeinfo->weak_fn((void*)((char*)h + CORVID_HEADER_BYTES));
+                }
                 corvid_release_count++;
                 corvid_free_block(h);
             } else {
