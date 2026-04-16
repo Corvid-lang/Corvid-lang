@@ -194,6 +194,32 @@ pub struct OwnershipPlan {
     pub drops_after: BTreeMap<ProgramPoint, BTreeSet<LocalId>>,
     pub drops_at_block_exit: BTreeMap<BlockId, BTreeSet<LocalId>>,
     pub ir_paths: BTreeMap<ProgramPoint, IrPath>,
+    /// Phase 17b-2 drop specialization (Mojo ASAP). For each `If`
+    /// statement where a refcounted local dies on only SOME branch
+    /// paths, schedule per-branch drops so the local is released on
+    /// every path that reaches post-If code.
+    ///
+    /// Key: `IrPath` pointing to the If statement.
+    /// Value: which locals die on which branch edge.
+    ///
+    /// Applied by `dup_drop::apply_plan` after the main insertions:
+    ///   - `then_drops`: append `Drop`s to the tail of the If's
+    ///     `then_block`.
+    ///   - `fallthrough_drops`: append `Drop`s to the tail of the
+    ///     If's `else_block` (synthesizing an else_block if None).
+    pub branch_drops: BTreeMap<IrPath, BranchDrops>,
+}
+
+/// Per-If branch-scoped drop bookkeeping for 17b-2. Each set lists
+/// refcounted locals that must be released on the corresponding
+/// branch edge to match live-out-of-If with live-in-of-post-If.
+#[derive(Debug, Clone, Default)]
+pub struct BranchDrops {
+    /// Drops to apply at the tail of `then_block`.
+    pub then_drops: BTreeSet<LocalId>,
+    /// Drops to apply at the tail of `else_block` (or in a
+    /// synthesized else_block when the source had `else_block: None`).
+    pub fallthrough_drops: BTreeSet<LocalId>,
 }
 
 impl OwnershipPlan {
@@ -227,6 +253,7 @@ pub fn analyze_agent(agent: &IrAgent) -> (Cfg, OwnershipPlan) {
     builder.lower_block(&agent.body, entry, Vec::new());
     let cfg = Cfg { blocks: builder.blocks, entry };
     let ir_paths = builder.ir_paths;
+    let if_cfg_coords = builder.if_cfg_coords;
 
     // Parameters are defined at function entry. Refcounted parameters
     // start owned (for now — borrow-sig-driven parameter elision is
@@ -242,7 +269,66 @@ pub fn analyze_agent(agent: &IrAgent) -> (Cfg, OwnershipPlan) {
     let liveness = compute_liveness(&cfg, &param_locals);
     let mut plan = build_plan(&cfg, &liveness, &param_locals);
     plan.ir_paths = ir_paths;
+    plan.branch_drops = build_branch_drops(&cfg, &liveness, &if_cfg_coords, &param_locals);
     (cfg, plan)
+}
+
+/// Phase 17b-2 — per-If per-branch drop analysis.
+///
+/// For each If statement recorded in `if_cfg_coords`, compute the
+/// set of refcounted locals that die on the then-edge (but not the
+/// else/fallthrough-edge) and vice versa. Drops on each edge are
+/// injected by `dup_drop::apply_plan` at the tail of the
+/// corresponding IR branch.
+///
+/// Algorithm:
+///   - `dies_on_then_edge = live_out[cond] - live_in[then_cfg]`
+///     → schedule drops at tail of then_block
+///   - `dies_on_other_edge = live_out[cond] - live_in[merge_or_else]`
+///     → schedule drops at tail of else_block (synthesize if None)
+///
+/// A local dropped at the tail of a branch MUST NOT be dropped
+/// anywhere else on that branch — otherwise double-free. In
+/// practice, the analysis only schedules a branch-tail drop when
+/// the local is NOT used in that branch (live_in of that branch's
+/// CFG entry doesn't contain it), which means no in-branch drop
+/// exists for it. Safe by construction.
+fn build_branch_drops(
+    cfg: &Cfg,
+    liveness: &Liveness,
+    if_cfg_coords: &BTreeMap<IrPath, IfCfgCoords>,
+    _params: &BTreeMap<LocalId, Type>,
+) -> BTreeMap<IrPath, BranchDrops> {
+    let mut out: BTreeMap<IrPath, BranchDrops> = BTreeMap::new();
+    for (ir_path, coords) in if_cfg_coords {
+        let live_out_cond = &liveness.live_out[coords.cond_block];
+        let live_in_then = &liveness.live_in[coords.then_cfg];
+        let live_in_other = &liveness.live_in[coords.merge_or_else_cfg];
+
+        let mut branch = BranchDrops::default();
+
+        // then-edge: local live going into the branch but NOT used
+        // in the then-branch → dies on this edge.
+        for &l in live_out_cond {
+            if !live_in_then.contains(&l) {
+                branch.then_drops.insert(l);
+            }
+        }
+        // other-edge: same idea for the else/fallthrough branch.
+        for &l in live_out_cond {
+            if !live_in_other.contains(&l) {
+                branch.fallthrough_drops.insert(l);
+            }
+        }
+
+        let _ = coords.has_else; // consumed by apply_plan
+        let _ = cfg; // silence unused; kept for future per-block access
+
+        if !branch.then_drops.is_empty() || !branch.fallthrough_drops.is_empty() {
+            out.insert(ir_path.clone(), branch);
+        }
+    }
+    out
 }
 
 // ---------------------------------------------------------------------------
@@ -255,10 +341,35 @@ struct CfgBuilder {
     /// it. Populated as `lower_block` walks; consumed by
     /// `analyze_agent` and merged into the returned `OwnershipPlan`.
     ir_paths: BTreeMap<ProgramPoint, IrPath>,
+    /// Phase 17b-2 — for each lowered `IrStmt::If`, record the CFG
+    /// coordinates needed to compute per-branch drops later:
+    ///   - `cond_block`: the CFG block ending in the Branch (same as
+    ///     the block where the If's IrPath lives).
+    ///   - `then_cfg`: first CFG block of the then-branch.
+    ///   - `merge_or_else_cfg`: the CFG block control flows to when
+    ///     the cond is false (either the synthesized merge block for
+    ///     a no-else If, or the first block of the else-branch).
+    ///   - `has_else`: whether the source If had an else-block.
+    /// Keyed by `IrPath` to the If statement.
+    if_cfg_coords: BTreeMap<IrPath, IfCfgCoords>,
+}
+
+#[derive(Debug, Clone)]
+struct IfCfgCoords {
+    cond_block: BlockId,
+    then_cfg: BlockId,
+    merge_or_else_cfg: BlockId,
+    has_else: bool,
 }
 
 impl CfgBuilder {
-    fn new() -> Self { Self { blocks: Vec::new(), ir_paths: BTreeMap::new() } }
+    fn new() -> Self {
+        Self {
+            blocks: Vec::new(),
+            ir_paths: BTreeMap::new(),
+            if_cfg_coords: BTreeMap::new(),
+        }
+    }
 
     fn alloc_block(&mut self) -> BlockId {
         let id = self.blocks.len();
@@ -320,6 +431,8 @@ impl CfgBuilder {
                     return None;
                 }
                 IrStmt::If { cond, then_block, else_block, .. } => {
+                    let if_ir_path = my_path.clone();
+                    let cond_block = cur;
                     let cond_reads = collect_reads(cond, false);
                     self.push_stmt(cur, CfgStmt::Branch { reads: cond_reads }, my_path.clone());
                     let then_id = self.alloc_block();
@@ -332,7 +445,7 @@ impl CfgBuilder {
                     if let Some(at) = after_then {
                         self.add_succ(at, join);
                     }
-                    if let Some(eb) = else_block {
+                    let (merge_or_else_cfg, has_else) = if let Some(eb) = else_block {
                         let else_id = self.alloc_block();
                         self.add_succ(cur, else_id);
                         let mut else_parent = my_path.clone();
@@ -341,10 +454,22 @@ impl CfgBuilder {
                         if let Some(ae) = after_else {
                             self.add_succ(ae, join);
                         }
+                        (else_id, true)
                     } else {
                         // No else branch: control may fall through.
                         self.add_succ(cur, join);
-                    }
+                        (join, false)
+                    };
+                    // Record CFG coords for 17b-2 per-branch drop analysis.
+                    self.if_cfg_coords.insert(
+                        if_ir_path,
+                        IfCfgCoords {
+                            cond_block,
+                            then_cfg: then_id,
+                            merge_or_else_cfg,
+                            has_else,
+                        },
+                    );
                     cur = join;
                 }
                 IrStmt::For { var_local, var_name: _, iter, body, .. } => {

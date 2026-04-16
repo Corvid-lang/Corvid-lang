@@ -50,7 +50,7 @@ use corvid_ir::{IrAgent, IrBlock, IrExpr, IrExprKind, IrStmt};
 use corvid_resolve::LocalId;
 use std::collections::BTreeMap;
 
-use crate::dataflow::{analyze_agent, IrNavStep, IrPath, OwnershipPlan};
+use crate::dataflow::{analyze_agent, BranchDrops, IrNavStep, IrPath, OwnershipPlan};
 
 /// Public entry: clone `agent` and return a new agent with
 /// `IrStmt::Dup` and `IrStmt::Drop` inserted per the .6a plan.
@@ -208,6 +208,20 @@ pub fn apply_plan(agent: &IrAgent, plan: &OwnershipPlan) -> IrAgent {
     hoists.sort_by(|a, b| b.return_idx.cmp(&a.return_idx));
     for hoist in hoists {
         apply_hoist(&mut out.body, &hoist);
+    }
+
+    // Phase 17b-2 branch-specialized drops. For each If statement
+    // that 17b-2 analysis identified as needing per-branch drops,
+    // inject `IrStmt::Drop` ops at the tail of the appropriate
+    // branch. Deepest-nested Ifs processed first so earlier
+    // injections don't shift outer If indices.
+    //
+    // Keyed by IrPath ordered by length descending so a branch drop
+    // inside a nested If lands before its enclosing If is mutated.
+    let mut branch_drops: Vec<_> = plan.branch_drops.iter().collect();
+    branch_drops.sort_by(|a, b| b.0.len().cmp(&a.0.len()));
+    for (if_path, drops) in branch_drops {
+        apply_branch_drops(&mut out.body, if_path, drops);
     }
 
     // Block-exit drops: only handle the entry block (block 0 in the
@@ -497,6 +511,82 @@ fn navigate_mut<'a>(root: &'a mut IrBlock, parent: &IrPath) -> &'a mut IrBlock {
 
 fn zero_span() -> Span {
     Span { start: 0, end: 0 }
+}
+
+/// Phase 17b-2 — apply per-branch drops to an If statement.
+///
+/// `if_path` points to the If statement inside `root`. `drops` lists
+/// locals that die on each branch edge per the dataflow analysis.
+///
+/// For the then-edge: append `Drop` ops to the tail of
+/// `then_block`. Sorting BranchDrops via BTreeSet keeps the order
+/// deterministic.
+///
+/// For the fallthrough-edge: append to the tail of `else_block` if
+/// it exists; otherwise synthesize an else_block containing only
+/// the Drop ops.
+fn apply_branch_drops(root: &mut IrBlock, if_path: &IrPath, drops: &BranchDrops) {
+    // Navigate to the parent block containing the If statement, then
+    // fetch the specific If via its final Stmt index.
+    let (parent, idx) = split_path(if_path);
+    let parent_block = navigate_mut(root, &parent);
+    if idx >= parent_block.stmts.len() {
+        return;
+    }
+    let if_stmt = &mut parent_block.stmts[idx];
+    let (then_block, else_block, if_span) = match if_stmt {
+        IrStmt::If { then_block, else_block, span, .. } => {
+            (then_block, else_block, *span)
+        }
+        _ => return, // stale path
+    };
+
+    // Then-branch: append Drops to end of then_block, or before
+    // any trailing Return so they actually execute.
+    insert_drops_at_block_tail(then_block, &drops.then_drops);
+
+    // Fallthrough/else-branch: append to existing else_block or
+    // synthesize a new one. Note: synthesizing an else_block is a
+    // semantic change — it means control now passes through a new
+    // explicit block on the fall-through path. Since the new block
+    // contains only Drops, all-primitive pure computation outside
+    // the If continues to work; the only observable difference is
+    // the Drops fire where they previously didn't.
+    if !drops.fallthrough_drops.is_empty() {
+        match else_block {
+            Some(eb) => insert_drops_at_block_tail(eb, &drops.fallthrough_drops),
+            None => {
+                let drop_stmts: Vec<IrStmt> = drops
+                    .fallthrough_drops
+                    .iter()
+                    .map(|&l| IrStmt::Drop { local_id: l, span: zero_span() })
+                    .collect();
+                *else_block = Some(IrBlock {
+                    stmts: drop_stmts,
+                    span: if_span,
+                });
+            }
+        }
+    }
+}
+
+/// Append Drop ops at the tail of `block`, but BEFORE any trailing
+/// Return — Drops after a Return are unreachable at runtime. Locals
+/// iterated in BTreeSet order for deterministic output.
+fn insert_drops_at_block_tail(block: &mut IrBlock, locals: &std::collections::BTreeSet<corvid_resolve::LocalId>) {
+    if locals.is_empty() {
+        return;
+    }
+    let ret_pos = block.stmts.iter().rposition(|s| matches!(s, IrStmt::Return { .. }));
+    let insert_at = ret_pos.unwrap_or(block.stmts.len());
+    let mut at = insert_at;
+    for &l in locals {
+        block.stmts.insert(at, IrStmt::Drop {
+            local_id: l,
+            span: zero_span(),
+        });
+        at += 1;
+    }
 }
 
 // ---------------------------------------------------------------------------
