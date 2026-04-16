@@ -63,7 +63,7 @@ corvid: runtime error: integer overflow or division by zero
 
 Division and modulo by zero trap the same way. The safety story behind this is in [dev-log Day 19](dev-log.md).
 
-If you want wrapping arithmetic (e.g., hash mixing), a `@wrapping` annotation is on the Phase-22 roadmap.
+If you want wrapping arithmetic (e.g., hash mixing), a `@wrapping` annotation is on the long-range roadmap.
 
 ### `Bool` — true / false
 
@@ -117,10 +117,10 @@ Operators: `+` (concat), `==`, `!=`, `<`, `<=`, `>`, `>=` (bytewise lexicographi
 String literals live in `.rodata` and are **immortal** — retain/release on them are no-ops. Concatenated strings are heap-allocated and automatically freed when their last reference goes away (refcount reaches zero). No manual memory management.
 
 What's NOT supported yet:
-- String length (`len(s)` / `s.len`) — needs a `len` builtin mechanism, Phase 22+
-- Indexing (`s[0]`) — Phase 22+
+- String length (`len(s)` / `s.len`) — needs a `len` builtin mechanism, planned future work
+- Indexing (`s[0]`) — planned future work
 - Iteration (`for c in s`) — needs iterator protocol, future slice
-- Slicing / case-folding / search — stdlib phase
+- Slicing / case-folding / search — stdlib work
 
 String semantics landed in [dev-log Day 24](dev-log.md); the memory model behind them is [dev-log Day 23](dev-log.md).
 
@@ -366,7 +366,7 @@ This is the killer feature. Enforced at compile time, not runtime. Works in both
 
 ### Current compilation gap
 
-`corvid build --target=native` doesn't yet wire tool / prompt / approve calls into compiled code — Phase 14 adds native tool dispatch via a proc-macro `#[tool]` registry. For now, AI-shaped programs run via:
+`corvid build --target=native` doesn't yet wire tool / prompt / approve calls into compiled code — native tool dispatch is provided by a proc-macro `#[tool]` registry. For now, AI-shaped programs run via:
 
 ```bash
 corvid run refund_bot.cor                     # interpreter, fully native runtime
@@ -405,7 +405,7 @@ Generates runnable Python. The `corvid-runtime` Python package provides `tool_ca
 corvid run src/program.cor
 ```
 
-Executes via the Rust tree-walking interpreter in `corvid-vm`. Full AI runtime available (tools, prompts, approvals, tracing). Use this for day-to-day development and for AI-shaped programs until Phase 14.
+Executes via the Rust tree-walking interpreter in `corvid-vm`. Full AI runtime available (tools, prompts, approvals, tracing). Use this for day-to-day development and for AI-shaped programs until the native AI runtime path is complete.
 
 ---
 
@@ -424,7 +424,7 @@ Every error has a code (`E0001`–`E0302`) and a suggested fix. See [ARCHITECTUR
 A compiled program can fail at runtime for:
 - **Integer overflow / division by zero** — prints to stderr, exits 1.
 
-That's currently the full list. Approval denial, tool failures, LLM failures only apply to the interpreter/Python paths (Phase 14 adds them to native).
+That's currently the full list. Approval denial, tool failures, and LLM failures only apply to the interpreter/Python paths until the native dispatch path is complete.
 
 ### Runtime errors (interpreter)
 
@@ -447,7 +447,7 @@ All carry a source span so the error points at the offending code.
 - Every non-scalar value (String, Struct, eventually List) lives behind a 16-byte header: `atomic refcount + reserved`.
 - Static literals have refcount = `i64::MIN` (immortal) — retain/release on them are no-ops.
 - Structs with refcounted fields (Strings etc.) get an auto-generated destructor that releases each refcounted field when the struct is freed.
-- Refcount updates are atomic — single-threaded today, but Phase 25 multi-agent won't need a migration.
+- Refcount updates are atomic — single-threaded today, but future multi-agent work won't need a migration.
 
 ### Leak verification
 
@@ -463,7 +463,7 @@ The test suite asserts `ALLOCS == RELEASES` on every fixture. Any codegen bug th
 
 ### When it matters for you
 
-For short-lived programs (agents that run once and exit), refcount overhead is invisible. For long-running services (future RAG servers, Phase 25 multi-agent coordinators), the leak-free guarantee means a Corvid service can run for days/weeks without memory growth. Memory-management design rationale: [dev-log Day 23](dev-log.md) (foundation) and [dev-log Day 24](dev-log.md) (ownership wiring).
+For short-lived programs (agents that run once and exit), refcount overhead is invisible. For long-running services (future RAG servers and multi-agent coordinators), the leak-free guarantee means a Corvid service can run for days/weeks without memory growth. Memory-management design rationale: [dev-log Day 23](dev-log.md) (foundation) and [dev-log Day 24](dev-log.md) (ownership wiring).
 
 ---
 
@@ -491,7 +491,7 @@ x = 5
 
 ### No `len` / indexing on strings yet
 
-`s.len` and `s[0]` aren't supported yet. Planned for Phase 22+.
+`s.len` and `s[0]` aren't supported yet. Planned future work.
 
 ### `for c in string` not yet in native code
 
@@ -499,7 +499,7 @@ Compiles via the interpreter; raises `NotSupported` in the native compiler. The 
 
 ### Writing tools in Rust
 
-Phase 14 ships a typed C-ABI for tool dispatch. Users write tool implementations in a Rust crate, decorate them with `#[tool("name")]`, build the crate as a staticlib, and pass the resulting `.lib` / `.a` to `corvid run --with-tools-lib <path>` or `corvid build --target=native --with-tools-lib <path>`.
+Native tool dispatch ships with a typed C ABI. Users write tool implementations in a Rust crate, decorate them with `#[tool("name")]`, build the crate as a staticlib, and pass the resulting `.lib` / `.a` to `corvid run --with-tools-lib <path>` or `corvid build --target=native --with-tools-lib <path>`.
 
 Example tool crate:
 
@@ -546,7 +546,7 @@ cd ../my_corvid_app
 corvid run main.cor --with-tools-lib ../my_tools/target/release/libmy_tools.a
 ```
 
-Phase 14 supported tool signatures (scalars only; Struct/List defer to Phase 15):
+Currently supported tool signatures (scalars only; Struct/List support comes later):
 
 | Corvid type | Rust type   |
 |-------------|-------------|
@@ -561,7 +561,7 @@ Without `--with-tools-lib`, programs that call user tools fall back to the inter
 
 ### Methods on types (`extend T:` blocks)
 
-Phase 16 attaches methods to user-declared types via `extend T:` blocks. Methods can be ANY declaration kind — agent, prompt, or tool — and all dispatch through the same dot-syntax. The receiver is an explicit first parameter (no `self` keyword); the typechecker and IR rewrite `value.method(args)` into a regular call with the receiver prepended.
+Methods attach to user-declared types via `extend T:` blocks. Methods can be ANY declaration kind — agent, prompt, or tool — and all dispatch through the same dot-syntax. The receiver is an explicit first parameter (no `self` keyword); the typechecker and IR rewrite `value.method(args)` into a regular call with the receiver prepended.
 
 ```corvid
 type Order:
@@ -586,26 +586,26 @@ Call sites:
 ```corvid
 agent process(o: Order) -> Int:
     t = o.total()              # pure agent call
-    pitch = o.summarize()      # LLM dispatch through Phase 15 bridge
-    s = o.fetch_status()       # tool dispatch through Phase 14 bridge
+    pitch = o.summarize()      # LLM dispatch through the native prompt bridge
+    s = o.fetch_status()       # tool dispatch through the native tool bridge
     return t
 ```
 
 Visibility:
 - Default is **private** — callable only from code in the same file.
 - `public` makes the method callable from anywhere the type is visible.
-- `public(package)` reserves package-scoped visibility for Phase 25's package-manager work; syntactically accepted now so user code doesn't need re-annotation later.
-- `public(effect: ...)` is the syntactic slot reserved for Phase 20's effect-scoped visibility.
+- `public(package)` reserves package-scoped visibility for future package-manager work; syntactically accepted now so user code doesn't need re-annotation later.
+- `public(effect: ...)` is the syntactic slot reserved for future effect-scoped visibility.
 
 Method-name rules:
 - Two methods with the same name on the same type → compile error.
 - A method whose name collides with a field on the same type → compile error.
 - Methods with the same name on different types coexist (`Order.total`, `Line.total`).
-- Methods on built-in types (Int, String, List) defer to a future phase to avoid orphan-rule complexity.
+- Methods on built-in types (Int, String, List) defer to later work to avoid orphan-rule complexity.
 
 ### Performance — when native wins
 
-Phase 12 closed with published numbers (ARCHITECTURE.md §18). End-to-end wall-clock on three representative workloads:
+The first native-runtime close shipped with published numbers (ARCHITECTURE.md §18). End-to-end wall-clock on three representative workloads:
 
 | Workload | Interpreter | Native | Ratio |
 |---|---|---|---|
@@ -617,17 +617,17 @@ Phase 12 closed with published numbers (ARCHITECTURE.md §18). End-to-end wall-c
 
 Auto dispatch (`corvid run` default) still picks native for tool-free programs because the compile cache makes re-runs near-instant and real agent workloads exceed the crossover. Override with `--target=interpreter` for tiny programs where the spawn tax matters.
 
-Reproduce locally: `cargo bench -p corvid-codegen-cl --bench phase12_benchmarks`.
+Reproduce locally: `cargo bench -p corvid-codegen-cl --bench native_foundation_benchmarks`.
 
 ### Running Corvid code
 
 `corvid run <file>` picks the right execution tier automatically:
 
 - **Native AOT** when the program uses only native-able features (arithmetic, Bool, Float, String, struct, list, agent-to-agent calls). First run compiles and caches; subsequent runs of the same source skip codegen entirely (≈15× faster). Cache lives at `<project>/target/cache/native/<hash>[.exe]` and is swept by `cargo clean`.
-- **Interpreter** when the program uses anything that needs the async runtime (tool calls, prompt calls, `approve`, `import python`). Auto-fallback announces itself with one stderr line naming the specific construct and the phase that will lift the restriction:
+- **Interpreter** when the program uses anything that needs the async runtime (tool calls, prompt calls, `approve`, `import python`). Auto-fallback announces itself with one stderr line naming the specific construct and the native feature gap:
 
 ```
-↻ running via interpreter: program calls prompt `greet` — native prompt dispatch lands in Phase 14
+↻ running via interpreter: program calls prompt `greet` — native prompt dispatch is not available on this path yet
 ```
 
 Explicit overrides:
@@ -671,7 +671,7 @@ Format rules the codegen-emitted `main` uses:
 
 ### No multi-threading
 
-Corvid is single-threaded today. Atomic refcount is cheap insurance for Phase 25 (multi-agent coordinators).
+Corvid is single-threaded today. Atomic refcount is cheap insurance for future multi-agent coordinators.
 
 ---
 
@@ -679,20 +679,20 @@ Corvid is single-threaded today. Atomic refcount is cheap insurance for Phase 25
 
 Per [ROADMAP.md](ROADMAP.md):
 
-- **Phase 17** (next) — Cycle collector on top of refcount. Backstops the refcount runtime against reference cycles using a stop-the-world mark-sweep collector triggered by allocation pressure. Closes the "deterministic destructors leak on cycles" hole without giving up Phase 12g/h's prompt-release property.
-- **Slice 12k** — polish, benchmarks, stability guarantees.
-- **Phase 14** — proc-macro `#[tool]` registry, tool/prompt/approve in compiled code.
-- **Phase 16** — effect-tagged `import python "..."` (TypeScript `.d.ts` analog).
-- **Phase 18** — Google + Ollama LLM adapters alongside the current Anthropic + OpenAI.
-- **Phase 20** — typed `Result` + retry policies.
-- **Phase 22** — streaming (`Stream<T>`), cost budgets (`@budget($)`), uncertainty types (`T?confidence`), replay as a language primitive, `@wrapping` opt-out for Int arithmetic, `@checked` for Float.
-- **Phase 25** — multi-agent composition + durable execution.
+- **Cycle collection on top of refcount** — backstops the refcount runtime against reference cycles using a stop-the-world mark-sweep collector triggered by allocation pressure.
+- **Polish, benchmarks, and stability guarantees**
+- **Compiled-code tool / prompt / approve support** — proc-macro `#[tool]` registry and native AI dispatch.
+- **Effect-tagged `import python "..."`** — TypeScript `.d.ts` analog.
+- **More LLM adapters** — Google + Ollama alongside Anthropic + OpenAI.
+- **Typed `Result` + retry policies**
+- **Streaming, cost budgets, uncertainty types, replay as a language primitive, and arithmetic annotations**
+- **Multi-agent composition + durable execution**
 
-Features earn their slice through real pull, not speculation. Adding something to the roadmap requires a proposal in `dev-log.md` per the rules in [CONTRIBUTING.md](CONTRIBUTING.md).
+Features earn their place through real pull, not speculation. Adding something to the roadmap requires a proposal in `dev-log.md` per the rules in [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ---
 
-## Per-slice feature log
+## Feature Log
 
 Each user-visible feature lands with a dev-log entry explaining the design decisions. Cross-references:
 
@@ -708,38 +708,38 @@ Each user-visible feature lands with a dev-log entry explaining the design decis
 | List + `for` + `break` / `continue` | [Day 26](dev-log.md) |
 | Parameterised entry agents + Float/String entry returns | [Day 27](dev-log.md) |
 | Native as the default tier for tool-free programs + compile cache | [Day 28](dev-log.md) |
-| Phase 12 close-out benchmarks: native is 2.7×–13.6× faster end-to-end | [Day 29](dev-log.md) |
-| Phase 13: tokio + corvid runtime embedded in compiled binaries; native tool dispatch (narrow case) | [Day 30](dev-log.md) |
-| Phase 14: `#[tool]` proc-macro + typed C ABI dispatch + `--with-tools-lib` | [Day 31](dev-log.md) |
-| Phase 15: native prompt dispatch + 5 LLM provider adapters (Anthropic / OpenAI / OpenAI-compat / Ollama / Gemini) | [Day 32](dev-log.md) |
-| Phase 16: methods on types (`extend T:` blocks, mixed agent/prompt/tool, public visibility) | [Day 33](dev-log.md) |
-| Slice 17a: typed heap headers + per-type typeinfo + non-atomic refcount | [Day 16](dev-log.md) |
-| Slice 17c: Cranelift safepoints + emitted stack-map table | [Day 25](dev-log.md) |
-| Slice 17d: cycle collector — mark-sweep over the refcount heap | [Day 26](dev-log.md) |
-| Slice 17f++: replay-deterministic GC trigger log + shadow-count refcount verifier with PC blame | [Day 27](dev-log.md) |
+| Native-runtime close-out benchmarks: native is 2.7×–13.6× faster end-to-end | [Day 29](dev-log.md) |
+| Tokio + corvid runtime embedded in compiled binaries; narrow native tool dispatch | [Day 30](dev-log.md) |
+| `#[tool]` proc-macro + typed C ABI dispatch + `--with-tools-lib` | [Day 31](dev-log.md) |
+| Native prompt dispatch + 5 LLM provider adapters (Anthropic / OpenAI / OpenAI-compat / Ollama / Gemini) | [Day 32](dev-log.md) |
+| Methods on types (`extend T:` blocks, mixed agent/prompt/tool, public visibility) | [Day 33](dev-log.md) |
+| Typed heap headers + per-type typeinfo + non-atomic refcount | [Day 16](dev-log.md) |
+| Cranelift safepoints + emitted stack-map table | [Day 25](dev-log.md) |
+| Cycle collector — mark-sweep over the refcount heap | [Day 26](dev-log.md) |
+| Replay-deterministic GC trigger log + shadow-count refcount verifier with PC blame | [Day 27](dev-log.md) |
 
 ---
 
-## Slice 17a — typed heap headers (what it means for users)
+## Typed Heap Headers (what it means for users)
 
-**Nothing to change in your Corvid code.** Slice 17a is infrastructure for the upcoming cycle collector (Phase 17d) and the effect-typed memory model (slice 17b). It's behavior-preserving end-to-end — all 105 codegen parity tests pass unchanged.
+**Nothing to change in your Corvid code.** This is infrastructure for the cycle collector and the effect-typed memory model. It's behavior-preserving end-to-end — all 105 codegen parity tests pass unchanged.
 
 What changed under the hood:
 
 - **Every refcounted allocation now carries a per-type metadata pointer** (`corvid_typeinfo`) in its 16-byte header. The collector (17d) and the dump/debug tooling (later) both dispatch through this block rather than hardcoding per-type knowledge in the runtime.
-- **Refcount is no longer atomic.** Corvid is single-threaded, so the atomic ops were paying a per-retain/release cost (~10-50× vs non-atomic on x86) for a multi-threaded scenario that doesn't exist yet. Phase 25 multi-agent will bring a proper multi-threaded RC design — biased RC or deferred RC, not blanket atomics.
+- **Refcount is no longer atomic.** Corvid is single-threaded, so the atomic ops were paying a per-retain/release cost (~10-50× vs non-atomic on x86) for a multi-threaded scenario that doesn't exist yet. Future multi-agent work will bring a proper multi-threaded RC design — biased RC or deferred RC, not blanket atomics.
 - **`List<Int>`-style primitive lists no longer mis-trace.** The old design couldn't tell at trace time whether a list held pointers or integers; the new typeinfo's `elem_typeinfo = NULL` sentinel is explicit. Compiled programs with `List<Int>` now carry a typeinfo that says "don't chase these slots."
 - **Refcount bit-packing.** Top bits of the refcount word are reserved for the cycle collector's mark/color state (17d, 17h). Retain/release preserve those bits under an externally-set mark — pinned by a new runtime test.
 
 What becomes possible next:
 
-- Slice 17b (renamed from "per-task arena"): the effect-typed memory model. Most allocations bump-allocate in a per-scope arena driven by static escape analysis; the compiler elides RC ops entirely on provably-unique values (Perceus-style); in-place reuse converts functional-style updates into bump-free mutations.
-- Slice 17d: the cycle collector dispatches through each object's typeinfo during the mark phase. No per-type switch in the collector.
-- Slice 17g: `Weak<T>` slots in the typeinfo's reserved `weak_fn` field.
+- The effect-typed memory model: most allocations bump-allocate in a per-scope arena driven by static escape analysis; the compiler elides RC ops entirely on provably-unique values (Perceus-style); in-place reuse converts functional-style updates into bump-free mutations.
+- The cycle collector dispatches through each object's typeinfo during the mark phase. No per-type switch in the collector.
+- `Weak<T>` slots into the typeinfo's reserved `weak_fn` field.
 
-## Slice 17d — cycle collector (what it means for users)
+## Cycle Collector (what it means for users)
 
-**Nothing to change in your Corvid code.** Slice 17d closes Phase 17's correctness promise: refcount handles the acyclic case in the fast path; a stop-the-world mark-sweep collector reclaims unreachable cycles.
+**Nothing to change in your Corvid code.** This closes the memory-foundation correctness promise: refcount handles the acyclic case in the fast path; a stop-the-world mark-sweep collector reclaims unreachable cycles.
 
 What changed under the hood:
 
@@ -753,7 +753,7 @@ How to interact with it:
 - `CORVID_GC_TRIGGER=N` — fire automatic GC every N allocations. Set to `0` to disable.
 - `CORVID_DEBUG_ALLOC=1` — print alloc/release counters at exit (existing knob, still works).
 
-## Slice 17f++ — refcount verifier + GC trigger log (what it means for users)
+## Refcount Verifier + GC Trigger Log (what it means for users)
 
 This is Corvid-specific infrastructure that turns the cycle collector into **a runtime checker for the ownership optimizer (17b)**. Every GC cycle, the verifier traverses the reachable graph, computes the expected refcount of each block from its incoming edges, and diffs against the actual refcount. Drift means a miscompile.
 
@@ -781,7 +781,7 @@ The slice also lays the foundation for **replay-deterministic GC**:
 
 - Every GC cycle appends a record to a trigger log: `(alloc_count, safepoint_count, cycle_index)`.
 - A new `corvid_safepoint_count` global plus `corvid_safepoint_notify()` C entry are exposed for codegen / latency-aware triggers (17b-7) to drive collection at compiler-invariant points.
-- Phase 19 replay infrastructure can read the log via `corvid_gc_trigger_log_length` / `corvid_gc_trigger_log_at` accessors and replay GC at the same logical points across runs, even if the optimizer changes allocation patterns.
+- Replay infrastructure can read the log via `corvid_gc_trigger_log_length` / `corvid_gc_trigger_log_at` accessors and replay GC at the same logical points across runs, even if the optimizer changes allocation patterns.
 
 What this gets Corvid:
 
@@ -789,7 +789,7 @@ What this gets Corvid:
 2. Refcount miscompilations carry source-locating blame instead of presenting as silent corruption later.
 3. GC trigger points are explicit data the runtime exposes, not a hidden side-effect of allocation pressure — which is what makes replay-time reproduction possible.
 
-## Phase 19 — REPL and replay (how to use it)
+## REPL And Replay (how to use it)
 
 Corvid now has an interactive REPL:
 
@@ -837,7 +837,7 @@ So a parse/type/runtime error in turn `N` does not poison the session state from
 
 ### Result / Option / `?` / retry in the REPL
 
-The Phase 18 surfaces work directly in `corvid repl`:
+The `Result` / `Option` / retry surfaces work directly in `corvid repl`:
 
 ```text
 >>> Ok(Some("hi"))
@@ -905,7 +905,7 @@ If a trace is incomplete, replay reports `TRUNCATED` and still shows the recorde
 
 ## Weak References
 
-Phase 17g adds first-class weak references with effect-typed invalidation.
+Corvid now has first-class weak references with effect-typed invalidation.
 
 ### Basic syntax
 
@@ -1017,7 +1017,7 @@ Current native parity coverage proves the live-upgrade path. A stronger source-l
 
 ## VM Heap Handles
 
-Slice 17h.1 moved the interpreter's cycle-capable values onto VM-owned retain/release metadata in preparation for Bacon-Rajan cycle collection.
+VM Heap Handles moved the interpreter's cycle-capable values onto VM-owned retain/release metadata in preparation for Bacon-Rajan cycle collection.
 
 What changed:
 
@@ -1045,7 +1045,7 @@ Practical implication:
 
 ## VM Cycle Collection
 
-Slice 17h.2 adds Bacon-Rajan trial deletion to the interpreter tier.
+VM Cycle Collection adds Bacon-Rajan trial deletion to the interpreter tier.
 
 What is collected:
 
@@ -1068,9 +1068,9 @@ Parity model:
 - parity is asserted by tests, not by sharing allocator/runtime code
 - current cycle parity is synthetic heap parity, not source-level parity, because Corvid source still cannot mutate fields to construct a cycle directly
 
-## Phase 17 retrospective
+## Memory Foundation Retrospective
 
-Phase 17 is where Corvid stopped being "a language with some RC plumbing" and became a language with a measurable memory story.
+This is where Corvid stopped being "a language with some RC plumbing" and became a language with a measurable memory story.
 
 What users get now that they did not have before:
 
@@ -1083,7 +1083,7 @@ What users get now that they did not have before:
 
 ### What the measurements currently support
 
-These numbers are the current pre-`.6d-2` baseline from `cargo bench -p corvid-runtime --bench phase17_runtime ...`. The final Phase 17 lock reruns the same harness after the unified ownership-pass cleanup lands.
+These numbers are the current pre-`.6d-2` baseline from `cargo bench -p corvid-runtime --bench memory_runtime ...`. The final foundation lock reruns the same harness after the unified ownership-pass cleanup lands.
 
 | Claim | Supporting number |
 |---|---|
@@ -1100,11 +1100,11 @@ Corvid's moat is not "faster than Rust at everything." The stronger claim is nar
 - low audit cost
 - ownership verification tied to the runtime's real heap graph
 
-Phase 17 is the first point where that claim has a measured baseline instead of architecture prose.
+This is the first point where that claim has a measured baseline instead of architecture prose.
 
-### What still depends on Phase 17b
+### What still depends on the optimization wave
 
-Phase 17b is the optimization wave that should move the numbers from "credible" to "competitive":
+The optimization wave should move the numbers from "credible" to "competitive":
 
 - the unified ownership pass
 - pair elimination
@@ -1170,7 +1170,7 @@ Why the slice matters:
 Important honesty note:
 
 - the first post-17e benchmark rerun showed a full-sheet slowdown, including primitive-only paths
-- that is treated as environment noise until proven otherwise and is not folded into the published Phase 17 numbers
+- that is treated as environment noise until proven otherwise and is not folded into the published foundation numbers
 - 17e ships on correctness first; measurement delta is held until a clean rerun
 
 ### Latency-aware RC at prompt boundaries
@@ -1193,8 +1193,8 @@ What it does **not** do:
 - no attempt to optimize prompt-internal owned temps
 - no claim that tool-only workflows materially move from this slice
 
-That is a useful Phase 17 lesson: the moat claim has to follow the measured hotspot, not the broader story we hoped would be true. For Corvid, the differentiated boundary optimization is prompt / LLM lowering, not generic tool dispatch.
+That is a useful lesson from the memory-foundation work: the moat claim has to follow the measured hotspot, not the broader story we hoped would be true. For Corvid, the differentiated boundary optimization is prompt / LLM lowering, not generic tool dispatch.
 
 ## Contributing / feedback
 
-See [CONTRIBUTING.md](CONTRIBUTING.md). The rules of the road are: pre-phase chat before code, per-slice commits at every boundary, dev-log entry for every session, no shortcuts. The `learnings.md` file you're reading gets updated when each slice ships a user-visible feature.
+See [CONTRIBUTING.md](CONTRIBUTING.md). The rules of the road are: design chat before code, per-scope commits at every boundary, dev-log entry for every session, no shortcuts. The `learnings.md` file you're reading gets updated when each user-visible feature ships.

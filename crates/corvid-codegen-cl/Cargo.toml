@@ -38,5 +38,5 @@ criterion     = "0.5"
 serde_json    = { workspace = true }
 
 [[bench]]
-name = "phase12_benchmarks"
+name = "native_foundation_benchmarks"
 harness = false

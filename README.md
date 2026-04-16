@@ -17,10 +17,10 @@ Table-stakes for a modern general-purpose language:
 What makes it *AI-native* — the differentiator, not the whole story:
 
 - **Agents, tools, prompts, `approve`, `dangerous` are keywords** — not library decorators. Enforced at compile time.
-- **The compiler reasons about AI code** the same way it reasons about the rest: types flow through prompt inputs, effects propagate through tool chains, costs can be bounded statically (Phase 22), executions are replayable by construction (Phase 24).
+- **The compiler reasons about AI code** the same way it reasons about the rest: types flow through prompt inputs, effects propagate through tool chains, future cost bounds can be checked statically, and executions are designed to become replayable by construction.
 - **No runtime magic.** Every safety property has a corresponding compiler rule that produced it. Read the error, trace it to the rule, understand why.
 
-v1.0 is a multi-year effort. v0.1 (complete) is the internal milestone that proved the language design end-to-end using a Python transpile backend. v0.2+ builds the native runtime. See [`ROADMAP.md`](./ROADMAP.md) for the full phase plan.
+v1.0 is a multi-year effort. v0.1 (complete) is the internal milestone that proved the language design end-to-end using a Python transpile backend. v0.2+ builds the native runtime. See [`ROADMAP.md`](./ROADMAP.md) for the full build plan.
 
 ---
 
@@ -124,8 +124,8 @@ An opt-in `--target=python` backend is retained for users who want to deploy to 
 - ✅ Python transpile backend works end-to-end.
 - ✅ CLI works (`corvid new`, `check`, `build`, `run`, `doctor`).
 - ✅ Offline demo at [`examples/refund_bot_demo/`](./examples/refund_bot_demo/).
-- 🚧 Native interpreter in progress (Phase 11).
-- ⏳ Cranelift native compiler starts Phase 12.
+- 🚧 Native interpreter in progress.
+- ⏳ Cranelift native compiler under active development.
 
 Tests: **134 Rust + 10 Python, all green.**
 
@@ -153,7 +153,7 @@ At v1.0 this becomes `curl -fsSL corvid.dev/install.sh | sh` with no Python step
 - [`CONTRIBUTING.md`](./CONTRIBUTING.md) — mission, vision, values, and the rules for working on Corvid. **Read this first if you're joining the project.**
 - [`ARCHITECTURE.md`](./ARCHITECTURE.md) — compiler design, pipeline, conventions.
 - [`FEATURES.md`](./FEATURES.md) — feature roadmap v0.1 → v1.0.
-- [`ROADMAP.md`](./ROADMAP.md) — phase-by-phase build plan.
+- [`ROADMAP.md`](./ROADMAP.md) — long-range build plan.
 - [`dev-log.md`](./dev-log.md) — build journal.
 - [`examples/`](./examples/) — runnable `.cor` programs.
 

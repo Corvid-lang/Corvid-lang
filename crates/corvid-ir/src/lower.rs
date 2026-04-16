@@ -502,7 +502,7 @@ impl<'a> Lowerer<'a> {
     /// when `target`'s type matches a registered method. Returns
     /// `None` when the call doesn't resolve to a method (caller
     /// falls back to the regular field-access-of-a-fn path, which
-    /// produces `IrCallKind::Unknown` and lets later phases error).
+    /// produces `IrCallKind::Unknown` and lets later validation error).
     fn try_method_call(
         &self,
         target: &Expr,

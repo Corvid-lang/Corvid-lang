@@ -42,7 +42,7 @@ pub enum InterpErrorKind {
     IndexOutOfBounds { len: usize, index: i64 },
 
     /// The interpreter encountered a construct it doesn't implement yet.
-    /// Expected only during phased rollout — should never fire in shipped code.
+    /// Expected only during staged rollout — should never fire in shipped code.
     NotImplemented(String),
 
     /// An agent or tool returned without producing a value, but a value was expected.

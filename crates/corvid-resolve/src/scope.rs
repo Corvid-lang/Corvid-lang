@@ -47,7 +47,7 @@ pub enum BuiltIn {
     Pass,
 }
 
-/// Kind of top-level declaration, for error messages and later phases.
+/// Kind of top-level declaration, for error messages and later passes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum DeclKind {
     Import,

@@ -318,12 +318,12 @@ The suite does not need to prove that Corvid wins on every generic language benc
 
 Recommended execution order:
 
-1. Finish Phase 17 close slices that directly affect ownership/audit cost:
+1. Finish the memory-foundation close slices that directly affect ownership/audit cost:
    - `17b-2`
    - `17e`
    - `17b-6`
    - `17b-7`
-2. Finish Phase 18 native support needed for realistic compiled workflows:
+2. Finish the next native-backend wave needed for realistic compiled workflows:
    - `18d`
    - `18e`
 3. Add canonical workload fixtures

@@ -49,5 +49,5 @@ corvid-vm = { workspace = true }
 corvid-resolve = { workspace = true }
 
 [[bench]]
-name = "phase17_runtime"
+name = "memory_runtime"
 harness = false
