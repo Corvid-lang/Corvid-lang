@@ -1,6 +1,6 @@
 # Memory Foundation Results
 
-Status: draft close-out.
+Status: closed on `v0.1-memory-foundation`.
 
 The memory-management foundation is shipped on `main`, including:
 
@@ -14,12 +14,6 @@ The memory-management foundation is shipped on `main`, including:
 - drop specialization
 - effect-typed scope reduction
 - latency-aware RC at prompt / LLM boundaries
-
-What remains before final lock:
-
-- publish one same-session ratio set for Corvid vs. Python vs. TypeScript
-- fold those ratios into this document
-- close the roadmap, dev log, learnings, and release tag in one pass
 
 This document is the receipt for the shipped foundation. It is not the end of the optimization story, and it does not pretend the deferred research work already landed.
 
@@ -105,7 +99,7 @@ Interpretation rule:
 
 Each published session includes a single disclosed noise floor:
 
-- standard deviation of the control scenario across the 30 interleaved measured trials
+- coefficient of variation of the control scenario across the 30 interleaved measured trials
 
 The reader can then judge whether the observed ratios rise meaningfully above the host's ambient variability.
 
@@ -155,6 +149,53 @@ The comparative runner set is now in-repo:
 | TypeScript / Node | `benches/typescript/` | shipped |
 
 All three consume the canonical fixtures under `benchmarks/cases/` and emit JSONL trial records using the same subtraction rule.
+
+## Published same-session ratios
+
+Source archive:
+
+- `benches/results/2026-04-16-ratio-session/`
+- publication commit: `4090366`
+
+Session disclosure:
+
+- noise floor: `41.40%` control CV on the worst stack
+- per-stack control CV:
+  - `corvid`: `20.90%`
+  - `python`: `41.40%`
+  - `typescript`: `28.69%`
+
+### Corvid vs Python
+
+| Scenario | Median ratio | 95% CI |
+|---|---:|---:|
+| `tool_loop` | `36.126` | `[31.998, 40.193]` |
+| `retry_workflow` | `24.985` | `[22.340, 27.789]` |
+| `approval_workflow` | `25.635` | `[22.771, 28.551]` |
+| `replay_trace` | `35.326` | `[32.139, 41.280]` |
+
+### Corvid vs TypeScript
+
+| Scenario | Median ratio | 95% CI |
+|---|---:|---:|
+| `tool_loop` | `2.627` | `[2.227, 3.127]` |
+| `retry_workflow` | `1.669` | `[1.433, 1.959]` |
+| `approval_workflow` | `2.488` | `[2.171, 3.029]` |
+| `replay_trace` | `2.636` | `[2.391, 2.961]` |
+
+Interpretation:
+
+- every published ratio is greater than `1.0`
+- every published 95% CI stays above `1.0`
+- so this session does **not** support any claim that Corvid is faster than either Python or TypeScript on these workflow runners
+
+What this session does support:
+
+- the same-session ratio methodology is implemented and reproducible
+- Corvid can compare orchestration overhead honestly without leaking external wait time into the claim
+- the current native runner still has meaningful startup / runtime overhead to remove before a competitive performance narrative is justified
+
+The archive includes the full ratio-shape tables (`p50` / `p90` / `p99`) in `ratios.md`. This document keeps only the headline medians and confidence intervals.
 
 ## Optimization wave
 
@@ -225,11 +266,4 @@ See [memory-foundation-deferrals.md](memory-foundation-deferrals.md) for the rat
 | `17g` | `Weak<T>` with effect-typed invalidation | shipped | `ba01e78` | VM and native safety story |
 | `17h.1` | VM-owned heap handles | shipped | `318c892` | VM memory refactor |
 | `17h.2` | VM Bacon-Rajan cycle collector | shipped | `91d95ac` | interpreter parity |
-| `17i` | Close-out + benchmarks + release lock | in progress | `-` | this document |
-
-## Open lock conditions
-
-This document locks only when:
-
-- one same-session interleaved ratio run is published under `benches/results/YYYY-MM-DD-ratio-session/`
-- the roadmap, dev log, learnings, and release tag are updated together on top of that published session
+| `17i` | Close-out + benchmarks + release lock | shipped | `v0.1-memory-foundation` | this document + release tag |

@@ -1226,6 +1226,41 @@ So the rule for the close-out is now explicit:
 - document the rejection reason
 - do not promote them into the published results table until the session clears the quiet-host gate
 
+### Same-session ratio publication
+
+The published close-out numbers use a stricter rule than the earlier absolute microbenchmarks:
+
+- run Corvid, Python, and TypeScript back-to-back in one interleaved session
+- subtract fixture-declared external wait from wall time on every trial
+- publish ratios and confidence intervals, not absolute milliseconds
+
+That choice matters because this host was not quiet enough to support honest absolute timing claims. The published archive under `benches/results/2026-04-16-ratio-session/` therefore says one precise thing:
+
+- Corvid is slower than both Python and TypeScript on the current comparative runners, and every reported confidence interval stays above `1.0`
+
+That is not flattering, but it is the right close-out claim. The value of the slice is methodological:
+
+- the cross-language benchmark surface is now real
+- the subtraction rule is fixed
+- the ratio archive is reproducible
+- future optimization work has a defensible comparative baseline instead of an aspirational claim
+
+### Professional naming in source
+
+Source code now uses behavioral names rather than roadmap numbering.
+
+What changed:
+
+- benchmark targets use names like `memory_runtime` and `native_foundation_benchmarks`
+- inline comments and public API docs describe the behavior directly
+- roadmap / slice terminology stays in planning and retrospective documents, not in compiler or runtime source
+
+Why it matters:
+
+- code should read on its own merits
+- public API docs should describe the feature, not the project-management history behind it
+- roadmap identifiers still exist where they are useful: `ROADMAP.md`, `dev-log.md`, `learnings.md`, and the close-out / deferral docs
+
 ## Contributing / feedback
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). The rules of the road are: design chat before code, per-scope commits at every boundary, dev-log entry for every session, no shortcuts. The `learnings.md` file you're reading gets updated when each user-visible feature ships.

@@ -3198,6 +3198,39 @@ Native Corvid runner note:
 - the native path now uses per-prompt canned replies and per-prompt mock latency in the env-backed mock LLM adapter
 - benchmark-only `#[tool]` shims under `benches/corvid/tools/` provide deterministic tool outputs and latencies for the native binaries
 
+## Day 35 [B] - 2026-04-16 - Memory foundation close-out and Phase 17 lock
+
+Closed the memory-foundation wave with the same-session ratio methodology and the release lock.
+
+What landed:
+
+- methodology rewrite in `docs/memory-foundation-results.md` and `benches/README.md`
+- same-session ratio tooling in `benches/analysis/`
+- published ratio archive in `benches/results/2026-04-16-ratio-session/`
+- roadmap / learnings / close-out docs updated together
+- release tag: `v0.1-memory-foundation`
+
+Methodology outcome:
+
+- we published ratios, not absolutes
+- all three stacks ran interleaved in one session
+- external wait stayed subtracted per trial
+- the archive carries a `41.40%` worst-stack control-noise disclosure
+
+What the ratios say:
+
+- Corvid is slower than both Python and TypeScript on the current comparative runners
+- every published 95% confidence interval stays above `1.0`
+- so the close-out makes no performance-win claim
+
+Why the lock is still worth shipping:
+
+- the comparative benchmark surface is now real and reproducible
+- the methodology is explicit enough for future reruns to invalidate or improve the claim honestly
+- the memory-management foundation itself is complete: native + VM cycle collection, verifier, weak refs, unified ownership, scope reduction, and prompt-boundary RC flattening all landed
+
+Phase 17 therefore closes as a foundation release, not as a premature speed-victory story.
+
 
 
 

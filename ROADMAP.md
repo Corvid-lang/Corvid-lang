@@ -343,13 +343,47 @@ Pre-phase chat caught two limiting shortcuts in my brief and reshaped the phase 
 
 **Architecturally important:** Phase 16 introduces NO new IR variants. Method calls compile to ordinary `IrCallKind::Agent` / `Prompt` / `Tool` calls with the receiver prepended as the first argument. Codegen (Cranelift, Python transpile, future WASM) needs no per-method handling — methods are agents/prompts/tools with a different declaration syntax and a different lookup path.
 
-### Phase 17 — Cycle collector + effect-typed memory model (~10–14 weeks)
+### Phase 17 — Cycle collector + effect-typed memory model (~10–14 weeks) ✅ closed
 
 **Goal.** Backstop refcount against cycles AND lift the memory model to take advantage of Corvid's typed effects. Most allocations should never see refcount at all; the ones that do should rarely be atomic; cycles should be caught without per-allocation tracing overhead.
 
 **Hard dep:** Phase 12 (refcount runtime + native codegen).
 
-**Slice plan:**
+**Status.** Closed in `v0.1-memory-foundation`.
+
+| Slice | Outcome | Commit / tag |
+|---|---|---|
+| `17a` | typed heap headers + per-type typeinfo | `1fea6a0` |
+| `17b-0` | retain/release counters + baseline RC counts | `7ef4304` |
+| `17b-1a` | `Dup` / `Drop` IR + borrow-signature scaffolding | `82f78b5` |
+| `17b-1b.1` | borrow inference + callee-side ABI elision | `2bce2a8` |
+| `17b-1b.2` | string operand borrow-at-use-site peephole | `71c7fe4` |
+| `17b-1b.3` | field/index target borrow-at-use-site peephole | `de3acb5` |
+| `17b-1b.4` | `for` iterator borrow-at-use-site peephole | `a725449` |
+| `17b-1b.5` | call-arg borrow-at-use-site peephole | `b0a911e` |
+| `17b-1b.6a` | ownership dataflow groundwork | `760b07e` |
+| `17b-1b.6b` | IR `Dup` / `Drop` insertion | `1d1af44` |
+| `17b-1b.6c` | ownership hook into codegen pipeline | `f3762cd` |
+| `17b-1b.6d-1` | transition guard stage | `8e2e98e` |
+| `17b-1b.6d-2a` | entry / return cleanup stage | `520e30b` |
+| `17b-1b.6d-2` | unified ownership pass default-on | `0cc7895` |
+| `17b-1c` | whole-program pair elimination | `046806d` |
+| `17b-2` | drop specialization | `8c55c3f` |
+| `17b-3` | reuse analysis | deferred to Phase 17.5 |
+| `17b-4` | Morphic-style specialization | deferred to Phase 17.5 |
+| `17b-5` | escape analysis | deferred to Phase 17.5 |
+| `17b-6` | effect-row-directed RC | deferred to Phase 20 |
+| `17b-7` | latency-aware RC at prompt / LLM boundaries | `6bedbfb` |
+| `17c` | safepoints + stack maps | `e55efea` |
+| `17d` | native mark-sweep cycle collector | `ca428bf` |
+| `17e` | effect-typed scope reduction | `f5a3bce` |
+| `17f / 17f++` | deterministic GC triggers + refcount verifier | `a3b841d` |
+| `17g` | `Weak<T>` | `ba01e78` |
+| `17h.1` | VM-owned heap handles | `318c892` |
+| `17h.2` | VM Bacon-Rajan cycle collector | `91d95ac` |
+| `17i` | close-out + benchmark lock | `v0.1-memory-foundation` |
+
+**Historical slice plan (kept for design context):**
 
 - [x] **17a — typed heap headers + per-type typeinfo** *(landed 2026-04-14)*. Every refcounted allocation carries a `corvid_typeinfo*` pointer in its 16-byte header. Per-type metadata (destroy_fn, trace_fn, flags, elem_typeinfo) lives in `.rodata`. Refcount dropped `_Atomic` (Phase 25 will do proper multi-threaded RC, not blanket atomics). Bits 61-62 reserved for 17d mark + 17h color. `List<Int>` mis-trace bug eliminated by design (`elem_typeinfo = NULL` sentinel). 6 new runtime tracer tests, all 105 parity tests still green.
 - [~] **17b — principled RC optimization (Perceus).** *Region inference dropped from this slice based on Perceus paper analysis + MLton's published rejection of Tofte-Talpin regions; revisit only if post-17b measurements show remaining allocation pressure justifies the complexity.*
@@ -358,20 +392,20 @@ Pre-phase chat caught two limiting shortcuts in my brief and reshaped the phase 
   - [x] **17b-1b.1** *(landed 2026-04-15)* — Lean 4-style monotone fixed-point borrow inference over the call graph. Populates `IrAgent.borrow_sig`. Callee-side ABI elision: refcounted params marked `Borrowed` skip entry-retain + scope-exit release. Measured: `passthrough_agent` 13 → 9 ops (31%).
   - [~] **17b-1b.peepholes** *(landed 2026-04-15 as four separate commits: 17b-1b.2, .3, .4, .5)* — **single borrow-at-use-site optimization family** applied to four IR positions: string BinOp operands, FieldAccess / Index targets, for-loop iter, and call-site args (coordinated with callee `borrow_sig`). Shipped as four commits while structurally one optimization; retrospective dev-log entry Day 24 captures the honest framing. Cumulative measured (baseline → current): `string_concat_chain` 12→10 (8%), `struct_build_and_destructure` 14→8 (43%), `list_of_strings_iter` 22→14 (36%), `passthrough_agent` 13→7 (46%), `local_arg_to_borrowed_callee` new at 6 ops.
   - [ ] **17b-1b** *(real, still pending)* — full use-list + CFG-aware last-use + branch-asymmetric `Dup`/`Drop` insertion pass in `ownership::transform_agent`. Deletes the ~40 scattered `emit_retain`/`emit_release` sites in `lowering.rs`. Handles what peepholes cannot: loop-var body analysis, scope-exit Drop redundancy, cross-statement last-use elision, list-literal item-slot Locals. **This is the work that was originally committed as 17b-1b. The peephole series shipped wins but did not replace this.** Needs its own pre-phase chat; multi-session slice when resumed.
-  - [ ] **17b-1c** — whole-program retain/release pair elimination. Needs `AgentSummary` to actually populate `may_retain` / `may_release` / `borrows_param` (currently stubbed in ownership.rs). Depends on 17b-1b above.
-  - [ ] **17b-2** — drop specialization. `drop x` on a known typeinfo inlines the child-release sequence instead of dispatching through `typeinfo->destroy_fn`. No-op drops (NULL destroy_fn) elided entirely.
+  - [x] **17b-1c** - whole-program retain/release pair elimination. Shipped as the first same-block ARC-style cleanup pass after the unified ownership pipeline.
+  - [x] **17b-2** - drop specialization. `drop x` on a known typeinfo now inlines the child-release sequence instead of dispatching through `typeinfo->destroy_fn`.
   - [ ] **17b-3** — reuse analysis. Match `drop(x_size_N); alloc(size_M ≤ N)` pairs in a basic block; emit `if (refcount & MASK) == 1 { reuse_in_place } else { drop; alloc }`. Same-size-in-words rule per Perceus / Lean 4.
   - [ ] **17b-4** — Morphic-style per-call-site alias-mode specialization (Lobster-style, gated to mixed-mode callees only).
   - [ ] **17b-5** — Choi-style interprocedural escape analysis → stack / arena promotion for non-escaping allocations.
   - [ ] **17b-6** — **INNOVATION (zero prior art):** effect-row-directed RC. `Pure` effect → static `isUnique` discharge; `<llm>` effect → batching point for RC ops across known-slow suspensions.
-  - [ ] **17b-7** — **INNOVATION (zero prior art):** latency-aware RC scheduling across tool/LLM call boundaries.
-- [ ] **17c — Cranelift safepoint emission + stack maps.** Per-function safepoint records so 17d's mark phase can find live roots on the Tokio task stacks. Cranelift supports stack maps natively.
-- [ ] **17d — LLM-call-piggyback incremental cycle collector.** Mark-sweep over the refcount heap. Triggered during LLM/tool wait windows (which Corvid's effect system makes visible to the collector — no other GP language has this). Dispatches through `typeinfo->trace_fn` per object — uniform, no per-type switch.
-- [ ] **17e — effect-typed scope reduction.** The `CYCLIC_CAPABLE` flag tells the collector which subgraphs can possibly contain cycles. Non-cyclic types (most leaves) skip tracing entirely. Computed by static cycle analysis at compile time.
-- [ ] **17f — replay-deterministic GC triggers.** GC fires on deterministic events, not heap-pressure heuristics. Same input → same collection points → reproducible memory traces for debugging.
-- [ ] **17g — `Weak<T>` user-facing type.** Typeinfo's `weak_fn` slot (reserved NULL in 17a) gets populated. Weak refs participate in marking but don't keep alive.
-- [ ] **17h — interpreter-side cycle collector.** Bacon-Rajan over `Arc` for the interpreter tier. Uses bit 62 (color) of the refcount word that 17a already reserved.
-- [ ] **17i — tests + close-out.** Cyclic-data parity fixture: data structure that today leaks under `CORVID_DEBUG_ALLOC=1`; after Phase 17 the leak-counter returns to zero. Benchmark deltas vs pre-Phase-17 (the per-RC-op speedup from non-atomic + region elision should be measurable on hot paths).
+  - [x] **17b-7** - **INNOVATION (zero prior art):** latency-aware RC scheduling across prompt/LLM call boundaries.
+- [x] **17c** - Cranelift safepoint emission + stack maps. Per-function safepoint records let the native collector find live roots on task stacks.
+- [x] **17d** - native mark-sweep cycle collector. Dispatches through `typeinfo->trace_fn` per object with deterministic test hooks and allocation-pressure triggering.
+- [x] **17e** - effect-typed scope reduction. Shipped as conservative same-block `Drop` relocation across effect-free spans.
+- [x] **17f** - replay-deterministic GC triggers plus the runtime refcount verifier. GC behavior is now measurable and replay-auditable.
+- [x] **17g** - `Weak<T>` user-facing type. Weak refs now ship with effect-typed invalidation rules and runtime clearing semantics.
+- [x] **17h** - interpreter-side cycle collector. Bacon-Rajan now runs over VM-owned heap handles in the interpreter tier.
+- [x] **17i** - tests + close-out. Locked with the same-session ratio archive and release tag `v0.1-memory-foundation`.
 
 **Non-scope:** generational GC. Concurrent collection (mutator-collector concurrency via write barriers — post-v1.0 if multi-threaded Corvid ever becomes a direction).
 
