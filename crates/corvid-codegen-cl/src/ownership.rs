@@ -446,10 +446,46 @@ fn transform_agent(
 // ---------------------------------------------------------------------------
 
 /// Is this type refcounted at runtime? Mirrors the predicate in
-/// `lowering.rs::is_refcounted_type` — String, Struct, List are
-/// refcounted; primitives are not.
+/// `lowering.rs::is_refcounted_type`.
+///
+/// Post-17g: `Weak<T>` and `Option<refcounted>` are also refcounted
+/// at the value level — they're heap boxes themselves and need
+/// `Dup`/`Drop` on the enclosing value. Their REFERENT is not
+/// automatically a strong edge: `Weak` holds a non-owning pointer,
+/// and `Option<refcounted>` can be `None`. See `is_strong_refcounted`
+/// for the predicate that distinguishes strong edges (used by
+/// forthcoming 17b-3 / 17b-5 escape + reuse analyses).
 pub(crate) fn is_refcounted(ty: &Type) -> bool {
-    matches!(ty, Type::String | Type::Struct(_) | Type::List(_))
+    match ty {
+        Type::String | Type::Struct(_) | Type::List(_) | Type::Weak(_, _) => true,
+        Type::Option(inner) => is_refcounted(inner),
+        _ => false,
+    }
+}
+
+/// Does this type hold a STRONG refcount-incrementing edge to a
+/// refcounted payload? `Weak<T>` is refcounted at the value level but
+/// does NOT strongly own its target — tracing through a Weak during
+/// reachability analysis must not count as a retaining edge.
+/// `Option<T>` is strong iff its inner is strong AND the value is
+/// `Some` at runtime; the analysis treats it as "maybe-strong" by
+/// returning true here, delegating the null-path handling to codegen.
+///
+/// This predicate is forward-compatibility for 17b-3 (drop-guided
+/// reuse) and 17b-5 (Choi escape) — .6a/.6b/.6c use `is_refcounted`
+/// for Dup/Drop placement, which must fire for both strong and weak
+/// carriers of refcounted payloads.
+#[allow(dead_code)]
+pub(crate) fn is_strong_refcounted(ty: &Type) -> bool {
+    match ty {
+        Type::String | Type::Struct(_) | Type::List(_) => true,
+        // Weak is never a strong edge — it carries a weak slot.
+        Type::Weak(_, _) => false,
+        // Option<strong> is maybe-strong; callers requiring
+        // definite-strong should test with the null-path consideration.
+        Type::Option(inner) => is_strong_refcounted(inner),
+        _ => false,
+    }
 }
 
 /// Is this expression exactly a `Local { local_id: target }` with
