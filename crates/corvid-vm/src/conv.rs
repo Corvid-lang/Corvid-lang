@@ -9,7 +9,7 @@
 //! struct results can recover their `type_id` and `type_name`. The
 //! interpreter passes the called tool's / prompt's declared return type.
 
-use crate::value::{StructValue, Value};
+use crate::value::{BoxedValue, ListValue, StructValue, Value};
 use corvid_ir::IrType;
 use corvid_resolve::DefId;
 use corvid_types::Type;
@@ -28,21 +28,23 @@ pub fn value_to_json(v: &Value) -> serde_json::Value {
         Value::Nothing => serde_json::Value::Null,
         Value::Struct(s) => {
             let mut obj = serde_json::Map::new();
-            for (k, v) in &s.fields {
-                obj.insert(k.clone(), value_to_json(v));
-            }
+            s.with_fields(|fields| {
+                for (k, v) in fields {
+                    obj.insert(k.clone(), value_to_json(v));
+                }
+            });
             serde_json::Value::Object(obj)
         }
         Value::List(items) => {
-            serde_json::Value::Array(items.iter().map(value_to_json).collect())
+            serde_json::Value::Array(items.iter_cloned().iter().map(value_to_json).collect())
         }
         Value::Weak(w) => match w.upgrade() {
             Some(value) => serde_json::json!({ "tag": "weak", "value": value_to_json(&value) }),
             None => serde_json::json!({ "tag": "weak", "value": serde_json::Value::Null }),
         },
-        Value::ResultOk(v) => serde_json::json!({ "tag": "ok", "ok": value_to_json(v) }),
-        Value::ResultErr(v) => serde_json::json!({ "tag": "err", "err": value_to_json(v) }),
-        Value::OptionSome(v) => serde_json::json!({ "tag": "some", "value": value_to_json(v) }),
+        Value::ResultOk(v) => serde_json::json!({ "tag": "ok", "ok": value_to_json(&v.get()) }),
+        Value::ResultErr(v) => serde_json::json!({ "tag": "err", "err": value_to_json(&v.get()) }),
+        Value::OptionSome(v) => serde_json::json!({ "tag": "some", "value": value_to_json(&v.get()) }),
         Value::OptionNone => serde_json::json!({ "tag": "none" }),
     }
 }
@@ -88,7 +90,7 @@ pub fn json_to_value(
             for item in items {
                 out.push(json_to_value(item, elem_ty, types_by_id)?);
             }
-            Ok(Value::List(Arc::new(out)))
+            Ok(Value::List(ListValue::new(out)))
         }
         (Type::Option(inner_ty), J::Object(map)) => match map.get("tag").and_then(|v| v.as_str()) {
             Some("some") => {
@@ -96,7 +98,7 @@ pub fn json_to_value(
                     expected: "Option::Some payload".into(),
                     got: "missing `value` field".into(),
                 })?;
-                Ok(Value::OptionSome(Arc::new(json_to_value(raw, inner_ty, types_by_id)?)))
+                Ok(Value::OptionSome(BoxedValue::new(json_to_value(raw, inner_ty, types_by_id)?)))
             }
             Some("none") => Ok(Value::OptionNone),
             _ => Err(ConvError::TypeMismatch {
@@ -111,14 +113,14 @@ pub fn json_to_value(
                         expected: "Result::Ok payload".into(),
                         got: "missing `ok` field".into(),
                     })?;
-                    Ok(Value::ResultOk(Arc::new(json_to_value(raw, ok_ty, types_by_id)?)))
+                    Ok(Value::ResultOk(BoxedValue::new(json_to_value(raw, ok_ty, types_by_id)?)))
                 }
                 Some("err") => {
                     let raw = map.get("err").cloned().ok_or_else(|| ConvError::TypeMismatch {
                         expected: "Result::Err payload".into(),
                         got: "missing `err` field".into(),
                     })?;
-                    Ok(Value::ResultErr(Arc::new(json_to_value(raw, err_ty, types_by_id)?)))
+                    Ok(Value::ResultErr(BoxedValue::new(json_to_value(raw, err_ty, types_by_id)?)))
                 }
                 _ => Err(ConvError::TypeMismatch {
                     expected: type_label(expected),
@@ -143,11 +145,11 @@ pub fn json_to_value(
                 let v = json_to_value(raw, &field.ty, types_by_id)?;
                 fields.insert(field.name.clone(), v);
             }
-            Ok(Value::Struct(Arc::new(StructValue {
-                type_id: ir_type.id,
-                type_name: ir_type.name.clone(),
+            Ok(Value::Struct(StructValue::new(
+                ir_type.id,
+                ir_type.name.clone(),
                 fields,
-            })))
+            )))
         }
         // `Unknown` accepts any JSON, lossy. Used as a graceful fallback.
         (Type::Unknown, json) => Ok(json_to_value_loose(json)),
@@ -175,7 +177,7 @@ fn json_to_value_loose(json: serde_json::Value) -> Value {
             }
         }
         J::String(s) => Value::String(Arc::from(s)),
-        J::Array(items) => Value::List(Arc::new(items.into_iter().map(json_to_value_loose).collect())),
+        J::Array(items) => Value::List(ListValue::new(items.into_iter().map(json_to_value_loose).collect::<Vec<_>>())),
         J::Object(_) => {
             // Without a type, we can't rebuild a Struct. Drop to Nothing
             // and let the interpreter surface a clean error if the value
@@ -282,7 +284,7 @@ mod tests {
 
     #[test]
     fn list_roundtrips() {
-        let v = Value::List(Arc::new(vec![Value::Int(1), Value::Int(2)]));
+        let v = Value::List(ListValue::new(vec![Value::Int(1), Value::Int(2)]));
         let j = value_to_json(&v);
         assert_eq!(j, json!([1, 2]));
         let empty: HashMap<DefId, &IrType> = HashMap::new();
@@ -311,12 +313,9 @@ mod tests {
         let v = json_to_value(json, &Type::Struct(id), &by_id).unwrap();
         match v {
             Value::Struct(s) => {
-                assert_eq!(s.type_name, "Decision");
-                assert_eq!(s.type_id, id);
-                assert_eq!(
-                    s.fields.get("should_refund").unwrap(),
-                    &Value::Bool(true)
-                );
+                assert_eq!(s.type_name(), "Decision");
+                assert_eq!(s.type_id(), id);
+                assert_eq!(s.get_field("should_refund").unwrap(), Value::Bool(true));
             }
             other => panic!("expected struct, got {other:?}"),
         }

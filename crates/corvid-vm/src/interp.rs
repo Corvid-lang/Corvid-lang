@@ -10,7 +10,7 @@
 use crate::conv::{json_to_value, value_to_json};
 use crate::env::Env;
 use crate::errors::{InterpError, InterpErrorKind};
-use crate::value::{StructValue, Value};
+use crate::value::{BoxedValue, ListValue, StructValue, Value};
 use async_recursion::async_recursion;
 use corvid_ast::{BinaryOp, Span, UnaryOp};
 use corvid_ir::{
@@ -120,11 +120,7 @@ pub fn build_struct(
     type_name: &str,
     fields: impl IntoIterator<Item = (String, Value)>,
 ) -> Value {
-    Value::Struct(Arc::new(StructValue {
-        type_id,
-        type_name: type_name.to_string(),
-        fields: fields.into_iter().collect(),
-    }))
+    Value::Struct(StructValue::new(type_id, type_name.to_string(), fields))
 }
 
 /// Control-flow outcome of evaluating a statement or block.
@@ -290,13 +286,11 @@ impl<'ir> Interpreter<'ir> {
                     Err(v) => return Ok(Flow::Return(v)),
                 };
                 let items = match iter_val {
-                    Value::List(items) => items,
+                    Value::List(items) => items.iter_cloned(),
                     Value::String(s) => {
-                        let chars: Vec<Value> = s
-                            .chars()
+                        s.chars()
                             .map(|c| Value::String(Arc::from(c.to_string())))
-                            .collect();
-                        Arc::new(chars)
+                            .collect()
                     }
                     other => {
                         return Err(InterpError::new(
@@ -308,8 +302,8 @@ impl<'ir> Interpreter<'ir> {
                         ))
                     }
                 };
-                for item in items.iter() {
-                    self.env.bind(*var_local, item.clone());
+                for item in items {
+                    self.env.bind(*var_local, item);
                     match self.eval_block(body).await? {
                         Flow::Normal | Flow::Continue => continue,
                         Flow::Break => return Ok(Flow::Normal),
@@ -382,10 +376,10 @@ impl<'ir> Interpreter<'ir> {
                     Err(v) => return Ok(ExprFlow::Propagate(v)),
                 };
                 match t {
-                    Value::Struct(s) => s.fields.get(field).cloned().map(ExprFlow::Value).ok_or_else(|| {
+                    Value::Struct(s) => s.get_field(field).map(ExprFlow::Value).ok_or_else(|| {
                         InterpError::new(
                             InterpErrorKind::UnknownField {
-                                struct_name: s.type_name.clone(),
+                                struct_name: s.type_name().to_string(),
                                 field: field.clone(),
                             },
                             expr.span,
@@ -420,7 +414,7 @@ impl<'ir> Interpreter<'ir> {
                                 expr.span,
                             ));
                         }
-                        Ok(ExprFlow::Value(items[idx as usize].clone()))
+                        Ok(ExprFlow::Value(items.get(idx as usize).expect("checked list index")))
                     }
                     (other, _) => Err(InterpError::new(
                         InterpErrorKind::TypeMismatch {
@@ -500,7 +494,7 @@ impl<'ir> Interpreter<'ir> {
                         Err(v) => return Ok(ExprFlow::Propagate(v)),
                     }
                 }
-                Ok(ExprFlow::Value(Value::List(Arc::new(out))))
+                Ok(ExprFlow::Value(Value::List(ListValue::new(out))))
             }
 
             IrExprKind::WeakNew { strong } => {
@@ -527,7 +521,7 @@ impl<'ir> Interpreter<'ir> {
                 };
                 match weak {
                     Value::Weak(weak) => match weak.upgrade() {
-                        Some(value) => Ok(ExprFlow::Value(Value::OptionSome(Arc::new(value)))),
+                        Some(value) => Ok(ExprFlow::Value(Value::OptionSome(BoxedValue::new(value)))),
                         None => Ok(ExprFlow::Value(Value::OptionNone)),
                     },
                     other => Err(InterpError::new(
@@ -545,7 +539,7 @@ impl<'ir> Interpreter<'ir> {
                     Ok(v) => v,
                     Err(v) => return Ok(ExprFlow::Propagate(v)),
                 };
-                Ok(ExprFlow::Value(Value::ResultOk(Arc::new(v))))
+                Ok(ExprFlow::Value(Value::ResultOk(BoxedValue::new(v))))
             }
 
             IrExprKind::ResultErr { inner } => {
@@ -553,7 +547,7 @@ impl<'ir> Interpreter<'ir> {
                     Ok(v) => v,
                     Err(v) => return Ok(ExprFlow::Propagate(v)),
                 };
-                Ok(ExprFlow::Value(Value::ResultErr(Arc::new(v))))
+                Ok(ExprFlow::Value(Value::ResultErr(BoxedValue::new(v))))
             }
 
             IrExprKind::OptionSome { inner } => {
@@ -561,7 +555,7 @@ impl<'ir> Interpreter<'ir> {
                     Ok(v) => v,
                     Err(v) => return Ok(ExprFlow::Propagate(v)),
                 };
-                Ok(ExprFlow::Value(Value::OptionSome(Arc::new(v))))
+                Ok(ExprFlow::Value(Value::OptionSome(BoxedValue::new(v))))
             }
 
             IrExprKind::OptionNone => Ok(ExprFlow::Value(Value::OptionNone)),
@@ -572,9 +566,9 @@ impl<'ir> Interpreter<'ir> {
                     ExprFlow::Propagate(v) => return Ok(ExprFlow::Propagate(v)),
                 };
                 match inner {
-                    Value::ResultOk(v) => Ok(ExprFlow::Value((*v).clone())),
+                    Value::ResultOk(v) => Ok(ExprFlow::Value(v.get())),
                     Value::ResultErr(v) => Ok(ExprFlow::Propagate(Value::ResultErr(v))),
-                    Value::OptionSome(v) => Ok(ExprFlow::Value((*v).clone())),
+                    Value::OptionSome(v) => Ok(ExprFlow::Value(v.get())),
                     Value::OptionNone => Ok(ExprFlow::Propagate(Value::OptionNone)),
                     other => Err(InterpError::new(
                         InterpErrorKind::TypeMismatch {
@@ -733,17 +727,17 @@ impl<'ir> Interpreter<'ir> {
                         span,
                     ));
                 }
-                let fields = ir_type
+                let fields: Vec<(String, Value)> = ir_type
                     .fields
                     .iter()
                     .zip(arg_values.into_iter())
                     .map(|(f, v)| (f.name.clone(), v))
                     .collect();
-                Ok(ExprFlow::Value(Value::Struct(std::sync::Arc::new(crate::value::StructValue {
-                    type_id: ir_type.id,
-                    type_name: ir_type.name.clone(),
+                Ok(ExprFlow::Value(Value::Struct(crate::value::StructValue::new(
+                    ir_type.id,
+                    ir_type.name.clone(),
                     fields,
-                }))))
+                ))))
             }
             IrCallKind::Unknown => {
                 let _ = result_ty;

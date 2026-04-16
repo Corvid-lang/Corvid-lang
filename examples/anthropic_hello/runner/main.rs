@@ -70,8 +70,8 @@ fn print_greeting(v: &Value) {
 }
 
 fn field_str(s: &corvid_driver::StructValue, key: &str) -> String {
-    s.fields
-        .get(key)
+    s.get_field(key)
+        .as_ref()
         .map(|v| match v {
             Value::String(s) => s.to_string(),
             other => other.to_string(),

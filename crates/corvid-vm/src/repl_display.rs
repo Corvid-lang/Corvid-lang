@@ -2,7 +2,6 @@
 
 use crate::value::Value;
 use std::collections::HashSet;
-use std::sync::Arc;
 
 const MAX_DEPTH: usize = 32;
 
@@ -33,33 +32,36 @@ fn render_value_inner(
         }
         Value::Nothing => "nothing".to_string(),
         Value::Struct(s) => {
-            let key = Arc::as_ptr(s) as usize;
+            let key = s.ptr_key();
             if !visited.insert(key) {
                 return "<cycle>".to_string();
             }
-            let mut fields: Vec<_> = s.fields.iter().collect();
-            fields.sort_by(|(a, _), (b, _)| a.cmp(b));
-            let rendered = fields
-                .into_iter()
-                .map(|(name, value)| {
-                    format!(
-                        "{name}: {}",
-                        render_value_inner(value, depth + 1, visited)
-                    )
-                })
-                .collect::<Vec<_>>()
-                .join(", ");
+            let rendered = s.with_fields(|fields| {
+                let mut fields: Vec<_> = fields.iter().collect();
+                fields.sort_by(|(a, _), (b, _)| a.cmp(b));
+                fields
+                    .into_iter()
+                    .map(|(name, value)| {
+                        format!(
+                            "{name}: {}",
+                            render_value_inner(value, depth + 1, visited)
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            });
             visited.remove(&key);
-            format!("{}({rendered})", s.type_name)
+            format!("{}({rendered})", s.type_name())
         }
         Value::List(items) => {
-            let key = Arc::as_ptr(items) as usize;
+            let key = items.ptr_key();
             if !visited.insert(key) {
                 return "<cycle>".to_string();
             }
             let rendered = items
-                .iter()
-                .map(|item| render_value_inner(item, depth + 1, visited))
+                .iter_cloned()
+                .into_iter()
+                .map(|item| render_value_inner(&item, depth + 1, visited))
                 .collect::<Vec<_>>()
                 .join(", ");
             visited.remove(&key);
@@ -70,29 +72,32 @@ fn render_value_inner(
             None => "Weak(<cleared>)".to_string(),
         },
         Value::ResultOk(inner) => {
-            let key = Arc::as_ptr(inner) as usize;
+            let key = inner.ptr_key();
             if !visited.insert(key) {
                 return "<cycle>".to_string();
             }
-            let rendered = format!("Ok({})", render_value_inner(inner, depth + 1, visited));
+            let value = inner.get();
+            let rendered = format!("Ok({})", render_value_inner(&value, depth + 1, visited));
             visited.remove(&key);
             rendered
         }
         Value::ResultErr(inner) => {
-            let key = Arc::as_ptr(inner) as usize;
+            let key = inner.ptr_key();
             if !visited.insert(key) {
                 return "<cycle>".to_string();
             }
-            let rendered = format!("Err({})", render_value_inner(inner, depth + 1, visited));
+            let value = inner.get();
+            let rendered = format!("Err({})", render_value_inner(&value, depth + 1, visited));
             visited.remove(&key);
             rendered
         }
         Value::OptionSome(inner) => {
-            let key = Arc::as_ptr(inner) as usize;
+            let key = inner.ptr_key();
             if !visited.insert(key) {
                 return "<cycle>".to_string();
             }
-            let rendered = format!("Some({})", render_value_inner(inner, depth + 1, visited));
+            let value = inner.get();
+            let rendered = format!("Some({})", render_value_inner(&value, depth + 1, visited));
             visited.remove(&key);
             rendered
         }
@@ -117,12 +122,12 @@ fn escape_display(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::render_value;
-    use crate::value::Value;
+    use crate::value::{BoxedValue, Value};
     use std::sync::Arc;
 
     #[test]
     fn renders_nested_result_option_values() {
-        let value = Value::ResultOk(Arc::new(Value::OptionSome(Arc::new(Value::String(
+        let value = Value::ResultOk(BoxedValue::new(Value::OptionSome(BoxedValue::new(Value::String(
             Arc::from("hi"),
         )))));
         assert_eq!(render_value(&value), "Ok(Some(\"hi\"))");
@@ -132,7 +137,7 @@ mod tests {
     fn caps_deep_recursive_rendering() {
         let mut value = Value::Int(0);
         for _ in 0..40 {
-            value = Value::OptionSome(Arc::new(value));
+            value = Value::OptionSome(BoxedValue::new(value));
         }
         assert!(render_value(&value).contains("<...>"));
     }

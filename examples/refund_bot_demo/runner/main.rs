@@ -103,16 +103,16 @@ fn print_decision(v: &Value) {
     match v {
         Value::Struct(s) => {
             let should_refund = s
-                .fields
-                .get("should_refund")
+                .get_field("should_refund")
+                .as_ref()
                 .and_then(|v| match v {
                     Value::Bool(b) => Some(*b),
                     _ => None,
                 })
                 .unwrap_or(false);
             let reason = s
-                .fields
-                .get("reason")
+                .get_field("reason")
+                .as_ref()
                 .map(|v| v.to_string())
                 .unwrap_or_else(|| "<no reason>".into());
             println!("refund_bot decided: should_refund={should_refund} reason={reason}");

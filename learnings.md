@@ -1015,6 +1015,30 @@ The direct runtime weak tests live in:
 
 Current native parity coverage proves the live-upgrade path. A stronger source-level overwrite/drop parity case is still under audit in the native codegen / ownership interaction.
 
+## VM Heap Handles
+
+Slice 17h.1 moved the interpreter's cycle-capable values onto VM-owned retain/release metadata in preparation for Bacon-Rajan cycle collection.
+
+What changed:
+
+- `Struct`, `List`, and boxed `Result` / `OptionSome` payloads no longer rely only on raw `Arc` clone/drop semantics for their Corvid-level lifetime.
+- the interpreter now owns explicit retain/release accounting for those graph nodes
+- native and VM heaps are still completely separate implementations; they only need to agree behaviourally
+
+Important boundary:
+
+- `String` stays a leaf `Arc<str>` in 17h.1
+
+Why that boundary is honest:
+
+- strings are heap values, but not cycle-forming graph nodes
+- Bacon-Rajan needs ownership over the graph edges, and those live in struct/list/boxed payloads, not in leaf strings
+
+Practical implication:
+
+- this commit is the prerequisite plumbing for VM cycle collection, not the collector itself
+- Bacon-Rajan lands on top of these VM-owned graph handles in 17h.2
+
 ## Contributing / feedback
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). The rules of the road are: pre-phase chat before code, per-slice commits at every boundary, dev-log entry for every session, no shortcuts. The `learnings.md` file you're reading gets updated when each slice ships a user-visible feature.

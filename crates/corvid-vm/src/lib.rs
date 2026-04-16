@@ -332,11 +332,11 @@ agent read(t: Ticket) -> String:
             "type Ticket:\n    order_id: String\n\nagent grab(t: Ticket) -> String:\n    return t.order_id\n",
         );
         let ticket_id = ir.types[0].id;
-        let empty = Value::Struct(Arc::new(StructValue {
-            type_id: ticket_id,
-            type_name: "Ticket".into(),
-            fields: std::collections::HashMap::new(),
-        }));
+        let empty = Value::Struct(StructValue::new(
+            ticket_id,
+            "Ticket",
+            std::collections::HashMap::new(),
+        ));
         let rt = empty_runtime();
         let err = run_agent(&ir, "grab", vec![empty], &rt).await.unwrap_err();
         assert!(matches!(err.kind, InterpErrorKind::UnknownField { .. }));
@@ -454,8 +454,8 @@ agent run(id: String, amount: Float) -> Receipt:
         .expect("run");
         match v {
             Value::Struct(s) => {
-                assert_eq!(s.type_name, "Receipt");
-                assert_eq!(s.fields.get("id").unwrap(), &Value::String(Arc::from("ord_1")));
+                assert_eq!(s.type_name(), "Receipt");
+                assert_eq!(s.get_field("id").unwrap(), Value::String(Arc::from("ord_1")));
             }
             other => panic!("expected Receipt struct, got {other:?}"),
         }
@@ -521,8 +521,8 @@ agent run(reason: String) -> Decision:
             .expect("run");
         match v {
             Value::Struct(s) => {
-                assert_eq!(s.type_name, "Decision");
-                assert_eq!(s.fields.get("should_refund").unwrap(), &Value::Bool(true));
+                assert_eq!(s.type_name(), "Decision");
+                assert_eq!(s.get_field("should_refund").unwrap(), Value::Bool(true));
             }
             other => panic!("expected Decision struct, got {other:?}"),
         }

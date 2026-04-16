@@ -2871,6 +2871,49 @@ Finished `test` profile ... target(s) in ...
 
 - Stronger native source-level parity around compiler-emitted drop points for weak targets. The direct runtime layer is correct; the remaining mismatch is in codegen / ownership interaction, not in `weak.c`.
 
+## Day 30 [B] — 2026-04-16 — Slice 17h.1: VM-owned heap handles before Bacon-Rajan
+
+Pre-phase design answers locked before code:
+
+1. The interpreter could not implement Bacon-Rajan honestly on top of raw `Arc` semantics alone. `Arc::drop` only exposes final destruction, not decrement-to-nonzero, so it could not buffer possible cycle roots or maintain collector metadata at the Corvid semantic layer.
+2. Native and VM heaps stay independent. Native values still live in `corvid_c_runtime`; VM values still live in Rust process memory. Parity is enforced by tests, not by sharing an allocator.
+3. Trigger determinism for 17h proper will ride on buffered-root count, not wall-clock or incidental runtime counters.
+
+### What shipped
+
+This commit is the plumbing split, not Bacon-Rajan yet:
+
+1. `crates/corvid-vm/src/value.rs` now gives cycle-capable interpreter values (`Struct`, `List`, `ResultOk`, `ResultErr`, `OptionSome`) VM-owned retain/release semantics via explicit heap metadata instead of leaning purely on `Arc` semantics.
+2. `crates/corvid-vm/src/interp.rs`, `conv.rs`, and `repl_display.rs` were moved to the new handle/accessor model without changing language behaviour.
+3. Downstream VM consumers that read struct fields directly (the driver test and example runners) were updated to the accessor surface so the workspace still compiles cleanly.
+4. Added a refcount-plumbing unit test proving clone/drop accounting on the new struct handle path.
+
+### One important design boundary
+
+- Leaf `String` values remain `Arc<str>` in 17h.1. They are heap values, but not graph nodes that can participate in reference cycles, so moving them did not buy Bacon-Rajan reachability power in this commit.
+- The cycle-capable graph nodes are the part that moved first because they are the load-bearing prerequisite for 17h.2.
+
+### Verification
+
+```text
+cargo test -p corvid-vm
+38 passed
+
+cargo test -p corvid-driver --no-run
+ok
+
+cargo test --workspace --no-run
+Finished `test` profile ... target(s) in ...
+```
+
+### What remains for 17h.2
+
+- color states on VM-owned graph nodes
+- possible-cycle roots buffer
+- Bacon-Rajan mark-gray / scan / collect-white passes
+- explicit `collect_cycles()` entry
+- cross-tier native-vs-interpreter parity tests for collected cycles
+
 
 
 

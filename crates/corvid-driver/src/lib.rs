@@ -992,8 +992,8 @@ agent refund_bot(ticket: Ticket) -> Decision:
 
         match v {
             Value::Struct(s) => {
-                assert_eq!(s.type_name, "Decision");
-                assert_eq!(s.fields.get("should_refund").unwrap(), &Value::Bool(true));
+                assert_eq!(s.type_name(), "Decision");
+                assert_eq!(s.get_field("should_refund").unwrap(), Value::Bool(true));
             }
             other => panic!("expected Decision struct, got {other:?}"),
         }
