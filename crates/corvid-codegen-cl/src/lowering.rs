@@ -1670,12 +1670,39 @@ pub fn lower_file(
         func_ids_by_def.insert(agent.id, id);
     }
 
+    // Phase 17b-1b.6c — optional shadow-path pass that inserts
+    // `IrStmt::Dup` / `IrStmt::Drop` at the positions the dataflow
+    // analysis in .6a computes.
+    //
+    // Gated by `CORVID_DUP_DROP_PASS=1`. Default OFF — behavior
+    // unchanged. When ON, the pass runs and the scattered
+    // `emit_retain` / `emit_release` sites ALSO run, producing
+    // double-counted RC ops. That's deliberate for .6c: we ship the
+    // pipeline integration with observable parity-breaking behavior
+    // visible only under the explicit flag, so the existing test
+    // suite stays green and no fixture is affected by default.
+    //
+    // Slice .6d is where the flag flips to default-ON, the scattered
+    // emit sites are deleted (their job subsumed by the Dup/Drop ops
+    // the pass emits), and the four 17b-1b.2..5 peephole helpers are
+    // removed. .6d also adds the verifier-audit test that runs every
+    // parity fixture under `CORVID_GC_VERIFY=abort` — the final
+    // correctness check on the unified pass.
+    let dup_drop_enabled = std::env::var("CORVID_DUP_DROP_PASS")
+        .map(|v| v == "1" || v == "true")
+        .unwrap_or(false);
+
     // Pass 2: define each agent's body.
     for agent in &ir.agents {
         let &func_id = func_ids_by_def
             .get(&agent.id)
             .expect("declared in pass 1");
-        define_agent(module, agent, func_id, &func_ids_by_def, &runtime)?;
+        if dup_drop_enabled {
+            let transformed = crate::dup_drop::insert_dup_drop(agent);
+            define_agent(module, &transformed, func_id, &func_ids_by_def, &runtime)?;
+        } else {
+            define_agent(module, agent, func_id, &func_ids_by_def, &runtime)?;
+        }
     }
 
     // Pass 3: emit the `corvid_entry` trampoline if an entry agent was
