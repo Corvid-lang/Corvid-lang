@@ -46,11 +46,11 @@
 //! drops for unused parameters of the function (entry block).
 
 use corvid_ast::Span;
-use corvid_ir::{IrAgent, IrBlock, IrStmt};
+use corvid_ir::{IrAgent, IrBlock, IrExpr, IrExprKind, IrStmt};
 use corvid_resolve::LocalId;
 use std::collections::BTreeMap;
 
-use crate::dataflow::{analyze_agent, IrNavStep, IrPath, OwnershipPlan, ProgramPoint};
+use crate::dataflow::{analyze_agent, IrNavStep, IrPath, OwnershipPlan};
 
 /// Public entry: clone `agent` and return a new agent with
 /// `IrStmt::Dup` and `IrStmt::Drop` inserted per the .6a plan.
@@ -76,11 +76,24 @@ pub fn insert_dup_drop(agent: &IrAgent) -> IrAgent {
 pub fn apply_plan(agent: &IrAgent, plan: &OwnershipPlan) -> IrAgent {
     let mut out = agent.clone();
 
+    // Fresh-LocalId allocator for synthetic-Let hoisting. Scan the
+    // agent to find the max LocalId in use across params + all Let /
+    // For / Dup / Drop statements, then allocate fresh IDs starting
+    // from max+1. Bumping guarantees the hoisted `tmp` never aliases
+    // any user-visible local.
+    let mut next_local = next_local_id(agent);
+
     // Group insertions by IR-tree position. Each map is
     //   IrPath (without the trailing Stmt step) → Vec<(stmt_idx, IrStmt)>
     // sorted by stmt_idx DESCENDING so we insert from the back of the
     // block forward, keeping earlier indices stable.
     let mut group: BTreeMap<IrPath, Vec<(usize, IrStmt, InsertionSide)>> = BTreeMap::new();
+    // Hoist instructions: for each Return whose expr reads any of
+    // the drop-after locals, replace the expr with a bare Local ref
+    // to a fresh tmp and insert a preceding Let + Drop sequence.
+    // Separated from `group` because the hoist requires mutating the
+    // Return statement itself, not just inserting siblings.
+    let mut hoists: Vec<HoistPlan> = Vec::new();
 
     for (pp, locals) in &plan.dups {
         if let Some(path) = plan.ir_paths.get(pp) {
@@ -97,25 +110,55 @@ pub fn apply_plan(agent: &IrAgent, plan: &OwnershipPlan) -> IrAgent {
     for (pp, locals) in &plan.drops_after {
         if let Some(path) = plan.ir_paths.get(pp) {
             let (parent, idx) = split_path(path);
-            // A drop_after on a Return statement is unreachable at
-            // runtime — the return exits before the drop can fire.
-            // Promote to Before so it runs just before the exit.
-            // Check the target block's statement at this index.
+            // A drop_after on a Return statement is unreachable if we
+            // place it after the Return (never executes) and UAF-
+            // hazardous if we place it before (return's expr still
+            // reads the local). Two cases:
+            //
+            //   - If the Return's expr does NOT reference any of the
+            //     locals being dropped, drop-before-Return is safe.
+            //     Promote to Before.
+            //   - If it DOES reference any, hoist the expr into a
+            //     synthetic `Let tmp = <expr>; Drop <locals>; Return tmp`.
+            //     The Drops then land after the expr has evaluated
+            //     but before the return instruction fires.
             let target_block = find_block(&agent.body, &parent);
-            let is_return = target_block
+            let return_expr = target_block
                 .and_then(|b| b.stmts.get(idx))
-                .map(|s| matches!(s, IrStmt::Return { .. }))
-                .unwrap_or(false);
-            let side = if is_return {
-                InsertionSide::Before
-            } else {
-                InsertionSide::After
-            };
+                .and_then(|s| match s {
+                    IrStmt::Return { value: Some(e), .. } => Some(e.clone()),
+                    _ => None,
+                });
+
+            if let Some(expr) = return_expr {
+                let needs_hoist = locals.iter().any(|&l| expr_reads_local(&expr, l));
+                if needs_hoist {
+                    let tmp_id = LocalId(next_local);
+                    next_local += 1;
+                    hoists.push(HoistPlan {
+                        parent: parent.clone(),
+                        return_idx: idx,
+                        tmp_id,
+                        drop_locals: locals.iter().copied().collect(),
+                    });
+                    continue;
+                }
+                // Non-reading Return: safe to drop-before.
+                for &l in locals {
+                    group.entry(parent.clone()).or_default().push((
+                        idx,
+                        IrStmt::Drop { local_id: l, span: zero_span() },
+                        InsertionSide::Before,
+                    ));
+                }
+                continue;
+            }
+            // Not a Return with a value-expr: normal drop-after.
             for &l in locals {
                 group.entry(parent.clone()).or_default().push((
                     idx,
                     IrStmt::Drop { local_id: l, span: zero_span() },
-                    side,
+                    InsertionSide::After,
                 ));
             }
         }
@@ -156,6 +199,17 @@ pub fn apply_plan(agent: &IrAgent, plan: &OwnershipPlan) -> IrAgent {
         }
     }
 
+    // Apply hoists AFTER the plain insertions. Hoists must run last
+    // because they depend on the Return statement's index being
+    // stable; if another drop_after widened the same block between
+    // group-sort and hoist-apply, the Return's index would shift.
+    // We sort hoists largest-idx-first so earlier hoists don't
+    // invalidate later ones in the same block.
+    hoists.sort_by(|a, b| b.return_idx.cmp(&a.return_idx));
+    for hoist in hoists {
+        apply_hoist(&mut out.body, &hoist);
+    }
+
     // Block-exit drops: only handle the entry block (block 0 in the
     // CFG). Append `IrStmt::Drop` to the end of the agent body, but
     // place it BEFORE any trailing Return so the drop actually
@@ -180,6 +234,196 @@ pub fn apply_plan(agent: &IrAgent, plan: &OwnershipPlan) -> IrAgent {
 enum InsertionSide {
     Before,
     After,
+}
+
+/// Recipe for hoisting a Return's expression into a synthetic Let
+/// so drops can fire between expr eval and the actual return.
+///
+/// Before:                     After:
+///   Return { expr: E }          Let tmp = E
+///                               Drop drop_locals...
+///                               Return { expr: Local(tmp) }
+struct HoistPlan {
+    /// Parent path leading to the block containing the Return.
+    parent: IrPath,
+    /// Index of the Return statement within that block.
+    return_idx: usize,
+    /// Fresh LocalId allocated for the synthetic tmp binding.
+    tmp_id: LocalId,
+    /// Locals to Drop between the Let and the Return.
+    drop_locals: Vec<LocalId>,
+}
+
+/// Scan the agent's body to find the highest LocalId already in use,
+/// plus parameter IDs. Returns `max + 1` as the starting point for
+/// synthetic-Let fresh allocations.
+///
+/// Must cover every IR shape that can bind or reference a LocalId:
+/// params, Let.local_id, For.var_local, Dup.local_id, Drop.local_id,
+/// and any IrExprKind::Local's local_id inside nested expressions.
+fn next_local_id(agent: &IrAgent) -> u32 {
+    let mut max_id: u32 = 0;
+    for p in &agent.params {
+        if p.local_id.0 > max_id { max_id = p.local_id.0; }
+    }
+    scan_block(&agent.body, &mut max_id);
+    max_id + 1
+}
+
+fn scan_block(block: &IrBlock, max_id: &mut u32) {
+    for stmt in &block.stmts {
+        scan_stmt(stmt, max_id);
+    }
+}
+
+fn scan_stmt(stmt: &IrStmt, max_id: &mut u32) {
+    match stmt {
+        IrStmt::Let { local_id, value, .. } => {
+            if local_id.0 > *max_id { *max_id = local_id.0; }
+            scan_expr(value, max_id);
+        }
+        IrStmt::Return { value: Some(e), .. } => scan_expr(e, max_id),
+        IrStmt::Return { value: None, .. } => {}
+        IrStmt::If { cond, then_block, else_block, .. } => {
+            scan_expr(cond, max_id);
+            scan_block(then_block, max_id);
+            if let Some(eb) = else_block { scan_block(eb, max_id); }
+        }
+        IrStmt::For { var_local, iter, body, .. } => {
+            if var_local.0 > *max_id { *max_id = var_local.0; }
+            scan_expr(iter, max_id);
+            scan_block(body, max_id);
+        }
+        IrStmt::Expr { expr, .. } => scan_expr(expr, max_id),
+        IrStmt::Approve { args, .. } => {
+            for a in args { scan_expr(a, max_id); }
+        }
+        IrStmt::Dup { local_id, .. } | IrStmt::Drop { local_id, .. } => {
+            if local_id.0 > *max_id { *max_id = local_id.0; }
+        }
+        IrStmt::Break { .. } | IrStmt::Continue { .. } | IrStmt::Pass { .. } => {}
+    }
+}
+
+fn scan_expr(expr: &IrExpr, max_id: &mut u32) {
+    match &expr.kind {
+        IrExprKind::Local { local_id, .. } => {
+            if local_id.0 > *max_id { *max_id = local_id.0; }
+        }
+        IrExprKind::Literal(_) | IrExprKind::Decl { .. } | IrExprKind::OptionNone => {}
+        IrExprKind::FieldAccess { target, .. } => scan_expr(target, max_id),
+        IrExprKind::Index { target, index } => {
+            scan_expr(target, max_id);
+            scan_expr(index, max_id);
+        }
+        IrExprKind::BinOp { left, right, .. } => {
+            scan_expr(left, max_id);
+            scan_expr(right, max_id);
+        }
+        IrExprKind::UnOp { operand, .. } => scan_expr(operand, max_id),
+        IrExprKind::Call { args, .. } => {
+            for a in args { scan_expr(a, max_id); }
+        }
+        IrExprKind::List { items } => {
+            for item in items { scan_expr(item, max_id); }
+        }
+        IrExprKind::WeakNew { strong } => scan_expr(strong, max_id),
+        IrExprKind::WeakUpgrade { weak } => scan_expr(weak, max_id),
+        IrExprKind::ResultOk { inner }
+        | IrExprKind::ResultErr { inner }
+        | IrExprKind::OptionSome { inner }
+        | IrExprKind::TryPropagate { inner } => scan_expr(inner, max_id),
+        IrExprKind::TryRetry { body, .. } => scan_expr(body, max_id),
+    }
+}
+
+/// Walk `expr` and return true if it contains any read of `target`.
+/// Used to decide whether a Return's expr forces a synthetic-Let hoist.
+fn expr_reads_local(expr: &IrExpr, target: LocalId) -> bool {
+    match &expr.kind {
+        IrExprKind::Local { local_id, .. } => *local_id == target,
+        IrExprKind::Literal(_) | IrExprKind::Decl { .. } | IrExprKind::OptionNone => false,
+        IrExprKind::FieldAccess { target: t, .. } => expr_reads_local(t, target),
+        IrExprKind::Index { target: t, index } => {
+            expr_reads_local(t, target) || expr_reads_local(index, target)
+        }
+        IrExprKind::BinOp { left, right, .. } => {
+            expr_reads_local(left, target) || expr_reads_local(right, target)
+        }
+        IrExprKind::UnOp { operand, .. } => expr_reads_local(operand, target),
+        IrExprKind::Call { args, .. } => args.iter().any(|a| expr_reads_local(a, target)),
+        IrExprKind::List { items } => items.iter().any(|it| expr_reads_local(it, target)),
+        IrExprKind::WeakNew { strong } => expr_reads_local(strong, target),
+        IrExprKind::WeakUpgrade { weak } => expr_reads_local(weak, target),
+        IrExprKind::ResultOk { inner }
+        | IrExprKind::ResultErr { inner }
+        | IrExprKind::OptionSome { inner }
+        | IrExprKind::TryPropagate { inner } => expr_reads_local(inner, target),
+        IrExprKind::TryRetry { body, .. } => expr_reads_local(body, target),
+    }
+}
+
+/// Execute one HoistPlan against the IR tree. Replaces `Return { E }`
+/// with `[Let tmp = E, Drop locals..., Return { Local(tmp) }]`.
+fn apply_hoist(root: &mut IrBlock, hoist: &HoistPlan) {
+    let block = navigate_mut(root, &hoist.parent);
+    let ret_idx = hoist.return_idx;
+    // Bound-check: if the block was rewritten between plan construction
+    // and hoist application, bail out rather than panic.
+    if ret_idx >= block.stmts.len() {
+        return;
+    }
+    let Some(orig_expr) = (match &block.stmts[ret_idx] {
+        IrStmt::Return { value: Some(e), .. } => Some(e.clone()),
+        _ => None,
+    }) else {
+        return;
+    };
+    let return_span = match &block.stmts[ret_idx] {
+        IrStmt::Return { span, .. } => *span,
+        _ => zero_span(),
+    };
+    let expr_ty = orig_expr.ty.clone();
+    let expr_span = orig_expr.span;
+
+    // Build the replacement sequence.
+    //   Let tmp = <orig>
+    //   Drop d0; Drop d1; ...
+    //   Return Local(tmp)
+    let let_stmt = IrStmt::Let {
+        local_id: hoist.tmp_id,
+        name: "__corvid_ret_tmp".to_string(),
+        ty: expr_ty.clone(),
+        value: orig_expr,
+        span: return_span,
+    };
+    let mut drop_stmts: Vec<IrStmt> = hoist
+        .drop_locals
+        .iter()
+        .map(|&l| IrStmt::Drop { local_id: l, span: zero_span() })
+        .collect();
+    let new_return = IrStmt::Return {
+        value: Some(IrExpr {
+            kind: IrExprKind::Local {
+                local_id: hoist.tmp_id,
+                name: "__corvid_ret_tmp".to_string(),
+            },
+            ty: expr_ty,
+            span: expr_span,
+        }),
+        span: return_span,
+    };
+
+    // Splice: replace block.stmts[ret_idx] with [let, drops..., return].
+    block.stmts.remove(ret_idx);
+    let mut insert_at = ret_idx;
+    block.stmts.insert(insert_at, let_stmt);
+    insert_at += 1;
+    for drop_stmt in drop_stmts.drain(..) {
+        block.stmts.insert(insert_at, drop_stmt);
+        insert_at += 1;
+    }
+    block.stmts.insert(insert_at, new_return);
 }
 
 /// Split a navigation path into (parent_path, final_stmt_idx).

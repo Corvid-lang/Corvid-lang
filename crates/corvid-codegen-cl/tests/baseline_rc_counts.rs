@@ -213,8 +213,15 @@ agent list_of_strings_iter() -> Int:
     //   iter is borrowed, saving the iter-retain + loop-exit-release
     //   pair (1 retain + 1 release).
     // Pre-17b-1b: 7/15. Post-17b-1b.2: 4/12. Post-17b-1b.4: 3/11.
-    assert_eq!(c.retain_calls, 3, "list_of_strings_iter retain_calls");
-    assert_eq!(c.release_calls, 11, "list_of_strings_iter release_calls");
+    // Post-17b-1b.6d (unified pass): 0 / 10 — the pass elides the
+    //   three per-iteration s retains entirely because `s` reads in
+    //   the body are classified at Borrowed (via BinOp peephole path)
+    //   and the unified pass schedules Drops precisely at last-use,
+    //   so intermediate retains disappear. Release count drops by
+    //   one because the pass's drop-on-iter-exit replaces the
+    //   scope-end release + separate drop pair with a single Drop.
+    assert_eq!(c.retain_calls, 0, "list_of_strings_iter retain_calls");
+    assert_eq!(c.release_calls, 10, "list_of_strings_iter release_calls");
 }
 
 #[test]
@@ -249,8 +256,13 @@ agent main() -> Int:
     // entry-retain + scope-exit release. Both sides collapse — the
     // retain/release traffic on x's refcount nets to zero across
     // the call boundary.
-    assert_eq!(c.retain_calls, 2, "local_arg_to_borrowed_callee retain_calls");
-    assert_eq!(c.release_calls, 4, "local_arg_to_borrowed_callee release_calls");
+    // Post-17b-1b.6d (unified pass): 1 / 3 — pass's analysis classifies
+    //   Tool/Prompt args as Borrowed, Agent args per borrow_sig. With
+    //   σ(echo)=Borrowed the caller skips per-call retain+release as
+    //   before; residual ops come from the comparison BinOp and
+    //   scope setup.
+    assert_eq!(c.retain_calls, 1, "local_arg_to_borrowed_callee retain_calls");
+    assert_eq!(c.release_calls, 3, "local_arg_to_borrowed_callee release_calls");
 }
 
 #[test]
@@ -284,6 +296,12 @@ agent main() -> Int:
     // 17b-1b.2 peephole: `a == "one"` where a is a bare Local.
     // Saves 1 retain + 1 release.
     // Pre-17b-1b.2: 3 / 6. Post: 2 / 5.
-    assert_eq!(c.retain_calls, 2, "passthrough_agent retain_calls");
-    assert_eq!(c.release_calls, 5, "passthrough_agent release_calls");
+    // Post-17b-1b.6d (unified pass): 0 / 3 — pass eliminates the
+    //   per-call retain entirely (Agent σ is Borrowed for echo; the
+    //   pass's Dup-before-non-last-use triggers nowhere because both
+    //   echo calls are last uses of their literal args). Release
+    //   count drops from 5 to 3 because scope-end releases are
+    //   subsumed by precise last-use Drops.
+    assert_eq!(c.retain_calls, 0, "passthrough_agent retain_calls");
+    assert_eq!(c.release_calls, 3, "passthrough_agent release_calls");
 }

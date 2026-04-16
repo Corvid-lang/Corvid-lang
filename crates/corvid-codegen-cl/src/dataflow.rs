@@ -348,7 +348,21 @@ impl CfgBuilder {
                     cur = join;
                 }
                 IrStmt::For { var_local, var_name: _, iter, body, .. } => {
-                    let iter_reads = collect_reads(iter, true);
+                    // For-loop iter is BORROWED when it's a bare Local
+                    // (the codegen peephole `lower_container_maybe_borrowed`
+                    // reads the Variable without retaining; the iter's
+                    // +1 stays with the Local, not the loop). Classify
+                    // as Borrowed so the pass schedules a Drop after
+                    // last-use (i.e., after the loop) rather than
+                    // assuming consumption.
+                    //
+                    // For a non-bare iter (list literal, call result),
+                    // codegen's for-loop epilogue releases the temp
+                    // unconditionally — the pass doesn't need to track
+                    // it. Classifying as Borrowed here still yields
+                    // correct behavior because the classification only
+                    // affects Local reads.
+                    let iter_reads = collect_reads(iter, false);
                     self.push_stmt(cur, CfgStmt::LoopHead {
                         var: *var_local,
                         var_ty: iter_element_type(iter),
@@ -465,14 +479,38 @@ fn walk_expr(expr: &IrExpr, consumed: bool, out: &mut Vec<LocalRead>) {
         IrExprKind::UnOp { operand, .. } => {
             walk_expr(operand, true, out);
         }
-        IrExprKind::Call { args, .. } => {
-            // Without per-callee borrow-sig propagation here (handled
-            // by the existing partial 17b-1b.1 pass and the codegen
-            // peepholes), we conservatively classify args as Owned.
-            // .6b will refine this when it consumes the per-callee
-            // borrow_sig from `AgentSummary`.
+        IrExprKind::Call { kind, args, .. } => {
+            // Call-arg ownership semantics depend on the call kind
+            // (Scoped-C fix per 17b-1b.6d-2b):
+            //
+            //   - Tool / Prompt: the FFI bridge on the other side
+            //     borrows refcounted args for the duration of the
+            //     call and does NOT take a +1. Caller retains
+            //     ownership; analysis must treat args as Borrowed so
+            //     the pass schedules a Drop after last-use (not
+            //     before, which would assume consumption).
+            //
+            //   - Agent: depends on the callee's borrow_sig. Without
+            //     a sig in hand here (analyzer doesn't thread it
+            //     through), conservatively treat as Owned — matches
+            //     pre-17b behavior. The codegen peephole at the
+            //     Agent call site consults borrow_sig directly.
+            //
+            //   - StructConstructor: args are consumed (fields own
+            //     the values). Owned.
+            //
+            //   - Unknown: treat conservatively — Borrowed avoids
+            //     scheduling a consumption-style Drop on an arg we
+            //     can't prove is actually consumed.
+            let args_consumed = match kind {
+                corvid_ir::IrCallKind::Tool { .. }
+                | corvid_ir::IrCallKind::Prompt { .. }
+                | corvid_ir::IrCallKind::Unknown => false,
+                corvid_ir::IrCallKind::Agent { .. }
+                | corvid_ir::IrCallKind::StructConstructor { .. } => true,
+            };
             for a in args {
-                walk_expr(a, true, out);
+                walk_expr(a, args_consumed, out);
             }
         }
         IrExprKind::List { items } => {

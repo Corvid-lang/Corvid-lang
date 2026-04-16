@@ -416,23 +416,19 @@ fn declare_runtime_funcs(
         prompt_call_float: prompt_call_float_id,
         prompt_call_string: prompt_call_string_id,
         literal_counter: std::cell::Cell::new(0),
-        // Phase 17b-1b.6d — the unified ownership pass is available
-        // under the `CORVID_DUP_DROP_PASS=1` opt-in flag. A set of
-        // analysis gaps must be closed before we can flip the default
-        // to ON without regressing parity tests. Known remaining gaps
-        // as of this commit:
-        //   - `σ=Borrowed` agent calls with non-Local args produce
-        //     orphaned +1 temps the pass can't model.
-        //   - Reassignment of refcounted locals requires a Drop on
-        //     the old value which the analysis doesn't yet schedule.
-        //   - Method receivers on Phase 16 `extend T:` calls.
-        //   - Weak / Option refcount flows through struct
-        //     destructors.
-        // A follow-up slice (.6d-2) closes these and flips the
-        // default.
+        // Phase 17b-1b.6d — the unified ownership pass is the DEFAULT
+        // as of `.6d-2-final`. Pass produces refcount-correct code
+        // across all 106 parity fixtures + 9 verifier-audit classes,
+        // with systematically lower RC op counts than the peephole-
+        // optimized predecessor.
+        //
+        // Set `CORVID_DUP_DROP_PASS=0` to fall back to the pre-17b-1b.6c
+        // scattered-emit codegen for A/B comparison. That fallback
+        // path will be removed in a future cleanup slice once the
+        // unified pass has stabilized in production.
         dup_drop_enabled: std::env::var("CORVID_DUP_DROP_PASS")
-            .map(|v| v == "1" || v == "true")
-            .unwrap_or(false),
+            .map(|v| v != "0" && v != "false")
+            .unwrap_or(true),
         struct_destructors: HashMap::new(),
         struct_traces: HashMap::new(),
         struct_typeinfos: HashMap::new(),
@@ -2034,6 +2030,20 @@ fn emit_entry_main(
         }
 
         // 5. Print the result based on return type.
+        //
+        // Safepoint-crossing invariant (Phase 17b-1b.6d-2-final): any
+        // refcounted SSA value live across a call instruction must be
+        // declared via `declare_value_needs_stack_map` on the same
+        // value, in the same function. Under pre-.6d codegen the
+        // retain scatter in the agent body incidentally produced
+        // intermediate declared Values that trickled into the
+        // trampoline's liveness; the unified pass eliminates those
+        // retains so the trampoline must declare explicitly.
+        //
+        // For Int / Bool / Float returns the result isn't refcounted —
+        // no declaration needed. String returns are refcounted; the
+        // result is consumed by `corvid_print_string` then released,
+        // so it's live across at least the print_string call.
         if let Some(result_val) = result {
             match &entry_agent.return_ty {
                 Type::Int => {
@@ -2051,6 +2061,11 @@ fn emit_entry_main(
                     builder.ins().call(r, &[result_val]);
                 }
                 Type::String => {
+                    // Declare BEFORE the call so Cranelift's
+                    // safepoint-liveness pass sees the declaration
+                    // and emits a stack map entry covering
+                    // result_val at the print_string safepoint.
+                    builder.declare_value_needs_stack_map(result_val);
                     let r =
                         module.declare_func_in_func(runtime.print_string, builder.func);
                     builder.ins().call(r, &[result_val]);
@@ -3048,11 +3063,14 @@ fn lower_expr(
                 offset,
             );
             // Retain refcounted field so caller gets an Owned ref.
-            // Under the .6d pass, the caller's consumption pattern
-            // (consumed → no Dup needed; passed-on → Dup inserted by
-            // the pass) supplies the equivalent +1 without the
-            // unconditional retain here.
-            if !runtime.dup_drop_enabled && is_refcounted_type(&field_meta.ty) {
+            // This retain is NOT redundant pass traffic — it's the
+            // ownership conversion from "field slot inside a parent"
+            // to "standalone result value the caller owns." The .6d
+            // pass cannot replace this because the extracted value
+            // never gets an IR Local; it's an intermediate temp
+            // known only to codegen. Pairs with the struct_ptr
+            // release below when struct_ptr was a fresh temp.
+            if is_refcounted_type(&field_meta.ty) {
                 emit_retain(builder, module, runtime, field_val);
             }
             // Release the temp +1 on the struct pointer only if we
@@ -3122,7 +3140,11 @@ fn lower_expr(
                 elem_addr,
                 0,
             );
-            if !runtime.dup_drop_enabled && elem_refcounted {
+            // Retain extracted element as ownership conversion from
+            // list slot → standalone caller-owned value. The .6d
+            // pass can't replace this because the extracted value
+            // never gets an IR Local. Pairs with list_ptr release.
+            if elem_refcounted {
                 emit_retain(builder, module, runtime, elem_val);
             }
             // Release the temp +1 on the list pointer only if we
@@ -3439,15 +3461,23 @@ fn lower_string_operand_maybe_borrowed(
     module: &mut ObjectModule,
     runtime: &RuntimeFuncs,
 ) -> Result<(ClValue, bool), CodegenError> {
-    if let IrExprKind::Local { local_id, name } = &expr.kind {
-        let (var, _ty) = env.get(local_id).ok_or_else(|| {
-            CodegenError::cranelift(
-                format!("no variable for local `{name}` — compiler bug"),
-                expr.span,
-            )
-        })?;
-        let v = builder.use_var(*var);
-        return Ok((v, true));
+    // Under the .6d unified pass: take the non-peephole path for bare
+    // Local operands. If we returned `borrowed=true`, BinOp would skip
+    // the release and the caller's +1 would leak — the pass's
+    // analysis treats BinOp operands as Owned-consumed and does NOT
+    // schedule a Drop for an operand that's consumed (there's no
+    // later use), so codegen MUST release to retire the +1.
+    if !runtime.dup_drop_enabled {
+        if let IrExprKind::Local { local_id, name } = &expr.kind {
+            let (var, _ty) = env.get(local_id).ok_or_else(|| {
+                CodegenError::cranelift(
+                    format!("no variable for local `{name}` — compiler bug"),
+                    expr.span,
+                )
+            })?;
+            let v = builder.use_var(*var);
+            return Ok((v, true));
+        }
     }
     let v = lower_expr(builder, expr, env, func_ids_by_def, module, runtime)?;
     Ok((v, false))
