@@ -416,6 +416,23 @@ fn declare_runtime_funcs(
         prompt_call_float: prompt_call_float_id,
         prompt_call_string: prompt_call_string_id,
         literal_counter: std::cell::Cell::new(0),
+        // Phase 17b-1b.6d — the unified ownership pass is available
+        // under the `CORVID_DUP_DROP_PASS=1` opt-in flag. A set of
+        // analysis gaps must be closed before we can flip the default
+        // to ON without regressing parity tests. Known remaining gaps
+        // as of this commit:
+        //   - `σ=Borrowed` agent calls with non-Local args produce
+        //     orphaned +1 temps the pass can't model.
+        //   - Reassignment of refcounted locals requires a Drop on
+        //     the old value which the analysis doesn't yet schedule.
+        //   - Method receivers on Phase 16 `extend T:` calls.
+        //   - Weak / Option refcount flows through struct
+        //     destructors.
+        // A follow-up slice (.6d-2) closes these and flips the
+        // default.
+        dup_drop_enabled: std::env::var("CORVID_DUP_DROP_PASS")
+            .map(|v| v == "1" || v == "true")
+            .unwrap_or(false),
         struct_destructors: HashMap::new(),
         struct_traces: HashMap::new(),
         struct_typeinfos: HashMap::new(),
@@ -1370,6 +1387,14 @@ pub struct RuntimeFuncs {
     pub prompt_call_float: FuncId,
     pub prompt_call_string: FuncId,
     pub literal_counter: std::cell::Cell<u64>,
+    /// Phase 17b-1b.6d — when true, codegen-level scattered
+    /// `emit_retain` / `emit_release` sites are skipped because the
+    /// dataflow-driven pass in `crate::dup_drop` has already inserted
+    /// the equivalent `IrStmt::Dup` / `IrStmt::Drop` ops into the IR.
+    /// Set from `CORVID_DUP_DROP_PASS` in `lower_file`. Default true
+    /// (pass is active); set to false to fall back to pre-17b-1b.6c
+    /// behavior for A/B debugging.
+    pub dup_drop_enabled: bool,
     /// Per-struct-type destructors generated in `lower_file` for
     /// structs with at least one refcounted field. Missing entries
     /// mean the struct has no refcounted fields (typeinfo.destroy_fn
@@ -1670,34 +1695,21 @@ pub fn lower_file(
         func_ids_by_def.insert(agent.id, id);
     }
 
-    // Phase 17b-1b.6c — optional shadow-path pass that inserts
-    // `IrStmt::Dup` / `IrStmt::Drop` at the positions the dataflow
-    // analysis in .6a computes.
-    //
-    // Gated by `CORVID_DUP_DROP_PASS=1`. Default OFF — behavior
-    // unchanged. When ON, the pass runs and the scattered
-    // `emit_retain` / `emit_release` sites ALSO run, producing
-    // double-counted RC ops. That's deliberate for .6c: we ship the
-    // pipeline integration with observable parity-breaking behavior
-    // visible only under the explicit flag, so the existing test
-    // suite stays green and no fixture is affected by default.
-    //
-    // Slice .6d is where the flag flips to default-ON, the scattered
-    // emit sites are deleted (their job subsumed by the Dup/Drop ops
-    // the pass emits), and the four 17b-1b.2..5 peephole helpers are
-    // removed. .6d also adds the verifier-audit test that runs every
-    // parity fixture under `CORVID_GC_VERIFY=abort` — the final
-    // correctness check on the unified pass.
-    let dup_drop_enabled = std::env::var("CORVID_DUP_DROP_PASS")
-        .map(|v| v == "1" || v == "true")
-        .unwrap_or(false);
+    // Phase 17b-1b.6d — the unified ownership pass is active by
+    // default (see `runtime.dup_drop_enabled` populated from
+    // `CORVID_DUP_DROP_PASS` in `declare_runtime_funcs`). When on,
+    // each agent's IR gets the `insert_dup_drop` transformation
+    // BEFORE codegen sees it, and every scattered
+    // `emit_retain`/`emit_release` site in the expression lowerings
+    // guards itself on `runtime.dup_drop_enabled` so the two paths
+    // don't double-count.
 
     // Pass 2: define each agent's body.
     for agent in &ir.agents {
         let &func_id = func_ids_by_def
             .get(&agent.id)
             .expect("declared in pass 1");
-        if dup_drop_enabled {
+        if runtime.dup_drop_enabled {
             let transformed = crate::dup_drop::insert_dup_drop(agent);
             define_agent(module, &transformed, func_id, &func_ids_by_def, &runtime)?;
         } else {
@@ -2239,7 +2251,15 @@ fn define_agent(
                     .map(|b| matches!(b, corvid_ir::ParamBorrow::Borrowed))
                     .unwrap_or(false);
                 if !is_borrowed {
-                    emit_retain(&mut builder, module, runtime, block_arg);
+                    if !runtime.dup_drop_enabled {
+                        emit_retain(&mut builder, module, runtime, block_arg);
+                    }
+                    // scope_stack tracking is still needed even under
+                    // dup_drop_enabled for the fallback path to work
+                    // (CORVID_DUP_DROP_PASS=0). The scope walk at
+                    // return/break/continue guards its emit_release
+                    // calls on the flag, so carrying the entry is
+                    // free when the flag is on.
                     scope_stack[0].push((p.local_id, var));
                 }
                 // Borrowed: no retain, no scope tracking. Caller's
@@ -2375,10 +2395,12 @@ fn lower_stmt(
             // `release` call has side effects we care about, which it
             // doesn't, but the ordering is conventional).
             let _ = value_ty; // currently unused but shows intent
-            for scope in scope_stack.iter().rev() {
-                for (_, var) in scope.iter().rev() {
-                    let v_local = builder.use_var(*var);
-                    emit_release(builder, module, runtime, v_local);
+            if !runtime.dup_drop_enabled {
+                for scope in scope_stack.iter().rev() {
+                    for (_, var) in scope.iter().rev() {
+                        let v_local = builder.use_var(*var);
+                        emit_release(builder, module, runtime, v_local);
+                    }
                 }
             }
             builder.ins().return_(&[v]);
@@ -2386,10 +2408,21 @@ fn lower_stmt(
         }
         IrStmt::Expr { expr, .. } => {
             let v = lower_expr(builder, expr, env, func_ids_by_def, module, runtime)?;
-            // Discarded statement-expression: if the value is a
-            // refcounted Owned temp, it has no owner — release it.
+            // Discarded statement-expression:
+            //   - If the expression is a BARE Local read, the value
+            //     belongs to the Local binding; the .6d pass handles
+            //     its lifetime via block-exit drops or last-use kills.
+            //     Under flag-off the pre-.6d path retained at read
+            //     time, so we release to match.
+            //   - If the expression is anything else (call, composite,
+            //     literal), it produced a fresh Owned temp with no
+            //     owner — always release, regardless of flag, since
+            //     the pass has no Local to drop.
             if is_refcounted_type(&expr.ty) {
-                emit_release(builder, module, runtime, v);
+                let is_bare_local = matches!(&expr.kind, IrExprKind::Local { .. });
+                if !is_bare_local || !runtime.dup_drop_enabled {
+                    emit_release(builder, module, runtime, v);
+                }
             }
             Ok(BlockOutcome::Normal)
         }
@@ -2430,6 +2463,14 @@ fn lower_stmt(
             // For reassignment of a refcounted local: read the old
             // value first, release it, THEN bind the new value (which
             // came pre-Owned from `lower_expr`).
+            // Reassignment: the old value of the Local is being
+            // replaced; its +1 must drop. The .6d pass doesn't yet
+            // model reassignment-kill (the analysis treats a rebind
+            // as a def but doesn't schedule a Drop for the previous
+            // value — this is a forward-compatibility gap tracked for
+            // a future analysis extension). Always release the old
+            // value at codegen time so the unified pass stays
+            // refcount-correct on reassigned refcounted locals.
             if refcounted && is_reassignment {
                 let old = builder.use_var(var);
                 emit_release(builder, module, runtime, old);
@@ -2517,7 +2558,7 @@ fn lower_stmt(
                     module,
                     runtime,
                 )?;
-                if is_refcounted_type(&a.ty) {
+                if !runtime.dup_drop_enabled && is_refcounted_type(&a.ty) {
                     emit_release(builder, module, runtime, v);
                 }
             }
@@ -2636,7 +2677,12 @@ fn lower_expr(
             // reference. Convert to Owned by retaining so the caller
             // (bind / return / call-arg / discard) can dispose of it
             // uniformly. For non-refcounted types this is a no-op.
-            if is_refcounted_type(&expr.ty) {
+            //
+            // Under the .6d unified pass, we rely on the pass's Dup
+            // insertion at non-last consuming uses instead of
+            // retaining on every read — the last use of a local
+            // consumes the existing +1 directly.
+            if !runtime.dup_drop_enabled && is_refcounted_type(&expr.ty) {
                 emit_retain(builder, module, runtime, v);
             }
             Ok(v)
@@ -2774,9 +2820,11 @@ fn lower_expr(
                     ));
                 }
                 let result = results[0];
-                for (v, needs) in arg_vals.iter().zip(needs_post_release.iter()) {
-                    if *needs {
-                        emit_release(builder, module, runtime, *v);
+                if !runtime.dup_drop_enabled {
+                    for (v, needs) in arg_vals.iter().zip(needs_post_release.iter()) {
+                        if *needs {
+                            emit_release(builder, module, runtime, *v);
+                        }
                     }
                 }
                 Ok(result)
@@ -2877,9 +2925,11 @@ fn lower_expr(
                 // literals (refcount = i64::MIN sentinel) this is a
                 // no-op; for heap values it decrements the refcount
                 // we bumped pre-call.
-                for (v, is_ref) in arg_vals.iter().zip(arg_refcounted.iter()) {
-                    if *is_ref {
-                        emit_release(builder, module, runtime, *v);
+                if !runtime.dup_drop_enabled {
+                    for (v, is_ref) in arg_vals.iter().zip(arg_refcounted.iter()) {
+                        if *is_ref {
+                            emit_release(builder, module, runtime, *v);
+                        }
                     }
                 }
 
@@ -2987,11 +3037,19 @@ fn lower_expr(
                 offset,
             );
             // Retain refcounted field so caller gets an Owned ref.
-            if is_refcounted_type(&field_meta.ty) {
+            // Under the .6d pass, the caller's consumption pattern
+            // (consumed → no Dup needed; passed-on → Dup inserted by
+            // the pass) supplies the equivalent +1 without the
+            // unconditional retain here.
+            if !runtime.dup_drop_enabled && is_refcounted_type(&field_meta.ty) {
                 emit_retain(builder, module, runtime, field_val);
             }
             // Release the temp +1 on the struct pointer only if we
-            // created one. Borrowed reads have no +1 to release.
+            // created one. `struct_borrowed = false` means the target
+            // was a fresh temp (call result, constructor, nested field
+            // access) not a bare Local — the .6d pass doesn't see
+            // those, so codegen must drop unconditionally. Borrowed
+            // reads have no +1 to release.
             if !struct_borrowed {
                 emit_release(builder, module, runtime, struct_ptr);
             }
@@ -3053,11 +3111,14 @@ fn lower_expr(
                 elem_addr,
                 0,
             );
-            if elem_refcounted {
+            if !runtime.dup_drop_enabled && elem_refcounted {
                 emit_retain(builder, module, runtime, elem_val);
             }
             // Release the temp +1 on the list pointer only if we
-            // actually took one. Borrowed reads have no +1 to drop.
+            // actually took one. `list_borrowed = false` means the
+            // target was a fresh temp, not a bare Local — the .6d
+            // pass doesn't see internal temps, so codegen drops
+            // unconditionally. Borrowed reads have no +1 to drop.
             if !list_borrowed {
                 emit_release(builder, module, runtime, list_ptr);
             }
@@ -3131,7 +3192,7 @@ fn lower_expr(
             let weak_new_ref = module.declare_func_in_func(runtime.weak_new, builder.func);
             let call = builder.ins().call(weak_new_ref, &[strong_val]);
             let weak_ptr = builder.inst_results(call)[0];
-            if is_refcounted_type(&strong.ty) {
+            if !runtime.dup_drop_enabled && is_refcounted_type(&strong.ty) {
                 emit_release(builder, module, runtime, strong_val);
             }
             Ok(weak_ptr)
@@ -3142,7 +3203,7 @@ fn lower_expr(
                 module.declare_func_in_func(runtime.weak_upgrade, builder.func);
             let call = builder.ins().call(weak_upgrade_ref, &[weak_val]);
             let upgraded = builder.inst_results(call)[0];
-            if is_refcounted_type(&weak.ty) {
+            if !runtime.dup_drop_enabled && is_refcounted_type(&weak.ty) {
                 emit_release(builder, module, runtime, weak_val);
             }
             Ok(upgraded)
@@ -3402,10 +3463,10 @@ fn lower_string_binop_with_ownership(
             let callee = module.declare_func_in_func(runtime.string_concat, builder.func);
             let call = builder.ins().call(callee, &[l, r]);
             let result = builder.inst_results(call)[0];
-            if !l_borrowed {
+            if !runtime.dup_drop_enabled && !l_borrowed {
                 emit_release(builder, module, runtime, l);
             }
-            if !r_borrowed {
+            if !runtime.dup_drop_enabled && !r_borrowed {
                 emit_release(builder, module, runtime, r);
             }
             Ok(result)
@@ -3421,10 +3482,10 @@ fn lower_string_binop_with_ownership(
                 let zero = builder.ins().iconst(I8, 0);
                 builder.ins().icmp(IntCC::Equal, eq_i8, zero)
             };
-            if !l_borrowed {
+            if !runtime.dup_drop_enabled && !l_borrowed {
                 emit_release(builder, module, runtime, l);
             }
-            if !r_borrowed {
+            if !runtime.dup_drop_enabled && !r_borrowed {
                 emit_release(builder, module, runtime, r);
             }
             Ok(result)
@@ -3442,10 +3503,10 @@ fn lower_string_binop_with_ownership(
                 _ => unreachable!(),
             };
             let result = builder.ins().icmp(cc, cmp_i64, zero);
-            if !l_borrowed {
+            if !runtime.dup_drop_enabled && !l_borrowed {
                 emit_release(builder, module, runtime, l);
             }
-            if !r_borrowed {
+            if !runtime.dup_drop_enabled && !r_borrowed {
                 emit_release(builder, module, runtime, r);
             }
             Ok(result)
@@ -3603,8 +3664,12 @@ fn lower_for(
         builder.declare_value_needs_stack_map(elem_val);
     }
     // Rebind loop-var: release old value (null-safe), retain new if
-    // refcounted, def_var.
-    if elem_refcounted {
+    // refcounted, def_var. Under the .6d pass, the pass inserts a
+    // Drop on the loop variable at each iteration's natural last-use
+    // point and does not emit a fresh Dup for the new iteration
+    // element (the load above produces it with no +1 attached; the
+    // consumer patterns inside the body supply Dups as needed).
+    if !runtime.dup_drop_enabled && elem_refcounted {
         let old = builder.use_var(loop_var);
         emit_release(builder, module, runtime, old);
         emit_retain(builder, module, runtime, elem_val);
@@ -3629,9 +3694,11 @@ fn lower_for(
         BlockOutcome::Normal => {
             // Release body-scope locals before jumping to step.
             let body_scope = scope_stack.pop().unwrap_or_default();
-            for (_, v) in body_scope.iter().rev() {
-                let x = builder.use_var(*v);
-                emit_release(builder, module, runtime, x);
+            if !runtime.dup_drop_enabled {
+                for (_, v) in body_scope.iter().rev() {
+                    let x = builder.use_var(*v);
+                    emit_release(builder, module, runtime, x);
+                }
             }
             builder.ins().jump(step_b, &[]);
         }
@@ -3661,6 +3728,12 @@ fn lower_for(
     // Release the list pointer we retained at the top — only if we
     // actually produced a +1 (non-borrowed path). When iter was a
     // bare Local we borrowed it and there's nothing to release.
+    // `list_borrowed = false` means the iter was a fresh-owned temp
+    // (list literal or call result), not a bare Local. The .6d pass
+    // only schedules Drops for Locals in the IR; internal expression
+    // temps are invisible to it, so the codegen must still drop the
+    // list's +1 at loop end. `list_borrowed = true` means it was a
+    // bare Local and the pass handles its lifetime.
     if is_refcounted_type(&iter.ty) && !list_borrowed {
         emit_release(builder, module, runtime, list_ptr);
     }
@@ -3690,11 +3763,13 @@ fn lower_break_or_continue(
     // Walk scopes deeper than `scope_depth_at_entry`, releasing
     // refcounted locals. Don't pop — the lower_block that created
     // those scopes is still on the stack above us.
-    for depth in (ctx.scope_depth_at_entry..scope_stack.len()).rev() {
-        let scope = &scope_stack[depth];
-        for (_, v) in scope.iter().rev() {
-            let x = builder.use_var(*v);
-            emit_release(builder, module, runtime, x);
+    if !runtime.dup_drop_enabled {
+        for depth in (ctx.scope_depth_at_entry..scope_stack.len()).rev() {
+            let scope = &scope_stack[depth];
+            for (_, v) in scope.iter().rev() {
+                let x = builder.use_var(*v);
+                emit_release(builder, module, runtime, x);
+            }
         }
     }
     let target = if is_break {
@@ -3947,6 +4022,12 @@ fn emit_concat_chain(
         // string_concat returns a fresh +1; the inputs are consumed
         // (concat keeps its own copies if it needs them, but the
         // result is independent — release-on-consume is safe).
+        //
+        // This helper is INTERNAL prompt-building — it operates on
+        // freshly-allocated +1 String values produced within the same
+        // function (from emit_string_const, string_from_*). Those
+        // aren't driven by IrStmt-level ownership, so the .6d pass
+        // doesn't touch them. Keep the release unconditional.
         emit_release(builder, module, runtime, acc);
         emit_release(builder, module, runtime, next);
         acc = new_acc;
