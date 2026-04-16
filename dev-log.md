@@ -2914,6 +2914,49 @@ Finished `test` profile ... target(s) in ...
 - explicit `collect_cycles()` entry
 - cross-tier native-vs-interpreter parity tests for collected cycles
 
+## Day 31 [B] — 2026-04-16 — Slice 17h.2: Bacon-Rajan cycle collection in the VM
+
+### What shipped
+
+1. Added a VM-only Bacon-Rajan collector in `crates/corvid-vm/src/cycle_collector.rs`.
+2. VM-owned graph nodes now carry collector metadata: strong count, shadow count, color, and buffered-root state.
+3. Graph-node drops now buffer possible cycle roots on decrement-to-nonzero and keep the refcount fast path for decrement-to-zero.
+4. Added the public `corvid_vm::collect_cycles()` entry for explicit collection.
+5. Auto-collection now uses `CORVID_VM_GC_TRIGGER` with the same mental model as the native tier's trigger knob; `0` disables auto-collect.
+6. Added VM integration tests for:
+   - 2-block cycle collection
+   - 3-block cycle collection
+   - acyclic fast-path non-regression
+7. Added cross-tier parity tests comparing VM and native reclamation cardinality on the same synthetic graph categories.
+
+### Mid-slice discovery
+
+The collector could not reuse ordinary `Drop` semantics while tearing down condemned white nodes. Doing that would have mutated refcounts during collector-owned teardown and re-buffered nodes from inside the collection itself.
+
+The fix was to split teardown into two phases:
+
+1. mark the condemned set first and zero their collector-visible strong counts
+2. clear their payloads under a suppression guard so the cycle edges disappear without ordinary decrement/buffer side effects
+
+That preserved determinism and made the teardown path honest.
+
+### Verification
+
+```text
+cargo test -p corvid-vm
+38 unit tests + 6 collector/parity integration tests passed
+
+cargo test -p corvid-vm --test cycle_collector --test parity_native_vs_interp
+6 passed
+
+cargo test --workspace --no-run
+Finished `test` profile ... target(s) in ...
+```
+
+### One important honesty note
+
+Current cycle parity is synthetic-graph parity, not source-program parity. That is not a dodge; it is a current language limitation. Corvid source still has no field mutation, so neither tier can construct a refcount cycle directly from source today. The native tier's own 17d tests already used synthetic heap graphs for the same reason. Once field mutation exists, these parity cases should be upgraded to source fixtures.
+
 
 
 

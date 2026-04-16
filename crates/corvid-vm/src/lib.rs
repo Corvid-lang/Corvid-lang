@@ -19,6 +19,7 @@
 #![allow(dead_code)]
 
 pub mod conv;
+pub mod cycle_collector;
 pub mod env;
 pub mod errors;
 pub mod interp;
@@ -27,6 +28,7 @@ pub mod schema;
 pub mod value;
 
 pub use conv::{json_to_value, value_to_json, ConvError};
+pub use cycle_collector::collect_cycles;
 pub use env::Env;
 pub use errors::{InterpError, InterpErrorKind};
 pub use interp::{bind_and_run_agent, build_struct, run_agent, run_agent_with_env};

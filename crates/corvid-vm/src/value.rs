@@ -4,35 +4,29 @@
 //! `Result*`, `OptionSome`) ride on VM-owned heap cells with explicit
 //! retain/release bookkeeping so the interpreter can own its refcount
 //! semantics instead of delegating them to `Arc`.
+//!
+//! `String` intentionally stays `Arc<str>` for now because it is a leaf
+//! payload with no outgoing refcounted edges. If a future string-like type
+//! ever gains outgoing refcounted edges (rope fragments, parent-backed
+//! string views, lazy concat nodes), it must migrate to `HeapHandle` style
+//! ownership and participate in the VM collector.
 
+use crate::cycle_collector;
 use corvid_resolve::DefId;
 use std::collections::HashMap;
 use std::fmt;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 
 /// A runtime value.
 #[derive(Debug)]
 pub enum Value {
-    /// 64-bit signed integer.
     Int(i64),
-
-    /// 64-bit float. IEEE 754 semantics — notably `NaN != NaN`.
     Float(f64),
-
-    /// UTF-8 string. Strings are leaf heap objects, so `Arc` remains enough.
     String(Arc<str>),
-
-    /// Boolean.
     Bool(bool),
-
-    /// The single `nothing` value.
     Nothing,
-
-    /// A struct instance.
     Struct(StructValue),
-
-    /// A list of homogeneous values.
     List(ListValue),
     Weak(WeakValue),
     ResultOk(BoxedValue),
@@ -41,15 +35,30 @@ pub enum Value {
     OptionNone,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub(crate) enum Color {
+    Black = 0,
+    Gray = 1,
+    White = 2,
+    Purple = 3,
+}
+
 #[derive(Debug)]
 struct HeapMeta {
     strong: AtomicUsize,
+    shadow: AtomicUsize,
+    color: AtomicU8,
+    buffered: AtomicBool,
 }
 
 impl HeapMeta {
     fn new() -> Self {
         Self {
             strong: AtomicUsize::new(1),
+            shadow: AtomicUsize::new(0),
+            color: AtomicU8::new(Color::Black as u8),
+            buffered: AtomicBool::new(false),
         }
     }
 
@@ -57,17 +66,60 @@ impl HeapMeta {
         self.strong.fetch_add(1, Ordering::Relaxed);
     }
 
-    fn release(&self) -> bool {
-        self.strong.fetch_sub(1, Ordering::AcqRel) == 1
+    fn release(&self) -> usize {
+        self.strong.fetch_sub(1, Ordering::AcqRel)
     }
 
     fn strong_count(&self) -> usize {
         self.strong.load(Ordering::Acquire)
     }
+
+    fn set_strong(&self, value: usize) {
+        self.strong.store(value, Ordering::Release);
+    }
+
+    fn shadow_count(&self) -> usize {
+        self.shadow.load(Ordering::Acquire)
+    }
+
+    fn set_shadow(&self, value: usize) {
+        self.shadow.store(value, Ordering::Release);
+    }
+
+    fn inc_shadow(&self) {
+        self.shadow.fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn dec_shadow(&self) {
+        let old = self.shadow.fetch_sub(1, Ordering::AcqRel);
+        debug_assert!(old > 0, "shadow count underflow");
+    }
+
+    fn color(&self) -> Color {
+        match self.color.load(Ordering::Acquire) {
+            0 => Color::Black,
+            1 => Color::Gray,
+            2 => Color::White,
+            3 => Color::Purple,
+            other => panic!("invalid heap color {other}"),
+        }
+    }
+
+    fn set_color(&self, color: Color) {
+        self.color.store(color as u8, Ordering::Release);
+    }
+
+    fn buffered(&self) -> bool {
+        self.buffered.load(Ordering::Acquire)
+    }
+
+    fn set_buffered(&self, value: bool) {
+        self.buffered.store(value, Ordering::Release);
+    }
 }
 
 #[derive(Debug)]
-struct StructInner {
+pub(crate) struct StructInner {
     meta: HeapMeta,
     type_id: DefId,
     type_name: String,
@@ -75,13 +127,13 @@ struct StructInner {
 }
 
 #[derive(Debug)]
-struct ListInner {
+pub(crate) struct ListInner {
     meta: HeapMeta,
     items: Mutex<Option<Vec<Value>>>,
 }
 
 #[derive(Debug)]
-struct BoxedInner {
+pub(crate) struct BoxedInner {
     meta: HeapMeta,
     value: Mutex<Option<Value>>,
 }
@@ -102,8 +154,191 @@ pub enum WeakValue {
 }
 
 pub struct StructWeakValue(Weak<StructInner>);
-
 pub struct ListWeakValue(Weak<ListInner>);
+
+#[derive(Clone)]
+pub(crate) enum ObjectRef {
+    Struct(Arc<StructInner>),
+    List(Arc<ListInner>),
+    Boxed(Arc<BoxedInner>),
+}
+
+#[derive(Clone)]
+pub(crate) enum WeakObjectRef {
+    Struct(Weak<StructInner>),
+    List(Weak<ListInner>),
+    Boxed(Weak<BoxedInner>),
+}
+
+impl ObjectRef {
+    fn meta(&self) -> &HeapMeta {
+        match self {
+            ObjectRef::Struct(inner) => &inner.meta,
+            ObjectRef::List(inner) => &inner.meta,
+            ObjectRef::Boxed(inner) => &inner.meta,
+        }
+    }
+
+    pub(crate) fn ptr_key(&self) -> usize {
+        match self {
+            ObjectRef::Struct(inner) => Arc::as_ptr(inner) as usize,
+            ObjectRef::List(inner) => Arc::as_ptr(inner) as usize,
+            ObjectRef::Boxed(inner) => Arc::as_ptr(inner) as usize,
+        }
+    }
+
+    pub(crate) fn strong_count(&self) -> usize {
+        self.meta().strong_count()
+    }
+
+    pub(crate) fn release_strong(&self) -> usize {
+        self.meta().release()
+    }
+
+    pub(crate) fn set_strong_zero(&self) {
+        self.meta().set_strong(0);
+    }
+
+    pub(crate) fn shadow_count(&self) -> usize {
+        self.meta().shadow_count()
+    }
+
+    pub(crate) fn set_shadow(&self, value: usize) {
+        self.meta().set_shadow(value);
+    }
+
+    pub(crate) fn inc_shadow(&self) {
+        self.meta().inc_shadow();
+    }
+
+    pub(crate) fn dec_shadow(&self) {
+        self.meta().dec_shadow();
+    }
+
+    pub(crate) fn color(&self) -> Color {
+        self.meta().color()
+    }
+
+    pub(crate) fn set_color(&self, color: Color) {
+        self.meta().set_color(color);
+    }
+
+    pub(crate) fn buffered(&self) -> bool {
+        self.meta().buffered()
+    }
+
+    pub(crate) fn set_buffered(&self, value: bool) {
+        self.meta().set_buffered(value);
+    }
+
+    pub(crate) fn downgrade(&self) -> WeakObjectRef {
+        match self {
+            ObjectRef::Struct(inner) => WeakObjectRef::Struct(Arc::downgrade(inner)),
+            ObjectRef::List(inner) => WeakObjectRef::List(Arc::downgrade(inner)),
+            ObjectRef::Boxed(inner) => WeakObjectRef::Boxed(Arc::downgrade(inner)),
+        }
+    }
+
+    pub(crate) fn children(&self) -> Vec<ObjectRef> {
+        match self {
+            ObjectRef::Struct(inner) => inner
+                .fields
+                .lock()
+                .expect("struct fields lock poisoned")
+                .as_ref()
+                .map(children_from_map)
+                .unwrap_or_default(),
+            ObjectRef::List(inner) => inner
+                .items
+                .lock()
+                .expect("list items lock poisoned")
+                .as_ref()
+                .map(|items| children_from_slice(items))
+                .unwrap_or_default(),
+            ObjectRef::Boxed(inner) => inner
+                .value
+                .lock()
+                .expect("boxed value lock poisoned")
+                .as_ref()
+                .and_then(Value::as_object_ref)
+                .into_iter()
+                .collect(),
+        }
+    }
+
+    pub(crate) fn free_zero_path(&self) {
+        self.set_buffered(false);
+        self.set_shadow(0);
+        self.set_color(Color::Black);
+        self.clear_payload();
+    }
+
+    pub(crate) fn prepare_collect(&self) {
+        self.set_buffered(false);
+        self.set_shadow(0);
+        self.set_color(Color::Black);
+        self.set_strong_zero();
+    }
+
+    pub(crate) fn clear_payload(&self) {
+        match self {
+            ObjectRef::Struct(inner) => {
+                let fields = inner
+                    .fields
+                    .lock()
+                    .expect("struct fields lock poisoned")
+                    .take();
+                drop(fields);
+            }
+            ObjectRef::List(inner) => {
+                let items = inner
+                    .items
+                    .lock()
+                    .expect("list items lock poisoned")
+                    .take();
+                drop(items);
+            }
+            ObjectRef::Boxed(inner) => {
+                let value = inner
+                    .value
+                    .lock()
+                    .expect("boxed value lock poisoned")
+                    .take();
+                drop(value);
+            }
+        }
+    }
+}
+
+impl WeakObjectRef {
+    pub(crate) fn upgrade(&self) -> Option<ObjectRef> {
+        match self {
+            WeakObjectRef::Struct(inner) => inner.upgrade().map(ObjectRef::Struct),
+            WeakObjectRef::List(inner) => inner.upgrade().map(ObjectRef::List),
+            WeakObjectRef::Boxed(inner) => inner.upgrade().map(ObjectRef::Boxed),
+        }
+    }
+}
+
+fn children_from_map(fields: &HashMap<String, Value>) -> Vec<ObjectRef> {
+    let mut out = Vec::new();
+    for value in fields.values() {
+        if let Some(child) = value.as_object_ref() {
+            out.push(child);
+        }
+    }
+    out
+}
+
+fn children_from_slice(items: &[Value]) -> Vec<ObjectRef> {
+    let mut out = Vec::new();
+    for value in items {
+        if let Some(child) = value.as_object_ref() {
+            out.push(child);
+        }
+    }
+    out
+}
 
 impl StructValue {
     pub fn new(
@@ -146,8 +381,15 @@ impl StructValue {
         Arc::as_ptr(&self.0) as usize
     }
 
-    #[cfg(test)]
-    fn strong_count(&self) -> usize {
+    #[doc(hidden)]
+    pub fn set_field(&self, field: impl Into<String>, value: Value) {
+        let mut guard = self.0.fields.lock().expect("struct fields lock poisoned");
+        let fields = guard.as_mut().expect("struct payload already freed");
+        fields.insert(field.into(), value);
+    }
+
+    #[doc(hidden)]
+    pub fn strong_count_for_tests(&self) -> usize {
         self.0.meta.strong_count()
     }
 }
@@ -161,15 +403,7 @@ impl Clone for StructValue {
 
 impl Drop for StructValue {
     fn drop(&mut self) {
-        if self.0.meta.release() {
-            let fields = self
-                .0
-                .fields
-                .lock()
-                .expect("struct fields lock poisoned")
-                .take();
-            drop(fields);
-        }
+        cycle_collector::release_object(ObjectRef::Struct(self.0.clone()));
     }
 }
 
@@ -231,15 +465,7 @@ impl Clone for ListValue {
 
 impl Drop for ListValue {
     fn drop(&mut self) {
-        if self.0.meta.release() {
-            let items = self
-                .0
-                .items
-                .lock()
-                .expect("list items lock poisoned")
-                .take();
-            drop(items);
-        }
+        cycle_collector::release_object(ObjectRef::List(self.0.clone()));
     }
 }
 
@@ -281,15 +507,7 @@ impl Clone for BoxedValue {
 
 impl Drop for BoxedValue {
     fn drop(&mut self) {
-        if self.0.meta.release() {
-            let value = self
-                .0
-                .value
-                .lock()
-                .expect("boxed value lock poisoned")
-                .take();
-            drop(value);
-        }
+        cycle_collector::release_object(ObjectRef::Boxed(self.0.clone()));
     }
 }
 
@@ -350,7 +568,6 @@ impl Clone for Value {
 }
 
 impl Value {
-    /// Human-readable name of the value's dynamic type. Used in diagnostics.
     pub fn type_name(&self) -> String {
         match self {
             Value::Int(_) => "Int".into(),
@@ -366,9 +583,6 @@ impl Value {
         }
     }
 
-    /// Produce a new struct value. Intended for tests and the runtime's
-    /// tool-boundary code; user programs construct structs via tool/prompt
-    /// returns (or later via a constructor syntax in v0.4+).
     pub fn new_struct(
         type_id: DefId,
         type_name: impl Into<String>,
@@ -385,9 +599,19 @@ impl Value {
             _ => None,
         }
     }
+
+    pub(crate) fn as_object_ref(&self) -> Option<ObjectRef> {
+        match self {
+            Value::Struct(s) => Some(ObjectRef::Struct(s.0.clone())),
+            Value::List(items) => Some(ObjectRef::List(items.0.clone())),
+            Value::ResultOk(v) | Value::ResultErr(v) | Value::OptionSome(v) => {
+                Some(ObjectRef::Boxed(v.0.clone()))
+            }
+            _ => None,
+        }
+    }
 }
 
-/// Pretty printing for debug output and CLI `corvid run` result display.
 impl fmt::Display for Value {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -446,8 +670,6 @@ fn escape_display(s: &str) -> String {
     out
 }
 
-/// Equality that matches Corvid's `==` semantics. Used by interpreter
-/// binops and by tests.
 impl PartialEq for Value {
     fn eq(&self, other: &Value) -> bool {
         match (self, other) {
@@ -519,7 +741,7 @@ mod tests {
             [("label".to_string(), Value::String(Arc::from("root")))],
         ));
         let strong = match &value {
-            Value::Struct(s) => s.strong_count(),
+            Value::Struct(s) => s.strong_count_for_tests(),
             _ => unreachable!(),
         };
         assert_eq!(strong, 1);
@@ -530,7 +752,7 @@ mod tests {
         }
 
         let strong = match &value {
-            Value::Struct(s) => s.strong_count(),
+            Value::Struct(s) => s.strong_count_for_tests(),
             _ => unreachable!(),
         };
         assert_eq!(strong, 1001);
@@ -538,7 +760,7 @@ mod tests {
         drop(clones);
 
         let strong = match &value {
-            Value::Struct(s) => s.strong_count(),
+            Value::Struct(s) => s.strong_count_for_tests(),
             _ => unreachable!(),
         };
         assert_eq!(strong, 1);

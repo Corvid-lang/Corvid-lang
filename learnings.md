@@ -1028,6 +1028,10 @@ What changed:
 Important boundary:
 
 - `String` stays a leaf `Arc<str>` in 17h.1
+- if a future string-like value ever gains an outgoing refcounted edge
+  (for example a rope node or a parent-backed string view), it must move
+  onto a VM heap handle and participate in Bacon-Rajan like any other
+  graph node
 
 Why that boundary is honest:
 
@@ -1038,6 +1042,31 @@ Practical implication:
 
 - this commit is the prerequisite plumbing for VM cycle collection, not the collector itself
 - Bacon-Rajan lands on top of these VM-owned graph handles in 17h.2
+
+## VM Cycle Collection
+
+Slice 17h.2 adds Bacon-Rajan trial deletion to the interpreter tier.
+
+What is collected:
+
+- VM-owned graph nodes: `Struct`, `List`, `ResultOk`, `ResultErr`, and `OptionSome`
+
+What is not collected by Bacon-Rajan:
+
+- leaf `String` values, because they still have no outgoing refcounted edges
+
+Trigger model:
+
+- the VM buffers possible cycle roots when a graph node's strong count drops but does not hit zero
+- collection runs explicitly via `corvid_vm::collect_cycles()`
+- auto-collection uses the roots-buffer threshold from `CORVID_VM_GC_TRIGGER`
+- `CORVID_VM_GC_TRIGGER=0` disables the auto trigger
+
+Parity model:
+
+- native and VM heaps are still separate implementations
+- parity is asserted by tests, not by sharing allocator/runtime code
+- current cycle parity is synthetic heap parity, not source-level parity, because Corvid source still cannot mutate fields to construct a cycle directly
 
 ## Contributing / feedback
 
