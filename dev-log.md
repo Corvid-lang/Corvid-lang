@@ -2957,6 +2957,182 @@ Finished `test` profile ... target(s) in ...
 
 Current cycle parity is synthetic-graph parity, not source-program parity. That is not a dodge; it is a current language limitation. Corvid source still has no field mutation, so neither tier can construct a refcount cycle directly from source today. The native tier's own 17d tests already used synthetic heap graphs for the same reason. Once field mutation exists, these parity cases should be upgraded to source fixtures.
 
+## Day 32 [B] — 2026-04-16 — Phase 17 close-out draft (numbers lock held for `.6d-2`)
+
+This is the prose shell for the Phase 17 close-out. Final benchmark tables stay unlocked until Developer A's `.6d-2` unified-pass cleanup lands and the exact same harness is rerun on the post-pass tree.
+
+### Phase 17 in one line
+
+Corvid now has a measurable memory foundation:
+
+- typed heap headers
+- native mark-sweep cycle collection
+- interpreter-tier Bacon-Rajan cycle collection
+- weak references with effect-typed invalidation
+- replay-deterministic GC trigger logging
+- runtime ownership verification with blame PCs
+
+### Slice recap in landed order
+
+- `1fea6a0` — Slice 17a: typed heap headers + per-type typeinfo + non-atomic RC
+- `...` — 17b ownership workstream (Developer A, multiple slices; final unified pass still in flight)
+- `...` — Slice 17c: safepoints + emitted stack maps
+- `...` — Slice 17d: native cycle collector
+- `...` — Slice 17f++: replay-deterministic GC trigger log + refcount verifier
+- `ba01e78` — Slice 17g: weak refs with effect-typed invalidation
+- `318c892` — Slice 17h.1: VM-owned heap handles
+- `91d95ac` — Slice 17h.2: VM Bacon-Rajan cycle collection
+
+The precise 17b middle entries should be filled in from the final commit list when the close-out commit is cut, not guessed here.
+
+### Mid-close-out discovery worth keeping
+
+The first honest 17i benchmark run exposed that the VM collector still relied on recursive graph traversal. That was not acceptable for the replay tier. The fix shipped before the close-out locked:
+
+- `crates/corvid-vm/src/cycle_collector.rs` is now iterative, not recursive
+- deep cyclic graphs no longer depend on oversized thread stacks
+- the benchmark-only large-stack workaround was deleted
+
+That makes the replay / interpreter story materially stronger than it was at the start of 17i.
+
+### Verifier storage spike
+
+The strongest late-slice optimization in 17i was moving verifier scratch state out of transient hash maps and into the allocation tracking node itself:
+
+- expected refcount now lives in the tracking node during a GC cycle
+- verifier visited-state lives in the same tagged scratch word
+- verifier cycles are keyed by `verify_epoch`
+
+This kept the verifier's semantics intact but removed per-cycle shadow-map and visited-set allocation. The current provisional benchmark delta is large enough that this should stay unless `.6d-2` exposes an interaction:
+
+- alloc-heavy verifier overhead fell from roughly `2.8x` worst-case to roughly `1.2x` in the current run
+
+### Allocation-path spike
+
+The second late-slice push targeted the hottest native fixed-size allocation path directly:
+
+- added a narrow fixed-size freelist allocator for typed payloads whose size exactly matches `typeinfo->size`
+- variable-sized payloads still use `malloc/free`
+- the experiment is honest runtime behavior, not a benchmark-only shortcut
+- the hardened version is byte-budget bounded per size class, not an unbounded freelist
+
+Current provisional effect on the benchmark sheet:
+
+- `tight_box_alloc` now sits around the low-30-ns range on the hot path
+- the new `tight_box_alloc_cold_preload` benchmark keeps that path in the high-30-ns range after deterministic cache thrash
+- verifier `warn/off` stays around the low-1.2x range on alloc-heavy paths in the current run
+
+This needs one more rerun after `.6d-2` lands before it becomes a locked claim, but it is strong enough to stay in the draft narrative.
+
+### Pool hardening details
+
+The original pooling spike was too generous in one direction and too weak in another:
+
+- unbounded would have been a fragmentation risk
+- a naive fixed block-count cap crushed the hot path and hid the allocator win again
+
+The hardened version now:
+
+- bounds each size class by cached bytes, not an arbitrary flat block count
+- exposes test-only counters for cached-block count and cap per payload size
+- proves recycled blocks reset verifier scratch state before reuse
+- proves GC sweep of fixed-size cyclic blocks returns them to the pool
+
+### What Phase 17 enables next
+
+- Phase 19 replay determinism now rests on a stronger foundation: native + interpreter memory semantics are both explicit and testable.
+- Phase 25 multi-agent work now has a typed-heap and trigger-log substrate to build on instead of retrofitting memory observability later.
+- Phase 17b can now be judged quantitatively rather than stylistically, because isolated retain/release costs and verifier overhead are both measured.
+
+### What is explicitly deferred
+
+Deferred to the remainder of Phase 17b or to Phase 17.5:
+
+- `.6d-2` final unified ownership-pass cleanup
+- `17b-1c` pair elimination
+- `17b-2` drop specialization
+- `17b-6` effect-row-directed RC
+- `17b-7` latency-aware RC across tool / LLM boundaries
+- Koka-style reuse / Morphic / Choi / VM locality follow-ups
+
+### Numbers placeholder
+
+The final close-out commit should replace this section with locked benchmark tables from `docs/phase-17-results.md` after rerunning:
+
+```bash
+cargo bench -p corvid-runtime --bench phase17_runtime -- --sample-size 10 --warm-up-time 1 --measurement-time 3
+```
+
+## Day 33 [B] — 2026-04-16 — Slice 17b-1c: whole-program retain/release pair elimination
+
+Shipped the first narrow pair-elimination pass in `crates/corvid-codegen-cl/src/pair_elim.rs`.
+
+What the slice actually does:
+
+- runs after `insert_dup_drop` and before native lowering
+- removes same-block `Dup(L)` / `Drop(L)` pairs when:
+  - `Dup(L)` is followed immediately by one safe internal use of `L`
+  - the matching `Drop(L)` is later in the same straight-line block
+  - nothing in between touches `L`, redefines it, or passes it to code we do not control
+- recursively processes nested blocks, but does not pair across branches or loops
+
+Two assumptions are now documented in the module comment:
+
+- today's `Dup` / `Drop` are pass-inserted ownership ops, not user-authored IR
+- removing a redundant pair around a safepoint does not change the GC-visible live set, because the stack map roots stay the same
+
+Mid-slice discovery:
+
+- the current `baseline_rc_counts` workloads do not exercise any same-block removable pairs under today's analyzer output
+- the pass is still correct and testable, but the immediate measurable reduction is on a benchmark-shaped public-API fixture rather than on the current published RC baselines
+- this is a workload-coverage gap, not a soundness excuse
+
+Verification shipped with the slice:
+
+```bash
+cargo test -p corvid-codegen-cl --lib pair_elim -- --nocapture
+cargo test -p corvid-codegen-cl --test pair_elim -- --nocapture
+cargo test -p corvid-codegen-cl --test dup_drop_pipeline -- --nocapture
+```
+
+What remains for the published numbers story:
+
+- rerun against Developer A's `.6d-2b` landing tree
+- add a real RC-count workload that exhibits same-block pair pressure if the baseline suite still does not
+
+## Day 34 [B] — 2026-04-16 — Slice 17e: effect-typed scope reduction
+
+Shipped a first conservative effect-aware ownership pass in `crates/corvid-codegen-cl/src/scope_reduce.rs`.
+
+What the slice does:
+
+- runs after `insert_dup_drop` and after same-block pair elimination
+- builds a codegen-local `EffectInfo` sidecar keyed by `IrPath`
+- treats only literal / local / unary / arithmetic expression statements as effect-free
+- treats calls, approve, control-flow, and ownership ops as effect barriers
+- moves `Drop` earlier only inside the same straight-line block
+
+Why the scope is narrow:
+
+- no typechecker changes
+- no reopening `dataflow.rs` or `dup_drop.rs`
+- no cross-branch / cross-loop relocation
+- correctness of "drop still executes on every path that would have reached the original site" stays obvious
+
+Verification shipped with the slice:
+
+```bash
+cargo test -p corvid-codegen-cl --test scope_reduce
+cargo test -p corvid-codegen-cl --test dup_drop_pipeline --test pair_elim --test stack_maps
+cargo test -p corvid-codegen-cl --test parity
+```
+
+Mid-slice measurement note:
+
+- the first post-17e `phase17_runtime` rerun regressed across the full sheet, including `primitive_control`
+- that is not a credible 17e signal because `17e` only reorders `Drop`s on refcounted paths and cannot plausibly slow primitive-only workloads
+- the benchmark numbers are therefore explicitly held pending a clean rerun under the agreed environment protocol
+
 
 
 

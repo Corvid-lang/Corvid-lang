@@ -1707,6 +1707,8 @@ pub fn lower_file(
             .expect("declared in pass 1");
         if runtime.dup_drop_enabled {
             let transformed = crate::pair_elim::eliminate_pairs(crate::dup_drop::insert_dup_drop(agent));
+            let effect_info = crate::scope_reduce::analyze_effects(&transformed);
+            let transformed = crate::scope_reduce::reduce_scope(transformed, &effect_info);
             define_agent(module, &transformed, func_id, &func_ids_by_def, &runtime)?;
         } else {
             define_agent(module, agent, func_id, &func_ids_by_def, &runtime)?;

@@ -29,6 +29,7 @@ pub mod lowering;
 pub mod module;
 pub mod ownership;
 pub mod pair_elim;
+pub mod scope_reduce;
 
 pub use errors::{CodegenError, CodegenErrorKind};
 

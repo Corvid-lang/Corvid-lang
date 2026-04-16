@@ -1068,6 +1068,111 @@ Parity model:
 - parity is asserted by tests, not by sharing allocator/runtime code
 - current cycle parity is synthetic heap parity, not source-level parity, because Corvid source still cannot mutate fields to construct a cycle directly
 
+## Phase 17 retrospective
+
+Phase 17 is where Corvid stopped being "a language with some RC plumbing" and became a language with a measurable memory story.
+
+What users get now that they did not have before:
+
+- typed native heap objects with per-type metadata
+- native cycle collection for unreachable refcount cycles
+- interpreter-tier cycle collection, so REPL and replay do not quietly diverge from native semantics
+- weak references with checker-enforced effect invalidation rules
+- replay-deterministic GC trigger logging
+- runtime ownership verification with blame PCs
+
+### What the measurements currently support
+
+These numbers are the current pre-`.6d-2` baseline from `cargo bench -p corvid-runtime --bench phase17_runtime ...`. The final Phase 17 lock reruns the same harness after the unified ownership-pass cleanup lands.
+
+| Claim | Supporting number |
+|---|---|
+| Native fixed-size allocation is now a real competitive strength | `tight_box_alloc`: about `30.6 ns/alloc` hot, `37.9 ns/alloc` after deterministic cold-cache preload |
+| Native cycle collection scales cleanly with heap size | mark-sweep stays around `13–17 ns/node` across the current pooled runtime path |
+| Runtime ownership verification is no longer prohibitively expensive | verifier `warn/off`: about `1.22x` on `tight_box_alloc`, `1.26x` on `string_heavy_concat`; list-heavy is noise in the current run |
+| Future ownership optimizations still have a real baseline to beat | isolated RC ops: about `4.85–5.30 ns` for retain/release and `3.82 ns` for a retain-release pair in the current harness |
+
+### Why this matters for Corvid's positioning
+
+Corvid's moat is not "faster than Rust at everything." The stronger claim is narrower and better:
+
+- replay-deterministic execution
+- low audit cost
+- ownership verification tied to the runtime's real heap graph
+
+Phase 17 is the first point where that claim has a measured baseline instead of architecture prose.
+
+### What still depends on Phase 17b
+
+Phase 17b is the optimization wave that should move the numbers from "credible" to "competitive":
+
+- the unified ownership pass
+- pair elimination
+- drop specialization
+- effect-row-directed RC
+- latency-aware RC across tool / LLM boundaries
+
+Those slices matter because they attack the measured overhead directly, not abstractly.
+
+### Pair elimination, first cut
+
+Slice `17b-1c` adds the first explicit retain/release pair-elimination pass to native codegen.
+
+What it does today:
+
+- looks only at same-block `Dup` / `Drop` pairs inserted by the ownership pass
+- removes the pair when one safe internal use sits between them and nothing else touches the local
+- refuses to pair across branches, loops, agent/tool/prompt/unknown calls, or weak-reference creation
+
+Why the scope is narrow on purpose:
+
+- it is sound without needing to reopen the active CFG/dataflow files
+- it documents the safepoint argument explicitly, so GC behavior stays auditable
+- it gives Corvid a real ARC-style optimization stage without pretending the broad SSA version already exists
+
+Important measurement note:
+
+- the current `baseline_rc_counts` workloads do not yet expose a same-block removable pair
+- so this slice lands with a benchmark-shaped proof fixture and a no-op result on the current published baselines
+- the honest next step is to rerun after `.6d-2b` and extend the RC-count suite with a workload that actually exercises pair pressure
+
+### Effect-typed scope reduction
+
+Slice `17e` adds the first effect-aware ownership optimization pass in native codegen.
+
+What it does today:
+
+- looks at `Drop` placement after the unified ownership pass and pair elimination
+- classifies statements as either effect-free or effect barriers using a codegen-local sidecar keyed by `IrPath`
+- moves `Drop` earlier only when the path between the defining `Let` and the existing `Drop` stays within one straight-line block and crosses no effect barrier
+
+What counts as effect-free in the current slice:
+
+- literal-producing expressions
+- local reads
+- unary arithmetic
+- binary arithmetic
+
+What counts as a barrier:
+
+- all calls
+- `approve`
+- `if` / `for`
+- `return`
+- `break` / `continue`
+- `Dup` / `Drop`
+
+Why the slice matters:
+
+- it is the first ownership optimization that uses Corvid's effect-awareness rather than only plain liveness
+- it shrinks RC-alive windows without pretending the full interprocedural effect-row story already exists
+
+Important honesty note:
+
+- the first post-17e benchmark rerun showed a full-sheet slowdown, including primitive-only paths
+- that is treated as environment noise until proven otherwise and is not folded into the published Phase 17 numbers
+- 17e ships on correctness first; measurement delta is held until a clean rerun
+
 ## Contributing / feedback
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). The rules of the road are: pre-phase chat before code, per-slice commits at every boundary, dev-log entry for every session, no shortcuts. The `learnings.md` file you're reading gets updated when each slice ships a user-visible feature.
