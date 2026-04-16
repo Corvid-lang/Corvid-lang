@@ -28,6 +28,7 @@ pub mod link;
 pub mod lowering;
 pub mod module;
 pub mod ownership;
+pub mod pair_elim;
 
 pub use errors::{CodegenError, CodegenErrorKind};
 
