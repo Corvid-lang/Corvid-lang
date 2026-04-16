@@ -1,6 +1,6 @@
 //! Parser for Corvid expressions.
 //!
-//! Phase 3a: expression grammar only. Statements and declarations come next.
+//! Parser implementation for expressions, statements, and declarations.
 //!
 //! Technique: recursive descent for structural rules + Pratt-style
 //! precedence climbing for binary operators.
@@ -1164,7 +1164,7 @@ impl<'a> Parser<'a> {
         })
     }
 
-    // -- extend (Phase 16 methods) ------------------------------
+    // -- extend methods ------------------------------
 
     /// Parse an `extend TypeName:` block. The body is an indented
     /// list of tool / prompt / agent declarations, each optionally
@@ -1244,8 +1244,8 @@ impl<'a> Parser<'a> {
         self.bump(); // public
         if matches!(self.peek(), TokKind::LParen) {
             self.bump(); // (
-            // Only `package` is accepted inside public(...) at Phase
-            // 16. Phase 20 extends with effect-scoped variants.
+            // Only `package` is accepted inside public(...) today.
+            // Future work may add effect-scoped variants.
             match self.peek() {
                 TokKind::KwPackage => {
                     self.bump();
@@ -1254,7 +1254,7 @@ impl<'a> Parser<'a> {
                     return Err(ParseError {
                         kind: ParseErrorKind::UnexpectedToken {
                             got: describe_token(other),
-                            expected: "`package` inside `public(...)` (the only variant Phase 16 supports)".into(),
+                            expected: "`package` inside `public(...)` (the only supported variant today)".into(),
                         },
                         span: self.peek_span(),
                     });
@@ -1807,7 +1807,7 @@ mod tests {
     }
 
     // =================================================================
-    // Phase 3b — Statement and block parser tests
+    // Statement and block parser tests
     // =================================================================
 
     use corvid_ast::{Block, Stmt};
@@ -2029,7 +2029,7 @@ mod tests {
     }
 
     // =================================================================
-    // Phase 3c — File / declaration parser tests
+    // File / declaration parser tests
     // =================================================================
 
     use corvid_ast::{AgentDecl, Decl, Effect, File, ImportSource, TypeRef};
@@ -2405,7 +2405,7 @@ agent good(x: String) -> String:
     }
 
     // -----------------------------------------------------------------
-    // Phase 16 — `extend T:` block + visibility parsing
+    // `extend T:` block + visibility parsing
     // -----------------------------------------------------------------
 
     use corvid_ast::{ExtendDecl, ExtendMethodKind, Visibility};
@@ -2454,7 +2454,7 @@ agent good(x: String) -> String:
 
     #[test]
     fn parses_extend_with_mixed_decl_kinds() {
-        // The whole point of Phase 16's "methods can be any decl kind"
+        // The whole point of allowing methods to be any decl kind
         // — verify the parser accepts a mix of agent / prompt / tool
         // inside one `extend` block.
         let file = parse_file_src(
@@ -2474,7 +2474,7 @@ agent good(x: String) -> String:
         );
         assert!(
             !errs.is_empty(),
-            "expected parse error for `public(secret)` — only `public(package)` is valid in Phase 16"
+            "expected parse error for `public(secret)` — only `public(package)` is valid today"
         );
     }
 }

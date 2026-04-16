@@ -1,20 +1,20 @@
-//! Slice 17b-1b.6a — CFG + liveness + ownership dataflow analysis.
+//! CFG + liveness + ownership dataflow analysis.
 //!
 //! READ-ONLY in this commit. The analysis runs over an `IrAgent`,
 //! computes a per-local ownership plan (where to insert `Dup`, where
 //! to insert `Drop`), and returns it as a structured value. It does
-//! NOT mutate the IR or change codegen. Slice 17b-1b.6b will consume
+//! NOT mutate the IR or change codegen. The ownership rewriter consumes
 //! the plan to actually insert `IrStmt::Dup` / `IrStmt::Drop`.
-//! Slice 17b-1b.6c will then delete the scattered
+//! The lowering cleanup then deletes the scattered
 //! `emit_retain` / `emit_release` sites in `lowering.rs` plus the
-//! four 17b-1b.2..5 peepholes.
+//! four ownership peepholes.
 //!
-//! Design choices pinned in pre-phase chat:
-//!   - Path B: ship as three sub-slices (.6a / .6b / .6c) so each is
-//!     reviewable; the monolithic claim is honored in the final state.
+//! Design choices:
+//!   - split the ownership rollout into analysis, insertion, and
+//!     lowering cleanup so each step stays reviewable
 //!   - Dataflow precision (not linear scan; not full Perceus).
-//!   - The 17f++ verifier (`CORVID_GC_VERIFY=abort`) audits the result
-//!     against the runtime contract in .6c.
+//!   - The GC verifier (`CORVID_GC_VERIFY=abort`) audits the final
+//!     runtime contract.
 //!
 //! ## Algorithm
 //!
@@ -44,13 +44,12 @@
 //!   - For locals defined but never used: schedule `Drop` immediately
 //!     after the defining `Let`.
 //!
-//! ## Non-goals for .6a
+//! ## Non-goals
 //!
-//! - Does not insert `Dup`/`Drop` into the IR (.6b's job).
-//! - Does not change codegen (.6c's job).
-//! - Does not handle `Weak<T>` ownership (slice 17g; deliberately
-//!   shipped in parallel by Developer B and joined later).
-//! - Does not perform any of 17b-3..17b-7 advanced optimizations.
+//! - Does not insert `Dup`/`Drop` into the IR.
+//! - Does not change codegen.
+//! - Does not handle `Weak<T>` ownership.
+//! - Does not perform advanced RC optimizations.
 
 use corvid_ir::{IrAgent, IrBlock, IrExpr, IrExprKind, IrStmt};
 use corvid_resolve::LocalId;
@@ -97,7 +96,7 @@ pub struct CfgBlock {
 /// A flattened statement. Holds the local reads we extracted from
 /// the corresponding `IrStmt`. We don't carry the original
 /// expression tree — the analysis only needs reads + defs + control
-/// flow at this layer. Slice .6b will re-walk the IR alongside the
+/// flow at this layer. The ownership rewriter re-walks the IR alongside the
 /// plan to actually insert `Dup`/`Drop` ops.
 #[derive(Debug, Clone)]
 pub enum CfgStmt {
@@ -145,7 +144,7 @@ pub enum ReadKind {
 // ---------------------------------------------------------------------------
 
 /// One navigation step from an `IrAgent.body` root down to a specific
-/// nested statement. Used by 17b-1b.6b to translate `ProgramPoint`
+/// nested statement. Used by the ownership rewriter to translate `ProgramPoint`
 /// coordinates (which live in the flattened CFG) back into mutable
 /// positions in the original IR tree.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -167,8 +166,8 @@ pub enum IrNavStep {
 /// to one specific statement. Always ends with a `Stmt(idx)`.
 pub type IrPath = Vec<IrNavStep>;
 
-/// The output of this slice. Per agent, lists every Dup/Drop the
-/// future .6b pass should insert into the IR.
+/// The output of the ownership analysis. Per agent, lists every
+/// `Dup`/`Drop` the IR rewriter should insert.
 ///
 /// Shape:
 ///   - `dups[(block, pos)]` — set of locals to Dup immediately BEFORE
@@ -182,19 +181,19 @@ pub type IrPath = Vec<IrNavStep>;
 ///     paths).
 ///   - `ir_paths[(block, pos)]` — the IR-tree coordinate that maps
 ///     this CFG `ProgramPoint` to a mutable position in
-///     `agent.body`. Populated by `analyze_agent`. Slice 17b-1b.6b
+///     `agent.body`. Populated by `analyze_agent`. The IR rewriter
 ///     consumes this to insert `IrStmt::Dup`/`IrStmt::Drop`.
 ///
 /// Determinism: BTreeMap/BTreeSet throughout. Pass output is stable
-/// across runs and across compiler versions — the 17f++ trigger-log
-/// + record/replay story relies on it.
+/// across runs and across compiler versions — the trigger-log and
+/// record/replay story rely on it.
 #[derive(Debug, Clone, Default)]
 pub struct OwnershipPlan {
     pub dups: BTreeMap<ProgramPoint, BTreeSet<LocalId>>,
     pub drops_after: BTreeMap<ProgramPoint, BTreeSet<LocalId>>,
     pub drops_at_block_exit: BTreeMap<BlockId, BTreeSet<LocalId>>,
     pub ir_paths: BTreeMap<ProgramPoint, IrPath>,
-    /// Phase 17b-2 drop specialization (Mojo ASAP). For each `If`
+    /// Branch-local drop specialization. For each `If`
     /// statement where a refcounted local dies on only SOME branch
     /// paths, schedule per-branch drops so the local is released on
     /// every path that reaches post-If code.
@@ -210,7 +209,7 @@ pub struct OwnershipPlan {
     pub branch_drops: BTreeMap<IrPath, BranchDrops>,
 }
 
-/// Per-If branch-scoped drop bookkeeping for 17b-2. Each set lists
+/// Per-`If` branch-scoped drop bookkeeping. Each set lists
 /// refcounted locals that must be released on the corresponding
 /// branch edge to match live-out-of-If with live-in-of-post-If.
 #[derive(Debug, Clone, Default)]
@@ -275,7 +274,7 @@ pub fn analyze_agent_full(agent: &IrAgent) -> (Cfg, Liveness, OwnershipPlan) {
     // Parameters are defined at function entry. Refcounted parameters
     // start owned (for now — borrow-sig-driven parameter elision is
     // already handled at codegen by the existing borrow_sig consumer
-    // and survives this slice unchanged).
+    // and survives this pass unchanged).
     let mut param_locals: BTreeMap<LocalId, Type> = BTreeMap::new();
     for p in &agent.params {
         if is_refcounted(&p.ty) {
@@ -290,7 +289,7 @@ pub fn analyze_agent_full(agent: &IrAgent) -> (Cfg, Liveness, OwnershipPlan) {
     (cfg, liveness, plan)
 }
 
-/// Phase 17b-2 — per-If per-branch drop analysis.
+/// Per-`If` per-branch drop analysis.
 ///
 /// For each If statement recorded in `if_cfg_coords`, compute the
 /// set of refcounted locals that die on the then-edge (but not the
@@ -358,7 +357,7 @@ struct CfgBuilder {
     /// it. Populated as `lower_block` walks; consumed by
     /// `analyze_agent` and merged into the returned `OwnershipPlan`.
     ir_paths: BTreeMap<ProgramPoint, IrPath>,
-    /// Phase 17b-2 — for each lowered `IrStmt::If`, record the CFG
+    /// For each lowered `IrStmt::If`, record the CFG
     /// coordinates needed to compute per-branch drops later:
     ///   - `cond_block`: the CFG block ending in the Branch (same as
     ///     the block where the If's IrPath lives).

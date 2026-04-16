@@ -1,7 +1,7 @@
 //! Ollama adapter — local-first LLM inference.
 //!
 //! Speaks `POST /api/chat` against the local Ollama server (default
-//! `http://localhost:11434`). Phase 15's local-first story: users
+//! `http://localhost:11434`). Corvid's local-first story means users
 //! running Ollama get full Corvid functionality with no API key, no
 //! network egress, no per-token cost. Critical for privacy-sensitive
 //! deployments and offline development.
@@ -14,12 +14,12 @@
 //!
 //! Structured output: Ollama's chat API supports `format: "json"` and
 //! more recently a `format: <json-schema>` field for stricter output.
-//! Phase 15 uses the schema field when an `output_schema` is provided
+//! Corvid uses the schema field when an `output_schema` is provided
 //! (matches OpenAI's structured-output behaviour); falls back to
 //! plain text completion otherwise.
 //!
 //! Out of scope: streaming responses, multi-modal inputs, custom
-//! sampling parameters. Phase 20 + 31 territory.
+//! sampling parameters.
 
 use crate::errors::RuntimeError;
 use crate::llm::{LlmAdapter, LlmRequest, LlmResponse, TokenUsage};
@@ -87,7 +87,7 @@ impl LlmAdapter for OllamaAdapter {
             let mut body = json!({
                 "model": model_name,
                 // `stream: false` returns the full response in one
-                // JSON object; streaming is Phase 20 work.
+                // JSON object; streaming is not implemented yet.
                 "stream": false,
                 "messages": [
                     {"role": "user", "content": req.rendered}

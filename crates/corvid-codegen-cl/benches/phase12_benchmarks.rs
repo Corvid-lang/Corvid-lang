@@ -1,11 +1,11 @@
-//! Phase 12 close-out benchmarks — slice 12k.
+//! Native-tier close-out benchmarks for the early compiler/runtime baseline.
 //!
 //! Three representative Corvid programs, each measured on both tiers:
 //! the tree-walking interpreter (`corvid-vm::run_agent`) and the native
 //! AOT binary produced by this crate's codegen.
 //!
-//! Why these three? Each exercises a distinct codepath that Phase 12
-//! added, so the per-workload ratio tells us which slice's lowering is
+//! Why these three? Each exercises a distinct codepath from the early
+//! native tier, so the per-workload ratio tells us which lowering path is
 //! hot or cold:
 //!
 //!   arith_loop         — Int arithmetic + `for` + List<Int> (12a, 12h)
@@ -15,8 +15,8 @@
 //! The measurement is end-to-end wall-clock: for native that includes
 //! process spawn + execution + exit, because that's what `corvid run`
 //! users actually pay. If native can't beat the interpreter despite
-//! carrying the spawn tax, that's a real regression — Phase 12 stays
-//! open until it's fixed (see slice 12k's fair-comparison gate in
+//! carrying the spawn tax, that's a real regression — the native tier stays
+//! open until it's fixed (see the fair-comparison gate in
 //! ROADMAP.md).
 //!
 //! The programs are generated at bench-setup time (not hand-written)

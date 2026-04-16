@@ -6,8 +6,8 @@
 //! * **Tool dispatch** via `ToolRegistry` — async handlers keyed by name.
 //! * **Approval flow** via the `Approver` trait — stdin or programmatic.
 //! * **LLM adapters** via `LlmRegistry` — model-prefix dispatch over a
-//!   trait-object adapter list. Slice 2a ships only the mock adapter;
-//!   real `claude-*` HTTP dispatch lands in slice 2b.
+//!   trait-object adapter list, including the mock adapter used by tests
+//!   and offline demos.
 //! * **Tracing** via `Tracer` — JSONL events to disk, swallowing IO
 //!   errors so a broken trace cannot crash an agent.
 //!
@@ -19,7 +19,7 @@
 //!
 //! See `ARCHITECTURE.md` §6.
 
-// Phase 13 (native async runtime) introduces a C-ABI bridge module
+// The native async runtime introduces a C-ABI bridge module
 // (`ffi_bridge`) that compiled Corvid binaries call into. That module must
 // use `unsafe` to handle raw pointers across the FFI boundary — it's the
 // only place in the crate where unsafe is allowed. Every other module

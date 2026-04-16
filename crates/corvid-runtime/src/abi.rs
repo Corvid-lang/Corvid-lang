@@ -1,12 +1,10 @@
 //! Typed C-ABI wrapper types shared between Cranelift codegen and the
-//! `#[tool]` proc-macro (Phase 14).
+//! `#[tool]` proc-macro.
 //!
-//! Phase 13 shipped a narrow `corvid_tool_call_sync_int` bridge for
-//! `() -> Int` tool calls. Phase 14 replaces that with direct typed
-//! calls: each `#[tool]` declaration becomes a `#[no_mangle] pub extern "C" fn`
-//! whose parameters and return use the types in this module, and the
-//! Cranelift codegen emits a direct call to the symbol with matching-
-//! typed values.
+//! Tool calls use direct typed exports: each `#[tool]` declaration
+//! becomes a `#[no_mangle] pub extern "C" fn` whose parameters and
+//! return use the types in this module, and the Cranelift codegen
+//! emits a direct call to the symbol with matching typed values.
 //!
 //! # Why typed ABI, not JSON
 //!
@@ -18,7 +16,7 @@
 //! ABI is what Rust FFI already uses idiomatically; we're just picking
 //! it over the lazy default.
 //!
-//! # What types are supported (Phase 14)
+//! # What types are supported today
 //!
 //! | Corvid type | ABI type         | Conversion        |
 //! |-------------|------------------|-------------------|
@@ -27,7 +25,7 @@
 //! | `Float`     | `f64`            | identity          |
 //! | `String`    | `CorvidString`   | refcount-aware    |
 //!
-//! `Struct` and `List` at the tool ABI defer to Phase 15.
+//! `Struct` and `List` at the tool ABI are not implemented yet.
 //!
 //! # Safety rationale
 //!
@@ -112,7 +110,7 @@ impl IntoCorvidAbi<bool> for bool {
 // CorvidString — the ABI representation of a Corvid `String`.
 // ------------------------------------------------------------
 //
-// A Corvid String (per slice 12f's layout) has this shape in memory:
+// A Corvid String has this shape in memory:
 //
 //   offset -16: refcount    (i64)   — via descriptor - 16
 //   offset  -8: reserved    (i64)
@@ -149,13 +147,13 @@ pub struct CorvidString {
 }
 
 // SAFETY: CorvidString is a pointer to refcounted memory. Crossing a
-// tokio task boundary is safe in 17a because Corvid program code runs
+// tokio task boundary is safe today because Corvid program code runs
 // single-threaded (tools dispatch through the tokio runtime but the
 // Corvid values themselves are owned by one Rust task at a time). The
 // payload bytes are immutable after construction; Strings are shared-
-// immutable. Phase 25 multi-agent will revisit this with a proper
+// immutable. Future multi-agent work will revisit this with a proper
 // multi-threaded refcount design (biased RC / per-arena locks); the
-// Send/Sync impls here are 17a-scoped.
+// Send/Sync impls here are scoped to the current single-threaded model.
 unsafe impl Send for CorvidString {}
 unsafe impl Sync for CorvidString {}
 
@@ -192,7 +190,7 @@ impl CorvidString {
 // CorvidString ↔ String conversions.
 //
 // Receive-side (from_corvid_abi): wrapper received a CorvidString from
-// Cranelift. Per Corvid's +0 ABI (slice 12f: "caller passes without
+// Cranelift. Per Corvid's +0 ABI ("caller passes without
 // bumping; callee retains on entry"), we need to retain here to own
 // the reference. On conversion to a native `String` we copy the bytes
 // (so the native String owns its own memory) and release our retained
@@ -214,21 +212,21 @@ impl FromCorvidAbi<CorvidString> for String {
         // contract.
         //
         // Tool-call ABI is BORROW-ONLY on arguments: the Cranelift
-        // caller keeps ownership of the refcount, passes us a +0
+        // caller keeps ownership of the refcount and passes us a +0
         // borrow, and we neither retain nor release. That means we
         // can copy bytes out safely while `abi` stays alive
         // (Cranelift guarantees it until the call returns), but must
         // NOT touch the refcount. If we released here, the caller's
         // subsequent end-of-scope release would double-free. Agent
         // calls use a different +0-with-retain-on-entry convention
-        // (slice 12f); tool calls deliberately diverge for FFI
+        //; tool calls deliberately diverge for FFI
         // simplicity.
         let bytes = unsafe { abi.as_bytes() };
         match std::str::from_utf8(bytes) {
             Ok(s) => s.to_owned(),
             Err(_) => {
                 // Corvid String bytes are declared UTF-8 by construction
-                // (slice 12f only constructs them from valid UTF-8
+                // (the runtime only constructs them from valid UTF-8
                 // sources). Panic rather than return replacement chars —
                 // silent corruption is worse than a loud abort when the
                 // invariant breaks.

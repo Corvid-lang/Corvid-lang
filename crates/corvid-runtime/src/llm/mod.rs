@@ -6,8 +6,8 @@
 //! registered into the runtime's `LlmRegistry`, dispatched by model
 //! prefix.
 //!
-//! Slice 2a ships only the `MockAdapter` for tests and offline demos.
-//! Real `claude-*` HTTP dispatch lands in slice 2b.
+//! The runtime always ships a `MockAdapter` for tests and offline demos.
+//! Provider-backed adapters are layered on top of the same interface.
 
 pub mod anthropic;
 pub mod gemini;
@@ -47,9 +47,9 @@ pub struct LlmRequest {
 /// type. For string-returning prompts this is a JSON string; for struct
 /// returns it's a JSON object whose keys match the declared fields.
 ///
-/// `usage` records the token counts the provider reports. Phase 15
-/// adds this so the runtime can aggregate per-process totals (foundation
-/// for Phase 20's `@budget($)` cost-bound annotations). Adapters that
+/// `usage` records the token counts the provider reports. The runtime
+/// aggregates these per process and can feed higher-level budgeting
+/// features later. Adapters that
 /// don't have token info from the provider report zeros.
 #[derive(Debug, Clone)]
 pub struct LlmResponse {

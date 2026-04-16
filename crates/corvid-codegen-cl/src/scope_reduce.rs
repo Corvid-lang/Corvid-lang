@@ -1,4 +1,4 @@
-//! Slice 17e — effect-typed scope reduction.
+//! Effect-typed scope reduction.
 //!
 //! This pass runs after `insert_dup_drop` and after same-block pair
 //! elimination. It shortens RC-alive windows by moving `IrStmt::Drop`
@@ -15,7 +15,7 @@
 //!   - only literal-producing / local-read / arithmetic / unary pure
 //!     expressions count as effect-free
 //!
-//! The point of this slice is not maximum movement. It is to make the
+//! The point of this pass is not maximum movement. It is to make the
 //! ownership pass aware of effect-free windows without reopening the
 //! active dataflow files.
 

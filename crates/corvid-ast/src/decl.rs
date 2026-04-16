@@ -21,7 +21,7 @@ pub enum Decl {
     Tool(ToolDecl),
     Prompt(PromptDecl),
     Agent(AgentDecl),
-    /// Phase 16 — `extend T:` block attaching methods to a user type.
+    /// `extend T:` block attaching methods to a user type.
     /// Methods are ordinary Tool / Prompt / Agent decls whose first
     /// parameter's type matches `T`. Dot-syntax at call sites
     /// (`value.method(args)`) rewrites to the underlying call at
@@ -43,20 +43,17 @@ impl Decl {
 }
 
 /// Visibility modifier on a method declared inside an `extend` block.
-/// Defaults to `Private` (file-scoped). Phase 16 ships `Public` and
-/// the `Public(Package)` placeholder for Phase 25 package-manager
-/// integration. Phase 20 extends to effect-scoped visibility via
-/// additional variants inside `public(...)`.
+/// Defaults to `Private` (file-scoped). `Public` is callable anywhere
+/// the type is visible, and `PublicPackage` is reserved for a future
+/// package-level visibility boundary.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Visibility {
     /// Default. Callable only from the file declaring the extend block.
     Private,
     /// `public` — callable from anywhere the type is visible.
     Public,
-    /// `public(package)` — callable within the declaring package.
-    /// Phase 25's package manager gives this the formal boundary;
-    /// Phase 16 ships the syntax so code doesn't need a breaking
-    /// re-annotation later.
+    /// `public(package)` — callable within the declaring package once
+    /// package-level visibility is wired up.
     PublicPackage,
 }
 
@@ -66,7 +63,7 @@ impl Visibility {
     }
 }
 
-/// Phase 16 `extend T:` block. Attaches methods to an existing
+/// `extend T:` block. Attaches methods to an existing
 /// user-declared type. The inner decls can be any of tool / prompt /
 /// agent — the receiver is the first parameter of each, whose type
 /// must match the extended type. The block's visibility modifiers

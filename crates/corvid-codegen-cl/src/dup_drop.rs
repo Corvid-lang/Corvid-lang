@@ -1,26 +1,26 @@
-//! Slice 17b-1b.6b — IR Dup/Drop insertion driven by the .6a plan.
+//! IR Dup/Drop insertion driven by the ownership plan.
 //!
-//! This module is a SHADOW PATH. It takes an `IrAgent`, runs the .6a
+//! This module is a shadow path. It takes an `IrAgent`, runs the
 //! analysis, and returns a NEW agent with `IrStmt::Dup`/`IrStmt::Drop`
 //! statements inserted at the precise positions the plan calls for.
 //!
 //! It is NOT wired into the compilation pipeline yet. The codegen
 //! still consumes the un-transformed agent; the scattered
 //! `emit_retain` / `emit_release` calls in `lowering.rs` remain the
-//! authoritative ownership story until slice .6c.
+//! authoritative ownership story until the unified pass took over.
 //!
-//! Why ship .6b in this form:
-//!   - The plan from .6a is a data structure; its correctness can be
+//! Why this ships in this form:
+//!   - The ownership plan is a data structure; its correctness can be
 //!     unit-tested. But "the plan applied to IR" is a separate
 //!     transformation, and *its* correctness can also be unit-tested
 //!     in isolation — without having to teach codegen to deduplicate
 //!     against the existing emit_retain/release sites.
-//!   - Slice .6c will (a) wire this transformation into the pipeline
+//!   - The integration step will (a) wire this transformation into the pipeline
 //!     and (b) delete the 38 scattered emit_retain/release sites + 4
 //!     peepholes. The two changes go together because either alone
 //!     would either double-RC (if .6c only inserts) or zero-RC (if
 //!     .6c only deletes). They MUST land in the same commit.
-//!   - Verifying the insertion logic in .6b means .6c becomes a
+//!   - Verifying the insertion logic here means the pipeline wiring becomes a
 //!     mechanical edit, not a creative one.
 //!
 //! ## Algorithm
@@ -53,7 +53,7 @@ use std::collections::BTreeMap;
 use crate::dataflow::{analyze_agent, BranchDrops, IrNavStep, IrPath, OwnershipPlan};
 
 /// Public entry: clone `agent` and return a new agent with
-/// `IrStmt::Dup` and `IrStmt::Drop` inserted per the .6a plan.
+/// `IrStmt::Dup` and `IrStmt::Drop` inserted per the ownership plan.
 ///
 /// Pure: does not mutate the input. Stable across runs (the plan is
 /// deterministic; insertion order is deterministic within a path).
@@ -210,8 +210,8 @@ pub fn apply_plan(agent: &IrAgent, plan: &OwnershipPlan) -> IrAgent {
         apply_hoist(&mut out.body, &hoist);
     }
 
-    // Phase 17b-2 branch-specialized drops. For each If statement
-    // that 17b-2 analysis identified as needing per-branch drops,
+    // Branch-specialized drops. For each If statement
+    // that analysis identified as needing per-branch drops,
     // inject `IrStmt::Drop` ops at the tail of the appropriate
     // branch. Deepest-nested Ifs processed first so earlier
     // injections don't shift outer If indices.
@@ -513,7 +513,7 @@ fn zero_span() -> Span {
     Span { start: 0, end: 0 }
 }
 
-/// Phase 17b-2 — apply per-branch drops to an If statement.
+/// Apply per-branch drops to an If statement.
 ///
 /// `if_path` points to the If statement inside `root`. `drops` lists
 /// locals that die on each branch edge per the dataflow analysis.

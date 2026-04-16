@@ -11,8 +11,8 @@
 //! which are known at build time and stable for the lifetime of the
 //! `corvid-codegen-cl` binary we're compiling. Runtime discovery would
 //! need to walk file system for the staticlib and re-parse profile
-//! state — lazy-semantics we're avoiding on purpose (Phase 13 design
-//! decision: eager init, no lazy lookup of anything load-bearing).
+//! state — lazy semantics we're avoiding on purpose. The linker setup
+//! stays eager and explicit for anything load-bearing.
 
 use std::path::PathBuf;
 

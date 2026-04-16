@@ -336,8 +336,8 @@ impl<'ir> Interpreter<'ir> {
             IrStmt::Break { .. } => Ok(Flow::Break),
             IrStmt::Continue { .. } => Ok(Flow::Continue),
             IrStmt::Pass { .. } => Ok(Flow::Normal),
-            // Phase 17b: the interpreter uses Arc for refcounting,
-            // so codegen-inserted Dup/Drop are ignorable at this
+            // The interpreter uses Arc for refcounting, so
+            // codegen-inserted Dup/Drop are ignorable at this
             // tier. The native codegen lowers them to corvid_retain
             // / corvid_release calls.
             IrStmt::Dup { .. } | IrStmt::Drop { .. } => Ok(Flow::Normal),

@@ -46,8 +46,8 @@ struct Checker<'a> {
     types: HashMap<Span, Type>,
     errors: Vec<TypeError>,
 
-    /// Indexed declarations for O(1) lookup by DefId. Phase 16
-    /// methods get inserted here too — a method `extend Order: agent
+    /// Indexed declarations for O(1) lookup by DefId. Methods from
+    /// `extend` blocks get inserted here too — a method `extend Order: agent
     /// total(o: Order) -> Int` indexes into `agents_by_id` under the
     /// method's allocated DefId, alongside file-level free agents.
     tools_by_id: HashMap<DefId, &'a ToolDecl>,
@@ -55,7 +55,7 @@ struct Checker<'a> {
     agents_by_id: HashMap<DefId, &'a AgentDecl>,
     types_by_id: HashMap<DefId, &'a TypeDecl>,
 
-    /// Phase 16 — per-receiver-type method side-table from the
+    /// Per-receiver-type method side-table from the
     /// resolver. Method calls (`x.foo(args)`) look up `x`'s declared
     /// type then this map to find the method's `DefId`, after which
     /// dispatch reuses the existing tool / prompt / agent call paths.
@@ -171,8 +171,8 @@ impl<'a> Checker<'a> {
                 }
                 Decl::Import(_) => {}
                 Decl::Extend(ext) => {
-                    // Phase 16 slice 16c — index method decls by
-                    // their allocated DefIds (from the resolver's
+                    // Index method decls by their allocated DefIds
+                    // (from the resolver's
                     // method side-table) into the same per-kind
                     // tables free decls use, so call-resolution can
                     // dispatch uniformly.
@@ -236,8 +236,8 @@ impl<'a> Checker<'a> {
                     // by the parser, and the resolver has vetted their names.
                 }
                 Decl::Extend(ext) => {
-                    // Phase 16 slice 16c: typecheck agent method
-                    // bodies the same way free agents are checked.
+                    // Typecheck agent method bodies the same way free
+                    // agents are checked.
                     // Tool methods have no body. Prompt methods
                     // have a template (not a code block) — its
                     // typecheck is the same as a free prompt's.
@@ -611,7 +611,7 @@ impl<'a> Checker<'a> {
         span: Span,
         expected: Option<&Type>,
     ) -> Type {
-        // Phase 16: a callee of shape `target.field` is a method call.
+        // A callee of shape `target.field` is a method call.
         // Lower it: typecheck the receiver, look up the method by
         // (receiver_type_def_id, method_name), validate args (with
         // the receiver implicitly prepended), reuse the appropriate
@@ -913,7 +913,7 @@ impl<'a> Checker<'a> {
         }
     }
 
-    /// Phase 16 — `target.method(args)` rewritten to a regular
+    /// `target.method(args)` rewritten to a regular
     /// function call with the receiver as the first argument. The
     /// receiver's type is looked up in the methods side-table to
     /// pick the matching method DefId; from there we reuse the
@@ -939,7 +939,7 @@ impl<'a> Checker<'a> {
                 self.errors.push(TypeError::new(
                     TypeErrorKind::NotCallable {
                         got: format!(
-                            "method `{}` on receiver of type `{}` — Phase 16 supports methods only on user-declared types (struct types). Methods on built-ins arrive in a later phase.",
+                            "method `{}` on receiver of type `{}` — methods currently work only on user-declared struct types. Built-in receiver methods are not implemented yet.",
                             method_name.name,
                             other.display_name()
                         ),

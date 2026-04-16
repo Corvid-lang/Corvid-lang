@@ -129,7 +129,7 @@ impl SymbolTable {
 
     /// Allocate a fresh `DefId` for a declaration that lives in a
     /// scoped table (NOT the file-level by-name namespace). Used for
-    /// Phase 16 methods inside `extend T:` blocks — they share names
+    /// Methods inside `extend T:` blocks — they share names
     /// across types (`Point.distance`, `Line.distance`) so they can't
     /// go in the global by-name table, but they still need stable
     /// identity for downstream IR + diagnostics. Caller is responsible

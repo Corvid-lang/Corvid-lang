@@ -1,5 +1,5 @@
 //! Compile-time + run-time verification that `#[tool]` produces the
-//! contract slice 14a promises:
+//! contract this macro layer promises:
 //!
 //!   1. The user's `async fn` remains callable as plain Rust.
 //!   2. A `#[no_mangle] pub extern "C" fn __corvid_tool_<name>` wrapper
@@ -7,7 +7,7 @@
 //!   3. A `ToolMetadata` entry is visible via `inventory::iter`.
 //!
 //! End-to-end invocation of the wrapper (which would need the runtime
-//! bridge + tokio + the C runtime linked) is slice 14d's job — this
+//! bridge + tokio + the C runtime linked) is handled elsewhere — this
 //! test only verifies the macro contract, not dispatch.
 
 use corvid_runtime::{abi::ToolMetadata, inventory};
@@ -35,7 +35,7 @@ async fn round_trip_float(x: f64) -> f64 {
     x + 1.0
 }
 
-/// Zero-arg tool returning Int — same shape as Phase 13's narrow
+/// Zero-arg tool returning Int — same shape as the narrow
 /// bridge used to support directly. Preserves that capability.
 #[tool("zero_arg_answer")]
 async fn zero_arg_answer() -> i64 {

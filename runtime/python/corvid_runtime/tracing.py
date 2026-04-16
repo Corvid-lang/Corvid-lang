@@ -1,7 +1,7 @@
 """Lightweight trace writer.
 
 Every tool call, prompt call, approval, and agent-run boundary is appended
-as a JSON line to `target/trace/<run_id>.jsonl`. Phase 10+ will build a
+as a JSON line to `target/trace/<run_id>.jsonl`. Later work will build a
 richer viewer; for v0.1 the file itself is the product.
 """
 

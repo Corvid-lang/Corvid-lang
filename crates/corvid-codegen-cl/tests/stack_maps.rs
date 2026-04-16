@@ -1,4 +1,4 @@
-//! Phase 17c — end-to-end integration test for stack map emission +
+//! End-to-end integration test for stack map emission +
 //! runtime lookup.
 //!
 //! Each test compiles a small Corvid program to a native binary,
@@ -23,14 +23,14 @@
 //!      `write_data_addr`), `fn_start` would be NULL or
 //!      `ref_offsets` would be wild, and the assertions catch it.
 //!
-//! Why this is the load-bearing 17c consumer:
+//! Why this is the load-bearing stack-map consumer:
 //!
-//!   The stack-map table itself is dead weight until 17d's mark
-//!   phase walks it. This test exercises the same lookup path 17d
+//!   The stack-map table itself is dead weight until the collector's mark
+//!   walk uses it. This test exercises the same lookup path the collector
 //!   will use (`corvid_stack_maps_entry_count`,
 //!   `corvid_stack_maps_entry_at`) against a real compiled binary.
 //!   If anything in the emit/relocate/load chain is wrong, this
-//!   test fails BEFORE 17d ships, so we don't compound debugging
+//!   test fails before collector integration, so we don't compound debugging
 //!   complexity.
 
 use corvid_codegen_cl::build_native_to_disk;
@@ -270,7 +270,7 @@ agent main() -> String:
 
 /// Test 4: parser sanity. Checks the dump-parser handles the empty
 /// refs case (`refs=[]`) which appears for entries with non-pointer
-/// types — shouldn't actually happen in 17c (we only declare I64
+/// types — shouldn't actually happen in current stack-map emission (we only declare I64
 /// pointers) but the parser must not crash on it.
 #[test]
 fn parser_handles_empty_refs_brackets() {

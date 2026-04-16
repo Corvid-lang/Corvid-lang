@@ -12,7 +12,7 @@
 //! because Rust extern "C" declarations don't synthesize implementations.
 //!
 //! The C files were previously compiled by `corvid-codegen-cl`'s
-//! `link.rs` at user-binary link time. Phase 15 moves the compilation
+//! `link.rs` at user-binary link time. The current layout moves the compilation
 //! here so corvid-codegen-cl just links against corvid-runtime's
 //! staticlib (which already contains the C objects).
 

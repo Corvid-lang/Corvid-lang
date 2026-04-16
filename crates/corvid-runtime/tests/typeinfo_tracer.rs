@@ -1,4 +1,4 @@
-//! Phase 17a — typeinfo-driven alloc/release/trace path.
+//! Typeinfo-driven alloc/release/trace path.
 //!
 //! These tests exercise the C runtime directly: they construct Corvid-
 //! layout heap objects, install custom typeinfo blocks, and invoke

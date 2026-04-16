@@ -1,9 +1,9 @@
-//! Phase 17b-1b — principled `Dup`/`Drop` insertion pass.
+//! Principled `Dup`/`Drop` insertion pass.
 //!
 //! Walks each agent body and inserts `IrStmt::Dup` / `IrStmt::Drop`
 //! at every ownership boundary. The output IR is consumed by
 //! `lowering.rs` in place of the scattered `emit_retain`/`emit_release`
-//! calls that existed pre-17b-1b.
+//! calls that existed before the unified ownership path.
 //!
 //! ## Algorithm overview
 //!
@@ -33,10 +33,9 @@
 //!
 //! 5. **Function summaries.** Per agent we compute `may_retain`,
 //!    `may_release`, and per-parameter `borrows_param` flags. These
-//!    are consumed by slice 17b-1c (whole-program retain/release
-//!    pair elimination).
+//!    are consumed by whole-program retain/release pair elimination.
 //!
-//! ## Why this slice is indivisible
+//! ## Why this pass is indivisible
 //!
 //! A partial implementation — e.g., borrow inference without Dup
 //! insertion — produces an IR where callees expect Borrowed semantics
@@ -56,29 +55,28 @@
 //!   emits no Drop on `p_i` and emits a Dup before any consuming use.
 //! * **Parity preservation.** `ALLOCS == RELEASES` for every test.
 //!
-//! ## What this slice does NOT do
+//! ## What this pass does NOT do
 //!
-//! * **No whole-program retain/release pair elimination** — that's
-//!   17b-1c, consuming the function summaries we emit here.
-//! * **No drop specialization** — 17b-2.
-//! * **No reuse / in-place update** — 17b-3.
-//! * **No Morphic-style per-call-site specialization** — 17b-4.
-//! * **No escape analysis / stack promotion** — 17b-5.
+//! * **No whole-program retain/release pair elimination** — that
+//!   consumes the function summaries emitted here.
+//! * **No drop specialization.**
+//! * **No reuse / in-place update.**
+//! * **No per-call-site specialization.**
+//! * **No escape analysis / stack promotion.**
 
 use corvid_ir::{
     IrAgent, IrBlock, IrCallKind, IrExpr, IrExprKind, IrFile, IrStmt, ParamBorrow,
 };
 use corvid_resolve::{DefId, LocalId};
 use corvid_types::Type;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 // ---------------------------------------------------------------------------
 // Output types
 // ---------------------------------------------------------------------------
 
 /// Per-agent analysis summary. Populated for every agent in the file.
-/// Consumed by 17b-1c (whole-program pair elimination) once that
-/// slice lands.
+/// Consumed by the whole-program pair-elimination pass.
 #[derive(Debug, Clone)]
 pub struct AgentSummary {
     /// Mirror of `IrAgent.borrow_sig`. Populated here, written back
@@ -89,7 +87,7 @@ pub struct AgentSummary {
     /// Does the body contain any `Drop` or other consumer?
     pub may_release: bool,
     /// Per-parameter: is `p_i` borrowed on every code path?
-    /// `true` means 17b-1c can eliminate a cross-call retain/release
+    /// `true` means the pair-elimination pass can eliminate a cross-call retain/release
     /// pair for this argument slot.
     pub borrows_param: Vec<bool>,
 }
@@ -97,12 +95,12 @@ pub struct AgentSummary {
 /// Top-level entry point. Consumes an `IrFile`, runs the full
 /// analysis + transformation, returns a new `IrFile` with `Dup`/`Drop`
 /// statements inserted and `borrow_sig` populated on every agent,
-/// plus per-agent summaries for 17b-1c.
+/// plus per-agent summaries for later ownership cleanups.
 pub fn analyze(ir: IrFile) -> (IrFile, HashMap<DefId, AgentSummary>) {
-    // Phase 1: borrow inference (Lean 4-style fixed point).
+    // Step 1: borrow inference (Lean 4-style fixed point).
     let borrow_sigs = infer_borrow_sigs(&ir);
 
-    // Phase 2: per-agent Dup/Drop insertion.
+    // Step 2: per-agent `Dup`/`Drop` insertion.
     let mut transformed_agents = Vec::with_capacity(ir.agents.len());
     let mut summaries: HashMap<DefId, AgentSummary> = HashMap::new();
     for agent in &ir.agents {
@@ -130,7 +128,7 @@ fn default_borrow_sig(params: &[corvid_ir::IrParam]) -> Vec<ParamBorrow> {
 }
 
 // ---------------------------------------------------------------------------
-// Phase 1 — borrow inference (Lean 4-style monotone fixed point)
+// Step 1 — borrow inference (Lean 4-style monotone fixed point)
 // ---------------------------------------------------------------------------
 
 /// A parameter is `Borrowed` iff the body never consumes it. "Consume"
@@ -149,11 +147,11 @@ fn default_borrow_sig(params: &[corvid_ir::IrParam]) -> Vec<ParamBorrow> {
 /// is viable; we pessimistically mark return-of-param as Owned. On
 /// subsequent iterations, if we observe that nothing else consumes
 /// p_i, we upgrade return-of-param to "emit Dup before return" —
-/// but that upgrade actually lands in Phase 2 (Dup/Drop insertion).
-/// For Phase 1 inference, return-of-param stays Owned.
+/// but that upgrade actually lands in the insertion step.
+/// For borrow inference, return-of-param stays Owned.
 ///
-/// This is intentionally conservative: the slice that also owns
-/// `Dup-before-return` is 17b-1b itself — Phase 2 of this module.
+/// This is intentionally conservative: `Dup-before-return` is handled
+/// by the insertion step in this same module.
 /// The optimistic "every param starts Borrowed" initial state of
 /// the fixed point avoids the chicken-and-egg in the limit case of
 /// a param with no consumers at all (e.g., `agent f(x: String) -> Int: return 0`
@@ -210,7 +208,7 @@ fn infer_borrow_sigs(ir: &IrFile) -> HashMap<DefId, Vec<ParamBorrow>> {
 
 /// Does the agent's body consume `target`? Checks for consumers:
 ///   - Return of `target` (without prior local Dup — always true in
-///     initial inference; Dup insertion happens in Phase 2)
+///     initial inference; `Dup` insertion happens in the next step)
 ///   - Store into a struct field, list literal slot, list element
 ///   - Pass as argument to callee `g` where `σ(g, slot) = Owned`
 fn param_is_consumed(
@@ -229,7 +227,7 @@ fn param_is_consumed(
                 //
                 // In Corvid's current codegen the Dup-before-return
                 // is already emitted naturally by lower_expr's
-                // retain on `IrExprKind::Local`, so this slice
+                // retain on `IrExprKind::Local`, so this pass
                 // (17b-1b.1) doesn't need to insert it — only avoid
                 // treating the pattern as a consumer.
                 //
@@ -311,8 +309,8 @@ fn expr_consumes_target(
             let callee_sig = match kind {
                 IrCallKind::Agent { def_id } => sigs.get(def_id),
                 // Tools / prompts / struct constructors all have
-                // owning calling conventions in 17b-1b — no borrow
-                // inference for them in this slice (future work
+                // owning calling conventions today — no borrow
+                // inference for them in this pass (future work
                 // once tools/prompts support ownership annotations).
                 _ => None,
             };
@@ -327,7 +325,7 @@ fn expr_consumes_target(
             }
             false
         }
-        // Phase 18 IR variants — Result/Option construction stores
+        // Result/Option construction stores
         // the inner value into a tagged-union payload (consuming
         // position). `?` propagation conditionally returns the
         // value; if `target` is referenced inside, it's consumed
@@ -360,7 +358,7 @@ fn expr_references(expr: &IrExpr, target: LocalId) -> bool {
         }
         IrExprKind::List { items } => items.iter().any(|i| expr_references(i, target)),
         IrExprKind::Call { args, .. } => args.iter().any(|a| expr_references(a, target)),
-        // Phase 18 IR variants — recurse into sub-expressions.
+        // Tagged-union/retry nodes recurse into sub-expressions.
         IrExprKind::WeakNew { strong: inner }
         | IrExprKind::WeakUpgrade { weak: inner }
         | IrExprKind::ResultOk { inner }
@@ -392,7 +390,7 @@ fn visit_block(block: &IrBlock, visitor: &mut dyn FnMut(&IrStmt)) {
 }
 
 // ---------------------------------------------------------------------------
-// Phase 2 — Dup/Drop insertion (one agent at a time)
+// Step 2 — Dup/Drop insertion (one agent at a time)
 // ---------------------------------------------------------------------------
 
 /// Transform a single agent's body: insert `Dup` and `Drop` statements
@@ -401,20 +399,20 @@ fn visit_block(block: &IrBlock, visitor: &mut dyn FnMut(&IrStmt)) {
 fn transform_agent(
     agent: &IrAgent,
     borrow_sig: Vec<ParamBorrow>,
-    sigs: &HashMap<DefId, Vec<ParamBorrow>>,
+    _sigs: &HashMap<DefId, Vec<ParamBorrow>>,
 ) -> (IrAgent, AgentSummary) {
-    // In 17b-1b.1 we populate borrow_sig but do NOT insert Dup/Drop
+    // We populate borrow_sig but do NOT insert Dup/Drop
     // yet. The scattered emit_retain/emit_release sites in lowering.rs
-    // stay as the ownership ground truth for this sub-slice. The full
-    // Dup/Drop insertion + scattered-site deletion lands in 17b-1b.2
-    // so we can ship a partial win (borrow-sig-driven call-site
+    // stay as the ownership ground truth for this transitional mode.
+    // Full Dup/Drop insertion and scattered-site deletion land in the
+    // complete ownership path so we can ship a partial win (borrow-sig-driven call-site
     // elision) without also shouldering the ~40-site surgery in one
     // commit.
     //
     // To make the partial ship coherent: borrow_sig IS consumed at
     // call-sites in `lowering.rs` — if σ(callee, i) = Borrowed, the
     // callee-entry retain and scope-exit release for that parameter
-    // are skipped. That's the measurable win for this sub-slice.
+    // are skipped. That's the measurable win for this transitional step.
 
     let body = agent.body.clone();
 

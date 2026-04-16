@@ -32,8 +32,8 @@
 //!
 //! Single-threaded current-thread runtime starts faster (~0ms vs
 //! ~5-10ms) but can't give Corvid a production-grade concurrency story
-//! once Phase 20's `Stream<T>` and Phase 25's multi-agent work land.
-//! Design decision made at Phase 13 pre-phase chat (dev-log Day 30):
+//! once streaming and multi-agent support land.
+//! Design decision from the native runtime bring-up discussion (dev-log Day 30):
 //! pay the startup tax now so Corvid ships on a runtime that matches
 //! the GP-language positioning from day one, rather than swapping
 //! runtimes mid-roadmap.
@@ -113,7 +113,7 @@ fn bridge() -> &'static BridgeState {
     unsafe { &*p }
 }
 
-/// Phase-13 probe function. Returns 42. Used by the slice-13a smoke
+/// Probe function. Returns 42. Used by the early smoke
 /// test to verify the staticlib builds and links correctly into a
 /// compiled Corvid binary before any of the real bridge surface lands.
 /// Kept permanently because smoke-testing the FFI path on any future
@@ -156,8 +156,8 @@ pub extern "C" fn corvid_runtime_init() -> i32 {
 
     BRIDGE.store(ptr, Ordering::Release);
 
-    // Slice 14c: walk every `#[tool]` metadata entry linked into this
-    // binary. Today we just record the count for diagnostics; slice
+    // Walk every `#[tool]` metadata entry linked into this
+    // binary. Today we just record the count for diagnostics; later
     // 14e plumbs these entries into the approve-policy table, and a
     // future `corvid check` command can cross-verify the signatures
     // against the `.cor` source.
@@ -193,17 +193,17 @@ pub extern "C" fn corvid_runtime_shutdown() {
     }
 }
 
-/// Phase-13 tool-call bridge for the narrow case `fn(no args) -> Int`.
+/// Tool-call bridge for the narrow case `fn(no args) -> Int`.
 ///
 /// Compiled Corvid code that resolved a tool call to an agent-scope
 /// `IrCallKind::Tool` emits a call to this function with the tool name
 /// as a pointer + length. We call into the runtime's `call_tool` via
 /// `block_on` and return the resulting Int.
 ///
-/// Arguments JSON is hardcoded to `[]` in this slice — Phase 14 ships
+/// Arguments JSON is hardcoded to `[]` here — the typed bridge ships
 /// the generalised bridge with full argument + return-type marshalling
 /// via `serde_json`. This narrow version exists so the parity harness
-/// can exercise the async path end-to-end before Phase 14 lands.
+/// can exercise the async path end-to-end before the typed bridge lands.
 ///
 /// Error conventions:
 ///
@@ -232,8 +232,8 @@ pub unsafe extern "C" fn corvid_tool_call_sync_int(
             eprintln!("corvid_tool_call_sync_int: null/empty tool name");
             return i64::MIN;
         }
-        let slice = std::slice::from_raw_parts(name_ptr, name_len);
-        match std::str::from_utf8(slice) {
+        let name_bytes = std::slice::from_raw_parts(name_ptr, name_len);
+        match std::str::from_utf8(name_bytes) {
             Ok(s) => s,
             Err(e) => {
                 eprintln!("corvid_tool_call_sync_int: invalid UTF-8 in tool name: {e}");
@@ -368,9 +368,9 @@ pub(crate) fn record_registered_tool_count(n: i64) {
 }
 
 // ------------------------------------------------------------
-// Phase 15 — typed prompt-dispatch bridges.
+// Typed prompt-dispatch bridges.
 //
-// One bridge per return type, mirroring Phase 14's typed-ABI design.
+// One bridge per return type, mirroring the typed-ABI tool design.
 // Each takes 4 CorvidString args (prompt name, signature string,
 // rendered prompt body, model name) and returns the typed value.
 //
@@ -474,7 +474,7 @@ fn call_llm_once(
     let model_owned = model.to_string();
     // Combine system prompt + user-side rendered prompt with two
     // newlines. Adapters that have native system-prompt support could
-    // separate these later; for Phase 15 v1 the concat is universal.
+    // separate these later; for now the concat is universal.
     let combined = format!("{system_prompt}\n\n{rendered}");
     let req = LlmRequest {
         prompt: prompt_owned,
@@ -734,7 +734,7 @@ fn build_corvid_runtime() -> Runtime {
         b = b.default_model(&model);
     }
 
-    // Phase 15: register every supported LLM adapter unconditionally
+    // Register every supported LLM adapter unconditionally
     // so the model-prefix dispatch in `LlmRegistry::call` can route
     // any `CORVID_MODEL` to its provider. Adapters that need an API
     // key fall back to an empty string when the env var is missing —
@@ -761,12 +761,12 @@ fn build_corvid_runtime() -> Runtime {
     let compat_key = std::env::var("OPENAI_COMPAT_API_KEY").unwrap_or_default();
     b = b.llm(Arc::new(OpenAiCompatibleAdapter::new(compat_key)));
 
-    // Phase 13 test-only mock-tool registration. Format:
+    // Test-only mock-tool registration. Format:
     //   CORVID_TEST_MOCK_INT_TOOLS="name1:value1;name2:value2"
     //
     // Each name becomes a tool that ignores its args and returns the
     // given Int. Used by the parity harness to exercise the compiled
-    // tool-call path before Phase 14 ships the user-facing proc-macro
+    // tool-call path before the user-facing proc-macro
     // registry. Not a production feature — users never set this env
     // var, and nothing in the driver surfaces it.
     if let Ok(spec) = std::env::var("CORVID_TEST_MOCK_INT_TOOLS") {
@@ -811,7 +811,7 @@ fn trace_dir_for_current_process() -> PathBuf {
 // ------------------------------------------------------------
 // Tests — internal only, exercise the safe Rust surface. The C-ABI
 // path is covered by the corvid-codegen-cl parity harness once
-// slice 13a's link flow lands.
+// the early link flow lands.
 // ------------------------------------------------------------
 
 #[cfg(test)]

@@ -1,6 +1,6 @@
-/* Corvid native runtime: weak fallback for `corvid_stack_maps`.
+﻿/* Corvid native runtime: weak fallback for `corvid_stack_maps`.
  *
- * Phase 17c introduced the `corvid_stack_maps` data symbol, emitted
+ * The stack-map emitter introduced the `corvid_stack_maps` data symbol, emitted
  * by the codegen (corvid-codegen-cl/src/lowering.rs::
  * emit_stack_map_table) into every compiled Corvid binary's
  * `.rodata`. Runtime code in `stack_maps.c` and `collector.c`
@@ -15,14 +15,14 @@
  * with the linker attribute that lets a stronger definition
  * (the codegen-emitted one in a real Corvid binary) override it.
  *
- *   - MSVC: `__declspec(selectany)` — linker tolerates multiple
+ *   - MSVC: `__declspec(selectany)` â€” linker tolerates multiple
  *     definitions and picks any. The codegen's definition, being
  *     in the main object of the Corvid binary, typically wins.
- *   - GCC/Clang: `__attribute__((weak))` — weak symbol, overridden
+ *   - GCC/Clang: `__attribute__((weak))` â€” weak symbol, overridden
  *     by any strong definition.
  *
  * Rust-only tests see entry_count=0 and the collector's mark
- * phase finds no safepoints to walk (correct no-op behavior).
+ * walk finds no safepoints to traverse (correct no-op behavior).
  * Real Corvid binaries get the codegen-emitted table with real
  * data (correct).
  */
@@ -51,3 +51,4 @@ const corvid_stack_maps_header corvid_stack_maps = { 0, 0 };
 __attribute__((weak))
 const corvid_stack_maps_header corvid_stack_maps = { 0, 0 };
 #endif
+

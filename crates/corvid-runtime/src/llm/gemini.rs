@@ -4,13 +4,13 @@
 //! against `https://generativelanguage.googleapis.com`. Auth is via
 //! query-parameter API key (Gemini's standard for the simple key-based
 //! tier; Application Default Credentials live behind a separate code
-//! path we don't ship in Phase 15).
+//! path we do not ship yet).
 //!
 //! Model spec convention: any `gemini-*` model name in `CORVID_MODEL`
 //! routes here. Examples: `gemini-2.0-flash`, `gemini-1.5-pro`.
 //!
 //! Structured output: Gemini supports `responseMimeType: "application/json"`
-//! plus an optional `responseSchema` field. Phase 15 sets both when
+//! plus an optional `responseSchema` field. Corvid sets both when
 //! the caller provides an `output_schema`.
 //!
 //! Out of scope: streaming (`:streamGenerateContent`), function-calling,

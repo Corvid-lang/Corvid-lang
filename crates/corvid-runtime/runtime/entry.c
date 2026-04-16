@@ -1,6 +1,6 @@
 /* Corvid native runtime: entry-agent helpers.
  *
- * Slice 12i: the codegen emits its own `main(int argc, char** argv)`
+ * The codegen emits its own `main(int argc, char** argv)`
  * via Cranelift, signature-aware per program. That generated main
  * uses the helpers in this file to:
  *
@@ -12,7 +12,7 @@
  *   - register the leak-detector printer via atexit (corvid_init →
  *     atexit(corvid_on_exit))
  *
- * Parse / arity errors print a slice-specific message and `exit(1)`.
+ * Parse / arity errors print a clear message and `exit(1)`.
  * The runtime overflow handler stays for arithmetic and bounds
  * violations; entry-time parse errors get their own messages because
  * they're the user's first interaction with the binary and the
@@ -31,11 +31,11 @@ extern long long corvid_alloc_count;
 extern long long corvid_release_count;
 extern long long corvid_retain_call_count;
 extern long long corvid_release_call_count;
-/* Phase 17d — set by corvid_init based on CORVID_GC_TRIGGER env var.
+/* Set by corvid_init based on CORVID_GC_TRIGGER env var.
  * alloc.c reads this to decide when to auto-collect. */
 extern long long corvid_gc_trigger_threshold;
 
-/* Phase 17f++ — verifier mode, set by corvid_init based on
+/* Verifier mode, set by corvid_init based on
  * CORVID_GC_VERIFY env var. 0=off, 1=warn, 2=abort. verify.c reads
  * this at every GC cycle. */
 extern int corvid_gc_verify_mode;
@@ -52,7 +52,7 @@ void corvid_on_exit(void) {
                 corvid_retain_call_count,
                 corvid_release_call_count);
     }
-    /* Phase 17f++ — if the verifier ran and caught drift, surface
+    /* If the verifier ran and caught drift, surface
      * the total at exit even under warn mode so CI can pick it up. */
     if (corvid_gc_verify_mode != 0 && corvid_gc_verify_drift_count > 0) {
         fprintf(stderr,
@@ -66,13 +66,13 @@ extern int corvid_stack_maps_dump_requested;
 
 /* Called as the first instruction of generated main. Registers the
  * exit handler so leak counters get printed regardless of how main
- * eventually returns. Phase 17c — also dumps the stack-map table
+ * eventually returns. Also dumps the stack-map table
  * when CORVID_DEBUG_STACK_MAPS is set, so the integration test can
  * inspect what codegen emitted.
  */
 void corvid_init(void) {
     atexit(corvid_on_exit);
-    /* Phase 17c — dump-on-start if requested. The flag is a simple
+    /* Dump-on-start if requested. The flag is a simple
      * int (not a getenv call here) so stack_maps.o doesn't need
      * getenv, keeping the minimal-CRT test link simple. */
     corvid_stack_maps_dump_requested =
@@ -80,7 +80,7 @@ void corvid_init(void) {
     if (corvid_stack_maps_dump_requested) {
         corvid_stack_maps_dump();
     }
-    /* Phase 17d — parse CORVID_GC_TRIGGER here rather than in
+    /* Parse CORVID_GC_TRIGGER here rather than in
      * alloc.c; keeps strtoll/getenv out of alloc.o so the minimal-
      * CRT tests (ffi_bridge_smoke) can link corvid_c_runtime without
      * dragging in full stdlib. Default: 10_000 allocations between
@@ -94,7 +94,7 @@ void corvid_init(void) {
         corvid_gc_trigger_threshold = 10000;
     }
 
-    /* Phase 17f++ — verifier mode. off|warn|abort. */
+    /* Verifier mode. off|warn|abort. */
     const char* vv = getenv("CORVID_GC_VERIFY");
     if (vv != NULL) {
         if (strcmp(vv, "warn") == 0 || strcmp(vv, "1") == 0) {
@@ -116,7 +116,7 @@ void corvid_arity_mismatch(long long expected, long long got) {
     exit(2);
 }
 
-/* ---- parse helpers — slice-specific error messages ---------------- */
+/* ---- parse helpers ------------------------------------------------ */
 
 long long corvid_parse_i64(const char* s, long long argv_index) {
     if (s == NULL) {

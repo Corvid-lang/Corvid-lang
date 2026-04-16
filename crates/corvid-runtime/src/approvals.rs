@@ -9,7 +9,7 @@
 //!   embedding hosts that want to plug their own auth system in.
 //!
 //! Programs select an approver via `Runtime::set_approver`. There is no
-//! "default approve all" in this slice — that would weaken the safety
+//! "default approve all" here — that would weaken the safety
 //! story. Tests that need it construct `ProgrammaticApprover::always_yes`
 //! explicitly so the intent is on the page.
 

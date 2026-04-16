@@ -2,8 +2,7 @@
 //!
 //! Only surface today is `#[tool("name")]`. Applied to an `async fn` in
 //! a user Rust crate, it generates the typed C-ABI bridge that
-//! Cranelift-compiled Corvid code links against (Phase 14 — dev-log
-//! Day 31, ROADMAP slice 14a).
+//! Cranelift-compiled Corvid code links against.
 //!
 //! # What the macro does
 //!
@@ -36,8 +35,8 @@
 //!   the codegen side. The macro just calls the conversion traits.
 //! - It doesn't do error handling beyond what the user's `async fn`
 //!   already does. Tools whose `async fn` returns `T` cannot fail at
-//!   the Corvid level today — Phase 18 adds `Result<T, E>` and the
-//!   macro will grow a Result-return path then.
+//!   the Corvid level today — the macro does not support a
+//!   `Result<T, E>` return path yet.
 //! - It doesn't support sync `fn` (only `async fn`). Users wrap a
 //!   sync body in `async { ... }` trivially; keeping the macro
 //!   async-only means one codepath to test and maintain.
@@ -64,14 +63,14 @@ pub fn tool(attr: TokenStream, item: TokenStream) -> TokenStream {
 }
 
 fn expand_tool(name_lit: LitStr, f: ItemFn) -> syn::Result<TokenStream2> {
-    // Phase 14 contract: `#[tool]` only accepts `async fn`. Sync fns
+    // `#[tool]` only accepts `async fn`. Sync fns
     // are wrappable in `async { ... }` trivially — rejecting them here
     // prevents accidental "my tool isn't async so it can't await the
     // LLM" foot-guns down the line.
     if f.sig.asyncness.is_none() {
         return Err(syn::Error::new_spanned(
             &f.sig.fn_token,
-            "#[tool] requires `async fn` — wrap synchronous bodies in `async { ... }` if you don't need to await anything (Phase 14)",
+            "#[tool] requires `async fn` — wrap synchronous bodies in `async { ... }` if you don't need to await anything",
         ));
     }
 
@@ -122,7 +121,7 @@ fn expand_tool(name_lit: LitStr, f: ItemFn) -> syn::Result<TokenStream2> {
         // (defined in `corvid_runtime::abi`). The conversion may copy
         // (e.g. CorvidString -> String copies bytes) and may release
         // refcounts (CorvidString into conversion releases the
-        // caller's +0 reference — per slice 12f's +0 ABI the wrapper
+        // caller's +0 reference — per the +0 ABI the wrapper
         // retains on entry and releases here).
         arg_conversions.push(quote! {
             let #arg_name: #native_ty_tokens =
@@ -196,9 +195,8 @@ fn expand_tool(name_lit: LitStr, f: ItemFn) -> syn::Result<TokenStream2> {
 }
 
 /// Map a Rust type appearing in a `#[tool]` signature to its Corvid
-/// ABI type. Phase 14 supports scalar types + String; Struct and List
-/// at the tool ABI defer to Phase 15 where composite marshalling lands
-/// alongside prompt dispatch.
+/// ABI type. Tool signatures currently support scalar types plus
+/// String; Struct and List at the tool ABI are not implemented yet.
 fn abi_type_for(ty: &Type) -> syn::Result<TokenStream2> {
     let ts = quote! { #ty }.to_string().replace(' ', "");
     match ts.as_str() {
@@ -209,7 +207,7 @@ fn abi_type_for(ty: &Type) -> syn::Result<TokenStream2> {
         other => Err(syn::Error::new_spanned(
             ty,
             format!(
-                "#[tool] signatures in Phase 14 support only `i64` (Corvid Int), `f64` (Float), `bool` (Bool), `String`. Got `{other}`. Struct/List arg + return types land in Phase 15."
+                "#[tool] signatures currently support only `i64` (Corvid Int), `f64` (Float), `bool` (Bool), and `String`. Got `{other}`. Struct/List arguments and returns are not implemented yet."
             ),
         )),
     }
@@ -217,7 +215,7 @@ fn abi_type_for(ty: &Type) -> syn::Result<TokenStream2> {
 
 /// The wrapper symbol name embeds the tool name. Tool names that aren't
 /// valid C identifiers get their non-alphanumeric chars replaced with
-/// underscores. Phase 14 tool names are typically snake_case identifiers
+/// underscores. Tool names are typically snake_case identifiers
 /// anyway; mangling exists for robustness, not because anyone writes
 /// a tool named `"with spaces!"`.
 fn mangle_tool_name(name: &str) -> String {

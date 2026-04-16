@@ -21,7 +21,7 @@ pub struct Resolved {
     pub symbols: SymbolTable,
     pub bindings: HashMap<Span, Binding>,
     pub errors: Vec<ResolveError>,
-    /// Phase 16 method side-table — per-receiver-type registry of
+    /// Method side-table — per-receiver-type registry of
     /// methods declared in `extend T:` blocks. Outer key is the type's
     /// `DefId`; inner map is keyed by method name. Methods don't
     /// collide across types (`Point.distance` and `Line.distance`
@@ -42,7 +42,7 @@ pub struct MethodEntry {
     /// at the AST level. Tells the typechecker which dispatch path
     /// to use when rewriting the call.
     pub kind: MethodKind,
-    /// Visibility from the extend block. Phase 16 stores it; Phase 25
+    /// Visibility from the extend block. The current implementation stores it; later
     /// (package manager) gives it cross-file enforcement teeth.
     pub visibility: Visibility,
     /// Span of the declaration for diagnostics.
@@ -78,7 +78,7 @@ struct Resolver {
     /// bindings share the function scope).
     scopes: Vec<LocalScope>,
     next_local_id: u32,
-    /// Phase 16 method side-table. Populated in `collect_methods` after
+    /// Method side-table. Populated in `collect_methods` after
     /// `collect_decls` has run (so type DefIds are known before we look
     /// up `extend T:` targets).
     methods: HashMap<DefId, HashMap<String, MethodEntry>>,
@@ -117,9 +117,9 @@ impl Resolver {
                 Decl::Prompt(p) => (p.name.name.clone(), DeclKind::Prompt, p.span),
                 Decl::Agent(a) => (a.name.name.clone(), DeclKind::Agent, a.span),
                 Decl::Extend(_) => {
-                    // Phase 16 slice 16a: parser accepts `extend T:`
+                    // The parser accepts `extend T:`
                     // blocks; method registration into a per-type
-                    // method table lands in slice 16b. For now the
+                    // method table lands in the next step. For now the
                     // extend decl contributes no top-level symbols
                     // (methods are scoped to the receiver type, not
                     // to the file's symbol namespace).
@@ -138,7 +138,7 @@ impl Resolver {
         }
     }
 
-    // ---------------- pass 1.5 (Phase 16): collect methods ----------------
+    // ---------------- pass 1.5: collect methods ----------------
 
     /// Walk every `extend T:` block, validate the target is a known
     /// type, and register each contained method in the per-type method
@@ -178,7 +178,7 @@ impl Resolver {
         //    catch method/field collisions cheaply. Source of truth
         //    is the AST `TypeDecl` we find by walking `file.decls`
         //    once. v0.1 has no per-type field index in the resolver;
-        //    Phase 16 stays cheap rather than building one for one
+        //    This stays cheap rather than building one for one
         //    use site.
         let type_decl = file.decls.iter().find_map(|d| match d {
             Decl::Type(t) if t.name.name == ext.type_name.name => Some(t),
@@ -263,7 +263,7 @@ impl Resolver {
                 Decl::Prompt(p) => self.resolve_prompt_decl(p),
                 Decl::Agent(a) => self.resolve_agent_decl(a),
                 Decl::Extend(ext) => {
-                    // Phase 16 slice 16b: resolve each method body
+                    // Resolve each method body
                     // the same way free agents/prompts/tools are
                     // resolved. Method bodies see the same scoping
                     // rules — there's no implicit `self` (the
@@ -297,7 +297,7 @@ impl Resolver {
 
     fn resolve_prompt_decl(&mut self, p: &PromptDecl) {
         // Resolve param and return types. The template is a plain string;
-        // interpolations are a Phase-5+ concern.
+        // interpolations are a later concern.
         self.push_scope();
         for param in &p.params {
             self.resolve_type_ref(&param.ty);

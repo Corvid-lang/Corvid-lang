@@ -24,7 +24,7 @@ pub const ANTHROPIC_DEFAULT_BASE: &str = "https://api.anthropic.com";
 /// Anthropic API version header value.
 pub const ANTHROPIC_VERSION: &str = "2023-06-01";
 
-/// Default max tokens cap. Most use cases fit; per-call override lands in Phase 22.
+/// Default max tokens cap. Most use cases fit; per-call override is future work.
 const DEFAULT_MAX_TOKENS: u32 = 4096;
 
 pub struct AnthropicAdapter {

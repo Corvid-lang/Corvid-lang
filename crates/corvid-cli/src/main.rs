@@ -41,8 +41,8 @@ enum Command {
         target: String,
     },
     /// Build and run a Corvid source file. Picks the native AOT tier
-    /// when the program uses only native-able features (Phase 12i
-    /// surface); falls back to the interpreter otherwise with a one-line
+    /// when the program stays within the current native command-line
+    /// boundary; falls back to the interpreter otherwise with a one-line
     /// notice. Override with `--target`.
     Run {
         file: PathBuf,
@@ -52,8 +52,8 @@ enum Command {
         /// / `interpreter` forces the interpreter tier.
         #[arg(long, default_value = "auto")]
         target: String,
-        /// Path to a compiled `#[tool]` staticlib (Phase 14). When
-        /// provided, tool-using programs compile + run natively; the
+        /// Path to a compiled `#[tool]` staticlib. When
+        /// provided, tool-using programs compile and run natively; the
         /// linker resolves `__corvid_tool_<name>` symbols against this
         /// lib. Without it, tool-using programs fall back to the
         /// interpreter (auto) or error out (native).
@@ -178,8 +178,9 @@ fn cmd_run(file: &Path, target: &str, tools_lib: Option<&Path>) -> Result<u8> {
             );
         }
     }
-    // Auto: native AOT tier when the IR is tool-free + scalar-boundary
-    // OR (Phase 14) tool-using with a tools staticlib provided.
+    // Auto: native AOT tier when the IR is tool-free and uses only
+    // supported command-line boundary types, or when tool-using code
+    // has a companion tools staticlib provided.
     // Interpreter otherwise (with a stderr notice). Native-required
     // and interpreter-forced are the explicit overrides. See
     // `RunTarget` docs in corvid-driver for the exact semantics.

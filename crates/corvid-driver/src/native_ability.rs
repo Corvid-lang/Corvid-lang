@@ -1,13 +1,10 @@
 //! Decides whether an IR file can run through the native AOT tier.
 //!
-//! Phase 12 ships "native for tool-free programs." Phase 13 adds the
-//! async runtime bridge. Phase 14 lifts the `approve` restriction and
-//! adds conditional tool-call support: programs with tool calls can
-//! compile when the caller supplies a tools staticlib via
-//! `--with-tools-lib`; otherwise the scan still reports `ToolCall` so
-//! the dispatcher falls back to the interpreter. The scan produces a
-//! structured reason so the CLI can tell the user which future slice
-//! or phase would lift each remaining restriction.
+//! The native path currently supports prompt calls and conditionally
+//! supports tool calls when the caller supplies a companion tools
+//! staticlib via `--with-tools-lib`. The scan produces a structured
+//! reason so the CLI can explain why a program falls back to the
+//! interpreter.
 //!
 //! Rationale for a pre-flight IR scan (vs. "try compile, catch
 //! NotSupported"): (a) names the native-ability rule explicitly so it's
@@ -17,22 +14,19 @@
 
 use corvid_ir::{IrBlock, IrCallKind, IrExpr, IrExprKind, IrFile, IrImportSource, IrStmt};
 
-/// Why a program can't run via the native tier. Each variant names the
-/// missing feature and the phase that will add it.
+/// Why a program can't run via the native tier.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum NotNativeReason {
     PythonImport { module: String },
-    /// User-declared tool called from compiled code. Phase 14 supports
-    /// this via typed-ABI direct calls, but only when the caller
+    /// User-declared tool called from compiled code. This is supported
+    /// via typed-ABI direct calls, but only when the caller
     /// supplies a tools staticlib (`--with-tools-lib`). Without one,
     /// the scan reports this reason and the dispatcher falls back.
     ToolCall { name: String },
-    /// Phase 18 language features (Result/Option/`?`/`try-retry`)
-    /// parse, typecheck, and interpret fully today. Native codegen
-    /// for tagged-union layout and retry desugaring lands in slices
-    /// 18d / 18e. Until then the dispatcher routes Phase-18-using
-    /// programs to the interpreter tier.
-    Phase18Unfinished,
+    /// `Result` / `Option` / `?` / `try ... retry` work in the
+    /// interpreter today, but the native backend does not lower them
+    /// yet.
+    TaggedUnionRetryNotNative,
 }
 
 impl std::fmt::Display for NotNativeReason {
@@ -40,15 +34,15 @@ impl std::fmt::Display for NotNativeReason {
         match self {
             Self::PythonImport { module } => write!(
                 f,
-                "program imports Python module `{module}` — native Python FFI lands in Phase 30"
+                "program imports Python module `{module}` — native Python FFI is not implemented yet"
             ),
             Self::ToolCall { name } => write!(
                 f,
                 "program calls tool `{name}` — pass `--with-tools-lib <path>` pointing at your compiled `#[tool]` staticlib, or let auto-dispatch fall back to the interpreter"
             ),
-            Self::Phase18Unfinished => write!(
+            Self::TaggedUnionRetryNotNative => write!(
                 f,
-                "program uses `Result` / `Option` / `?` / `try ... retry` — native codegen for tagged unions + retry desugaring lands in slices 18d / 18e. Interpreter tier handles it fully today."
+                "program uses `Result` / `Option` / `?` / `try ... retry` — the interpreter handles these today, but native tagged-union lowering and retry desugaring are not implemented yet"
             ),
         }
     }
@@ -103,11 +97,9 @@ fn scan_stmt(stmt: &IrStmt) -> Result<(), NotNativeReason> {
             scan_block(body)
         }
         IrStmt::Approve { args, .. } => {
-            // Phase 14: `approve` compiles to a no-op (statically
-            // checked by the effect checker; runtime verification
-            // lands in Phase 20). Still walk the arg expressions so
-            // any tool/prompt call buried in an approve arg is
-            // reported.
+            // `approve` compiles to a no-op in generated native code.
+            // Still walk the arg expressions so any tool/prompt call
+            // buried in an approve arg is reported.
             for a in args {
                 scan_expr(a)?;
             }
@@ -115,8 +107,8 @@ fn scan_stmt(stmt: &IrStmt) -> Result<(), NotNativeReason> {
         }
         IrStmt::Expr { expr, .. } => scan_expr(expr),
         IrStmt::Break { .. } | IrStmt::Continue { .. } | IrStmt::Pass { .. } => Ok(()),
-        // Phase 17b: ownership ops contain no user expressions; they
-        // don't change whether this agent can run natively.
+        // Ownership ops contain no user expressions; they don't change
+        // whether this agent can run natively.
         IrStmt::Dup { .. } | IrStmt::Drop { .. } => Ok(()),
     }
 }
@@ -136,11 +128,10 @@ fn scan_expr(expr: &IrExpr) -> Result<(), NotNativeReason> {
                     })
                 }
                 IrCallKind::Prompt { .. } => {
-                    // Phase 15: prompt calls compile + run natively.
-                    // No extra user-provided lib needed (corvid-runtime
-                    // ships the LLM adapters built-in). Runtime errors
-                    // surface if no provider is configured (no API
-                    // key + not Ollama-only).
+                    // Prompt calls compile and run natively. No extra
+                    // user-provided lib is needed because corvid-runtime
+                    // ships the LLM adapters built in. Runtime errors
+                    // surface if no provider is configured.
                 }
                 IrCallKind::Agent { .. }
                 | IrCallKind::StructConstructor { .. }
@@ -169,24 +160,21 @@ fn scan_expr(expr: &IrExpr) -> Result<(), NotNativeReason> {
         }
         IrExprKind::WeakNew { strong } => scan_expr(strong),
         IrExprKind::WeakUpgrade { weak } => scan_expr(weak),
-        // Phase 18 IR variants — Result/Option/?/try-retry. Until
-        // slice 18d lands native codegen for these, the native-
-        // ability check routes programs that use them to the
-        // interpreter tier. Recurse into sub-expressions so any
+        // Tagged-union and retry IR nodes still route the program to
+        // the interpreter tier. Recurse into sub-expressions so any
         // nested tool/prompt calls inside still get flagged
-        // correctly (their non-native reasons take precedence over
-        // the Phase-18 gap).
+        // correctly.
         IrExprKind::ResultOk { inner }
         | IrExprKind::ResultErr { inner }
         | IrExprKind::OptionSome { inner }
         | IrExprKind::TryPropagate { inner } => {
             scan_expr(inner)?;
-            Err(NotNativeReason::Phase18Unfinished)
+            Err(NotNativeReason::TaggedUnionRetryNotNative)
         }
-        IrExprKind::OptionNone => Err(NotNativeReason::Phase18Unfinished),
+        IrExprKind::OptionNone => Err(NotNativeReason::TaggedUnionRetryNotNative),
         IrExprKind::TryRetry { body, .. } => {
             scan_expr(body)?;
-            Err(NotNativeReason::Phase18Unfinished)
+            Err(NotNativeReason::TaggedUnionRetryNotNative)
         }
     }
 }

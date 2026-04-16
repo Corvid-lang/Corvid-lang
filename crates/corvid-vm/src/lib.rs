@@ -4,8 +4,8 @@
 //!
 //! 1. **Dev tier.** During development, `corvid run` dispatches through this
 //!    interpreter so changes show up without a native recompile step.
-//! 2. **Correctness oracle.** Once the Cranelift native compiler (Phase 12+)
-//!    is in flight, compiler output is validated against interpreter output
+//! 2. **Correctness oracle.** Once the Cranelift native compiler is in
+//!    flight, compiler output is validated against interpreter output
 //!    for every fixture — which is why this tier is async-native, matching
 //!    the future native runtime instead of taking the easier sync route.
 //!
@@ -13,7 +13,7 @@
 //! delegated to `corvid-runtime`. The interpreter converts between
 //! `Value` and `serde_json::Value` at the boundary (`crate::conv`).
 //!
-//! See `ARCHITECTURE.md` §4 (pipeline) and `ROADMAP.md` Phase 11.
+//! See `ARCHITECTURE.md` §4 (pipeline).
 
 #![forbid(unsafe_code)]
 #![allow(dead_code)]

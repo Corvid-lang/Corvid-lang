@@ -3,7 +3,7 @@
 //! Every agent becomes `async def`. Tools, prompts, types, and imports
 //! surface as runtime registrations or dataclass definitions. The
 //! generated code imports from the `corvid_runtime` Python package,
-//! which is provided separately (Phase 8).
+//! which is provided separately.
 
 use crate::emitter::Emitter;
 use corvid_ast::{BinaryOp, Effect, UnaryOp};
@@ -233,7 +233,7 @@ impl Codegen {
             IrStmt::Break { .. } => self.out.writeln("break"),
             IrStmt::Continue { .. } => self.out.writeln("continue"),
             IrStmt::Pass { .. } => self.out.writeln("pass"),
-            // Phase 17b: Python transpile ignores ownership ops —
+            // Python transpile ignores ownership ops —
             // CPython handles refcount itself.
             IrStmt::Dup { .. } | IrStmt::Drop { .. } => {}
         }
@@ -287,12 +287,9 @@ impl Codegen {
                     "(_ for _ in ()).throw(NotImplementedError(\"Weak codegen lands in 17g-py\"))",
                 );
             }
-            // Phase 18 IR variants — Result/Option construction +
-            // ? / try-retry control flow. The Python transpile tier
-            // gets full Result/Option support in slice 18d (likely
-            // emitting `Ok(x)` / `Err(e)` / `Some(x)` / `None` as
-            // small Python wrapper classes, or as 2-tuples; design
-            // decision in 18d's pre-phase chat).
+            // Result/Option construction and `?` / `try-retry`
+            // control flow are not implemented in the Python
+            // transpile tier yet.
             //
             // Until then this tier emits a marker that's invalid
             // Python on purpose — programs using these features
@@ -301,22 +298,22 @@ impl Codegen {
             // fully (Dev B's 18a-18c work).
             IrExprKind::ResultOk { .. } | IrExprKind::ResultErr { .. } => {
                 self.out.write(
-                    "(_ for _ in ()).throw(NotImplementedError(\"Result codegen lands in 18d-py\"))",
+                    "(_ for _ in ()).throw(NotImplementedError(\"Result codegen is not implemented for Python yet\"))",
                 );
             }
             IrExprKind::OptionSome { .. } | IrExprKind::OptionNone => {
                 self.out.write(
-                    "(_ for _ in ()).throw(NotImplementedError(\"Option codegen lands in 18d-py\"))",
+                    "(_ for _ in ()).throw(NotImplementedError(\"Option codegen is not implemented for Python yet\"))",
                 );
             }
             IrExprKind::TryPropagate { .. } => {
                 self.out.write(
-                    "(_ for _ in ()).throw(NotImplementedError(\"`?` codegen lands in 18d-py\"))",
+                    "(_ for _ in ()).throw(NotImplementedError(\"`?` codegen is not implemented for Python yet\"))",
                 );
             }
             IrExprKind::TryRetry { .. } => {
                 self.out.write(
-                    "(_ for _ in ()).throw(NotImplementedError(\"`try ... retry` codegen lands in 18e-py\"))",
+                    "(_ for _ in ()).throw(NotImplementedError(\"`try ... retry` codegen is not implemented for Python yet\"))",
                 );
             }
         }
@@ -411,8 +408,8 @@ fn python_type_hint_of(ty: &corvid_types::Type) -> String {
         T::Bool => "bool".into(),
         T::Nothing => "None".into(),
         T::Struct(_) | T::Function { .. } | T::List(_) | T::Unknown => "object".into(),
-        // Phase 18 — emitting "object" here is a safe approximation
-        // until 18d-py decides on Python's representation
+        // Emitting "object" here is a safe approximation until the
+        // Python backend decides on its representation
         // (wrapper classes vs typing.Optional[T] vs plain T-or-Exception
         // patterns). Result types likely render as `object` (union
         // type) in Python 3.10+ or `typing.Union[...]` for older.

@@ -1,10 +1,10 @@
 //! IR → Cranelift IR lowering.
 //!
-//! Slice 12a scope: `Int` parameters, `Int` return, `Int` literals,
-//! `Int` arithmetic with overflow trap, agent-to-agent calls,
-//! parameter loads, `return`. Everything else raises
-//! `CodegenError::NotSupported` with a slice pointer so the boundary
-//! is auditable.
+//! Native lowering starts with the scalar command-line boundary:
+//! `Int` parameters and returns, integer literals, integer arithmetic
+//! with overflow traps, agent-to-agent calls, parameter loads, and
+//! `return`. Unsupported features raise `CodegenError::NotSupported`
+//! with a descriptive feature boundary.
 
 use crate::errors::CodegenError;
 use cranelift_codegen::binemit::CodeOffset;
@@ -26,7 +26,7 @@ use corvid_types::Type;
 use std::collections::{BTreeSet, HashMap};
 
 const _: () = {
-    // A readable reminder: slice 12a compiles only Int. Type checks
+    // A readable reminder: the earliest native path compiled only Int. Type checks
     // elsewhere should already have enforced this for well-typed programs.
 };
 
@@ -38,7 +38,7 @@ fn lowered_outcome_placeholder() -> BlockOutcome {
 /// Mangle a user agent's name into a link-safe symbol. Prevents
 /// collisions with C runtime symbols (`main`, `printf`, `malloc`, ...).
 ///
-/// Phase 16 includes the agent's `DefId` in the symbol because methods
+/// Include the agent's `DefId` in the symbol because methods
 /// declared inside `extend T:` blocks share their unmangled names
 /// across types (`Order.total`, `Line.total` both get the AST name
 /// `total`). Including the DefId disambiguates without changing the
@@ -179,7 +179,7 @@ fn declare_runtime_funcs(
             )
         })?;
 
-    // ---- slice 12i entry helpers ----
+    // ---- native entry helpers ----
     let void_void_sig = module.make_signature();
     let entry_init_id = module
         .declare_function(ENTRY_INIT_SYMBOL, Linkage::Import, &void_void_sig)
@@ -273,7 +273,7 @@ fn declare_runtime_funcs(
             CodegenError::cranelift(format!("declare print_string: {e}"), Span::new(0, 0))
         })?;
 
-    // Phase 13 bridge imports.
+    // Runtime bridge imports.
     let mut tool_call_sync_int_sig = module.make_signature();
     tool_call_sync_int_sig.params.push(AbiParam::new(I64)); // name_ptr
     tool_call_sync_int_sig.params.push(AbiParam::new(I64)); // name_len
@@ -313,7 +313,7 @@ fn declare_runtime_funcs(
             )
         })?;
 
-    // Phase 15 stringification helpers. Each takes a typed scalar
+    // Stringification helpers. Each takes a typed scalar
     // and returns a Corvid String descriptor pointer (i64).
     let mut sfi_sig = module.make_signature();
     sfi_sig.params.push(AbiParam::new(I64));
@@ -342,7 +342,7 @@ fn declare_runtime_funcs(
             CodegenError::cranelift(format!("declare string_from_float: {e}"), Span::new(0, 0))
         })?;
 
-    // Phase 15 prompt bridges. Each takes 4 CorvidString descriptor
+    // Typed prompt bridges. Each takes 4 CorvidString descriptor
     // pointers (i64) — prompt name, signature, rendered template,
     // model — and returns the typed value.
     let make_prompt_sig =
@@ -416,16 +416,16 @@ fn declare_runtime_funcs(
         prompt_call_float: prompt_call_float_id,
         prompt_call_string: prompt_call_string_id,
         literal_counter: std::cell::Cell::new(0),
-        // Phase 17b-1b.6d — the unified ownership pass is the DEFAULT
-        // as of `.6d-2-final`. Pass produces refcount-correct code
+        // The unified ownership pass is the default. It produces
+        // refcount-correct code
         // across all 106 parity fixtures + 9 verifier-audit classes,
         // with systematically lower RC op counts than the peephole-
         // optimized predecessor.
         //
-        // Set `CORVID_DUP_DROP_PASS=0` to fall back to the pre-17b-1b.6c
+        // Set `CORVID_DUP_DROP_PASS=0` to fall back to the legacy
         // scattered-emit codegen for A/B comparison. That fallback
-        // path will be removed in a future cleanup slice once the
-        // unified pass has stabilized in production.
+        // path will be removed once the unified pass has fully
+        // stabilized in production.
         dup_drop_enabled: std::env::var("CORVID_DUP_DROP_PASS")
             .map(|v| v != "0" && v != "false")
             .unwrap_or(true),
@@ -443,7 +443,7 @@ fn declare_runtime_funcs(
     })
 }
 
-/// Phase 17c — define a Cranelift function AND rescue its user
+/// Define a Cranelift function and preserve its user
 /// stack maps out of `CompiledCode.buffer` before they're discarded
 /// by `ObjectModule::define_function`.
 ///
@@ -458,7 +458,7 @@ fn declare_runtime_funcs(
 /// The intercepted maps are stashed in `runtime.stack_maps` keyed
 /// by `func_id`. After `module.finish()` we emit a `corvid_stack_maps`
 /// `.rodata` symbol with function-pointer relocations so the cycle
-/// collector's mark phase can look up a stack map given a return PC.
+/// collector's mark walk can look up a stack map given a return PC.
 ///
 /// Signature mirrors `ObjectModule::define_function` so call-site
 /// rewrites are a straight substitution.
@@ -520,7 +520,7 @@ fn define_function_with_stack_maps(
     Ok(())
 }
 
-/// Phase 17c — emit the `corvid_stack_maps` data symbol from the
+/// Emit the `corvid_stack_maps` data symbol from the
 /// accumulated per-function stack maps in `runtime.stack_maps`.
 ///
 /// Binary layout of `corvid_stack_maps` (must match the reader in
@@ -539,7 +539,7 @@ fn define_function_with_stack_maps(
 ///              then refs pool: flat u32 array of SP-relative slot offsets
 /// ```
 ///
-/// Runtime lookup (17d's mark phase, via `corvid_stack_maps_find`):
+/// Runtime lookup (the collector's mark walk, via `corvid_stack_maps_find`):
 /// given a return PC from an on-stack frame, scan entries computing
 /// `fn_start + pc_offset` and match. For each match, walk the
 /// `ref_count`-length `ref_offsets` array; each u32 is a byte offset
@@ -719,14 +719,14 @@ fn define_struct_destructor(
     Ok(func_id)
 }
 
-/// Phase 17a — emit `corvid_trace_<TypeName>(payload, marker, ctx)` for
+/// Emit `corvid_trace_<TypeName>(payload, marker, ctx)` for
 /// a refcounted struct type. Mirrors `define_struct_destructor` but
 /// dispatches through an indirect marker function pointer on each
 /// refcounted field instead of releasing it.
 ///
 /// Trace fns are emitted for every refcounted struct — including
 /// structs with zero refcounted fields — so the future (17d) mark
-/// phase can dispatch uniformly without a per-object NULL check.
+/// collector can dispatch uniformly without a per-object NULL check.
 /// The linker folds duplicate empty bodies, so the cost is ~zero.
 ///
 /// Marker signature: `fn(obj: i64, ctx: i64) -> ()`. Context-passing
@@ -800,7 +800,7 @@ fn define_struct_trace(
     Ok(func_id)
 }
 
-/// Phase 17a — on-disk typeinfo block layout. Must match exactly the
+/// On-disk typeinfo block layout. Must match exactly the
 /// `corvid_typeinfo` struct in `crates/corvid-runtime/runtime/alloc.c`.
 ///
 /// ```text
@@ -896,7 +896,7 @@ fn emit_struct_typeinfo(
     Ok(data_id)
 }
 
-/// Phase 17a — emit `corvid_typeinfo_List_<elem>` for a concrete list
+/// Emit `corvid_typeinfo_List_<elem>` for a concrete list
 /// element type. Uses the runtime's shared `corvid_destroy_list` and
 /// `corvid_trace_list` rather than per-type functions; the element
 /// layout info lives entirely in `elem_typeinfo`.
@@ -993,7 +993,7 @@ fn mangle_type_name(ty: &Type) -> String {
         Type::List(inner) => format!("List_{}", mangle_type_name(inner)),
         Type::Struct(def_id) => format!("Struct_{}", def_id.0),
         Type::Function { .. } => "Function".into(),
-        // Phase 18 added Result<T,E> and Option<T> as compiler-known
+        // Result<T,E> and Option<T> are compiler-known
         // tagged unions. Their typeinfo emission (and full native
         // codegen) lands in 18d. For 17c we just need the mangler
         // to terminate; the resulting names won't be used at runtime
@@ -1025,7 +1025,7 @@ fn mangle_type_name(ty: &Type) -> String {
     }
 }
 
-/// Phase 17a — walk every `Type::List(_)` the IR mentions (agent sigs,
+/// Walk every `Type::List(_)` the IR mentions (agent sigs,
 /// struct fields, tool/prompt sigs, expression types) and produce the
 /// set of unique list element types in a dependency-friendly order:
 /// element types come before lists that contain them.
@@ -1155,7 +1155,7 @@ fn visit_expr_types(
                 visit_expr_types(el, seen, order, visit);
             }
         }
-        // Phase 18 IR variants — Result/Option/?/try-retry. The
+        // Result/Option/?/try-retry IR variants. The
         // visit_expr_types pass collects list-element types for
         // typeinfo emission. Result/Option don't appear in list-
         // element positions in 17c (their codegen lands in 18d),
@@ -1204,7 +1204,7 @@ fn emit_release(
 /// allocation. When true, the codegen tracks ownership: `retain` on
 /// bind, `release` on scope exit, etc.
 ///
-/// Slice 12e: only `String` is refcounted. Future slices add `Struct`
+/// Today `String` is refcounted. Future work extends this to `Struct`
 /// (12f), `List` (12g) — both will return true here.
 fn is_refcounted_type(ty: &Type) -> bool {
     match ty {
@@ -1240,7 +1240,7 @@ pub const STRING_CMP_SYMBOL: &str = "corvid_string_cmp";
 
 /// `void* corvid_alloc_typed(long long payload_bytes, const corvid_typeinfo* ti)`
 /// — heap-allocate an N-byte payload behind a 16-byte typed header.
-/// Phase 17a collapsed the old `corvid_alloc` + `corvid_alloc_with_destructor`
+/// The typed allocator collapsed the old `corvid_alloc` + `corvid_alloc_with_destructor`
 /// pair: every allocation now carries a typeinfo pointer, and
 /// `corvid_release` dispatches through `typeinfo->destroy_fn` (NULL
 /// = no refcounted children, equivalent to the old plain-alloc case).
@@ -1255,8 +1255,8 @@ pub const LIST_DESTROY_SYMBOL: &str = "corvid_destroy_list";
 /// `void corvid_trace_list(void*, void(*)(void*, void*), void*)` —
 /// shared runtime tracer installed in every list type's typeinfo.
 /// Reads its own typeinfo's `elem_typeinfo` to decide whether to
-/// walk elements (NULL = primitive elements = no-op). Phase 17a
-/// emits it for every list; 17d's mark phase will invoke it.
+/// walk elements (NULL = primitive elements = no-op). Codegen
+/// emits it for every list; the collector's mark walk invokes it.
 pub const LIST_TRACE_SYMBOL: &str = "corvid_trace_list";
 pub const WEAK_NEW_SYMBOL: &str = "corvid_weak_new";
 pub const WEAK_UPGRADE_SYMBOL: &str = "corvid_weak_upgrade";
@@ -1270,7 +1270,7 @@ pub const WEAK_BOX_TYPEINFO_SYMBOL: &str = "corvid_typeinfo_WeakBox";
 /// for string-less programs.
 pub const STRING_TYPEINFO_SYMBOL: &str = "corvid_typeinfo_String";
 
-// Slice 12i — entry-agent helpers (argv decoding, result printing,
+// Entry-agent helpers (argv decoding, result printing,
 // arity reporting, atexit). Called from the codegen-emitted `main`.
 
 pub const ENTRY_INIT_SYMBOL: &str = "corvid_init";
@@ -1284,15 +1284,15 @@ pub const PRINT_BOOL_SYMBOL: &str = "corvid_print_bool";
 pub const PRINT_F64_SYMBOL: &str = "corvid_print_f64";
 pub const PRINT_STRING_SYMBOL: &str = "corvid_print_string";
 
-// Phase 13 — async tool dispatch bridge. Signature in Rust:
+// Async tool dispatch bridge. Signature in Rust:
 //   corvid_tool_call_sync_int(name_ptr: *const u8, name_len: usize) -> i64
 // Returns i64::MIN on error (tool-not-found, tool-errored, non-integer
-// return). Phase 13 only supports the `() -> Int` tool signature;
-// Phase 14 ships the generalised bridge with full JSON arg + return
+// return). The narrow bridge only supports the `() -> Int` tool
+// signature; the typed bridge handles the general JSON arg + return
 // marshalling.
 pub const TOOL_CALL_SYNC_INT_SYMBOL: &str = "corvid_tool_call_sync_int";
 
-// Phase 15 — scalar-to-String stringification helpers. Used by the
+// Scalar-to-String stringification helpers. Used by the
 // Cranelift codegen for `IrCallKind::Prompt` lowering when a
 // non-String argument is interpolated into a prompt template. Each
 // returns a refcount-1 Corvid String the caller must release.
@@ -1300,7 +1300,7 @@ pub const STRING_FROM_INT_SYMBOL: &str = "corvid_string_from_int";
 pub const STRING_FROM_BOOL_SYMBOL: &str = "corvid_string_from_bool";
 pub const STRING_FROM_FLOAT_SYMBOL: &str = "corvid_string_from_float";
 
-// Phase 15 — typed prompt-dispatch bridges. One per return type;
+// Typed prompt-dispatch bridges. One per return type;
 // each takes 4 CorvidString args (prompt name, signature, rendered
 // template, model) and returns the typed value. Built-in
 // retry-with-validation + function-signature context — see the
@@ -1310,15 +1310,15 @@ pub const PROMPT_CALL_BOOL_SYMBOL: &str = "corvid_prompt_call_bool";
 pub const PROMPT_CALL_FLOAT_SYMBOL: &str = "corvid_prompt_call_float";
 pub const PROMPT_CALL_STRING_SYMBOL: &str = "corvid_prompt_call_string";
 
-// Phase 13 — runtime bridge init/shutdown called from `corvid_init`
+// Runtime bridge init/shutdown called from `corvid_init`
 // at the start of codegen-emitted `main` when the program uses any
 // tool/prompt/approve construct. Tool-free programs skip these
-// calls to preserve slice 12k's startup benchmark numbers.
+// calls to preserve startup benchmark numbers.
 pub const RUNTIME_INIT_SYMBOL: &str = "corvid_runtime_init";
 pub const RUNTIME_SHUTDOWN_SYMBOL: &str = "corvid_runtime_shutdown";
 
 /// Per-struct payload uses fixed 8-byte field slots for simple offset
-/// math. Tight packing is a Phase-22 optimization.
+/// math. Tighter packing is a later optimization.
 pub const STRUCT_FIELD_SLOT_BYTES: i32 = 8;
 
 /// Bytes per struct field when computing alloc size.
@@ -1340,26 +1340,26 @@ pub struct RuntimeFuncs {
     pub string_concat: FuncId,
     pub string_eq: FuncId,
     pub string_cmp: FuncId,
-    /// Phase 17a: single typed allocator replaces the pre-17a
+    /// Single typed allocator replaces the older
     /// `alloc`/`alloc_with_destructor` pair. Signature:
     /// `(size: i64, typeinfo_ptr: i64) -> i64`.
     pub alloc_typed: FuncId,
-    /// Phase 17a: shared runtime destructor installed in every
+    /// Shared runtime destructor installed in every
     /// refcounted-element list type's typeinfo. Replaces the
     /// pre-17a `list_destroy_refcounted`.
     pub list_destroy: FuncId,
-    /// Phase 17a: shared runtime tracer installed in every list's
-    /// typeinfo; 17d's mark phase will invoke it.
+    /// Shared runtime tracer installed in every list's
+    /// typeinfo; the collector's mark walk will invoke it.
     pub list_trace: FuncId,
     pub weak_new: FuncId,
     pub weak_upgrade: FuncId,
     pub weak_clear_self: FuncId,
-    /// Phase 17a: runtime-provided `corvid_typeinfo_String` data
+    /// Runtime-provided `corvid_typeinfo_String` data
     /// symbol. Imported so codegen can relocate its address into
     /// static string literals and List<String>'s elem_typeinfo slot.
     pub string_typeinfo: cranelift_module::DataId,
     pub weak_box_typeinfo: cranelift_module::DataId,
-    // Slice 12i — entry helpers used by the codegen-emitted `main`.
+    // Entry helpers used by the codegen-emitted `main`.
     pub entry_init: FuncId,
     pub entry_arity_mismatch: FuncId,
     pub parse_i64: FuncId,
@@ -1370,21 +1370,21 @@ pub struct RuntimeFuncs {
     pub print_bool: FuncId,
     pub print_f64: FuncId,
     pub print_string: FuncId,
-    // Phase 13 — async tool bridge + runtime init/shutdown.
+    // Async tool bridge + runtime init/shutdown.
     pub tool_call_sync_int: FuncId,
     pub runtime_init: FuncId,
     pub runtime_shutdown: FuncId,
-    // Phase 15 — scalar→String helpers for prompt-template interpolation.
+    // Scalar->String helpers for prompt-template interpolation.
     pub string_from_int: FuncId,
     pub string_from_bool: FuncId,
     pub string_from_float: FuncId,
-    // Phase 15 — typed prompt bridges, one per return type.
+    // Typed prompt bridges, one per return type.
     pub prompt_call_int: FuncId,
     pub prompt_call_bool: FuncId,
     pub prompt_call_float: FuncId,
     pub prompt_call_string: FuncId,
     pub literal_counter: std::cell::Cell<u64>,
-    /// Phase 17b-1b.6d — when true, codegen-level scattered
+    /// When true, codegen-level scattered
     /// `emit_retain` / `emit_release` sites are skipped because the
     /// dataflow-driven pass in `crate::dup_drop` has already inserted
     /// the equivalent `IrStmt::Dup` / `IrStmt::Drop` ops into the IR.
@@ -1397,16 +1397,16 @@ pub struct RuntimeFuncs {
     /// mean the struct has no refcounted fields (typeinfo.destroy_fn
     /// stays NULL; corvid_release skips dispatch).
     pub struct_destructors: HashMap<DefId, FuncId>,
-    /// Phase 17a — per-struct-type trace fns. Emitted for every
+    /// Per-struct-type trace functions. Emitted for every
     /// refcounted struct type (including those with no refcounted
     /// fields — those trace fns are empty bodies, kept for uniform
-    /// dispatch in 17d's mark phase without a per-object NULL check).
+    /// dispatch in the collector mark walk without a per-object NULL check).
     pub struct_traces: HashMap<DefId, FuncId>,
-    /// Phase 17a — per-struct-type typeinfo data symbols. Every
+    /// Per-struct-type typeinfo data symbols. Every
     /// refcounted struct allocation references its block via
     /// `corvid_alloc_typed(size, &typeinfo)`.
     pub struct_typeinfos: HashMap<DefId, cranelift_module::DataId>,
-    /// Phase 17a — per-concrete-list-type typeinfo data symbols,
+    /// Per-concrete-list-type typeinfo data symbols,
     /// keyed by the element `Type` (so `List<Int>` maps on `Type::Int`,
     /// `List<List<String>>` maps on `Type::List(Box::new(Type::String))`).
     /// Populated in `lower_file` by walking every `Type::List(_)` the
@@ -1419,21 +1419,21 @@ pub struct RuntimeFuncs {
     /// offsets, constructor arity checks, destructor lookup) without
     /// threading `&IrFile` through every call site.
     pub ir_types: HashMap<DefId, corvid_ir::IrType>,
-    /// Phase 14 — tool declarations, keyed by `DefId`. The codegen
+    /// Tool declarations, keyed by `DefId`. The codegen
     /// needs to know the declared signature (param types, return type)
     /// to emit a correctly-typed direct call to the `#[tool]` wrapper
     /// symbol. Cloned in from the `IrFile` the same way `ir_types` is.
     pub ir_tools: HashMap<DefId, corvid_ir::IrTool>,
-    /// Phase 14 — cache of imported `__corvid_tool_<name>` FuncIds so
+    /// Cache of imported `__corvid_tool_<name>` FuncIds so
     /// repeated calls to the same tool re-use one declaration. First
     /// sight declares; later sights re-use.
     pub tool_wrapper_ids: std::cell::RefCell<HashMap<DefId, FuncId>>,
-    /// Phase 15 — prompt declarations, keyed by `DefId`. Codegen reads
+    /// Prompt declarations, keyed by `DefId`. Codegen reads
     /// each prompt's params + template + return type to emit
     /// signature-aware bridge calls.
     pub ir_prompts: HashMap<DefId, corvid_ir::IrPrompt>,
     pub prompt_pins: HashMap<Span, BTreeSet<LocalId>>,
-    /// Phase 17b-1b.5 — per-agent borrow signature, populated from
+    /// Per-agent borrow signature, populated from
     /// `IrAgent.borrow_sig` during `lower_file`. Consumed at
     /// `IrCallKind::Agent` call sites to decide per-arg whether to
     /// apply the caller-side borrow peephole: if the callee slot
@@ -1441,11 +1441,11 @@ pub struct RuntimeFuncs {
     /// skip the pre-call retain (via `lower_expr`) AND the post-call
     /// release.
     pub agent_borrow_sigs: HashMap<DefId, Vec<corvid_ir::ParamBorrow>>,
-    /// Phase 17c — per-function stack maps accumulated by
+    /// Per-function stack maps accumulated by
     /// `define_function_with_stack_maps` at each compile site.
     /// After `module.finish()` this is read by `emit_stack_map_table`
     /// to produce the `corvid_stack_maps` `.rodata` symbol that
-    /// 17d's cycle-collector mark phase will consult via
+    /// the cycle collector's mark walk will consult via
     /// `corvid_stack_maps_find(return_pc)`.
     ///
     /// Keyed by `FuncId` so the post-finish emission can resolve
@@ -1591,21 +1591,21 @@ pub fn lower_file(
         runtime.ir_types.insert(ty.id, ty.clone());
     }
 
-    // Phase 14 — same pattern for tool declarations so the Cranelift
+    // Same pattern for tool declarations so the Cranelift
     // `IrCallKind::Tool` lowering can look up param + return types and
     // declare the matching `__corvid_tool_<name>` wrapper import.
     for tool in &ir.tools {
         runtime.ir_tools.insert(tool.id, tool.clone());
     }
 
-    // Phase 15 — same pattern for prompt declarations. `IrCallKind::Prompt`
+    // Same pattern for prompt declarations. `IrCallKind::Prompt`
     // lowering reads each prompt's params + template + return type to
     // emit signature-aware bridge calls.
     for prompt in &ir.prompts {
         runtime.ir_prompts.insert(prompt.id, prompt.clone());
     }
 
-    // Phase 17b-1b.5 — capture per-agent borrow_sig into the runtime
+    // Capture per-agent borrow_sig into the runtime
     // table so call-site lowering can consult it without threading
     // `&IrFile` through every function. Agents with `borrow_sig =
     // None` fall through to the pre-17b behavior (all params Owned).
@@ -1615,12 +1615,12 @@ pub fn lower_file(
         }
     }
 
-    // Phase 17a — emit per-type metadata in dependency order:
+    // Emit per-type metadata in dependency order:
     //
     //   1. Struct destructors (existing): release refcounted fields
     //      when rc→0. Only for structs with refcounted fields.
     //   2. Struct trace fns (new in 17a): walk refcounted fields for
-    //      17d's mark phase. Emitted for every refcounted struct —
+    //      the collector's mark walk. Emitted for every refcounted struct —
     //      even ones with no refcounted fields get an empty-body
     //      trace so dispatch is uniform (linker folds duplicates).
     //   3. Struct typeinfo blocks (new): .rodata record referenced
@@ -1639,7 +1639,7 @@ pub fn lower_file(
     // folds duplicates), typeinfos (every struct, uniform allocation
     // path). The pre-17a "primitive-only structs skip typeinfo"
     // short-circuit is gone — uniformity means 17d doesn't need a
-    // special case for them in the mark phase.
+    // special case for them in the mark walk.
     for ty in &ir.types {
         let has_refcounted_field = ty.fields.iter().any(|f| is_refcounted_type(&f.ty));
         let destroy_id = if has_refcounted_field {
@@ -1669,7 +1669,7 @@ pub fn lower_file(
     }
 
     // Pass 1: declare every agent. Signatures are Int + Bool only for
-    // slice 12b. Symbols are mangled so user agent names (e.g. `main`,
+    // the early native tier. Symbols are mangled so user agent names (e.g. `main`,
     // `printf`, `malloc`) cannot collide with C runtime symbols at link
     // time. Only the trampoline is exported (`corvid_entry`).
     for agent in &ir.agents {
@@ -1693,7 +1693,7 @@ pub fn lower_file(
         func_ids_by_def.insert(agent.id, id);
     }
 
-    // Phase 17b-1b.6d — the unified ownership pass is active by
+    // The unified ownership pass is active by
     // default (see `runtime.dup_drop_enabled` populated from
     // `CORVID_DUP_DROP_PASS` in `declare_runtime_funcs`). When on,
     // each agent's IR gets the `insert_dup_drop` transformation
@@ -1738,10 +1738,10 @@ pub fn lower_file(
         let entry_func_id = *func_ids_by_def
             .get(&entry_agent.id)
             .expect("declared in pass 1");
-        // Phase 13: codegen-emitted main calls `corvid_runtime_init()`
+        // Codegen-emitted main calls `corvid_runtime_init()`
         // and registers `corvid_runtime_shutdown` via atexit ONLY if the
         // program actually uses the async runtime. Pure-computation
-        // programs skip these calls to preserve the slice 12k startup
+        // programs skip these calls to preserve startup
         // benchmark numbers — multi-thread tokio startup is ~5-10ms on
         // Windows, which would otherwise regress every tool-free
         // `corvid run` invocation.
@@ -1755,7 +1755,7 @@ pub fn lower_file(
         )?;
     }
 
-    // Phase 17c — emit the `corvid_stack_maps` table AFTER every
+    // Emit the `corvid_stack_maps` table after every
     // function has been compiled (so `runtime.stack_maps` is fully
     // populated). Emit even when empty so downstream consumers
     // (`corvid_stack_maps_find` in the runtime) never hit unresolved-
@@ -1821,7 +1821,7 @@ fn expr_uses_runtime(expr: &IrExpr) -> bool {
         }
         IrExprKind::UnOp { operand, .. } => expr_uses_runtime(operand),
         IrExprKind::List { items } => items.iter().any(expr_uses_runtime),
-        // Phase 18 IR variants — recurse into sub-expressions. The
+        // Result/Option IR variants recurse into sub-expressions. The
         // wrappers themselves don't use the async runtime, but a
         // `?`-propagated tool call inside `inner` still does.
         IrExprKind::WeakNew { strong: inner }
@@ -1847,7 +1847,7 @@ fn expr_uses_runtime(expr: &IrExpr) -> bool {
 ///   5. Prints the result via the matching helper.
 ///   6. Returns 0.
 ///
-/// Replaces the slice-12a `corvid_entry` trampoline. Now that the
+/// Replaces the original `corvid_entry` trampoline. Now that the
 /// codegen knows the entry signature at emit time, generating `main`
 /// directly avoids the C-shim-with-introspection trap.
 fn emit_entry_main(
@@ -1855,18 +1855,18 @@ fn emit_entry_main(
     entry_agent: &IrAgent,
     entry_func_id: FuncId,
     runtime: &RuntimeFuncs,
-    // Phase 13: emit `corvid_runtime_init()` + `atexit(corvid_runtime_shutdown)`
+    // Emit `corvid_runtime_init()` + `atexit(corvid_runtime_shutdown)`
     // only if the program actually needs the async runtime. Passing `false`
     // keeps compiled binaries as small + fast-starting as they were in
-    // slice 12k.
+    // startup benchmark baseline.
     uses_runtime: bool,
 ) -> Result<(), CodegenError> {
-    // I32 is imported at file scope since Phase 13 needs it in
+    // I32 is imported at file scope since runtime setup needs it in
     // `declare_runtime_funcs` too.
 
     // Validate that every entry parameter and the return type are
     // representable at the command-line / stdout boundary. Struct and
-    // List are deliberately excluded — they need a serialization slice.
+    // List are deliberately excluded — they need a serialization implementation.
     for p in &entry_agent.params {
         check_entry_boundary_type(&p.ty, p.span, "parameter")?;
     }
@@ -1904,7 +1904,7 @@ fn emit_entry_main(
         let init_ref = module.declare_func_in_func(runtime.entry_init, builder.func);
         builder.ins().call(init_ref, &[]);
 
-        // 1a. (Phase 13) If the program uses the async runtime, build
+        // If the program uses the async runtime, build
         // the tokio + corvid runtime globals NOW, eagerly. Shutdown is
         // registered via `atexit` so worker threads join cleanly at
         // exit. Shutdown runs BEFORE the leak-counter atexit (atexit
@@ -2039,7 +2039,7 @@ fn emit_entry_main(
 
         // 5. Print the result based on return type.
         //
-        // Safepoint-crossing invariant (Phase 17b-1b.6d-2-final): any
+        // Safepoint-crossing invariant: any
         // refcounted SSA value live across a call instruction must be
         // declared via `declare_value_needs_stack_map` on the same
         // value, in the same function. Under pre-.6d codegen the
@@ -2103,7 +2103,7 @@ fn emit_entry_main(
 
 /// Validate that a type is one of the four supported at the
 /// command-line / stdout boundary. Struct and List need a
-/// dedicated serialization slice; Nothing isn't a sensible
+/// dedicated serialization layer; Nothing isn't a sensible
 /// CLI value either.
 fn check_entry_boundary_type(
     ty: &Type,
@@ -2116,7 +2116,7 @@ fn check_entry_boundary_type(
         | Type::Result(_, _) | Type::Option(_) | Type::Weak(_, _) => {
             Err(CodegenError::not_supported(
                 format!(
-                    "entry agent {role} of type `{}` — slice 12i supports `Int` / `Bool` / `Float` / `String` only at the command-line boundary; structured types (including Result / Option from Phase 18 and Weak from slice 17g) arrive in a future serialization slice (use a wrapper agent that converts internally)",
+                    "entry agent {role} of type `{}` — the native command-line boundary currently supports only `Int` / `Bool` / `Float` / `String`; structured types (including Result, Option, and Weak) need a dedicated serialization layer (use a wrapper agent that converts internally)",
                     ty.display_name()
                 ),
                 span,
@@ -2134,7 +2134,7 @@ fn reject_unsupported_types(agent: &IrAgent) -> Result<(), CodegenError> {
         cl_type_for(&p.ty, p.span).map_err(|_| {
             CodegenError::not_supported(
                 format!(
-                    "parameter `{}: {}` — slice 12d supports `Int`, `Bool`, and `Float` (`String` / `Struct` / `List` land in slices 12e–g)",
+                    "parameter `{}: {}` — this native lowering path supports `Int`, `Bool`, and `Float` here; `String`, `Struct`, and `List` use later lowering paths",
                     p.name,
                     p.ty.display_name()
                 ),
@@ -2145,7 +2145,7 @@ fn reject_unsupported_types(agent: &IrAgent) -> Result<(), CodegenError> {
     cl_type_for(&agent.return_ty, agent.span).map_err(|_| {
         CodegenError::not_supported(
             format!(
-                "agent `{}` returns `{}` — slice 12d supports `Int`, `Bool`, and `Float` returns",
+                "agent `{}` returns `{}` — this native lowering path supports `Int`, `Bool`, and `Float` returns here",
                 agent.name,
                 agent.return_ty.display_name()
             ),
@@ -2157,8 +2157,7 @@ fn reject_unsupported_types(agent: &IrAgent) -> Result<(), CodegenError> {
 
 /// Map a Corvid `Type` to the Cranelift IR type width we compile it to.
 /// `Int` → `I64`, `Bool` → `I8`. Everything else raises
-/// `CodegenError::NotSupported` with a pointer to the slice that
-/// introduces it.
+/// `CodegenError::NotSupported` with a descriptive feature boundary.
 fn cl_type_for(ty: &Type, span: Span) -> Result<clir::Type, CodegenError> {
     match ty {
         Type::Int => Ok(I64),
@@ -2180,27 +2179,23 @@ fn cl_type_for(ty: &Type, span: Span) -> Result<clir::Type, CodegenError> {
         Type::Weak(_, _) => Ok(I64),
         Type::Option(inner) if is_refcounted_type(inner) => Ok(I64),
         Type::Nothing => Err(CodegenError::not_supported(
-            "`Nothing` — slice 12d pairs it with bare `return`",
+            "`Nothing` — use a bare `return` instead",
             span,
         )),
         Type::Function { .. } => Err(CodegenError::not_supported(
-            "function types as values — Phase 14 revisits first-class callables",
+            "function types as values — first-class callables are not implemented in native codegen yet",
             span,
         )),
-        // Phase 18 added Result<T,E> and Option<T>. Their native
-        // codegen lands in 18d (tagged-union layout: discriminant
-        // + payload, with proper destroy_fn for refcounted payloads).
-        // Until then any program that reaches codegen with a
-        // Result/Option in its value flow gets a clean error here
-        // — the typechecker accepts these types, the interpreter
-        // tier handles them fully (per Dev B's 18a-18c work),
-        // native compilation just doesn't yet.
+        // Result<T,E> and Option<T> are accepted by the typechecker and
+        // handled fully by the interpreter. Native tagged-union layout
+        // and retry lowering are not implemented yet, so native
+        // compilation reports a clean boundary here.
         Type::Result(_, _) => Err(CodegenError::not_supported(
-            "`Result<T, E>` — native codegen lands in slice 18d (tagged union layout); use the interpreter tier (`corvid run --tier interp`) until then",
+            "`Result<T, E>` — native tagged-union lowering is not implemented yet; use the interpreter tier (`corvid run --tier interp`) until then",
             span,
         )),
         Type::Option(_) => Err(CodegenError::not_supported(
-            "`Option<T>` with non-refcounted payload — native codegen currently supports nullable-pointer `Option<T>` only when `T` is refcounted (the path weak upgrade uses); wider tagged-union Option codegen lands in slice 18d",
+            "`Option<T>` with non-refcounted payload — native codegen currently supports nullable-pointer `Option<T>` only when `T` is refcounted (the path used by weak upgrade); wider tagged-union Option lowering is not implemented yet",
             span,
         )),
         Type::Unknown => Err(CodegenError::cranelift(
@@ -2248,7 +2243,7 @@ fn define_agent(
             var_idx += 1;
             let ty = cl_type_for(&p.ty, p.span)?;
             builder.declare_var(var, ty);
-            // Phase 17c — mark the refcounted parameter Value so
+            // Mark the refcounted parameter Value so
             // Cranelift spills it before safepoints and records its
             // SP-relative offset in the function's stack map. The
             // `declare_value_needs_stack_map` API is per-Value (not
@@ -2256,14 +2251,14 @@ fn define_agent(
             // SSA-phi flow for values that travel through this
             // Variable across blocks.
             //
-            // 17d's cycle collector mark phase walks these recorded
+            // The cycle collector mark walk uses these recorded
             // offsets at each safepoint PC to find on-stack GC roots.
             if is_refcounted_type(&p.ty) {
                 builder.declare_value_needs_stack_map(block_arg);
             }
             builder.def_var(var, block_arg);
             env.insert(p.local_id, (var, ty));
-            // Phase 17b-1b ABI — driven by `agent.borrow_sig`:
+            // Borrow ABI driven by `agent.borrow_sig`:
             //   * `ParamBorrow::Owned` (pre-17b default, and what a
             //      consuming body needs): callee retains on entry,
             //      tracks in function-root scope for symmetric
@@ -2413,7 +2408,7 @@ fn lower_stmt(
                 Some(e) => lower_expr(builder, e, env, func_ids_by_def, module, runtime)?,
                 None => {
                     return Err(CodegenError::not_supported(
-                        "bare `return` (Nothing type not supported in slice 12a)",
+                        "bare `return` (Nothing type not supported yet)",
                         *span,
                     ));
                 }
@@ -2510,7 +2505,7 @@ fn lower_stmt(
                 emit_release(builder, module, runtime, old);
             }
             let v = lower_expr(builder, value, env, func_ids_by_def, module, runtime)?;
-            // Phase 17c — the Value flowing into a refcounted
+            // The Value flowing into a refcounted
             // binding must be stack-map-declared so Cranelift spills
             // it across safepoints. Cranelift's safepoint pass
             // tracks liveness through SSA phis for Values that
@@ -2569,13 +2564,13 @@ fn lower_stmt(
             runtime,
         ),
         IrStmt::Approve { args, .. } => {
-            // Phase 14: `approve` compiles to a no-op. The effect
-            // checker (Phase 5) statically verifies that every
+            // `approve` compiles to a no-op. The effect
+            // checker statically verifies that every
             // dangerous-tool call is preceded by a matching approve
             // — that's Corvid's primary enforcement mechanism and
             // it already runs before codegen. Runtime approve
             // verification (belt-and-braces against malicious IR
-            // that bypasses the checker) lands in Phase 20 alongside
+            // that bypasses the checker) lands in later safety work alongside
             // the rest of the effect-row machinery — at that point
             // approve gains a full runtime stack with typed args.
             // Today we still lower the arg expressions so their side
@@ -2617,8 +2612,8 @@ fn lower_stmt(
             module,
             runtime,
         ),
-        // Phase 17b-1a — Dup/Drop as first-class IR operations. In
-        // slice 17b-1a the ownership analysis pass hasn't been
+        // Dup/Drop as first-class IR operations. In the fallback
+        // path the ownership analysis pass hasn't been
         // written yet, so these variants never appear in the IR
         // codegen receives (only `None` borrow_sigs and no
         // Dup/Drop statements — all ownership is still handled by
@@ -2696,7 +2691,7 @@ fn lower_expr(
             lower_string_literal(builder, module, runtime, s, expr.span)
         }
         IrExprKind::Literal(IrLiteral::Nothing) => Err(CodegenError::not_supported(
-            "`nothing` literal — slice 12d adds it alongside the `Nothing` type",
+            "`nothing` literal is not supported yet",
             expr.span,
         )),
         IrExprKind::Local { local_id, name } => {
@@ -2743,7 +2738,7 @@ fn lower_expr(
             // after the helper call). Dispatch here so we have access
             // to the IR type information.
             //
-            // Phase 17b-1b.2 peephole — borrow-at-use-site for
+            // Borrow-at-use-site peephole for
             // consuming string BinOps. If an operand is a bare
             // `IrExprKind::Local` of a refcounted String, we lower
             // the Local WITHOUT emitting the ownership-conversion
@@ -2786,7 +2781,7 @@ fn lower_expr(
                     )
                 })?;
                 let callee_ref = module.declare_func_in_func(*callee_id, builder.func);
-                // Phase 17b-1b.5 — caller-side borrow peephole. For
+                // Caller-side borrow peephole. For
                 // each refcounted arg whose callee slot is Borrowed
                 // (per the callee's `borrow_sig` populated by the
                 // ownership pass) AND whose argument expression is a
@@ -2847,7 +2842,7 @@ fn lower_expr(
                 if results.len() != 1 {
                     return Err(CodegenError::cranelift(
                         format!(
-                            "agent `{callee_name}` returned {} values; slice 12a expects exactly 1",
+                            "agent `{callee_name}` returned {} values; native lowering expects exactly 1",
                             results.len()
                         ),
                         expr.span,
@@ -2864,7 +2859,7 @@ fn lower_expr(
                 Ok(result)
             }
             IrCallKind::Tool { def_id, .. } => {
-                // Phase 14: emit a DIRECT typed call to the tool's
+                // Emit a direct typed call to the tool's
                 // `#[tool]`-generated wrapper symbol. No JSON, no
                 // dynamic dispatch — just a `call` instruction against
                 // a named import. Link-time symbol resolution catches
@@ -2923,8 +2918,8 @@ fn lower_expr(
                     }
                 };
 
-                // Tool-call ABI (Phase 14): refcount lifecycle matches
-                // the agent-call convention (slice 12f) — caller
+                // Tool-call ABI: refcount lifecycle matches
+                // the agent-call convention — caller
                 // produces an Owned (+1) refcounted arg via the
                 // existing `lower_expr` path (use_var retains to
                 // convert Borrowed→Owned), the `#[tool]` wrapper
@@ -3054,7 +3049,7 @@ fn lower_expr(
             let offset = (i as i32) * STRUCT_FIELD_SLOT_BYTES;
             let field_cl_ty = cl_type_for(&field_meta.ty, field_meta.span)?;
 
-            // Phase 17b-1b.3 peephole: if the target is a bare
+            // Borrow-at-use-site peephole: if the target is a bare
             // `IrExprKind::Local`, read the Variable directly with
             // no ownership-conversion retain, and skip the symmetric
             // post-extract release of the struct pointer. The load
@@ -3099,7 +3094,7 @@ fn lower_expr(
             let elem_cl_ty = cl_type_for(&elem_ty, expr.span)?;
             let elem_refcounted = is_refcounted_type(&elem_ty);
 
-            // Phase 17b-1b.3 peephole: same borrow-at-use-site trick
+            // Same borrow-at-use-site trick
             // as FieldAccess — if the list target is a bare Local,
             // borrow it (no retain) and skip the post-extract release.
             // The bounds-check + load only read the list's memory;
@@ -3182,7 +3177,7 @@ fn lower_expr(
             // Allocation size: 8 (length) + 8 * N (elements).
             let total_bytes = 8 + 8 * items.len() as i64;
             let size_val = builder.ins().iconst(I64, total_bytes);
-            // Phase 17a: single typed allocator. The typeinfo block
+            // Single typed allocator. The typeinfo block
             // (pre-emitted in lower_file) carries destroy_fn
             // (corvid_destroy_list for refcounted elements, NULL
             // otherwise) and trace_fn (corvid_trace_list always).
@@ -3249,11 +3244,10 @@ fn lower_expr(
             }
             Ok(upgraded)
         }
-        // Phase 18 IR variants — Result/Option construction and
-        // ? / try-retry control flow. The interpreter tier handles
-        // these end-to-end (Dev B's 18a-18c work). Native codegen
-        // for tagged-union layout, discriminant-based branching,
-        // and retry-loop desugaring lands in slice 18d / 18e.
+        // Result/Option construction and `?` / `try-retry` control
+        // flow are handled end-to-end by the interpreter. Native
+        // tagged-union layout, discriminant-based branching, and
+        // retry-loop desugaring are not implemented yet.
         //
         // Until then any program that hits these IR variants in
         // native compilation gets a clean, actionable error here.
@@ -3264,7 +3258,7 @@ fn lower_expr(
         // expressions, return values, etc.).
         IrExprKind::ResultOk { .. } | IrExprKind::ResultErr { .. } => {
             Err(CodegenError::not_supported(
-                "`Result<T, E>` construction (`Ok(...)` / `Err(...)`) — native codegen lands in slice 18d; use the interpreter tier (`corvid run --tier interp`) until then",
+                "`Result<T, E>` construction (`Ok(...)` / `Err(...)`) — native tagged-union lowering is not implemented yet; use the interpreter tier (`corvid run --tier interp`) until then",
                 expr.span,
             ))
         }
@@ -3283,13 +3277,13 @@ fn lower_expr(
         }
         IrExprKind::TryPropagate { .. } => {
             Err(CodegenError::not_supported(
-                "postfix `?` operator — native codegen lands in slice 18d (compiles to discriminant-branch + early return); use the interpreter tier until then",
+                "postfix `?` operator — native discriminant-based lowering is not implemented yet; use the interpreter tier until then",
                 expr.span,
             ))
         }
         IrExprKind::TryRetry { .. } => {
             Err(CodegenError::not_supported(
-                "`try ... on error retry N times backoff ...` — native codegen lands in slice 18e (desugars to a loop with sleep-backed backoff); use the interpreter tier until then",
+                "`try ... on error retry N times backoff ...` — native retry lowering is not implemented yet; use the interpreter tier until then",
                 expr.span,
             ))
         }
@@ -3404,7 +3398,7 @@ enum ArithDomain {
     Float,
 }
 
-/// Phase 17b-1b.3 — lower a container expression (struct target of a
+/// Lower a container expression (struct target of a
 /// `FieldAccess`, list target of an `Index`) in a borrow position.
 /// Returns `(value, borrowed)` following the same convention as
 /// `lower_string_operand_maybe_borrowed`:
@@ -3441,7 +3435,7 @@ fn lower_container_maybe_borrowed(
     Ok((v, false))
 }
 
-/// Phase 17b-1b.2 — lower a string-typed operand in a borrow position
+/// Lower a string-typed operand in a borrow position
 /// (e.g. an operand of a consuming String BinOp: concat, equality, or
 /// ordering compare). Returns `(value, borrowed)`:
 ///
@@ -3491,7 +3485,7 @@ fn lower_string_operand_maybe_borrowed(
     Ok((v, false))
 }
 
-/// Phase 17b-1b.2 — lower a string BinOp whose operands may be borrowed
+/// Lower a string BinOp whose operands may be borrowed
 /// rather than Owned. Mirrors `lower_string_binop` but conditionally
 /// skips the post-op release for any operand that was passed as a
 /// borrow (no +1 was produced; nothing to release).
@@ -3619,7 +3613,7 @@ fn lower_for(
         Type::List(elem) => (**elem).clone(),
         Type::String => {
             return Err(CodegenError::not_supported(
-                "`for c in string` iteration in native code — future slice (needs iterator \
+                "`for c in string` iteration in native code — not implemented yet (needs iterator \
                  protocol or string-specific lowering)",
                 span,
             ));
@@ -3636,7 +3630,7 @@ fn lower_for(
     let elem_cl_ty = cl_type_for(&elem_ty, span)?;
     let elem_refcounted = is_refcounted_type(&elem_ty);
 
-    // Phase 17b-1b.4 peephole: iter-as-bare-Local borrow. Same
+    // Iter-as-bare-Local borrow peephole. Same
     // correctness argument as 17b-1b.3's FieldAccess/Index — the
     // loop's use of `list_ptr` (length load + per-element load +
     // bounds arithmetic) only READS the list's memory; never
@@ -3718,7 +3712,7 @@ fn lower_for(
         elem_addr,
         0,
     );
-    // Phase 17c — the loaded element is a refcounted pointer that
+    // The loaded element is a refcounted pointer that
     // flows into the loop variable. Declare it so Cranelift spills
     // before any safepoint in the loop body.
     if elem_refcounted {
@@ -3874,14 +3868,14 @@ fn lower_struct_constructor(
     let size = builder
         .ins()
         .iconst(I64, struct_payload_bytes(ty.fields.len()));
-    // Phase 17a: structs with refcounted fields use the typeinfo-
+    // Structs with refcounted fields use the typeinfo-
     // driven allocator. Structs with no refcounted fields currently
     // skip typeinfo entirely (lower_file bypasses emission for them)
     // — they allocate with NULL destroy_fn via a runtime-owned
     // empty typeinfo? For 17a we keep the pre-typed behavior for
     // these: only emit typed allocation when the struct actually
     // has refcounted fields requiring dispatch. Non-refcounted
-    // structs remain on the old path *only temporarily* — slice
+    // structs remain on the old path *only temporarily* — future
     // 17a's follow-up will uniformize this once 17d needs every
     // heap object traceable. Tracked as a TODO in ROADMAP.
     let struct_ptr = if let Some(&ti_id) = runtime.struct_typeinfos.get(&ty.id) {
@@ -3927,7 +3921,7 @@ fn lower_struct_constructor(
 /// the user's crate defines `__corvid_tool_<other-name>`. Mangling
 /// rule: every non-ASCII-alphanumeric character becomes `_`.
 // ------------------------------------------------------------
-// Phase 15 — prompt call lowering.
+// Prompt call lowering.
 //
 // Codegen knows the prompt's template + signature + return type at
 // compile time. The strategy:
@@ -4049,7 +4043,7 @@ fn emit_stringify_arg(
         }
         other => Err(CodegenError::not_supported(
             format!(
-                "prompt argument type `{}` is not yet supported in template interpolation — Phase 15 supports Int / Bool / Float / String only; Struct / List defer to a later slice",
+                "prompt argument type `{}` is not yet supported in template interpolation — the native prompt bridge currently supports only Int / Bool / Float / String; Struct / List interpolation is not implemented yet",
                 other.display_name()
             ),
             span,
@@ -4210,7 +4204,7 @@ fn lower_prompt_call(
         other => {
             return Err(CodegenError::not_supported(
                 format!(
-                    "prompt `{callee_name}` returns `{}` — Phase 15 supports Int / Bool / Float / String returns; structured returns defer to Phase 20 (`Grounded<T>`)",
+                    "prompt `{callee_name}` returns `{}` — the native prompt bridge currently supports only Int / Bool / Float / String returns; structured prompt returns are not implemented yet",
                     other.display_name()
                 ),
                 span,
@@ -4645,6 +4639,6 @@ fn trap_on_zero(
     builder.seal_block(cont_block);
 }
 
-// Silence warnings for fields we'll start using in slice 12b.
+// Silence warnings for fields we expect to use soon.
 #[allow(dead_code)]
 fn _force_use(_: MemFlags, _: Signature) {}

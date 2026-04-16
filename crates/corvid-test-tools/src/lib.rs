@@ -1,4 +1,4 @@
-//! Mock `#[tool]` implementations used by the Phase 14 parity harness.
+//! Mock `#[tool]` implementations used by the typed-tool parity harness.
 //!
 //! Every tool here reads its return value from a dedicated env var so
 //! the harness can reuse one linked staticlib across fixtures that need
@@ -9,7 +9,7 @@
 //! The env-var indirection is NOT the mechanism real tools should use
 //! at runtime. Real tools compute their return values (e.g. an LLM call,
 //! a DB query). These mocks exist purely to keep tests fast + isolated
-//! while Phase 14's typed-ABI dispatch path is exercised end-to-end.
+//! while the typed-ABI dispatch path is exercised end-to-end.
 
 use corvid_macros::tool;
 
@@ -53,7 +53,7 @@ fn env_string(key: &str) -> String {
 }
 
 // ------------------------------------------------------------
-// Phase 13-compatible mock tools.
+// Legacy-compatible mock tools.
 // Kept under their original names so the existing parity fixtures
 // keep working after the dispatch mechanism flip from env-var-registry
 // to typed-ABI-direct-call.
@@ -90,7 +90,7 @@ async fn leaf() -> i64 {
 }
 
 // ------------------------------------------------------------
-// Phase 14 mock tools exercising each scalar arg type + mixed shapes.
+// Mock tools exercising each scalar arg type and mixed shapes.
 // ------------------------------------------------------------
 
 #[tool("double_int")]

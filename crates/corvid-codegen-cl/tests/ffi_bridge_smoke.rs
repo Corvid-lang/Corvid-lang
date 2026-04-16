@@ -1,15 +1,15 @@
-//! Slice 13b smoke test — verifies the corvid-runtime staticlib's
+//! Smoke test — verifies the corvid-runtime staticlib's
 //! C-ABI surface is reachable from a linked C program.
 //!
 //! Writes a hand-rolled C program that calls `corvid_runtime_init()`,
 //! `corvid_runtime_probe()`, and `corvid_runtime_shutdown()` — the
-//! three bridge functions Phase 13 exposes. Compiles + links it the
+//! three early bridge functions. Compiles + links it the
 //! same way `link.rs` compiles Corvid programs, so any linker error
 //! in the real code path surfaces here first.
 //!
-//! If this test fails, slice 13b's linkage is broken and no compiled
+//! If this test fails, early native linkage is broken and no compiled
 //! Corvid binary with tool/prompt support can run. The rest of
-//! Phase 13 is blocked until this is green.
+//! The native bridge layer is blocked until this is green.
 //!
 //! Not part of the parity harness because it has no Corvid source —
 //! it's a pure FFI contract test. Lives alongside parity.rs because
@@ -22,7 +22,7 @@ use std::process::Command;
 /// Source of the smoke-test C program. Inlined so the test is
 /// self-contained — no fixtures directory, no risk of copy-paste drift.
 ///
-/// Exercises every bridge function the slice 13b / 13c surface exposes:
+/// Exercises every bridge function the early bridge surface exposes:
 ///   - `corvid_runtime_probe`                 (pure, no runtime needed)
 ///   - `corvid_runtime_init`                  (eager init)
 ///   - `corvid_tool_call_sync_int`            (async dispatch via block_on)
@@ -30,9 +30,9 @@ use std::process::Command;
 ///
 /// The mock tool `smoke_answer` is registered via the
 /// `CORVID_TEST_MOCK_INT_TOOLS` env var the harness sets before
-/// spawning the binary. Env-var-based registration is the Phase 13
+/// spawning the binary. Env-var-based registration is the early
 /// test pattern (see `ffi_bridge.rs::build_corvid_runtime`) — user-
-/// facing tool registration is Phase 14's proc-macro registry.
+/// facing tool registration is the proc-macro registry.
 const FFI_SMOKE_C: &str = r#"
 #include <stdio.h>
 #include <stdlib.h>
@@ -122,7 +122,7 @@ fn ffi_bridge_init_probe_shutdown() {
     let c_path = tmp.path().join("ffi_smoke.c");
     std::fs::write(&c_path, FFI_SMOKE_C).expect("write c source");
 
-    // Phase 15: the C runtime (alloc.c, strings.c, etc.) is now
+    // The C runtime (alloc.c, strings.c, etc.) is now
     // compiled into corvid-runtime.lib by corvid-runtime's build.rs.
     // The smoke test links just the staticlib — no separate C source
     // compile needed.

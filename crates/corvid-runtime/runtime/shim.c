@@ -1,6 +1,6 @@
 /* Corvid AOT runtime shim.
  *
- * Slice 12i: `main` is no longer here — the codegen emits its own
+ * `main` is no longer here — the codegen emits its own
  * `main(int argc, char** argv)` per program (signature-aware, with
  * argv decoding + result printing tailored to the entry agent's
  * type). This file shrinks to:

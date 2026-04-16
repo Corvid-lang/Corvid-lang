@@ -1,4 +1,4 @@
-//! Slice 17b-2 — drop specialization (Mojo ASAP).
+//! Drop specialization tests.
 //!
 //! The unified ownership pass (.6d-2) schedules Drops based on
 //! per-statement last-use. That handles most cases but misses

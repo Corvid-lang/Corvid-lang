@@ -2,13 +2,9 @@
 //!
 //! AOT-first: IR → relocatable object file → system linker →
 //! `target/bin/<stem>[.exe]`. No JIT detour. The interpreter in
-//! `corvid-vm` remains the oracle — slice-12a lowering is tested by
-//! parity harness (`tests/parity.rs`) that runs every fixture through
-//! both tiers and asserts identical results.
-//!
-//! Slice 12a supports Int-only, pure-computation agents (plus
-//! recursive agent-to-agent calls). Everything else raises
-//! `CodegenError::NotSupported` with the slice that adds it.
+//! `corvid-vm` remains the oracle — the parity harness
+//! (`tests/parity.rs`) runs every fixture through both tiers and
+//! asserts identical results.
 //!
 //! Overflow policy: every `Int` arithmetic op uses Cranelift's
 //! `sadd_overflow` / `ssub_overflow` / `smul_overflow` and branches to
@@ -17,7 +13,7 @@
 //! This matches the interpreter's `Arithmetic("integer overflow")`
 //! semantics byte-for-byte.
 //!
-//! See `ARCHITECTURE.md` §4 (pipeline) and `ROADMAP.md` Phase 12.
+//! See `ARCHITECTURE.md` §4 (pipeline).
 
 #![forbid(unsafe_code)]
 
@@ -46,7 +42,7 @@ pub fn compile_to_object(
     object_path: &Path,
     entry_agent_name: Option<&str>,
 ) -> Result<(), CodegenError> {
-    // Phase 17b-1b — run the ownership analysis pass before codegen.
+    // Run the ownership analysis pass before codegen.
     // Output is a transformed IrFile with borrow_sig populated on
     // every agent. Codegen downstream consults borrow_sig at call
     // sites to skip the callee-entry retain + scope-exit release
@@ -73,13 +69,13 @@ pub fn compile_to_object(
 /// if multiple are present.
 ///
 /// `extra_tool_libs` holds additional `.lib` / `.a` paths the linker
-/// should pull in. Phase 14 uses this for the tool-implementation
+/// should pull in. Native tool dispatch uses this for the tool-implementation
 /// staticlib: `cargo build` produces `libuser_tools.a`, the path goes
 /// here, and the linker resolves `__corvid_tool_<name>` symbols
-/// emitted by `IrCallKind::Tool` codegen. An empty slice means no
+/// emitted by `IrCallKind::Tool` codegen. An empty list means no
 /// user-provided tools — tool-using programs will fail to link with
-/// an unresolved-symbol error, which is the correct outcome (Phase
-/// 14's driver gate surfaces a friendlier error earlier).
+/// an unresolved-symbol error, which is the correct outcome. The
+/// driver surfaces a friendlier error earlier.
 pub fn build_native_to_disk(
     ir: &IrFile,
     module_name: &str,
@@ -87,13 +83,11 @@ pub fn build_native_to_disk(
     extra_tool_libs: &[&Path],
 ) -> Result<PathBuf, CodegenError> {
     let entry = pick_entry_agent(ir)?;
-    // Slice 12i lifted parameter-less + Int/Bool-only restrictions for
-    // the four scalar types. Struct and List at the entry boundary
-    // remain blocked — they need a dedicated serialization slice
-    // (JSON or similar) before they can round-trip through argv /
-    // stdout meaningfully. The codegen-emitted main itself enforces
-    // the same boundary; this guard surfaces the error earlier with
-    // the agent name.
+    // The native command-line boundary currently supports the four
+    // scalar types. Structs and lists at the entry boundary remain
+    // blocked until a dedicated serialization layer exists. The
+    // codegen-emitted main itself enforces the same boundary; this
+    // guard surfaces the error earlier with the agent name.
     for p in &entry.params {
         if matches!(
             &p.ty,
@@ -101,7 +95,7 @@ pub fn build_native_to_disk(
         ) {
             return Err(CodegenError::not_supported(
                 format!(
-                    "entry agent `{}` parameter `{}` is `{}` — slice 12i supports Int/Bool/Float/String at the command-line boundary; structured-input types need a future serialization slice (use a wrapper agent that takes a String and parses internally)",
+                    "entry agent `{}` parameter `{}` is `{}` — the native command-line boundary currently supports only Int/Bool/Float/String; structured input needs a dedicated serialization layer (use a wrapper agent that takes a String and parses internally)",
                     entry.name,
                     p.name,
                     p.ty.display_name()
@@ -116,7 +110,7 @@ pub fn build_native_to_disk(
     ) {
         return Err(CodegenError::not_supported(
             format!(
-                "entry agent `{}` returns `{}` — slice 12i supports Int/Bool/Float/String returns; structured-output types need a future serialization slice",
+                "entry agent `{}` returns `{}` — the native command-line boundary currently supports only Int/Bool/Float/String returns; structured output needs a dedicated serialization layer",
                 entry.name,
                 entry.return_ty.display_name()
             ),

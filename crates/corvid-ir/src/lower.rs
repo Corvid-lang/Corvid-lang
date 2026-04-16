@@ -24,7 +24,7 @@ struct Lowerer<'a> {
     symbols: &'a SymbolTable,
     bindings: &'a HashMap<Span, Binding>,
     types: &'a HashMap<Span, Type>,
-    /// Phase 16 — per-receiver-type method side-table from the
+    /// Per-receiver-type method side-table from the
     /// resolver. `lower_file` walks `Decl::Extend` blocks and looks
     /// up each method's allocated DefId here so the IR emits methods
     /// alongside free decls in the per-kind vectors.
@@ -56,8 +56,8 @@ impl<'a> Lowerer<'a> {
                 Decl::Prompt(p) => prompts.push(self.lower_prompt(p)),
                 Decl::Agent(a) => agents.push(self.lower_agent(a)),
                 Decl::Extend(ext) => {
-                    // Phase 16 slice 16c — lower each method into the
-                    // appropriate per-kind IR vector. Methods get
+                    // Lower each method into the appropriate per-kind
+                    // IR vector. Methods get
                     // their `DefId` from the resolver's method side
                     // table (NOT the by-name namespace, since two
                     // types can share method names like `total`).
@@ -147,7 +147,7 @@ impl<'a> Lowerer<'a> {
         self.lower_tool_with_id(t, id)
     }
 
-    /// Phase 16: lower a tool decl whose DefId was allocated outside
+    /// Lower a tool decl whose DefId was allocated outside
     /// the by-name namespace (i.e. it's a method inside an `extend`
     /// block, looked up via the methods side-table rather than by
     /// name).
@@ -197,8 +197,8 @@ impl<'a> Lowerer<'a> {
             return_ty: self.type_ref_to_type(&a.return_ty),
             body: self.lower_block(&a.body),
             span: a.span,
-            // Phase 17b — populated by corvid-codegen-cl's ownership
-            // pass. None at lowering time means "every parameter is
+            // Populated by corvid-codegen-cl's ownership pass. `None`
+            // at lowering time means "every parameter is
             // Owned" at codegen (matches pre-17b semantics).
             borrow_sig: None,
         }
@@ -383,7 +383,7 @@ impl<'a> Lowerer<'a> {
     }
 
     fn lower_call(&self, callee: &Expr, args: &[Expr]) -> IrExprKind {
-        // Phase 16: `target.method(args)` rewrites to a regular call
+        // `target.method(args)` rewrites to a regular call
         // with the receiver prepended. Method DefId comes from the
         // resolver's per-type method side-table; the caller's type
         // is read from the type checker's per-expression side table.
@@ -497,7 +497,7 @@ impl<'a> Lowerer<'a> {
         }
     }
 
-    /// Phase 16: detect + lower a `target.method(args)` call. Returns
+    /// Detect and lower a `target.method(args)` call. Returns
     /// `Some(IrExprKind::Call { ... })` with the receiver prepended
     /// when `target`'s type matches a registered method. Returns
     /// `None` when the call doesn't resolve to a method (caller
@@ -519,8 +519,8 @@ impl<'a> Lowerer<'a> {
         let kind = match entry.kind {
             corvid_resolve::resolver::MethodKind::Tool => IrCallKind::Tool {
                 def_id: entry.def_id,
-                // Method-tool effects: Phase 16 keeps Safe as the
-                // conservative default; the IR's IrTool carries the
+                // Method-tool effects keep `Safe` as the conservative
+                // default; the IR's `IrTool` carries the
                 // declared effect once `define_tool` lowers it.
                 effect: Effect::Safe,
             },

@@ -1,9 +1,8 @@
 //! Errors the Cranelift codegen produces.
 //!
 //! Distinct from `corvid-vm::InterpError` — those fire at runtime inside
-//! the interpreter. These fire at compile time when codegen refuses a
-//! construct (too early in the slice plan) or when Cranelift itself
-//! raises.
+//! the interpreter. These fire at compile time when codegen refuses an
+//! unsupported construct or when Cranelift itself raises.
 
 use corvid_ast::Span;
 use std::fmt;
@@ -46,9 +45,7 @@ impl CodegenError {
 
 #[derive(Debug, Clone)]
 pub enum CodegenErrorKind {
-    /// The IR construct is not supported by this codegen backend at the
-    /// current slice. Each arm of 12a's lowering switches carries a
-    /// message pointing to the slice that will add support.
+    /// The IR construct is not supported by this codegen backend yet.
     NotSupported(String),
 
     /// Cranelift itself raised during codegen (invalid IR, verifier

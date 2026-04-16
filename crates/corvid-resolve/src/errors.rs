@@ -19,12 +19,12 @@ pub enum ResolveErrorKind {
     /// outer `ResolveError`) points to the duplicate.
     DuplicateDecl { name: String, first_span: Span },
 
-    /// Phase 16 — `extend T:` block targets a type that doesn't exist
+    /// `extend T:` block targets a type that doesn't exist
     /// (or isn't a type — e.g., the user wrote `extend foo:` where
     /// `foo` is an agent name).
     ExtendTargetNotAType(String),
 
-    /// Phase 16 — two methods with the same name declared inside the
+    /// Two methods with the same name declared inside the
     /// same `extend T:` block (or split across multiple `extend T:`
     /// blocks for the same type).
     DuplicateMethod {
@@ -33,7 +33,7 @@ pub enum ResolveErrorKind {
         first_span: Span,
     },
 
-    /// Phase 16 — a method's name collides with a field name on the
+    /// A method's name collides with a field name on the
     /// same type. `.foo` would be ambiguous (field access vs zero-arg
     /// method call), so we reject at declaration time.
     MethodFieldCollision {

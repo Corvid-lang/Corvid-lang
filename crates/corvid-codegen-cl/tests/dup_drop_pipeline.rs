@@ -1,4 +1,4 @@
-//! Slice 17b-1b.6c — pipeline integration test for the dataflow-
+//! Pipeline integration test for the dataflow-
 //! driven Dup/Drop pass.
 //!
 //! The pass itself is unit-tested in `src/dup_drop.rs`. This file
@@ -7,12 +7,12 @@
 //! codegen, Cranelift accepts the transformed IR, the native binary
 //! links, runs, and exits cleanly.
 //!
-//! What this slice (.6c) ships:
+//! What this test covers:
 //!   - the pipeline hook inside `lower_file` (Pass 2)
 //!   - opt-in env-var gate (default OFF — no behavior change)
 //!   - this test, proving the hook works end-to-end
 //!
-//! What .6d will add (not this slice):
+//! What the unified pass adds later:
 //!   - flip the default to ON
 //!   - delete the ~38 scattered `emit_retain` / `emit_release` sites
 //!     in `lowering.rs` (their job subsumed by Dup/Drop ops)
@@ -22,7 +22,7 @@
 //! With the flag OFF, every existing test + fixture behaves
 //! identically to before this commit. The flag-ON path adds extra
 //! retain/release calls on top of the scattered emits (deliberate
-//! double-count for this transitional slice — the pass produces
+//! double-count for this transitional state — the pass produces
 //! correct ops but the pipeline isn't yet trusting them as the sole
 //! source of truth). The test below asserts only the NON-REGRESSION
 //! invariants that must hold in either mode: balanced alloc/release
@@ -173,7 +173,7 @@ agent pass_through(s: String) -> String:
 }
 
 /// Regression guard: with the flag OFF (the production default),
-/// behavior is byte-for-byte identical to before this slice.
+/// behavior is byte-for-byte identical to the legacy path.
 /// Covered implicitly by the full `parity.rs` + `baseline_rc_counts.rs`
 /// suite staying green, but we assert the principle explicitly here:
 /// a program's counters with the flag unset match the counters with

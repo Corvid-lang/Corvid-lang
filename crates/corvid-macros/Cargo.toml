@@ -3,7 +3,7 @@ name = "corvid-macros"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Proc-macros for Corvid. Defines `#[tool]` — the attribute users put on Rust functions to make them callable from compiled Corvid code via the Phase 14 typed C-ABI bridge."
+description = "Proc-macros for Corvid. Defines `#[tool]` — the attribute users put on Rust functions to make them callable from compiled Corvid code via the typed C-ABI bridge."
 
 [lib]
 proc-macro = true

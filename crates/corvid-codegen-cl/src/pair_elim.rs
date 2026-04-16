@@ -1,11 +1,11 @@
-//! Slice 17b-1c — same-block retain/release pair elimination.
+//! Same-block retain/release pair elimination.
 //!
 //! This pass consumes the IR produced by the unified ownership path
 //! (`insert_dup_drop`) and removes `IrStmt::Dup` / `IrStmt::Drop`
 //! pairs that are provably redundant in a single straight-line basic
 //! block.
 //!
-//! Scope of this slice:
+//! Scope of this pass:
 //!   - only pass-inserted `Dup`/`Drop` are expected to exist in the IR
 //!   - only same-block, straight-line pairs are considered
 //!   - cross-branch / cross-loop / cross-function elimination is
@@ -13,7 +13,7 @@
 //!
 //! Assumption to document explicitly: today the only producer of
 //! `IrStmt::Dup` / `IrStmt::Drop` is the ownership pass. If a future
-//! slice introduces hand-authored Dup/Drop or another pass starts
+//! feature introduces hand-authored Dup/Drop or another pass starts
 //! emitting them for a different purpose, this pass's safety contract
 //! must be re-reviewed.
 //!

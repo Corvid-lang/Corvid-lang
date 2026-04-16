@@ -1,8 +1,8 @@
-//! Slice 17b-0 — retain/release call-count baselines.
+//! Retain/release call-count baselines.
 //!
 //! Records the retain/release op counts for a handful of representative
 //! Corvid programs under the current codegen-time retain/release
-//! insertion model. These numbers are the baseline against which slice
+//! insertion model. These numbers are the baseline against which later
 //! 17b-1 (principled dup/drop pass) will be measured.
 //!
 //! Each baseline is committed as an exact-match assertion. When 17b-1

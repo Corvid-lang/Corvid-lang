@@ -305,7 +305,7 @@ agent echo(x: String) -> String:
     }
 
     // ============================================================
-    // Phase 16 — `extend T:` method side-table tests
+    // `extend T:` method side-table tests
     // ============================================================
 
     #[test]

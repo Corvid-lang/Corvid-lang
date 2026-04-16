@@ -1,16 +1,16 @@
-/* Corvid native runtime: stack map lookup.
+﻿/* Corvid native runtime: stack map lookup.
  *
- * Phase 17c — given a return PC observed in a stack frame during a
- * cycle-collection mark phase, find the `corvid_stack_map_entry`
+ * Given a return PC observed in a stack frame during a
+ * cycle-collection mark walk, find the `corvid_stack_map_entry`
  * (emitted by codegen into the `.rodata` symbol `corvid_stack_maps`)
  * that describes the live refcounted pointers at that PC.
  *
- * Binary layout of `corvid_stack_maps` — must match the emitter in
+ * Binary layout of `corvid_stack_maps` â€” must match the emitter in
  * `crates/corvid-codegen-cl/src/lowering.rs::emit_stack_map_table`:
  *
  *   offset  0 :  u64 entry_count
  *   offset  8 :  u64 reserved (= 0)
- *   offset 16 :  entries[entry_count] — each 32 bytes:
+ *   offset 16 :  entries[entry_count] â€” each 32 bytes:
  *                   +0  const void* fn_start     (reloc'd to function symbol)
  *                   +8  u32          pc_offset    (return_pc = fn_start + pc_offset)
  *                  +12  u32          frame_bytes
@@ -21,13 +21,13 @@
  *              of a live refcounted pointer at the corresponding
  *              safepoint's PC.
  *
- * Phase 17d will consume this by walking task stacks, looking up
+ * The collector consumes this by walking task stacks, looking up
  * each frame's return PC, and for each found entry marking the
  * refcounted pointers at SP + ref_offsets[i].
  *
  * Lookup strategy: linear scan. Acceptable for v0.1 (programs have
- * <1000 entries). Once programs get larger and the mark phase runs
- * frequently enough to matter, upgrade to binary search — the
+ * <1000 entries). Once programs get larger and the mark walk runs
+ * frequently enough to matter, upgrade to binary search â€” the
  * emitter already sorts entries by (fn_id, pc_offset) for
  * determinism, so the table is pre-sorted for binary search over
  * fn_start + pc_offset via any stable tiebreaker.
@@ -57,13 +57,13 @@ typedef struct corvid_stack_maps_header {
 extern const corvid_stack_maps_header corvid_stack_maps;
 
 /* Given a return PC (typically read from a stack frame during the
- * cycle-collection mark phase), return a pointer to the matching
+ * cycle-collection mark walk), return a pointer to the matching
  * stack map entry, or NULL if the PC does not correspond to any
  * safepoint in any compiled Corvid function.
  *
  * The NULL case is expected and correct: not every PC in the
  * program is a safepoint (non-call instructions, C runtime frames,
- * tokio-internal frames, etc.). 17d's mark phase should treat NULL
+ * tokio-internal frames, etc.). The collector's mark walk should treat NULL
  * as "skip this frame, no Corvid roots here."
  */
 const corvid_stack_map_entry*
@@ -81,8 +81,8 @@ corvid_stack_maps_find(const void* return_pc) {
     return NULL;
 }
 
-/* Introspection helpers — primarily for 17c's integration test and
- * debug builds. 17d's mark phase uses `corvid_stack_maps_find`
+/* Introspection helpers â€” primarily for the stack-map integration test and
+ * debug builds. The collector's mark walk uses `corvid_stack_maps_find`
  * directly. */
 
 uint64_t corvid_stack_maps_entry_count(void) {
@@ -97,8 +97,8 @@ corvid_stack_maps_entry_at(uint64_t index) {
     return &corvid_stack_maps.entries[index];
 }
 
-/* Debug dumper — prints the entire stack map table to stderr in a
- * grep-friendly format. Used by the 17c integration test (sets
+/* Debug dumper â€” prints the entire stack map table to stderr in a
+ * grep-friendly format. Used by the stack-map integration test (sets
  * `CORVID_DEBUG_STACK_MAPS=1` in the env, runs the compiled binary,
  * parses the stderr lines to assert the table looks correct).
  *
@@ -131,9 +131,10 @@ void corvid_stack_maps_dump(void) {
     }
 }
 
-/* Phase 17d — moved env-var parsing to entry.c to keep getenv out
+/* Moved env-var parsing to entry.c to keep getenv out
  * of stack_maps.o. The minimal-CRT ffi_bridge_smoke test links
  * corvid_c_runtime without a full stdlib; pulling in getenv via
  * stack_maps.o would break its link. entry.c's corvid_init sets
  * this flag at program start. */
 int corvid_stack_maps_dump_requested = 0;
+

@@ -10,7 +10,7 @@
  * Each element is a single I64 (either a scalar value or a refcounted
  * pointer, depending on the element type).
  *
- * Phase 17a (typed headers): one destroy and one trace function serve
+ * Typed headers: one destroy and one trace function serve
  * every refcounted-element list type. Both recover the list's typeinfo
  * from the header (walking back 16 bytes), read `elem_typeinfo` from
  * it, and decide whether to follow elements:

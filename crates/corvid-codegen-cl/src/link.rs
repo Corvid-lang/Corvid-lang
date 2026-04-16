@@ -8,9 +8,9 @@
 //! expose a "link these objects into this binary" entry point on all
 //! platforms uniformly.
 //!
-//! Phase 15: the C runtime files (alloc.c, strings.c, lists.c, entry.c,
-//! shim.c) moved to corvid-runtime/runtime/. corvid-runtime's build.rs
-//! compiles them into the corvid-runtime.lib staticlib, so this
+//! The C runtime files (alloc.c, strings.c, lists.c, entry.c, shim.c)
+//! live in `corvid-runtime/runtime/`. `corvid-runtime`'s build.rs
+//! compiles them into the runtime static libraries, so this
 //! linker invocation just needs to combine the Cranelift-emitted .obj
 //! with whichever runtime-bearing staticlib the caller picked.
 
@@ -24,7 +24,7 @@ pub fn link_binary(
     object_path: &Path,
     _entry_agent_symbol: &str,
     output_path: &Path,
-    // Phase 14: tool-implementation staticlibs to link in. The Cranelift
+    // Tool-implementation staticlibs to link in. The Cranelift
     // codegen's `IrCallKind::Tool` lowering emits calls to
     // `__corvid_tool_<name>` symbols which must be provided by these
     // libs; if an expected symbol is missing, the linker fails with a
@@ -84,7 +84,7 @@ pub fn link_binary(
         )));
     }
 
-    // Phase 15: corvid-runtime's build.rs compiles the C runtime
+    // corvid-runtime's build.rs compiles the C runtime
     // (alloc.c, strings.c, etc.) into a separate `corvid_c_runtime`
     // staticlib. cargo's auto-link-lib mechanism only flows through
     // managed cargo builds; non-cargo linker invocations (here +
@@ -93,8 +93,7 @@ pub fn link_binary(
 
     if compiler.is_like_msvc() {
         // MSVC: cl.exe acts as the link driver. The C runtime is
-        // already inside corvid_c_runtime.lib (built by corvid-runtime's
-        // build.rs in Phase 15), so we just hand cl.exe the Cranelift
+        // already inside corvid_c_runtime.lib, so we just hand cl.exe the Cranelift
         // .obj plus the runtime/tools staticlibs.
         cmd.arg(object_path)
             .arg(format!("/Fe:{}", output_path.display()));
@@ -138,7 +137,7 @@ pub fn link_binary(
             .arg("legacy_stdio_definitions.lib");
     } else {
         // GCC/Clang: cc object.o libcorvid_runtime.a <native libs> -o output
-        // The C runtime is inside corvid-runtime.a (Phase 15 onwards),
+        // The C runtime is inside corvid-runtime.a,
         // so just hand the linker the .obj + the staticlibs.
         cmd.arg(object_path);
         // Exactly ONE runtime-bearing staticlib (see MSVC branch above

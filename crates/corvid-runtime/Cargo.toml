@@ -6,19 +6,19 @@ license.workspace = true
 description = "Native runtime for Corvid: tool dispatch, approvals, LLM adapters, tracing."
 
 [lib]
-# `lib` (rlib) keeps Rust crates (corvid-driver, corvid-vm, etc.) able to depend
-# on us as a normal Rust crate. `staticlib` produces a `.lib`/`.a` that the
-# native codegen (corvid-codegen-cl) links into every compiled Corvid binary so
-# generated code can call into tokio + the Corvid runtime. Phase 13 scope.
+# `lib` (rlib) keeps Rust crates (corvid-driver, corvid-vm, etc.) able to
+# depend on us as a normal Rust crate. `staticlib` produces a `.lib`/`.a`
+# that the native codegen links into every compiled Corvid binary so
+# generated code can call into tokio and the Corvid runtime.
 crate-type = ["lib", "staticlib"]
 
 [build-dependencies]
-# Phase 15: corvid-runtime's build.rs compiles the C runtime files
-# (runtime/*.c) into the produced lib/staticlib via the `cc` crate.
-# This keeps corvid-runtime self-contained — Rust callers (tests,
-# corvid-driver, corvid-vm) don't need a separate C compile to
-# resolve the C-side helpers (`corvid_alloc`, `corvid_release`,
-# `corvid_string_from_bytes`, etc.) the abi + ffi_bridge layers use.
+# corvid-runtime's build.rs compiles the C runtime files (`runtime/*.c`)
+# into the produced lib/staticlib via the `cc` crate. This keeps
+# corvid-runtime self-contained: Rust callers do not need a separate C
+# compile to resolve the C-side helpers (`corvid_alloc`,
+# `corvid_release`, `corvid_string_from_bytes`, etc.) the ABI and FFI
+# bridge layers use.
 cc = "1"
 
 [dependencies]
@@ -28,9 +28,9 @@ tokio = { workspace = true }
 futures = "0.3"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 dotenvy = "0.15"
-# Phase 14: inventory collects `ToolMetadata` entries from every
-# `#[tool]` macro invocation across linked user tool crates. Read once
-# by `corvid_runtime_init` to build the effect-policy table.
+# `inventory` collects `ToolMetadata` entries from every `#[tool]`
+# macro invocation across linked user tool crates. Read once by
+# `corvid_runtime_init` to build the effect-policy table.
 inventory = { workspace = true }
 
 [features]
@@ -44,3 +44,10 @@ optional = true
 [dev-dependencies]
 tempfile = "3"
 wiremock = "0.6"
+criterion = "0.5"
+corvid-vm = { workspace = true }
+corvid-resolve = { workspace = true }
+
+[[bench]]
+name = "phase17_runtime"
+harness = false

@@ -87,7 +87,7 @@ agent check(flag: Bool) -> String:
 
     #[test]
     fn emits_break_continue_pass() {
-        // Slice 12h's typechecker strictly infers the loop variable's
+        // The typechecker strictly infers the loop variable's
         // type from the iterable's element type, so `if x:` on a
         // String (char) is a Bool mismatch. Use an explicit comparison.
         let src = "\

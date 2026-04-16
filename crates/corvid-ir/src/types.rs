@@ -79,7 +79,7 @@ pub struct IrAgent {
     pub return_ty: Type,
     pub body: IrBlock,
     pub span: Span,
-    /// Phase 17b — per-parameter ownership at the callee ABI.
+    /// Per-parameter ownership at the callee ABI.
     /// `None` = ownership analysis hasn't run on this agent (every
     /// parameter is treated as Owned, matching pre-17b behavior).
     /// `Some(v)` with `v.len() == params.len()` — each entry matches
@@ -174,7 +174,7 @@ pub enum IrStmt {
     Continue { span: Span },
     Pass { span: Span },
 
-    /// Phase 17b — increment a refcounted local's refcount.
+    /// Increment a refcounted local's refcount.
     /// Inserted by the ownership analysis pass at non-final uses of a
     /// binding. Codegen lowers this as a single `corvid_retain` call.
     /// The interpreter ignores it (Arc handles refcount implicitly).
@@ -184,7 +184,7 @@ pub enum IrStmt {
     /// checks via the local's declared type before emitting.
     Dup { local_id: LocalId, span: Span },
 
-    /// Phase 17b — release a refcounted local's refcount.
+    /// Release a refcounted local's refcount.
     /// Inserted at final use (unless the use is a consume/move) or at
     /// scope exit for any still-owned bindings. Codegen lowers this as
     /// a single `corvid_release` call. The interpreter ignores it.

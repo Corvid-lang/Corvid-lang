@@ -28,7 +28,7 @@
 
 /* Typeinfo block forward-declaration — the definition lives in alloc.c
  * (`corvid_typeinfo_String`). Every runtime-internal string allocation
- * tags its header with this block so Phase 17d's tracer can dispatch. */
+ * tags its header with this block so the collector tracer can dispatch. */
 struct corvid_typeinfo;
 extern const struct corvid_typeinfo corvid_typeinfo_String;
 extern void* corvid_alloc_typed(long long payload_bytes,
@@ -115,7 +115,7 @@ void* corvid_string_from_cstr(const char* s) {
 }
 
 /* Wrap an explicit-length byte slice as a refcounted Corvid String.
- * Phase 14: consumed by the Rust-side `string_from_rust` helper in
+ * Consumed by the Rust-side `string_from_rust` helper in
  * `corvid-runtime::ffi_bridge` when a `#[tool]` wrapper converts a
  * returned Rust `String` back into a `CorvidString`. NUL bytes within
  * the payload are preserved — this is not strcpy.
@@ -127,7 +127,7 @@ void* corvid_string_from_bytes(const char* bytes, long long length) {
     return alloc_string(bytes, length);
 }
 
-/* Phase 15: scalar-to-String stringification helpers used by the
+/* Scalar-to-String stringification helpers used by the
  * Cranelift codegen when interpolating prompt-template `{var}`
  * placeholders whose argument is a non-String scalar. The rendered
  * prompt is built up by concatenating template literals and these
@@ -150,7 +150,7 @@ void* corvid_string_from_int(long long n) {
 
 void* corvid_string_from_bool(char b) {
     /* Match the user-visible Bool format Corvid uses on stdout
-     * (slice 12i's `corvid_print_bool`): `true` / `false`, lowercase.
+     * (`corvid_print_bool`): `true` / `false`, lowercase.
      * Templates embedding Bool values get the same string literal
      * a user would see when printing. */
     if (b) {
@@ -161,8 +161,8 @@ void* corvid_string_from_bool(char b) {
 }
 
 void* corvid_string_from_float(double v) {
-    /* `%.17g` is the round-trippable IEEE 754 format — same one slice
-     * 12i's `corvid_print_f64` uses for stdout. NaN / Inf round-trip
+    /* `%.17g` is the round-trippable IEEE 754 format — same one
+     * `corvid_print_f64` uses for stdout. NaN / Inf round-trip
      * as their printf representations ("nan" / "inf" / "-inf"). 64
      * bytes is conservatively above the longest possible %.17g
      * output (~25 chars). */

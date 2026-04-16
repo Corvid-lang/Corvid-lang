@@ -1,4 +1,4 @@
-/* Corvid native runtime: weak references (slice 17g).
+/* Corvid native runtime: weak references.
  *
  * Weak values are pointer-sized, refcounted "slot boxes":
  *

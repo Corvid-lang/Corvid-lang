@@ -33,7 +33,7 @@ use corvid_resolve::{resolve, ResolveError};
 use corvid_syntax::{lex, parse_file, LexError, ParseError};
 use corvid_types::{typecheck, TypeError};
 
-/// A unified diagnostic from any compiler phase, with a span that can be
+/// A unified diagnostic from any compiler stage, with a span that can be
 /// rendered against the original source.
 #[derive(Debug, Clone)]
 pub struct Diagnostic {
@@ -258,10 +258,10 @@ pub fn build_native_to_disk(source_path: &Path) -> anyhow::Result<NativeBuildOut
                 .unwrap_or("program")
                 .to_string();
             let requested = bin_dir.join(&stem);
-            // Phase 14: production users pass `--with-tools-lib` to
-            // the CLI (slice 14f); this path is the one hit by that
-            // flow and by tool-free `corvid build --target=native`.
-            // Empty slice = no user tool crates linked — tool-using
+            // Production users pass `--with-tools-lib` to the CLI;
+            // this path is the one hit by that flow and by tool-free
+            // `corvid build --target=native`.
+            // Empty tools-lib list = no user tool crates linked — tool-using
             // programs fail at link time with an unresolved-symbol
             // error that surfaces the missing tool by name.
             let produced =
@@ -520,8 +520,7 @@ pub async fn run_ir_with_runtime(
 ///   stderr message announces the fallback so the user can reason about
 ///   which tier actually ran.
 /// - `Native`: require the native tier. Programs that need the
-///   interpreter fail with a clean error naming the missing feature and
-///   the phase that would lift it.
+///   interpreter fail with a clean error naming the missing feature.
 /// - `Interpreter`: force the interpreter, even when native would work.
 ///   Useful for debugging, trace capture, and comparing tiers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -541,8 +540,7 @@ pub fn run_native(path: &Path) -> Result<u8, anyhow::Error> {
 /// `corvid run <file> [--target=...] [--with-tools-lib <path>]`
 /// entry point. Dispatches by tier per `target`; when `tools_lib`
 /// is `Some`, tool-using programs gain access to the native tier
-/// (their tool implementations live in that staticlib — see Phase 14's
-/// `#[tool]` proc-macro). Without a tools_lib, tool calls still route
+/// (their tool implementations live in that staticlib). Without a tools_lib, tool calls still route
 /// to the interpreter fallback (auto) or hard-fail (native).
 ///
 /// Common setup (env, tracer config) lives in the per-tier helpers
@@ -580,7 +578,7 @@ pub fn run_with_target(
     // unconditionally (it doesn't know about the lib); the dispatcher
     // here decides whether to treat that reason as a blocker. Other
     // reasons (python imports, prompt calls) still block until their
-    // respective phases.
+    // respective feature gaps.
     let scan = native_ability(&ir);
     let tools_satisfy = |r: &NotNativeReason| -> bool {
         matches!(r, NotNativeReason::ToolCall { .. }) && tools_lib.is_some()
@@ -660,8 +658,8 @@ fn run_via_interpreter_tier(path: &Path, ir: &IrFile) -> Result<u8, anyhow::Erro
 }
 
 /// Native tier: produce a binary (via cache when possible) and exec it.
-/// The codegen-emitted `main` handles argv decoding + result printing
-/// per slice 12i, so we inherit stdin/stdout/stderr and let the binary
+/// The codegen-emitted `main` handles argv decoding and result printing,
+/// so we inherit stdin/stdout/stderr and let the binary
 /// own the user interaction directly.
 fn run_via_native_tier(
     path: &Path,
@@ -705,7 +703,7 @@ pub fn build_or_get_cached_native(
     // they get distinct cached binaries. Re-linking against the same
     // lib re-uses. Users who modify A in place and keep the same
     // path get stale cache — a `cargo clean` fixes it; a future
-    // polish slice could hash the lib contents.
+    // future polish work could hash the lib contents.
     let tools_lib_str = tools_lib
         .map(|p| p.to_string_lossy().to_string())
         .unwrap_or_default();
@@ -729,7 +727,7 @@ pub fn build_or_get_cached_native(
         .to_string();
     let module_name = format!("corvid_native_{key}");
     let target_bin = cache_dir.join(&key);
-    // Phase 14: forward the tools lib (if any) to the linker so
+    // Forward the tools lib (if any) to the linker so
     // `__corvid_tool_<name>` symbols resolve against the user's
     // compiled `#[tool]` implementations.
     let extra_libs_owned: Vec<&Path> = tools_lib.iter().copied().collect();
@@ -1058,7 +1056,7 @@ agent refund_bot(ticket: Ticket) -> Decision:
     }
 
     // ========================================================
-    // Slice 12j: native-tier dispatch + compile cache.
+    // Native-tier dispatch plus compile cache.
     // ========================================================
 
     const NATIVE_ABLE_SRC: &str = "agent main() -> Int:\n    return 7 * 6\n";
@@ -1111,14 +1109,13 @@ agent main() -> String:
     }
 
     #[test]
-    fn native_ability_accepts_prompt_calls_phase_15() {
-        // Phase 15 lifted the prompt-call gate — prompts compile +
-        // run natively against the runtime's bundled LLM adapters.
-        // Was `Err(NotNativeReason::PromptCall { ... })` pre-Phase-15.
+    fn native_ability_accepts_prompt_calls() {
+        // Prompt calls compile and run natively against the runtime's
+        // bundled LLM adapters.
         let ir = compile_to_ir(PROMPT_USING_SRC).expect("compile");
         assert!(
             native_ability(&ir).is_ok(),
-            "Phase 15 lifted the prompt gate; scan should accept prompt-using IRs"
+            "prompt support is native now; scan should accept prompt-using IRs"
         );
     }
 
@@ -1176,7 +1173,7 @@ agent main() -> String:
     /// Verified by checking `run_with_target` returns exit 1 and the
     /// program never runs. We don't capture stderr here (Rust tests
     /// don't expose a clean way without a process boundary), but the
-    /// exit code is the contract this slice promises.
+    /// exit code is the contract this helper promises.
     #[test]
     fn run_with_target_native_required_errors_on_tool_use() {
         let tmp = tempfile::tempdir().expect("tempdir");

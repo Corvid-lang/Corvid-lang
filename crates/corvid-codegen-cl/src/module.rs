@@ -2,7 +2,7 @@
 //!
 //! AOT-first: we produce a relocatable object file (`.o` on Unix,
 //! `.obj` on Windows) and hand it to the system linker. JIT is not on
-//! the Phase-12 path.
+//! the current native path.
 
 use crate::errors::CodegenError;
 use cranelift_codegen::isa::{self, CallConv};
@@ -26,8 +26,8 @@ pub fn make_host_object_module(module_name: &str) -> Result<ObjectModule, Codege
     flag_builder
         .set("enable_verifier", "true")
         .map_err(|e| CodegenError::cranelift(format!("settings enable_verifier: {e}"), span()))?;
-    // Phase 17d — preserve frame pointers so the cycle collector's
-    // mark phase can walk the stack by chasing RBP without needing
+    // Preserve frame pointers so the cycle collector's stack walk can
+    // follow RBP without needing
     // OS-specific unwind info (.pdata on Windows, .eh_frame on
     // Linux/macOS). Every refcounted-value-holding frame ends up
     // in the RBP chain, and for each frame we look up its return
@@ -37,7 +37,7 @@ pub fn make_host_object_module(module_name: &str) -> Result<ObjectModule, Codege
     // pointer (Cranelift otherwise uses it as GPR). Acceptable
     // given the alternative (emitting + registering OS unwind info
     // at every function define) is a large scope expansion. A
-    // future perf slice can revisit once measurements warrant it.
+    // future performance work can revisit once measurements warrant it.
     flag_builder
         .set("preserve_frame_pointers", "true")
         .map_err(|e| {

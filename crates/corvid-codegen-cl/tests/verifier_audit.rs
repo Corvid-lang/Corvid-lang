@@ -1,9 +1,9 @@
-//! Slice 17b-1b.6c-audit — verifier-driven correctness baseline.
+﻿//! Verifier-driven correctness baseline.
 //!
 //! Runs representative Corvid programs under the combined settings
 //!
-//!   CORVID_GC_TRIGGER=1      — force a GC cycle after every allocation
-//!   CORVID_GC_VERIFY=abort   — verifier computes expected refcount
+//!   CORVID_GC_TRIGGER=1      â€” force a GC cycle after every allocation
+//!   CORVID_GC_VERIFY=abort   â€” verifier computes expected refcount
 //!                              from graph reachability at every cycle
 //!                              and `abort()`s on any drift
 //!
@@ -13,7 +13,7 @@
 //! contract, every program exits cleanly and drift count stays at 0.
 //!
 //! Purpose: establish a pre-.6d baseline of correctness. Landing
-//! this slice green means:
+//! keeping this green means:
 //!
 //!   - the current scattered emit_retain/release codegen is
 //!     verifier-audited on every class of refcounted operation we
@@ -34,11 +34,11 @@
 //!   - Tool / prompt / agent dispatch: these exercise the FFI
 //!     bridge paths that my .6d surgery preserves as-is (those
 //!     emit_release sites are boundary code, not pass-replaceable).
-//!     A follow-up slice should add FFI coverage if we want to
+//!     A follow-up test should add FFI coverage if we want to
 //!     pin their correctness too, but that's outside the ownership
 //!     pass's scope.
 //!   - Weak / Option<refcounted>: these are 17g's surface. Dev B's
-//!     slice tests cover those directly.
+//!     targeted tests cover those directly.
 
 use corvid_codegen_cl::build_native_to_disk;
 use corvid_ir::lower;
@@ -232,8 +232,8 @@ agent main() -> Int:
 }
 
 /// Nested structure: a struct holding a string field. Tests that
-/// typeinfo trace functions work correctly under the verifier —
-/// a mark-phase traversal through the struct's string field
+/// typeinfo trace functions work correctly under the verifier â€”
+/// a mark-walk traversal through the struct's string field
 /// contributes an incoming edge that must match the string's refcount.
 #[test]
 fn nested_struct_with_string_traverses_cleanly() {
@@ -248,3 +248,4 @@ agent main() -> Int:
 "#;
     audit("nested_struct_with_string_traverses_cleanly", src);
 }
+

@@ -1,4 +1,4 @@
-//! Slice 17b-7 — latency-aware RC across prompt / LLM boundaries.
+//! Latency-aware RC across prompt / LLM boundaries.
 //!
 //! Current scope is intentionally narrow:
 //!   - prompt / LLM boundaries only

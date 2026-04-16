@@ -83,7 +83,7 @@ pub fn cache_key(source: &str) -> String {
     feed(source.as_bytes(), &mut h);
     feed(b"|cl=", &mut h);
     feed(env!("CARGO_PKG_VERSION").as_bytes(), &mut h);
-    // Phase 15: C runtime moved into corvid-runtime — folding its
+    // The C runtime moved into corvid-runtime — folding its
     // crate version into the key catches cache invalidation when the
     // runtime is rebuilt with C-side changes.
     feed(b"|runtime=", &mut h);

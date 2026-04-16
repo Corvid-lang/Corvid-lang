@@ -3,9 +3,9 @@
 //! Every fixture compiles to a native binary, runs it, and compares the
 //! binary's stdout (the printed `i64`) to the interpreter's `Value::Int`.
 //! If the two tiers disagree on any fixture, the harness fails — that's
-//! the oracle property slice 2a's async decision defended.
+//! the oracle property the early async decision defended.
 //!
-//! Slice 12a fixtures: Int-only, pure computation, parameter-less entry
+//! Int-only, pure computation, parameter-less entry fixtures
 //! agents (the C shim can't pass argv yet). Arithmetic overflow paths
 //! assert on stderr + non-zero exit instead of value equality.
 
@@ -22,7 +22,7 @@ use std::sync::Arc;
 
 /// Path to the `corvid-test-tools` staticlib. The parity harness links
 /// this into every compiled Corvid binary so `#[tool]`-declared mocks
-/// are available for fixtures that exercise tool calls (Phase 14
+/// are available for fixtures that exercise tool calls (typed tool
 /// onwards). Pure-computation fixtures don't call into it — the dead
 /// symbols are stripped by the linker.
 fn test_tools_lib_path() -> PathBuf {
@@ -55,7 +55,7 @@ fn run_with_leak_detector(bin: &std::path::Path) -> (String, String, std::proces
     (stdout, stderr, output.status)
 }
 
-/// Run a binary with Phase 14 tool-return values set via env vars.
+/// Run a binary with typed tool-return values set via env vars.
 /// Each entry maps a Corvid tool name (e.g. `"answer"`) to the Int
 /// value the test wants that tool to return. The helper translates
 /// the name to the env-var key the test-tools staticlib reads (e.g.
@@ -196,7 +196,7 @@ fn assert_parity_bool(src: &str, expected: bool) {
         "compiled binary exited non-zero: status={:?} stderr={stderr} stdout={stdout} src=\n{src}",
         status.code()
     );
-    // Slice 12i: codegen-emitted main prints Bool as "true"/"false"
+    // Codegen-emitted main prints Bool as "true"/"false"
     // via `corvid_print_bool` (was "1"/"0" via the old shim main).
     // Accept both for resilience against future format tweaks.
     let printed = stdout.trim().lines().next().unwrap_or("");
@@ -386,7 +386,7 @@ fn modulo_by_zero_is_parity_error() {
 }
 
 // ============================================================
-// Slice 12b fixtures: Bool, comparisons, if/else, unary ops,
+// Bool, comparisons, if/else, unary ops fixtures,
 // short-circuit and/or.
 // ============================================================
 
@@ -567,7 +567,7 @@ fn bool_returning_agent_is_even() {
 }
 
 // ============================================================
-// Slice 12c fixtures: bare local bindings (`x = expr`) and `pass`.
+// Bare local bindings (`x = expr`) and `pass` fixtures.
 // ============================================================
 
 #[test]
@@ -670,10 +670,10 @@ agent run() -> Int:
 }
 
 // ============================================================
-// Slice 12d fixtures: Float arithmetic + comparisons + IEEE 754.
+// Float arithmetic + comparisons + IEEE 754 fixtures.
 // ============================================================
 //
-// Float entry-agent returns are blocked until slice 12h (the C shim's
+// Float entry-agent returns are blocked until serialization support (the C shim's
 // `printf("%lld")` doesn't print Floats), so every Float fixture
 // computes with Float internally but returns `Bool` or `Int`.
 
@@ -767,10 +767,10 @@ agent f() -> Bool:
 }
 
 /// Float entry-agent returns are not yet supported — driver must
-/// surface a clean `NotSupported` pointing at slice 12h.
+/// surface a clean `NotSupported` pointing at the missing serialization support.
 #[test]
 fn struct_entry_return_is_blocked_with_clear_error() {
-    // Slice 12i lifted the Float-return restriction. Struct/List
+    // The newer entry path lifted the Float-return restriction. Struct/List
     // returns are still blocked — verify the driver guard fires.
     use corvid_codegen_cl::{build_native_to_disk, CodegenErrorKind};
     let ir = ir_of(
@@ -787,7 +787,7 @@ fn struct_entry_return_is_blocked_with_clear_error() {
             );
             assert!(
                 msg.contains("serialization"),
-                "expected message to point at the serialization slice: {msg}"
+                "expected message to point at missing serialization support: {msg}"
             );
         }
         other => panic!("expected NotSupported, got {other:?}"),
@@ -795,7 +795,7 @@ fn struct_entry_return_is_blocked_with_clear_error() {
 }
 
 // ============================================================
-// Slice 12f fixtures: String literals, concat, comparisons.
+// String literals, concat, comparisons fixtures.
 // Every fixture is also subject to the leak detector — if any
 // allocation outlives release, the test fails with the imbalance.
 // ============================================================
@@ -886,7 +886,7 @@ agent f() -> Bool:
 }
 
 // ============================================================
-// Slice 12g fixtures: Struct construction, field access,
+// Struct construction, field access fixtures,
 // destructor-driven release of refcounted fields.
 // Leak detector runs on each — zero leaks required.
 // ============================================================
@@ -909,10 +909,10 @@ agent main() -> Int:
 
 #[test]
 fn struct_with_bool_field() {
-    // Phase 18 promoted `on` to a hard keyword (used by
+    // `on` is now a hard keyword (used by
     // `try ... on error retry ...` syntax). The field was renamed
     // `enabled` to unbreak this test. TODO (Dev B or 18-polish
-    // slice): consider making `on` a context-sensitive / soft
+    // this feature): consider making `on` a context-sensitive / soft
     // keyword so user identifiers with that name keep working.
     assert_parity_bool(
         "\
@@ -1028,7 +1028,7 @@ agent main() -> Int:
 }
 
 // ============================================================
-// Slice 12h fixtures: List<T>, `for`, `break`, `continue`.
+// List<T>, `for`, `break`, `continue` fixtures.
 // Leak detector confirms zero leaks on every fixture — including
 // List<String> (shared destructor walks + releases elements).
 // ============================================================
@@ -1166,7 +1166,7 @@ agent main() -> Int:
 }
 
 // ============================================================
-// Slice 12i fixtures: parameterised entry agents + non-Int
+// Parameterised entry agents + non-Int
 // returns at the command-line boundary. The compiled main
 // decodes argv via parse_i64/_f64/_bool/string_from_cstr and
 // prints results via the type-dispatched print helpers.
@@ -1191,7 +1191,7 @@ fn run_compiled_with_args(
 }
 
 /// Build, run with argv, and return (stdout-first-line, stderr). Shared
-/// by every slice-12i fixture helper so the compile + exec plumbing
+/// by every entry-fixture helper so the compile + exec plumbing
 /// stays in one place.
 #[track_caller]
 fn compile_and_run(src: &str, argv: &[&str]) -> (String, String) {
@@ -1212,7 +1212,7 @@ fn compile_and_run(src: &str, argv: &[&str]) -> (String, String) {
 }
 
 /// Drive the interpreter with typed `Value` args and assert it produced
-/// `expected`. Used by slice-12i fixtures whose entry agent takes params.
+/// `expected`. Used by entry fixtures whose entry agent takes params.
 #[track_caller]
 fn run_interp_with_args(src: &str, agent: &str, args: Vec<Value>, expected: Value) {
     let ir = ir_of(src);
@@ -1375,7 +1375,7 @@ fn arity_mismatch_exits_nonzero() {
 
 #[test]
 fn parse_error_on_bad_int_argv_exits_nonzero() {
-    // "notanint" isn't a valid Int — parse_i64 should print a slice-
+    // "notanint" isn't a valid Int — parse_i64 should print a
     // specific error (not reuse the overflow path) and exit non-zero.
     let src = "agent calc(n: Int) -> Int:\n    return n\n";
     let ir = ir_of(src);
@@ -1420,7 +1420,7 @@ fn agent_with_param_uses_local_alongside_param() {
 }
 
 // ============================================================
-// Phase 13 fixtures: native-tier `tool` calls dispatched through
+// Native-tier `tool` call fixtures dispatched through
 // the async runtime bridge.
 //
 // Each fixture registers its zero-arg Int-returning mocks in both
@@ -1430,9 +1430,9 @@ fn agent_with_param_uses_local_alongside_param() {
 //     codegen-emitted main's `corvid_runtime_init` call reads during
 //     runtime construction (see corvid-runtime's ffi_bridge.rs).
 //
-// Phase 14 ships the user-facing proc-macro registry and generalises
+// The typed bridge ships the user-facing proc-macro registry and generalises
 // the bridge to arbitrary arg + return types; these fixtures exercise
-// only the narrow `() -> Int` shape slice 13c supports.
+// only the narrow `() -> Int` shape the early bridge supports.
 // ============================================================
 
 /// Parity harness variant that pre-registers mock zero-arg Int tools in
@@ -1561,7 +1561,7 @@ fn tool_called_from_helper_agent() {
 }
 
 // ============================================================
-// Phase 14 fixtures: typed-ABI dispatch across scalar arg types.
+// Typed-ABI dispatch fixtures across scalar arg types.
 // Each fixture uses a fixed-behaviour tool from `corvid-test-tools`
 // (no env var required — the tool's behaviour is baked in). The
 // interpreter tier registers a matching handler via
@@ -1569,7 +1569,7 @@ fn tool_called_from_helper_agent() {
 // extern wrapper from the linked staticlib. Both tiers must agree.
 // ============================================================
 
-/// Helper for Phase 14 fixtures whose tools have fixed (non-env)
+/// Helper for typed-ABI fixtures whose tools have fixed (non-env)
 /// behaviour. Caller supplies a closure that adds the tool handlers
 /// to the interpreter Runtime; the native binary uses `corvid-test-tools`'s
 /// baked-in implementations.
@@ -1670,7 +1670,7 @@ fn tool_takes_string_arg_returns_int() {
 }
 
 // ============================================================
-// Phase 15 fixtures: native-tier prompt dispatch through the
+// Native-tier prompt dispatch fixtures through the
 // LlmRegistry + adapter pipeline.
 //
 // Every fixture uses the env-var mock LLM (`CORVID_TEST_MOCK_LLM=1`,
@@ -1812,7 +1812,7 @@ fn prompt_with_string_arg_interpolation() {
 
 #[test]
 fn prompt_with_local_string_arg_interpolation() {
-    // Slice 17b-7: bare-Local String args at prompt boundaries are
+    // Bare-Local String args at prompt boundaries are
     // pinned as borrowed rather than released like owned temps. This
     // fixture exercises the local path directly and proves the prompt
     // boundary doesn't retire the binding's structural +1.
@@ -1827,10 +1827,10 @@ fn prompt_with_local_string_arg_interpolation() {
 
 #[test]
 fn approve_before_dangerous_tool_compiles_and_runs() {
-    // Phase 14: `approve` is a compile-time-checked no-op in
-    // generated code. The effect checker (Phase 5) verifies that
+    // `approve` is a compile-time-checked no-op in
+    // generated code. The effect checker verifies that
     // every dangerous-tool call is preceded by a matching approve
-    // at COMPILE time; Phase 20's moat work adds runtime verification
+    // at compile time; later safety work adds runtime verification
     // as additional defense-in-depth. Here we exercise the codegen
     // path end-to-end: the approve statement lowers, the dangerous
     // tool call dispatches through the typed ABI, and the result
@@ -1870,12 +1870,12 @@ fn tool_roundtrips_string() {
 }
 
 // ============================================================
-// Phase 16 fixtures: methods on user types via `extend T:` blocks.
+// Methods on user types via `extend T:` block fixtures.
 //
 // Methods compile to ordinary agent calls with the receiver
 // prepended as the first argument (typechecker + IR rewrites
 // `x.foo(args)` to `foo(x, args...)`). No codegen changes were
-// needed for Phase 16 — these fixtures verify the rewrite is
+// needed for methods — these fixtures verify the rewrite is
 // transparent to the existing native-tier pipeline.
 // ============================================================
 
