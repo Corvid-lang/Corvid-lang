@@ -1,0 +1,190 @@
+{
+  "generated_at": "2026-04-16T20:00:46.787244Z",
+  "control": {
+    "corvid": {
+      "median_orchestration_ms": 42.81015,
+      "median_launcher_overhead_ms": 73.20974999917374,
+      "cv_pct": 15.214198683602284
+    },
+    "python": {
+      "median_orchestration_ms": 0.0020500156097114086,
+      "median_launcher_overhead_ms": 221.60919997259043,
+      "cv_pct": 26.133813310042104
+    },
+    "typescript": {
+      "median_orchestration_ms": 0.0055500000000279215,
+      "median_launcher_overhead_ms": 2902.0436000110903,
+      "cv_pct": 32.64934223700434
+    }
+  },
+  "scenarios": {
+    "tool_loop": {
+      "corvid": {
+        "median_orchestration_ms": 85.16119999999995,
+        "median_launcher_overhead_ms": 99.28885000985224,
+        "median_actual_external_wait_ms": 491.14295,
+        "median_external_wait_bias_ms": 26.142949999999985,
+        "median_runner_total_wall_ms": 558.217,
+        "median_compile_to_ir_ms": 0.80375,
+        "median_cache_resolve_ms": 0.2037,
+        "median_binary_exec_ms": 550.1610499999999,
+        "median_retry_sleep_actual_ms": 9.999999999999999e-05,
+        "median_prompt_wait_actual_ms": 404.23245,
+        "median_tool_wait_actual_ms": 87.63289999999999,
+        "median_allocs": 8.0,
+        "median_releases": 8.0,
+        "median_retain_calls": 0.0,
+        "median_release_calls": 19.0,
+        "median_gc_trigger_count": 0.0,
+        "median_safepoint_count": 0.0,
+        "median_stack_map_entry_count": 23.0,
+        "median_verify_drift_count": 0.0,
+        "startup_proxy_share_pct": 50.26954763436873,
+        "retain_calls_per_step": 0.0,
+        "release_calls_per_step": 4.75
+      },
+      "python": {
+        "median_orchestration_ms": 2.4541499989572912,
+        "median_launcher_overhead_ms": 234.8729999794159,
+        "median_actual_external_wait_ms": 466.67924997746013,
+        "median_external_wait_bias_ms": 1.679249977460131
+      },
+      "typescript": {
+        "median_orchestration_ms": 24.051499999999947,
+        "median_launcher_overhead_ms": 2996.0687000030903,
+        "median_actual_external_wait_ms": 488.53825,
+        "median_external_wait_bias_ms": 23.538250000000005
+      },
+      "comparative": {
+        "corvid_vs_python_median_ratio": 34.70089441810113,
+        "corvid_vs_typescript_median_ratio": 3.5407853980001303
+      }
+    },
+    "retry_workflow": {
+      "corvid": {
+        "median_orchestration_ms": 89.45005,
+        "median_launcher_overhead_ms": 75.11445001660363,
+        "median_actual_external_wait_ms": 363.79085,
+        "median_external_wait_bias_ms": 28.790849999999978,
+        "median_runner_total_wall_ms": 430.87284999999997,
+        "median_compile_to_ir_ms": 0.73565,
+        "median_cache_resolve_ms": 0.19975,
+        "median_binary_exec_ms": 324.0998,
+        "median_retry_sleep_actual_ms": 100.4281,
+        "median_prompt_wait_actual_ms": 166.02655,
+        "median_tool_wait_actual_ms": 98.02445,
+        "median_allocs": 6.0,
+        "median_releases": 6.0,
+        "median_retain_calls": 0.0,
+        "median_release_calls": 12.0,
+        "median_gc_trigger_count": 0.0,
+        "median_safepoint_count": 0.0,
+        "median_stack_map_entry_count": 5.0,
+        "median_verify_drift_count": 0.0,
+        "startup_proxy_share_pct": 47.85928012337612,
+        "retain_calls_per_step": 0.0,
+        "release_calls_per_step": 6.0
+      },
+      "python": {
+        "median_orchestration_ms": 3.4742500202264637,
+        "median_launcher_overhead_ms": 239.95010001817718,
+        "median_actual_external_wait_ms": 337.73190004285425,
+        "median_external_wait_bias_ms": 2.7319000428542495
+      },
+      "typescript": {
+        "median_orchestration_ms": 36.89595000000003,
+        "median_launcher_overhead_ms": 2955.6274999911893,
+        "median_actual_external_wait_ms": 371.37795,
+        "median_external_wait_bias_ms": 36.37795
+      },
+      "comparative": {
+        "corvid_vs_python_median_ratio": 25.74657824832346,
+        "corvid_vs_typescript_median_ratio": 2.4243866874277513
+      }
+    },
+    "approval_workflow": {
+      "corvid": {
+        "median_orchestration_ms": 52.30389999999997,
+        "median_launcher_overhead_ms": 97.8446499949452,
+        "median_actual_external_wait_ms": 241.1719,
+        "median_external_wait_bias_ms": -3.828099999999992,
+        "median_runner_total_wall_ms": 303.62545,
+        "median_compile_to_ir_ms": 0.6891,
+        "median_cache_resolve_ms": 0.1778,
+        "median_binary_exec_ms": 297.3038,
+        "median_retry_sleep_actual_ms": 9.999999999999999e-05,
+        "median_prompt_wait_actual_ms": 207.44095,
+        "median_tool_wait_actual_ms": 33.174850000000006,
+        "median_allocs": 7.0,
+        "median_releases": 7.0,
+        "median_retain_calls": 0.0,
+        "median_release_calls": 14.0,
+        "median_gc_trigger_count": 0.0,
+        "median_safepoint_count": 0.0,
+        "median_stack_map_entry_count": 7.0,
+        "median_verify_drift_count": 0.0,
+        "startup_proxy_share_pct": 81.84886786644978,
+        "retain_calls_per_step": 0.0,
+        "release_calls_per_step": 7.0
+      },
+      "python": {
+        "median_orchestration_ms": 1.5912500047124922,
+        "median_launcher_overhead_ms": 235.23984997882508,
+        "median_actual_external_wait_ms": 246.1835999856703,
+        "median_external_wait_bias_ms": 1.1835999856702983
+      },
+      "typescript": {
+        "median_orchestration_ms": 17.589000000000055,
+        "median_launcher_overhead_ms": 2914.6595499876603,
+        "median_actual_external_wait_ms": 262.297,
+        "median_external_wait_bias_ms": 17.297000000000025
+      },
+      "comparative": {
+        "corvid_vs_python_median_ratio": 32.869693539734044,
+        "corvid_vs_typescript_median_ratio": 2.9736710444027405
+      }
+    },
+    "replay_trace": {
+      "corvid": {
+        "median_orchestration_ms": 105.469,
+        "median_launcher_overhead_ms": 119.72690000430231,
+        "median_actual_external_wait_ms": 457.2347,
+        "median_external_wait_bias_ms": 32.23469999999995,
+        "median_runner_total_wall_ms": 540.8043,
+        "median_compile_to_ir_ms": 1.16005,
+        "median_cache_resolve_ms": 0.3364,
+        "median_binary_exec_ms": 530.4689000000001,
+        "median_retry_sleep_actual_ms": 9.999999999999999e-05,
+        "median_prompt_wait_actual_ms": 380.58279999999996,
+        "median_tool_wait_actual_ms": 76.29429999999999,
+        "median_allocs": 8.0,
+        "median_releases": 8.0,
+        "median_retain_calls": 0.0,
+        "median_release_calls": 19.0,
+        "median_gc_trigger_count": 0.0,
+        "median_safepoint_count": 0.0,
+        "median_stack_map_entry_count": 18.0,
+        "median_verify_drift_count": 0.0,
+        "startup_proxy_share_pct": 40.59026823047531,
+        "retain_calls_per_step": 0.0,
+        "release_calls_per_step": 4.75
+      },
+      "python": {
+        "median_orchestration_ms": 2.448899979935959,
+        "median_launcher_overhead_ms": 312.6369000528939,
+        "median_actual_external_wait_ms": 426.68075003894046,
+        "median_external_wait_bias_ms": 1.6807500389404595
+      },
+      "typescript": {
+        "median_orchestration_ms": 29.02510000000001,
+        "median_launcher_overhead_ms": 4023.606949988528,
+        "median_actual_external_wait_ms": 453.54845000000006,
+        "median_external_wait_bias_ms": 28.54845000000006
+      },
+      "comparative": {
+        "corvid_vs_python_median_ratio": 43.06790839320359,
+        "corvid_vs_typescript_median_ratio": 3.6337170242307506
+      }
+    }
+  }
+}
