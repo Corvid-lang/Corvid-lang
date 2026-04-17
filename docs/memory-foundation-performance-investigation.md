@@ -271,6 +271,13 @@ A later low-overhead session applies the third correction above:
 - `benches/results/2026-04-17-direct-counter-session/`
 - publication commit: `dbb6bc2`
 
+A later internal-timing session applies one more alignment correction plus
+measured-path runtime reductions:
+
+- `benches/results/2026-04-17-internal-timing-session/`
+- runtime / harness commit: `df54889`
+- publication commit: `7df3e4d`
+
 What changed:
 
 - the Corvid / Python gap narrowed from roughly `25x-36x` to roughly `3x-4x`
@@ -281,8 +288,27 @@ After the direct-counter correction:
 - the Corvid / Python gap narrowed further to roughly `1.2x-1.8x`
 - the Corvid / TypeScript gap narrowed to roughly `2.4x-4.9x`
 
+After the internal-timing correction and benchmark-path runtime reductions:
+
+- Corvid / Python ratios moved below `1.0` on all four shipped scenarios
+- Corvid / TypeScript ratios moved below `1.0` on all four shipped scenarios
+- the published medians now sit around `0.19x-0.31x` vs Python and
+  `0.39x-0.63x` vs TypeScript
+
+That last step matters for a different reason than the earlier corrections.
+The investigation identified startup and wait-accounting artifacts as the
+largest measured distortions. The internal-timing session confirms that
+finding: once the final runner-geometry mismatch is removed and the measured
+native path stops paying avoidable tracing / bridge overhead, the fixture-set
+comparison flips.
+
 Those two moves come from the same correction. The historical session was overstating Corvid's gap to Python by charging startup and wait-accounting artifacts to orchestration cost, and it was understating Corvid's gap to TypeScript by charging Node's sleep overshoot to orchestration cost.
 
-The low-overhead session still does **not** support a claim that Corvid is faster than either stack. It does support a more accurate statement: once the measurable harness artifacts are removed, Corvid's remaining orchestration gap is in the low-single-digit multiples rather than the double-digit multiples that originally published.
+The low-overhead session still did **not** support a claim that Corvid was
+faster than either stack. The later internal-timing session does support a
+fixture-scoped claim that Corvid is faster than the current Python and
+TypeScript benchmark runners on these four shipped scenarios. That is still a
+same-session ratio result, not an absolute-throughput claim and not a blanket
+"Corvid is always faster" statement.
 
 For the current published interpretation, see [memory-foundation-results.md](memory-foundation-results.md).

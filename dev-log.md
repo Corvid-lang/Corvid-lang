@@ -3231,6 +3231,47 @@ Why the lock is still worth shipping:
 
 Phase 17 therefore closes as a foundation release, not as a premature speed-victory story.
 
+## Day 36 [B] - 2026-04-17 - Native workflow runner alignment and internal-timing ratio session
+
+Follow-up work after the close-out investigation attacked the remaining
+benchmark-path overhead directly instead of guessing at optimizer changes.
+
+What changed in the native comparative path:
+
+- Corvid's persistent runner now measures `wall_ms` inside the native benchmark
+  process from trial start to trial completion instead of around the parent
+  runner's stdin/stdout request loop
+- disabled tracing now short-circuits event construction entirely
+- trace writes are buffered instead of flushed on every event
+- fixture tools use direct typed wrappers and prebuilt reply payloads
+- mock prompt calls skip unused bridge work on the hot path
+
+Why this mattered:
+
+- Python and TypeScript were already reporting in-process elapsed time
+- Corvid was still paying runner transport cost plus avoidable benchmark-path
+  runtime overhead
+- the previous "close but still slower" sessions were therefore no longer the
+  final honest comparison surface
+
+Published archive:
+
+- `benches/results/2026-04-17-internal-timing-session/`
+
+Top-line outcome on the shipped workflow fixtures:
+
+- Corvid / Python ratios: `0.186x-0.312x`
+- Corvid / TypeScript ratios: `0.392x-0.626x`
+
+Interpretation:
+
+- this session supports a fixture-scoped claim that Corvid is faster than the
+  current Python and TypeScript benchmark runners on the four shipped
+  scenarios
+- it does **not** justify a blanket claim that Corvid is universally faster
+  than Python or Node orchestration code
+- absolute milliseconds remain held until a verified-quiet host is available
+
 
 
 

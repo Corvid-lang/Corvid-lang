@@ -58,6 +58,12 @@ Each trial keeps both nominal and measured wait:
 
 Publication uses the measured-wait subtraction so wake-up jitter stays in the external-wait bucket instead of being misattributed to orchestration work.
 
+For Corvid's persistent native runner, `wall_ms` must be measured **inside**
+the launched native benchmark process from trial start to trial completion.
+Do not measure around the parent runner's stdin/stdout request loop, because
+Python and TypeScript already report in-process trial elapsed time and the
+extra transport overhead would make the comparison asymmetric.
+
 ## Published statistics
 
 Each published session emits:

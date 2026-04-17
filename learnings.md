@@ -1245,6 +1245,45 @@ That is not flattering, but it is the right close-out claim. The value of the sl
 - the ratio archive is reproducible
 - future optimization work has a defensible comparative baseline instead of an aspirational claim
 
+### Internal timing and benchmark-path reductions
+
+The first honest comparative sessions still left one asymmetry in place:
+
+- Python and TypeScript reported in-process trial elapsed time
+- Corvid was still paying parent-runner stdin/stdout transport around each
+  measured trial
+
+That mismatch is now removed.
+
+The current runner discipline for Corvid native is:
+
+- keep the persistent native process
+- measure `wall_ms` inside the launched native benchmark process from trial
+  start to trial completion
+- subtract actual measured external wait
+
+The measured Corvid path also now avoids benchmark-only overhead that was not
+part of the workload itself:
+
+- disabled tracing skips event construction entirely
+- trace writes are buffered instead of flushed on every event
+- fixture tools use direct typed wrappers
+- mock prompt calls avoid decoding and concatenating strings that the mock path
+  never consumes
+
+Current same-session result:
+
+- Corvid is faster than the current Python and TypeScript benchmark runners on
+  the four shipped workflow fixtures
+
+That statement is intentionally narrow:
+
+- it is a ratio-only result on a noisy host
+- it applies to the shipped fixture workloads, not every possible orchestration
+  workload
+- it is the correct developer and marketing claim only because the earlier
+  harness artifacts are now explicitly archived and superseded, not erased
+
 ### Professional naming in source
 
 Source code now uses behavioral names rather than roadmap numbering.
