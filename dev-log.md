@@ -3796,6 +3796,39 @@ Interpretation:
 - from here, the next meaningful native work is richer `Result` / retry policy
   semantics, not more ad hoc payload exceptions
 
+Day 51 â€” Nested native `Result` payloads compose, and the parser caught up
+
+What shipped:
+
+- added explicit native-ability and parity coverage for nested native results:
+  `Result<Result<Int, String>, String>` and
+  `Result<Int, Result<String, Bool>>`
+- proved native postfix `?` still widens correctly when the enclosing function
+  changes the ok type but keeps a nested native `Result` on the error side
+- completed the front-end parser path for the already-landed effect syntax:
+  `effect` declarations, `uses` clauses, `@constraint(...)`, and the `@` / `$`
+  lexer tokens now parse consistently instead of existing half-wired
+
+What the evidence says:
+
+- the current native `Result<T, E>` subset is compositional one level deeper
+  than the earlier structured-payload slices showed; nested native `Result`
+  wrappers on either side still ride the same ownership and typeinfo model
+- the nested-error widening required no runtime change once the inner error
+  value was built under its own correct return context; the native rewrap path
+  already preserves matching error shapes cleanly
+- the front end had reached the point where the AST and lexer knew about
+  effect declarations but the parser still had duplicate / missing method paths;
+  completing that parser work was the right build unblock, not a shortcut
+
+Interpretation:
+
+- Corvid's native tagged-union path is still widening the right way: prove
+  deeper composition of the existing representation before designing a broader
+  layout family
+- the next honest native step is richer retry / result policy semantics or a
+  truly broader representation boundary, not more leaf-shape proof alone
+
 
 
 

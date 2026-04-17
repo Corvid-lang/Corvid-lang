@@ -58,7 +58,7 @@ mod tests {
         let src = "agent tool prompt type import as \
                    extend public package \
                    try on error retry times backoff linear exponential \
-                   approve dangerous \
+                   approve dangerous effect uses \
                    if else for in return break continue pass \
                    true false nothing \
                    and or not";
@@ -83,6 +83,8 @@ mod tests {
             TokKind::KwExponential,
             TokKind::KwApprove,
             TokKind::KwDangerous,
+            TokKind::KwEffect,
+            TokKind::KwUses,
             TokKind::KwIf,
             TokKind::KwElse,
             TokKind::KwFor,
@@ -106,9 +108,9 @@ mod tests {
     #[test]
     fn dropped_keywords_are_idents() {
         // Words dropped in the simplification (`let`, `function`, `from`,
-        // `effect`, `pure`, `compensable`, `irreversible`) should now lex
+        // `pure`, `compensable`, `irreversible`) should now lex
         // as plain identifiers.
-        for word in ["let", "function", "from", "effect", "pure", "compensable", "irreversible"] {
+        for word in ["let", "function", "from", "pure", "compensable", "irreversible"] {
             let toks = kinds(word);
             assert!(
                 matches!(toks[0], TokKind::Ident(ref s) if s == word),

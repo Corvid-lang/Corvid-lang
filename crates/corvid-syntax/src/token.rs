@@ -47,6 +47,8 @@ pub enum TokKind {
     // --- keywords: effect system ---
     KwApprove,
     KwDangerous,
+    KwEffect,
+    KwUses,
 
     // --- keywords: control flow ---
     KwIf,
@@ -80,6 +82,8 @@ pub enum TokKind {
     Dot,      // .
     Arrow,    // ->
     Question, // ?
+    At,       // @
+    Dollar,   // $
 
     // --- operators ---
     Assign,  // =
@@ -133,6 +137,8 @@ impl TokKind {
             "exponential" => TokKind::KwExponential,
             "approve" => TokKind::KwApprove,
             "dangerous" => TokKind::KwDangerous,
+            "effect" => TokKind::KwEffect,
+            "uses" => TokKind::KwUses,
             "if" => TokKind::KwIf,
             "else" => TokKind::KwElse,
             "for" => TokKind::KwFor,

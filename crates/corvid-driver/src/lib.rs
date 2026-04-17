@@ -1329,6 +1329,53 @@ agent main() -> Bool:
     return true
 "#;
 
+    const NATIVE_RESULT_NESTED_OK_SRC: &str = r#"
+agent fetch(flag: Bool) -> Result<Result<Int, String>, String>:
+    if flag:
+        return Ok(Ok(7))
+    return Err("no")
+
+agent main() -> Bool:
+    first = fetch(true)
+    second = fetch(false)
+    return true
+"#;
+
+    const NATIVE_RESULT_NESTED_OK_TRY_SRC: &str = r#"
+agent fetch(flag: Bool) -> Result<Result<Int, String>, String>:
+    if flag:
+        return Ok(Ok(7))
+    return Err("no")
+
+agent forward(flag: Bool) -> Result<Result<Int, String>, String>:
+    value = fetch(flag)?
+    return Ok(value)
+
+agent main() -> Bool:
+    first = forward(true)
+    second = forward(false)
+    return true
+"#;
+
+    const NATIVE_RESULT_NESTED_ERR_TRY_SRC: &str = r#"
+agent inner_error() -> Result<String, Bool>:
+    return Err(false)
+
+agent fetch(flag: Bool) -> Result<Int, Result<String, Bool>>:
+    if flag:
+        return Ok(7)
+    return Err(inner_error())
+
+agent widen(flag: Bool) -> Result<Bool, Result<String, Bool>>:
+    value = fetch(flag)?
+    return Ok(value == 7)
+
+agent main() -> Bool:
+    first = widen(true)
+    second = widen(false)
+    return true
+"#;
+
     const NATIVE_STRING_RETRY_REJECTED_SRC: &str = r#"
 prompt lookup(id: String) -> String:
     """
@@ -1524,6 +1571,33 @@ agent load(id: String) -> String:
         assert!(
             native_ability(&ir).is_ok(),
             "Result<List<Int>, String> `?` should now compile natively"
+        );
+    }
+
+    #[test]
+    fn native_ability_accepts_native_result_with_nested_ok_payload() {
+        let ir = compile_to_ir(NATIVE_RESULT_NESTED_OK_SRC).expect("compile");
+        assert!(
+            native_ability(&ir).is_ok(),
+            "Result<Result<Int, String>, String> should now compile natively"
+        );
+    }
+
+    #[test]
+    fn native_ability_accepts_native_result_with_nested_ok_try_propagation() {
+        let ir = compile_to_ir(NATIVE_RESULT_NESTED_OK_TRY_SRC).expect("compile");
+        assert!(
+            native_ability(&ir).is_ok(),
+            "Result<Result<Int, String>, String> `?` should now compile natively"
+        );
+    }
+
+    #[test]
+    fn native_ability_accepts_native_result_with_nested_error_try_widening() {
+        let ir = compile_to_ir(NATIVE_RESULT_NESTED_ERR_TRY_SRC).expect("compile");
+        assert!(
+            native_ability(&ir).is_ok(),
+            "Result<A, Result<B, C>> `?` inside Result<D, Result<B, C>> should now compile natively"
         );
     }
 

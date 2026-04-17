@@ -1585,6 +1585,34 @@ prefer semantic proof over premature representation work. Before inventing a
 new layout, first ask whether the current representation already supports the
 broader case and simply lacks tests or a clean frontend path.
 
+### Nested native `Result` payloads should be proven before new layouts are invented
+
+The next meaningful widening after `Result<Struct, String>` and
+`Result<List<Int>, String>` was not another leaf payload. It was whether native
+`Result<T, E>` still behaved coherently when one side was itself another native
+`Result`. Corvid now has explicit proof for nested ok-payloads
+(`Result<Result<Int, String>, String>`) and nested error payloads
+(`Result<Int, Result<String, Bool>>`), including widened postfix `?` where the
+enclosing function changes the ok type but preserves the nested error shape. No
+runtime change was needed. That matters because it says the current wrapper,
+typeinfo, and ownership model are not just good enough for isolated examples;
+they compose one level deeper without new machinery. The lesson is strategic:
+before inventing a broader native tagged-union layout, first prove how far the
+existing one already goes under realistic composition.
+
+### Build unblocks should complete an unfinished front-end path, not paper over it
+
+This same slice also hit a front-end problem unrelated to native lowering: the
+lexer and AST already knew about `effect` declarations, `uses` clauses,
+`@constraint(...)`, and cost literals, but the parser still had missing and
+duplicate method paths for them. The right fix was to finish that parser path
+coherently, not to stub around it just enough for one test to compile. Once the
+parser, keyword tests, and declaration recovery all agreed on the same syntax,
+the native work could continue without dragging a half-wired front-end branch
+forward. The lesson is simple: when an unblock reveals a subsystem that is only
+partially switched over, complete that subsystem to one internally consistent
+state instead of layering more local exceptions on top.
+
 ## Contributing / feedback
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). The rules of the road are: design chat before code, per-scope commits at every boundary, dev-log entry for every session, no shortcuts. The `learnings.md` file you're reading gets updated when each user-visible feature ships.

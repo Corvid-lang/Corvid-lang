@@ -8,7 +8,8 @@
 use crate::errors::{ParseError, ParseErrorKind};
 use crate::token::{TokKind, Token};
 use corvid_ast::{
-    AgentDecl, Backoff, BinaryOp, Block, Decl, Effect, Expr, ExtendDecl, ExtendMethod,
+    AgentDecl, Backoff, BinaryOp, Block, Decl, DimensionDecl, DimensionValue, Effect,
+    EffectConstraint, EffectDecl, EffectRef, EffectRow, Expr, ExtendDecl, ExtendMethod,
     ExtendMethodKind, Field, File, Ident, ImportDecl, ImportSource, Literal, Param, PromptDecl,
     Span, Stmt, ToolDecl, TypeDecl, TypeRef, UnaryOp, Visibility, WeakEffect, WeakEffectRow,
 };
@@ -874,6 +875,8 @@ impl<'a> Parser<'a> {
                 | TokKind::KwPrompt
                 | TokKind::KwAgent
                 | TokKind::KwExtend
+                | TokKind::KwEffect
+                | TokKind::At
         ) {
             return self.parse_decl().map(ReplItem::Decl);
         }
@@ -914,6 +917,8 @@ impl<'a> Parser<'a> {
                 | TokKind::KwTool
                 | TokKind::KwPrompt
                 | TokKind::KwAgent
+                | TokKind::KwEffect
+                | TokKind::At
                 | TokKind::KwExtend
                 | TokKind::Eof => return,
                 _ => {
@@ -931,10 +936,26 @@ impl<'a> Parser<'a> {
             TokKind::KwPrompt => self.parse_prompt_decl().map(Decl::Prompt),
             TokKind::KwAgent => self.parse_agent_decl().map(Decl::Agent),
             TokKind::KwExtend => self.parse_extend_decl().map(Decl::Extend),
+            TokKind::KwEffect => self.parse_effect_decl().map(Decl::Effect),
+            TokKind::At => {
+                let constraints = self.parse_constraints()?;
+                if !matches!(self.peek(), TokKind::KwAgent) {
+                    return Err(ParseError {
+                        kind: ParseErrorKind::UnexpectedToken {
+                            got: describe_token(self.peek()),
+                            expected: "`agent` after constraint annotations".into(),
+                        },
+                        span: self.peek_span(),
+                    });
+                }
+                let mut agent = self.parse_agent_decl()?;
+                agent.constraints = constraints;
+                Ok(Decl::Agent(agent))
+            }
             other => Err(ParseError {
                 kind: ParseErrorKind::UnexpectedToken {
                     got: describe_token(other),
-                    expected: "a top-level declaration (agent, tool, prompt, type, import, extend)".into(),
+                    expected: "a top-level declaration (agent, tool, prompt, type, import, extend, effect, @annotation)".into(),
                 },
                 span: self.peek_span(),
             }),
@@ -1075,6 +1096,8 @@ impl<'a> Parser<'a> {
             Effect::Safe
         };
 
+        let effect_row = self.parse_uses_clause()?;
+
         let end = self.peek_span();
         self.expect_newline()?;
         Ok(ToolDecl {
@@ -1082,9 +1105,119 @@ impl<'a> Parser<'a> {
             params,
             return_ty,
             effect,
-            effect_row: Default::default(),
+            effect_row,
             span: start.merge(end),
         })
+    }
+
+    // -- effect --------------------------------------------------
+
+    fn parse_effect_decl(&mut self) -> Result<EffectDecl, ParseError> {
+        let start = self.peek_span();
+        self.bump(); // effect
+
+        let (name, name_span) = self.expect_ident()?;
+        self.expect(TokKind::Colon, "`:` after effect name")?;
+        self.expect_newline()?;
+
+        if !matches!(self.peek(), TokKind::Indent) {
+            return Err(ParseError {
+                kind: ParseErrorKind::ExpectedBlock,
+                span: self.peek_span(),
+            });
+        }
+        self.bump(); // Indent
+
+        let mut dimensions = Vec::new();
+        while !matches!(self.peek(), TokKind::Dedent | TokKind::Eof) {
+            self.skip_newlines();
+            if matches!(self.peek(), TokKind::Dedent | TokKind::Eof) {
+                break;
+            }
+            dimensions.push(self.parse_dimension_decl()?);
+        }
+
+        let end = self.peek_span();
+        if matches!(self.peek(), TokKind::Dedent) {
+            self.bump();
+        }
+
+        Ok(EffectDecl {
+            name: Ident::new(name, name_span),
+            dimensions,
+            span: start.merge(end),
+        })
+    }
+
+    fn parse_dimension_decl(&mut self) -> Result<DimensionDecl, ParseError> {
+        let start = self.peek_span();
+        let (name, name_span) = self.expect_ident()?;
+        self.expect(TokKind::Colon, "`:` after dimension name")?;
+        let value = self.parse_dimension_value()?;
+        let end = self.prev_span();
+        self.expect_newline()?;
+        Ok(DimensionDecl {
+            name: Ident::new(name, name_span),
+            value,
+            span: start.merge(end),
+        })
+    }
+
+    fn parse_dimension_value(&mut self) -> Result<DimensionValue, ParseError> {
+        let span = self.peek_span();
+        match self.peek().clone() {
+            TokKind::KwTrue => {
+                self.bump();
+                Ok(DimensionValue::Bool(true))
+            }
+            TokKind::KwFalse => {
+                self.bump();
+                Ok(DimensionValue::Bool(false))
+            }
+            TokKind::Dollar => {
+                self.bump();
+                match self.peek().clone() {
+                    TokKind::Int(n) => {
+                        self.bump();
+                        Ok(DimensionValue::Cost(n as f64))
+                    }
+                    TokKind::Float(n) => {
+                        self.bump();
+                        Ok(DimensionValue::Cost(n))
+                    }
+                    other => Err(ParseError {
+                        kind: ParseErrorKind::UnexpectedToken {
+                            got: describe_token(&other),
+                            expected: "a numeric cost literal after `$`".into(),
+                        },
+                        span: self.peek_span(),
+                    }),
+                }
+            }
+            TokKind::Int(n) => {
+                self.bump();
+                Ok(DimensionValue::Number(n as f64))
+            }
+            TokKind::Float(n) => {
+                self.bump();
+                Ok(DimensionValue::Number(n))
+            }
+            TokKind::StringLit(s) => {
+                self.bump();
+                Ok(DimensionValue::Name(s))
+            }
+            TokKind::Ident(name) => {
+                self.bump();
+                Ok(DimensionValue::Name(name))
+            }
+            other => Err(ParseError {
+                kind: ParseErrorKind::UnexpectedToken {
+                    got: describe_token(&other),
+                    expected: "a dimension value".into(),
+                },
+                span,
+            }),
+        }
     }
 
     // -- prompt --------------------------------------------------
@@ -1097,6 +1230,7 @@ impl<'a> Parser<'a> {
         let params = self.parse_params()?;
         self.expect(TokKind::Arrow, "`->` before return type")?;
         let return_ty = self.parse_type_ref()?;
+        let effect_row = self.parse_uses_clause()?;
         self.expect(TokKind::Colon, "`:` after prompt signature")?;
         self.expect_newline()?;
 
@@ -1136,7 +1270,7 @@ impl<'a> Parser<'a> {
             params,
             return_ty,
             template,
-            effect_row: Default::default(),
+            effect_row,
             span: start.merge(end),
         })
     }
@@ -1151,6 +1285,7 @@ impl<'a> Parser<'a> {
         let params = self.parse_params()?;
         self.expect(TokKind::Arrow, "`->` before return type")?;
         let return_ty = self.parse_type_ref()?;
+        let effect_row = self.parse_uses_clause()?;
         self.expect(TokKind::Colon, "`:` after agent signature")?;
         self.expect_newline()?;
 
@@ -1162,10 +1297,67 @@ impl<'a> Parser<'a> {
             params,
             return_ty,
             body,
-            effect_row: Default::default(),
+            effect_row,
             constraints: Vec::new(),
             span: start.merge(end),
         })
+    }
+
+    fn parse_uses_clause(&mut self) -> Result<EffectRow, ParseError> {
+        if !matches!(self.peek(), TokKind::KwUses) {
+            return Ok(EffectRow::default());
+        }
+        let start = self.peek_span();
+        self.bump(); // uses
+        let mut effects = Vec::new();
+        let (first_name, first_span) = self.expect_ident()?;
+        effects.push(EffectRef {
+            name: Ident::new(first_name, first_span),
+            span: first_span,
+        });
+        while matches!(self.peek(), TokKind::Comma) {
+            self.bump();
+            let (name, span) = self.expect_ident()?;
+            effects.push(EffectRef {
+                name: Ident::new(name, span),
+                span,
+            });
+        }
+        let end = effects.last().map(|e| e.span).unwrap_or(start);
+        Ok(EffectRow {
+            effects,
+            span: start.merge(end),
+        })
+    }
+
+    fn parse_constraints(&mut self) -> Result<Vec<EffectConstraint>, ParseError> {
+        let mut constraints = Vec::new();
+        while matches!(self.peek(), TokKind::At) {
+            let start = self.peek_span();
+            self.bump(); // @
+            let (name, name_span) = self.expect_ident()?;
+            let value = if matches!(self.peek(), TokKind::LParen) {
+                self.bump();
+                if matches!(self.peek(), TokKind::RParen) {
+                    self.bump();
+                    None
+                } else {
+                    let value = self.parse_dimension_value()?;
+                    self.expect(TokKind::RParen, "`)` after constraint value")?;
+                    Some(value)
+                }
+            } else {
+                None
+            };
+            let end = self.prev_span();
+            self.expect_newline()?;
+            constraints.push(EffectConstraint {
+                dimension: Ident::new(name, name_span),
+                value,
+                span: start.merge(end),
+            });
+        }
+        Ok(constraints)
     }
 
     // -- extend methods ------------------------------
