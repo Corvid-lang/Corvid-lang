@@ -1040,6 +1040,13 @@ fn define_result_destructor(
     Ok(func_id)
 }
 
+fn option_uses_wrapper(option_ty: &Type) -> bool {
+    match option_ty {
+        Type::Option(inner) => is_native_wide_option_type(option_ty) || matches!(&**inner, Type::Option(_)),
+        _ => false,
+    }
+}
+
 fn define_result_trace(
     module: &mut ObjectModule,
     result_ty: &Type,
@@ -1249,6 +1256,62 @@ fn define_option_trace(
     Ok(func_id)
 }
 
+fn define_option_destructor(
+    module: &mut ObjectModule,
+    option_ty: &Type,
+    payload_ty: &Type,
+    runtime: &RuntimeFuncs,
+) -> Result<FuncId, CodegenError> {
+    let mut sig = module.make_signature();
+    sig.params.push(AbiParam::new(I64));
+
+    let symbol = format!("corvid_destroy_{}", mangle_type_name(option_ty));
+    let func_id = module
+        .declare_function(&symbol, Linkage::Local, &sig)
+        .map_err(|e| {
+            CodegenError::cranelift(format!("declare option destructor `{symbol}`: {e}"), Span::new(0, 0))
+        })?;
+
+    let mut ctx = Context::new();
+    ctx.func = Function::with_name_signature(
+        UserFuncName::user(0, func_id.as_u32()),
+        module.declarations().get_function_decl(func_id).signature.clone(),
+    );
+    let mut bctx = FunctionBuilderContext::new();
+    {
+        let mut builder = FunctionBuilder::new(&mut ctx.func, &mut bctx);
+        let entry = builder.create_block();
+        builder.append_block_params_for_function_params(entry);
+        builder.switch_to_block(entry);
+        builder.seal_block(entry);
+
+        let payload = builder.block_params(entry)[0];
+        if is_refcounted_type(payload_ty) {
+            let release_ref = module.declare_func_in_func(runtime.release, builder.func);
+            let payload_val = builder.ins().load(
+                I64,
+                cranelift_codegen::ir::MemFlags::trusted(),
+                payload,
+                OPTION_PAYLOAD_OFFSET,
+            );
+            builder.ins().call(release_ref, &[payload_val]);
+        }
+
+        builder.ins().return_(&[]);
+        builder.finalize();
+    }
+
+    define_function_with_stack_maps(
+        module,
+        func_id,
+        &mut ctx,
+        runtime,
+        Span::new(0, 0),
+        &format!("option destructor `{symbol}`"),
+    )?;
+    Ok(func_id)
+}
+
 fn emit_option_typeinfo(
     module: &mut ObjectModule,
     option_ty: &Type,
@@ -1407,6 +1470,7 @@ fn mangle_type_name(ty: &Type) -> String {
             mangle_type_name(err)
         ),
         Type::Option(inner) => format!("Option_{}", mangle_type_name(inner)),
+        Type::Grounded(inner) => format!("Grounded_{}", mangle_type_name(inner)),
         Type::Weak(inner, effects) => {
             if effects.is_any() {
                 format!("Weak_{}", mangle_type_name(inner))
@@ -1559,7 +1623,7 @@ fn collect_option_types(ir: &IrFile) -> Vec<Type> {
         match ty {
             Type::Option(inner) => {
                 visit(inner, seen, order);
-                if is_native_wide_option_type(ty) && seen.insert(ty.clone()) {
+                if option_uses_wrapper(ty) && seen.insert(ty.clone()) {
                     order.push(ty.clone());
                 }
             }
@@ -1744,6 +1808,7 @@ fn is_native_value_type(ty: &Type) -> bool {
         Type::Struct(_) | Type::List(_) | Type::Weak(_, _) => true,
         Type::Option(_) => is_native_option_type(ty),
         Type::Result(ok, err) => is_native_value_type(ok) && is_native_value_type(err),
+        Type::Grounded(inner) => is_native_value_type(inner),
         Type::Nothing | Type::Function { .. } | Type::Unknown => false,
     }
 }
@@ -2255,18 +2320,23 @@ pub fn lower_file(
         runtime.result_typeinfos.insert(result_ty, typeinfo_id);
     }
 
-    // Wide scalar options: `None` stays the zero pointer, while
+    // Wrapper-backed options: `None` stays the zero pointer, while
     // `Some(...)` allocates a tiny typed wrapper storing the payload in
-    // one slot. This keeps the same nullable-pointer control-flow shape
-    // as refcounted `Option<T>` while widening native support to scalar
-    // payloads like `Option<Int>`.
+    // one slot. This is required both for wide scalar payloads and for
+    // nested `Option<T>` shapes where bare nullable-pointer encoding
+    // would collapse `Some(None)` into outer `None`.
     for option_ty in collect_option_types(ir) {
         let payload_ty = match &option_ty {
             Type::Option(inner) => (**inner).clone(),
             _ => continue,
         };
+        let destroy_id = if is_refcounted_type(&payload_ty) {
+            Some(define_option_destructor(module, &option_ty, &payload_ty, &runtime)?)
+        } else {
+            None
+        };
         let trace_id = define_option_trace(module, &option_ty, &payload_ty, &runtime)?;
-        let typeinfo_id = emit_option_typeinfo(module, &option_ty, None, trace_id, &runtime)?;
+        let typeinfo_id = emit_option_typeinfo(module, &option_ty, destroy_id, trace_id, &runtime)?;
         runtime.option_typeinfos.insert(option_ty, typeinfo_id);
     }
 
@@ -2736,6 +2806,7 @@ fn check_entry_boundary_type(
                 span,
             ))
         }
+        Type::Grounded(inner) => check_entry_boundary_type(inner, span, role),
         Type::Function { .. } | Type::Unknown => Err(CodegenError::cranelift(
             format!("entry agent {role} has un-printable type `{}`", ty.display_name()),
             span,
@@ -2769,6 +2840,9 @@ fn emit_entry_result_print(
             let r = module.declare_func_in_func(runtime.print_string, builder.func);
             builder.ins().call(r, &[result_val]);
             emit_release(builder, module, runtime, result_val);
+        }
+        Type::Grounded(inner) => {
+            emit_entry_result_print(builder, module, runtime, inner, result_val);
         }
         _ => unreachable!("boundary check rejected non-printable returns"),
     }
@@ -2825,6 +2899,7 @@ fn cl_type_for(ty: &Type, span: Span) -> Result<clir::Type, CodegenError> {
         Type::Result(_, _) if is_native_result_type(ty) => Ok(I64),
         Type::Option(inner) if is_refcounted_type(inner) => Ok(I64),
         Type::Option(_) if is_native_wide_option_type(ty) => Ok(I64),
+        Type::Grounded(inner) => cl_type_for(inner, span),
         Type::Nothing => Err(CodegenError::not_supported(
             "`Nothing` — use a bare `return` instead",
             span,
@@ -3037,9 +3112,9 @@ fn lower_try_propagate_option(
     module: &mut ObjectModule,
     runtime: &RuntimeFuncs,
 ) -> Result<ClValue, CodegenError> {
-    let (option_payload_ty, wide_option) = match &inner.ty {
+    let (option_payload_ty, wrapped_option) = match &inner.ty {
+        Type::Option(payload) if option_uses_wrapper(&inner.ty) => (&**payload, true),
         Type::Option(payload) if is_refcounted_type(payload) => (&**payload, false),
-        Type::Option(payload) if is_native_wide_option_type(&inner.ty) => (&**payload, true),
         Type::Option(_) => {
             return Err(CodegenError::not_supported(
                 "postfix `?` on `Option<T>` — native lowering currently supports nullable-pointer `Option<T>` with refcounted payloads plus wide scalar `Option<Int|Bool|Float>`",
@@ -3101,13 +3176,16 @@ fn lower_try_propagate_option(
 
     builder.switch_to_block(some_block);
     builder.seal_block(some_block);
-    if wide_option {
+    if wrapped_option {
         let payload = builder.ins().load(
             result_cl_ty,
             cranelift_codegen::ir::MemFlags::trusted(),
             option_val,
             OPTION_PAYLOAD_OFFSET,
         );
+        if is_refcounted_type(option_payload_ty) {
+            emit_retain(builder, module, runtime, payload);
+        }
         emit_release(builder, module, runtime, option_val);
         builder.ins().jump(merge_block, &[payload.into()]);
     } else {
@@ -4584,10 +4662,10 @@ fn lower_expr(
             ))
         }
         IrExprKind::OptionSome { inner } => {
-            if is_native_wide_option_type(&expr.ty) {
+            if option_uses_wrapper(&expr.ty) {
                 let payload_ty = match &expr.ty {
                     Type::Option(inner_ty) => &**inner_ty,
-                    _ => unreachable!("wide option gate requires Option<T> type"),
+                    _ => unreachable!("option wrapper gate requires Option<T> type"),
                 };
                 let payload = lower_expr(
                     builder,

@@ -414,6 +414,7 @@ fn python_type_hint_of(ty: &corvid_types::Type) -> String {
         // patterns). Result types likely render as `object` (union
         // type) in Python 3.10+ or `typing.Union[...]` for older.
         T::Result(_, _) | T::Option(_) | T::Weak(_, _) => "object".into(),
+        T::Grounded(inner) => python_type_hint_of(inner),
     }
 }
 

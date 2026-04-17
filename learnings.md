@@ -1627,6 +1627,19 @@ interpreter, and native tier, not just adding one more native representation
 case. If a construct is already a language-level failure carrier, retry policy
 should treat it coherently across both tiers.
 
+### Nullable-pointer options are only safe until they stop preserving information
+
+The cheap native encoding for `Option<T>` is a good one when the payload has a
+non-null native representation: `Some(payload)` is the payload pointer/value and
+`None` is zero. But that encoding is not universally sound. As soon as the
+payload is itself an option-shaped value, bare nullability collapses semantics:
+outer `None` and `Some(None)` both become zero. Corvid now widens the native
+representation at exactly that boundary by allocating a tiny typed wrapper for
+nested option payloads while keeping direct nullable-pointer options on the fast
+path. The lesson is architectural: representation widening should happen where
+the current encoding stops being semantically injective, not just where it is
+convenient to add one more case.
+
 ## Contributing / feedback
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). The rules of the road are: design chat before code, per-scope commits at every boundary, dev-log entry for every session, no shortcuts. The `learnings.md` file you're reading gets updated when each user-visible feature ships.

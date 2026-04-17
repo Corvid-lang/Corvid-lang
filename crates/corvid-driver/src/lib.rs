@@ -1234,6 +1234,37 @@ agent main() -> Bool:
     return true
 "#;
 
+    const NATIVE_NESTED_OPTION_INT_SRC: &str = r#"
+agent fetch(mode: Int) -> Option<Option<Int>>:
+    if mode == 0:
+        return None
+    if mode == 1:
+        return Some(None)
+    return Some(Some(7))
+
+agent main() -> Bool:
+    first = fetch(0)
+    second = fetch(1)
+    third = fetch(2)
+    return first == None and second != None and third != None
+"#;
+
+    const NATIVE_NESTED_OPTION_INT_TRY_SRC: &str = r#"
+agent fetch(mode: Int) -> Option<Option<Int>>:
+    if mode == 0:
+        return None
+    if mode == 1:
+        return Some(None)
+    return Some(Some(7))
+
+agent inspect(mode: Int) -> Option<Bool>:
+    value = fetch(mode)?
+    return Some(value == None or value != None)
+
+agent main() -> Bool:
+    return inspect(0) == None and inspect(1) != None and inspect(2) != None
+"#;
+
     const NATIVE_RESULT_OPTION_INT_SRC: &str = r#"
 agent fetch(flag: Bool) -> Result<Option<Int>, String>:
     if flag:
@@ -1532,6 +1563,24 @@ agent load(id: String) -> String:
         assert!(
             native_ability(&ir).is_ok(),
             "retry over the native Option<T> subset should now compile natively"
+        );
+    }
+
+    #[test]
+    fn native_ability_accepts_nested_option_payloads() {
+        let ir = compile_to_ir(NATIVE_NESTED_OPTION_INT_SRC).expect("compile");
+        assert!(
+            native_ability(&ir).is_ok(),
+            "Option<Option<Int>> should now compile natively"
+        );
+    }
+
+    #[test]
+    fn native_ability_accepts_nested_option_try_propagation() {
+        let ir = compile_to_ir(NATIVE_NESTED_OPTION_INT_TRY_SRC).expect("compile");
+        assert!(
+            native_ability(&ir).is_ok(),
+            "Option<Option<Int>> `?` should now compile natively"
         );
     }
 

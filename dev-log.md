@@ -3864,6 +3864,42 @@ Interpretation:
   and richer retry classification/policy, not re-litigating the basic retry
   carrier semantics
 
+Day 53 — Native option widening crossed the real representation boundary
+
+What shipped:
+
+- widened native `Option<T>` beyond the bare nullable-pointer subset by adding
+  wrapper-backed support exactly where nullability stops being sound:
+  nested option payloads such as `Option<Option<Int>>`
+- added native-ability and parity coverage proving the native tier now
+  distinguishes outer `None` from `Some(None)` and that outer `?` still hands
+  back the inner option value cleanly
+- completed the last remaining native retry/result policy widening from the
+  roadmap perspective: retry works across both shipped failure carriers and the
+  broader native tagged-union representation now reaches nested option shapes
+- fixed the surrounding build fallout from `Grounded<T>` exhaustiveness so the
+  touched crates compile coherently again
+
+What the evidence says:
+
+- the real remaining representation gap was not arbitrary bigger unions; it was
+  the specific place where the cheap nullable encoding loses information
+- nested `Option<T>` is the canonical example: without a wrapper, outer `None`
+  and `Some(None)` collapse to the same zero value, which is semantically wrong
+- a selective wrapper is the right widening because it preserves the fast path
+  for direct nullable options while restoring correctness exactly where the
+  nullable representation becomes ambiguous
+
+Interpretation:
+
+- this finishes the meaningful native/core work of Phase 18 without taking a
+  shortcut to a totally new tagged-union layout family
+- the next roadmap move is no longer "finish native widening" or "finish retry
+  policy widening" — those are done enough to stop here
+- the next step should be discussed before coding, because it is now a genuine
+  cross-phase choice between Phase 20 effect integration and the next capability
+  wave
+
 
 
 

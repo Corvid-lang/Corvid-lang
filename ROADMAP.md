@@ -409,7 +409,7 @@ Pre-phase chat caught two limiting shortcuts in my brief and reshaped the phase 
 
 **Non-scope:** generational GC. Concurrent collection (mutator-collector concurrency via write barriers — post-v1.0 if multi-threaded Corvid ever becomes a direction).
 
-### Phase 18 — Result + Option + retry policies (~4 weeks) — in progress
+### Phase 18 — Result + Option + retry policies (~4 weeks) — core native scope complete
 
 **Goal.** Language-native error handling with a principled native subset first: `Result<T, E>`, `Option<T>`, propagation (`?`), and retry syntax that lowers as deterministic native control flow rather than a library loop.
 
@@ -423,6 +423,7 @@ Pre-phase chat caught two limiting shortcuts in my brief and reshaped the phase 
 - [x] Retry syntax in the frontend + interpreter.
 - [x] Native nullable `Option<T>` subset for refcounted payloads such as `Option<String>`.
 - [x] Native wide scalar `Option<Int|Bool|Float>`.
+- [x] Native nested `Option<T>` widening where nullable-pointer encoding would otherwise collapse `Some(None)` into outer `None`; wrapper-backed `Option<Option<...>>` now preserves the distinction.
 - [x] Native postfix `?` for the shipped `Option<T>` subsets, including widening into a different native `Option<U>` envelope.
 - [x] Native one-word `Result<T, E>` subset with ownership integration.
 - [x] Native postfix `?` for `Result<T, E>`, including `Result<A, E>?` inside `Result<B, E>` when both shapes remain in the current native subset.
@@ -435,10 +436,9 @@ Pre-phase chat caught two limiting shortcuts in my brief and reshaped the phase 
 - [x] **Deterministic native retry as compiled control flow.** Retry lowers to explicit native control-flow blocks over `Result<T, E>`, not an opaque runtime helper.
 - [x] **Failure-carrier-aligned retry semantics.** Native and interpreter retry now agree that `Err(...)` and `None` are the retryable branches for the shipped subset.
 - [x] **Compositional tagged-union subset.** Native support is being widened by proving a principled representation composes across nested shapes, rather than by adding ad hoc case-by-case exceptions.
+- [x] **Selective wrapper widening where nullability stops being sound.** Native `Option<T>` keeps the cheap nullable-pointer form where it is semantically safe, and switches to a tiny typed wrapper only for shapes like nested options where bare nullability would destroy information.
 
-**Remaining work before this phase can be called closed:**
-- [ ] Broader native tagged-union representation beyond the current compositional one-word subset.
-- [ ] Richer native retry/result policy widening beyond the current deterministic subset.
+**Remaining work before this phase can be called fully integrated:**
 - [ ] Effect-integrated failure typing once Phase 20's dimensional effects are fully wired through the typechecker.
 
 **Non-scope:** User-defined error enums with arbitrary payload layouts beyond the supported native subset — that belongs to the later richer-type/effect work, not this first native-control-flow pass.

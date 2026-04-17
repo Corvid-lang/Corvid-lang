@@ -2208,6 +2208,22 @@ fn native_option_retry_returns_none_after_exhausting_attempts() {
 }
 
 #[test]
+fn native_nested_option_int_distinguishes_none_from_some_none() {
+    assert_parity_bool_without_tools(
+        "agent fetch(mode: Int) -> Option<Option<Int>>:\n    if mode == 0:\n        return None\n    if mode == 1:\n        return Some(None)\n    return Some(Some(7))\n\nagent main() -> Bool:\n    first = fetch(0)\n    second = fetch(1)\n    third = fetch(2)\n    return first == None and second != None and third != None\n",
+        true,
+    );
+}
+
+#[test]
+fn native_nested_option_try_propagates_outer_none_and_preserves_inner_option() {
+    assert_parity_bool_without_tools(
+        "agent fetch(mode: Int) -> Option<Option<Int>>:\n    if mode == 0:\n        return None\n    if mode == 1:\n        return Some(None)\n    return Some(Some(7))\n\nagent inspect(mode: Int) -> Option<Bool>:\n    value = fetch(mode)?\n    return Some(value == None or value != None)\n\nagent main() -> Bool:\n    return inspect(0) == None and inspect(1) != None and inspect(2) != None\n",
+        true,
+    );
+}
+
+#[test]
 fn wide_option_bool_none_compares_equal_to_none() {
     assert_parity_bool_without_tools(
         "agent maybe(flag: Bool) -> Option<Bool>:\n    if flag:\n        return Some(true)\n    return None\n\nagent main() -> Bool:\n    return maybe(false) == None and maybe(true) != None\n",

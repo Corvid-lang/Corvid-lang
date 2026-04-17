@@ -214,6 +214,7 @@ fn type_label(t: &Type) -> String {
                 format!("Weak<{}, {{{}}}>", type_label(inner), effect_names.join(", "))
             }
         }
+        Type::Grounded(inner) => format!("Grounded<{}>", type_label(inner)),
         Type::Function { .. } => "function".into(),
         Type::Unknown => "<unknown>".into(),
     }

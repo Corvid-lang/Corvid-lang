@@ -91,6 +91,7 @@ fn schema_for_inner(
             "required": ["tag", "value"],
             "additionalProperties": false,
         }),
+        Type::Grounded(inner) => schema_for_inner(inner, types_by_id, visiting),
         Type::Struct(def_id) => {
             // Cycle guard: if we're already building this struct's schema
             // higher up the stack, emit an empty object placeholder. The
