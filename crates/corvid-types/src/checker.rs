@@ -170,6 +170,7 @@ impl<'a> Checker<'a> {
                     }
                 }
                 Decl::Import(_) => {}
+                Decl::Effect(_) => {}
                 Decl::Extend(ext) => {
                     // Index method decls by their allocated DefIds
                     // (from the resolver's
@@ -231,7 +232,7 @@ impl<'a> Checker<'a> {
         for decl in &file.decls {
             match decl {
                 Decl::Agent(a) => self.check_agent(a),
-                Decl::Prompt(_) | Decl::Tool(_) | Decl::Type(_) | Decl::Import(_) => {
+                Decl::Prompt(_) | Decl::Tool(_) | Decl::Type(_) | Decl::Import(_) | Decl::Effect(_) => {
                     // No body to check. Signatures are already well-formed
                     // by the parser, and the resolver has vetted their names.
                 }

@@ -1082,6 +1082,7 @@ impl<'a> Parser<'a> {
             params,
             return_ty,
             effect,
+            effect_row: Default::default(),
             span: start.merge(end),
         })
     }
@@ -1135,6 +1136,7 @@ impl<'a> Parser<'a> {
             params,
             return_ty,
             template,
+            effect_row: Default::default(),
             span: start.merge(end),
         })
     }
@@ -1160,6 +1162,8 @@ impl<'a> Parser<'a> {
             params,
             return_ty,
             body,
+            effect_row: Default::default(),
+            constraints: Vec::new(),
             span: start.merge(end),
         })
     }

@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 ///
 /// Every AST node carries one so diagnostics can point at the exact
 /// characters the user wrote.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 pub struct Span {
     pub start: usize,
     pub end: usize,

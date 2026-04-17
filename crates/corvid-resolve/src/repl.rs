@@ -146,5 +146,6 @@ fn decl_kind_name(decl: &Decl) -> String {
         Decl::Prompt(_) => "prompt".into(),
         Decl::Agent(_) => "agent".into(),
         Decl::Extend(_) => "extend".into(),
+        Decl::Effect(_) => "effect".into(),
     }
 }

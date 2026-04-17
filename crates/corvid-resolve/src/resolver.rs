@@ -116,6 +116,13 @@ impl Resolver {
                 Decl::Tool(t) => (t.name.name.clone(), DeclKind::Tool, t.span),
                 Decl::Prompt(p) => (p.name.name.clone(), DeclKind::Prompt, p.span),
                 Decl::Agent(a) => (a.name.name.clone(), DeclKind::Agent, a.span),
+                Decl::Effect(_) => {
+                    // Effect declarations are not yet part of the
+                    // resolver's symbol namespace. They stay parseable
+                    // and serializable, but name resolution for effect
+                    // rows lands with the fuller effect-system work.
+                    continue;
+                }
                 Decl::Extend(_) => {
                     // The parser accepts `extend T:`
                     // blocks; method registration into a per-type
@@ -262,6 +269,7 @@ impl Resolver {
                 Decl::Tool(t) => self.resolve_tool_decl(t),
                 Decl::Prompt(p) => self.resolve_prompt_decl(p),
                 Decl::Agent(a) => self.resolve_agent_decl(a),
+                Decl::Effect(_) => {}
                 Decl::Extend(ext) => {
                     // Resolve each method body
                     // the same way free agents/prompts/tools are
