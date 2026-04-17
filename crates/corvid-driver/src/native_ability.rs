@@ -79,22 +79,22 @@ pub fn native_ability(ir: &IrFile) -> Result<(), NotNativeReason> {
         }
     }
     for agent in &ir.agents {
-        scan_block(&agent.body)?;
+        scan_block(&agent.body, &agent.return_ty)?;
     }
     Ok(())
 }
 
-fn scan_block(block: &IrBlock) -> Result<(), NotNativeReason> {
+fn scan_block(block: &IrBlock, current_return_ty: &Type) -> Result<(), NotNativeReason> {
     for stmt in &block.stmts {
-        scan_stmt(stmt)?;
+        scan_stmt(stmt, current_return_ty)?;
     }
     Ok(())
 }
 
-fn scan_stmt(stmt: &IrStmt) -> Result<(), NotNativeReason> {
+fn scan_stmt(stmt: &IrStmt, current_return_ty: &Type) -> Result<(), NotNativeReason> {
     match stmt {
-        IrStmt::Let { value, .. } => scan_expr(value),
-        IrStmt::Return { value: Some(v), .. } => scan_expr(v),
+        IrStmt::Let { value, .. } => scan_expr(value, current_return_ty),
+        IrStmt::Return { value: Some(v), .. } => scan_expr(v, current_return_ty),
         IrStmt::Return { value: None, .. } => Ok(()),
         IrStmt::If {
             cond,
@@ -102,27 +102,27 @@ fn scan_stmt(stmt: &IrStmt) -> Result<(), NotNativeReason> {
             else_block,
             ..
         } => {
-            scan_expr(cond)?;
-            scan_block(then_block)?;
+            scan_expr(cond, current_return_ty)?;
+            scan_block(then_block, current_return_ty)?;
             if let Some(b) = else_block {
-                scan_block(b)?;
+                scan_block(b, current_return_ty)?;
             }
             Ok(())
         }
         IrStmt::For { iter, body, .. } => {
-            scan_expr(iter)?;
-            scan_block(body)
+            scan_expr(iter, current_return_ty)?;
+            scan_block(body, current_return_ty)
         }
         IrStmt::Approve { args, .. } => {
             // `approve` compiles to a no-op in generated native code.
             // Still walk the arg expressions so any tool/prompt call
             // buried in an approve arg is reported.
             for a in args {
-                scan_expr(a)?;
+                scan_expr(a, current_return_ty)?;
             }
             Ok(())
         }
-        IrStmt::Expr { expr, .. } => scan_expr(expr),
+        IrStmt::Expr { expr, .. } => scan_expr(expr, current_return_ty),
         IrStmt::Break { .. } | IrStmt::Continue { .. } | IrStmt::Pass { .. } => Ok(()),
         // Ownership ops contain no user expressions; they don't change
         // whether this agent can run natively.
@@ -130,7 +130,7 @@ fn scan_stmt(stmt: &IrStmt) -> Result<(), NotNativeReason> {
     }
 }
 
-fn scan_expr(expr: &IrExpr) -> Result<(), NotNativeReason> {
+fn scan_expr(expr: &IrExpr, current_return_ty: &Type) -> Result<(), NotNativeReason> {
     match &expr.kind {
         IrExprKind::Literal(_) | IrExprKind::Local { .. } | IrExprKind::Decl { .. } => Ok(()),
         IrExprKind::Call {
@@ -155,34 +155,34 @@ fn scan_expr(expr: &IrExpr) -> Result<(), NotNativeReason> {
                 | IrCallKind::Unknown => {}
             }
             for a in args {
-                scan_expr(a)?;
+                scan_expr(a, current_return_ty)?;
             }
             Ok(())
         }
-        IrExprKind::FieldAccess { target, .. } => scan_expr(target),
+        IrExprKind::FieldAccess { target, .. } => scan_expr(target, current_return_ty),
         IrExprKind::Index { target, index } => {
-            scan_expr(target)?;
-            scan_expr(index)
+            scan_expr(target, current_return_ty)?;
+            scan_expr(index, current_return_ty)
         }
         IrExprKind::BinOp { left, right, .. } => {
-            scan_expr(left)?;
-            scan_expr(right)
+            scan_expr(left, current_return_ty)?;
+            scan_expr(right, current_return_ty)
         }
-        IrExprKind::UnOp { operand, .. } => scan_expr(operand),
+        IrExprKind::UnOp { operand, .. } => scan_expr(operand, current_return_ty),
         IrExprKind::List { items } => {
             for it in items {
-                scan_expr(it)?;
+                scan_expr(it, current_return_ty)?;
             }
             Ok(())
         }
-        IrExprKind::WeakNew { strong } => scan_expr(strong),
-        IrExprKind::WeakUpgrade { weak } => scan_expr(weak),
+        IrExprKind::WeakNew { strong } => scan_expr(strong, current_return_ty),
+        IrExprKind::WeakUpgrade { weak } => scan_expr(weak, current_return_ty),
         // Tagged-union and retry IR nodes still route the program to
         // the interpreter tier. Recurse into sub-expressions so any
         // nested tool/prompt calls inside still get flagged
         // correctly.
         IrExprKind::OptionSome { inner } => {
-            scan_expr(inner)?;
+            scan_expr(inner, current_return_ty)?;
             if is_native_nullable_option_expr_type(&expr.ty) {
                 Ok(())
             } else {
@@ -191,8 +191,8 @@ fn scan_expr(expr: &IrExpr) -> Result<(), NotNativeReason> {
         }
         IrExprKind::ResultOk { inner }
         | IrExprKind::ResultErr { inner }
-        | IrExprKind::TryPropagate { inner } => {
-            scan_expr(inner)?;
+        => {
+            scan_expr(inner, current_return_ty)?;
             Err(NotNativeReason::TaggedUnionRetryNotNative)
         }
         IrExprKind::OptionNone => {
@@ -202,8 +202,18 @@ fn scan_expr(expr: &IrExpr) -> Result<(), NotNativeReason> {
                 Err(NotNativeReason::TaggedUnionRetryNotNative)
             }
         }
+        IrExprKind::TryPropagate { inner } => {
+            scan_expr(inner, current_return_ty)?;
+            if is_native_nullable_option_expr_type(&inner.ty)
+                && is_native_nullable_option_expr_type(current_return_ty)
+            {
+                Ok(())
+            } else {
+                Err(NotNativeReason::TaggedUnionRetryNotNative)
+            }
+        }
         IrExprKind::TryRetry { body, .. } => {
-            scan_expr(body)?;
+            scan_expr(body, current_return_ty)?;
             Err(NotNativeReason::TaggedUnionRetryNotNative)
         }
     }

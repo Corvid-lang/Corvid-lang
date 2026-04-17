@@ -1104,6 +1104,20 @@ agent main() -> Bool:
     return maybe(true) != None
 "#;
 
+    const NULLABLE_OPTION_TRY_SRC: &str = r#"
+agent maybe(flag: Bool) -> Option<String>:
+    if flag:
+        return Some("hi")
+    return None
+
+agent unwrap(flag: Bool) -> Option<String>:
+    value = maybe(flag)?
+    return Some(value)
+
+agent main() -> Bool:
+    return unwrap(true) != None
+"#;
+
     #[test]
     fn native_ability_accepts_pure_computation() {
         let ir = compile_to_ir(NATIVE_ABLE_SRC).expect("compile");
@@ -1155,6 +1169,15 @@ agent main() -> Bool:
             Err(NotNativeReason::TaggedUnionRetryNotNative) => {}
             other => panic!("expected tagged-union rejection, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn native_ability_accepts_nullable_option_try_propagation() {
+        let ir = compile_to_ir(NULLABLE_OPTION_TRY_SRC).expect("compile");
+        assert!(
+            native_ability(&ir).is_ok(),
+            "nullable Option<String> `?` should now compile natively"
+        );
     }
 
     /// Second compilation of the same source hits the cache: no

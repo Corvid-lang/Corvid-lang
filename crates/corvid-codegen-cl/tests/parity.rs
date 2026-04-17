@@ -2014,3 +2014,11 @@ fn nullable_option_string_none_compares_equal_to_none() {
         true,
     );
 }
+
+#[test]
+fn nullable_option_string_try_propagates_some_and_none() {
+    assert_parity_bool_without_tools(
+        "agent maybe(flag: Bool) -> Option<String>:\n    if flag:\n        return Some(\"hi\")\n    return None\n\nagent unwrap(flag: Bool) -> Option<String>:\n    value = maybe(flag)?\n    return Some(value)\n\nagent main() -> Bool:\n    return unwrap(false) == None and unwrap(true) != None\n",
+        true,
+    );
+}

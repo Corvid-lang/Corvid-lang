@@ -2367,6 +2367,7 @@ fn define_agent(
         let lowered = lower_block(
             &mut builder,
             &agent.body,
+            &agent.return_ty,
             &mut env,
             &mut var_idx,
             &mut scope_stack,
@@ -2428,9 +2429,108 @@ enum BlockOutcome {
     Terminated,
 }
 
+fn emit_function_return(
+    builder: &mut FunctionBuilder,
+    value: ClValue,
+    scope_stack: &[Vec<(LocalId, Variable)>],
+    module: &mut ObjectModule,
+    runtime: &RuntimeFuncs,
+) {
+    if !runtime.dup_drop_enabled {
+        for scope in scope_stack.iter().rev() {
+            for (_, var) in scope.iter().rev() {
+                let v_local = builder.use_var(*var);
+                emit_release(builder, module, runtime, v_local);
+            }
+        }
+    }
+    builder.ins().return_(&[value]);
+}
+
+fn lower_try_propagate_option(
+    builder: &mut FunctionBuilder,
+    expr: &IrExpr,
+    inner: &IrExpr,
+    current_return_ty: &Type,
+    env: &HashMap<LocalId, (Variable, clir::Type)>,
+    scope_stack: &Vec<Vec<(LocalId, Variable)>>,
+    func_ids_by_def: &HashMap<DefId, FuncId>,
+    module: &mut ObjectModule,
+    runtime: &RuntimeFuncs,
+) -> Result<ClValue, CodegenError> {
+    let option_payload_ty = match &inner.ty {
+        Type::Option(payload) if is_refcounted_type(payload) => &**payload,
+        Type::Option(_) => {
+            return Err(CodegenError::not_supported(
+                "postfix `?` on `Option<T>` — native lowering currently supports only nullable-pointer `Option<T>` with refcounted payloads",
+                expr.span,
+            ))
+        }
+        Type::Result(_, _) => {
+            return Err(CodegenError::not_supported(
+                "postfix `?` on `Result<T, E>` — native tagged-union lowering is not implemented yet; use the interpreter tier until then",
+                expr.span,
+            ))
+        }
+        _ => {
+            return Err(CodegenError::cranelift(
+                format!(
+                    "postfix `?` saw non-Option inner type `{}` — typecheck should have caught this",
+                    inner.ty.display_name()
+                ),
+                expr.span,
+            ))
+        }
+    };
+
+    match current_return_ty {
+        Type::Option(ret_payload) if is_refcounted_type(ret_payload) => {}
+        _ => {
+            return Err(CodegenError::not_supported(
+                "postfix `?` — native lowering currently supports only functions returning nullable-pointer `Option<T>`",
+                expr.span,
+            ))
+        }
+    }
+
+    let option_val = lower_expr(
+        builder,
+        inner,
+        current_return_ty,
+        env,
+        scope_stack,
+        func_ids_by_def,
+        module,
+        runtime,
+    )?;
+    let result_cl_ty = cl_type_for(option_payload_ty, expr.span)?;
+    let some_block = builder.create_block();
+    let none_block = builder.create_block();
+    let merge_block = builder.create_block();
+    let result = builder.append_block_param(merge_block, result_cl_ty);
+
+    builder
+        .ins()
+        .brif(option_val, some_block, &[], none_block, &[]);
+
+    builder.switch_to_block(none_block);
+    builder.seal_block(none_block);
+    let none_val = builder.ins().iconst(I64, 0);
+    emit_function_return(builder, none_val, scope_stack, module, runtime);
+
+    builder.switch_to_block(some_block);
+    builder.seal_block(some_block);
+    builder.ins().jump(merge_block, &[option_val.into()]);
+
+    builder.switch_to_block(merge_block);
+    builder.seal_block(merge_block);
+    Ok(result)
+}
+
 fn lower_block(
     builder: &mut FunctionBuilder,
     block: &IrBlock,
+    current_return_ty: &Type,
     env: &mut HashMap<LocalId, (Variable, clir::Type)>,
     var_idx: &mut usize,
     scope_stack: &mut Vec<Vec<(LocalId, Variable)>>,
@@ -2443,6 +2543,7 @@ fn lower_block(
         match lower_stmt(
             builder,
             stmt,
+            current_return_ty,
             env,
             var_idx,
             scope_stack,
@@ -2461,6 +2562,7 @@ fn lower_block(
 fn lower_stmt(
     builder: &mut FunctionBuilder,
     stmt: &IrStmt,
+    current_return_ty: &Type,
     env: &mut HashMap<LocalId, (Variable, clir::Type)>,
     var_idx: &mut usize,
     scope_stack: &mut Vec<Vec<(LocalId, Variable)>>,
@@ -2471,9 +2573,17 @@ fn lower_stmt(
 ) -> Result<BlockOutcome, CodegenError> {
     match stmt {
         IrStmt::Return { value, span } => {
-            let value_ty = value.as_ref().map(|e| e.ty.clone());
             let v = match value {
-                Some(e) => lower_expr(builder, e, env, func_ids_by_def, module, runtime)?,
+                Some(e) => lower_expr(
+                    builder,
+                    e,
+                    current_return_ty,
+                    env,
+                    scope_stack,
+                    func_ids_by_def,
+                    module,
+                    runtime,
+                )?,
                 None => {
                     return Err(CodegenError::not_supported(
                         "bare `return` (Nothing type not supported yet)",
@@ -2491,20 +2601,20 @@ fn lower_stmt(
             // mirror lexical scope exit order (matters only if the
             // `release` call has side effects we care about, which it
             // doesn't, but the ordering is conventional).
-            let _ = value_ty; // currently unused but shows intent
-            if !runtime.dup_drop_enabled {
-                for scope in scope_stack.iter().rev() {
-                    for (_, var) in scope.iter().rev() {
-                        let v_local = builder.use_var(*var);
-                        emit_release(builder, module, runtime, v_local);
-                    }
-                }
-            }
-            builder.ins().return_(&[v]);
+            emit_function_return(builder, v, scope_stack, module, runtime);
             Ok(BlockOutcome::Terminated)
         }
         IrStmt::Expr { expr, .. } => {
-            let v = lower_expr(builder, expr, env, func_ids_by_def, module, runtime)?;
+            let v = lower_expr(
+                builder,
+                expr,
+                current_return_ty,
+                env,
+                scope_stack,
+                func_ids_by_def,
+                module,
+                runtime,
+            )?;
             // Discarded statement-expression:
             //   - If the expression is a BARE Local read, the value
             //     belongs to the Local binding; the .6d pass handles
@@ -2572,7 +2682,16 @@ fn lower_stmt(
                 let old = builder.use_var(var);
                 emit_release(builder, module, runtime, old);
             }
-            let v = lower_expr(builder, value, env, func_ids_by_def, module, runtime)?;
+            let v = lower_expr(
+                builder,
+                value,
+                current_return_ty,
+                env,
+                scope_stack,
+                func_ids_by_def,
+                module,
+                runtime,
+            )?;
             // The Value flowing into a refcounted
             // binding must be stack-map-declared so Cranelift spills
             // it across safepoints. Cranelift's safepoint pass
@@ -2603,6 +2722,7 @@ fn lower_stmt(
             cond,
             then_block,
             else_block.as_ref(),
+            current_return_ty,
             env,
             var_idx,
             scope_stack,
@@ -2623,6 +2743,7 @@ fn lower_stmt(
             iter,
             body,
             *span,
+            current_return_ty,
             env,
             var_idx,
             scope_stack,
@@ -2650,7 +2771,9 @@ fn lower_stmt(
                 let v = lower_expr(
                     builder,
                     a,
+                    current_return_ty,
                     env,
+                    scope_stack,
                     func_ids_by_def,
                     module,
                     runtime,
@@ -2744,7 +2867,9 @@ fn lower_stmt(
 fn lower_expr(
     builder: &mut FunctionBuilder,
     expr: &IrExpr,
+    current_return_ty: &Type,
     env: &HashMap<LocalId, (Variable, clir::Type)>,
+    scope_stack: &Vec<Vec<(LocalId, Variable)>>,
     func_ids_by_def: &HashMap<DefId, FuncId>,
     module: &mut ObjectModule,
     runtime: &RuntimeFuncs,
@@ -2795,7 +2920,9 @@ fn lower_expr(
                     *op,
                     left,
                     right,
+                    current_return_ty,
                     env,
+                    scope_stack,
                     func_ids_by_def,
                     module,
                     runtime,
@@ -2825,19 +2952,19 @@ fn lower_expr(
             // ownership contract.
             if matches!(&left.ty, Type::String) && matches!(&right.ty, Type::String) {
                 let (l, l_borrowed) =
-                    lower_string_operand_maybe_borrowed(builder, left, env, func_ids_by_def, module, runtime)?;
+                    lower_string_operand_maybe_borrowed(builder, left, current_return_ty, env, scope_stack, func_ids_by_def, module, runtime)?;
                 let (r, r_borrowed) =
-                    lower_string_operand_maybe_borrowed(builder, right, env, func_ids_by_def, module, runtime)?;
+                    lower_string_operand_maybe_borrowed(builder, right, current_return_ty, env, scope_stack, func_ids_by_def, module, runtime)?;
                 return lower_string_binop_with_ownership(
                     builder, *op, l, r, l_borrowed, r_borrowed, expr.span, module, runtime,
                 );
             }
-            let l = lower_expr(builder, left, env, func_ids_by_def, module, runtime)?;
-            let r = lower_expr(builder, right, env, func_ids_by_def, module, runtime)?;
+            let l = lower_expr(builder, left, current_return_ty, env, scope_stack, func_ids_by_def, module, runtime)?;
+            let r = lower_expr(builder, right, current_return_ty, env, scope_stack, func_ids_by_def, module, runtime)?;
             lower_binop_strict(builder, *op, l, r, expr.span, module, runtime)
         }
         IrExprKind::UnOp { op, operand } => {
-            let v = lower_expr(builder, operand, env, func_ids_by_def, module, runtime)?;
+            let v = lower_expr(builder, operand, current_return_ty, env, scope_stack, func_ids_by_def, module, runtime)?;
             lower_unop(builder, *op, v, expr.span, module, runtime)
         }
         IrExprKind::Call { kind, callee_name, args } => match kind {
@@ -2897,7 +3024,9 @@ fn lower_expr(
                     let v = lower_expr(
                         builder,
                         a,
+                        current_return_ty,
                         env,
+                        scope_stack,
                         func_ids_by_def,
                         module,
                         runtime,
@@ -3005,7 +3134,9 @@ fn lower_expr(
                     arg_vals.push(lower_expr(
                         builder,
                         a,
+                        current_return_ty,
                         env,
+                        scope_stack,
                         func_ids_by_def,
                         module,
                         runtime,
@@ -3056,7 +3187,9 @@ fn lower_expr(
                     *def_id,
                     callee_name,
                     args,
+                    current_return_ty,
                     env,
+                    scope_stack,
                     func_ids_by_def,
                     &expr.ty,
                     expr.span,
@@ -3075,7 +3208,9 @@ fn lower_expr(
                     runtime,
                     &ir_type,
                     args,
+                    current_return_ty,
                     env,
+                    scope_stack,
                     func_ids_by_def,
                     expr.span,
                 )
@@ -3125,7 +3260,7 @@ fn lower_expr(
             // mutate the struct's refcount. The Local's binding
             // stays Live — its scope-exit release handles cleanup.
             let (struct_ptr, struct_borrowed) = lower_container_maybe_borrowed(
-                builder, target, env, func_ids_by_def, module, runtime,
+                builder, target, current_return_ty, env, scope_stack, func_ids_by_def, module, runtime,
             )?;
             let field_val = builder.ins().load(
                 field_cl_ty,
@@ -3168,9 +3303,18 @@ fn lower_expr(
             // The bounds-check + load only read the list's memory;
             // never mutate its refcount or escape the pointer.
             let (list_ptr, list_borrowed) = lower_container_maybe_borrowed(
-                builder, target, env, func_ids_by_def, module, runtime,
+                builder, target, current_return_ty, env, scope_stack, func_ids_by_def, module, runtime,
             )?;
-            let idx_val = lower_expr(builder, index, env, func_ids_by_def, module, runtime)?;
+            let idx_val = lower_expr(
+                builder,
+                index,
+                current_return_ty,
+                env,
+                scope_stack,
+                func_ids_by_def,
+                module,
+                runtime,
+            )?;
 
             // Bounds check: trap if `idx_val >= length` or `idx_val < 0`.
             let length = builder.ins().load(
@@ -3279,8 +3423,16 @@ fn lower_expr(
             // Store each element at offset 8 + i * 8. The element's
             // Owned +1 transfers into the list.
             for (i, item) in items.iter().enumerate() {
-                let item_val =
-                    lower_expr(builder, item, env, func_ids_by_def, module, runtime)?;
+                let item_val = lower_expr(
+                    builder,
+                    item,
+                    current_return_ty,
+                    env,
+                    scope_stack,
+                    func_ids_by_def,
+                    module,
+                    runtime,
+                )?;
                 let offset = 8 + (i as i32) * 8;
                 builder.ins().store(
                     cranelift_codegen::ir::MemFlags::trusted(),
@@ -3292,7 +3444,16 @@ fn lower_expr(
             Ok(list_ptr)
         }
         IrExprKind::WeakNew { strong } => {
-            let strong_val = lower_expr(builder, strong, env, func_ids_by_def, module, runtime)?;
+            let strong_val = lower_expr(
+                builder,
+                strong,
+                current_return_ty,
+                env,
+                scope_stack,
+                func_ids_by_def,
+                module,
+                runtime,
+            )?;
             let weak_new_ref = module.declare_func_in_func(runtime.weak_new, builder.func);
             let call = builder.ins().call(weak_new_ref, &[strong_val]);
             let weak_ptr = builder.inst_results(call)[0];
@@ -3302,7 +3463,16 @@ fn lower_expr(
             Ok(weak_ptr)
         }
         IrExprKind::WeakUpgrade { weak } => {
-            let weak_val = lower_expr(builder, weak, env, func_ids_by_def, module, runtime)?;
+            let weak_val = lower_expr(
+                builder,
+                weak,
+                current_return_ty,
+                env,
+                scope_stack,
+                func_ids_by_def,
+                module,
+                runtime,
+            )?;
             let weak_upgrade_ref =
                 module.declare_func_in_func(runtime.weak_upgrade, builder.func);
             let call = builder.ins().call(weak_upgrade_ref, &[weak_val]);
@@ -3332,7 +3502,16 @@ fn lower_expr(
         }
         IrExprKind::OptionSome { inner } => {
             if is_refcounted_type(&expr.ty) {
-                lower_expr(builder, inner, env, func_ids_by_def, module, runtime)
+                lower_expr(
+                    builder,
+                    inner,
+                    current_return_ty,
+                    env,
+                    scope_stack,
+                    func_ids_by_def,
+                    module,
+                    runtime,
+                )
             } else {
                 Err(CodegenError::not_supported(
                     "`Some(...)` with non-refcounted payload — native codegen currently supports nullable-pointer `Option<T>` only when `T` is refcounted",
@@ -3343,12 +3522,17 @@ fn lower_expr(
         IrExprKind::OptionNone => {
             Ok(builder.ins().iconst(I64, 0))
         }
-        IrExprKind::TryPropagate { .. } => {
-            Err(CodegenError::not_supported(
-                "postfix `?` operator — native discriminant-based lowering is not implemented yet; use the interpreter tier until then",
-                expr.span,
-            ))
-        }
+        IrExprKind::TryPropagate { inner } => lower_try_propagate_option(
+            builder,
+            expr,
+            inner,
+            current_return_ty,
+            env,
+            scope_stack,
+            func_ids_by_def,
+            module,
+            runtime,
+        ),
         IrExprKind::TryRetry { .. } => {
             Err(CodegenError::not_supported(
                 "`try ... on error retry N times backoff ...` — native retry lowering is not implemented yet; use the interpreter tier until then",
@@ -3484,7 +3668,9 @@ enum ArithDomain {
 fn lower_container_maybe_borrowed(
     builder: &mut FunctionBuilder,
     expr: &IrExpr,
+    current_return_ty: &Type,
     env: &HashMap<LocalId, (Variable, clir::Type)>,
+    scope_stack: &Vec<Vec<(LocalId, Variable)>>,
     func_ids_by_def: &HashMap<DefId, FuncId>,
     module: &mut ObjectModule,
     runtime: &RuntimeFuncs,
@@ -3499,7 +3685,16 @@ fn lower_container_maybe_borrowed(
         let v = builder.use_var(*var);
         return Ok((v, true));
     }
-    let v = lower_expr(builder, expr, env, func_ids_by_def, module, runtime)?;
+    let v = lower_expr(
+        builder,
+        expr,
+        current_return_ty,
+        env,
+        scope_stack,
+        func_ids_by_def,
+        module,
+        runtime,
+    )?;
     Ok((v, false))
 }
 
@@ -3526,7 +3721,9 @@ fn lower_container_maybe_borrowed(
 fn lower_string_operand_maybe_borrowed(
     builder: &mut FunctionBuilder,
     expr: &IrExpr,
+    current_return_ty: &Type,
     env: &HashMap<LocalId, (Variable, clir::Type)>,
+    scope_stack: &Vec<Vec<(LocalId, Variable)>>,
     func_ids_by_def: &HashMap<DefId, FuncId>,
     module: &mut ObjectModule,
     runtime: &RuntimeFuncs,
@@ -3549,7 +3746,16 @@ fn lower_string_operand_maybe_borrowed(
             return Ok((v, true));
         }
     }
-    let v = lower_expr(builder, expr, env, func_ids_by_def, module, runtime)?;
+    let v = lower_expr(
+        builder,
+        expr,
+        current_return_ty,
+        env,
+        scope_stack,
+        func_ids_by_def,
+        module,
+        runtime,
+    )?;
     Ok((v, false))
 }
 
@@ -3668,6 +3874,7 @@ fn lower_for(
     iter: &IrExpr,
     body: &IrBlock,
     span: Span,
+    current_return_ty: &Type,
     env: &mut HashMap<LocalId, (Variable, clir::Type)>,
     var_idx: &mut usize,
     scope_stack: &mut Vec<Vec<(LocalId, Variable)>>,
@@ -3709,7 +3916,7 @@ fn lower_for(
     // stays Live in its enclosing scope, governed by the usual
     // scope-exit release.
     let (list_ptr, list_borrowed) = lower_container_maybe_borrowed(
-        builder, iter, env, func_ids_by_def, module, runtime,
+        builder, iter, current_return_ty, env, scope_stack, func_ids_by_def, module, runtime,
     )?;
 
     // Load length from offset 0 of the list payload.
@@ -3805,6 +4012,7 @@ fn lower_for(
     let body_outcome = lower_block(
         builder,
         body,
+        current_return_ty,
         env,
         var_idx,
         scope_stack,
@@ -3918,7 +4126,9 @@ fn lower_struct_constructor(
     runtime: &RuntimeFuncs,
     ty: &corvid_ir::IrType,
     args: &[IrExpr],
+    current_return_ty: &Type,
     env: &HashMap<LocalId, (Variable, clir::Type)>,
+    scope_stack: &Vec<Vec<(LocalId, Variable)>>,
     func_ids_by_def: &HashMap<DefId, FuncId>,
     span: Span,
 ) -> Result<ClValue, CodegenError> {
@@ -3966,7 +4176,16 @@ fn lower_struct_constructor(
     // field arg is lowered as an Owned temp; the store transfers that
     // +1 ownership into the struct — no extra retain, no release.
     for (i, arg) in args.iter().enumerate() {
-        let value = lower_expr(builder, arg, env, func_ids_by_def, module, runtime)?;
+        let value = lower_expr(
+            builder,
+            arg,
+            current_return_ty,
+            env,
+            scope_stack,
+            func_ids_by_def,
+            module,
+            runtime,
+        )?;
         let offset = (i as i32) * STRUCT_FIELD_SLOT_BYTES;
         builder.ins().store(
             cranelift_codegen::ir::MemFlags::trusted(),
@@ -4200,7 +4419,9 @@ fn lower_prompt_call(
     def_id: DefId,
     callee_name: &str,
     args: &[IrExpr],
+    current_return_ty: &Type,
     env: &HashMap<LocalId, (Variable, clir::Type)>,
+    scope_stack: &Vec<Vec<(LocalId, Variable)>>,
     func_ids_by_def: &HashMap<DefId, FuncId>,
     return_ty: &Type,
     span: Span,
@@ -4240,7 +4461,16 @@ fn lower_prompt_call(
     let mut arg_vals: Vec<ClValue> = Vec::with_capacity(args.len());
     let mut arg_pinned: Vec<bool> = Vec::with_capacity(args.len());
     for a in args {
-        let v = lower_expr(builder, a, env, func_ids_by_def, module, runtime)?;
+        let v = lower_expr(
+            builder,
+            a,
+            current_return_ty,
+            env,
+            scope_stack,
+            func_ids_by_def,
+            module,
+            runtime,
+        )?;
         let pinned = matches!(&a.ty, Type::String)
             && matches!(&a.kind, IrExprKind::Local { .. })
             && pinned_locals.is_some_and(|set| {
@@ -4532,12 +4762,23 @@ fn lower_short_circuit(
     op: BinaryOp,
     left: &IrExpr,
     right: &IrExpr,
+    current_return_ty: &Type,
     env: &HashMap<LocalId, (Variable, clir::Type)>,
+    scope_stack: &Vec<Vec<(LocalId, Variable)>>,
     func_ids_by_def: &HashMap<DefId, FuncId>,
     module: &mut ObjectModule,
     runtime: &RuntimeFuncs,
 ) -> Result<ClValue, CodegenError> {
-    let l = lower_expr(builder, left, env, func_ids_by_def, module, runtime)?;
+    let l = lower_expr(
+        builder,
+        left,
+        current_return_ty,
+        env,
+        scope_stack,
+        func_ids_by_def,
+        module,
+        runtime,
+    )?;
 
     let right_block = builder.create_block();
     let merge_block = builder.create_block();
@@ -4563,7 +4804,16 @@ fn lower_short_circuit(
 
     builder.switch_to_block(right_block);
     builder.seal_block(right_block);
-    let r = lower_expr(builder, right, env, func_ids_by_def, module, runtime)?;
+    let r = lower_expr(
+        builder,
+        right,
+        current_return_ty,
+        env,
+        scope_stack,
+        func_ids_by_def,
+        module,
+        runtime,
+    )?;
     builder.ins().jump(merge_block, &[r.into()]);
 
     builder.switch_to_block(merge_block);
@@ -4582,6 +4832,7 @@ fn lower_if(
     cond: &IrExpr,
     then_block_ir: &IrBlock,
     else_block_ir: Option<&IrBlock>,
+    current_return_ty: &Type,
     env: &mut HashMap<LocalId, (Variable, clir::Type)>,
     var_idx: &mut usize,
     scope_stack: &mut Vec<Vec<(LocalId, Variable)>>,
@@ -4590,7 +4841,16 @@ fn lower_if(
     module: &mut ObjectModule,
     runtime: &RuntimeFuncs,
 ) -> Result<BlockOutcome, CodegenError> {
-    let cond_val = lower_expr(builder, cond, env, func_ids_by_def, module, runtime)?;
+    let cond_val = lower_expr(
+        builder,
+        cond,
+        current_return_ty,
+        env,
+        scope_stack,
+        func_ids_by_def,
+        module,
+        runtime,
+    )?;
 
     let then_b = builder.create_block();
     let else_b = if else_block_ir.is_some() {
@@ -4615,6 +4875,7 @@ fn lower_if(
     let then_outcome = lower_block(
         builder,
         then_block_ir,
+        current_return_ty,
         env,
         var_idx,
         scope_stack,
@@ -4651,6 +4912,7 @@ fn lower_if(
         let else_outcome = lower_block(
             builder,
             else_body,
+            current_return_ty,
             env,
             var_idx,
             scope_stack,

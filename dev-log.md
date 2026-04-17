@@ -3499,6 +3499,38 @@ Interpretation:
 - the next honest capability slices are still `?` propagation for nullable
   option, then tagged-union `Result`, then retry
 
+## Day 42 [B] - 2026-04-17 - Native nullable Option `?` propagation
+
+Extended the new nullable-option subset through real control flow instead of
+stopping at construction and comparison.
+
+What changed:
+
+- native codegen now lowers postfix `?` when the inner expression is a
+  nullable-pointer `Option<T>` with a refcounted payload and the enclosing
+  function also returns a nullable-pointer `Option<_>`
+- early-return cleanup reuses the same live-local release walk as explicit
+  `return`, so `None` propagation does not leak locals
+- native-ability scan now accepts the same nullable-option `?` subset while
+  still rejecting `Result` and retry
+- added parity coverage proving both `Some` and `None` propagation through a
+  helper agent
+
+What the evidence says:
+
+- the existing nullable `Option<T>` representation (`pointer or null`) was the
+  right foundation; `?` lowering is a control-flow problem, not a new runtime
+  layout problem
+- the slice still does not overclaim: `Result<T, E>` and `try ... retry`
+  remain fenced off
+
+Interpretation:
+
+- native nullable `Option<T>` is now useful as an internal control-flow type,
+  not just a value you can construct and compare
+- the next honest step is native `Result<T, E>` tagged-union lowering, not
+  more widening of `Option` before the error path exists
+
 
 
 

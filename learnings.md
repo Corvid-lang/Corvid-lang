@@ -1439,6 +1439,31 @@ Why it matters:
   (`corvid_bench_tool_wait_ns` missing from the FFI bridge), which is exactly
   why capability work needs end-to-end parity coverage and not just scan tests
 
+### Native nullable `Option<T>` `?` propagation
+
+Once native nullable `Option<T>` existed as `pointer-or-null`, the next sound
+step was not more constructors. It was control flow: make postfix `?` work on
+that exact representation and no more.
+
+What changed:
+
+- native codegen now treats `Option<T>?` as a null check plus early return when
+  the enclosing function also returns a native nullable `Option<_>`
+- the early-return path uses the same live-local cleanup walk as explicit
+  `return`, so the new control-flow form stays ownership-correct
+- native-ability accepts that subset and parity tests prove both `Some` and
+  `None` propagation through helper agents
+
+Why it matters:
+
+- it turns native nullable `Option<T>` into a real internal control-flow type
+  instead of a value-only curiosity
+- it proves the broader feature wave should keep following the same pattern:
+  widen from an already-proven runtime representation rather than trying to
+  land `Result`, `?`, and retry as one opaque monolith
+- it preserves the no-shortcuts rule: the slice still refuses `Result<T, E>`
+  and retry until their layouts and control flow exist for real
+
 ## Contributing / feedback
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). The rules of the road are: design chat before code, per-scope commits at every boundary, dev-log entry for every session, no shortcuts. The `learnings.md` file you're reading gets updated when each user-visible feature ships.
