@@ -55,6 +55,7 @@ impl<'a> Lowerer<'a> {
                 Decl::Tool(t) => tools.push(self.lower_tool(t)),
                 Decl::Prompt(p) => prompts.push(self.lower_prompt(p)),
                 Decl::Agent(a) => agents.push(self.lower_agent(a)),
+                Decl::Effect(_) => {}
                 Decl::Extend(ext) => {
                     // Lower each method into the appropriate per-kind
                     // IR vector. Methods get

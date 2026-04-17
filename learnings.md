@@ -1555,6 +1555,19 @@ without new runtime machinery. That is the pattern to keep following. Widen the
 native subset first where the representation already composes cleanly, then add
 new encodings only when a real semantic need remains.
 
+### Native option envelopes and retry composition
+
+The next confirmation after widening `Option<T>?` was whether that broader rule
+still held up when mixed with native retry and widened `Result` propagation. It
+does. A retried native `Result<String, String>` can now flow through `?` into
+`Result<Bool, String>` without new runtime machinery, and `Option<T>?` can
+early-return `None` into any native `Option<U>` envelope because the control
+flow only needs the envelope's `None` representation. That is the deeper rule:
+when a branch of the semantics is payload-agnostic, Corvid should not keep a
+same-shape restriction just because it was easier to implement first. The right
+pattern is to prove the broader semantic rule once the representation and
+ownership model are already strong enough to carry it.
+
 ## Contributing / feedback
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). The rules of the road are: design chat before code, per-scope commits at every boundary, dev-log entry for every session, no shortcuts. The `learnings.md` file you're reading gets updated when each user-visible feature ships.

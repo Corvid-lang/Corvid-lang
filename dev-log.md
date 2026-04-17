@@ -3732,6 +3732,40 @@ Interpretation:
 - the next honest native step is still broader structured `Result` / retry
   policy work, not more arbitrary shape restrictions around `Option`
 
+Day 49 — Native option envelopes widen cleanly
+
+What shipped:
+
+- widened native postfix `?` on `Option<T>` so it can early-return `None` into
+  any supported native `Option<U>` envelope, not just the same concrete option
+  shape
+- added explicit proof that retry and propagation compose in the native subset:
+  retry a `Result<String, String>` expression, then use `?` into
+  `Result<Bool, String>`
+
+What the evidence says:
+
+- the previous same-shape restriction on native `Option<T>?` was not a runtime
+  requirement; it was just a narrower codegen gate than the model demanded
+- once the option envelope is native on both sides, the early `None` branch is
+  payload-agnostic
+- the native retry/result path still composes cleanly when the retried
+  expression is immediately fed into widened `?` propagation
+
+Verification discipline:
+
+- getting the native test matrix green also required one more minimal
+  `Decl::Effect(_)` pass-through in `corvid-ir` so the in-progress effect-system
+  AST changes stopped breaking unrelated native verification
+
+Interpretation:
+
+- Corvid's native subset is still widening in the right direction: remove
+  artificial restrictions where the representation already supports the broader
+  semantics, then prove the broader rule end to end
+- the next honest step remains richer structured `Result` payloads and retry
+  policy semantics, not another round of arbitrary same-shape gates
+
 
 
 
