@@ -3343,6 +3343,36 @@ Recommendation:
   highest-value move; the residual cost is already too small to dominate the
   current workflow fixtures
 
+## Day 39 [B] - 2026-04-17 - Scalar prompt bridge fast path
+
+Took the one remaining named benchmark bucket from the residual profile:
+bridge / string-conversion overhead on the shipped env-mock prompt path.
+
+What changed:
+
+- scalar prompt bridges (`Int`, `Bool`, `Float`) now borrow the prompt name and
+  read directly from the queued env-mock reply instead of traversing the full
+  generic prompt bridge when the fixture already provides a direct answer
+- profiling guards in the runtime benchmark path now cache their enable/disable
+  state so profiling-off runs no longer pay repeated env-var lookups
+
+Published archive:
+
+- `benches/results/2026-04-17-scalar-mock-fastpath-session-v2/`
+
+Top-line outcome on the shipped workflow fixtures:
+
+- Corvid / Python ratios: `0.10x-0.17x`
+- Corvid / TypeScript ratios: `0.24x-0.39x`
+
+Interpretation:
+
+- this is still the same fixture-scoped claim, not a blanket language-speed
+  claim
+- the bridge bucket really was worth one more pass
+- after this cut, the shipped workflow path is materially faster again on all
+  four scenarios
+
 
 
 

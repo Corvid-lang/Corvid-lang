@@ -239,6 +239,77 @@ The constant-prompt archive includes the full ratio-shape tables (`p50` /
 `p90` / `p99`) in `ratios.md`. This document keeps only the headline medians
 and confidence intervals.
 
+### Current scalar-mock fast-path session
+
+Source archive:
+
+- `benches/results/2026-04-17-scalar-mock-fastpath-session-v2/`
+- runtime commit: `f574493`
+- publication commit: `4291092`
+
+Methodology and measured-path changes relative to the constant-prompt session:
+
+- scalar prompt calls under the shipped env-mock fixture path now bypass the
+  generic prompt bridge and parse directly from a borrowed queued mock reply
+- profiling guard checks are cached, so benchmark runs no longer pay repeated
+  environment-variable lookups when profiling is disabled
+
+Session disclosure:
+
+- control values are close to zero on all three stacks, so CV is unstable as a
+  primary noise summary
+- absolute control disclosure:
+  - `corvid`: median `0.000244 ms`, IQR `[0.000000, 0.000488]`, CV `35.36%`
+  - `python`: median `0.001100 ms`, IQR `[0.000700, 0.001500]`, CV `69.11%`
+  - `typescript`: median `0.001000 ms`, IQR `[0.000700, 0.001575]`, CV `58.91%`
+
+#### Constant-prompt vs scalar-mock medians
+
+| Scenario | Corvid / Python constant-prompt | Corvid / Python scalar-mock | Corvid / TypeScript constant-prompt | Corvid / TypeScript scalar-mock |
+|---|---:|---:|---:|---:|
+| `tool_loop` | `0.267` | `0.169` | `0.528` | `0.299` |
+| `retry_workflow` | `0.173` | `0.105` | `0.367` | `0.241` |
+| `approval_workflow` | `0.230` | `0.104` | `0.606` | `0.273` |
+| `replay_trace` | `0.287` | `0.163` | `0.601` | `0.385` |
+
+#### Corvid vs Python
+
+| Scenario | Median ratio | 95% CI |
+|---|---:|---:|
+| `tool_loop` | `0.169` | `[0.151, 0.179]` |
+| `retry_workflow` | `0.105` | `[0.099, 0.112]` |
+| `approval_workflow` | `0.104` | `[0.100, 0.113]` |
+| `replay_trace` | `0.163` | `[0.154, 0.175]` |
+
+#### Corvid vs TypeScript
+
+| Scenario | Median ratio | 95% CI |
+|---|---:|---:|
+| `tool_loop` | `0.299` | `[0.256, 0.345]` |
+| `retry_workflow` | `0.241` | `[0.221, 0.265]` |
+| `approval_workflow` | `0.273` | `[0.212, 0.295]` |
+| `replay_trace` | `0.385` | `[0.364, 0.402]` |
+
+Interpretation:
+
+- every scalar-mock ratio is below `1.0`
+- every scalar-mock 95% CI stays below `1.0`
+- so this session becomes the strongest current fixture-scoped claim in the
+  archive: Corvid is faster than the current Python and TypeScript benchmark
+  runners on these four shipped workflow fixtures
+
+What this session supports:
+
+- the remaining named bridge/string-conversion bucket was worth one more pass
+- the shipped env-mock prompt path now avoids the generic scalar bridge on the
+  hottest benchmark cases
+- the benchmark path no longer pays repeated profiling-guard env lookups while
+  profiling is off
+
+The scalar-mock archive includes the full ratio-shape tables (`p50` / `p90` /
+`p99`) in `ratios.md`. This document keeps only the headline medians and
+confidence intervals.
+
 ### Earlier internal-timing session
 
 Source archive:

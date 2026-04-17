@@ -443,6 +443,13 @@ A later constant-prompt session applies one more native-code optimization:
 - codegen commit: `0ce3c14`
 - publication commit: `f281e5e`
 
+A later scalar-mock session applies one more bridge-focused optimization plus a
+profiling-guard cleanup:
+
+- `benches/results/2026-04-17-scalar-mock-fastpath-session-v2/`
+- runtime commit: `f574493`
+- publication commit: `4291092`
+
 What changed:
 
 - the Corvid / Python gap narrowed from roughly `25x-36x` to roughly `3x-4x`
@@ -465,6 +472,11 @@ After constant prompt rendering for compile-time literal arguments:
 - Corvid / Python ratios improve further to about `0.17x-0.29x`
 - Corvid / TypeScript ratios improve further to about `0.37x-0.61x`
 
+After the scalar env-mock fast path and cached profiling guards:
+
+- Corvid / Python ratios improve further to about `0.10x-0.17x`
+- Corvid / TypeScript ratios improve further to about `0.24x-0.39x`
+
 That last step matters for a different reason than the earlier corrections.
 The investigation identified startup and wait-accounting artifacts as the
 largest measured distortions. The internal-timing session confirms that
@@ -484,5 +496,14 @@ same-session ratio result, not an absolute-throughput claim and not a blanket
 The constant-prompt session strengthens that same scoped claim. It does not
 change the measurement methodology; it reduces real native work on prompt calls
 that can be rendered entirely at compile time.
+
+The scalar-mock session strengthens the same claim again. It also keeps the
+measurement methodology fixed. The gain comes from real measured-path changes:
+
+- scalar prompt bridges under the shipped env-mock fixture path now parse
+  directly from a borrowed queued reply instead of traversing the generic
+  prompt bridge
+- profiling guards now cache their enable/disable state, so benchmark runs no
+  longer pay repeated environment lookups when profiling is off
 
 For the current published interpretation, see [memory-foundation-results.md](memory-foundation-results.md).

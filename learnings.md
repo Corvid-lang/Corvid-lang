@@ -1346,6 +1346,27 @@ Why it matters:
   residual cost is no longer large enough to dominate the shipped workflow
   fixtures
 
+### Scalar prompt bridge fast path
+
+The residual profile correctly identified the bridge / string-conversion path
+as the last named benchmark bucket worth attacking on the shipped fixtures.
+
+What changed:
+
+- scalar prompt returns under the shipped env-mock path now bypass the generic
+  prompt bridge and parse directly from a borrowed queued reply
+- profiling-off runs cache the profiling guard state instead of checking the
+  environment on every hot-path call
+
+Why it matters:
+
+- this is a real measured-path reduction, not another harness rewrite
+- it improves all four shipped workflow scenarios again after the
+  constant-prompt pass
+- once the residual bucket is already tiny, the winning optimization is often
+  removing a whole layer of generic machinery rather than shaving a few
+  instructions inside it
+
 ## Contributing / feedback
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). The rules of the road are: design chat before code, per-scope commits at every boundary, dev-log entry for every session, no shortcuts. The `learnings.md` file you're reading gets updated when each user-visible feature ships.
