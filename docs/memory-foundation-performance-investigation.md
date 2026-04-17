@@ -506,4 +506,22 @@ measurement methodology fixed. The gain comes from real measured-path changes:
 - profiling guards now cache their enable/disable state, so benchmark runs no
   longer pay repeated environment lookups when profiling is off
 
+A later immortal-string session strengthens that same fixture-scoped claim one
+more time:
+
+- `benches/results/2026-04-17-immortal-string-session/`
+
+The gain comes from another real measured-path reduction, not a methodology
+change:
+
+- repeated env-mock prompt replies and benchmark tool replies are prebuilt as
+  immortal `CorvidString` values
+- the shipped fixtures therefore stop paying per-use release/free work on
+  those canned replies
+
+That result is consistent with the residual breakdown. Prompt rendering itself
+was already small. The remaining worthwhile micro-bucket was the bridge /
+string-ownership path, and reused reply ownership turned out to be the next
+piece of that bucket worth removing.
+
 For the current published interpretation, see [memory-foundation-results.md](memory-foundation-results.md).

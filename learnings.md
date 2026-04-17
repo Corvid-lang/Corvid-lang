@@ -1367,6 +1367,28 @@ Why it matters:
   removing a whole layer of generic machinery rather than shaving a few
   instructions inside it
 
+### Immortal fixture-string reuse
+
+Once the scalar prompt bridge was out of the way, the remaining fixture-path
+overhead lived in ownership churn on canned prompt and tool replies.
+
+What changed:
+
+- repeated env-mock prompt replies are now interned to immortal
+  `CorvidString` values
+- benchmark tool replies use the same immortal-string path
+- the shipped workflow fixtures therefore stop paying per-use release/free work
+  on repeated canned replies
+
+Why it matters:
+
+- this is the kind of micro-optimization that is only worth doing once the
+  benchmark path is already very small
+- it confirms that the remaining hot-path work was in bridge ownership, not in
+  prompt rendering itself
+- it strengthens the fixture-scoped benchmark claim again without changing the
+  measurement methodology
+
 ## Contributing / feedback
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). The rules of the road are: design chat before code, per-scope commits at every boundary, dev-log entry for every session, no shortcuts. The `learnings.md` file you're reading gets updated when each user-visible feature ships.

@@ -239,7 +239,7 @@ The constant-prompt archive includes the full ratio-shape tables (`p50` /
 `p90` / `p99`) in `ratios.md`. This document keeps only the headline medians
 and confidence intervals.
 
-### Current scalar-mock fast-path session
+### Earlier scalar-mock fast-path session
 
 Source archive:
 
@@ -309,6 +309,77 @@ What this session supports:
 The scalar-mock archive includes the full ratio-shape tables (`p50` / `p90` /
 `p99`) in `ratios.md`. This document keeps only the headline medians and
 confidence intervals.
+
+### Current immortal fixture-string session
+
+Source archive:
+
+- `benches/results/2026-04-17-immortal-string-session/`
+
+Measured-path changes relative to the scalar-mock session:
+
+- repeated env-mock prompt replies are now prebuilt as immortal
+  `CorvidString` values instead of one-shot heap strings
+- repeated benchmark tool replies follow the same immortal-string path
+- the queued fixture data can therefore be reused without per-use native
+  release/free work on the shipped benchmark path
+
+Session disclosure:
+
+- control values are close to zero on all three stacks, so CV is unstable as a
+  primary noise summary
+- absolute control disclosure:
+  - `corvid`: median `0.000185 ms`, IQR `[0.000122, 0.000428]`, CV `38.31%`
+  - `python`: median `0.001100 ms`, IQR `[0.000900, 0.001300]`, CV `30.15%`
+  - `typescript`: median `0.000950 ms`, IQR `[0.000700, 0.001350]`, CV `76.75%`
+
+#### Scalar-mock vs immortal-string medians
+
+| Scenario | Corvid / Python scalar-mock | Corvid / Python immortal-string | Corvid / TypeScript scalar-mock | Corvid / TypeScript immortal-string |
+|---|---:|---:|---:|---:|
+| `tool_loop` | `0.169` | `0.155` | `0.299` | `0.294` |
+| `retry_workflow` | `0.105` | `0.091` | `0.241` | `0.195` |
+| `approval_workflow` | `0.104` | `0.103` | `0.273` | `0.270` |
+| `replay_trace` | `0.163` | `0.137` | `0.385` | `0.336` |
+
+#### Corvid vs Python
+
+| Scenario | Median ratio | 95% CI |
+|---|---:|---:|
+| `tool_loop` | `0.155` | `[0.144, 0.164]` |
+| `retry_workflow` | `0.091` | `[0.083, 0.099]` |
+| `approval_workflow` | `0.103` | `[0.098, 0.108]` |
+| `replay_trace` | `0.137` | `[0.127, 0.150]` |
+
+#### Corvid vs TypeScript
+
+| Scenario | Median ratio | 95% CI |
+|---|---:|---:|
+| `tool_loop` | `0.294` | `[0.241, 0.352]` |
+| `retry_workflow` | `0.195` | `[0.172, 0.226]` |
+| `approval_workflow` | `0.270` | `[0.234, 0.289]` |
+| `replay_trace` | `0.336` | `[0.260, 0.370]` |
+
+Interpretation:
+
+- every immortal-string ratio remains below `1.0`
+- every immortal-string 95% CI remains below `1.0`
+- so this session becomes the strongest current fixture-scoped claim in the
+  archive: Corvid is faster than the current Python and TypeScript benchmark
+  runners on these four shipped workflow fixtures
+
+What this session supports:
+
+- the last remaining benchmark-path win on the shipped fixtures was in
+  repeated canned reply ownership, not prompt rendering
+- turning queued prompt/tool replies into immortal strings removes another
+  slice of real native work from the measured path
+- the largest gains are on `retry_workflow` and `replay_trace`, where those
+  reused replies are hit most often
+
+The immortal-string archive includes the full ratio-shape tables (`p50` /
+`p90` / `p99`) in `ratios.md`. This document keeps only the headline medians
+and confidence intervals.
 
 ### Earlier internal-timing session
 

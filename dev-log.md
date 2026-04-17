@@ -3373,6 +3373,39 @@ Interpretation:
 - after this cut, the shipped workflow path is materially faster again on all
   four scenarios
 
+## Day 40 [B] - 2026-04-17 - Immortal fixture-string path
+
+Took the remaining benchmark-path ownership overhead out of the shipped
+workflow fixtures by changing canned prompt and tool replies from one-shot heap
+strings to reused immortal strings.
+
+What changed:
+
+- added a runtime helper that constructs immortal `CorvidString` values from
+  borrowed bytes
+- env-mock prompt reply parsing now interns repeated reply text to one immortal
+  `CorvidString` per distinct value
+- benchmark tool reply parsing follows the same path, so queued canned outputs
+  no longer pay per-use release/free work
+
+Published archive:
+
+- `benches/results/2026-04-17-immortal-string-session/`
+
+Top-line outcome on the shipped workflow fixtures:
+
+- Corvid / Python ratios: `0.09x-0.16x`
+- Corvid / TypeScript ratios: `0.20x-0.34x`
+
+Interpretation:
+
+- this is still the same fixture-scoped claim, not a blanket language-speed
+  claim
+- the benchmark-path win was not in prompt rendering anymore; it was in
+  repeated canned reply ownership
+- the biggest extra gains show up on `retry_workflow` and `replay_trace`,
+  where the fixture paths reuse queued replies most heavily
+
 
 
 
