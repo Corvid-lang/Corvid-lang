@@ -44,6 +44,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #if defined(_MSC_VER)
 #pragma intrinsic(_ReturnAddress)
@@ -52,6 +53,16 @@ void* _ReturnAddress(void);
 #else
 #define CORVID_CALLER_PC() __builtin_return_address(0)
 #endif
+
+static uint64_t corvid_now_ns(void) {
+    struct timespec ts;
+    timespec_get(&ts, TIME_UTC);
+    return ((uint64_t)ts.tv_sec * 1000000000ULL) + (uint64_t)ts.tv_nsec;
+}
+
+static int corvid_profile_runtime_enabled(void) {
+    return getenv("CORVID_PROFILE_RUNTIME") != NULL ? 1 : 0;
+}
 
 #define CORVID_HEADER_BYTES 16
 
@@ -210,6 +221,7 @@ long long corvid_alloc_count = 0;
 long long corvid_release_count = 0;
 long long corvid_retain_call_count = 0;
 long long corvid_release_call_count = 0;
+static uint64_t corvid_bench_rc_release_ns_total = 0;
 
 long long corvid_safepoint_count = 0;
 
@@ -303,6 +315,7 @@ void corvid_retain(void* payload) {
 }
 
 void corvid_release(void* payload) {
+    uint64_t start_ns = corvid_profile_runtime_enabled() ? corvid_now_ns() : 0;
     const void* caller_pc = CORVID_CALLER_PC();
     corvid_release_call_count++;
     if (payload == NULL) return;
@@ -333,4 +346,11 @@ void corvid_release(void* payload) {
                 prev_rc);
         exit(1);
     }
+    if (start_ns != 0) {
+        corvid_bench_rc_release_ns_total += corvid_now_ns() - start_ns;
+    }
+}
+
+uint64_t corvid_bench_rc_release_ns(void) {
+    return corvid_bench_rc_release_ns_total;
 }

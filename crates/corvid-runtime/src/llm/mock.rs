@@ -18,9 +18,14 @@ fn profile_enabled() -> bool {
 }
 
 static BENCH_PROMPT_WAIT_NS: AtomicU64 = AtomicU64::new(0);
+static BENCH_MOCK_DISPATCH_NS: AtomicU64 = AtomicU64::new(0);
 
 pub fn bench_prompt_wait_ns() -> u64 {
     BENCH_PROMPT_WAIT_NS.load(Ordering::Relaxed)
+}
+
+pub fn bench_mock_dispatch_ns() -> u64 {
+    BENCH_MOCK_DISPATCH_NS.load(Ordering::Relaxed)
 }
 
 fn sync_string_replies() -> &'static Mutex<HashMap<String, VecDeque<CorvidString>>> {
@@ -81,6 +86,7 @@ fn sync_latencies() -> &'static Mutex<HashMap<String, VecDeque<u64>>> {
 }
 
 pub fn env_mock_string_reply_sync(prompt: &str) -> Option<CorvidString> {
+    let latency_lookup_start = Instant::now();
     let latency_ms = {
         let mut latencies = sync_latencies().lock().unwrap();
         latencies
@@ -88,6 +94,10 @@ pub fn env_mock_string_reply_sync(prompt: &str) -> Option<CorvidString> {
             .and_then(|queue| queue.pop_front())
             .unwrap_or(0)
     };
+    BENCH_MOCK_DISPATCH_NS.fetch_add(
+        latency_lookup_start.elapsed().as_nanos() as u64,
+        Ordering::Relaxed,
+    );
     if latency_ms > 0 {
         let start = Instant::now();
         std::thread::sleep(std::time::Duration::from_millis(latency_ms));
@@ -95,12 +105,17 @@ pub fn env_mock_string_reply_sync(prompt: &str) -> Option<CorvidString> {
         BENCH_PROMPT_WAIT_NS.fetch_add((actual_ms * 1_000_000.0) as u64, Ordering::Relaxed);
         emit_wait_profile("prompt", prompt, latency_ms, actual_ms);
     }
+    let reply_lookup_start = Instant::now();
     let value = {
         let mut replies = sync_string_replies().lock().unwrap();
         replies
             .get_mut(prompt)
             .and_then(|queue| queue.pop_front())
     }?;
+    BENCH_MOCK_DISPATCH_NS.fetch_add(
+        reply_lookup_start.elapsed().as_nanos() as u64,
+        Ordering::Relaxed,
+    );
     Some(value)
 }
 
@@ -275,11 +290,17 @@ impl LlmAdapter for EnvVarMockAdapter {
                 .unwrap_or_else(|| self.fallback.clone())
         };
         let latency_ms = {
+            let latency_lookup_start = Instant::now();
             let mut latencies = self.latencies_ms.lock().unwrap();
-            latencies
+            let value = latencies
                 .get_mut(&prompt)
                 .and_then(|queue| queue.pop_front())
-                .unwrap_or(0)
+                .unwrap_or(0);
+            BENCH_MOCK_DISPATCH_NS.fetch_add(
+                latency_lookup_start.elapsed().as_nanos() as u64,
+                Ordering::Relaxed,
+            );
+            value
         };
 
         Box::pin(async move {
@@ -295,6 +316,11 @@ impl LlmAdapter for EnvVarMockAdapter {
                     actual_ms,
                 );
             }
+            let response_wrap_start = Instant::now();
+            BENCH_MOCK_DISPATCH_NS.fetch_add(
+                response_wrap_start.elapsed().as_nanos() as u64,
+                Ordering::Relaxed,
+            );
             Ok(LlmResponse {
                 value,
                 usage: TokenUsage::default(),

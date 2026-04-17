@@ -45,6 +45,11 @@ extern uint64_t corvid_stack_maps_entry_count(void);
 extern uint64_t corvid_bench_approval_wait_ns(void);
 extern uint64_t corvid_bench_prompt_wait_ns(void);
 extern uint64_t corvid_bench_tool_wait_ns(void);
+extern uint64_t corvid_bench_prompt_render_ns(void);
+extern uint64_t corvid_bench_json_bridge_ns(void);
+extern uint64_t corvid_bench_mock_dispatch_ns(void);
+extern uint64_t corvid_bench_trace_overhead_ns(void);
+extern uint64_t corvid_bench_rc_release_ns(void);
 
 static long long corvid_bench_allocs_before = 0;
 static long long corvid_bench_releases_before = 0;
@@ -57,7 +62,24 @@ static long long corvid_bench_verify_drift_count_before = 0;
 static uint64_t corvid_bench_approval_wait_ns_before = 0;
 static uint64_t corvid_bench_prompt_wait_ns_before = 0;
 static uint64_t corvid_bench_tool_wait_ns_before = 0;
+static uint64_t corvid_bench_prompt_render_ns_before = 0;
+static uint64_t corvid_bench_json_bridge_ns_before = 0;
+static uint64_t corvid_bench_mock_dispatch_ns_before = 0;
+static uint64_t corvid_bench_trace_overhead_ns_before = 0;
+static uint64_t corvid_bench_rc_release_ns_before = 0;
+static uint64_t corvid_bench_trial_init_ns_total = 0;
+static uint64_t corvid_bench_trial_init_ns_before = 0;
 static double corvid_bench_trial_start_ms = 0.0;
+
+static uint64_t corvid_now_ns(void) {
+    struct timespec ts;
+    timespec_get(&ts, TIME_UTC);
+    return ((uint64_t)ts.tv_sec * 1000000000ULL) + (uint64_t)ts.tv_nsec;
+}
+
+static int corvid_profile_runtime_enabled(void) {
+    return getenv("CORVID_PROFILE_RUNTIME") != NULL ? 1 : 0;
+}
 
 static double corvid_now_ms(void) {
     struct timespec ts;
@@ -262,6 +284,7 @@ long long corvid_bench_next_trial(void) {
     }
     char* end = NULL;
     long long trial_idx = strtoll(buf, &end, 10);
+    uint64_t init_start_ns = corvid_profile_runtime_enabled() ? corvid_now_ns() : 0;
     corvid_bench_allocs_before = corvid_alloc_count;
     corvid_bench_releases_before = corvid_release_count;
     corvid_bench_retain_calls_before = corvid_retain_call_count;
@@ -273,6 +296,15 @@ long long corvid_bench_next_trial(void) {
     corvid_bench_approval_wait_ns_before = corvid_bench_approval_wait_ns();
     corvid_bench_prompt_wait_ns_before = corvid_bench_prompt_wait_ns();
     corvid_bench_tool_wait_ns_before = corvid_bench_tool_wait_ns();
+    corvid_bench_prompt_render_ns_before = corvid_bench_prompt_render_ns();
+    corvid_bench_json_bridge_ns_before = corvid_bench_json_bridge_ns();
+    corvid_bench_mock_dispatch_ns_before = corvid_bench_mock_dispatch_ns();
+    corvid_bench_trace_overhead_ns_before = corvid_bench_trace_overhead_ns();
+    corvid_bench_rc_release_ns_before = corvid_bench_rc_release_ns();
+    if (init_start_ns != 0) {
+        corvid_bench_trial_init_ns_total += corvid_now_ns() - init_start_ns;
+    }
+    corvid_bench_trial_init_ns_before = corvid_bench_trial_init_ns_total;
     corvid_bench_trial_start_ms = corvid_now_ms();
     return trial_idx > 0 ? trial_idx : 0;
 }
@@ -288,8 +320,26 @@ void corvid_bench_finish_trial(long long trial_idx) {
     double tool_wait_ms =
         (double)(corvid_bench_tool_wait_ns() - corvid_bench_tool_wait_ns_before)
         / 1000000.0;
+    double prompt_render_ms =
+        (double)(corvid_bench_prompt_render_ns() - corvid_bench_prompt_render_ns_before)
+        / 1000000.0;
+    double json_bridge_ms =
+        (double)(corvid_bench_json_bridge_ns() - corvid_bench_json_bridge_ns_before)
+        / 1000000.0;
+    double mock_dispatch_ms =
+        (double)(corvid_bench_mock_dispatch_ns() - corvid_bench_mock_dispatch_ns_before)
+        / 1000000.0;
+    double trace_overhead_ms =
+        (double)(corvid_bench_trace_overhead_ns() - corvid_bench_trace_overhead_ns_before)
+        / 1000000.0;
+    double rc_release_time_ms =
+        (double)(corvid_bench_rc_release_ns() - corvid_bench_rc_release_ns_before)
+        / 1000000.0;
+    double trial_init_ms =
+        (double)(corvid_bench_trial_init_ns_total - corvid_bench_trial_init_ns_before)
+        / 1000000.0;
     fprintf(stderr,
-            "CORVID_BENCH_TRIAL={\"trial_idx\":%lld,\"trial_wall_ms\":%.6f,\"allocs\":%lld,\"releases\":%lld,\"retain_calls\":%lld,\"release_calls\":%lld,\"gc_trigger_count\":%lld,\"safepoint_count\":%lld,\"stack_map_entry_count\":%llu,\"verify_drift_count\":%lld,\"approval_wait_actual_ms\":%.6f,\"prompt_wait_actual_ms\":%.6f,\"tool_wait_actual_ms\":%.6f}\n",
+            "CORVID_BENCH_TRIAL={\"trial_idx\":%lld,\"trial_wall_ms\":%.6f,\"allocs\":%lld,\"releases\":%lld,\"retain_calls\":%lld,\"release_calls\":%lld,\"gc_trigger_count\":%lld,\"safepoint_count\":%lld,\"stack_map_entry_count\":%llu,\"verify_drift_count\":%lld,\"approval_wait_actual_ms\":%.6f,\"prompt_wait_actual_ms\":%.6f,\"tool_wait_actual_ms\":%.6f,\"prompt_render_ms\":%.6f,\"json_bridge_ms\":%.6f,\"mock_llm_dispatch_ms\":%.6f,\"trial_init_ms\":%.6f,\"trace_overhead_ms\":%.6f,\"rc_release_time_ms\":%.6f}\n",
             trial_idx,
             trial_wall_ms,
             corvid_alloc_count - corvid_bench_allocs_before,
@@ -303,6 +353,12 @@ void corvid_bench_finish_trial(long long trial_idx) {
             corvid_gc_verify_drift_count - corvid_bench_verify_drift_count_before,
             approval_wait_ms,
             prompt_wait_ms,
-            tool_wait_ms);
+            tool_wait_ms,
+            prompt_render_ms,
+            json_bridge_ms,
+            mock_dispatch_ms,
+            trial_init_ms,
+            trace_overhead_ms,
+            rc_release_time_ms);
     fflush(stderr);
 }

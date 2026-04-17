@@ -9,10 +9,21 @@
 
 use crate::redact::RedactionSet;
 use serde::{Deserialize, Serialize};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::io::BufWriter;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
+
+static BENCH_TRACE_OVERHEAD_NS: AtomicU64 = AtomicU64::new(0);
+
+fn profile_runtime_enabled() -> bool {
+    std::env::var("CORVID_PROFILE_RUNTIME").ok().as_deref() == Some("1")
+}
+
+pub fn bench_trace_overhead_ns() -> u64 {
+    BENCH_TRACE_OVERHEAD_NS.load(Ordering::Relaxed)
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "kind")]
@@ -175,6 +186,11 @@ impl Tracer {
     /// Append an event. IO errors are swallowed. Args inside the event
     /// are passed through the redaction set before serialization.
     pub fn emit(&self, event: TraceEvent) {
+        let profile_start = if profile_runtime_enabled() {
+            Some(std::time::Instant::now())
+        } else {
+            None
+        };
         if !self.is_enabled() {
             return;
         }
@@ -188,6 +204,12 @@ impl Tracer {
                 use std::io::Write;
                 let _ = writeln!(f, "{line}");
             }
+        }
+        if let Some(start) = profile_start {
+            BENCH_TRACE_OVERHEAD_NS.fetch_add(
+                start.elapsed().as_nanos() as u64,
+                Ordering::Relaxed,
+            );
         }
     }
 

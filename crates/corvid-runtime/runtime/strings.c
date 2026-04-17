@@ -23,8 +23,25 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #define CORVID_HEADER_BYTES 16
+
+static uint64_t corvid_bench_prompt_render_ns_total = 0;
+
+static uint64_t corvid_now_ns(void) {
+    struct timespec ts;
+    timespec_get(&ts, TIME_UTC);
+    return ((uint64_t)ts.tv_sec * 1000000000ULL) + (uint64_t)ts.tv_nsec;
+}
+
+static int corvid_profile_runtime_enabled(void) {
+    return getenv("CORVID_PROFILE_RUNTIME") != NULL ? 1 : 0;
+}
+
+uint64_t corvid_bench_prompt_render_ns(void) {
+    return corvid_bench_prompt_render_ns_total;
+}
 
 /* Typeinfo block forward-declaration — the definition lives in alloc.c
  * (`corvid_typeinfo_String`). Every runtime-internal string allocation
@@ -62,6 +79,7 @@ static void* alloc_string(const char* src, long long len) {
  * refcount = 1. Does not modify or retain the inputs.
  */
 void* corvid_string_concat(void* a_payload, void* b_payload) {
+    uint64_t start_ns = corvid_profile_runtime_enabled() ? corvid_now_ns() : 0;
     corvid_string* a = (corvid_string*)a_payload;
     corvid_string* b = (corvid_string*)b_payload;
     long long total = a->length + b->length;
@@ -73,6 +91,9 @@ void* corvid_string_concat(void* a_payload, void* b_payload) {
     if (b->length > 0) memcpy(bytes + a->length, b->bytes_ptr, (size_t)b->length);
     desc->bytes_ptr = bytes;
     desc->length = total;
+    if (start_ns != 0) {
+        corvid_bench_prompt_render_ns_total += corvid_now_ns() - start_ns;
+    }
     return payload;
 }
 
@@ -140,27 +161,42 @@ void* corvid_string_from_bytes(const char* bytes, long long length) {
 #include <stdio.h>
 
 void* corvid_string_from_int(long long n) {
+    uint64_t start_ns = corvid_profile_runtime_enabled() ? corvid_now_ns() : 0;
     /* `%lld` with a 32-byte buffer covers every possible i64 (max
      * decimal length of i64 is 20 chars including the sign). */
     char buf[32];
     int len = snprintf(buf, sizeof(buf), "%lld", n);
     if (len < 0) len = 0;
-    return alloc_string(buf, (long long)len);
+    void* payload = alloc_string(buf, (long long)len);
+    if (start_ns != 0) {
+        corvid_bench_prompt_render_ns_total += corvid_now_ns() - start_ns;
+    }
+    return payload;
 }
 
 void* corvid_string_from_bool(char b) {
+    uint64_t start_ns = corvid_profile_runtime_enabled() ? corvid_now_ns() : 0;
     /* Match the user-visible Bool format Corvid uses on stdout
      * (`corvid_print_bool`): `true` / `false`, lowercase.
      * Templates embedding Bool values get the same string literal
      * a user would see when printing. */
     if (b) {
-        return alloc_string("true", 4);
+        void* payload = alloc_string("true", 4);
+        if (start_ns != 0) {
+            corvid_bench_prompt_render_ns_total += corvid_now_ns() - start_ns;
+        }
+        return payload;
     } else {
-        return alloc_string("false", 5);
+        void* payload = alloc_string("false", 5);
+        if (start_ns != 0) {
+            corvid_bench_prompt_render_ns_total += corvid_now_ns() - start_ns;
+        }
+        return payload;
     }
 }
 
 void* corvid_string_from_float(double v) {
+    uint64_t start_ns = corvid_profile_runtime_enabled() ? corvid_now_ns() : 0;
     /* `%.17g` is the round-trippable IEEE 754 format — same one
      * `corvid_print_f64` uses for stdout. NaN / Inf round-trip
      * as their printf representations ("nan" / "inf" / "-inf"). 64
@@ -169,5 +205,9 @@ void* corvid_string_from_float(double v) {
     char buf[64];
     int len = snprintf(buf, sizeof(buf), "%.17g", v);
     if (len < 0) len = 0;
-    return alloc_string(buf, (long long)len);
+    void* payload = alloc_string(buf, (long long)len);
+    if (start_ns != 0) {
+        corvid_bench_prompt_render_ns_total += corvid_now_ns() - start_ns;
+    }
+    return payload;
 }

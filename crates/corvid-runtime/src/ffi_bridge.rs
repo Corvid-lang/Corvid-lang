@@ -44,16 +44,31 @@ use crate::abi::{CorvidString, REGISTERED_TOOL_COUNT};
 use crate::approvals::{bench_approval_wait_ns, ProgrammaticApprover, StdinApprover};
 use crate::llm::anthropic::AnthropicAdapter;
 use crate::llm::gemini::GeminiAdapter;
-use crate::llm::mock::{bench_prompt_wait_ns, env_mock_string_reply_sync, EnvVarMockAdapter};
+use crate::llm::mock::{
+    bench_mock_dispatch_ns, bench_prompt_wait_ns, env_mock_string_reply_sync, EnvVarMockAdapter,
+};
 use crate::llm::ollama::OllamaAdapter;
 use crate::llm::openai::OpenAiAdapter;
 use crate::llm::openai_compat::OpenAiCompatibleAdapter;
 use crate::runtime::{Runtime, RuntimeBuilder};
-use crate::tracing::{fresh_run_id, Tracer};
+use crate::tracing::{bench_trace_overhead_ns, fresh_run_id, Tracer};
 use crate::redact::RedactionSet;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicPtr, Ordering};
+use std::sync::atomic::{AtomicPtr, AtomicU64, Ordering};
 use std::sync::Arc;
+use std::time::Instant;
+
+static BENCH_JSON_BRIDGE_NS: AtomicU64 = AtomicU64::new(0);
+
+fn record_json_bridge_ns(start: Instant, prompt_wait_before: u64, mock_dispatch_before: u64) {
+    let elapsed_ns = start.elapsed().as_nanos() as u64;
+    let prompt_wait_ns = bench_prompt_wait_ns().saturating_sub(prompt_wait_before);
+    let mock_dispatch_ns = bench_mock_dispatch_ns().saturating_sub(mock_dispatch_before);
+    let residual = elapsed_ns
+        .saturating_sub(prompt_wait_ns)
+        .saturating_sub(mock_dispatch_ns);
+    BENCH_JSON_BRIDGE_NS.fetch_add(residual, Ordering::Relaxed);
+}
 
 /// The bridge state owned for the lifetime of a compiled Corvid
 /// process. Constructed eagerly by `corvid_runtime_init` and stored
@@ -131,6 +146,21 @@ pub extern "C" fn corvid_bench_prompt_wait_ns() -> u64 {
 #[no_mangle]
 pub extern "C" fn corvid_bench_approval_wait_ns() -> u64 {
     bench_approval_wait_ns()
+}
+
+#[no_mangle]
+pub extern "C" fn corvid_bench_mock_dispatch_ns() -> u64 {
+    bench_mock_dispatch_ns()
+}
+
+#[no_mangle]
+pub extern "C" fn corvid_bench_trace_overhead_ns() -> u64 {
+    bench_trace_overhead_ns()
+}
+
+#[no_mangle]
+pub extern "C" fn corvid_bench_json_bridge_ns() -> u64 {
+    BENCH_JSON_BRIDGE_NS.load(Ordering::Relaxed)
 }
 
 /// Construct the tokio runtime + the Corvid `Runtime` and store them
@@ -520,6 +550,9 @@ pub unsafe extern "C" fn corvid_prompt_call_int(
     rendered: CorvidString,
     model: CorvidString,
 ) -> i64 {
+    let bridge_start = Instant::now();
+    let prompt_wait_before = bench_prompt_wait_ns();
+    let mock_dispatch_before = bench_mock_dispatch_ns();
     let state = bridge();
     let prompt_name = unsafe { read_corvid_string(prompt_name) };
     let signature = unsafe { read_corvid_string(signature) };
@@ -538,6 +571,7 @@ pub unsafe extern "C" fn corvid_prompt_call_int(
         match call_llm_once(state, &prompt_name, &model, &rendered, &sys) {
             Err(e) => {
                 if attempt == max_retries {
+                    record_json_bridge_ns(bridge_start, prompt_wait_before, mock_dispatch_before);
                     panic!(
                         "corvid prompt `{prompt_name}` (model `{model}`): adapter failed after {} attempts: {e}",
                         attempt + 1
@@ -546,11 +580,15 @@ pub unsafe extern "C" fn corvid_prompt_call_int(
                 continue;
             }
             Ok(text) => match parse_int(&text) {
-                Some(v) => return v,
+                Some(v) => {
+                    record_json_bridge_ns(bridge_start, prompt_wait_before, mock_dispatch_before);
+                    return v;
+                }
                 None => last_response = Some(text),
             },
         }
     }
+    record_json_bridge_ns(bridge_start, prompt_wait_before, mock_dispatch_before);
     panic!(
         "corvid prompt `{prompt_name}` (model `{model}`): could not parse Int from LLM response after {} attempts. Last response: {:?}",
         max_retries + 1,
@@ -565,6 +603,9 @@ pub unsafe extern "C" fn corvid_prompt_call_bool(
     rendered: CorvidString,
     model: CorvidString,
 ) -> bool {
+    let bridge_start = Instant::now();
+    let prompt_wait_before = bench_prompt_wait_ns();
+    let mock_dispatch_before = bench_mock_dispatch_ns();
     let state = bridge();
     let prompt_name = unsafe { read_corvid_string(prompt_name) };
     let signature = unsafe { read_corvid_string(signature) };
@@ -583,6 +624,7 @@ pub unsafe extern "C" fn corvid_prompt_call_bool(
         match call_llm_once(state, &prompt_name, &model, &rendered, &sys) {
             Err(e) => {
                 if attempt == max_retries {
+                    record_json_bridge_ns(bridge_start, prompt_wait_before, mock_dispatch_before);
                     panic!(
                         "corvid prompt `{prompt_name}`: adapter failed after {} attempts: {e}",
                         attempt + 1
@@ -591,11 +633,15 @@ pub unsafe extern "C" fn corvid_prompt_call_bool(
                 continue;
             }
             Ok(text) => match parse_bool(&text) {
-                Some(v) => return v,
+                Some(v) => {
+                    record_json_bridge_ns(bridge_start, prompt_wait_before, mock_dispatch_before);
+                    return v;
+                }
                 None => last_response = Some(text),
             },
         }
     }
+    record_json_bridge_ns(bridge_start, prompt_wait_before, mock_dispatch_before);
     panic!(
         "corvid prompt `{prompt_name}`: could not parse Bool from LLM response after {} attempts. Last: {:?}",
         max_retries + 1,
@@ -610,6 +656,9 @@ pub unsafe extern "C" fn corvid_prompt_call_float(
     rendered: CorvidString,
     model: CorvidString,
 ) -> f64 {
+    let bridge_start = Instant::now();
+    let prompt_wait_before = bench_prompt_wait_ns();
+    let mock_dispatch_before = bench_mock_dispatch_ns();
     let state = bridge();
     let prompt_name = unsafe { read_corvid_string(prompt_name) };
     let signature = unsafe { read_corvid_string(signature) };
@@ -628,6 +677,7 @@ pub unsafe extern "C" fn corvid_prompt_call_float(
         match call_llm_once(state, &prompt_name, &model, &rendered, &sys) {
             Err(e) => {
                 if attempt == max_retries {
+                    record_json_bridge_ns(bridge_start, prompt_wait_before, mock_dispatch_before);
                     panic!(
                         "corvid prompt `{prompt_name}`: adapter failed after {} attempts: {e}",
                         attempt + 1
@@ -636,11 +686,15 @@ pub unsafe extern "C" fn corvid_prompt_call_float(
                 continue;
             }
             Ok(text) => match parse_float(&text) {
-                Some(v) => return v,
+                Some(v) => {
+                    record_json_bridge_ns(bridge_start, prompt_wait_before, mock_dispatch_before);
+                    return v;
+                }
                 None => last_response = Some(text),
             },
         }
     }
+    record_json_bridge_ns(bridge_start, prompt_wait_before, mock_dispatch_before);
     panic!(
         "corvid prompt `{prompt_name}`: could not parse Float from LLM response after {} attempts. Last: {:?}",
         max_retries + 1,
@@ -656,10 +710,14 @@ pub unsafe extern "C" fn corvid_prompt_call_string(
     model: CorvidString,
 ) -> CorvidString {
     use crate::abi::IntoCorvidAbi;
+    let bridge_start = Instant::now();
+    let prompt_wait_before = bench_prompt_wait_ns();
+    let mock_dispatch_before = bench_mock_dispatch_ns();
     let prompt_name = unsafe { read_corvid_string(prompt_name) };
 
     if using_env_mock_llm() {
         if let Some(text) = env_mock_string_reply_sync(&prompt_name) {
+            record_json_bridge_ns(bridge_start, prompt_wait_before, mock_dispatch_before);
             return text;
         }
     }
@@ -681,7 +739,10 @@ pub unsafe extern "C" fn corvid_prompt_call_string(
         )
     };
     match call_llm_once(state, &prompt_name, &model, &rendered, &sys) {
-        Ok(text) => text.into_corvid_abi(),
+        Ok(text) => {
+            record_json_bridge_ns(bridge_start, prompt_wait_before, mock_dispatch_before);
+            text.into_corvid_abi()
+        }
         Err(e) => panic!(
             "corvid prompt `{prompt_name}` (model `{model}`): adapter failed: {e}"
         ),

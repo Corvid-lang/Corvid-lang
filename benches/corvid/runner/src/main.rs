@@ -1,7 +1,7 @@
 use anyhow::{bail, Context, Result};
 use corvid_driver::{build_or_get_cached_native, compile_to_ir};
 use serde::Deserialize;
-use serde_json::{json, Value};
+use serde_json::{Map, Value};
 use std::collections::BTreeMap;
 use std::fs;
 use std::io::{BufRead, BufReader, Write};
@@ -33,6 +33,12 @@ struct TrialProfile {
     approval_wait_actual_ms: f64,
     prompt_wait_actual_ms: f64,
     tool_wait_actual_ms: f64,
+    prompt_render_ms: f64,
+    json_bridge_ms: f64,
+    mock_llm_dispatch_ms: f64,
+    trial_init_ms: f64,
+    trace_overhead_ms: f64,
+    rc_release_time_ms: f64,
     allocs: Option<i64>,
     releases: Option<i64>,
     retain_calls: Option<i64>,
@@ -180,7 +186,7 @@ fn start_native_server(
     let source_path = source_for_fixture(root, &fixture.name);
     let source = fs::read_to_string(&source_path)?;
     let compile_source = if profile_enabled {
-        format!("{source}\n# benchmark-profiling\n")
+        format!("{source}\n# benchmark-profiling-v2\n")
     } else {
         source.clone()
     };
@@ -213,6 +219,9 @@ fn start_native_server(
     let tool_latencies = tool_latencies_repeated(fixture, requests);
 
     let mut command = Command::new(&binary);
+    let trace_disable = std::env::var("CORVID_BENCH_TRACE_DISABLE")
+        .ok()
+        .unwrap_or_else(|| "1".to_string());
     command
         .current_dir(&trial_dir)
         .stdin(Stdio::piped())
@@ -220,7 +229,7 @@ fn start_native_server(
         .stderr(Stdio::piped())
         .env("CORVID_MODEL", "mock-bench")
         .env("CORVID_APPROVE_AUTO", "1")
-        .env("CORVID_TRACE_DISABLE", "1")
+        .env("CORVID_TRACE_DISABLE", trace_disable)
         .env("CORVID_TEST_MOCK_LLM", "1")
         .env("CORVID_TEST_MOCK_LLM_REPLIES", serde_json::to_string(&prompt_replies)?)
         .env("CORVID_TEST_MOCK_LLM_LATENCY_MS", serde_json::to_string(&prompt_latencies)?)
@@ -232,7 +241,6 @@ fn start_native_server(
         .env("CORVID_BENCH_CACHE_RESOLVE_MS", format!("{cache_resolve_ms:.6}"))
         .env("CORVID_BENCH_CACHE_HIT", if cached.from_cache { "1" } else { "0" });
     if profile_enabled {
-        command.env("CORVID_PROFILE_EVENTS", "1");
         command.env("CORVID_PROFILE_RUNTIME", "1");
     }
 
@@ -302,46 +310,118 @@ fn run_trial(fixture: &Fixture, server: &mut NativeServer, trial: usize) -> Resu
     let retry_sleep_actual_ms = retry_sleep_start.elapsed().as_secs_f64() * 1000.0;
     profile.actual_external_wait_ms += retry_sleep_actual_ms;
     let total_wall_ms = profile.trial_wall_ms + approval_wait_actual_ms + retry_sleep_actual_ms;
+    let total_profiled_ms = profile.prompt_render_ms
+        + profile.json_bridge_ms
+        + profile.mock_llm_dispatch_ms
+        + profile.trial_init_ms
+        + profile.trace_overhead_ms
+        + profile.rc_release_time_ms;
+    let orchestration_overhead_ms = total_wall_ms - profile.actual_external_wait_ms;
+    let unattributed_ms = (orchestration_overhead_ms - total_profiled_ms).max(0.0);
 
-    Ok(json!({
-        "implementation": "corvid-native",
-        "process_mode": "persistent",
-        "fixture": fixture.name,
-        "trial": trial,
-        "success": true,
-        "stdout_match": stdout == expected_stdout,
-        "total_wall_ms": total_wall_ms,
-        "external_wait_ms": external_wait_ms,
-        "actual_external_wait_ms": profile.actual_external_wait_ms,
-        "external_wait_bias_ms": profile.actual_external_wait_ms - external_wait_ms as f64,
-        "orchestration_overhead_ms": total_wall_ms - profile.actual_external_wait_ms,
-        "runner_total_wall_ms": total_wall_ms,
-        "compile_to_ir_ms": server.compile_to_ir_ms,
-        "cache_resolve_ms": server.cache_resolve_ms,
-        "binary_exec_ms": profile.trial_wall_ms,
-        "retry_sleep_nominal_ms": retry_sleep_ms,
-        "retry_sleep_actual_ms": retry_sleep_actual_ms,
-        "cache_hit": server.cache_hit,
-        "trace_size_raw_bytes": trace_size_raw_bytes,
-        "logical_steps_recorded": logical_steps_recorded,
-        "bytes_per_step": bytes_per_step,
-        "replay_supported": false,
-        "expected_replay_steps": fixture.expected_replay_events.len(),
-        "approval_wait_nominal_ms": approval_wait_nominal_ms,
-        "approval_wait_actual_ms": profile.approval_wait_actual_ms,
-        "prompt_wait_nominal_ms": fixture.steps.iter().filter(|s| s.kind == "prompt").map(|s| s.external_latency_ms).sum::<u64>(),
-        "prompt_wait_actual_ms": profile.prompt_wait_actual_ms,
-        "tool_wait_nominal_ms": fixture.steps.iter().filter(|s| s.kind == "tool").map(|s| s.external_latency_ms).sum::<u64>(),
-        "tool_wait_actual_ms": profile.tool_wait_actual_ms,
-        "allocs": profile.allocs,
-        "releases": profile.releases,
-        "retain_calls": profile.retain_calls,
-        "release_calls": profile.release_calls,
-        "gc_trigger_count": profile.gc_trigger_count,
-        "safepoint_count": profile.safepoint_count,
-        "stack_map_entry_count": profile.stack_map_entry_count,
-        "verify_drift_count": profile.verify_drift_count,
-    }))
+    let mut record = Map::new();
+    record.insert("implementation".into(), Value::String("corvid-native".into()));
+    record.insert("process_mode".into(), Value::String("persistent".into()));
+    record.insert("fixture".into(), Value::String(fixture.name.clone()));
+    record.insert("trial".into(), Value::from(trial as u64));
+    record.insert("success".into(), Value::Bool(true));
+    record.insert("stdout_match".into(), Value::Bool(stdout == expected_stdout));
+    record.insert("total_wall_ms".into(), Value::from(total_wall_ms));
+    record.insert("external_wait_ms".into(), Value::from(external_wait_ms));
+    record.insert("actual_external_wait_ms".into(), Value::from(profile.actual_external_wait_ms));
+    record.insert(
+        "external_wait_bias_ms".into(),
+        Value::from(profile.actual_external_wait_ms - external_wait_ms as f64),
+    );
+    record.insert("orchestration_overhead_ms".into(), Value::from(orchestration_overhead_ms));
+    record.insert("runner_total_wall_ms".into(), Value::from(total_wall_ms));
+    record.insert("compile_to_ir_ms".into(), Value::from(server.compile_to_ir_ms));
+    record.insert("cache_resolve_ms".into(), Value::from(server.cache_resolve_ms));
+    record.insert("binary_exec_ms".into(), Value::from(profile.trial_wall_ms));
+    record.insert("retry_sleep_nominal_ms".into(), Value::from(retry_sleep_ms));
+    record.insert("retry_sleep_actual_ms".into(), Value::from(retry_sleep_actual_ms));
+    record.insert("cache_hit".into(), Value::Bool(server.cache_hit));
+    record.insert("trace_size_raw_bytes".into(), Value::from(trace_size_raw_bytes));
+    record.insert("logical_steps_recorded".into(), Value::from(logical_steps_recorded as u64));
+    record.insert("bytes_per_step".into(), Value::from(bytes_per_step));
+    record.insert("replay_supported".into(), Value::Bool(false));
+    record.insert(
+        "expected_replay_steps".into(),
+        Value::from(fixture.expected_replay_events.len() as u64),
+    );
+    record.insert("approval_wait_nominal_ms".into(), Value::from(approval_wait_nominal_ms));
+    record.insert("approval_wait_actual_ms".into(), Value::from(profile.approval_wait_actual_ms));
+    record.insert(
+        "prompt_wait_nominal_ms".into(),
+        Value::from(
+            fixture
+                .steps
+                .iter()
+                .filter(|s| s.kind == "prompt")
+                .map(|s| s.external_latency_ms)
+                .sum::<u64>(),
+        ),
+    );
+    record.insert("prompt_wait_actual_ms".into(), Value::from(profile.prompt_wait_actual_ms));
+    record.insert(
+        "tool_wait_nominal_ms".into(),
+        Value::from(
+            fixture
+                .steps
+                .iter()
+                .filter(|s| s.kind == "tool")
+                .map(|s| s.external_latency_ms)
+                .sum::<u64>(),
+        ),
+    );
+    record.insert("tool_wait_actual_ms".into(), Value::from(profile.tool_wait_actual_ms));
+    record.insert("prompt_render_ms".into(), Value::from(profile.prompt_render_ms));
+    record.insert("json_bridge_ms".into(), Value::from(profile.json_bridge_ms));
+    record.insert(
+        "mock_llm_dispatch_ms".into(),
+        Value::from(profile.mock_llm_dispatch_ms),
+    );
+    record.insert("trial_init_ms".into(), Value::from(profile.trial_init_ms));
+    record.insert("trace_overhead_ms".into(), Value::from(profile.trace_overhead_ms));
+    record.insert("rc_release_time_ms".into(), Value::from(profile.rc_release_time_ms));
+    record.insert("total_profiled_ms".into(), Value::from(total_profiled_ms));
+    record.insert("unattributed_ms".into(), Value::from(unattributed_ms));
+    record.insert("allocs".into(), profile.allocs.map(Value::from).unwrap_or(Value::Null));
+    record.insert(
+        "releases".into(),
+        profile.releases.map(Value::from).unwrap_or(Value::Null),
+    );
+    record.insert(
+        "retain_calls".into(),
+        profile.retain_calls.map(Value::from).unwrap_or(Value::Null),
+    );
+    record.insert(
+        "release_calls".into(),
+        profile.release_calls.map(Value::from).unwrap_or(Value::Null),
+    );
+    record.insert(
+        "gc_trigger_count".into(),
+        profile.gc_trigger_count.map(Value::from).unwrap_or(Value::Null),
+    );
+    record.insert(
+        "safepoint_count".into(),
+        profile.safepoint_count.map(Value::from).unwrap_or(Value::Null),
+    );
+    record.insert(
+        "stack_map_entry_count".into(),
+        profile
+            .stack_map_entry_count
+            .map(Value::from)
+            .unwrap_or(Value::Null),
+    );
+    record.insert(
+        "verify_drift_count".into(),
+        profile
+            .verify_drift_count
+            .map(Value::from)
+            .unwrap_or(Value::Null),
+    );
+    Ok(Value::Object(record))
 }
 
 fn read_stdout_line(reader: &mut BufReader<ChildStdout>) -> Result<String> {
@@ -390,6 +470,30 @@ fn read_trial_profile(reader: &mut BufReader<ChildStderr>) -> Result<TrialProfil
                 .unwrap_or(0.0);
             profile.tool_wait_actual_ms = value
                 .get("tool_wait_actual_ms")
+                .and_then(Value::as_f64)
+                .unwrap_or(0.0);
+            profile.prompt_render_ms = value
+                .get("prompt_render_ms")
+                .and_then(Value::as_f64)
+                .unwrap_or(0.0);
+            profile.json_bridge_ms = value
+                .get("json_bridge_ms")
+                .and_then(Value::as_f64)
+                .unwrap_or(0.0);
+            profile.mock_llm_dispatch_ms = value
+                .get("mock_llm_dispatch_ms")
+                .and_then(Value::as_f64)
+                .unwrap_or(0.0);
+            profile.trial_init_ms = value
+                .get("trial_init_ms")
+                .and_then(Value::as_f64)
+                .unwrap_or(0.0);
+            profile.trace_overhead_ms = value
+                .get("trace_overhead_ms")
+                .and_then(Value::as_f64)
+                .unwrap_or(0.0);
+            profile.rc_release_time_ms = value
+                .get("rc_release_time_ms")
                 .and_then(Value::as_f64)
                 .unwrap_or(0.0);
             profile.actual_external_wait_ms = profile.approval_wait_actual_ms
