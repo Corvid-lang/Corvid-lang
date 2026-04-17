@@ -84,7 +84,7 @@ The trial record keeps both:
 - `external_wait_ms` = nominal wait requested by the fixture
 - `actual_external_wait_ms` = measured wait observed at runtime
 
-As of the harness correction that introduced persistent native execution and actual-wait subtraction, the published orchestration metric subtracts the **measured** wait, not the nominal wait. Prior published same-session ratios used nominal subtraction and remain archived as-is for reproducibility.
+As of commit `e5b371a`, the published orchestration metric subtracts the **measured** wait, not the nominal wait. Prior published same-session ratios used nominal subtraction and remain archived as-is for reproducibility.
 
 That distinction matters because even mocked sleep calls have host-dependent wake-up jitter. Subtracting nominal wait charges overshoot or undershoot to orchestration cost; subtracting actual measured wait isolates the language/runtime work more faithfully.
 
@@ -109,6 +109,8 @@ Each published session includes a single disclosed noise floor:
 - coefficient of variation of the control scenario across the 30 interleaved measured trials
 
 The reader can then judge whether the observed ratios rise meaningfully above the host's ambient variability.
+
+When the control median approaches zero, the coefficient of variation becomes unstable because the denominator is too small. In those sessions, the archive also publishes the control median and IQR in absolute milliseconds and treats those absolute values as the primary control disclosure.
 
 ### What is intentionally not published yet
 
@@ -157,14 +159,83 @@ The comparative runner set is now in-repo:
 
 All three consume the canonical fixtures under `benchmarks/cases/` and emit JSONL trial records using the same subtraction rule.
 
-## Published same-session ratios
+## Same-session ratio sessions
+
+### Corrected harness session
+
+Source archive:
+
+- `benches/results/2026-04-17-corrected-session/`
+- publication commit: `74abcd6`
+
+Methodology corrections relative to the historical close-out session:
+
+- Corvid now executes measured trials inside a persistent native process instead of relaunching the binary for every trial.
+- All three stacks now subtract **actual measured external wait**, not nominal fixture wait.
+
+Session disclosure:
+
+- control values are close to zero on all three stacks, so CV is unstable as a primary noise summary
+- absolute control disclosure:
+  - `corvid`: median `0.1017 ms`, IQR `[0.0919, 0.1149]`, CV `216.89%`
+  - `python`: median `0.00135 ms`, IQR `[0.00095, 0.00177]`, CV `38.43%`
+  - `typescript`: median `0.00080 ms`, IQR `[0.00060, 0.00147]`, CV `79.29%`
+
+#### Before / after medians
+
+| Scenario | Corvid / Python historical | Corvid / Python corrected | Corvid / TypeScript historical | Corvid / TypeScript corrected |
+|---|---:|---:|---:|---:|
+| `tool_loop` | `36.126` | `3.528` | `2.627` | `8.338` |
+| `retry_workflow` | `24.985` | `2.978` | `1.669` | `7.657` |
+| `approval_workflow` | `25.635` | `3.486` | `2.488` | `10.207` |
+| `replay_trace` | `35.326` | `3.780` | `2.636` | `8.531` |
+
+The same methodology correction moved the story in opposite directions:
+
+- Corvid vs Python improved sharply because the historical session was charging repeated native startup and wait-accounting bias to orchestration cost.
+- Corvid vs TypeScript worsened sharply because the historical session was also charging Node's real sleep overshoot to orchestration cost.
+
+#### Corvid vs Python
+
+| Scenario | Median ratio | 95% CI |
+|---|---:|---:|
+| `tool_loop` | `3.528` | `[3.263, 4.046]` |
+| `retry_workflow` | `2.978` | `[2.872, 3.165]` |
+| `approval_workflow` | `3.486` | `[3.146, 3.795]` |
+| `replay_trace` | `3.780` | `[3.571, 4.124]` |
+
+#### Corvid vs TypeScript
+
+| Scenario | Median ratio | 95% CI |
+|---|---:|---:|
+| `tool_loop` | `8.338` | `[7.460, 9.828]` |
+| `retry_workflow` | `7.657` | `[7.241, 8.033]` |
+| `approval_workflow` | `10.207` | `[9.162, 10.851]` |
+| `replay_trace` | `8.531` | `[7.618, 9.571]` |
+
+Interpretation:
+
+- every corrected ratio is still greater than `1.0`
+- every corrected 95% CI stays above `1.0`
+- so the corrected session still does **not** support any claim that Corvid is faster than either Python or TypeScript on these workflow runners
+
+What the corrected session does support:
+
+- the published historical Corvid / Python gap was materially overstated by harness artifacts
+- after removing those artifacts, Corvid's orchestration overhead is within roughly `3x-4x` of Python on these scenarios
+- after the same correction, Corvid is still materially slower than TypeScript / Node on these scenarios, at roughly `8x-10x`
+- this is a defensible `v0.1` position with clear optimization headroom, not a performance-win story
+
+The corrected archive includes the full ratio-shape tables (`p50` / `p90` / `p99`) in `ratios.md`. This document keeps only the headline medians and confidence intervals.
+
+### Historical close-out session
 
 Source archive:
 
 - `benches/results/2026-04-16-ratio-session/`
 - publication commit: `4090366`
 
-Session disclosure:
+Historical session disclosure:
 
 - noise floor: `41.40%` control CV on the worst stack
 - per-stack control CV:
@@ -172,37 +243,16 @@ Session disclosure:
   - `python`: `41.40%`
   - `typescript`: `28.69%`
 
-### Corvid vs Python
+Historical medians:
 
-| Scenario | Median ratio | 95% CI |
+| Scenario | Corvid / Python | Corvid / TypeScript |
 |---|---:|---:|
-| `tool_loop` | `36.126` | `[31.998, 40.193]` |
-| `retry_workflow` | `24.985` | `[22.340, 27.789]` |
-| `approval_workflow` | `25.635` | `[22.771, 28.551]` |
-| `replay_trace` | `35.326` | `[32.139, 41.280]` |
+| `tool_loop` | `36.126` | `2.627` |
+| `retry_workflow` | `24.985` | `1.669` |
+| `approval_workflow` | `25.635` | `2.488` |
+| `replay_trace` | `35.326` | `2.636` |
 
-### Corvid vs TypeScript
-
-| Scenario | Median ratio | 95% CI |
-|---|---:|---:|
-| `tool_loop` | `2.627` | `[2.227, 3.127]` |
-| `retry_workflow` | `1.669` | `[1.433, 1.959]` |
-| `approval_workflow` | `2.488` | `[2.171, 3.029]` |
-| `replay_trace` | `2.636` | `[2.391, 2.961]` |
-
-Interpretation:
-
-- every published ratio is greater than `1.0`
-- every published 95% CI stays above `1.0`
-- so this session does **not** support any claim that Corvid is faster than either Python or TypeScript on these workflow runners
-
-What this session does support:
-
-- the same-session ratio methodology is implemented and reproducible
-- Corvid can compare orchestration overhead honestly without leaking external wait time into the claim
-- the current native runner still has meaningful startup / runtime overhead to remove before a competitive performance narrative is justified
-
-The archive includes the full ratio-shape tables (`p50` / `p90` / `p99`) in `ratios.md`. This document keeps only the headline medians and confidence intervals.
+This session remains archived unchanged for reproducibility. It is no longer the preferred interpretation because it was collected before the persistent-process correction and before actual-wait subtraction replaced nominal subtraction.
 
 ## Optimization wave
 

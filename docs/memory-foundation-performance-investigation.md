@@ -252,3 +252,26 @@ This becomes worth doing only once the benchmark stops being dominated by proces
 - Cross-host replication of the same findings on a clean quiet calibration machine
 
 Those are all valid next tools, but none were required to identify the top two contributors in this slice.
+
+## Resolution
+
+The two top-ranked harness fixes from this investigation have now landed:
+
+1. persistent native benchmark execution, so measured Corvid trials no longer pay binary startup per trial
+2. actual-wait subtraction, so orchestration cost subtracts measured external wait instead of nominal fixture wait
+
+Corrected same-session ratios are archived under:
+
+- `benches/results/2026-04-17-corrected-session/`
+- publication commit: `74abcd6`
+
+What changed:
+
+- the Corvid / Python gap narrowed from roughly `25x-36x` to roughly `3x-4x`
+- the Corvid / TypeScript gap widened from roughly `1.7x-2.6x` to roughly `8x-10x`
+
+Those two moves come from the same correction. The historical session was overstating Corvid's gap to Python by charging startup and wait-accounting artifacts to orchestration cost, and it was understating Corvid's gap to TypeScript by charging Node's sleep overshoot to orchestration cost.
+
+The corrected session still does **not** support a claim that Corvid is faster than either stack. It does support a more accurate statement: once the harness artifacts are removed, Corvid's remaining orchestration gap to Python is materially smaller and sits in the residual execution bucket identified above.
+
+For the current published interpretation, see [memory-foundation-results.md](memory-foundation-results.md).
