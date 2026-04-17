@@ -159,6 +159,7 @@ impl<'a> Lowerer<'a> {
             params: self.lower_params(&t.params),
             return_ty: self.type_ref_to_type(&t.return_ty),
             effect: t.effect,
+            effect_names: t.effect_row.effects.iter().map(|e| e.name.name.clone()).collect(),
             span: t.span,
         }
     }

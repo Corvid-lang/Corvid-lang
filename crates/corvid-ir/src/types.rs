@@ -56,6 +56,7 @@ pub struct IrTool {
     pub params: Vec<IrParam>,
     pub return_ty: Type,
     pub effect: Effect,
+    pub effect_names: Vec<String>,
     pub span: Span,
 }
 

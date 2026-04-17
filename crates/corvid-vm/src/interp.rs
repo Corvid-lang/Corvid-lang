@@ -836,14 +836,28 @@ impl<'ir> Interpreter<'ir> {
                     }
                 }
 
-                json_to_value(result, &tool.return_ty, &self.types_by_id)
-                    .map(ExprFlow::Value)
+                let value = json_to_value(result, &tool.return_ty, &self.types_by_id)
                     .map_err(|e| {
                     InterpError::new(
                         InterpErrorKind::Marshal(format!("tool `{callee_name}`: {e}")),
                         span,
                     )
-                })
+                })?;
+
+                // If the tool has a `retrieval` effect (data: grounded),
+                // wrap the result in Grounded with a provenance chain.
+                let is_grounded = tool.effect_names.iter().any(|e| e == "retrieval");
+                if is_grounded {
+                    let chain = crate::value::ProvenanceChain::with_retrieval(
+                        callee_name,
+                        corvid_runtime::now_ms(),
+                    );
+                    Ok(ExprFlow::Value(Value::Grounded(
+                        crate::value::GroundedValue::new(value, chain),
+                    )))
+                } else {
+                    Ok(ExprFlow::Value(value))
+                }
             }
             IrCallKind::Prompt { def_id } => {
                 let prompt = self.prompts_by_id.get(def_id).copied().ok_or_else(|| {
@@ -910,8 +924,7 @@ impl<'ir> Interpreter<'ir> {
                     }
                 }
 
-                json_to_value(resp.value, &prompt.return_ty, &self.types_by_id)
-                    .map(ExprFlow::Value)
+                let value = json_to_value(resp.value, &prompt.return_ty, &self.types_by_id)
                     .map_err(|e| {
                         InterpError::new(
                             InterpErrorKind::Marshal(format!(
@@ -919,7 +932,27 @@ impl<'ir> Interpreter<'ir> {
                             )),
                             span,
                         )
-                    })
+                    })?;
+
+                // Provenance propagation: if any argument was Grounded,
+                // the prompt's output inherits the provenance chain with
+                // a PromptTransform entry added.
+                let mut merged_chain = crate::value::ProvenanceChain::new();
+                let mut has_grounded_input = false;
+                for arg in &arg_values {
+                    if let Value::Grounded(g) = arg {
+                        merged_chain.merge(&g.provenance);
+                        has_grounded_input = true;
+                    }
+                }
+                if has_grounded_input {
+                    merged_chain.add_prompt_transform(callee_name, corvid_runtime::now_ms());
+                    Ok(ExprFlow::Value(Value::Grounded(
+                        crate::value::GroundedValue::new(value, merged_chain),
+                    )))
+                } else {
+                    Ok(ExprFlow::Value(value))
+                }
             }
             IrCallKind::Agent { def_id } => {
                 let agent = self.agents_by_id.get(def_id).copied().ok_or_else(|| {
