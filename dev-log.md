@@ -3464,6 +3464,41 @@ Interpretation:
 - if future benchmarks add real compute loops, revisit this with a workload
   that actually makes code scheduling and instruction selection matter
 
+## Day 41 [B] - 2026-04-17 - Native nullable Option<String> slice
+
+Moved native capability forward with the smallest sound subset of the
+Result/Option/retry wave instead of pretending the whole feature family landed
+ at once.
+
+What changed:
+
+- native-ability scan now accepts nullable-pointer `Option<T>` when `T` is
+  already a refcounted native payload (`String`, `Struct`, `List`, nested
+  nullable option)
+- added driver coverage proving `Option<String>` is accepted while wide
+  tagged-union `Option<Int>` still routes to the interpreter
+- added parity coverage for helper agents returning `Option<String>` and
+  wrapper agents comparing against `None`
+- fixed a real runtime link defect uncovered by the new parity tests:
+  `entry.c` referenced `corvid_bench_tool_wait_ns`, but the Rust FFI bridge
+  did not export it
+
+What the evidence says:
+
+- the backend's nullable-pointer option path was already structurally present;
+  the missing pieces were the driver gate and test coverage
+- `Result`, postfix `?`, and retry remain correctly fenced off — this slice
+  does not overclaim
+- the parity harness failure was a genuine runtime contract bug, not a feature
+  bug or a benchmark artifact
+
+Interpretation:
+
+- Corvid native now supports a real, user-visible subset of `Option<T>` beyond
+  the earlier weak-upgrade-only path
+- the next honest capability slices are still `?` propagation for nullable
+  option, then tagged-union `Result`, then retry
+
 
 
 

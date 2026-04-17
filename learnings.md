@@ -1415,6 +1415,30 @@ Machine-code tuning should be revisited when Corvid adds compute-heavy
 benchmarks, not treated as the default next step just because other obvious
 bottlenecks have already been removed.
 
+### Native nullable `Option<T>` subset
+
+The first honest native step for the Result/Option/retry family was not the
+whole feature set. It was the subset the backend already represented cleanly:
+nullable-pointer `Option<T>` where `T` is already a refcounted native payload.
+
+What changed:
+
+- the driver's native-ability scan now accepts `Option<String>` / similar
+  nullable-pointer payloads
+- wide tagged-union shapes like `Option<Int>` still reject cleanly
+- parity coverage now proves helper agents can return `Option<String>` and
+  wrapper agents can compare the result against `None`
+
+Why it matters:
+
+- this moves real native capability forward without pretending `Result`, `?`,
+  or retry are already done
+- it confirms the right strategy for the broader feature wave: land the
+  genuinely supported subset first, then widen from proven machinery
+- the slice also flushed out a real runtime-link contract bug
+  (`corvid_bench_tool_wait_ns` missing from the FFI bridge), which is exactly
+  why capability work needs end-to-end parity coverage and not just scan tests
+
 ## Contributing / feedback
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). The rules of the road are: design chat before code, per-scope commits at every boundary, dev-log entry for every session, no shortcuts. The `learnings.md` file you're reading gets updated when each user-visible feature ships.

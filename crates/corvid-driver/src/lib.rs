@@ -1084,6 +1084,26 @@ agent main() -> String:
     return greet("world")
 "#;
 
+    const NULLABLE_OPTION_STRING_SRC: &str = r#"
+agent maybe(flag: Bool) -> Option<String>:
+    if flag:
+        return Some("hi")
+    return None
+
+agent main() -> Bool:
+    return maybe(true) != None
+"#;
+
+    const WIDE_OPTION_INT_SRC: &str = r#"
+agent maybe(flag: Bool) -> Option<Int>:
+    if flag:
+        return Some(7)
+    return None
+
+agent main() -> Bool:
+    return maybe(true) != None
+"#;
+
     #[test]
     fn native_ability_accepts_pure_computation() {
         let ir = compile_to_ir(NATIVE_ABLE_SRC).expect("compile");
@@ -1117,6 +1137,24 @@ agent main() -> String:
             native_ability(&ir).is_ok(),
             "prompt support is native now; scan should accept prompt-using IRs"
         );
+    }
+
+    #[test]
+    fn native_ability_accepts_nullable_option_with_refcounted_payload() {
+        let ir = compile_to_ir(NULLABLE_OPTION_STRING_SRC).expect("compile");
+        assert!(
+            native_ability(&ir).is_ok(),
+            "nullable-pointer Option<String> should now compile natively"
+        );
+    }
+
+    #[test]
+    fn native_ability_rejects_wide_option_payloads() {
+        let ir = compile_to_ir(WIDE_OPTION_INT_SRC).expect("compile");
+        match native_ability(&ir) {
+            Err(NotNativeReason::TaggedUnionRetryNotNative) => {}
+            other => panic!("expected tagged-union rejection, got {other:?}"),
+        }
     }
 
     /// Second compilation of the same source hits the cache: no

@@ -13,6 +13,7 @@
 //! with early exit.
 
 use corvid_ir::{IrBlock, IrCallKind, IrExpr, IrExprKind, IrFile, IrImportSource, IrStmt};
+use corvid_types::Type;
 
 /// Why a program can't run via the native tier.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -23,9 +24,9 @@ pub enum NotNativeReason {
     /// supplies a tools staticlib (`--with-tools-lib`). Without one,
     /// the scan reports this reason and the dispatcher falls back.
     ToolCall { name: String },
-    /// `Result` / `Option` / `?` / `try ... retry` work in the
-    /// interpreter today, but the native backend does not lower them
-    /// yet.
+    /// `Result`, postfix `?`, and `try ... retry` still route to the
+    /// interpreter. Nullable-pointer `Option<T>` with a refcounted
+    /// payload is the one supported native subset today.
     TaggedUnionRetryNotNative,
 }
 
@@ -42,10 +43,26 @@ impl std::fmt::Display for NotNativeReason {
             ),
             Self::TaggedUnionRetryNotNative => write!(
                 f,
-                "program uses `Result` / `Option` / `?` / `try ... retry` — the interpreter handles these today, but native tagged-union lowering and retry desugaring are not implemented yet"
+                "program uses `Result`, postfix `?`, `try ... retry`, or a non-nullable `Option<T>` shape — the interpreter handles these today, but native tagged-union lowering and retry desugaring are not implemented yet"
             ),
         }
     }
+}
+
+fn is_refcounted_type(ty: &Type) -> bool {
+    match ty {
+        Type::String | Type::Struct(_) | Type::List(_) | Type::Weak(_, _) => true,
+        Type::Option(inner) => is_refcounted_type(inner),
+        _ => false,
+    }
+}
+
+fn is_native_nullable_option_type(ty: &Type) -> bool {
+    matches!(ty, Type::Option(inner) if is_refcounted_type(inner))
+}
+
+fn is_native_nullable_option_expr_type(ty: &Type) -> bool {
+    matches!(ty, Type::Option(inner) if is_refcounted_type(inner) || matches!(**inner, Type::Unknown))
 }
 
 /// Walk the IR and return `Ok(())` if every construct is native-able,
@@ -164,14 +181,27 @@ fn scan_expr(expr: &IrExpr) -> Result<(), NotNativeReason> {
         // the interpreter tier. Recurse into sub-expressions so any
         // nested tool/prompt calls inside still get flagged
         // correctly.
+        IrExprKind::OptionSome { inner } => {
+            scan_expr(inner)?;
+            if is_native_nullable_option_expr_type(&expr.ty) {
+                Ok(())
+            } else {
+                Err(NotNativeReason::TaggedUnionRetryNotNative)
+            }
+        }
         IrExprKind::ResultOk { inner }
         | IrExprKind::ResultErr { inner }
-        | IrExprKind::OptionSome { inner }
         | IrExprKind::TryPropagate { inner } => {
             scan_expr(inner)?;
             Err(NotNativeReason::TaggedUnionRetryNotNative)
         }
-        IrExprKind::OptionNone => Err(NotNativeReason::TaggedUnionRetryNotNative),
+        IrExprKind::OptionNone => {
+            if is_native_nullable_option_expr_type(&expr.ty) {
+                Ok(())
+            } else {
+                Err(NotNativeReason::TaggedUnionRetryNotNative)
+            }
+        }
         IrExprKind::TryRetry { body, .. } => {
             scan_expr(body)?;
             Err(NotNativeReason::TaggedUnionRetryNotNative)

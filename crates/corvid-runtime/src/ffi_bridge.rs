@@ -144,6 +144,11 @@ pub extern "C" fn corvid_bench_prompt_wait_ns() -> u64 {
 }
 
 #[no_mangle]
+pub extern "C" fn corvid_bench_tool_wait_ns() -> u64 {
+    0
+}
+
+#[no_mangle]
 pub extern "C" fn corvid_bench_approval_wait_ns() -> u64 {
     bench_approval_wait_ns()
 }

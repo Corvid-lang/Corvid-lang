@@ -55,6 +55,13 @@ fn run_with_leak_detector(bin: &std::path::Path) -> (String, String, std::proces
     (stdout, stderr, output.status)
 }
 
+fn compile_without_tools_lib(
+    ir: &corvid_ir::IrFile,
+    bin_path: &std::path::Path,
+) -> std::path::PathBuf {
+    build_native_to_disk(ir, "corvid_parity_test", bin_path, &[]).expect("compile + link")
+}
+
 /// Run a binary with typed tool-return values set via env vars.
 /// Each entry maps a Corvid tool name (e.g. `"answer"`) to the Int
 /// value the test wants that tool to return. The helper translates
@@ -199,6 +206,49 @@ fn assert_parity_bool(src: &str, expected: bool) {
     // Codegen-emitted main prints Bool as "true"/"false"
     // via `corvid_print_bool` (was "1"/"0" via the old shim main).
     // Accept both for resilience against future format tweaks.
+    let printed = stdout.trim().lines().next().unwrap_or("");
+    let compiled_bool = match printed {
+        "true" | "1" => true,
+        "false" | "0" => false,
+        other => panic!(
+            "expected `true` / `false` / `1` / `0` for Bool, got `{other}`; src=\n{src}"
+        ),
+    };
+    assert_eq!(
+        compiled_bool, expected,
+        "compiled result mismatch for source:\n{src}\nstderr: {stderr}"
+    );
+    assert_no_leaks(&stderr, src);
+}
+
+#[track_caller]
+fn assert_parity_bool_without_tools(src: &str, expected: bool) {
+    let ir = ir_of(src);
+
+    let runtime = Runtime::builder()
+        .approver(Arc::new(ProgrammaticApprover::always_yes()))
+        .build();
+    let interp_value = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(async { corvid_vm::run_agent(&ir, entry_name(&ir), vec![], &runtime).await })
+        .expect("interpreter run");
+    assert_eq!(
+        interp_value,
+        Value::Bool(expected),
+        "interpreter result mismatch for source:\n{src}"
+    );
+
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let bin_path = tmp.path().join("prog");
+    let produced = compile_without_tools_lib(&ir, &bin_path);
+    let (stdout, stderr, status) = run_with_leak_detector(&produced);
+    assert!(
+        status.success(),
+        "compiled binary exited non-zero: status={:?} stderr={stderr} stdout={stdout} src=\n{src}",
+        status.code()
+    );
     let printed = stdout.trim().lines().next().unwrap_or("");
     let compiled_bool = match printed {
         "true" | "1" => true,
@@ -1945,6 +1995,22 @@ fn method_with_string_field_releases_correctly() {
 fn weak_upgrade_is_live_while_strong_value_is_still_in_scope() {
     assert_parity_bool(
         "agent main() -> Bool:\n    s = \"hello\"\n    w = Weak::new(s)\n    return Weak::upgrade(w) != None\n",
+        true,
+    );
+}
+
+#[test]
+fn nullable_option_string_round_trips_through_native_agents() {
+    assert_parity_bool_without_tools(
+        "agent maybe(flag: Bool) -> Option<String>:\n    if flag:\n        return Some(\"hi\")\n    return None\n\nagent main() -> Bool:\n    value = maybe(true)\n    return value != None\n",
+        true,
+    );
+}
+
+#[test]
+fn nullable_option_string_none_compares_equal_to_none() {
+    assert_parity_bool_without_tools(
+        "agent maybe(flag: Bool) -> Option<String>:\n    if flag:\n        return Some(\"hi\")\n    return None\n\nagent main() -> Bool:\n    value = maybe(false)\n    return value == None\n",
         true,
     );
 }
