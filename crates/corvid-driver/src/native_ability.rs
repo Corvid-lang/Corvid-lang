@@ -231,13 +231,7 @@ fn scan_expr(expr: &IrExpr, current_return_ty: &Type) -> Result<(), NotNativeRea
             scan_expr(inner, current_return_ty)?;
             match &inner.ty {
                 Type::Option(_) => {
-                    if is_native_wide_option_type(&inner.ty) {
-                        if current_return_ty == &inner.ty {
-                            Ok(())
-                        } else {
-                            Err(NotNativeReason::TaggedUnionRetryNotNative)
-                        }
-                    } else if is_native_option_expr_type(&inner.ty)
+                    if is_native_option_expr_type(&inner.ty)
                         && is_native_option_expr_type(current_return_ty)
                     {
                         Ok(())

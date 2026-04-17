@@ -3696,6 +3696,42 @@ Interpretation:
   subset where the current representation composes cleanly, not by adding ad hoc
   escape hatches around ownership or retry semantics
 
+Day 48 — Wider native `Option<T>?` propagation
+
+What shipped:
+
+- widened native postfix `?` on `Option<T>` so the early-`None` path can return
+  into any native `Option<U>` envelope, not just the exact same concrete option
+  type
+- added driver and parity coverage for:
+  - `Option<Int>?` inside `Option<Bool>`
+  - `Option<String>?` inside `Option<Bool>`
+  - retry followed by `?` propagation into a different `Result` ok type
+
+What the evidence says:
+
+- the native option propagation path was already structurally capable of this
+  widening because the early-return path only needs to produce `None`
+- the previous same-shape restriction on wide options was artificial, not a
+  representation requirement
+- retry and propagation now compose one step further in the native subset:
+  retrying a `Result<A, E>` expression and then using `?` into `Result<B, E>`
+  works as expected
+
+Verification unblock work:
+
+- the current worktree also contains in-progress effect-system AST changes that
+  had left parser / resolver / typechecker default fields and match coverage
+  incomplete; those were patched minimally so the native verification pass could
+  compile again
+
+Interpretation:
+
+- this is the kind of widening Corvid should prefer: use the semantics the
+  current representation already supports, then prove them with tests
+- the next honest native step is still broader structured `Result` / retry
+  policy work, not more arbitrary shape restrictions around `Option`
+
 
 
 

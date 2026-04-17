@@ -3058,22 +3058,14 @@ fn lower_try_propagate_option(
         }
     };
 
-    if wide_option {
-        if current_return_ty != &inner.ty {
+    match current_return_ty {
+        Type::Option(ret_payload) if is_refcounted_type(ret_payload) => {}
+        Type::Option(_) if is_native_wide_option_type(current_return_ty) => {}
+        _ => {
             return Err(CodegenError::not_supported(
-                "postfix `?` on wide `Option<T>` — the current native subset supports propagation only when the enclosing function returns the same concrete scalar `Option<T>` shape",
+                "postfix `?` on `Option<T>` — native lowering currently supports only functions returning native `Option<T>` shapes",
                 expr.span,
-            ));
-        }
-    } else {
-        match current_return_ty {
-            Type::Option(ret_payload) if is_refcounted_type(ret_payload) => {}
-            _ => {
-                return Err(CodegenError::not_supported(
-                    "postfix `?` — native lowering currently supports only functions returning nullable-pointer `Option<T>`",
-                    expr.span,
-                ))
-            }
+            ))
         }
     }
 

@@ -2160,6 +2160,22 @@ fn wide_option_int_try_propagates_some_and_none() {
 }
 
 #[test]
+fn wide_option_int_try_propagates_into_different_outer_option_type() {
+    assert_parity_bool_without_tools(
+        "agent maybe(flag: Bool) -> Option<Int>:\n    if flag:\n        return Some(7)\n    return None\n\nagent widen(flag: Bool) -> Option<Bool>:\n    value = maybe(flag)?\n    return Some(value > 0)\n\nagent main() -> Bool:\n    return widen(false) == None and widen(true) != None\n",
+        true,
+    );
+}
+
+#[test]
+fn nullable_option_string_try_propagates_into_wide_outer_option_type() {
+    assert_parity_bool_without_tools(
+        "agent maybe(flag: Bool) -> Option<String>:\n    if flag:\n        return Some(\"hi\")\n    return None\n\nagent widen(flag: Bool) -> Option<Bool>:\n    value = maybe(flag)?\n    return Some(value == \"hi\")\n\nagent main() -> Bool:\n    return widen(false) == None and widen(true) != None\n",
+        true,
+    );
+}
+
+#[test]
 fn wide_option_bool_none_compares_equal_to_none() {
     assert_parity_bool_without_tools(
         "agent maybe(flag: Bool) -> Option<Bool>:\n    if flag:\n        return Some(true)\n    return None\n\nagent main() -> Bool:\n    return maybe(false) == None and maybe(true) != None\n",
@@ -2249,6 +2265,21 @@ fn native_result_option_int_retry_retries_until_success() {
             serde_json::json!("bad"),
             serde_json::json!("ok"),
             serde_json::json!("marker"),
+        ],
+        true,
+        "mock-1",
+    );
+}
+
+#[test]
+fn native_result_retry_then_try_propagates_into_different_ok_type() {
+    assert_parity_bool_with_mock_llm_queue(
+        "prompt probe() -> String:\n    \"Probe\"\n\nagent fetch() -> Result<String, String>:\n    value = probe()\n    if value == \"ok\":\n        return Ok(value)\n    return Err(value)\n\nagent widen() -> Result<Bool, String>:\n    attempt = try fetch() on error retry 3 times backoff linear 0\n    value = attempt?\n    return Ok(value == \"ok\")\n\nagent main() -> Bool:\n    first = widen()\n    return true\n",
+        "probe",
+        vec![
+            serde_json::json!("bad"),
+            serde_json::json!("bad"),
+            serde_json::json!("ok"),
         ],
         true,
         "mock-1",

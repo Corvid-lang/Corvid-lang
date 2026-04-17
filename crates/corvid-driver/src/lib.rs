@@ -1118,6 +1118,34 @@ agent main() -> Bool:
     return unwrap(true) != None
 "#;
 
+    const WIDE_OPTION_INT_TRY_WIDEN_SRC: &str = r#"
+agent maybe(flag: Bool) -> Option<Int>:
+    if flag:
+        return Some(7)
+    return None
+
+agent widen(flag: Bool) -> Option<Bool>:
+    value = maybe(flag)?
+    return Some(value > 0)
+
+agent main() -> Bool:
+    return widen(true) != None
+"#;
+
+    const NULLABLE_OPTION_TRY_WIDEN_SRC: &str = r#"
+agent maybe(flag: Bool) -> Option<String>:
+    if flag:
+        return Some("hi")
+    return None
+
+agent widen(flag: Bool) -> Option<Bool>:
+    value = maybe(flag)?
+    return Some(value == "hi")
+
+agent main() -> Bool:
+    return widen(true) != None
+"#;
+
     const NULLABLE_OPTION_TRY_SRC: &str = r#"
 agent maybe(flag: Bool) -> Option<String>:
     if flag:
@@ -1317,6 +1345,24 @@ agent load(id: String) -> String:
         assert!(
             native_ability(&ir).is_ok(),
             "wide scalar Option<Int> `?` should now compile natively"
+        );
+    }
+
+    #[test]
+    fn native_ability_accepts_wide_scalar_option_try_with_different_payload_type() {
+        let ir = compile_to_ir(WIDE_OPTION_INT_TRY_WIDEN_SRC).expect("compile");
+        assert!(
+            native_ability(&ir).is_ok(),
+            "Option<Int> `?` inside Option<Bool> should now compile natively"
+        );
+    }
+
+    #[test]
+    fn native_ability_accepts_nullable_option_try_with_wide_outer_payload() {
+        let ir = compile_to_ir(NULLABLE_OPTION_TRY_WIDEN_SRC).expect("compile");
+        assert!(
+            native_ability(&ir).is_ok(),
+            "Option<String> `?` inside Option<Bool> should now compile natively"
         );
     }
 

@@ -1540,6 +1540,21 @@ typeinfo, ownership, and cleanup invariants are sound, widening support should
 first look for shapes that naturally compose out of those primitives before
 adding new special-case encodings.
 
+### Wider native `Option<T>?` propagation
+
+The next useful native widening was not a new runtime object shape at all. It
+was removing an artificial restriction in `Option<T>?` propagation. Corvid now
+lets `Option<T>?` early-return into any native `Option<U>` envelope, because
+the `None` path does not care what the eventual `Some(...)` payload type is.
+That matters because it keeps the widening semantic rather than representational:
+the runtime already knew how to represent these options, and the control-flow
+rule was simply narrower than the underlying model required. The same slice also
+confirmed that retry composes one step further than the earlier minimal proof:
+retrying a native `Result<A, E>` and then using `?` into `Result<B, E>` works
+without new runtime machinery. That is the pattern to keep following. Widen the
+native subset first where the representation already composes cleanly, then add
+new encodings only when a real semantic need remains.
+
 ## Contributing / feedback
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). The rules of the road are: design chat before code, per-scope commits at every boundary, dev-log entry for every session, no shortcuts. The `learnings.md` file you're reading gets updated when each user-visible feature ships.
