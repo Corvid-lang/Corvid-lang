@@ -173,12 +173,16 @@ impl<'a> Lowerer<'a> {
     }
 
     fn lower_prompt_with_id(&self, p: &PromptDecl, id: DefId) -> IrPrompt {
+        let cites_strictly_param = p.cites_strictly.as_ref().and_then(|param_name| {
+            p.params.iter().position(|param| param.name.name == *param_name)
+        });
         IrPrompt {
             id,
             name: p.name.name.clone(),
             params: self.lower_params(&p.params),
             return_ty: self.type_ref_to_type(&p.return_ty),
             template: p.template.clone(),
+            cites_strictly_param,
             span: p.span,
         }
     }

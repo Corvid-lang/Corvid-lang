@@ -176,6 +176,7 @@ pub fn build_import(mocks: &TraceMocks) -> TraceImportResult {
             return_ty,
             template: first.rendered.clone().unwrap_or_default(),
             effect_row: EffectRow::default(),
+            cites_strictly: None,
             span: sp,
         }));
     }

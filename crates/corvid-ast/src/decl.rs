@@ -201,6 +201,10 @@ pub struct PromptDecl {
     /// Dimensional effect row: `uses llm_call, reads_context`.
     #[serde(default)]
     pub effect_row: EffectRow,
+    /// `cites <param> strictly` — runtime verification that the LLM
+    /// response references content from the named parameter.
+    #[serde(default)]
+    pub cites_strictly: Option<String>,
     pub span: Span,
 }
 

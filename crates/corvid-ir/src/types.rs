@@ -68,6 +68,9 @@ pub struct IrPrompt {
     pub params: Vec<IrParam>,
     pub return_ty: Type,
     pub template: String,
+    /// Index of the parameter whose content must appear in the LLM response.
+    /// Set when the prompt declares `cites <param> strictly`.
+    pub cites_strictly_param: Option<usize>,
     pub span: Span,
 }
 

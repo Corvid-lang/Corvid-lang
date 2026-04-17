@@ -934,6 +934,26 @@ impl<'ir> Interpreter<'ir> {
                         )
                     })?;
 
+                // `cites ctx strictly` runtime verification: check that
+                // the LLM response references content from the cited param.
+                if let Some(param_idx) = prompt.cites_strictly_param {
+                    if let Some(ctx_value) = arg_values.get(param_idx) {
+                        let ctx_text = value_to_json(ctx_value).to_string();
+                        let response_text = value_to_json(&value).to_string();
+                        // Verify overlap: at least one substantial substring
+                        // from the context appears in the response.
+                        if !citation_verified(&ctx_text, &response_text) {
+                            return Err(InterpError::new(
+                                InterpErrorKind::Other(format!(
+                                    "citation verification failed for prompt `{callee_name}`: \
+                                     response does not reference content from the cited context parameter"
+                                )),
+                                span,
+                            ));
+                        }
+                    }
+                }
+
                 // Provenance propagation: if any argument was Grounded,
                 // the prompt's output inherits the provenance chain with
                 // a PromptTransform entry added.
@@ -1239,6 +1259,34 @@ fn overflow(span: Span) -> InterpError {
         InterpErrorKind::Arithmetic("integer overflow".into()),
         span,
     )
+}
+
+/// Citation verification for `cites ctx strictly`. Checks that the
+/// LLM response contains at least one substantial substring from the
+/// context. "Substantial" means a contiguous run of words (≥ 4 words)
+/// from the context appears verbatim in the response.
+fn citation_verified(context: &str, response: &str) -> bool {
+    let ctx_lower = context.to_lowercase();
+    let resp_lower = response.to_lowercase();
+
+    // Extract word sequences from context and check for matches.
+    let ctx_words: Vec<&str> = ctx_lower.split_whitespace().collect();
+    if ctx_words.len() < 4 {
+        // Short context: check if the whole thing appears.
+        return resp_lower.contains(&ctx_lower);
+    }
+
+    // Sliding window: check if any 4-word sequence from context
+    // appears in the response.
+    let window_size = 4;
+    for window in ctx_words.windows(window_size) {
+        let phrase = window.join(" ");
+        if resp_lower.contains(&phrase) {
+            return true;
+        }
+    }
+
+    false
 }
 
 // `Type` import: needed by `eval_call`'s signature. Imported here at the

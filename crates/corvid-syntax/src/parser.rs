@@ -1271,6 +1271,7 @@ impl<'a> Parser<'a> {
             return_ty,
             template,
             effect_row,
+            cites_strictly: None,
             span: start.merge(end),
         })
     }
