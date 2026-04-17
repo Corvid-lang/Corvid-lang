@@ -409,7 +409,7 @@ Pre-phase chat caught two limiting shortcuts in my brief and reshaped the phase 
 
 **Non-scope:** generational GC. Concurrent collection (mutator-collector concurrency via write barriers — post-v1.0 if multi-threaded Corvid ever becomes a direction).
 
-### Phase 18 — Result + Option + retry policies (~4 weeks) — core native scope complete
+### Phase 18 — Result + Option + retry policies (~4 weeks) ✅ — core complete
 
 **Goal.** Language-native error handling with a principled native subset first: `Result<T, E>`, `Option<T>`, propagation (`?`), and retry syntax that lowers as deterministic native control flow rather than a library loop.
 
@@ -438,8 +438,7 @@ Pre-phase chat caught two limiting shortcuts in my brief and reshaped the phase 
 - [x] **Compositional tagged-union subset.** Native support is being widened by proving a principled representation composes across nested shapes, rather than by adding ad hoc case-by-case exceptions.
 - [x] **Selective wrapper widening where nullability stops being sound.** Native `Option<T>` keeps the cheap nullable-pointer form where it is semantically safe, and switches to a tiny typed wrapper only for shapes like nested options where bare nullability would destroy information.
 
-**Remaining work before this phase can be called fully integrated:**
-- [ ] Effect-integrated failure typing once Phase 20's dimensional effects are fully wired through the typechecker.
+**Phase 18 core work: done.** Remaining integration with Phase 20 dimensional effects (effect-integrated failure typing) belongs to the Phase 20 wave, not unfinished Phase 18 capability.
 
 **Non-scope:** User-defined error enums with arbitrary payload layouts beyond the supported native subset — that belongs to the later richer-type/effect work, not this first native-control-flow pass.
 
