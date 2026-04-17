@@ -15,8 +15,27 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#if defined(_MSC_VER)
+#include <windows.h>
+#else
+#include <time.h>
+#endif
 
 void corvid_runtime_overflow(void) {
     fprintf(stderr, "corvid: runtime error: integer overflow, division by zero, or index out of bounds\n");
     exit(1);
+}
+
+void corvid_sleep_ms(long long ms) {
+    if (ms <= 0) {
+        return;
+    }
+#if defined(_MSC_VER)
+    Sleep((DWORD)ms);
+#else
+    struct timespec ts;
+    ts.tv_sec = (time_t)(ms / 1000);
+    ts.tv_nsec = (long)((ms % 1000) * 1000000LL);
+    nanosleep(&ts, NULL);
+#endif
 }

@@ -3531,6 +3531,112 @@ Interpretation:
 - the next honest step is native `Result<T, E>` tagged-union lowering, not
   more widening of `Option` before the error path exists
 
+## Day 43 [B] - 2026-04-17 - Native one-word `Result<T, E>` subset
+
+Landed the first real native `Result<T, E>` slice as a typed-heap wrapper
+instead of leaving tagged unions entirely in the interpreter.
+
+What changed:
+
+- native codegen now lowers one-word `Result<T, E>` shapes to a typed wrapper
+  allocation with a fixed payload layout: `[tag: i64 | payload-slot: 8B]`
+- emitted per-concrete result destructors, trace functions, and typeinfo blocks
+  so result wrappers participate in the same native RC/GC machinery as structs
+  and lists
+- native `?` now propagates `Result<T, E>` when the enclosing function returns
+  the same concrete result shape, forwarding `Err(...)` directly and unwrapping
+  `Ok(...)`
+- the ownership pass now treats `Result<T, E>` wrappers as refcounted values,
+  which was required to avoid leaks on result locals
+- added driver coverage for native-ability acceptance and parity coverage for
+  result construction plus `?` propagation
+
+What the evidence says:
+
+- the typed-heap infrastructure from the memory foundation was already the
+  right substrate for result wrappers; this slice mostly needed representation
+  + ownership integration, not a new runtime model
+- the first parity run exposed a real ownership-analysis gap: codegen was
+  correct, but `Result<T, E>` still looked non-refcounted to the unified pass
+- after fixing that at the analysis layer, both construction and propagation
+  paths ran leak-free under parity
+
+Interpretation:
+
+- Corvid native now has a real error-carrying tagged-union subset, not just
+  nullable `Option<T>`
+- the next honest step is widening `Result<T, E>` `?` beyond same-shape
+  propagation and then moving on to native retry
+
+## Day 44 [B] - 2026-04-17 - Native `Result<A, E>?` to `Result<B, E>`
+
+Widened native `Result` propagation from exact same-shape forwarding to the
+standard error-type-preserving form.
+
+What changed:
+
+- native `?` now accepts `Result<A, E>` inside a function returning
+  `Result<B, E>` when both concrete result shapes stay inside the current
+  one-word native subset
+- the `Err(...)` path now rewraps the error payload into the enclosing
+  function's concrete result type instead of requiring the entire result shape
+  to match
+- native-ability accepts the same widened rule, and parity coverage now proves
+  the different-`Ok`-type propagation path runs leak-free
+
+What the evidence says:
+
+- the fixed `[tag | payload-slot]` result layout was the right abstraction:
+  widening did not need a new representation, only a correct `Err` rewrap path
+- ownership remained the subtle part: the widened `Err` path must retain the
+  error payload before releasing the inner wrapper so exactly one owned
+  reference survives in the outer wrapper
+
+Interpretation:
+
+- native `Result<T, E>` now behaves much more like a real control-flow feature
+  instead of a same-shape special case
+- the next honest feature step is native retry lowering on top of this result
+  foundation
+
+## Day 45 [B] - 2026-04-17 - Native `try ... retry` for `Result<T, E>`
+
+Landed the first native retry subset on top of the one-word native result
+representation instead of treating retry as an opaque runtime helper.
+
+What changed:
+
+- native AOT now lowers `try expr on error retry N times backoff ...` when
+  `expr` returns a native one-word `Result<T, E>`
+- the lowered form is explicit control flow in Cranelift: evaluate the body,
+  branch on the result tag, release failed attempt wrappers, sleep for a
+  deterministic backoff delay, and retry until success or the final `Err`
+- native retry does **not** pretend to catch arbitrary runtime traps; it
+  retries the recoverable `Result<T, E>` path and keeps non-Result retry bodies
+  on the interpreter
+- added a runtime sleep hook and widened native-ability + parity coverage,
+  including queued mock-prompt fixtures that prove retry actually consumes
+  multiple attempts before continuing
+
+What the evidence says:
+
+- the correct substrate for native retry was already the native result layout;
+  no new heap/object representation was needed
+- the subtle part was not looping, it was ownership: failed result wrappers
+  must be retired between attempts so retries do not leak or accumulate stale
+  error payloads
+- proving retry with queued replies was worth the extra harness work; compile
+  acceptance alone would not have shown whether the AOT path really executed
+  multiple attempts
+
+Interpretation:
+
+- Corvid native now has a real deterministic retry primitive for the recoverable
+  result path, not just `Option`/`Result` values without retry control flow
+- the next honest step is retry-policy widening or native `Result`/retry use on
+  richer structured return shapes, not more speculative work on the minimal
+  subset
+
 
 
 

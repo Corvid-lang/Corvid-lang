@@ -1464,6 +1464,51 @@ Why it matters:
 - it preserves the no-shortcuts rule: the slice still refuses `Result<T, E>`
   and retry until their layouts and control flow exist for real
 
+### Native one-word `Result<T, E>` subset
+
+The honest way to add native `Result<T, E>` was not "declare the whole feature
+done." It was to pick a representation the backend can actually own today and
+land that end to end. Corvid now lowers one-word `Result<T, E>` shapes as
+typed heap wrappers with a fixed `[tag | payload-slot]` layout, plus emitted
+destructor/trace/typeinfo metadata so RC and cycle collection see them as real
+heap objects rather than a codegen special case. The first test pass exposed
+the load-bearing integration point: the unified ownership analysis still
+classified `Result<T, E>` as non-refcounted, so result locals leaked even
+though the wrapper codegen was otherwise correct. Fixing the analysis, not
+papering over the leak in codegen, was the right move. The resulting native
+subset is credible: construction works, same-shape `?` propagation works, and
+the feature participates in the existing ownership/runtime model instead of
+bypassing it.
+
+### Native `Result<A, E>?` to `Result<B, E>`
+
+The next real step after same-shape `Result<T, E>?` was not a bigger wrapper
+layout. It was the standard propagation rule users actually expect:
+`Result<A, E>?` inside a function returning `Result<B, E>`. Corvid now does
+that by rebuilding only the `Err` wrapper on the early-return path. That is
+the important design point: the payload representation was already good enough;
+the missing piece was a principled ownership-preserving conversion path between
+two concrete result wrappers with the same error type. The widening slice
+confirmed the same lesson again: once the representation is sound, the hard
+part is preserving ownership and cleanup invariants during control flow, not
+inventing more layout machinery.
+
+### Native `try ... retry` for `Result<T, E>`
+
+The honest first native retry slice was not "retry anything that can fail."
+Compiled Corvid cannot catch process-level traps the way the interpreter can
+catch `InterpError`, so the sound AOT subset is retry over the recoverable
+native `Result<T, E>` path. Corvid now lowers that subset as explicit native
+control flow: evaluate the body, branch on the result tag, release failed
+wrappers before the next attempt, compute a deterministic linear/exponential
+delay from the source backoff policy, sleep, and re-enter the body. That is
+the right shape for future widening because it keeps retry as compiled control
+flow rather than hiding it in one opaque runtime helper. The slice also
+reconfirmed the testing rule: compile acceptance was not enough. The feature
+needed queued mock replies to prove the native tier actually performed multiple
+attempts and returned the final `Err` value without silently propagating or
+leaking between attempts.
+
 ## Contributing / feedback
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). The rules of the road are: design chat before code, per-scope commits at every boundary, dev-log entry for every session, no shortcuts. The `learnings.md` file you're reading gets updated when each user-visible feature ships.

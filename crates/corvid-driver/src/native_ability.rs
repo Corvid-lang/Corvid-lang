@@ -24,9 +24,10 @@ pub enum NotNativeReason {
     /// supplies a tools staticlib (`--with-tools-lib`). Without one,
     /// the scan reports this reason and the dispatcher falls back.
     ToolCall { name: String },
-    /// `Result`, postfix `?`, and `try ... retry` still route to the
-    /// interpreter. Nullable-pointer `Option<T>` with a refcounted
-    /// payload is the one supported native subset today.
+    /// Wider tagged unions and non-Result retry bodies still route to
+    /// the interpreter. Nullable-pointer `Option<T>` with a
+    /// refcounted payload plus the one-word `Result<T, E>` subset are
+    /// the supported native forms today.
     TaggedUnionRetryNotNative,
 }
 
@@ -43,7 +44,7 @@ impl std::fmt::Display for NotNativeReason {
             ),
             Self::TaggedUnionRetryNotNative => write!(
                 f,
-                "program uses `Result`, postfix `?`, `try ... retry`, or a non-nullable `Option<T>` shape — the interpreter handles these today, but native tagged-union lowering and retry desugaring are not implemented yet"
+                "program uses a tagged-union or retry shape outside the current native subset — native AOT supports nullable-pointer `Option<T>`, one-word `Result<T, E>`, postfix `?`, and `try ... retry` over native `Result<T, E>` bodies; wider shapes still run in the interpreter"
             ),
         }
     }
@@ -51,9 +52,19 @@ impl std::fmt::Display for NotNativeReason {
 
 fn is_refcounted_type(ty: &Type) -> bool {
     match ty {
-        Type::String | Type::Struct(_) | Type::List(_) | Type::Weak(_, _) => true,
+        Type::String | Type::Struct(_) | Type::List(_) | Type::Weak(_, _) | Type::Result(_, _) => true,
         Type::Option(inner) => is_refcounted_type(inner),
         _ => false,
+    }
+}
+
+fn is_native_value_type(ty: &Type) -> bool {
+    match ty {
+        Type::Int | Type::Bool | Type::Float | Type::String => true,
+        Type::Struct(_) | Type::List(_) | Type::Weak(_, _) => true,
+        Type::Option(inner) => is_refcounted_type(inner) && is_native_value_type(inner),
+        Type::Result(ok, err) => is_native_value_type(ok) && is_native_value_type(err),
+        Type::Nothing | Type::Function { .. } | Type::Unknown => false,
     }
 }
 
@@ -63,6 +74,10 @@ fn is_native_nullable_option_type(ty: &Type) -> bool {
 
 fn is_native_nullable_option_expr_type(ty: &Type) -> bool {
     matches!(ty, Type::Option(inner) if is_refcounted_type(inner) || matches!(**inner, Type::Unknown))
+}
+
+fn is_native_result_type(ty: &Type) -> bool {
+    matches!(ty, Type::Result(ok, err) if is_native_value_type(ok) && is_native_value_type(err))
 }
 
 /// Walk the IR and return `Ok(())` if every construct is native-able,
@@ -177,10 +192,9 @@ fn scan_expr(expr: &IrExpr, current_return_ty: &Type) -> Result<(), NotNativeRea
         }
         IrExprKind::WeakNew { strong } => scan_expr(strong, current_return_ty),
         IrExprKind::WeakUpgrade { weak } => scan_expr(weak, current_return_ty),
-        // Tagged-union and retry IR nodes still route the program to
-        // the interpreter tier. Recurse into sub-expressions so any
-        // nested tool/prompt calls inside still get flagged
-        // correctly.
+        // Tagged-union/retry nodes are accepted only for the current
+        // native subset. Recurse into sub-expressions first so any
+        // nested tool/prompt calls still get reported correctly.
         IrExprKind::OptionSome { inner } => {
             scan_expr(inner, current_return_ty)?;
             if is_native_nullable_option_expr_type(&expr.ty) {
@@ -189,11 +203,13 @@ fn scan_expr(expr: &IrExpr, current_return_ty: &Type) -> Result<(), NotNativeRea
                 Err(NotNativeReason::TaggedUnionRetryNotNative)
             }
         }
-        IrExprKind::ResultOk { inner }
-        | IrExprKind::ResultErr { inner }
-        => {
+        IrExprKind::ResultOk { inner } | IrExprKind::ResultErr { inner } => {
             scan_expr(inner, current_return_ty)?;
-            Err(NotNativeReason::TaggedUnionRetryNotNative)
+            if is_native_result_type(&expr.ty) {
+                Ok(())
+            } else {
+                Err(NotNativeReason::TaggedUnionRetryNotNative)
+            }
         }
         IrExprKind::OptionNone => {
             if is_native_nullable_option_expr_type(&expr.ty) {
@@ -204,17 +220,40 @@ fn scan_expr(expr: &IrExpr, current_return_ty: &Type) -> Result<(), NotNativeRea
         }
         IrExprKind::TryPropagate { inner } => {
             scan_expr(inner, current_return_ty)?;
-            if is_native_nullable_option_expr_type(&inner.ty)
-                && is_native_nullable_option_expr_type(current_return_ty)
-            {
-                Ok(())
-            } else {
-                Err(NotNativeReason::TaggedUnionRetryNotNative)
+            match &inner.ty {
+                Type::Option(_) => {
+                    if is_native_nullable_option_expr_type(&inner.ty)
+                        && is_native_nullable_option_expr_type(current_return_ty)
+                    {
+                        Ok(())
+                    } else {
+                        Err(NotNativeReason::TaggedUnionRetryNotNative)
+                    }
+                }
+                Type::Result(_, _) => {
+                    if is_native_result_type(&inner.ty) {
+                        if let Type::Result(_, outer_err) = current_return_ty {
+                            if is_native_result_type(current_return_ty) {
+                                if let Type::Result(_, inner_err) = &inner.ty {
+                                    if &**outer_err == &**inner_err {
+                                        return Ok(());
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    Err(NotNativeReason::TaggedUnionRetryNotNative)
+                }
+                _ => Err(NotNativeReason::TaggedUnionRetryNotNative),
             }
         }
         IrExprKind::TryRetry { body, .. } => {
             scan_expr(body, current_return_ty)?;
-            Err(NotNativeReason::TaggedUnionRetryNotNative)
+            if &body.ty == &expr.ty && is_native_result_type(&body.ty) {
+                Ok(())
+            } else {
+                Err(NotNativeReason::TaggedUnionRetryNotNative)
+            }
         }
     }
 }

@@ -19,7 +19,7 @@ use cranelift_codegen::Context;
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext, Variable};
 use cranelift_module::{DataDescription, FuncId, Linkage, Module};
 use cranelift_object::ObjectModule;
-use corvid_ast::{BinaryOp, Span, UnaryOp};
+use corvid_ast::{Backoff, BinaryOp, Span, UnaryOp};
 use corvid_ir::{IrAgent, IrBlock, IrCallKind, IrExpr, IrExprKind, IrFile, IrLiteral, IrStmt};
 use corvid_resolve::{DefId, LocalId};
 use corvid_types::Type;
@@ -342,6 +342,14 @@ fn declare_runtime_funcs(
             )
         })?;
 
+    let mut sleep_ms_sig = module.make_signature();
+    sleep_ms_sig.params.push(AbiParam::new(I64));
+    let sleep_ms_id = module
+        .declare_function(SLEEP_MS_SYMBOL, Linkage::Import, &sleep_ms_sig)
+        .map_err(|e| {
+            CodegenError::cranelift(format!("declare sleep_ms: {e}"), Span::new(0, 0))
+        })?;
+
     // Stringification helpers. Each takes a typed scalar
     // and returns a Corvid String descriptor pointer (i64).
     let mut sfi_sig = module.make_signature();
@@ -440,6 +448,7 @@ fn declare_runtime_funcs(
         tool_call_sync_int: tool_call_sync_int_id,
         runtime_init: runtime_init_id,
         runtime_shutdown: runtime_shutdown_id,
+        sleep_ms: sleep_ms_id,
         string_from_int: string_from_int_id,
         string_from_bool: string_from_bool_id,
         string_from_float: string_from_float_id,
@@ -465,6 +474,9 @@ fn declare_runtime_funcs(
         struct_traces: HashMap::new(),
         struct_typeinfos: HashMap::new(),
         list_typeinfos: HashMap::new(),
+        result_destructors: HashMap::new(),
+        result_traces: HashMap::new(),
+        result_typeinfos: HashMap::new(),
         ir_types: HashMap::new(),
         ir_tools: HashMap::new(),
         tool_wrapper_ids: std::cell::RefCell::new(HashMap::new()),
@@ -873,6 +885,12 @@ const TYPEINFO_FLAG_REGION_ALLOCATABLE: u32 = 0x10;
 #[allow(dead_code)]
 const TYPEINFO_FLAG_REUSE_SHAPE_HINT: u32 = 0x20;
 
+const RESULT_PAYLOAD_BYTES: i64 = 16;
+const RESULT_TAG_OFFSET: i32 = 0;
+const RESULT_PAYLOAD_OFFSET: i32 = 8;
+const RESULT_TAG_OK: i64 = 0;
+const RESULT_TAG_ERR: i64 = 1;
+
 /// Emit `corvid_typeinfo_<TypeName>` as a .rodata data symbol with
 /// function-pointer relocations to the type's destroy_fn (if any)
 /// and trace_fn. Returns the DataId so allocations can reference it.
@@ -924,6 +942,239 @@ fn emit_struct_typeinfo(
         .define_data(data_id, &desc)
         .map_err(|e| {
             CodegenError::cranelift(format!("define typeinfo `{symbol}`: {e}"), ty.span)
+        })?;
+    Ok(data_id)
+}
+
+fn define_result_destructor(
+    module: &mut ObjectModule,
+    result_ty: &Type,
+    ok_ty: &Type,
+    err_ty: &Type,
+    runtime: &RuntimeFuncs,
+) -> Result<FuncId, CodegenError> {
+    let mut sig = module.make_signature();
+    sig.params.push(AbiParam::new(I64));
+
+    let symbol = format!("corvid_destroy_{}", mangle_type_name(result_ty));
+    let func_id = module
+        .declare_function(&symbol, Linkage::Local, &sig)
+        .map_err(|e| {
+            CodegenError::cranelift(format!("declare destructor `{symbol}`: {e}"), Span::new(0, 0))
+        })?;
+
+    let mut ctx = Context::new();
+    ctx.func = Function::with_name_signature(
+        UserFuncName::user(0, func_id.as_u32()),
+        module.declarations().get_function_decl(func_id).signature.clone(),
+    );
+    let mut bctx = FunctionBuilderContext::new();
+    {
+        let mut builder = FunctionBuilder::new(&mut ctx.func, &mut bctx);
+        let entry = builder.create_block();
+        builder.append_block_params_for_function_params(entry);
+        builder.switch_to_block(entry);
+        builder.seal_block(entry);
+
+        let payload = builder.block_params(entry)[0];
+        let tag = builder.ins().load(
+            I64,
+            cranelift_codegen::ir::MemFlags::trusted(),
+            payload,
+            RESULT_TAG_OFFSET,
+        );
+        let release_ref = module.declare_func_in_func(runtime.release, builder.func);
+
+        if is_refcounted_type(ok_ty) || is_refcounted_type(err_ty) {
+            let ok_block = builder.create_block();
+            let err_block = builder.create_block();
+            let done_block = builder.create_block();
+            let is_ok = builder.ins().icmp_imm(IntCC::Equal, tag, RESULT_TAG_OK);
+            builder.ins().brif(is_ok, ok_block, &[], err_block, &[]);
+
+            builder.switch_to_block(ok_block);
+            builder.seal_block(ok_block);
+            if is_refcounted_type(ok_ty) {
+                let v = builder.ins().load(
+                    I64,
+                    cranelift_codegen::ir::MemFlags::trusted(),
+                    payload,
+                    RESULT_PAYLOAD_OFFSET,
+                );
+                builder.ins().call(release_ref, &[v]);
+            }
+            builder.ins().jump(done_block, &[]);
+
+            builder.switch_to_block(err_block);
+            builder.seal_block(err_block);
+            if is_refcounted_type(err_ty) {
+                let v = builder.ins().load(
+                    I64,
+                    cranelift_codegen::ir::MemFlags::trusted(),
+                    payload,
+                    RESULT_PAYLOAD_OFFSET,
+                );
+                builder.ins().call(release_ref, &[v]);
+            }
+            builder.ins().jump(done_block, &[]);
+
+            builder.switch_to_block(done_block);
+            builder.seal_block(done_block);
+        }
+
+        builder.ins().return_(&[]);
+        builder.finalize();
+    }
+
+    define_function_with_stack_maps(
+        module,
+        func_id,
+        &mut ctx,
+        runtime,
+        Span::new(0, 0),
+        &format!("destructor `{symbol}`"),
+    )?;
+    Ok(func_id)
+}
+
+fn define_result_trace(
+    module: &mut ObjectModule,
+    result_ty: &Type,
+    ok_ty: &Type,
+    err_ty: &Type,
+    runtime: &RuntimeFuncs,
+) -> Result<FuncId, CodegenError> {
+    let mut sig = module.make_signature();
+    sig.params.push(AbiParam::new(I64));
+    sig.params.push(AbiParam::new(I64));
+    sig.params.push(AbiParam::new(I64));
+
+    let symbol = format!("corvid_trace_{}", mangle_type_name(result_ty));
+    let func_id = module
+        .declare_function(&symbol, Linkage::Local, &sig)
+        .map_err(|e| {
+            CodegenError::cranelift(format!("declare trace `{symbol}`: {e}"), Span::new(0, 0))
+        })?;
+
+    let mut ctx = Context::new();
+    ctx.func = Function::with_name_signature(
+        UserFuncName::user(0, func_id.as_u32()),
+        module.declarations().get_function_decl(func_id).signature.clone(),
+    );
+    let mut bctx = FunctionBuilderContext::new();
+    {
+        let mut builder = FunctionBuilder::new(&mut ctx.func, &mut bctx);
+
+        let mut marker_sig = Signature::new(module.isa().default_call_conv());
+        marker_sig.params.push(AbiParam::new(I64));
+        marker_sig.params.push(AbiParam::new(I64));
+        let marker_sigref = builder.import_signature(marker_sig);
+
+        let entry = builder.create_block();
+        builder.append_block_params_for_function_params(entry);
+        builder.switch_to_block(entry);
+        builder.seal_block(entry);
+
+        let payload = builder.block_params(entry)[0];
+        let marker = builder.block_params(entry)[1];
+        let marker_ctx = builder.block_params(entry)[2];
+        let tag = builder.ins().load(
+            I64,
+            cranelift_codegen::ir::MemFlags::trusted(),
+            payload,
+            RESULT_TAG_OFFSET,
+        );
+
+        if is_refcounted_type(ok_ty) || is_refcounted_type(err_ty) {
+            let ok_block = builder.create_block();
+            let err_block = builder.create_block();
+            let done_block = builder.create_block();
+            let is_ok = builder.ins().icmp_imm(IntCC::Equal, tag, RESULT_TAG_OK);
+            builder.ins().brif(is_ok, ok_block, &[], err_block, &[]);
+
+            builder.switch_to_block(ok_block);
+            builder.seal_block(ok_block);
+            if is_refcounted_type(ok_ty) {
+                let v = builder.ins().load(
+                    I64,
+                    cranelift_codegen::ir::MemFlags::trusted(),
+                    payload,
+                    RESULT_PAYLOAD_OFFSET,
+                );
+                builder.ins().call_indirect(marker_sigref, marker, &[v, marker_ctx]);
+            }
+            builder.ins().jump(done_block, &[]);
+
+            builder.switch_to_block(err_block);
+            builder.seal_block(err_block);
+            if is_refcounted_type(err_ty) {
+                let v = builder.ins().load(
+                    I64,
+                    cranelift_codegen::ir::MemFlags::trusted(),
+                    payload,
+                    RESULT_PAYLOAD_OFFSET,
+                );
+                builder.ins().call_indirect(marker_sigref, marker, &[v, marker_ctx]);
+            }
+            builder.ins().jump(done_block, &[]);
+
+            builder.switch_to_block(done_block);
+            builder.seal_block(done_block);
+        }
+
+        builder.ins().return_(&[]);
+        builder.finalize();
+    }
+
+    define_function_with_stack_maps(
+        module,
+        func_id,
+        &mut ctx,
+        runtime,
+        Span::new(0, 0),
+        &format!("trace `{symbol}`"),
+    )?;
+    Ok(func_id)
+}
+
+fn emit_result_typeinfo(
+    module: &mut ObjectModule,
+    result_ty: &Type,
+    destroy_fn: Option<FuncId>,
+    trace_fn: FuncId,
+    runtime: &RuntimeFuncs,
+) -> Result<cranelift_module::DataId, CodegenError> {
+    let symbol = format!("corvid_typeinfo_{}", mangle_type_name(result_ty));
+    let data_id = module
+        .declare_data(&symbol, Linkage::Local, false, false)
+        .map_err(|e| {
+            CodegenError::cranelift(format!("declare typeinfo `{symbol}`: {e}"), Span::new(0, 0))
+        })?;
+
+    let mut desc = DataDescription::new();
+    desc.set_align(8);
+    let mut bytes = vec![0u8; TYPEINFO_BYTES];
+    bytes[TYPEINFO_OFF_SIZE as usize..(TYPEINFO_OFF_SIZE + 4) as usize]
+        .copy_from_slice(&(RESULT_PAYLOAD_BYTES as u32).to_le_bytes());
+
+    let flags: u32 = TYPEINFO_FLAG_HAS_WEAK_REFS;
+    bytes[TYPEINFO_OFF_FLAGS as usize..(TYPEINFO_OFF_FLAGS + 4) as usize]
+        .copy_from_slice(&flags.to_le_bytes());
+    desc.define(bytes.into_boxed_slice());
+
+    if let Some(dtor) = destroy_fn {
+        let dtor_ref = module.declare_func_in_data(dtor, &mut desc);
+        desc.write_function_addr(TYPEINFO_OFF_DESTROY_FN, dtor_ref);
+    }
+    let trace_ref = module.declare_func_in_data(trace_fn, &mut desc);
+    desc.write_function_addr(TYPEINFO_OFF_TRACE_FN, trace_ref);
+    let weak_ref = module.declare_func_in_data(runtime.weak_clear_self, &mut desc);
+    desc.write_function_addr(TYPEINFO_OFF_WEAK_FN, weak_ref);
+
+    module
+        .define_data(data_id, &desc)
+        .map_err(|e| {
+            CodegenError::cranelift(format!("define typeinfo `{symbol}`: {e}"), Span::new(0, 0))
         })?;
     Ok(data_id)
 }
@@ -1007,6 +1258,7 @@ fn typeinfo_data_for_refcounted_payload(
         Type::String => Some(runtime.string_typeinfo),
         Type::Struct(def_id) => runtime.struct_typeinfos.get(def_id).copied(),
         Type::List(inner_inner) => runtime.list_typeinfos.get(&(**inner_inner)).copied(),
+        Type::Result(_, _) => runtime.result_typeinfos.get(ty).copied(),
         Type::Weak(_, _) => Some(runtime.weak_box_typeinfo),
         Type::Option(inner) => typeinfo_data_for_refcounted_payload(inner, runtime),
         _ => None,
@@ -1081,6 +1333,72 @@ fn collect_list_element_types(ir: &IrFile) -> Vec<Type> {
                 if seen.insert(elem.clone()) {
                     order.push(elem);
                 }
+            }
+            Type::Result(ok, err) => {
+                visit(ok, seen, order);
+                visit(err, seen, order);
+            }
+            Type::Option(inner) | Type::Weak(inner, _) => visit(inner, seen, order),
+            Type::Function { params, ret, .. } => {
+                for param in params {
+                    visit(param, seen, order);
+                }
+                visit(ret, seen, order);
+            }
+            _ => {}
+        }
+    }
+
+    for agent in &ir.agents {
+        for param in &agent.params {
+            visit(&param.ty, &mut seen, &mut order);
+        }
+        visit(&agent.return_ty, &mut seen, &mut order);
+        visit_block_types(&agent.body, &mut seen, &mut order, &visit);
+    }
+    for ty in &ir.types {
+        for field in &ty.fields {
+            visit(&field.ty, &mut seen, &mut order);
+        }
+    }
+    for tool in &ir.tools {
+        for param in &tool.params {
+            visit(&param.ty, &mut seen, &mut order);
+        }
+        visit(&tool.return_ty, &mut seen, &mut order);
+    }
+    for prompt in &ir.prompts {
+        for param in &prompt.params {
+            visit(&param.ty, &mut seen, &mut order);
+        }
+        visit(&prompt.return_ty, &mut seen, &mut order);
+    }
+
+    order
+}
+
+fn collect_result_types(ir: &IrFile) -> Vec<Type> {
+    use std::collections::BTreeSet;
+    let mut seen: BTreeSet<Type> = BTreeSet::new();
+    let mut order: Vec<Type> = Vec::new();
+
+    fn visit(ty: &Type, seen: &mut BTreeSet<Type>, order: &mut Vec<Type>) {
+        match ty {
+            Type::Result(ok, err) => {
+                visit(ok, seen, order);
+                visit(err, seen, order);
+                if seen.insert(ty.clone()) {
+                    order.push(ty.clone());
+                }
+            }
+            Type::List(inner) | Type::Option(inner) | Type::Weak(inner, _) => {
+                visit(inner, seen, order);
+            }
+            Type::Function { params, ret, .. } => {
+                for param in params {
+                    visit(param, seen, order);
+                }
+                visit(ret, seen, order);
             }
             _ => {}
         }
@@ -1240,10 +1558,24 @@ fn emit_release(
 /// (12f), `List` (12g) — both will return true here.
 fn is_refcounted_type(ty: &Type) -> bool {
     match ty {
-        Type::String | Type::Struct(_) | Type::List(_) | Type::Weak(_, _) => true,
+        Type::String | Type::Struct(_) | Type::List(_) | Type::Weak(_, _) | Type::Result(_, _) => true,
         Type::Option(inner) => is_refcounted_type(inner),
         _ => false,
     }
+}
+
+fn is_native_value_type(ty: &Type) -> bool {
+    match ty {
+        Type::Int | Type::Bool | Type::Float | Type::String => true,
+        Type::Struct(_) | Type::List(_) | Type::Weak(_, _) => true,
+        Type::Option(inner) => is_refcounted_type(inner) && is_native_value_type(inner),
+        Type::Result(ok, err) => is_native_value_type(ok) && is_native_value_type(err),
+        Type::Nothing | Type::Function { .. } | Type::Unknown => false,
+    }
+}
+
+fn is_native_result_type(ty: &Type) -> bool {
+    matches!(ty, Type::Result(ok, err) if is_native_value_type(ok) && is_native_value_type(err))
 }
 
 // ---- runtime helper symbols ----
@@ -1351,6 +1683,7 @@ pub const PROMPT_CALL_STRING_SYMBOL: &str = "corvid_prompt_call_string";
 // calls to preserve startup benchmark numbers.
 pub const RUNTIME_INIT_SYMBOL: &str = "corvid_runtime_init";
 pub const RUNTIME_SHUTDOWN_SYMBOL: &str = "corvid_runtime_shutdown";
+pub const SLEEP_MS_SYMBOL: &str = "corvid_sleep_ms";
 
 /// Per-struct payload uses fixed 8-byte field slots for simple offset
 /// math. Tighter packing is a later optimization.
@@ -1412,6 +1745,7 @@ pub struct RuntimeFuncs {
     pub tool_call_sync_int: FuncId,
     pub runtime_init: FuncId,
     pub runtime_shutdown: FuncId,
+    pub sleep_ms: FuncId,
     // Scalar->String helpers for prompt-template interpolation.
     pub string_from_int: FuncId,
     pub string_from_bool: FuncId,
@@ -1451,6 +1785,13 @@ pub struct RuntimeFuncs {
     /// IR mentions before agent bodies are lowered — so expression-
     /// level list literals just look up by element type.
     pub list_typeinfos: HashMap<Type, cranelift_module::DataId>,
+    /// Per-concrete-result-type destructors for wrappers whose active
+    /// branch may hold a refcounted payload.
+    pub result_destructors: HashMap<Type, FuncId>,
+    /// Per-concrete-result-type trace functions.
+    pub result_traces: HashMap<Type, FuncId>,
+    /// Per-concrete-result-type typeinfo data symbols.
+    pub result_typeinfos: HashMap<Type, cranelift_module::DataId>,
     /// Owned copy of the IR's struct type metadata, keyed by `DefId`.
     /// Cloned into `RuntimeFuncs` in `lower_file` so the per-agent
     /// lowering functions can resolve struct layouts (for field
@@ -1664,7 +2005,9 @@ pub fn lower_file(
     //   3. Struct typeinfo blocks (new): .rodata record referenced
     //      from the allocation header. Relocations point at the
     //      destructor + trace fns emitted above.
-    //   4. List typeinfo blocks (new): one per concrete List<T> type
+    //   4. Result destructors / traces / typeinfos: one per concrete
+    //      Result<T, E> type mentioned in the IR.
+    //   5. List typeinfo blocks (new): one per concrete List<T> type
     //      walked out of the IR. Element-types emit first so outer
     //      list typeinfos can reference them via elem_typeinfo.
     //
@@ -1693,11 +2036,34 @@ pub fn lower_file(
         runtime.struct_typeinfos.insert(ty.id, typeinfo_id);
     }
 
+    // Results: fixed-size tagged wrappers. Each wrapper stores
+    // `[tag: i64 | payload-slot: 8B]`. The concrete per-type
+    // destructor/trace decides whether the active branch payload
+    // needs refcount release/marking.
+    for result_ty in collect_result_types(ir) {
+        let (ok_ty, err_ty) = match &result_ty {
+            Type::Result(ok, err) => ((**ok).clone(), (**err).clone()),
+            _ => continue,
+        };
+        let has_refcounted_branch = is_refcounted_type(&ok_ty) || is_refcounted_type(&err_ty);
+        let destroy_id = if has_refcounted_branch {
+            let id = define_result_destructor(module, &result_ty, &ok_ty, &err_ty, &runtime)?;
+            runtime.result_destructors.insert(result_ty.clone(), id);
+            Some(id)
+        } else {
+            None
+        };
+        let trace_id = define_result_trace(module, &result_ty, &ok_ty, &err_ty, &runtime)?;
+        runtime.result_traces.insert(result_ty.clone(), trace_id);
+        let typeinfo_id = emit_result_typeinfo(module, &result_ty, destroy_id, trace_id, &runtime)?;
+        runtime.result_typeinfos.insert(result_ty, typeinfo_id);
+    }
+
     // Lists: collect every concrete element type the IR mentions, in
     // dependency order (inner before outer), then emit one typeinfo
     // per concrete list type. For refcounted element types the
     // elem_typeinfo slot gets a relocation to the element's typeinfo
-    // (String built-in, struct, or nested list).
+    // (String built-in, struct, nested result, or nested list).
     let list_elem_types = collect_list_element_types(ir);
     for elem_ty in list_elem_types {
         let elem_typeinfo_data_id = typeinfo_data_for_refcounted_payload(&elem_ty, &runtime);
@@ -2245,6 +2611,7 @@ fn cl_type_for(ty: &Type, span: Span) -> Result<clir::Type, CodegenError> {
         Type::List(_) => Ok(I64),
         // Weak values are pointer-sized heap-managed slot boxes.
         Type::Weak(_, _) => Ok(I64),
+        Type::Result(_, _) if is_native_result_type(ty) => Ok(I64),
         Type::Option(inner) if is_refcounted_type(inner) => Ok(I64),
         Type::Nothing => Err(CodegenError::not_supported(
             "`Nothing` — use a bare `return` instead",
@@ -2525,6 +2892,335 @@ fn lower_try_propagate_option(
     builder.switch_to_block(merge_block);
     builder.seal_block(merge_block);
     Ok(result)
+}
+
+fn lower_try_propagate_result(
+    builder: &mut FunctionBuilder,
+    expr: &IrExpr,
+    inner: &IrExpr,
+    current_return_ty: &Type,
+    env: &HashMap<LocalId, (Variable, clir::Type)>,
+    scope_stack: &Vec<Vec<(LocalId, Variable)>>,
+    func_ids_by_def: &HashMap<DefId, FuncId>,
+    module: &mut ObjectModule,
+    runtime: &RuntimeFuncs,
+) -> Result<ClValue, CodegenError> {
+    let (ok_ty, err_ty) = match &inner.ty {
+        Type::Result(ok, err) if is_native_result_type(&inner.ty) => (&**ok, &**err),
+        Type::Result(_, _) => {
+            return Err(CodegenError::not_supported(
+                "postfix `?` on `Result<T, E>` â€” this concrete shape is outside the current native subset",
+                expr.span,
+            ))
+        }
+        _ => {
+            return Err(CodegenError::cranelift(
+                format!(
+                    "postfix `?` saw non-Result inner type `{}` â€” typecheck should have caught this",
+                    inner.ty.display_name()
+                ),
+                expr.span,
+            ))
+        }
+    };
+
+    if current_return_ty != &inner.ty {
+        if let Type::Result(_, outer_err) = current_return_ty {
+            if is_native_result_type(current_return_ty) && &**outer_err == err_ty {
+                let result_ptr = lower_expr(
+                    builder,
+                    inner,
+                    current_return_ty,
+                    env,
+                    scope_stack,
+                    func_ids_by_def,
+                    module,
+                    runtime,
+                )?;
+                let tag = builder.ins().load(
+                    I64,
+                    cranelift_codegen::ir::MemFlags::trusted(),
+                    result_ptr,
+                    RESULT_TAG_OFFSET,
+                );
+                let ok_cl_ty = cl_type_for(ok_ty, expr.span)?;
+                let ok_block = builder.create_block();
+                let err_block = builder.create_block();
+                let merge_block = builder.create_block();
+                let unwrapped = builder.append_block_param(merge_block, ok_cl_ty);
+                let is_ok = builder.ins().icmp_imm(IntCC::Equal, tag, RESULT_TAG_OK);
+                builder.ins().brif(is_ok, ok_block, &[], err_block, &[]);
+
+                builder.switch_to_block(err_block);
+                builder.seal_block(err_block);
+                let err_cl_ty = cl_type_for(err_ty, expr.span)?;
+                let err_payload = builder.ins().load(
+                    err_cl_ty,
+                    cranelift_codegen::ir::MemFlags::trusted(),
+                    result_ptr,
+                    RESULT_PAYLOAD_OFFSET,
+                );
+                if is_refcounted_type(err_ty) {
+                    emit_retain(builder, module, runtime, err_payload);
+                }
+                let outer_err_result = emit_result_wrapper_value(
+                    builder,
+                    module,
+                    runtime,
+                    current_return_ty,
+                    err_payload,
+                    err_ty,
+                    RESULT_TAG_ERR,
+                    expr.span,
+                )?;
+                emit_release(builder, module, runtime, result_ptr);
+                emit_function_return(builder, outer_err_result, scope_stack, module, runtime);
+
+                builder.switch_to_block(ok_block);
+                builder.seal_block(ok_block);
+                let payload = builder.ins().load(
+                    ok_cl_ty,
+                    cranelift_codegen::ir::MemFlags::trusted(),
+                    result_ptr,
+                    RESULT_PAYLOAD_OFFSET,
+                );
+                if is_refcounted_type(ok_ty) {
+                    emit_retain(builder, module, runtime, payload);
+                }
+                emit_release(builder, module, runtime, result_ptr);
+                builder.ins().jump(merge_block, &[payload.into()]);
+
+                builder.switch_to_block(merge_block);
+                builder.seal_block(merge_block);
+                return Ok(unwrapped);
+            }
+        }
+        return Err(CodegenError::not_supported(
+            "postfix `?` on `Result<T, E>` â€” the current native subset supports propagation only when the enclosing function returns the same concrete `Result<T, E>` shape",
+            expr.span,
+        ));
+    }
+
+    let result_ptr = lower_expr(
+        builder,
+        inner,
+        current_return_ty,
+        env,
+        scope_stack,
+        func_ids_by_def,
+        module,
+        runtime,
+    )?;
+    let tag = builder.ins().load(
+        I64,
+        cranelift_codegen::ir::MemFlags::trusted(),
+        result_ptr,
+        RESULT_TAG_OFFSET,
+    );
+    let ok_cl_ty = cl_type_for(ok_ty, expr.span)?;
+    let ok_block = builder.create_block();
+    let err_block = builder.create_block();
+    let merge_block = builder.create_block();
+    let unwrapped = builder.append_block_param(merge_block, ok_cl_ty);
+    let is_ok = builder.ins().icmp_imm(IntCC::Equal, tag, RESULT_TAG_OK);
+    builder.ins().brif(is_ok, ok_block, &[], err_block, &[]);
+
+    builder.switch_to_block(err_block);
+    builder.seal_block(err_block);
+    emit_function_return(builder, result_ptr, scope_stack, module, runtime);
+
+    builder.switch_to_block(ok_block);
+    builder.seal_block(ok_block);
+    let payload = builder.ins().load(
+        ok_cl_ty,
+        cranelift_codegen::ir::MemFlags::trusted(),
+        result_ptr,
+        RESULT_PAYLOAD_OFFSET,
+    );
+    if is_refcounted_type(ok_ty) {
+        emit_retain(builder, module, runtime, payload);
+    }
+    emit_release(builder, module, runtime, result_ptr);
+    builder.ins().jump(merge_block, &[payload.into()]);
+
+    builder.switch_to_block(merge_block);
+    builder.seal_block(merge_block);
+    Ok(unwrapped)
+}
+
+fn emit_retry_delay_ms(
+    builder: &mut FunctionBuilder,
+    retry_index: ClValue,
+    backoff: Backoff,
+) -> ClValue {
+    let cap = builder.ins().iconst(I64, i64::MAX);
+    match backoff {
+        Backoff::Linear(base_ms) => {
+            if base_ms == 0 {
+                return builder.ins().iconst(I64, 0);
+            }
+            let base = (base_ms.min(i64::MAX as u64)) as i64;
+            let ordinal = builder.ins().iadd_imm(retry_index, 1);
+            let max_multiplier = i64::MAX / base;
+            let overflow =
+                builder
+                    .ins()
+                    .icmp_imm(IntCC::SignedGreaterThan, ordinal, max_multiplier);
+            let raw = builder.ins().imul_imm(ordinal, base);
+            builder.ins().select(overflow, cap, raw)
+        }
+        Backoff::Exponential(base_ms) => {
+            if base_ms == 0 {
+                return builder.ins().iconst(I64, 0);
+            }
+            let base = (base_ms.min(i64::MAX as u64)) as i64;
+            let max_shift = ((i64::MAX / base) as u64).ilog2() as i64;
+            let overflow =
+                builder
+                    .ins()
+                    .icmp_imm(IntCC::SignedGreaterThan, retry_index, max_shift);
+            let base_val = builder.ins().iconst(I64, base);
+            let raw = builder.ins().ishl(base_val, retry_index);
+            builder.ins().select(overflow, cap, raw)
+        }
+    }
+}
+
+fn lower_try_retry_result(
+    builder: &mut FunctionBuilder,
+    expr: &IrExpr,
+    body: &IrExpr,
+    attempts: u64,
+    backoff: Backoff,
+    current_return_ty: &Type,
+    env: &HashMap<LocalId, (Variable, clir::Type)>,
+    scope_stack: &Vec<Vec<(LocalId, Variable)>>,
+    func_ids_by_def: &HashMap<DefId, FuncId>,
+    module: &mut ObjectModule,
+    runtime: &RuntimeFuncs,
+) -> Result<ClValue, CodegenError> {
+    if !is_native_result_type(&body.ty) {
+        return Err(CodegenError::not_supported(
+            "`try ... on error retry ...` in native code currently supports only the native one-word `Result<T, E>` subset",
+            expr.span,
+        ));
+    }
+    if expr.ty != body.ty {
+        return Err(CodegenError::cranelift(
+            format!(
+                "retry expression type `{}` did not match body type `{}` — typecheck should have caught this",
+                expr.ty.display_name(),
+                body.ty.display_name()
+            ),
+            expr.span,
+        ));
+    }
+
+    let total_attempts = attempts.max(1).min(i64::MAX as u64) as i64;
+    let total_val = builder.ins().iconst(I64, total_attempts);
+    let zero = builder.ins().iconst(I64, 0);
+
+    let attempt_block = builder.create_block();
+    let done_block = builder.create_block();
+    let result_cl_ty = cl_type_for(&expr.ty, expr.span)?;
+    let done_result = builder.append_block_param(done_block, result_cl_ty);
+    let attempt_retry_index = builder.append_block_param(attempt_block, I64);
+    let attempt_remaining = builder.append_block_param(attempt_block, I64);
+
+    builder.ins().jump(attempt_block, &[zero.into(), total_val.into()]);
+
+    builder.switch_to_block(attempt_block);
+    let retry_index_val = attempt_retry_index;
+    let remaining_val = attempt_remaining;
+    let result_ptr = lower_expr(
+        builder,
+        body,
+        current_return_ty,
+        env,
+        scope_stack,
+        func_ids_by_def,
+        module,
+        runtime,
+    )?;
+    let tag = builder.ins().load(
+        I64,
+        cranelift_codegen::ir::MemFlags::trusted(),
+        result_ptr,
+        RESULT_TAG_OFFSET,
+    );
+    let is_ok = builder.ins().icmp_imm(IntCC::Equal, tag, RESULT_TAG_OK);
+    let ok_block = builder.create_block();
+    let err_block = builder.create_block();
+    builder.ins().brif(is_ok, ok_block, &[], err_block, &[]);
+
+    builder.switch_to_block(ok_block);
+    builder.seal_block(ok_block);
+    builder.ins().jump(done_block, &[result_ptr.into()]);
+
+    builder.switch_to_block(err_block);
+    builder.seal_block(err_block);
+    let should_retry = builder.ins().icmp_imm(IntCC::SignedGreaterThan, remaining_val, 1);
+    let retry_block = builder.create_block();
+    let finish_err_block = builder.create_block();
+    builder.append_block_param(retry_block, result_cl_ty);
+    builder.append_block_param(retry_block, I64);
+    builder.append_block_param(retry_block, I64);
+    builder.append_block_param(finish_err_block, result_cl_ty);
+    builder.ins().brif(
+        should_retry,
+        retry_block,
+        &[result_ptr.into(), retry_index_val.into(), remaining_val.into()],
+        finish_err_block,
+        &[result_ptr.into()],
+    );
+
+    builder.switch_to_block(finish_err_block);
+    builder.seal_block(finish_err_block);
+    let final_result = builder.block_params(finish_err_block)[0];
+    builder.ins().jump(done_block, &[final_result.into()]);
+
+    builder.switch_to_block(retry_block);
+    builder.seal_block(retry_block);
+    let retry_result = builder.block_params(retry_block)[0];
+    let retry_index = builder.block_params(retry_block)[1];
+    let retry_remaining = builder.block_params(retry_block)[2];
+    emit_release(builder, module, runtime, retry_result);
+
+    let delay_val = emit_retry_delay_ms(builder, retry_index, backoff);
+    let zero_delay = builder.ins().iconst(I64, 0);
+    let has_delay = builder.ins().icmp(IntCC::SignedGreaterThan, delay_val, zero_delay);
+    let sleep_block = builder.create_block();
+    let no_sleep_block = builder.create_block();
+    let continue_block = builder.create_block();
+    builder.append_block_param(sleep_block, I64);
+    builder
+        .ins()
+        .brif(has_delay, sleep_block, &[delay_val.into()], no_sleep_block, &[]);
+
+    builder.switch_to_block(sleep_block);
+    builder.seal_block(sleep_block);
+    let sleep_delay = builder.block_params(sleep_block)[0];
+    let sleep_ref = module.declare_func_in_func(runtime.sleep_ms, builder.func);
+    builder.ins().call(sleep_ref, &[sleep_delay]);
+    builder.ins().jump(continue_block, &[]);
+
+    builder.switch_to_block(no_sleep_block);
+    builder.seal_block(no_sleep_block);
+    builder.ins().jump(continue_block, &[]);
+
+    builder.switch_to_block(continue_block);
+    builder.seal_block(continue_block);
+
+    let next_retry_index = builder.ins().iadd_imm(retry_index, 1);
+    let next_remaining = builder.ins().iadd_imm(retry_remaining, -1);
+    builder
+        .ins()
+        .jump(attempt_block, &[next_retry_index.into(), next_remaining.into()]);
+    builder.seal_block(attempt_block);
+
+    builder.switch_to_block(done_block);
+    builder.seal_block(done_block);
+    Ok(done_result)
 }
 
 fn lower_block(
@@ -3482,6 +4178,30 @@ fn lower_expr(
             }
             Ok(upgraded)
         }
+        IrExprKind::ResultOk { inner } if is_native_result_type(&expr.ty) => lower_result_constructor(
+            builder,
+            expr,
+            inner,
+            RESULT_TAG_OK,
+            current_return_ty,
+            env,
+            scope_stack,
+            func_ids_by_def,
+            module,
+            runtime,
+        ),
+        IrExprKind::ResultErr { inner } if is_native_result_type(&expr.ty) => lower_result_constructor(
+            builder,
+            expr,
+            inner,
+            RESULT_TAG_ERR,
+            current_return_ty,
+            env,
+            scope_stack,
+            func_ids_by_def,
+            module,
+            runtime,
+        ),
         // Result/Option construction and `?` / `try-retry` control
         // flow are handled end-to-end by the interpreter. Native
         // tagged-union layout, discriminant-based branching, and
@@ -3522,10 +4242,40 @@ fn lower_expr(
         IrExprKind::OptionNone => {
             Ok(builder.ins().iconst(I64, 0))
         }
-        IrExprKind::TryPropagate { inner } => lower_try_propagate_option(
+        IrExprKind::TryPropagate { inner } => match &inner.ty {
+            Type::Result(_, _) => lower_try_propagate_result(
+                builder,
+                expr,
+                inner,
+                current_return_ty,
+                env,
+                scope_stack,
+                func_ids_by_def,
+                module,
+                runtime,
+            ),
+            _ => lower_try_propagate_option(
+                builder,
+                expr,
+                inner,
+                current_return_ty,
+                env,
+                scope_stack,
+                func_ids_by_def,
+                module,
+                runtime,
+            ),
+        },
+        IrExprKind::TryRetry {
+            body,
+            attempts,
+            backoff,
+        } => lower_try_retry_result(
             builder,
             expr,
-            inner,
+            body,
+            *attempts,
+            *backoff,
             current_return_ty,
             env,
             scope_stack,
@@ -3533,12 +4283,6 @@ fn lower_expr(
             module,
             runtime,
         ),
-        IrExprKind::TryRetry { .. } => {
-            Err(CodegenError::not_supported(
-                "`try ... on error retry N times backoff ...` — native retry lowering is not implemented yet; use the interpreter tier until then",
-                expr.span,
-            ))
-        }
     }
 }
 
@@ -4195,6 +4939,107 @@ fn lower_struct_constructor(
         );
     }
     Ok(struct_ptr)
+}
+
+fn lower_result_constructor(
+    builder: &mut FunctionBuilder,
+    expr: &IrExpr,
+    inner: &IrExpr,
+    tag: i64,
+    current_return_ty: &Type,
+    env: &HashMap<LocalId, (Variable, clir::Type)>,
+    scope_stack: &Vec<Vec<(LocalId, Variable)>>,
+    func_ids_by_def: &HashMap<DefId, FuncId>,
+    module: &mut ObjectModule,
+    runtime: &RuntimeFuncs,
+) -> Result<ClValue, CodegenError> {
+    if !is_native_result_type(&expr.ty) {
+        return Err(CodegenError::not_supported(
+            "`Result<T, E>` construction outside the supported native subset â€” native lowering currently supports one-word payload shapes only",
+            expr.span,
+        ));
+    }
+
+    let payload_ty = match (&expr.ty, tag) {
+        (Type::Result(ok, _), RESULT_TAG_OK) => &**ok,
+        (Type::Result(_, err), RESULT_TAG_ERR) => &**err,
+        (Type::Result(_, _), _) => {
+            return Err(CodegenError::cranelift(
+                format!("invalid native Result tag {tag}"),
+                expr.span,
+            ))
+        }
+        _ => {
+            return Err(CodegenError::cranelift(
+                format!(
+                    "Result constructor expression has non-Result type `{}` â€” typecheck should have caught this",
+                    expr.ty.display_name()
+                ),
+                expr.span,
+            ))
+        }
+    };
+
+    let payload = lower_expr(
+        builder,
+        inner,
+        current_return_ty,
+        env,
+        scope_stack,
+        func_ids_by_def,
+        module,
+        runtime,
+    )?;
+    emit_result_wrapper_value(builder, module, runtime, &expr.ty, payload, payload_ty, tag, expr.span)
+}
+
+fn emit_result_wrapper_value(
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    runtime: &RuntimeFuncs,
+    result_ty: &Type,
+    payload: ClValue,
+    payload_ty: &Type,
+    tag: i64,
+    span: Span,
+) -> Result<ClValue, CodegenError> {
+    let result_ti_id = runtime
+        .result_typeinfos
+        .get(result_ty)
+        .copied()
+        .ok_or_else(|| {
+            CodegenError::cranelift(
+                format!(
+                    "no typeinfo pre-emitted for Result type `{}`",
+                    result_ty.display_name()
+                ),
+                span,
+            )
+        })?;
+    let size = builder.ins().iconst(I64, RESULT_PAYLOAD_BYTES);
+    let ti_gv = module.declare_data_in_func(result_ti_id, builder.func);
+    let ti_addr = builder.ins().symbol_value(I64, ti_gv);
+    let alloc_ref = module.declare_func_in_func(runtime.alloc_typed, builder.func);
+    let call = builder.ins().call(alloc_ref, &[size, ti_addr]);
+    let result_ptr = builder.inst_results(call)[0];
+    let tag_val = builder.ins().iconst(I64, tag);
+    builder.ins().store(
+        cranelift_codegen::ir::MemFlags::trusted(),
+        tag_val,
+        result_ptr,
+        RESULT_TAG_OFFSET,
+    );
+    let payload_cl_ty = cl_type_for(payload_ty, span)?;
+    builder.ins().store(
+        cranelift_codegen::ir::MemFlags::trusted(),
+        payload,
+        result_ptr,
+        RESULT_PAYLOAD_OFFSET,
+    );
+    // Keep `payload_cl_ty` used explicitly for the correctness check
+    // above: mismatched payload widths should fail before store.
+    let _ = payload_cl_ty;
+    Ok(result_ptr)
 }
 
 /// Lower a String literal into a static `.rodata` block and return the

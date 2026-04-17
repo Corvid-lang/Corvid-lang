@@ -84,17 +84,11 @@ pub fn link_binary(
         )));
     }
 
-    // corvid-runtime's build.rs compiles the C runtime
-    // (alloc.c, strings.c, etc.) into a separate `corvid_c_runtime`
-    // staticlib. cargo's auto-link-lib mechanism only flows through
-    // managed cargo builds; non-cargo linker invocations (here +
-    // ffi_bridge_smoke) must add the C-runtime lib path explicitly.
-    let c_runtime_lib = std::path::Path::new(corvid_runtime::c_runtime::C_RUNTIME_LIB_PATH);
-
     if compiler.is_like_msvc() {
         // MSVC: cl.exe acts as the link driver. The C runtime is
-        // already inside corvid_c_runtime.lib, so we just hand cl.exe the Cranelift
-        // .obj plus the runtime/tools staticlibs.
+        // already bundled into the runtime-bearing staticlib we link
+        // below, so we hand cl.exe only the Cranelift object plus
+        // that one runtime/tools library.
         cmd.arg(object_path)
             .arg(format!("/Fe:{}", output_path.display()));
         // Exactly ONE runtime-bearing staticlib: either the standalone
@@ -109,10 +103,6 @@ pub fn link_binary(
                 cmd.arg(lib);
             }
         }
-        // C runtime (`corvid_alloc`, `corvid_release`,
-        // `corvid_string_from_bytes`, etc.) is in a separate
-        // staticlib produced by corvid-runtime's build.rs.
-        cmd.arg(c_runtime_lib);
         cmd
             // `/link` separates cl.exe driver args from linker args.
             // Everything after this goes straight to link.exe.
@@ -137,8 +127,8 @@ pub fn link_binary(
             .arg("legacy_stdio_definitions.lib");
     } else {
         // GCC/Clang: cc object.o libcorvid_runtime.a <native libs> -o output
-        // The C runtime is inside corvid-runtime.a,
-        // so just hand the linker the .obj + the staticlibs.
+        // The runtime-bearing staticlib already bundles the C runtime,
+        // so just hand the linker the object + that one library.
         cmd.arg(object_path);
         // Exactly ONE runtime-bearing staticlib (see MSVC branch above
         // for the LNK2005 explanation — same constraint applies on
@@ -150,7 +140,6 @@ pub fn link_binary(
                 cmd.arg(lib);
             }
         }
-        cmd.arg(c_runtime_lib);
         cmd
             // System libs tokio + reqwest + rustls + Rust std need
             // on Linux / macOS. The set is near-identical; macOS

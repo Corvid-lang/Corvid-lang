@@ -1118,6 +1118,75 @@ agent main() -> Bool:
     return unwrap(true) != None
 "#;
 
+    const NATIVE_RESULT_STRING_SRC: &str = r#"
+agent fetch(flag: Bool) -> Result<String, String>:
+    if flag:
+        return Ok("hi")
+    return Err("no")
+
+agent main() -> Bool:
+    first = fetch(true)
+    second = fetch(false)
+    return true
+"#;
+
+    const NATIVE_RESULT_TRY_SRC: &str = r#"
+agent fetch(flag: Bool) -> Result<String, String>:
+    if flag:
+        return Ok("hi")
+    return Err("no")
+
+agent forward(flag: Bool) -> Result<String, String>:
+    value = fetch(flag)?
+    return Ok(value)
+
+agent main() -> Bool:
+    first = forward(true)
+    second = forward(false)
+    return true
+"#;
+
+    const NATIVE_RESULT_TRY_WIDEN_SRC: &str = r#"
+agent fetch(flag: Bool) -> Result<String, String>:
+    if flag:
+        return Ok("hi")
+    return Err("no")
+
+agent widen(flag: Bool) -> Result<Bool, String>:
+    value = fetch(flag)?
+    return Ok(true)
+
+agent main() -> Bool:
+    first = widen(true)
+    second = widen(false)
+    return true
+"#;
+
+    const NATIVE_RESULT_RETRY_SRC: &str = r#"
+agent fetch(flag: Bool) -> Result<String, String>:
+    if flag:
+        return Ok("hi")
+    return Err("no")
+
+agent retrying(flag: Bool) -> Result<String, String>:
+    return try fetch(flag) on error retry 3 times backoff linear 0
+
+agent main() -> Bool:
+    first = retrying(true)
+    second = retrying(false)
+    return true
+"#;
+
+    const NATIVE_STRING_RETRY_REJECTED_SRC: &str = r#"
+prompt lookup(id: String) -> String:
+    """
+    Lookup {id}
+    """
+
+agent load(id: String) -> String:
+    return try lookup(id) on error retry 3 times backoff exponential 40
+"#;
+
     #[test]
     fn native_ability_accepts_pure_computation() {
         let ir = compile_to_ir(NATIVE_ABLE_SRC).expect("compile");
@@ -1178,6 +1247,51 @@ agent main() -> Bool:
             native_ability(&ir).is_ok(),
             "nullable Option<String> `?` should now compile natively"
         );
+    }
+
+    #[test]
+    fn native_ability_accepts_native_result_subset() {
+        let ir = compile_to_ir(NATIVE_RESULT_STRING_SRC).expect("compile");
+        assert!(
+            native_ability(&ir).is_ok(),
+            "one-word Result<String, String> should now compile natively"
+        );
+    }
+
+    #[test]
+    fn native_ability_accepts_native_result_try_propagation() {
+        let ir = compile_to_ir(NATIVE_RESULT_TRY_SRC).expect("compile");
+        assert!(
+            native_ability(&ir).is_ok(),
+            "same-shape Result<String, String> `?` should now compile natively"
+        );
+    }
+
+    #[test]
+    fn native_ability_accepts_native_result_try_with_different_ok_type() {
+        let ir = compile_to_ir(NATIVE_RESULT_TRY_WIDEN_SRC).expect("compile");
+        assert!(
+            native_ability(&ir).is_ok(),
+            "Result<A, E> `?` inside Result<B, E> should now compile natively when the error type matches"
+        );
+    }
+
+    #[test]
+    fn native_ability_accepts_native_result_retry_subset() {
+        let ir = compile_to_ir(NATIVE_RESULT_RETRY_SRC).expect("compile");
+        assert!(
+            native_ability(&ir).is_ok(),
+            "retry over the native Result<T, E> subset should now compile natively"
+        );
+    }
+
+    #[test]
+    fn native_ability_rejects_retry_over_non_result_body() {
+        let ir = compile_to_ir(NATIVE_STRING_RETRY_REJECTED_SRC).expect("compile");
+        match native_ability(&ir) {
+            Err(NotNativeReason::TaggedUnionRetryNotNative) => {}
+            other => panic!("expected retry subset rejection, got {other:?}"),
+        }
     }
 
     /// Second compilation of the same source hits the cache: no
