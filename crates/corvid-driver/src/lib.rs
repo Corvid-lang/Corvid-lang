@@ -1267,6 +1267,68 @@ agent main() -> Bool:
     return probe() == "marker"
 "#;
 
+    const NATIVE_RESULT_STRUCT_SRC: &str = r#"
+type Boxed:
+    value: Int
+
+agent fetch(flag: Bool) -> Result<Boxed, String>:
+    if flag:
+        return Ok(Boxed(7))
+    return Err("no")
+
+agent main() -> Bool:
+    first = fetch(true)
+    second = fetch(false)
+    return true
+"#;
+
+    const NATIVE_RESULT_STRUCT_TRY_SRC: &str = r#"
+type Boxed:
+    value: Int
+
+agent fetch(flag: Bool) -> Result<Boxed, String>:
+    if flag:
+        return Ok(Boxed(7))
+    return Err("no")
+
+agent forward(flag: Bool) -> Result<Boxed, String>:
+    value = fetch(flag)?
+    return Ok(value)
+
+agent main() -> Bool:
+    first = forward(true)
+    second = forward(false)
+    return true
+"#;
+
+    const NATIVE_RESULT_LIST_INT_SRC: &str = r#"
+agent fetch(flag: Bool) -> Result<List<Int>, String>:
+    if flag:
+        return Ok([1, 2, 3])
+    return Err("no")
+
+agent main() -> Bool:
+    first = fetch(true)
+    second = fetch(false)
+    return true
+"#;
+
+    const NATIVE_RESULT_LIST_INT_TRY_SRC: &str = r#"
+agent fetch(flag: Bool) -> Result<List<Int>, String>:
+    if flag:
+        return Ok([1, 2, 3])
+    return Err("no")
+
+agent forward(flag: Bool) -> Result<List<Int>, String>:
+    value = fetch(flag)?
+    return Ok(value)
+
+agent main() -> Bool:
+    first = forward(true)
+    second = forward(false)
+    return true
+"#;
+
     const NATIVE_STRING_RETRY_REJECTED_SRC: &str = r#"
 prompt lookup(id: String) -> String:
     """
@@ -1426,6 +1488,42 @@ agent load(id: String) -> String:
         assert!(
             native_ability(&ir).is_ok(),
             "retry over Result<Option<Int>, String> should now compile natively"
+        );
+    }
+
+    #[test]
+    fn native_ability_accepts_native_result_with_struct_payload() {
+        let ir = compile_to_ir(NATIVE_RESULT_STRUCT_SRC).expect("compile");
+        assert!(
+            native_ability(&ir).is_ok(),
+            "Result<Struct, String> should now compile natively"
+        );
+    }
+
+    #[test]
+    fn native_ability_accepts_native_result_with_struct_try_propagation() {
+        let ir = compile_to_ir(NATIVE_RESULT_STRUCT_TRY_SRC).expect("compile");
+        assert!(
+            native_ability(&ir).is_ok(),
+            "Result<Struct, String> `?` should now compile natively"
+        );
+    }
+
+    #[test]
+    fn native_ability_accepts_native_result_with_list_payload() {
+        let ir = compile_to_ir(NATIVE_RESULT_LIST_INT_SRC).expect("compile");
+        assert!(
+            native_ability(&ir).is_ok(),
+            "Result<List<Int>, String> should now compile natively"
+        );
+    }
+
+    #[test]
+    fn native_ability_accepts_native_result_with_list_try_propagation() {
+        let ir = compile_to_ir(NATIVE_RESULT_LIST_INT_TRY_SRC).expect("compile");
+        assert!(
+            native_ability(&ir).is_ok(),
+            "Result<List<Int>, String> `?` should now compile natively"
         );
     }
 

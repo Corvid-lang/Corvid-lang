@@ -1568,6 +1568,23 @@ same-shape restriction just because it was easier to implement first. The right
 pattern is to prove the broader semantic rule once the representation and
 ownership model are already strong enough to carry it.
 
+### Structured native `Result` payloads can already ride the current subset
+
+The next honest widening question was whether native `Result<T, E>` really only
+handled leaf payloads, or whether the current subset already carried structured
+payloads and simply lacked proof. The answer is the latter. Corvid now has
+explicit native coverage for `Result<Boxed, String>` and
+`Result<List<Int>, String>`, including postfix `?`, without any new runtime or
+codegen machinery. The only thing blocking the list case was a frontend bug:
+`List` had dropped out of the resolver's built-in generic heads, so
+`Result<List<Int>, String>` died before native lowering ever ran. Fixing that
+was the right move because it exposed the real property of the system: the
+existing one-word native `Result<T, E>` subset already composes with structured
+heap-backed payloads that participate in the ownership model. The lesson is to
+prefer semantic proof over premature representation work. Before inventing a
+new layout, first ask whether the current representation already supports the
+broader case and simply lacks tests or a clean frontend path.
+
 ## Contributing / feedback
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). The rules of the road are: design chat before code, per-scope commits at every boundary, dev-log entry for every session, no shortcuts. The `learnings.md` file you're reading gets updated when each user-visible feature ships.

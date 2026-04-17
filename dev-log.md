@@ -3766,6 +3766,36 @@ Interpretation:
 - the next honest step remains richer structured `Result` payloads and retry
   policy semantics, not another round of arbitrary same-shape gates
 
+Day 50 â€” Structured native `Result` payloads already compose
+
+What shipped:
+
+- added explicit native-ability and parity coverage for `Result<Boxed, String>`
+  and `Result<List<Int>, String>`
+- proved native postfix `?` works on both structured payload shapes without
+  any new runtime or codegen machinery
+- fixed a real frontend regression that had been hiding the list case:
+  `List` was missing from the resolver's built-in generic heads, so
+  `Result<List<Int>, String>` failed before native lowering ever ran
+
+What the evidence says:
+
+- the current native one-word `Result<T, E>` subset is broader than the
+  earlier tests showed; it already carries structured ok-payloads that fit the
+  existing heap-backed ownership model
+- `Result<Struct, String>` and `Result<List<Int>, String>` are not special
+  encodings; they work because the payload representations already participate
+  in typeinfo, cleanup, and native `?` propagation correctly
+- once `List` resolves cleanly in the frontend, the list case needs no new
+  runtime path, which is the right outcome for a sound widening slice
+
+Interpretation:
+
+- the right widening rule remains "prove the larger semantic subset the current
+  representation already supports" rather than inventing new layouts early
+- from here, the next meaningful native work is richer `Result` / retry policy
+  semantics, not more ad hoc payload exceptions
+
 
 
 

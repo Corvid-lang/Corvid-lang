@@ -2272,6 +2272,38 @@ fn native_result_option_int_retry_retries_until_success() {
 }
 
 #[test]
+fn native_result_struct_round_trips_through_native_agents() {
+    assert_parity_bool_without_tools(
+        "type Boxed:\n    value: Int\n\nagent fetch(flag: Bool) -> Result<Boxed, String>:\n    if flag:\n        return Ok(Boxed(7))\n    return Err(\"no\")\n\nagent main() -> Bool:\n    first = fetch(true)\n    second = fetch(false)\n    return true\n",
+        true,
+    );
+}
+
+#[test]
+fn native_result_struct_try_propagates_ok_and_err() {
+    assert_parity_bool_without_tools(
+        "type Boxed:\n    value: Int\n\nagent fetch(flag: Bool) -> Result<Boxed, String>:\n    if flag:\n        return Ok(Boxed(7))\n    return Err(\"no\")\n\nagent forward(flag: Bool) -> Result<Boxed, String>:\n    value = fetch(flag)?\n    return Ok(value)\n\nagent main() -> Bool:\n    first = forward(true)\n    second = forward(false)\n    return true\n",
+        true,
+    );
+}
+
+#[test]
+fn native_result_list_int_round_trips_through_native_agents() {
+    assert_parity_bool_without_tools(
+        "agent fetch(flag: Bool) -> Result<List<Int>, String>:\n    if flag:\n        return Ok([1, 2, 3])\n    return Err(\"no\")\n\nagent main() -> Bool:\n    first = fetch(true)\n    second = fetch(false)\n    return true\n",
+        true,
+    );
+}
+
+#[test]
+fn native_result_list_int_try_propagates_ok_and_err() {
+    assert_parity_bool_without_tools(
+        "agent fetch(flag: Bool) -> Result<List<Int>, String>:\n    if flag:\n        return Ok([1, 2, 3])\n    return Err(\"no\")\n\nagent forward(flag: Bool) -> Result<List<Int>, String>:\n    value = fetch(flag)?\n    return Ok(value)\n\nagent main() -> Bool:\n    first = forward(true)\n    second = forward(false)\n    return true\n",
+        true,
+    );
+}
+
+#[test]
 fn native_result_retry_then_try_propagates_into_different_ok_type() {
     assert_parity_bool_with_mock_llm_queue(
         "prompt probe() -> String:\n    \"Probe\"\n\nagent fetch() -> Result<String, String>:\n    value = probe()\n    if value == \"ok\":\n        return Ok(value)\n    return Err(value)\n\nagent widen() -> Result<Bool, String>:\n    attempt = try fetch() on error retry 3 times backoff linear 0\n    value = attempt?\n    return Ok(value == \"ok\")\n\nagent main() -> Bool:\n    first = widen()\n    return true\n",

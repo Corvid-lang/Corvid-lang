@@ -547,6 +547,7 @@ impl<'a> Checker<'a> {
                 | BuiltIn::String
                 | BuiltIn::Bool
                 | BuiltIn::Nothing
+                | BuiltIn::List
                 | BuiltIn::Result
                 | BuiltIn::Option
                 | BuiltIn::Weak => {
