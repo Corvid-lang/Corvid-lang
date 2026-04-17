@@ -24,6 +24,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 extern long long corvid_alloc_count;
 extern long long corvid_release_count;
@@ -41,6 +42,7 @@ extern int corvid_gc_verify_mode;
 extern long long corvid_gc_verify_drift_count;
 extern long long corvid_gc_trigger_log_length(void);
 extern uint64_t corvid_stack_maps_entry_count(void);
+extern uint64_t corvid_bench_approval_wait_ns(void);
 extern uint64_t corvid_bench_prompt_wait_ns(void);
 extern uint64_t corvid_bench_tool_wait_ns(void);
 
@@ -52,8 +54,16 @@ static long long corvid_bench_gc_trigger_count_before = 0;
 static long long corvid_bench_safepoint_count_before = 0;
 static uint64_t corvid_bench_stack_map_entry_count_before = 0;
 static long long corvid_bench_verify_drift_count_before = 0;
+static uint64_t corvid_bench_approval_wait_ns_before = 0;
 static uint64_t corvid_bench_prompt_wait_ns_before = 0;
 static uint64_t corvid_bench_tool_wait_ns_before = 0;
+static double corvid_bench_trial_start_ms = 0.0;
+
+static double corvid_now_ms(void) {
+    struct timespec ts;
+    timespec_get(&ts, TIME_UTC);
+    return ((double)ts.tv_sec * 1000.0) + ((double)ts.tv_nsec / 1000000.0);
+}
 
 /* ---- exit-time leak + RC-op counters (registered via corvid_init) --- */
 
@@ -260,12 +270,18 @@ long long corvid_bench_next_trial(void) {
     corvid_bench_safepoint_count_before = corvid_safepoint_count;
     corvid_bench_stack_map_entry_count_before = corvid_stack_maps_entry_count();
     corvid_bench_verify_drift_count_before = corvid_gc_verify_drift_count;
+    corvid_bench_approval_wait_ns_before = corvid_bench_approval_wait_ns();
     corvid_bench_prompt_wait_ns_before = corvid_bench_prompt_wait_ns();
     corvid_bench_tool_wait_ns_before = corvid_bench_tool_wait_ns();
+    corvid_bench_trial_start_ms = corvid_now_ms();
     return trial_idx > 0 ? trial_idx : 0;
 }
 
 void corvid_bench_finish_trial(long long trial_idx) {
+    double trial_wall_ms = corvid_now_ms() - corvid_bench_trial_start_ms;
+    double approval_wait_ms =
+        (double)(corvid_bench_approval_wait_ns() - corvid_bench_approval_wait_ns_before)
+        / 1000000.0;
     double prompt_wait_ms =
         (double)(corvid_bench_prompt_wait_ns() - corvid_bench_prompt_wait_ns_before)
         / 1000000.0;
@@ -273,8 +289,9 @@ void corvid_bench_finish_trial(long long trial_idx) {
         (double)(corvid_bench_tool_wait_ns() - corvid_bench_tool_wait_ns_before)
         / 1000000.0;
     fprintf(stderr,
-            "CORVID_BENCH_TRIAL={\"trial_idx\":%lld,\"allocs\":%lld,\"releases\":%lld,\"retain_calls\":%lld,\"release_calls\":%lld,\"gc_trigger_count\":%lld,\"safepoint_count\":%lld,\"stack_map_entry_count\":%llu,\"verify_drift_count\":%lld,\"prompt_wait_actual_ms\":%.6f,\"tool_wait_actual_ms\":%.6f}\n",
+            "CORVID_BENCH_TRIAL={\"trial_idx\":%lld,\"trial_wall_ms\":%.6f,\"allocs\":%lld,\"releases\":%lld,\"retain_calls\":%lld,\"release_calls\":%lld,\"gc_trigger_count\":%lld,\"safepoint_count\":%lld,\"stack_map_entry_count\":%llu,\"verify_drift_count\":%lld,\"approval_wait_actual_ms\":%.6f,\"prompt_wait_actual_ms\":%.6f,\"tool_wait_actual_ms\":%.6f}\n",
             trial_idx,
+            trial_wall_ms,
             corvid_alloc_count - corvid_bench_allocs_before,
             corvid_release_count - corvid_bench_releases_before,
             corvid_retain_call_count - corvid_bench_retain_calls_before,
@@ -284,6 +301,7 @@ void corvid_bench_finish_trial(long long trial_idx) {
             (unsigned long long)(corvid_stack_maps_entry_count()
                                  - corvid_bench_stack_map_entry_count_before),
             corvid_gc_verify_drift_count - corvid_bench_verify_drift_count_before,
+            approval_wait_ms,
             prompt_wait_ms,
             tool_wait_ms);
     fflush(stderr);

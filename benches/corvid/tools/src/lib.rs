@@ -1,12 +1,13 @@
-use corvid_macros::tool;
+use corvid_runtime::abi::{CorvidString, IntoCorvidAbi};
 use serde_json::Value;
 use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
-type Queues = HashMap<String, VecDeque<String>>;
+type Queues = HashMap<String, VecDeque<CorvidString>>;
 type LatencyQueues = HashMap<String, VecDeque<u64>>;
+
 static BENCH_TOOL_WAIT_NS: AtomicU64 = AtomicU64::new(0);
 
 #[no_mangle]
@@ -25,12 +26,12 @@ fn parse_string_queues(var: &str) -> Queues {
                         Value::Array(values) => values
                             .into_iter()
                             .map(|v| match v {
-                                Value::String(s) => s,
-                                other => other.to_string(),
+                                Value::String(s) => s.into_corvid_abi(),
+                                other => other.to_string().into_corvid_abi(),
                             })
                             .collect(),
-                        Value::String(s) => VecDeque::from([s]),
-                        other => VecDeque::from([other.to_string()]),
+                        Value::String(s) => VecDeque::from([s.into_corvid_abi()]),
+                        other => VecDeque::from([other.to_string().into_corvid_abi()]),
                     };
                     (name, queue)
                 })
@@ -47,10 +48,7 @@ fn parse_latency_queues(var: &str) -> LatencyQueues {
             map.into_iter()
                 .map(|(name, value)| {
                     let queue = match value {
-                        Value::Array(values) => values
-                            .into_iter()
-                            .filter_map(|v| v.as_u64())
-                            .collect(),
+                        Value::Array(values) => values.into_iter().filter_map(|v| v.as_u64()).collect(),
                         other => other
                             .as_u64()
                             .map(|v| VecDeque::from([v]))
@@ -73,11 +71,7 @@ fn latencies() -> &'static Mutex<LatencyQueues> {
     LATENCIES.get_or_init(|| Mutex::new(parse_latency_queues("CORVID_BENCH_TOOL_LATENCIES_MS")))
 }
 
-fn profile_enabled() -> bool {
-    std::env::var("CORVID_PROFILE_EVENTS").ok().as_deref() == Some("1")
-}
-
-async fn maybe_sleep(tool: &str) {
+fn maybe_sleep_sync(tool: &str) {
     let latency = {
         let mut queues = latencies().lock().unwrap();
         queues
@@ -87,23 +81,13 @@ async fn maybe_sleep(tool: &str) {
     };
     if latency > 0 {
         let start = Instant::now();
-        tokio::time::sleep(Duration::from_millis(latency)).await;
+        std::thread::sleep(Duration::from_millis(latency));
         let actual_ms = start.elapsed().as_secs_f64() * 1000.0;
         BENCH_TOOL_WAIT_NS.fetch_add((actual_ms * 1_000_000.0) as u64, Ordering::Relaxed);
-        if profile_enabled() {
-            let event = serde_json::json!({
-                "kind": "wait",
-                "source_kind": "tool",
-                "name": tool,
-                "nominal_ms": latency,
-                "actual_ms": actual_ms,
-            });
-            eprintln!("CORVID_PROFILE_JSON={event}");
-        }
     }
 }
 
-fn next_response(tool: &str) -> String {
+fn next_response(tool: &str) -> CorvidString {
     let mut queues = responses().lock().unwrap();
     queues
         .get_mut(tool)
@@ -111,38 +95,45 @@ fn next_response(tool: &str) -> String {
         .unwrap_or_else(|| panic!("corvid_bench_tools: no queued response for `{tool}`"))
 }
 
-#[tool("lookup_customer_profile")]
-async fn lookup_customer_profile(_customer_id: String) -> String {
-    maybe_sleep("lookup_customer_profile").await;
+#[no_mangle]
+pub extern "C" fn __corvid_tool_lookup_customer_profile(customer_id: CorvidString) -> CorvidString {
+    let _ = customer_id;
+    maybe_sleep_sync("lookup_customer_profile");
     next_response("lookup_customer_profile")
 }
 
-#[tool("fetch_open_orders")]
-async fn fetch_open_orders(_customer_id: String) -> String {
-    maybe_sleep("fetch_open_orders").await;
+#[no_mangle]
+pub extern "C" fn __corvid_tool_fetch_open_orders(customer_id: CorvidString) -> CorvidString {
+    let _ = customer_id;
+    maybe_sleep_sync("fetch_open_orders");
     next_response("fetch_open_orders")
 }
 
-#[tool("fetch_shipment_status")]
-async fn fetch_shipment_status(_order_id: String, _attempt: i64) -> String {
-    maybe_sleep("fetch_shipment_status").await;
+#[no_mangle]
+pub extern "C" fn __corvid_tool_fetch_shipment_status(order_id: CorvidString, attempt: i64) -> CorvidString {
+    let _ = order_id;
+    let _ = attempt;
+    maybe_sleep_sync("fetch_shipment_status");
     next_response("fetch_shipment_status")
 }
 
-#[tool("issue_refund")]
-async fn issue_refund(_proposal: String) -> String {
-    maybe_sleep("issue_refund").await;
+#[no_mangle]
+pub extern "C" fn __corvid_tool_issue_refund(proposal: CorvidString) -> CorvidString {
+    let _ = proposal;
+    maybe_sleep_sync("issue_refund");
     next_response("issue_refund")
 }
 
-#[tool("lookup_customer_ticket_state")]
-async fn lookup_customer_ticket_state(_customer_id: String) -> String {
-    maybe_sleep("lookup_customer_ticket_state").await;
+#[no_mangle]
+pub extern "C" fn __corvid_tool_lookup_customer_ticket_state(customer_id: CorvidString) -> CorvidString {
+    let _ = customer_id;
+    maybe_sleep_sync("lookup_customer_ticket_state");
     next_response("lookup_customer_ticket_state")
 }
 
-#[tool("fetch_escalation_policy")]
-async fn fetch_escalation_policy(_priority: String) -> String {
-    maybe_sleep("fetch_escalation_policy").await;
+#[no_mangle]
+pub extern "C" fn __corvid_tool_fetch_escalation_policy(priority: CorvidString) -> CorvidString {
+    let _ = priority;
+    maybe_sleep_sync("fetch_escalation_policy");
     next_response("fetch_escalation_policy")
 }

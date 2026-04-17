@@ -9,6 +9,7 @@
 
 use crate::redact::RedactionSet;
 use serde::{Deserialize, Serialize};
+use std::io::BufWriter;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -83,7 +84,7 @@ pub struct Tracer {
 struct TracerInner {
     run_id: String,
     path: PathBuf,
-    file: Mutex<Option<std::fs::File>>,
+    file: Mutex<Option<BufWriter<std::fs::File>>>,
     redaction: RedactionSet,
 }
 
@@ -101,7 +102,8 @@ impl Tracer {
                 .append(true)
                 .open(&path)
         })()
-        .ok();
+        .ok()
+        .map(BufWriter::new);
         Self {
             inner: std::sync::Arc::new(TracerInner {
                 run_id,
@@ -162,9 +164,20 @@ impl Tracer {
         &self.inner.path
     }
 
+    pub fn is_enabled(&self) -> bool {
+        if let Ok(guard) = self.inner.file.lock() {
+            guard.is_some()
+        } else {
+            false
+        }
+    }
+
     /// Append an event. IO errors are swallowed. Args inside the event
     /// are passed through the redaction set before serialization.
     pub fn emit(&self, event: TraceEvent) {
+        if !self.is_enabled() {
+            return;
+        }
         let event = self.apply_redaction(event);
         let line = match serde_json::to_string(&event) {
             Ok(s) => s,
@@ -174,7 +187,6 @@ impl Tracer {
             if let Some(f) = guard.as_mut() {
                 use std::io::Write;
                 let _ = writeln!(f, "{line}");
-                let _ = f.flush();
             }
         }
     }
@@ -315,6 +327,7 @@ mod tests {
             tool: "double".into(),
             args: vec![json!(21)],
         });
+        drop(tracer);
 
         let path = dir.path().join("run-test.jsonl");
         let body = std::fs::read_to_string(&path).unwrap();

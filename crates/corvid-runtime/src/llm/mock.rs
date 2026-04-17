@@ -6,9 +6,10 @@
 
 use crate::errors::RuntimeError;
 use crate::llm::{LlmAdapter, LlmRequest, LlmResponse, TokenUsage};
+use crate::abi::{CorvidString, IntoCorvidAbi};
 use futures::future::BoxFuture;
 use std::collections::{HashMap, VecDeque};
-use std::sync::Mutex;
+use std::sync::{Mutex, OnceLock};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 
@@ -20,6 +21,87 @@ static BENCH_PROMPT_WAIT_NS: AtomicU64 = AtomicU64::new(0);
 
 pub fn bench_prompt_wait_ns() -> u64 {
     BENCH_PROMPT_WAIT_NS.load(Ordering::Relaxed)
+}
+
+fn sync_string_replies() -> &'static Mutex<HashMap<String, VecDeque<CorvidString>>> {
+    static REPLIES: OnceLock<Mutex<HashMap<String, VecDeque<CorvidString>>>> = OnceLock::new();
+    REPLIES.get_or_init(|| {
+        let replies = std::env::var("CORVID_TEST_MOCK_LLM_REPLIES")
+            .ok()
+            .and_then(|raw| serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(&raw).ok())
+            .map(|map| {
+                map.into_iter()
+                    .map(|(prompt, value)| {
+                        let queue = match value {
+                            serde_json::Value::Array(values) => values
+                                .into_iter()
+                                .map(|value| match value {
+                                    serde_json::Value::String(s) => s.into_corvid_abi(),
+                                    other => other.to_string().into_corvid_abi(),
+                                })
+                                .collect(),
+                            serde_json::Value::String(s) => VecDeque::from([s.into_corvid_abi()]),
+                            other => VecDeque::from([other.to_string().into_corvid_abi()]),
+                        };
+                        (prompt, queue)
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        Mutex::new(replies)
+    })
+}
+
+fn sync_latencies() -> &'static Mutex<HashMap<String, VecDeque<u64>>> {
+    static LATENCIES: OnceLock<Mutex<HashMap<String, VecDeque<u64>>>> = OnceLock::new();
+    LATENCIES.get_or_init(|| {
+        let latencies = std::env::var("CORVID_TEST_MOCK_LLM_LATENCY_MS")
+            .ok()
+            .and_then(|raw| serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(&raw).ok())
+            .map(|map| {
+                map.into_iter()
+                    .map(|(prompt, value)| {
+                        let queue = match value {
+                            serde_json::Value::Array(values) => values
+                                .into_iter()
+                                .filter_map(|v| v.as_u64())
+                                .collect(),
+                            other => other
+                                .as_u64()
+                                .map(|v| VecDeque::from([v]))
+                                .unwrap_or_default(),
+                        };
+                        (prompt, queue)
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        Mutex::new(latencies)
+    })
+}
+
+pub fn env_mock_string_reply_sync(prompt: &str) -> Option<CorvidString> {
+    let latency_ms = {
+        let mut latencies = sync_latencies().lock().unwrap();
+        latencies
+            .get_mut(prompt)
+            .and_then(|queue| queue.pop_front())
+            .unwrap_or(0)
+    };
+    if latency_ms > 0 {
+        let start = Instant::now();
+        std::thread::sleep(std::time::Duration::from_millis(latency_ms));
+        let actual_ms = start.elapsed().as_secs_f64() * 1000.0;
+        BENCH_PROMPT_WAIT_NS.fetch_add((actual_ms * 1_000_000.0) as u64, Ordering::Relaxed);
+        emit_wait_profile("prompt", prompt, latency_ms, actual_ms);
+    }
+    let value = {
+        let mut replies = sync_string_replies().lock().unwrap();
+        replies
+            .get_mut(prompt)
+            .and_then(|queue| queue.pop_front())
+    }?;
+    Some(value)
 }
 
 fn emit_wait_profile(kind: &str, name: &str, nominal_ms: u64, actual_ms: f64) {

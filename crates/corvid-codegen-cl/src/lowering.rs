@@ -2082,6 +2082,7 @@ fn emit_entry_main(
         builder.switch_to_block(bench_body_b);
         let trial_idx = builder.block_params(bench_body_b)[0];
         let entry_call = builder.ins().call(entry_ref, &decoded_args);
+        builder.ins().call(bench_finish_ref, &[trial_idx]);
         if let Some(result_val) = builder.inst_results(entry_call).first().copied() {
             emit_entry_result_print(
                 &mut builder,
@@ -2091,7 +2092,6 @@ fn emit_entry_main(
                 result_val,
             );
         }
-        builder.ins().call(bench_finish_ref, &[trial_idx]);
         builder.ins().jump(bench_check_b, &[]);
         builder.seal_block(bench_body_b);
         builder.seal_block(bench_check_b);

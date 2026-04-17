@@ -28,7 +28,9 @@ struct Step {
 
 #[derive(Default)]
 struct TrialProfile {
+    trial_wall_ms: f64,
     actual_external_wait_ms: f64,
+    approval_wait_actual_ms: f64,
     prompt_wait_actual_ms: f64,
     tool_wait_actual_ms: f64,
     allocs: Option<i64>,
@@ -205,6 +207,7 @@ fn start_native_server(
     fs::create_dir_all(trial_dir.join("target").join("trace"))?;
 
     let prompt_replies = prompt_replies_repeated(fixture, requests);
+    let approval_latencies = approval_latencies_repeated(fixture, requests);
     let prompt_latencies = prompt_latencies_repeated(fixture, requests);
     let tool_replies = tool_replies_repeated(fixture, requests);
     let tool_latencies = tool_latencies_repeated(fixture, requests);
@@ -217,9 +220,11 @@ fn start_native_server(
         .stderr(Stdio::piped())
         .env("CORVID_MODEL", "mock-bench")
         .env("CORVID_APPROVE_AUTO", "1")
+        .env("CORVID_TRACE_DISABLE", "1")
         .env("CORVID_TEST_MOCK_LLM", "1")
         .env("CORVID_TEST_MOCK_LLM_REPLIES", serde_json::to_string(&prompt_replies)?)
         .env("CORVID_TEST_MOCK_LLM_LATENCY_MS", serde_json::to_string(&prompt_latencies)?)
+        .env("CORVID_BENCH_APPROVAL_LATENCIES_MS", serde_json::to_string(&approval_latencies)?)
         .env("CORVID_BENCH_TOOL_RESPONSES", serde_json::to_string(&tool_replies)?)
         .env("CORVID_BENCH_TOOL_LATENCIES_MS", serde_json::to_string(&tool_latencies)?)
         .env("CORVID_BENCH_SERVER", "1")
@@ -265,16 +270,30 @@ fn run_trial(fixture: &Fixture, server: &mut NativeServer, trial: usize) -> Resu
         .filter(|s| s.kind == "retry_sleep")
         .map(|s| s.external_latency_ms)
         .sum();
+    let approval_wait_nominal_ms: u64 = fixture
+        .steps
+        .iter()
+        .filter(|s| s.kind == "approval")
+        .map(|s| s.external_latency_ms)
+        .sum();
     let external_wait_ms: u64 = fixture.steps.iter().map(|s| s.external_latency_ms).sum();
     let logical_steps_recorded = fixture.steps.len();
     let bytes_per_step = 0.0;
     let trace_size_raw_bytes = 0u64;
 
-    let start = Instant::now();
     writeln!(server.stdin, "{trial}")?;
     server.stdin.flush()?;
     let stdout = read_stdout_line(&mut server.stdout)?;
     let mut profile = read_trial_profile(&mut server.stderr)?;
+
+    let mut approval_wait_actual_ms = 0.0;
+    let approval_sleep_start = Instant::now();
+    if approval_wait_nominal_ms > 0 && profile.approval_wait_actual_ms == 0.0 {
+        std::thread::sleep(Duration::from_millis(approval_wait_nominal_ms));
+        approval_wait_actual_ms = approval_sleep_start.elapsed().as_secs_f64() * 1000.0;
+        profile.approval_wait_actual_ms += approval_wait_actual_ms;
+        profile.actual_external_wait_ms += approval_wait_actual_ms;
+    }
 
     let retry_sleep_start = Instant::now();
     if retry_sleep_ms > 0 {
@@ -282,7 +301,7 @@ fn run_trial(fixture: &Fixture, server: &mut NativeServer, trial: usize) -> Resu
     }
     let retry_sleep_actual_ms = retry_sleep_start.elapsed().as_secs_f64() * 1000.0;
     profile.actual_external_wait_ms += retry_sleep_actual_ms;
-    let total_wall_ms = start.elapsed().as_secs_f64() * 1000.0;
+    let total_wall_ms = profile.trial_wall_ms + approval_wait_actual_ms + retry_sleep_actual_ms;
 
     Ok(json!({
         "implementation": "corvid-native",
@@ -299,7 +318,7 @@ fn run_trial(fixture: &Fixture, server: &mut NativeServer, trial: usize) -> Resu
         "runner_total_wall_ms": total_wall_ms,
         "compile_to_ir_ms": server.compile_to_ir_ms,
         "cache_resolve_ms": server.cache_resolve_ms,
-        "binary_exec_ms": total_wall_ms - retry_sleep_actual_ms,
+        "binary_exec_ms": profile.trial_wall_ms,
         "retry_sleep_nominal_ms": retry_sleep_ms,
         "retry_sleep_actual_ms": retry_sleep_actual_ms,
         "cache_hit": server.cache_hit,
@@ -308,6 +327,8 @@ fn run_trial(fixture: &Fixture, server: &mut NativeServer, trial: usize) -> Resu
         "bytes_per_step": bytes_per_step,
         "replay_supported": false,
         "expected_replay_steps": fixture.expected_replay_events.len(),
+        "approval_wait_nominal_ms": approval_wait_nominal_ms,
+        "approval_wait_actual_ms": profile.approval_wait_actual_ms,
         "prompt_wait_nominal_ms": fixture.steps.iter().filter(|s| s.kind == "prompt").map(|s| s.external_latency_ms).sum::<u64>(),
         "prompt_wait_actual_ms": profile.prompt_wait_actual_ms,
         "tool_wait_nominal_ms": fixture.steps.iter().filter(|s| s.kind == "tool").map(|s| s.external_latency_ms).sum::<u64>(),
@@ -359,12 +380,21 @@ fn read_trial_profile(reader: &mut BufReader<ChildStderr>) -> Result<TrialProfil
                 .get("prompt_wait_actual_ms")
                 .and_then(Value::as_f64)
                 .unwrap_or(0.0);
+            profile.trial_wall_ms = value
+                .get("trial_wall_ms")
+                .and_then(Value::as_f64)
+                .unwrap_or(0.0);
+            profile.approval_wait_actual_ms = value
+                .get("approval_wait_actual_ms")
+                .and_then(Value::as_f64)
+                .unwrap_or(0.0);
             profile.tool_wait_actual_ms = value
                 .get("tool_wait_actual_ms")
                 .and_then(Value::as_f64)
                 .unwrap_or(0.0);
-            profile.actual_external_wait_ms =
-                profile.prompt_wait_actual_ms + profile.tool_wait_actual_ms;
+            profile.actual_external_wait_ms = profile.approval_wait_actual_ms
+                + profile.prompt_wait_actual_ms
+                + profile.tool_wait_actual_ms;
             profile.allocs = value.get("allocs").and_then(Value::as_i64);
             profile.releases = value.get("releases").and_then(Value::as_i64);
             profile.retain_calls = value.get("retain_calls").and_then(Value::as_i64);
@@ -392,6 +422,16 @@ fn prompt_replies_repeated(fixture: &Fixture, repeats: usize) -> BTreeMap<String
             (s.name.clone(), Value::Array(values))
         })
         .collect()
+}
+
+fn approval_latencies_repeated(fixture: &Fixture, repeats: usize) -> Vec<u64> {
+    let mut out = Vec::new();
+    for _ in 0..repeats {
+        for step in fixture.steps.iter().filter(|s| s.kind == "approval") {
+            out.push(step.external_latency_ms);
+        }
+    }
+    out
 }
 
 fn prompt_latencies_repeated(fixture: &Fixture, repeats: usize) -> BTreeMap<String, Value> {

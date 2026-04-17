@@ -41,10 +41,10 @@
 #![allow(unsafe_code)]
 
 use crate::abi::{CorvidString, REGISTERED_TOOL_COUNT};
-use crate::approvals::{ProgrammaticApprover, StdinApprover};
+use crate::approvals::{bench_approval_wait_ns, ProgrammaticApprover, StdinApprover};
 use crate::llm::anthropic::AnthropicAdapter;
 use crate::llm::gemini::GeminiAdapter;
-use crate::llm::mock::{bench_prompt_wait_ns, EnvVarMockAdapter};
+use crate::llm::mock::{bench_prompt_wait_ns, env_mock_string_reply_sync, EnvVarMockAdapter};
 use crate::llm::ollama::OllamaAdapter;
 use crate::llm::openai::OpenAiAdapter;
 use crate::llm::openai_compat::OpenAiCompatibleAdapter;
@@ -126,6 +126,11 @@ pub extern "C" fn corvid_runtime_probe() -> i64 {
 #[no_mangle]
 pub extern "C" fn corvid_bench_prompt_wait_ns() -> u64 {
     bench_prompt_wait_ns()
+}
+
+#[no_mangle]
+pub extern "C" fn corvid_bench_approval_wait_ns() -> u64 {
+    bench_approval_wait_ns()
 }
 
 /// Construct the tokio runtime + the Corvid `Runtime` and store them
@@ -437,6 +442,10 @@ fn format_instruction_float() -> &'static str {
     "Output only a single decimal number — no quotes, no explanation, no scientific notation prefix beyond what `f64::parse` accepts. Examples: 3.14, -0.5, 42.0."
 }
 
+fn using_env_mock_llm() -> bool {
+    std::env::var("CORVID_TEST_MOCK_LLM").ok().as_deref() == Some("1")
+}
+
 /// Build the system prompt sent to the LLM. Encodes the function
 /// signature + return-type instruction + (after retries) escalating
 /// reminders. `attempt` is 0-indexed; `last_failure` is `Some(text)`
@@ -477,10 +486,14 @@ fn call_llm_once(
     let runtime = state.corvid_runtime();
     let prompt_owned = prompt_name.to_string();
     let model_owned = model.to_string();
-    // Combine system prompt + user-side rendered prompt with two
-    // newlines. Adapters that have native system-prompt support could
-    // separate these later; for now the concat is universal.
-    let combined = format!("{system_prompt}\n\n{rendered}");
+    let combined = if using_env_mock_llm() {
+        rendered.to_string()
+    } else {
+        // Combine system prompt + user-side rendered prompt with two
+        // newlines. Adapters that have native system-prompt support could
+        // separate these later; for now the concat is universal.
+        format!("{system_prompt}\n\n{rendered}")
+    };
     let req = LlmRequest {
         prompt: prompt_owned,
         model: model_owned,
@@ -643,8 +656,15 @@ pub unsafe extern "C" fn corvid_prompt_call_string(
     model: CorvidString,
 ) -> CorvidString {
     use crate::abi::IntoCorvidAbi;
-    let state = bridge();
     let prompt_name = unsafe { read_corvid_string(prompt_name) };
+
+    if using_env_mock_llm() {
+        if let Some(text) = env_mock_string_reply_sync(&prompt_name) {
+            return text;
+        }
+    }
+
+    let state = bridge();
     let signature = unsafe { read_corvid_string(signature) };
     let rendered = unsafe { read_corvid_string(rendered) };
     let model = unsafe { read_corvid_string(model) };
@@ -653,9 +673,13 @@ pub unsafe extern "C" fn corvid_prompt_call_string(
     // IS the String. We still call once, and on adapter failure we
     // panic with a clear message — adapter errors are infrastructure
     // problems, not response-format problems.
-    let sys = format!(
-        "You are a function with signature `{signature}`. Return the appropriate string value as your full response — no quotes around the value, no explanation, no formatting markers."
-    );
+    let sys = if using_env_mock_llm() {
+        String::new()
+    } else {
+        format!(
+            "You are a function with signature `{signature}`. Return the appropriate string value as your full response — no quotes around the value, no explanation, no formatting markers."
+        )
+    };
     match call_llm_once(state, &prompt_name, &model, &rendered, &sys) {
         Ok(text) => text.into_corvid_abi(),
         Err(e) => panic!(
@@ -721,9 +745,13 @@ fn build_tokio_runtime() -> tokio::runtime::Runtime {
 }
 
 fn build_corvid_runtime() -> Runtime {
-    let trace_dir = trace_dir_for_current_process();
-    let tracer = Tracer::open(&trace_dir, fresh_run_id())
-        .with_redaction(RedactionSet::from_env());
+    let tracer = if std::env::var("CORVID_TRACE_DISABLE").ok().as_deref() == Some("1") {
+        Tracer::null()
+    } else {
+        let trace_dir = trace_dir_for_current_process();
+        Tracer::open(&trace_dir, fresh_run_id())
+            .with_redaction(RedactionSet::from_env())
+    };
 
     let mut b: RuntimeBuilder = Runtime::builder().tracer(tracer);
 

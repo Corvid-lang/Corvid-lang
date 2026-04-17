@@ -50,19 +50,23 @@ impl Runtime {
         name: &str,
         args: Vec<serde_json::Value>,
     ) -> Result<serde_json::Value, RuntimeError> {
-        self.tracer.emit(TraceEvent::ToolCall {
-            ts_ms: now_ms(),
-            run_id: self.tracer.run_id().to_string(),
-            tool: name.to_string(),
-            args: args.clone(),
-        });
+        if self.tracer.is_enabled() {
+            self.tracer.emit(TraceEvent::ToolCall {
+                ts_ms: now_ms(),
+                run_id: self.tracer.run_id().to_string(),
+                tool: name.to_string(),
+                args: args.clone(),
+            });
+        }
         let result = self.tools.call(name, args).await?;
-        self.tracer.emit(TraceEvent::ToolResult {
-            ts_ms: now_ms(),
-            run_id: self.tracer.run_id().to_string(),
-            tool: name.to_string(),
-            result: result.clone(),
-        });
+        if self.tracer.is_enabled() {
+            self.tracer.emit(TraceEvent::ToolResult {
+                ts_ms: now_ms(),
+                run_id: self.tracer.run_id().to_string(),
+                tool: name.to_string(),
+                result: result.clone(),
+            });
+        }
         Ok(result)
     }
 
@@ -71,25 +75,29 @@ impl Runtime {
         if req.model.is_empty() {
             req.model = self.default_model.clone();
         }
-        self.tracer.emit(TraceEvent::LlmCall {
-            ts_ms: now_ms(),
-            run_id: self.tracer.run_id().to_string(),
-            prompt: req.prompt.clone(),
-            model: if req.model.is_empty() {
-                None
-            } else {
-                Some(req.model.clone())
-            },
-            rendered: Some(req.rendered.clone()),
-            args: req.args.clone(),
-        });
+        if self.tracer.is_enabled() {
+            self.tracer.emit(TraceEvent::LlmCall {
+                ts_ms: now_ms(),
+                run_id: self.tracer.run_id().to_string(),
+                prompt: req.prompt.clone(),
+                model: if req.model.is_empty() {
+                    None
+                } else {
+                    Some(req.model.clone())
+                },
+                rendered: Some(req.rendered.clone()),
+                args: req.args.clone(),
+            });
+        }
         let resp = self.llms.call(&req).await?;
-        self.tracer.emit(TraceEvent::LlmResult {
-            ts_ms: now_ms(),
-            run_id: self.tracer.run_id().to_string(),
-            prompt: req.prompt.clone(),
-            result: resp.value.clone(),
-        });
+        if self.tracer.is_enabled() {
+            self.tracer.emit(TraceEvent::LlmResult {
+                ts_ms: now_ms(),
+                run_id: self.tracer.run_id().to_string(),
+                prompt: req.prompt.clone(),
+                result: resp.value.clone(),
+            });
+        }
         Ok(resp)
     }
 
@@ -100,29 +108,35 @@ impl Runtime {
         label: &str,
         args: Vec<serde_json::Value>,
     ) -> Result<(), RuntimeError> {
+        let trace_enabled = self.tracer.is_enabled();
+        let label_owned = label.to_string();
+        if trace_enabled {
+            self.tracer.emit(TraceEvent::ApprovalRequest {
+                ts_ms: now_ms(),
+                run_id: self.tracer.run_id().to_string(),
+                label: label_owned.clone(),
+                args: args.clone(),
+            });
+        }
         let req = ApprovalRequest {
-            label: label.to_string(),
-            args: args.clone(),
-        };
-        self.tracer.emit(TraceEvent::ApprovalRequest {
-            ts_ms: now_ms(),
-            run_id: self.tracer.run_id().to_string(),
-            label: label.to_string(),
+            label: label_owned.clone(),
             args,
-        });
+        };
         let decision = self.approver.approve(&req).await?;
         let approved = decision == ApprovalDecision::Approve;
-        self.tracer.emit(TraceEvent::ApprovalResponse {
-            ts_ms: now_ms(),
-            run_id: self.tracer.run_id().to_string(),
-            label: label.to_string(),
-            approved,
-        });
+        if trace_enabled {
+            self.tracer.emit(TraceEvent::ApprovalResponse {
+                ts_ms: now_ms(),
+                run_id: self.tracer.run_id().to_string(),
+                label: label_owned.clone(),
+                approved,
+            });
+        }
         if approved {
             Ok(())
         } else {
             Err(RuntimeError::ApprovalDenied {
-                action: label.to_string(),
+                action: label_owned,
             })
         }
     }
