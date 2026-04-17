@@ -48,10 +48,15 @@ Each measured trial must record:
 with:
 
 ```text
-orchestration_ms = wall_ms - external_wait_ms
+orchestration_ms = wall_ms - actual_external_wait_ms
 ```
 
-`external_wait_ms` is recorded per trial rather than assumed globally fixed.
+Each trial keeps both nominal and measured wait:
+
+- `external_wait_ms` = fixture-declared wait
+- `actual_external_wait_ms` = measured wait observed by the runner
+
+Publication uses the measured-wait subtraction so wake-up jitter stays in the external-wait bucket instead of being misattributed to orchestration work.
 
 ## Published statistics
 

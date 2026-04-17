@@ -81,13 +81,14 @@ async fn maybe_sleep(tool: &str) {
     if latency > 0 {
         let start = Instant::now();
         tokio::time::sleep(Duration::from_millis(latency)).await;
+        let actual_ms = start.elapsed().as_secs_f64() * 1000.0;
         if profile_enabled() {
             let event = serde_json::json!({
                 "kind": "wait",
                 "source_kind": "tool",
                 "name": tool,
                 "nominal_ms": latency,
-                "actual_ms": start.elapsed().as_secs_f64() * 1000.0,
+                "actual_ms": actual_ms,
             });
             eprintln!("CORVID_PROFILE_JSON={event}");
         }

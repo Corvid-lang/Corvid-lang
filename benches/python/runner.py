@@ -51,7 +51,7 @@ def run_trial(fixture: dict, trial: int) -> dict:
         "external_wait_ms": external_wait_ms,
         "actual_external_wait_ms": actual_external_wait_ms,
         "external_wait_bias_ms": actual_external_wait_ms - external_wait_ms,
-        "orchestration_overhead_ms": elapsed_ms - external_wait_ms,
+        "orchestration_overhead_ms": elapsed_ms - actual_external_wait_ms,
         "trace_size_raw_bytes": trace_bytes,
         "logical_steps_recorded": len(events),
         "bytes_per_step": trace_bytes / len(events) if events else 0.0,

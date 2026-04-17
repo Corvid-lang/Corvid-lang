@@ -174,11 +174,12 @@ impl LlmAdapter for EnvVarMockAdapter {
             if latency_ms > 0 {
                 let start = Instant::now();
                 tokio::time::sleep(std::time::Duration::from_millis(latency_ms)).await;
+                let actual_ms = start.elapsed().as_secs_f64() * 1000.0;
                 emit_wait_profile(
                     "prompt",
                     &prompt,
                     latency_ms,
-                    start.elapsed().as_secs_f64() * 1000.0,
+                    actual_ms,
                 );
             }
             Ok(LlmResponse {

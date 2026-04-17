@@ -295,7 +295,7 @@ fn run_trial(fixture: &Fixture, server: &mut NativeServer, trial: usize) -> Resu
         "external_wait_ms": external_wait_ms,
         "actual_external_wait_ms": profile.actual_external_wait_ms,
         "external_wait_bias_ms": profile.actual_external_wait_ms - external_wait_ms as f64,
-        "orchestration_overhead_ms": total_wall_ms - external_wait_ms as f64,
+        "orchestration_overhead_ms": total_wall_ms - profile.actual_external_wait_ms,
         "runner_total_wall_ms": total_wall_ms,
         "compile_to_ir_ms": server.compile_to_ir_ms,
         "cache_resolve_ms": server.cache_resolve_ms,

@@ -65,7 +65,7 @@ async function runTrial(fixture: Fixture, trial: number) {
     external_wait_ms: externalWaitMs,
     actual_external_wait_ms: actualExternalWaitMs,
     external_wait_bias_ms: actualExternalWaitMs - externalWaitMs,
-    orchestration_overhead_ms: elapsedMs - externalWaitMs,
+    orchestration_overhead_ms: elapsedMs - actualExternalWaitMs,
     trace_size_raw_bytes: traceBytes,
     logical_steps_recorded: events.length,
     bytes_per_step: events.length > 0 ? traceBytes / events.length : 0,

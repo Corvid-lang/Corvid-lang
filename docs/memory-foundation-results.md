@@ -76,10 +76,17 @@ Each measured trial is recorded as one JSONL line with:
 where:
 
 ```text
-orchestration_ms = wall_ms - external_wait_ms
+orchestration_ms = wall_ms - actual_external_wait_ms
 ```
 
-`external_wait_ms` is recorded per trial, not assumed globally constant. That matters because even mocked sleep calls have host-dependent wake-up jitter, and the subtraction must reflect the actual measured boundary wait for that trial.
+The trial record keeps both:
+
+- `external_wait_ms` = nominal wait requested by the fixture
+- `actual_external_wait_ms` = measured wait observed at runtime
+
+As of the harness correction that introduced persistent native execution and actual-wait subtraction, the published orchestration metric subtracts the **measured** wait, not the nominal wait. Prior published same-session ratios used nominal subtraction and remain archived as-is for reproducibility.
+
+That distinction matters because even mocked sleep calls have host-dependent wake-up jitter. Subtracting nominal wait charges overshoot or undershoot to orchestration cost; subtracting actual measured wait isolates the language/runtime work more faithfully.
 
 ### Published statistics
 
