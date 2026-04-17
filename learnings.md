@@ -1526,6 +1526,20 @@ lowering path was the right move. The lesson is the same as the earlier native
 representations and more on making every new representation participate in the
 existing ownership model without exceptions.
 
+### Compositional native tagged unions
+
+The next honest question after landing native `Result<T, E>`, wide scalar
+`Option<T>`, and native retry was whether those pieces actually compose or only
+work as isolated leaf features. Corvid now has explicit coverage proving that
+`Result<Option<Int>, String>` works natively through construction, postfix `?`,
+and deterministic retry without any new runtime machinery. That is an important
+signal: the current one-word tagged-union representation is not just "barely
+enough for the demo cases." It is compositional inside the subset it claims to
+support. The lesson is strategic as much as technical: once representation,
+typeinfo, ownership, and cleanup invariants are sound, widening support should
+first look for shapes that naturally compose out of those primitives before
+adding new special-case encodings.
+
 ## Contributing / feedback
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). The rules of the road are: design chat before code, per-scope commits at every boundary, dev-log entry for every session, no shortcuts. The `learnings.md` file you're reading gets updated when each user-visible feature ships.

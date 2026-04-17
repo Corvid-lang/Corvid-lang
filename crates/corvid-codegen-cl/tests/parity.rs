@@ -2222,3 +2222,35 @@ fn native_result_retry_returns_last_error_value_without_propagating() {
         "mock-1",
     );
 }
+
+#[test]
+fn native_result_option_int_round_trips_through_native_agents() {
+    assert_parity_bool_without_tools(
+        "agent fetch(flag: Bool) -> Result<Option<Int>, String>:\n    if flag:\n        return Ok(Some(7))\n    return Err(\"no\")\n\nagent main() -> Bool:\n    first = fetch(true)\n    second = fetch(false)\n    return true\n",
+        true,
+    );
+}
+
+#[test]
+fn native_result_option_int_try_propagates_ok_and_err() {
+    assert_parity_bool_without_tools(
+        "agent fetch(flag: Bool) -> Result<Option<Int>, String>:\n    if flag:\n        return Ok(Some(7))\n    return Err(\"no\")\n\nagent forward(flag: Bool) -> Result<Option<Int>, String>:\n    value = fetch(flag)?\n    return Ok(value)\n\nagent main() -> Bool:\n    first = forward(true)\n    second = forward(false)\n    return true\n",
+        true,
+    );
+}
+
+#[test]
+fn native_result_option_int_retry_retries_until_success() {
+    assert_parity_bool_with_mock_llm_queue(
+        "prompt probe() -> String:\n    \"Probe\"\n\nagent fetch() -> Result<Option<Int>, String>:\n    value = probe()\n    if value == \"ok\":\n        return Ok(Some(7))\n    return Err(value)\n\nagent main() -> Bool:\n    outcome = try fetch() on error retry 3 times backoff linear 0\n    return probe() == \"marker\"\n",
+        "probe",
+        vec![
+            serde_json::json!("bad"),
+            serde_json::json!("bad"),
+            serde_json::json!("ok"),
+            serde_json::json!("marker"),
+        ],
+        true,
+        "mock-1",
+    );
+}

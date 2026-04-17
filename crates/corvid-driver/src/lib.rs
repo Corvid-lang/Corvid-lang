@@ -1191,6 +1191,54 @@ agent main() -> Bool:
     return true
 "#;
 
+    const NATIVE_RESULT_OPTION_INT_SRC: &str = r#"
+agent fetch(flag: Bool) -> Result<Option<Int>, String>:
+    if flag:
+        return Ok(Some(7))
+    return Err("no")
+
+agent main() -> Bool:
+    first = fetch(true)
+    second = fetch(false)
+    return true
+"#;
+
+    const NATIVE_RESULT_OPTION_INT_TRY_SRC: &str = r#"
+agent fetch(flag: Bool) -> Result<Option<Int>, String>:
+    if flag:
+        return Ok(Some(7))
+    return Err("no")
+
+agent forward(flag: Bool) -> Result<Option<Int>, String>:
+    value = fetch(flag)?
+    return Ok(value)
+
+agent main() -> Bool:
+    first = forward(true)
+    second = forward(false)
+    return true
+"#;
+
+    const NATIVE_RESULT_OPTION_INT_RETRY_SRC: &str = r#"
+prompt probe() -> String:
+    """
+    Probe
+    """
+
+agent fetch() -> Result<Option<Int>, String>:
+    value = probe()
+    if value == "ok":
+        return Ok(Some(7))
+    return Err(value)
+
+agent retrying() -> Result<Option<Int>, String>:
+    return try fetch() on error retry 3 times backoff linear 0
+
+agent main() -> Bool:
+    first = retrying()
+    return probe() == "marker"
+"#;
+
     const NATIVE_STRING_RETRY_REJECTED_SRC: &str = r#"
 prompt lookup(id: String) -> String:
     """
@@ -1305,6 +1353,33 @@ agent load(id: String) -> String:
         assert!(
             native_ability(&ir).is_ok(),
             "retry over the native Result<T, E> subset should now compile natively"
+        );
+    }
+
+    #[test]
+    fn native_ability_accepts_native_result_with_wide_option_payload() {
+        let ir = compile_to_ir(NATIVE_RESULT_OPTION_INT_SRC).expect("compile");
+        assert!(
+            native_ability(&ir).is_ok(),
+            "Result<Option<Int>, String> should now compile natively"
+        );
+    }
+
+    #[test]
+    fn native_ability_accepts_native_result_with_wide_option_try_propagation() {
+        let ir = compile_to_ir(NATIVE_RESULT_OPTION_INT_TRY_SRC).expect("compile");
+        assert!(
+            native_ability(&ir).is_ok(),
+            "Result<Option<Int>, String> `?` should now compile natively"
+        );
+    }
+
+    #[test]
+    fn native_ability_accepts_native_result_with_wide_option_retry() {
+        let ir = compile_to_ir(NATIVE_RESULT_OPTION_INT_RETRY_SRC).expect("compile");
+        assert!(
+            native_ability(&ir).is_ok(),
+            "retry over Result<Option<Int>, String> should now compile natively"
         );
     }
 

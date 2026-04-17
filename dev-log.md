@@ -3668,6 +3668,34 @@ Interpretation:
   the next native capability slice, not a shortcut around representation or
   cleanup invariants
 
+Day 47 — Compositional native tagged-union subset
+
+What shipped:
+
+- locked in native support for nested one-word tagged-union shapes by adding
+  driver and parity coverage for `Result<Option<Int>, String>`
+- proved that the current native subset composes through:
+  - construction
+  - postfix `?`
+  - deterministic retry
+
+What the evidence says:
+
+- the wide scalar `Option<T>` wrapper and one-word `Result<T, E>` wrapper were
+  already representation-compatible; no extra runtime machinery was needed for
+  the nested case
+- the important outcome was not "more clever codegen," it was proving that the
+  existing ownership / trace / typeinfo integration still holds when one native
+  tagged union becomes the payload of another
+
+Interpretation:
+
+- Corvid's native tagged-union subset is now explicitly compositional for the
+  current one-word shapes, not just a flat set of unrelated leaf cases
+- the next widening step should keep following that rule: extend the supported
+  subset where the current representation composes cleanly, not by adding ad hoc
+  escape hatches around ownership or retry semantics
+
 
 
 
