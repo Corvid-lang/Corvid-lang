@@ -107,7 +107,7 @@ pub struct EnvVarMockAdapter {
     name: String,
     fallback: serde_json::Value,
     replies: Mutex<HashMap<String, VecDeque<serde_json::Value>>>,
-    latencies_ms: HashMap<String, u64>,
+    latencies_ms: Mutex<HashMap<String, VecDeque<u64>>>,
 }
 
 impl EnvVarMockAdapter {
@@ -130,14 +130,31 @@ impl EnvVarMockAdapter {
             .unwrap_or_default();
         let latencies_ms = std::env::var("CORVID_TEST_MOCK_LLM_LATENCY_MS")
             .ok()
-            .and_then(|raw| serde_json::from_str::<HashMap<String, u64>>(&raw).ok())
+            .and_then(|raw| serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(&raw).ok())
+            .map(|map| {
+                map.into_iter()
+                    .map(|(prompt, value)| {
+                        let queue = match value {
+                            serde_json::Value::Array(values) => values
+                                .into_iter()
+                                .filter_map(|v| v.as_u64())
+                                .collect(),
+                            other => other
+                                .as_u64()
+                                .map(|v| VecDeque::from([v]))
+                                .unwrap_or_default(),
+                        };
+                        (prompt, queue)
+                    })
+                    .collect()
+            })
             .unwrap_or_default();
 
         Self {
             name: "env-mock-llm".into(),
             fallback: serde_json::Value::String(raw),
             replies: Mutex::new(replies),
-            latencies_ms,
+            latencies_ms: Mutex::new(latencies_ms),
         }
     }
 }
@@ -168,7 +185,13 @@ impl LlmAdapter for EnvVarMockAdapter {
                 .and_then(|queue| queue.pop_front())
                 .unwrap_or_else(|| self.fallback.clone())
         };
-        let latency_ms = self.latencies_ms.get(&prompt).copied().unwrap_or(0);
+        let latency_ms = {
+            let mut latencies = self.latencies_ms.lock().unwrap();
+            latencies
+                .get_mut(&prompt)
+                .and_then(|queue| queue.pop_front())
+                .unwrap_or(0)
+        };
 
         Box::pin(async move {
             if latency_ms > 0 {
