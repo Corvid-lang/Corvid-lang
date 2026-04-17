@@ -56,6 +56,7 @@ mod tests {
             }],
             return_ty: ty_named("Order"),
             effect: Effect::Safe,
+            effect_row: EffectRow::default(),
             span: sp(),
         };
 
@@ -76,6 +77,7 @@ mod tests {
             ],
             return_ty: ty_named("Receipt"),
             effect: Effect::Dangerous,
+            effect_row: EffectRow::default(),
             span: sp(),
         };
 
@@ -167,6 +169,8 @@ mod tests {
                 ],
                 span: sp(),
             },
+            effect_row: EffectRow::default(),
+            constraints: Vec::new(),
             span: sp(),
         };
 

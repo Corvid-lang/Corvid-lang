@@ -1,6 +1,6 @@
 //! Top-level declarations — what appears at the root of a `.cor` file.
 
-use crate::effect::Effect;
+use crate::effect::{Effect, EffectConstraint, EffectDecl, EffectRow};
 use crate::span::{Ident, Span};
 use crate::stmt::Block;
 use crate::ty::{Field, Param, TypeRef};
@@ -22,11 +22,9 @@ pub enum Decl {
     Prompt(PromptDecl),
     Agent(AgentDecl),
     /// `extend T:` block attaching methods to a user type.
-    /// Methods are ordinary Tool / Prompt / Agent decls whose first
-    /// parameter's type matches `T`. Dot-syntax at call sites
-    /// (`value.method(args)`) rewrites to the underlying call at
-    /// typecheck time, so no new IR variants are introduced.
     Extend(ExtendDecl),
+    /// `effect Name:` dimensional effect declaration.
+    Effect(EffectDecl),
 }
 
 impl Decl {
@@ -38,6 +36,7 @@ impl Decl {
             Decl::Prompt(d) => d.span,
             Decl::Agent(d) => d.span,
             Decl::Extend(d) => d.span,
+            Decl::Effect(d) => d.span,
         }
     }
 }
@@ -179,6 +178,9 @@ pub struct ToolDecl {
     pub params: Vec<Param>,
     pub return_ty: TypeRef,
     pub effect: Effect,
+    /// Dimensional effect row: `uses transfer_money, audit_log`.
+    #[serde(default)]
+    pub effect_row: EffectRow,
     pub span: Span,
 }
 
@@ -196,6 +198,9 @@ pub struct PromptDecl {
     pub params: Vec<Param>,
     pub return_ty: TypeRef,
     pub template: String,
+    /// Dimensional effect row: `uses llm_call, reads_context`.
+    #[serde(default)]
+    pub effect_row: EffectRow,
     pub span: Span,
 }
 
@@ -211,5 +216,12 @@ pub struct AgentDecl {
     pub params: Vec<Param>,
     pub return_ty: TypeRef,
     pub body: Block,
+    /// Declared effect row: `uses search_knowledge, transfer_money`.
+    /// If empty, the typechecker infers the effect row from the body.
+    #[serde(default)]
+    pub effect_row: EffectRow,
+    /// Constraints: `@budget($1.00)`, `@trust(autonomous)`, etc.
+    #[serde(default)]
+    pub constraints: Vec<EffectConstraint>,
     pub span: Span,
 }

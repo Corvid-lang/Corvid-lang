@@ -10,6 +10,7 @@
 #![allow(dead_code)]
 
 pub mod checker;
+pub mod effects;
 pub mod errors;
 pub mod repl;
 pub mod types;
@@ -17,6 +18,10 @@ pub mod types;
 pub use checker::{typecheck, Checked};
 pub use errors::{TypeError, TypeErrorKind};
 pub use repl::{CheckedTurn, ReplLocal, ReplSession, ReplTurnBuild, REPL_RESULT_NAME};
+pub use effects::{
+    analyze_effects, AgentEffectSummary, ComposedProfile, ConstraintViolation, EffectProfile,
+    EffectRegistry,
+};
 pub use types::Type;
 
 #[cfg(test)]

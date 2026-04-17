@@ -56,6 +56,7 @@ pub enum DeclKind {
     Tool,
     Prompt,
     Agent,
+    Effect,
 }
 
 /// An entry in the file-level symbol table.
@@ -88,8 +89,8 @@ impl SymbolTable {
         self.builtins.insert("String".into(), BuiltIn::String);
         self.builtins.insert("Bool".into(), BuiltIn::Bool);
         self.builtins.insert("Nothing".into(), BuiltIn::Nothing);
-        self.builtins.insert("Result".into(), BuiltIn::Result);
         self.builtins.insert("List".into(), BuiltIn::List);
+        self.builtins.insert("Result".into(), BuiltIn::Result);
         self.builtins.insert("Option".into(), BuiltIn::Option);
         self.builtins.insert("Weak".into(), BuiltIn::Weak);
         self.builtins.insert("Ok".into(), BuiltIn::Ok);

@@ -5,7 +5,7 @@
 //! without the production infrastructure.
 
 use corvid_ast::{
-    Decl, Field, Ident, Param, PromptDecl, Span, ToolDecl, TypeDecl, TypeRef,
+    Decl, EffectRow, Field, Ident, Param, PromptDecl, Span, ToolDecl, TypeDecl, TypeRef,
 };
 use corvid_runtime::{Runtime, RuntimeError, TraceEvent};
 use serde_json::Value as JsonValue;
@@ -129,6 +129,7 @@ pub fn build_import(mocks: &TraceMocks) -> TraceImportResult {
             params,
             return_ty,
             effect: corvid_ast::Effect::Safe,
+            effect_row: EffectRow::default(),
             span: sp,
         }));
 
@@ -174,6 +175,7 @@ pub fn build_import(mocks: &TraceMocks) -> TraceImportResult {
             params,
             return_ty,
             template: first.rendered.clone().unwrap_or_default(),
+            effect_row: EffectRow::default(),
             span: sp,
         }));
     }

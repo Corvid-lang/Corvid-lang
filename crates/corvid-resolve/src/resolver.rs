@@ -116,13 +116,7 @@ impl Resolver {
                 Decl::Tool(t) => (t.name.name.clone(), DeclKind::Tool, t.span),
                 Decl::Prompt(p) => (p.name.name.clone(), DeclKind::Prompt, p.span),
                 Decl::Agent(a) => (a.name.name.clone(), DeclKind::Agent, a.span),
-                Decl::Effect(_) => {
-                    // Effect declarations are not yet part of the
-                    // resolver's symbol namespace. They stay parseable
-                    // and serializable, but name resolution for effect
-                    // rows lands with the fuller effect-system work.
-                    continue;
-                }
+                Decl::Effect(e) => (e.name.name.clone(), DeclKind::Effect, e.span),
                 Decl::Extend(_) => {
                     // The parser accepts `extend T:`
                     // blocks; method registration into a per-type
@@ -269,7 +263,7 @@ impl Resolver {
                 Decl::Tool(t) => self.resolve_tool_decl(t),
                 Decl::Prompt(p) => self.resolve_prompt_decl(p),
                 Decl::Agent(a) => self.resolve_agent_decl(a),
-                Decl::Effect(_) => {}
+                Decl::Effect(e) => self.resolve_effect_decl(e),
                 Decl::Extend(ext) => {
                     // Resolve each method body
                     // the same way free agents/prompts/tools are
@@ -295,17 +289,49 @@ impl Resolver {
         }
     }
 
+    fn resolve_effect_decl(&mut self, _e: &corvid_ast::EffectDecl) {
+        // Dimension values are literals — no identifier resolution needed.
+        // Future: if dimension values can reference types or other effects,
+        // resolve those here.
+    }
+
+    fn resolve_effect_row(&mut self, row: &corvid_ast::EffectRow) {
+        for effect_ref in &row.effects {
+            match self.symbols.lookup(&effect_ref.name.name) {
+                Some(Binding::Decl(id)) => {
+                    let entry = self.symbols.get(id);
+                    if entry.kind != DeclKind::Effect {
+                        self.errors.push(ResolveError {
+                            kind: ResolveErrorKind::UndefinedName(
+                                effect_ref.name.name.clone(),
+                            ),
+                            span: effect_ref.span,
+                        });
+                    } else {
+                        self.bindings.insert(effect_ref.name.span, Binding::Decl(id));
+                    }
+                }
+                _ => {
+                    self.errors.push(ResolveError {
+                        kind: ResolveErrorKind::UndefinedName(
+                            effect_ref.name.name.clone(),
+                        ),
+                        span: effect_ref.span,
+                    });
+                }
+            }
+        }
+    }
+
     fn resolve_tool_decl(&mut self, t: &ToolDecl) {
         for p in &t.params {
             self.resolve_type_ref(&p.ty);
         }
         self.resolve_type_ref(&t.return_ty);
-        // Tools have no body. Nothing more to resolve.
+        self.resolve_effect_row(&t.effect_row);
     }
 
     fn resolve_prompt_decl(&mut self, p: &PromptDecl) {
-        // Resolve param and return types. The template is a plain string;
-        // interpolations are a later concern.
         self.push_scope();
         for param in &p.params {
             self.resolve_type_ref(&param.ty);
@@ -314,6 +340,7 @@ impl Resolver {
             self.bindings.insert(param.name.span, Binding::Local(id));
         }
         self.resolve_type_ref(&p.return_ty);
+        self.resolve_effect_row(&p.effect_row);
         self.pop_scope();
     }
 
@@ -326,6 +353,7 @@ impl Resolver {
             self.bindings.insert(param.name.span, Binding::Local(id));
         }
         self.resolve_type_ref(&a.return_ty);
+        self.resolve_effect_row(&a.effect_row);
         self.resolve_block(&a.body);
         self.pop_scope();
     }
