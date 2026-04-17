@@ -450,41 +450,62 @@ Pre-phase chat caught two limiting shortcuts in my brief and reshaped the phase 
 
 This phase is too large to ship atomically without splitting. Nine substantial deliverables; no single landing of the whole thing. Slice breakdown mirrors Phase 12's pattern — each slice ships, tests, commits, and updates the dev-log independently, and the phase is only "closed" when every slice is green.
 
-#### Slice 20a — Custom effects + effect rows (~3 weeks)
-- [ ] Parser: `effect Name` top-level declaration. Effect rows on tool + agent signatures (`fn foo() -> T uses reads_pii, cites`).
-- [ ] Resolver + typechecker: effect rows flow through the call graph. Body verified against declared effects (raising an effect not in the row = compile error). Per-effect approval policies declarable in `corvid.toml`.
-- [ ] Revisits the Day-4 `Safe | Dangerous` decision — additive, no breaking change to existing code.
+#### Slice 20a — Dimensional effects + composition algebra (~4 weeks)
 
-#### Slice 20b — Grounding + citation contracts (~2 weeks)
+Corvid's moat: effects carry typed dimensions (cost, trust, reversibility, data, latency, confidence) that compose independently through the call graph. No other language has this.
+
+- [x] AST: `effect Name:` declaration with typed `DimensionDecl`s. `EffectRow` (`uses` clauses) on tool/agent/prompt signatures. `EffectConstraint` annotations (`@budget`, `@trust`, `@reversible`). `DimensionValue` types (Bool, Name, Cost, Number). `CompositionRule` (Sum, Max, Min, Union, LeastReversible). Committed `66bb4d1`.
+- [x] Resolver: `DeclKind::Effect` in symbol table. Effect declarations registered in pass 1. Effect refs in `uses` clauses resolved and validated in pass 2. Committed `66bb4d1`.
+- [x] Composition algebra: `EffectRegistry` built from declarations. 6 built-in dimension schemas. `compose()` applies per-dimension rules. `check_constraints()` validates composed profiles against annotations. `ConstraintViolation` with dimensional error messages. Committed `66bb4d1`.
+- [x] Call-graph analyzer: `analyze_effects()` walks agent bodies, collects effects from tool/prompt/agent calls, produces per-agent composed dimensional profiles. Committed `66bb4d1`.
+- [ ] Parser: `effect Name:` block syntax. `uses` clause on declarations. `@budget($)` / `@trust()` / `@reversible` annotation syntax.
+- [ ] Typechecker integration: wire the analyzer into `typecheck()` so dimensional constraint violations produce compile errors alongside the existing `approve`-before-`dangerous` check.
+- [ ] Legacy bridge: `dangerous` keyword maps to a built-in `dangerous` effect with `trust: human_required, reversible: false`. Existing code compiles unchanged.
+- [ ] Revisits the Day-4 `Safe | Dangerous` decision — additive, no breaking change.
+
+#### Slice 20b — Grounding + citation as data dimension (~2 weeks)
+
+Grounding is a data-classification dimension, not a separate feature. `cites` is an effect with `data: grounded`.
+
 - [ ] `grounds_on ctx` annotation on prompts; template must reference `ctx` or raise `E0201`.
-- [ ] `cites ctx` effect; return type must be `Grounded<T>` or `E0202`; template must request citations or `E0203`.
-- [ ] `Grounded<T>` compiler-known stdlib type; unwrap via the `.unwrap_discarding_sources()` method (uses Phase 16 methods machinery).
-- [ ] `cites ctx strictly` for runtime verification failure (code compiles; runtime checks citations against retrieved context and raises if they don't match).
+- [ ] `cites ctx` as a declared effect with `data: grounded` dimension; return type must be `Grounded<T>` or `E0202`.
+- [ ] `Grounded<T>` compiler-known stdlib type; unwrap via `.unwrap_discarding_sources()`.
+- [ ] `cites ctx strictly` for runtime citation verification.
 
 #### Slice 20c — `eval ... assert ...` language syntax (~2 weeks)
 - [ ] Parser + typechecker + lowering for `eval name: body ... assert expr` declarations.
 - [ ] IR node `IrEval` alongside `IrAgent`.
 - [ ] Runner CLI is out of scope — ships in Phase 27. This slice is language only.
 
-#### Slice 20d — `@budget($)` cost annotations (~3 weeks)
-- [ ] `@budget($0.10) agent name():` annotation parsed + typechecked.
-- [ ] Compile-time upper-bound analysis over LLM + retrieval calls in the agent body. Each prompt declaration carries an estimated-cost bound; analysis sums over control-flow paths.
-- [ ] Refuses to compile (`E0250`) if worst-case cost > budget. Warns (`W0251`) when the analysis can't prove a bound (e.g., unbounded recursion).
+#### Slice 20d — Cost dimension + `@budget` compile-time analysis (~3 weeks)
+
+Cost is a dimension in the effect system, not a standalone annotation. `@budget($1.00)` is an `EffectConstraint` on the cost dimension.
+
+- [ ] Each tool/prompt carries `cost: $X.XX` in its effect declaration.
+- [ ] Compile-time worst-case cost analysis sums the cost dimension over control-flow paths using the composition algebra.
+- [ ] `E0250` if worst-case cost > budget. `W0251` when the analysis can't prove a bound.
 - [ ] Also ships the `@wrapping` annotation for opt-out overflow checks deferred from Phase 12.
 
-#### Slice 20e — Uncertainty types `T?confidence` (~2 weeks)
-- [ ] Syntax: `T?confidence` — `T` with a `f64` confidence tracked through expressions.
-- [ ] Combining rule: confidence of `f(a?c1, b?c2)` = `min(c1, c2)` by default, overridable with `@combine_confidence fn(a, b) -> f64`.
-- [ ] Runtime carries the confidence value; prompts returning `T?confidence` parse a model-reported confidence from the LLM response.
+#### Slice 20e — Confidence dimension (~2 weeks)
 
-#### Slice 20f — `Stream<T>` (~2 weeks)
+Confidence is a dimension in the effect system. The `Min` composition rule means the least confident result determines the chain.
+
+- [ ] `confidence: 0.95` on prompt effect declarations.
+- [ ] Runtime carries the confidence value; prompts parse model-reported confidence from LLM responses.
+- [ ] Composition: `min` along the call path. An agent calling two prompts with confidence 0.9 and 0.8 has composed confidence 0.8.
+
+#### Slice 20f — `Stream<T>` + latency dimension (~2 weeks)
+
+Streaming is a latency class. `latency: streaming` is a dimension value, not a separate type system concept.
+
 - [ ] `Stream<T>` as compiler-known stdlib type. Prompts + tools can declare streaming returns.
 - [ ] `for x in stream:` consumes the stream. `yield` in agent bodies produces streams.
-- [ ] Integrates with Phase 13's native async runtime — streams back-pressure via Tokio channels under the hood.
+- [ ] `latency: streaming` dimension on declarations that return streams.
+- [ ] Integrates with the native async runtime — streams back-pressure via Tokio channels.
 
 #### Slice 20g — Bypass tests + effect-system specification (~2 weeks)
-- [ ] Property-based bypass tests proving the effect checker cannot be circumvented via FFI, generics, or indirect calls. `proptest`-driven.
-- [ ] Written effect-system specification (20–40 pages): syntax, typing rules, worked examples, FFI / async / generics interactions. Related-work section covering Koka, Eff, Frank, Haskell effect libs, Rust `unsafe`, capability systems. Lives in `docs/effects-spec.md`; ships at the phase boundary alongside the code.
+- [ ] Property-based bypass tests proving the dimensional effect checker cannot be circumvented via FFI, generics, or indirect calls. `proptest`-driven.
+- [ ] Written effect-system specification (20–40 pages): dimensional syntax, composition algebra, typing rules, worked examples, comparison to Koka/Eff/Frank/Haskell/Rust. Lives in `docs/effects-spec.md`.
 
 **Non-scope:** Runtime eval tooling CLI (Phase 27). RAG runtime infrastructure (Phase 32's `std.rag`). Custom effect annotations on Python FFI imports richer than `effects: <name>` (Phase 30 ships basic; richer stays here).
 
