@@ -39,7 +39,7 @@ pub use step::{
     Checkpoint, EnvSnapshot, ExecutionTrace, NoOpHook, RecordingHook, ReplayForkHook,
     StepAction, StepController, StepEvent, StepHook, StepMode, StmtKind,
 };
-pub use value::{StructValue, Value};
+pub use value::{GroundedValue, ProvenanceChain, ProvenanceEntry, ProvenanceKind, StructValue, Value};
 
 #[cfg(test)]
 mod tests {

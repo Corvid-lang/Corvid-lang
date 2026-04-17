@@ -102,6 +102,17 @@ fn render_value_inner(
             rendered
         }
         Value::OptionNone => "None".to_string(),
+        Value::Grounded(g) => {
+            let inner = render_value_inner(&g.inner.get(), depth + 1, visited);
+            let sources: Vec<String> = g.provenance.entries.iter().map(|e| {
+                format!("{}:{}", e.kind.label(), e.name)
+            }).collect();
+            if sources.is_empty() {
+                format!("Grounded({inner})")
+            } else {
+                format!("Grounded({inner}, sources: [{}])", sources.join(", "))
+            }
+        }
     }
 }
 

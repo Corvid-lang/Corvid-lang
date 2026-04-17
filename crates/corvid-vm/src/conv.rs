@@ -46,6 +46,17 @@ pub fn value_to_json(v: &Value) -> serde_json::Value {
         Value::ResultErr(v) => serde_json::json!({ "tag": "err", "err": value_to_json(&v.get()) }),
         Value::OptionSome(v) => serde_json::json!({ "tag": "some", "value": value_to_json(&v.get()) }),
         Value::OptionNone => serde_json::json!({ "tag": "none" }),
+        Value::Grounded(g) => {
+            let inner = value_to_json(&g.inner.get());
+            let sources: Vec<serde_json::Value> = g.provenance.entries.iter().map(|e| {
+                serde_json::json!({
+                    "kind": e.kind.label(),
+                    "name": e.name,
+                    "timestamp_ms": e.timestamp_ms,
+                })
+            }).collect();
+            serde_json::json!({ "tag": "grounded", "value": inner, "sources": sources })
+        }
     }
 }
 

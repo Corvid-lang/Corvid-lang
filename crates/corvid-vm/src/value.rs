@@ -33,6 +33,122 @@ pub enum Value {
     ResultErr(BoxedValue),
     OptionSome(BoxedValue),
     OptionNone,
+    Grounded(GroundedValue),
+}
+
+/// A value with a provenance chain proving it derives from a grounded source.
+#[derive(Debug, Clone)]
+pub struct GroundedValue {
+    pub inner: BoxedValue,
+    pub provenance: ProvenanceChain,
+}
+
+/// The provenance chain: every retrieval source, prompt transformation,
+/// and agent handoff that a value passed through.
+#[derive(Debug, Clone, Default)]
+pub struct ProvenanceChain {
+    pub entries: Vec<ProvenanceEntry>,
+}
+
+/// One step in the provenance chain.
+#[derive(Debug, Clone)]
+pub struct ProvenanceEntry {
+    pub kind: ProvenanceKind,
+    pub name: String,
+    pub timestamp_ms: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ProvenanceKind {
+    /// Data retrieved from an external source (tool with `data: grounded`).
+    Retrieval,
+    /// Data transformed by an LLM prompt.
+    PromptTransform,
+    /// Data passed through an agent call.
+    AgentHandoff,
+    /// Provenance deliberately severed by `.unwrap(reason: ...)`.
+    Severed { reason: String },
+}
+
+impl ProvenanceKind {
+    pub fn label(&self) -> &str {
+        match self {
+            ProvenanceKind::Retrieval => "retrieval",
+            ProvenanceKind::PromptTransform => "prompt",
+            ProvenanceKind::AgentHandoff => "agent",
+            ProvenanceKind::Severed { .. } => "severed",
+        }
+    }
+}
+
+impl ProvenanceChain {
+    pub fn new() -> Self {
+        Self { entries: Vec::new() }
+    }
+
+    pub fn with_retrieval(tool_name: &str, timestamp_ms: u64) -> Self {
+        Self {
+            entries: vec![ProvenanceEntry {
+                kind: ProvenanceKind::Retrieval,
+                name: tool_name.to_string(),
+                timestamp_ms,
+            }],
+        }
+    }
+
+    pub fn add_prompt_transform(&mut self, prompt_name: &str, timestamp_ms: u64) {
+        self.entries.push(ProvenanceEntry {
+            kind: ProvenanceKind::PromptTransform,
+            name: prompt_name.to_string(),
+            timestamp_ms,
+        });
+    }
+
+    pub fn add_agent_handoff(&mut self, agent_name: &str, timestamp_ms: u64) {
+        self.entries.push(ProvenanceEntry {
+            kind: ProvenanceKind::AgentHandoff,
+            name: agent_name.to_string(),
+            timestamp_ms,
+        });
+    }
+
+    pub fn merge(&mut self, other: &ProvenanceChain) {
+        for entry in &other.entries {
+            if !self.entries.iter().any(|e| e.name == entry.name && e.kind == entry.kind) {
+                self.entries.push(entry.clone());
+            }
+        }
+    }
+
+    pub fn has_retrieval(&self) -> bool {
+        self.entries.iter().any(|e| e.kind == ProvenanceKind::Retrieval)
+    }
+
+    pub fn has_source(&self, name: &str) -> bool {
+        self.entries.iter().any(|e| e.name == name)
+    }
+}
+
+impl GroundedValue {
+    pub fn new(inner: Value, provenance: ProvenanceChain) -> Self {
+        Self {
+            inner: BoxedValue::new(inner),
+            provenance,
+        }
+    }
+
+    pub fn sources(&self) -> &[ProvenanceEntry] {
+        &self.provenance.entries
+    }
+
+    pub fn unwrap_with_reason(self, reason: &str) -> (Value, ProvenanceEntry) {
+        let severed = ProvenanceEntry {
+            kind: ProvenanceKind::Severed { reason: reason.to_string() },
+            name: "unwrap".to_string(),
+            timestamp_ms: 0,
+        };
+        (self.inner.get(), severed)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -563,6 +679,7 @@ impl Clone for Value {
             Value::ResultErr(v) => Value::ResultErr(v.clone()),
             Value::OptionSome(v) => Value::OptionSome(v.clone()),
             Value::OptionNone => Value::OptionNone,
+            Value::Grounded(g) => Value::Grounded(g.clone()),
         }
     }
 }
@@ -580,6 +697,7 @@ impl Value {
             Value::Weak(_) => "Weak".into(),
             Value::ResultOk(_) | Value::ResultErr(_) => "Result".into(),
             Value::OptionSome(_) | Value::OptionNone => "Option".into(),
+            Value::Grounded(g) => format!("Grounded<{}>", g.inner.get().type_name()),
         }
     }
 
@@ -607,6 +725,7 @@ impl Value {
             Value::ResultOk(v) | Value::ResultErr(v) | Value::OptionSome(v) => {
                 Some(ObjectRef::Boxed(v.0.clone()))
             }
+            Value::Grounded(g) => Some(ObjectRef::Boxed(g.inner.0.clone())),
             _ => None,
         }
     }
@@ -652,6 +771,14 @@ impl fmt::Display for Value {
             Value::ResultErr(v) => write!(f, "Err({})", v.get()),
             Value::OptionSome(v) => write!(f, "Some({})", v.get()),
             Value::OptionNone => write!(f, "None"),
+            Value::Grounded(g) => {
+                write!(f, "Grounded({}, sources: [", g.inner.get())?;
+                for (i, entry) in g.provenance.entries.iter().enumerate() {
+                    if i > 0 { write!(f, ", ")?; }
+                    write!(f, "{}:{}", entry.kind.label(), entry.name)?;
+                }
+                write!(f, "])")
+            }
         }
     }
 }
@@ -687,6 +814,7 @@ impl PartialEq for Value {
             (Value::ResultErr(a), Value::ResultErr(b)) => a == b,
             (Value::OptionSome(a), Value::OptionSome(b)) => a == b,
             (Value::OptionNone, Value::OptionNone) => true,
+            (Value::Grounded(a), Value::Grounded(b)) => a.inner == b.inner,
             _ => false,
         }
     }
