@@ -36,7 +36,11 @@ static uint64_t corvid_now_ns(void) {
 }
 
 static int corvid_profile_runtime_enabled(void) {
-    return getenv("CORVID_PROFILE_RUNTIME") != NULL ? 1 : 0;
+    static int cached = -1;
+    if (cached < 0) {
+        cached = getenv("CORVID_PROFILE_RUNTIME") != NULL ? 1 : 0;
+    }
+    return cached;
 }
 
 uint64_t corvid_bench_prompt_render_ns(void) {

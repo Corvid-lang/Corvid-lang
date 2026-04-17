@@ -14,7 +14,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 
 fn profile_enabled() -> bool {
-    std::env::var("CORVID_PROFILE_EVENTS").ok().as_deref() == Some("1")
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    *ENABLED.get_or_init(|| std::env::var("CORVID_PROFILE_EVENTS").ok().as_deref() == Some("1"))
 }
 
 static BENCH_PROMPT_WAIT_NS: AtomicU64 = AtomicU64::new(0);

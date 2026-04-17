@@ -184,6 +184,21 @@ impl CorvidString {
             }
         }
     }
+
+    /// Borrow this Corvid string as UTF-8 without allocating.
+    ///
+    /// # Safety
+    ///
+    /// Same as [`CorvidString::as_bytes`]: `descriptor` must point at a
+    /// valid Corvid string descriptor and the caller must ensure the
+    /// underlying string stays alive for the lifetime of the borrow.
+    pub(crate) unsafe fn as_str(&self) -> &str {
+        let bytes = unsafe { self.as_bytes() };
+        match std::str::from_utf8(bytes) {
+            Ok(s) => s,
+            Err(_) => panic!("CorvidString contained invalid UTF-8"),
+        }
+    }
 }
 
 // ------------------------------------------------------------

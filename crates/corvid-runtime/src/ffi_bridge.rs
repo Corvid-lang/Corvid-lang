@@ -55,7 +55,7 @@ use crate::tracing::{bench_trace_overhead_ns, fresh_run_id, Tracer};
 use crate::redact::RedactionSet;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicPtr, AtomicU64, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::Instant;
 
 static BENCH_JSON_BRIDGE_NS: AtomicU64 = AtomicU64::new(0);
@@ -445,18 +445,24 @@ use crate::llm::LlmRequest;
 const DEFAULT_PROMPT_MAX_RETRIES: u32 = 3;
 
 fn prompt_max_retries() -> u32 {
-    std::env::var("CORVID_PROMPT_MAX_RETRIES")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(DEFAULT_PROMPT_MAX_RETRIES)
+    static VALUE: OnceLock<u32> = OnceLock::new();
+    *VALUE.get_or_init(|| {
+        std::env::var("CORVID_PROMPT_MAX_RETRIES")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(DEFAULT_PROMPT_MAX_RETRIES)
+    })
 }
 
-/// Read a `CorvidString` as a borrowed UTF-8 string. Same semantics
-/// as `abi::FromCorvidAbi for String` but returns a `Cow` so callers
-/// avoid an unconditional clone when they only need to read.
+/// Read a `CorvidString` as an owned Rust `String`.
 unsafe fn read_corvid_string(cs: CorvidString) -> String {
     use crate::abi::FromCorvidAbi;
     String::from_corvid_abi(cs)
+}
+
+/// Borrow a `CorvidString` as UTF-8 for the duration of the call.
+unsafe fn borrow_corvid_string<'a>(cs: &'a CorvidString) -> &'a str {
+    unsafe { cs.as_str() }
 }
 
 /// Format-instruction text per return type. Sent in the system prompt.
@@ -473,7 +479,8 @@ fn format_instruction_float() -> &'static str {
 }
 
 fn using_env_mock_llm() -> bool {
-    std::env::var("CORVID_TEST_MOCK_LLM").ok().as_deref() == Some("1")
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    *ENABLED.get_or_init(|| std::env::var("CORVID_TEST_MOCK_LLM").ok().as_deref() == Some("1"))
 }
 
 /// Build the system prompt sent to the LLM. Encodes the function
@@ -553,8 +560,39 @@ pub unsafe extern "C" fn corvid_prompt_call_int(
     let bridge_start = Instant::now();
     let prompt_wait_before = bench_prompt_wait_ns();
     let mock_dispatch_before = bench_mock_dispatch_ns();
+    let prompt_name_ref = unsafe { borrow_corvid_string(&prompt_name) };
+
+    if using_env_mock_llm() {
+        let max_retries = prompt_max_retries();
+        let mut last_response: Option<String> = None;
+        for _attempt in 0..=max_retries {
+            match env_mock_string_reply_sync(prompt_name_ref) {
+                Some(reply) => {
+                    let parsed = parse_int(unsafe { borrow_corvid_string(&reply) });
+                    if let Some(value) = parsed {
+                        unsafe { release_string(reply) };
+                        record_json_bridge_ns(bridge_start, prompt_wait_before, mock_dispatch_before);
+                        return value;
+                    }
+                    let text = unsafe { borrow_corvid_string(&reply) }.to_owned();
+                    unsafe { release_string(reply) };
+                    last_response = Some(text);
+                }
+                None => break,
+            }
+        }
+        if last_response.is_some() {
+            record_json_bridge_ns(bridge_start, prompt_wait_before, mock_dispatch_before);
+            panic!(
+                "corvid prompt `{prompt_name_ref}`: could not parse Int from env-mock response after {} attempts. Last response: {:?}",
+                max_retries + 1,
+                last_response.as_deref().unwrap_or("(none)")
+            );
+        }
+    }
+
     let state = bridge();
-    let prompt_name = unsafe { read_corvid_string(prompt_name) };
+    let prompt_name = prompt_name_ref.to_owned();
     let signature = unsafe { read_corvid_string(signature) };
     let rendered = unsafe { read_corvid_string(rendered) };
     let model = unsafe { read_corvid_string(model) };
@@ -606,8 +644,39 @@ pub unsafe extern "C" fn corvid_prompt_call_bool(
     let bridge_start = Instant::now();
     let prompt_wait_before = bench_prompt_wait_ns();
     let mock_dispatch_before = bench_mock_dispatch_ns();
+    let prompt_name_ref = unsafe { borrow_corvid_string(&prompt_name) };
+
+    if using_env_mock_llm() {
+        let max_retries = prompt_max_retries();
+        let mut last_response: Option<String> = None;
+        for _attempt in 0..=max_retries {
+            match env_mock_string_reply_sync(prompt_name_ref) {
+                Some(reply) => {
+                    let parsed = parse_bool(unsafe { borrow_corvid_string(&reply) });
+                    if let Some(value) = parsed {
+                        unsafe { release_string(reply) };
+                        record_json_bridge_ns(bridge_start, prompt_wait_before, mock_dispatch_before);
+                        return value;
+                    }
+                    let text = unsafe { borrow_corvid_string(&reply) }.to_owned();
+                    unsafe { release_string(reply) };
+                    last_response = Some(text);
+                }
+                None => break,
+            }
+        }
+        if last_response.is_some() {
+            record_json_bridge_ns(bridge_start, prompt_wait_before, mock_dispatch_before);
+            panic!(
+                "corvid prompt `{prompt_name_ref}`: could not parse Bool from env-mock response after {} attempts. Last: {:?}",
+                max_retries + 1,
+                last_response.as_deref().unwrap_or("(none)")
+            );
+        }
+    }
+
     let state = bridge();
-    let prompt_name = unsafe { read_corvid_string(prompt_name) };
+    let prompt_name = prompt_name_ref.to_owned();
     let signature = unsafe { read_corvid_string(signature) };
     let rendered = unsafe { read_corvid_string(rendered) };
     let model = unsafe { read_corvid_string(model) };
@@ -659,8 +728,39 @@ pub unsafe extern "C" fn corvid_prompt_call_float(
     let bridge_start = Instant::now();
     let prompt_wait_before = bench_prompt_wait_ns();
     let mock_dispatch_before = bench_mock_dispatch_ns();
+    let prompt_name_ref = unsafe { borrow_corvid_string(&prompt_name) };
+
+    if using_env_mock_llm() {
+        let max_retries = prompt_max_retries();
+        let mut last_response: Option<String> = None;
+        for _attempt in 0..=max_retries {
+            match env_mock_string_reply_sync(prompt_name_ref) {
+                Some(reply) => {
+                    let parsed = parse_float(unsafe { borrow_corvid_string(&reply) });
+                    if let Some(value) = parsed {
+                        unsafe { release_string(reply) };
+                        record_json_bridge_ns(bridge_start, prompt_wait_before, mock_dispatch_before);
+                        return value;
+                    }
+                    let text = unsafe { borrow_corvid_string(&reply) }.to_owned();
+                    unsafe { release_string(reply) };
+                    last_response = Some(text);
+                }
+                None => break,
+            }
+        }
+        if last_response.is_some() {
+            record_json_bridge_ns(bridge_start, prompt_wait_before, mock_dispatch_before);
+            panic!(
+                "corvid prompt `{prompt_name_ref}`: could not parse Float from env-mock response after {} attempts. Last: {:?}",
+                max_retries + 1,
+                last_response.as_deref().unwrap_or("(none)")
+            );
+        }
+    }
+
     let state = bridge();
-    let prompt_name = unsafe { read_corvid_string(prompt_name) };
+    let prompt_name = prompt_name_ref.to_owned();
     let signature = unsafe { read_corvid_string(signature) };
     let rendered = unsafe { read_corvid_string(rendered) };
     let model = unsafe { read_corvid_string(model) };
@@ -713,16 +813,17 @@ pub unsafe extern "C" fn corvid_prompt_call_string(
     let bridge_start = Instant::now();
     let prompt_wait_before = bench_prompt_wait_ns();
     let mock_dispatch_before = bench_mock_dispatch_ns();
-    let prompt_name = unsafe { read_corvid_string(prompt_name) };
+    let prompt_name_ref = unsafe { borrow_corvid_string(&prompt_name) };
 
     if using_env_mock_llm() {
-        if let Some(text) = env_mock_string_reply_sync(&prompt_name) {
+        if let Some(text) = env_mock_string_reply_sync(prompt_name_ref) {
             record_json_bridge_ns(bridge_start, prompt_wait_before, mock_dispatch_before);
             return text;
         }
     }
 
     let state = bridge();
+    let prompt_name = prompt_name_ref.to_owned();
     let signature = unsafe { read_corvid_string(signature) };
     let rendered = unsafe { read_corvid_string(rendered) };
     let model = unsafe { read_corvid_string(model) };

@@ -12,13 +12,14 @@ use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::io::BufWriter;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 static BENCH_TRACE_OVERHEAD_NS: AtomicU64 = AtomicU64::new(0);
 
 fn profile_runtime_enabled() -> bool {
-    std::env::var("CORVID_PROFILE_RUNTIME").ok().as_deref() == Some("1")
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    *ENABLED.get_or_init(|| std::env::var("CORVID_PROFILE_RUNTIME").ok().as_deref() == Some("1"))
 }
 
 pub fn bench_trace_overhead_ns() -> u64 {
