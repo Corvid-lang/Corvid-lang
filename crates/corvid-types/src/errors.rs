@@ -109,6 +109,13 @@ pub enum TypeErrorKind {
         expected_approve_label: String,
         arity: usize,
     },
+
+    /// A dimensional effect constraint was violated.
+    EffectConstraintViolation {
+        agent: String,
+        dimension: String,
+        message: String,
+    },
 }
 
 impl TypeErrorKind {
@@ -177,6 +184,9 @@ impl TypeErrorKind {
             Self::UnapprovedDangerousCall { tool, .. } => {
                 format!("dangerous tool `{tool}` called without a prior `approve`")
             }
+            Self::EffectConstraintViolation { agent, message, .. } => {
+                format!("effect constraint violated in agent `{agent}`: {message}")
+            }
         }
     }
 
@@ -243,6 +253,9 @@ impl TypeErrorKind {
                     "add `approve {expected_approve_label}({args})` on the line before this call"
                 ))
             }
+            Self::EffectConstraintViolation { dimension, .. } => Some(format!(
+                "relax the `@{dimension}` constraint, or remove the call that violates it"
+            )),
         }
     }
 }

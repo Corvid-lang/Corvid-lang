@@ -33,6 +33,33 @@ pub struct Checked {
 pub fn typecheck(file: &File, resolved: &Resolved) -> Checked {
     let mut c = Checker::new(file, resolved);
     c.check_file(file);
+
+    // Dimensional effect analysis: collect effect declarations, build
+    // the registry, analyze agents, and report constraint violations.
+    let effect_decls: Vec<&corvid_ast::EffectDecl> = file.decls.iter().filter_map(|d| {
+        if let Decl::Effect(e) = d { Some(e) } else { None }
+    }).collect();
+
+    if !effect_decls.is_empty() || file.decls.iter().any(|d| {
+        matches!(d, Decl::Agent(a) if !a.constraints.is_empty())
+    }) {
+        let owned_decls: Vec<corvid_ast::EffectDecl> = effect_decls.into_iter().cloned().collect();
+        let registry = crate::effects::EffectRegistry::from_decls(&owned_decls);
+        let summaries = crate::effects::analyze_effects(file, resolved, &registry);
+        for summary in &summaries {
+            for violation in &summary.violations {
+                c.errors.push(TypeError::new(
+                    TypeErrorKind::EffectConstraintViolation {
+                        agent: summary.agent_name.clone(),
+                        dimension: violation.dimension.clone(),
+                        message: violation.to_string(),
+                    },
+                    violation.span,
+                ));
+            }
+        }
+    }
+
     Checked {
         types: c.types,
         local_types: c.local_types,
@@ -602,7 +629,7 @@ impl<'a> Checker<'a> {
                 ));
                 Type::Unknown
             }
-            DeclKind::Import => Type::Unknown,
+            DeclKind::Import | DeclKind::Effect => Type::Unknown,
         }
     }
 
@@ -648,7 +675,7 @@ impl<'a> Checker<'a> {
                     DeclKind::Tool => self.check_tool_call(def_id, &name.name, args, span),
                     DeclKind::Prompt => self.check_prompt_call(def_id, &name.name, args),
                     DeclKind::Agent => self.check_agent_call(def_id, &name.name, args),
-                    DeclKind::Import => {
+                    DeclKind::Import | DeclKind::Effect => {
                         for a in args {
                             let _ = self.check_expr(a);
                         }
