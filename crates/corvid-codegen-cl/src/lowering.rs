@@ -4012,6 +4012,35 @@ enum TemplateSegment<'a> {
     Param(usize), // index into the prompt's params
 }
 
+fn prompt_constant_arg_text(expr: &IrExpr) -> Option<String> {
+    match &expr.kind {
+        IrExprKind::Literal(IrLiteral::String(s)) => Some(s.clone()),
+        IrExprKind::Literal(IrLiteral::Int(n)) => Some(n.to_string()),
+        IrExprKind::Literal(IrLiteral::Bool(b)) => Some(if *b {
+            "true".to_string()
+        } else {
+            "false".to_string()
+        }),
+        _ => None,
+    }
+}
+
+fn render_prompt_constant(
+    segments: &[TemplateSegment<'_>],
+    args: &[IrExpr],
+) -> Option<String> {
+    let mut rendered = String::new();
+    for seg in segments {
+        match seg {
+            TemplateSegment::Literal(text) => rendered.push_str(text),
+            TemplateSegment::Param(idx) => {
+                rendered.push_str(&prompt_constant_arg_text(&args[*idx])?);
+            }
+        }
+    }
+    Some(rendered)
+}
+
 /// Parse a prompt template into literal + `{param_name}` segments.
 /// Param names that aren't in `params` produce a codegen error —
 /// matches what the typechecker should already enforce, kept as
@@ -4227,28 +4256,34 @@ fn lower_prompt_call(
     // 2. Parse the template into segments at codegen time.
     let segments = parse_prompt_template(&prompt.template, &prompt.params, span)?;
 
-    // 3. Build the rendered-prompt CorvidString by emitting concat ops
-    //    over (literal | stringified arg) parts.
-    let mut parts: Vec<(ClValue, bool)> = Vec::with_capacity(segments.len());
-    for seg in &segments {
-        let part = match seg {
-            TemplateSegment::Literal(text) => (
-                emit_string_const(builder, module, runtime, text, span)?,
-                false,
-            ),
-            TemplateSegment::Param(idx) => {
-                let av = arg_vals[*idx];
-                let aty = &args[*idx].ty;
-                (
-                    emit_stringify_arg(builder, module, runtime, av, aty, span)?,
-                    arg_pinned[*idx] && matches!(aty, Type::String),
-                )
-            }
-        };
-        parts.push(part);
-    }
-    let (rendered, rendered_borrowed) =
-        emit_concat_chain(builder, module, runtime, parts, span)?;
+    // 3. Build the rendered prompt. If every interpolated arg is a
+    //    compile-time scalar/string literal, fold the full template to
+    //    one immortal literal and skip runtime stringify/concat work.
+    let (rendered, rendered_borrowed) = if let Some(text) =
+        render_prompt_constant(&segments, args)
+    {
+        (emit_string_const(builder, module, runtime, &text, span)?, false)
+    } else {
+        let mut parts: Vec<(ClValue, bool)> = Vec::with_capacity(segments.len());
+        for seg in &segments {
+            let part = match seg {
+                TemplateSegment::Literal(text) => (
+                    emit_string_const(builder, module, runtime, text, span)?,
+                    false,
+                ),
+                TemplateSegment::Param(idx) => {
+                    let av = arg_vals[*idx];
+                    let aty = &args[*idx].ty;
+                    (
+                        emit_stringify_arg(builder, module, runtime, av, aty, span)?,
+                        arg_pinned[*idx] && matches!(aty, Type::String),
+                    )
+                }
+            };
+            parts.push(part);
+        }
+        emit_concat_chain(builder, module, runtime, parts, span)?
+    };
 
     // 4. Build the constant CorvidStrings for prompt name, signature,
     //    and model. The model is left empty so the runtime falls back
