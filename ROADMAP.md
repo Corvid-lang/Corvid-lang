@@ -409,19 +409,37 @@ Pre-phase chat caught two limiting shortcuts in my brief and reshaped the phase 
 
 **Non-scope:** generational GC. Concurrent collection (mutator-collector concurrency via write barriers — post-v1.0 if multi-threaded Corvid ever becomes a direction).
 
-### Phase 18 — Result + Option + retry policies (~4 weeks)
+### Phase 18 — Result + Option + retry policies (~4 weeks) — in progress
 
-**Goal.** Language-native error handling. `Result<T, E>`, `Option<T>`, propagation (`?`), retry syntax.
+**Goal.** Language-native error handling with a principled native subset first: `Result<T, E>`, `Option<T>`, propagation (`?`), and retry syntax that lowers as deterministic native control flow rather than a library loop.
 
-**Hard dep:** typechecker extension for generic types (moderate work — the type system already has `List<T>` machinery, `Result<T, E>` extends the same path).
+**Hard dep:** typechecker extension for generic types (landed). The remaining work is native widening, not front-end feasibility.
 
-**Scope:**
-- `Result<T, E>` and `Option<T>` as compiler-known stdlib types. Codegen lowers as tagged unions (discriminant + payload).
-- `?` operator: `expr?` short-circuits the enclosing function with the error if `Err`, unwraps the value if `Ok`.
-- Retry syntax: `try <expr> on error retry N times backoff { linear ms | exponential ms }`. Desugars to a loop over the expression with sleep between attempts.
-- Effect integration: tool calls that can fail return `Result` by default; `dangerous` tools return `Result` whose error type includes an `ApprovalDenied` variant.
+**Status.** Front-end + interpreter support is landed. Native AOT support is substantially shipped for the compositional one-word subset and selected wide `Option<T>` cases; Phase 18 is no longer "can Corvid do this?" but "how far do we widen native support before moving on?"
 
-**Non-scope:** User-defined error enums with payloads beyond simple variants — that's Phase 20's job with effect rows and richer types.
+**Shipped so far:**
+- [x] `Result<T, E>` and `Option<T>` as compiler-known stdlib types in the frontend + interpreter.
+- [x] Postfix `?` in the frontend + interpreter.
+- [x] Retry syntax in the frontend + interpreter.
+- [x] Native nullable `Option<T>` subset for refcounted payloads such as `Option<String>`.
+- [x] Native wide scalar `Option<Int|Bool|Float>`.
+- [x] Native postfix `?` for the shipped `Option<T>` subsets, including widening into a different native `Option<U>` envelope.
+- [x] Native one-word `Result<T, E>` subset with ownership integration.
+- [x] Native postfix `?` for `Result<T, E>`, including `Result<A, E>?` inside `Result<B, E>` when both shapes remain in the current native subset.
+- [x] Native deterministic retry lowering over the native `Result<T, E>` subset with explicit backoff control flow and ownership-correct cleanup between attempts.
+- [x] Native compositional proof points for nested one-word shapes such as `Result<Option<Int>, String>` and nested `Result` envelopes.
+- [x] Native structured payload proof points inside the current subset, including `Result<Boxed, String>` and `Result<List<Int>, String>`.
+
+**Corvid inventions already landed in this phase:**
+- [x] **Deterministic native retry as compiled control flow.** Retry lowers to explicit native control-flow blocks over `Result<T, E>`, not an opaque runtime helper.
+- [x] **Compositional tagged-union subset.** Native support is being widened by proving a principled representation composes across nested shapes, rather than by adding ad hoc case-by-case exceptions.
+
+**Remaining work before this phase can be called closed:**
+- [ ] Broader native tagged-union representation beyond the current compositional one-word subset.
+- [ ] Richer native retry/result policy widening beyond the current deterministic subset.
+- [ ] Effect-integrated failure typing once Phase 20's dimensional effects are fully wired through the typechecker.
+
+**Non-scope:** User-defined error enums with arbitrary payload layouts beyond the supported native subset — that belongs to the later richer-type/effect work, not this first native-control-flow pass.
 
 ### Phase 19 — REPL (~3 weeks)
 
@@ -458,7 +476,7 @@ Corvid's moat: effects carry typed dimensions (cost, trust, reversibility, data,
 - [x] Resolver: `DeclKind::Effect` in symbol table. Effect declarations registered in pass 1. Effect refs in `uses` clauses resolved and validated in pass 2. Committed `66bb4d1`.
 - [x] Composition algebra: `EffectRegistry` built from declarations. 6 built-in dimension schemas. `compose()` applies per-dimension rules. `check_constraints()` validates composed profiles against annotations. `ConstraintViolation` with dimensional error messages. Committed `66bb4d1`.
 - [x] Call-graph analyzer: `analyze_effects()` walks agent bodies, collects effects from tool/prompt/agent calls, produces per-agent composed dimensional profiles. Committed `66bb4d1`.
-- [ ] Parser: `effect Name:` block syntax. `uses` clause on declarations. `@budget($)` / `@trust()` / `@reversible` annotation syntax.
+- [x] Parser: `effect Name:` block syntax. `uses` clause on declarations. `@budget($)` / `@trust()` / `@reversible` annotation syntax. Committed `3bfefaf`.
 - [ ] Typechecker integration: wire the analyzer into `typecheck()` so dimensional constraint violations produce compile errors alongside the existing `approve`-before-`dangerous` check.
 - [ ] Legacy bridge: `dangerous` keyword maps to a built-in `dangerous` effect with `trust: human_required, reversible: false`. Existing code compiles unchanged.
 - [ ] Revisits the Day-4 `Safe | Dangerous` decision — additive, no breaking change.
