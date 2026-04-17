@@ -1509,6 +1509,23 @@ needed queued mock replies to prove the native tier actually performed multiple
 attempts and returned the final `Err` value without silently propagating or
 leaking between attempts.
 
+### Native wide scalar `Option<T>`
+
+The honest next widening step after native nullable `Option<String>` was not
+to pretend every `Option<T>` is already cheap and native. Corvid now supports
+wide scalar `Option<Int>`, `Option<Bool>`, and `Option<Float>` by giving
+`Some(...)` a tiny typed heap wrapper while keeping `None` as the zero pointer.
+That matters because it preserves the same ownership and collector story as the
+rest of the native runtime: the value is a real heap object with typeinfo when
+it needs storage, not a codegen-only special case. The slice also exposed a
+real generic bug that had been latent before: non-string binary ops were not
+releasing refcounted operands after comparison/arithmetic. Wide `Option<T>`
+surfaced that immediately through `value != None`, and fixing the generic
+lowering path was the right move. The lesson is the same as the earlier native
+`Result` work: widening support safely depends less on inventing clever
+representations and more on making every new representation participate in the
+existing ownership model without exceptions.
+
 ## Contributing / feedback
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). The rules of the road are: design chat before code, per-scope commits at every boundary, dev-log entry for every session, no shortcuts. The `learnings.md` file you're reading gets updated when each user-visible feature ships.

@@ -477,6 +477,7 @@ fn declare_runtime_funcs(
         result_destructors: HashMap::new(),
         result_traces: HashMap::new(),
         result_typeinfos: HashMap::new(),
+        option_typeinfos: HashMap::new(),
         ir_types: HashMap::new(),
         ir_tools: HashMap::new(),
         tool_wrapper_ids: std::cell::RefCell::new(HashMap::new()),
@@ -890,6 +891,8 @@ const RESULT_TAG_OFFSET: i32 = 0;
 const RESULT_PAYLOAD_OFFSET: i32 = 8;
 const RESULT_TAG_OK: i64 = 0;
 const RESULT_TAG_ERR: i64 = 1;
+const OPTION_PAYLOAD_BYTES: i64 = 8;
+const OPTION_PAYLOAD_OFFSET: i32 = 0;
 
 /// Emit `corvid_typeinfo_<TypeName>` as a .rodata data symbol with
 /// function-pointer relocations to the type's destroy_fn (if any)
@@ -1179,6 +1182,115 @@ fn emit_result_typeinfo(
     Ok(data_id)
 }
 
+fn define_option_trace(
+    module: &mut ObjectModule,
+    option_ty: &Type,
+    payload_ty: &Type,
+    runtime: &RuntimeFuncs,
+) -> Result<FuncId, CodegenError> {
+    let mut sig = module.make_signature();
+    sig.params.push(AbiParam::new(I64)); // payload wrapper ptr
+    sig.params.push(AbiParam::new(I64)); // marker fn ptr
+    sig.params.push(AbiParam::new(I64)); // ctx
+
+    let symbol = format!("corvid_trace_{}", mangle_type_name(option_ty));
+    let func_id = module
+        .declare_function(&symbol, Linkage::Local, &sig)
+        .map_err(|e| {
+            CodegenError::cranelift(format!("declare option trace `{symbol}`: {e}"), Span::new(0, 0))
+        })?;
+
+    let mut ctx = Context::new();
+    ctx.func = Function::with_name_signature(
+        UserFuncName::user(0, func_id.as_u32()),
+        module.declarations().get_function_decl(func_id).signature.clone(),
+    );
+    let mut bctx = FunctionBuilderContext::new();
+    {
+        let mut builder = FunctionBuilder::new(&mut ctx.func, &mut bctx);
+
+        let mut marker_sig = Signature::new(module.isa().default_call_conv());
+        marker_sig.params.push(AbiParam::new(I64));
+        marker_sig.params.push(AbiParam::new(I64));
+        let marker_sigref = builder.import_signature(marker_sig);
+
+        let entry = builder.create_block();
+        builder.append_block_params_for_function_params(entry);
+        builder.switch_to_block(entry);
+        builder.seal_block(entry);
+        let payload = builder.block_params(entry)[0];
+        let marker = builder.block_params(entry)[1];
+        let marker_ctx = builder.block_params(entry)[2];
+
+        if is_refcounted_type(payload_ty) {
+            let payload_val = builder.ins().load(
+                I64,
+                cranelift_codegen::ir::MemFlags::trusted(),
+                payload,
+                OPTION_PAYLOAD_OFFSET,
+            );
+            builder
+                .ins()
+                .call_indirect(marker_sigref, marker, &[payload_val, marker_ctx]);
+        }
+
+        builder.ins().return_(&[]);
+        builder.finalize();
+    }
+
+    define_function_with_stack_maps(
+        module,
+        func_id,
+        &mut ctx,
+        runtime,
+        Span::new(0, 0),
+        &format!("option trace `{symbol}`"),
+    )?;
+    Ok(func_id)
+}
+
+fn emit_option_typeinfo(
+    module: &mut ObjectModule,
+    option_ty: &Type,
+    destroy_fn: Option<FuncId>,
+    trace_fn: FuncId,
+    runtime: &RuntimeFuncs,
+) -> Result<cranelift_module::DataId, CodegenError> {
+    let symbol = format!("corvid_typeinfo_{}", mangle_type_name(option_ty));
+    let data_id = module
+        .declare_data(&symbol, Linkage::Local, false, false)
+        .map_err(|e| {
+            CodegenError::cranelift(format!("declare option typeinfo `{symbol}`: {e}"), Span::new(0, 0))
+        })?;
+
+    let mut desc = DataDescription::new();
+    desc.set_align(8);
+    let mut bytes = vec![0u8; TYPEINFO_BYTES];
+    bytes[TYPEINFO_OFF_SIZE as usize..(TYPEINFO_OFF_SIZE + 4) as usize]
+        .copy_from_slice(&(OPTION_PAYLOAD_BYTES as u32).to_le_bytes());
+
+    let flags: u32 = TYPEINFO_FLAG_HAS_WEAK_REFS;
+    bytes[TYPEINFO_OFF_FLAGS as usize..(TYPEINFO_OFF_FLAGS + 4) as usize]
+        .copy_from_slice(&flags.to_le_bytes());
+    desc.define(bytes.into_boxed_slice());
+
+    if let Some(dtor) = destroy_fn {
+        let dtor_ref = module.declare_func_in_data(dtor, &mut desc);
+        desc.write_function_addr(TYPEINFO_OFF_DESTROY_FN, dtor_ref);
+    }
+    let trace_ref = module.declare_func_in_data(trace_fn, &mut desc);
+    desc.write_function_addr(TYPEINFO_OFF_TRACE_FN, trace_ref);
+    let weak_ref = module.declare_func_in_data(runtime.weak_clear_self, &mut desc);
+    desc.write_function_addr(TYPEINFO_OFF_WEAK_FN, weak_ref);
+
+    module
+        .define_data(data_id, &desc)
+        .map_err(|e| {
+            CodegenError::cranelift(format!("define option typeinfo `{symbol}`: {e}"), Span::new(0, 0))
+        })?;
+    Ok(data_id)
+}
+
 /// Emit `corvid_typeinfo_List_<elem>` for a concrete list
 /// element type. Uses the runtime's shared `corvid_destroy_list` and
 /// `corvid_trace_list` rather than per-type functions; the element
@@ -1260,7 +1372,13 @@ fn typeinfo_data_for_refcounted_payload(
         Type::List(inner_inner) => runtime.list_typeinfos.get(&(**inner_inner)).copied(),
         Type::Result(_, _) => runtime.result_typeinfos.get(ty).copied(),
         Type::Weak(_, _) => Some(runtime.weak_box_typeinfo),
-        Type::Option(inner) => typeinfo_data_for_refcounted_payload(inner, runtime),
+        Type::Option(inner) => {
+            if is_native_wide_option_type(ty) {
+                runtime.option_typeinfos.get(ty).copied()
+            } else {
+                typeinfo_data_for_refcounted_payload(inner, runtime)
+            }
+        }
         _ => None,
     }
 }
@@ -1432,6 +1550,62 @@ fn collect_result_types(ir: &IrFile) -> Vec<Type> {
     order
 }
 
+fn collect_option_types(ir: &IrFile) -> Vec<Type> {
+    use std::collections::BTreeSet;
+    let mut seen: BTreeSet<Type> = BTreeSet::new();
+    let mut order: Vec<Type> = Vec::new();
+
+    fn visit(ty: &Type, seen: &mut BTreeSet<Type>, order: &mut Vec<Type>) {
+        match ty {
+            Type::Option(inner) => {
+                visit(inner, seen, order);
+                if is_native_wide_option_type(ty) && seen.insert(ty.clone()) {
+                    order.push(ty.clone());
+                }
+            }
+            Type::Result(ok, err) => {
+                visit(ok, seen, order);
+                visit(err, seen, order);
+            }
+            Type::List(inner) | Type::Weak(inner, _) => visit(inner, seen, order),
+            Type::Function { params, ret, .. } => {
+                for param in params {
+                    visit(param, seen, order);
+                }
+                visit(ret, seen, order);
+            }
+            _ => {}
+        }
+    }
+
+    for agent in &ir.agents {
+        for param in &agent.params {
+            visit(&param.ty, &mut seen, &mut order);
+        }
+        visit(&agent.return_ty, &mut seen, &mut order);
+        visit_block_types(&agent.body, &mut seen, &mut order, &visit);
+    }
+    for ty in &ir.types {
+        for field in &ty.fields {
+            visit(&field.ty, &mut seen, &mut order);
+        }
+    }
+    for tool in &ir.tools {
+        for param in &tool.params {
+            visit(&param.ty, &mut seen, &mut order);
+        }
+        visit(&tool.return_ty, &mut seen, &mut order);
+    }
+    for prompt in &ir.prompts {
+        for param in &prompt.params {
+            visit(&param.ty, &mut seen, &mut order);
+        }
+        visit(&prompt.return_ty, &mut seen, &mut order);
+    }
+
+    order
+}
+
 /// Walk an `IrBlock` and visit every expression's `ty` through the
 /// caller's closure. Catches list literals and other list-producing
 /// expressions that don't surface in signatures.
@@ -1559,7 +1733,7 @@ fn emit_release(
 fn is_refcounted_type(ty: &Type) -> bool {
     match ty {
         Type::String | Type::Struct(_) | Type::List(_) | Type::Weak(_, _) | Type::Result(_, _) => true,
-        Type::Option(inner) => is_refcounted_type(inner),
+        Type::Option(inner) => is_native_wide_option_type(ty) || is_refcounted_type(inner),
         _ => false,
     }
 }
@@ -1568,9 +1742,20 @@ fn is_native_value_type(ty: &Type) -> bool {
     match ty {
         Type::Int | Type::Bool | Type::Float | Type::String => true,
         Type::Struct(_) | Type::List(_) | Type::Weak(_, _) => true,
-        Type::Option(inner) => is_refcounted_type(inner) && is_native_value_type(inner),
+        Type::Option(_) => is_native_option_type(ty),
         Type::Result(ok, err) => is_native_value_type(ok) && is_native_value_type(err),
         Type::Nothing | Type::Function { .. } | Type::Unknown => false,
+    }
+}
+
+fn is_native_wide_option_type(ty: &Type) -> bool {
+    matches!(ty, Type::Option(inner) if matches!(&**inner, Type::Int | Type::Bool | Type::Float))
+}
+
+fn is_native_option_type(ty: &Type) -> bool {
+    match ty {
+        Type::Option(inner) => is_refcounted_type(inner) || is_native_wide_option_type(ty),
+        _ => false,
     }
 }
 
@@ -1792,6 +1977,10 @@ pub struct RuntimeFuncs {
     pub result_traces: HashMap<Type, FuncId>,
     /// Per-concrete-result-type typeinfo data symbols.
     pub result_typeinfos: HashMap<Type, cranelift_module::DataId>,
+    /// Per-concrete-wide-option typeinfo data symbols. Wide scalar
+    /// `Option<T>` uses a typed heap wrapper for `Some(...)` and the
+    /// zero pointer for `None`.
+    pub option_typeinfos: HashMap<Type, cranelift_module::DataId>,
     /// Owned copy of the IR's struct type metadata, keyed by `DefId`.
     /// Cloned into `RuntimeFuncs` in `lower_file` so the per-agent
     /// lowering functions can resolve struct layouts (for field
@@ -2007,7 +2196,9 @@ pub fn lower_file(
     //      destructor + trace fns emitted above.
     //   4. Result destructors / traces / typeinfos: one per concrete
     //      Result<T, E> type mentioned in the IR.
-    //   5. List typeinfo blocks (new): one per concrete List<T> type
+    //   5. Wide Option<T> traces / typeinfos: one per concrete scalar
+    //      Option<T> type mentioned in the IR.
+    //   6. List typeinfo blocks (new): one per concrete List<T> type
     //      walked out of the IR. Element-types emit first so outer
     //      list typeinfos can reference them via elem_typeinfo.
     //
@@ -2057,6 +2248,21 @@ pub fn lower_file(
         runtime.result_traces.insert(result_ty.clone(), trace_id);
         let typeinfo_id = emit_result_typeinfo(module, &result_ty, destroy_id, trace_id, &runtime)?;
         runtime.result_typeinfos.insert(result_ty, typeinfo_id);
+    }
+
+    // Wide scalar options: `None` stays the zero pointer, while
+    // `Some(...)` allocates a tiny typed wrapper storing the payload in
+    // one slot. This keeps the same nullable-pointer control-flow shape
+    // as refcounted `Option<T>` while widening native support to scalar
+    // payloads like `Option<Int>`.
+    for option_ty in collect_option_types(ir) {
+        let payload_ty = match &option_ty {
+            Type::Option(inner) => (**inner).clone(),
+            _ => continue,
+        };
+        let trace_id = define_option_trace(module, &option_ty, &payload_ty, &runtime)?;
+        let typeinfo_id = emit_option_typeinfo(module, &option_ty, None, trace_id, &runtime)?;
+        runtime.option_typeinfos.insert(option_ty, typeinfo_id);
     }
 
     // Lists: collect every concrete element type the IR mentions, in
@@ -2613,6 +2819,7 @@ fn cl_type_for(ty: &Type, span: Span) -> Result<clir::Type, CodegenError> {
         Type::Weak(_, _) => Ok(I64),
         Type::Result(_, _) if is_native_result_type(ty) => Ok(I64),
         Type::Option(inner) if is_refcounted_type(inner) => Ok(I64),
+        Type::Option(_) if is_native_wide_option_type(ty) => Ok(I64),
         Type::Nothing => Err(CodegenError::not_supported(
             "`Nothing` — use a bare `return` instead",
             span,
@@ -2630,7 +2837,7 @@ fn cl_type_for(ty: &Type, span: Span) -> Result<clir::Type, CodegenError> {
             span,
         )),
         Type::Option(_) => Err(CodegenError::not_supported(
-            "`Option<T>` with non-refcounted payload — native codegen currently supports nullable-pointer `Option<T>` only when `T` is refcounted (the path used by weak upgrade); wider tagged-union Option lowering is not implemented yet",
+            "`Option<T>` — native codegen currently supports nullable-pointer `Option<T>` when `T` is refcounted plus wide scalar `Option<Int|Bool|Float>`; other payload shapes still need the interpreter tier",
             span,
         )),
         Type::Unknown => Err(CodegenError::cranelift(
@@ -2825,11 +3032,12 @@ fn lower_try_propagate_option(
     module: &mut ObjectModule,
     runtime: &RuntimeFuncs,
 ) -> Result<ClValue, CodegenError> {
-    let option_payload_ty = match &inner.ty {
-        Type::Option(payload) if is_refcounted_type(payload) => &**payload,
+    let (option_payload_ty, wide_option) = match &inner.ty {
+        Type::Option(payload) if is_refcounted_type(payload) => (&**payload, false),
+        Type::Option(payload) if is_native_wide_option_type(&inner.ty) => (&**payload, true),
         Type::Option(_) => {
             return Err(CodegenError::not_supported(
-                "postfix `?` on `Option<T>` — native lowering currently supports only nullable-pointer `Option<T>` with refcounted payloads",
+                "postfix `?` on `Option<T>` — native lowering currently supports nullable-pointer `Option<T>` with refcounted payloads plus wide scalar `Option<Int|Bool|Float>`",
                 expr.span,
             ))
         }
@@ -2850,13 +3058,22 @@ fn lower_try_propagate_option(
         }
     };
 
-    match current_return_ty {
-        Type::Option(ret_payload) if is_refcounted_type(ret_payload) => {}
-        _ => {
+    if wide_option {
+        if current_return_ty != &inner.ty {
             return Err(CodegenError::not_supported(
-                "postfix `?` — native lowering currently supports only functions returning nullable-pointer `Option<T>`",
+                "postfix `?` on wide `Option<T>` — the current native subset supports propagation only when the enclosing function returns the same concrete scalar `Option<T>` shape",
                 expr.span,
-            ))
+            ));
+        }
+    } else {
+        match current_return_ty {
+            Type::Option(ret_payload) if is_refcounted_type(ret_payload) => {}
+            _ => {
+                return Err(CodegenError::not_supported(
+                    "postfix `?` — native lowering currently supports only functions returning nullable-pointer `Option<T>`",
+                    expr.span,
+                ))
+            }
         }
     }
 
@@ -2887,7 +3104,18 @@ fn lower_try_propagate_option(
 
     builder.switch_to_block(some_block);
     builder.seal_block(some_block);
-    builder.ins().jump(merge_block, &[option_val.into()]);
+    if wide_option {
+        let payload = builder.ins().load(
+            result_cl_ty,
+            cranelift_codegen::ir::MemFlags::trusted(),
+            option_val,
+            OPTION_PAYLOAD_OFFSET,
+        );
+        emit_release(builder, module, runtime, option_val);
+        builder.ins().jump(merge_block, &[payload.into()]);
+    } else {
+        builder.ins().jump(merge_block, &[option_val.into()]);
+    }
 
     builder.switch_to_block(merge_block);
     builder.seal_block(merge_block);
@@ -3657,7 +3885,14 @@ fn lower_expr(
             }
             let l = lower_expr(builder, left, current_return_ty, env, scope_stack, func_ids_by_def, module, runtime)?;
             let r = lower_expr(builder, right, current_return_ty, env, scope_stack, func_ids_by_def, module, runtime)?;
-            lower_binop_strict(builder, *op, l, r, expr.span, module, runtime)
+            let result = lower_binop_strict(builder, *op, l, r, expr.span, module, runtime)?;
+            if is_refcounted_type(&left.ty) {
+                emit_release(builder, module, runtime, l);
+            }
+            if is_refcounted_type(&right.ty) {
+                emit_release(builder, module, runtime, r);
+            }
+            Ok(result)
         }
         IrExprKind::UnOp { op, operand } => {
             let v = lower_expr(builder, operand, current_return_ty, env, scope_stack, func_ids_by_def, module, runtime)?;
@@ -4203,17 +4438,17 @@ fn lower_expr(
             runtime,
         ),
         // Result/Option construction and `?` / `try-retry` control
-        // flow are handled end-to-end by the interpreter. Native
-        // tagged-union layout, discriminant-based branching, and
-        // retry-loop desugaring are not implemented yet.
+        // flow are native only for the current principled subset:
+        //   * nullable-pointer `Option<T>` when `T` is refcounted
+        //   * wide scalar `Option<Int|Bool|Float>`
+        //   * one-word `Result<T, E>`
+        //   * `try ... retry` over the native `Result<T, E>` subset
         //
-        // Until then any program that hits these IR variants in
-        // native compilation gets a clean, actionable error here.
-        // The cl_type_for path above will typically fire first
-        // for any binding of Result/Option type, but these arms
-        // are the load-bearing fallback for every position the
-        // typecheck doesn't intercept (intermediate sub-
-        // expressions, return values, etc.).
+        // Any shape outside that subset still gets a clean,
+        // actionable boundary here. The `cl_type_for` path above
+        // will typically fire first for bindings, but these arms are
+        // the load-bearing fallback for intermediate expressions and
+        // other positions the typecheck doesn't intercept.
         IrExprKind::ResultOk { .. } | IrExprKind::ResultErr { .. } => {
             Err(CodegenError::not_supported(
                 "`Result<T, E>` construction (`Ok(...)` / `Err(...)`) — native tagged-union lowering is not implemented yet; use the interpreter tier (`corvid run --tier interp`) until then",
@@ -4221,7 +4456,23 @@ fn lower_expr(
             ))
         }
         IrExprKind::OptionSome { inner } => {
-            if is_refcounted_type(&expr.ty) {
+            if is_native_wide_option_type(&expr.ty) {
+                let payload_ty = match &expr.ty {
+                    Type::Option(inner_ty) => &**inner_ty,
+                    _ => unreachable!("wide option gate requires Option<T> type"),
+                };
+                let payload = lower_expr(
+                    builder,
+                    inner,
+                    current_return_ty,
+                    env,
+                    scope_stack,
+                    func_ids_by_def,
+                    module,
+                    runtime,
+                )?;
+                emit_option_wrapper_value(builder, module, runtime, &expr.ty, payload, payload_ty, expr.span)
+            } else if is_refcounted_type(&expr.ty) {
                 lower_expr(
                     builder,
                     inner,
@@ -4234,7 +4485,7 @@ fn lower_expr(
                 )
             } else {
                 Err(CodegenError::not_supported(
-                    "`Some(...)` with non-refcounted payload — native codegen currently supports nullable-pointer `Option<T>` only when `T` is refcounted",
+                    "`Some(...)` — native codegen currently supports nullable-pointer `Option<T>` when `T` is refcounted plus wide scalar `Option<Int|Bool|Float>`",
                     expr.span,
                 ))
             }
@@ -5040,6 +5291,45 @@ fn emit_result_wrapper_value(
     // above: mismatched payload widths should fail before store.
     let _ = payload_cl_ty;
     Ok(result_ptr)
+}
+
+fn emit_option_wrapper_value(
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    runtime: &RuntimeFuncs,
+    option_ty: &Type,
+    payload: ClValue,
+    payload_ty: &Type,
+    span: Span,
+) -> Result<ClValue, CodegenError> {
+    let option_ti_id = runtime
+        .option_typeinfos
+        .get(option_ty)
+        .copied()
+        .ok_or_else(|| {
+            CodegenError::cranelift(
+                format!(
+                    "no typeinfo pre-emitted for wide Option type `{}`",
+                    option_ty.display_name()
+                ),
+                span,
+            )
+        })?;
+    let size = builder.ins().iconst(I64, OPTION_PAYLOAD_BYTES);
+    let ti_gv = module.declare_data_in_func(option_ti_id, builder.func);
+    let ti_addr = builder.ins().symbol_value(I64, ti_gv);
+    let alloc_ref = module.declare_func_in_func(runtime.alloc_typed, builder.func);
+    let call = builder.ins().call(alloc_ref, &[size, ti_addr]);
+    let option_ptr = builder.inst_results(call)[0];
+    let payload_cl_ty = cl_type_for(payload_ty, span)?;
+    builder.ins().store(
+        cranelift_codegen::ir::MemFlags::trusted(),
+        payload,
+        option_ptr,
+        OPTION_PAYLOAD_OFFSET,
+    );
+    let _ = payload_cl_ty;
+    Ok(option_ptr)
 }
 
 /// Lower a String literal into a static `.rodata` block and return the

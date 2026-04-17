@@ -3637,6 +3637,37 @@ Interpretation:
   richer structured return shapes, not more speculative work on the minimal
   subset
 
+Day 46 — Native wide scalar `Option<T>` subset
+
+What shipped:
+
+- widened native AOT `Option<T>` support from nullable refcounted payloads to
+  wide scalar `Option<Int>`, `Option<Bool>`, and `Option<Float>`
+- `Some(...)` for that subset now allocates a tiny typed wrapper while `None`
+  stays the zero pointer, so the existing nullable-pointer control-flow shape
+  still works
+- native postfix `?` now lowers on that same scalar subset
+- widened the driver native-ability gate and parity coverage for `Option<Int>`
+  and `Option<Bool>`
+
+Important debugging note:
+
+- the first parity pass found a real ownership bug outside the new option code:
+  generic non-string binary ops were not retiring refcounted operands after
+  comparison/arithmetic. Wide `Option<T>` surfaced it immediately through
+  `value != None`. Fixing that in generic expression lowering was the right
+  correction; changing the tests would have hidden a real leak in the native
+  path.
+
+Interpretation:
+
+- native `Option<T>` widening is now following the same principled pattern as
+  the native `Result<T, E>` work: real typed heap metadata plus ownership
+  integration, not ad hoc sentinels bolted onto codegen
+- the next honest widening step remains broader `Result`/retry policy work or
+  the next native capability slice, not a shortcut around representation or
+  cleanup invariants
+
 
 
 

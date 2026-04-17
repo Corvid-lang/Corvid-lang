@@ -456,7 +456,7 @@ fn transform_agent(
 pub(crate) fn is_refcounted(ty: &Type) -> bool {
     match ty {
         Type::String | Type::Struct(_) | Type::List(_) | Type::Weak(_, _) | Type::Result(_, _) => true,
-        Type::Option(inner) => is_refcounted(inner),
+        Type::Option(inner) => matches!(&**inner, Type::Int | Type::Bool | Type::Float) || is_refcounted(inner),
         _ => false,
     }
 }
@@ -481,7 +481,7 @@ pub(crate) fn is_strong_refcounted(ty: &Type) -> bool {
         Type::Weak(_, _) => false,
         // Option<strong> is maybe-strong; callers requiring
         // definite-strong should test with the null-path consideration.
-        Type::Option(inner) => is_strong_refcounted(inner),
+        Type::Option(inner) => matches!(&**inner, Type::Int | Type::Bool | Type::Float) || is_strong_refcounted(inner),
         _ => false,
     }
 }

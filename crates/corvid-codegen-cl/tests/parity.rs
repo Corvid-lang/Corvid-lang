@@ -2144,6 +2144,30 @@ fn nullable_option_string_try_propagates_some_and_none() {
 }
 
 #[test]
+fn wide_option_int_round_trips_through_native_agents() {
+    assert_parity_bool_without_tools(
+        "agent maybe(flag: Bool) -> Option<Int>:\n    if flag:\n        return Some(7)\n    return None\n\nagent main() -> Bool:\n    value = maybe(true)\n    return value != None\n",
+        true,
+    );
+}
+
+#[test]
+fn wide_option_int_try_propagates_some_and_none() {
+    assert_parity_bool_without_tools(
+        "agent maybe(flag: Bool) -> Option<Int>:\n    if flag:\n        return Some(7)\n    return None\n\nagent unwrap(flag: Bool) -> Option<Int>:\n    value = maybe(flag)?\n    return Some(value + 1)\n\nagent main() -> Bool:\n    return unwrap(false) == None and unwrap(true) != None\n",
+        true,
+    );
+}
+
+#[test]
+fn wide_option_bool_none_compares_equal_to_none() {
+    assert_parity_bool_without_tools(
+        "agent maybe(flag: Bool) -> Option<Bool>:\n    if flag:\n        return Some(true)\n    return None\n\nagent main() -> Bool:\n    return maybe(false) == None and maybe(true) != None\n",
+        true,
+    );
+}
+
+#[test]
 fn native_result_string_round_trips_through_native_agents() {
     assert_parity_bool_without_tools(
         "agent fetch(flag: Bool) -> Result<String, String>:\n    if flag:\n        return Ok(\"hi\")\n    return Err(\"no\")\n\nagent main() -> Bool:\n    first = fetch(true)\n    second = fetch(false)\n    return true\n",

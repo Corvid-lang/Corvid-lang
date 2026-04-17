@@ -1104,6 +1104,20 @@ agent main() -> Bool:
     return maybe(true) != None
 "#;
 
+    const WIDE_OPTION_INT_TRY_SRC: &str = r#"
+agent maybe(flag: Bool) -> Option<Int>:
+    if flag:
+        return Some(7)
+    return None
+
+agent unwrap(flag: Bool) -> Option<Int>:
+    value = maybe(flag)?
+    return Some(value + 1)
+
+agent main() -> Bool:
+    return unwrap(true) != None
+"#;
+
     const NULLABLE_OPTION_TRY_SRC: &str = r#"
 agent maybe(flag: Bool) -> Option<String>:
     if flag:
@@ -1232,12 +1246,12 @@ agent load(id: String) -> String:
     }
 
     #[test]
-    fn native_ability_rejects_wide_option_payloads() {
+    fn native_ability_accepts_wide_scalar_option_payloads() {
         let ir = compile_to_ir(WIDE_OPTION_INT_SRC).expect("compile");
-        match native_ability(&ir) {
-            Err(NotNativeReason::TaggedUnionRetryNotNative) => {}
-            other => panic!("expected tagged-union rejection, got {other:?}"),
-        }
+        assert!(
+            native_ability(&ir).is_ok(),
+            "wide scalar Option<Int> should now compile natively"
+        );
     }
 
     #[test]
@@ -1246,6 +1260,15 @@ agent load(id: String) -> String:
         assert!(
             native_ability(&ir).is_ok(),
             "nullable Option<String> `?` should now compile natively"
+        );
+    }
+
+    #[test]
+    fn native_ability_accepts_wide_scalar_option_try_propagation() {
+        let ir = compile_to_ir(WIDE_OPTION_INT_TRY_SRC).expect("compile");
+        assert!(
+            native_ability(&ir).is_ok(),
+            "wide scalar Option<Int> `?` should now compile natively"
         );
     }
 
