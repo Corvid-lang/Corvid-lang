@@ -4,8 +4,6 @@ import json
 import os
 import pathlib
 import subprocess
-import tempfile
-import time
 
 
 SCENARIOS = [
@@ -15,6 +13,7 @@ SCENARIOS = [
     "approval_workflow",
     "replay_trace",
 ]
+
 
 def corvid_cmd(repo: pathlib.Path) -> list[str]:
     manifest = repo / "benches" / "corvid" / "runner" / "Cargo.toml"
@@ -51,26 +50,68 @@ def stacks(repo: pathlib.Path):
         ("typescript", typescript_cmd(repo)),
     ]
 
-def run_stack(repo: pathlib.Path, stack: str, base_cmd: list[str], scenario: str, profile: bool):
-    fixture = repo / "benchmarks" / "cases" / f"{scenario}.json"
-    with tempfile.TemporaryDirectory() as tmp:
-        output = pathlib.Path(tmp) / "trial.jsonl"
-        cmd = base_cmd + [str(fixture), "1", str(output)]
+
+class RunnerServer:
+    def __init__(
+        self,
+        repo: pathlib.Path,
+        stack: str,
+        base_cmd: list[str],
+        scenario: str,
+        total_requests: int,
+        profile: bool,
+    ) -> None:
+        fixture = repo / "benchmarks" / "cases" / f"{scenario}.json"
+        cmd = list(base_cmd)
+        if stack == "corvid":
+            cmd += ["--server", str(fixture), str(total_requests)]
+        else:
+            cmd += ["--server", str(fixture)]
         env = os.environ.copy()
         if profile and stack == "corvid":
             env["CORVID_BENCH_PROFILE"] = "1"
-        start = time.perf_counter()
-        subprocess.run(cmd, cwd=repo, check=True, env=env)
-        launcher_wall_ms = (time.perf_counter() - start) * 1000.0
-        if not output.exists():
-            raise FileNotFoundError(f"{stack} runner did not write {output}")
-        record = json.loads(output.read_text(encoding="utf-8").strip())
-    record["stack"] = stack
-    record["wall_ms"] = record["total_wall_ms"]
-    record["orchestration_ms"] = record["orchestration_overhead_ms"]
-    record["launcher_wall_ms"] = launcher_wall_ms
-    record["launcher_overhead_ms"] = launcher_wall_ms - record["total_wall_ms"]
-    return record
+        self.proc = subprocess.Popen(
+            cmd,
+            cwd=repo,
+            env=env,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding="utf-8",
+            bufsize=1,
+        )
+        self.stack = stack
+
+    def run_trial(self, trial_idx: int) -> dict:
+        assert self.proc.stdin is not None
+        assert self.proc.stdout is not None
+        payload = json.dumps({"trial_idx": trial_idx})
+        self.proc.stdin.write(payload + "\n")
+        self.proc.stdin.flush()
+        line = self.proc.stdout.readline()
+        if not line:
+            stderr = ""
+            if self.proc.stderr is not None:
+                stderr = self.proc.stderr.read()
+            raise RuntimeError(f"{self.stack} runner ended early: {stderr}")
+        record = json.loads(line)
+        record["stack"] = self.stack
+        record["wall_ms"] = record["total_wall_ms"]
+        record["orchestration_ms"] = record["orchestration_overhead_ms"]
+        record.setdefault("launcher_wall_ms", 0.0)
+        record.setdefault("launcher_overhead_ms", 0.0)
+        return record
+
+    def close(self) -> None:
+        if self.proc.stdin is not None:
+            self.proc.stdin.close()
+        stderr = ""
+        if self.proc.stderr is not None:
+            stderr = self.proc.stderr.read()
+        rc = self.proc.wait()
+        if rc != 0:
+            raise RuntimeError(f"{self.stack} runner exited with {rc}: {stderr}")
 
 
 def main():
@@ -89,23 +130,33 @@ def main():
     stack_cmds = stacks(repo)
 
     records = []
+    total_requests = args.warmup + args.trials
     for scenario in SCENARIOS:
-        for _ in range(args.warmup):
-            for stack, cmd in stack_cmds:
-                run_stack(repo, stack, cmd, scenario, args.profile)
-        for trial_idx in range(1, args.trials + 1):
-            for stack, cmd in stack_cmds:
-                record = run_stack(repo, stack, cmd, scenario, args.profile)
-                records.append(
-                    {
-                        "scenario": scenario,
-                        "stack": stack,
-                        "trial_idx": trial_idx,
-                        "session_id": session_id,
-                        "timestamp": dt.datetime.utcnow().isoformat() + "Z",
-                        **record,
-                    }
-                )
+        servers = [
+            RunnerServer(repo, stack, cmd, scenario, total_requests, args.profile)
+            for stack, cmd in stack_cmds
+        ]
+        try:
+            for warm_idx in range(1, args.warmup + 1):
+                for server in servers:
+                    server.run_trial(warm_idx)
+            for trial_idx in range(1, args.trials + 1):
+                request_idx = args.warmup + trial_idx
+                for server in servers:
+                    record = server.run_trial(request_idx)
+                    records.append(
+                        {
+                            "scenario": scenario,
+                            "stack": server.stack,
+                            "trial_idx": trial_idx,
+                            "session_id": session_id,
+                            "timestamp": dt.datetime.utcnow().isoformat() + "Z",
+                            **record,
+                        }
+                    )
+        finally:
+            for server in servers:
+                server.close()
 
     raw_path.write_text("\n".join(json.dumps(r) for r in records) + "\n", encoding="utf-8")
 

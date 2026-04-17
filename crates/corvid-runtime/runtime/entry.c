@@ -25,8 +25,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include <stdlib.h>
-
 extern long long corvid_alloc_count;
 extern long long corvid_release_count;
 extern long long corvid_retain_call_count;
@@ -43,6 +41,15 @@ extern int corvid_gc_verify_mode;
 extern long long corvid_gc_verify_drift_count;
 extern long long corvid_gc_trigger_log_length(void);
 extern uint64_t corvid_stack_maps_entry_count(void);
+
+static long long corvid_bench_allocs_before = 0;
+static long long corvid_bench_releases_before = 0;
+static long long corvid_bench_retain_calls_before = 0;
+static long long corvid_bench_release_calls_before = 0;
+static long long corvid_bench_gc_trigger_count_before = 0;
+static long long corvid_bench_safepoint_count_before = 0;
+static uint64_t corvid_bench_stack_map_entry_count_before = 0;
+static long long corvid_bench_verify_drift_count_before = 0;
 
 /* ---- exit-time leak + RC-op counters (registered via corvid_init) --- */
 
@@ -195,17 +202,20 @@ char corvid_parse_bool(const char* s, long long argv_index) {
 
 void corvid_print_i64(long long v) {
     printf("%lld\n", v);
+    fflush(stdout);
 }
 
 void corvid_print_bool(long long v) {
     /* Treat any non-zero as true. The codegen passes 0 or 1; this
      * matches what users expect at the command line. */
     printf("%s\n", v ? "true" : "false");
+    fflush(stdout);
 }
 
 void corvid_print_f64(double v) {
     /* %.17g is round-trippable for IEEE 754 doubles. */
     printf("%.17g\n", v);
+    fflush(stdout);
 }
 
 /* Print a Corvid String — descriptor at offset 0 = bytes_ptr,
@@ -213,6 +223,7 @@ void corvid_print_f64(double v) {
 void corvid_print_string(void* descriptor) {
     if (descriptor == NULL) {
         printf("\n");
+        fflush(stdout);
         return;
     }
     long long* desc = (long long*)descriptor;
@@ -222,4 +233,44 @@ void corvid_print_string(void* descriptor) {
         fwrite(bytes, 1, (size_t)length, stdout);
     }
     fputc('\n', stdout);
+    fflush(stdout);
+}
+
+long long corvid_bench_server_enabled(void) {
+    const char* v = getenv("CORVID_BENCH_SERVER");
+    return (v != NULL && strcmp(v, "1") == 0) ? 1 : 0;
+}
+
+long long corvid_bench_next_trial(void) {
+    char buf[128];
+    if (fgets(buf, sizeof(buf), stdin) == NULL) {
+        return 0;
+    }
+    char* end = NULL;
+    long long trial_idx = strtoll(buf, &end, 10);
+    corvid_bench_allocs_before = corvid_alloc_count;
+    corvid_bench_releases_before = corvid_release_count;
+    corvid_bench_retain_calls_before = corvid_retain_call_count;
+    corvid_bench_release_calls_before = corvid_release_call_count;
+    corvid_bench_gc_trigger_count_before = corvid_gc_trigger_log_length();
+    corvid_bench_safepoint_count_before = corvid_safepoint_count;
+    corvid_bench_stack_map_entry_count_before = corvid_stack_maps_entry_count();
+    corvid_bench_verify_drift_count_before = corvid_gc_verify_drift_count;
+    return trial_idx > 0 ? trial_idx : 0;
+}
+
+void corvid_bench_finish_trial(long long trial_idx) {
+    fprintf(stderr,
+            "CORVID_BENCH_TRIAL={\"trial_idx\":%lld,\"allocs\":%lld,\"releases\":%lld,\"retain_calls\":%lld,\"release_calls\":%lld,\"gc_trigger_count\":%lld,\"safepoint_count\":%lld,\"stack_map_entry_count\":%llu,\"verify_drift_count\":%lld}\n",
+            trial_idx,
+            corvid_alloc_count - corvid_bench_allocs_before,
+            corvid_release_count - corvid_bench_releases_before,
+            corvid_retain_call_count - corvid_bench_retain_calls_before,
+            corvid_release_call_count - corvid_bench_release_calls_before,
+            corvid_gc_trigger_log_length() - corvid_bench_gc_trigger_count_before,
+            corvid_safepoint_count - corvid_bench_safepoint_count_before,
+            (unsigned long long)(corvid_stack_maps_entry_count()
+                                 - corvid_bench_stack_map_entry_count_before),
+            corvid_gc_verify_drift_count - corvid_bench_verify_drift_count_before);
+    fflush(stderr);
 }

@@ -56,6 +56,7 @@ async function runTrial(fixture: Fixture, trial: number) {
   const traceBytes = Buffer.byteLength(events.join("\n"), "utf8");
   return {
     implementation: "typescript-node",
+    process_mode: "persistent",
     fixture: fixture.name,
     trial,
     success: true,
@@ -74,12 +75,34 @@ async function runTrial(fixture: Fixture, trial: number) {
 }
 
 async function main() {
-  const [fixturePath, trialsRaw, outputPath] = process.argv.slice(2);
-  if (!fixturePath || !trialsRaw || !outputPath) {
-    throw new Error("usage: runner.ts <fixture.json> <trials> <output.jsonl>");
+  const args = process.argv.slice(2);
+  const serverMode = args[0] === "--server";
+  const positional = serverMode ? args.slice(1) : args;
+  const [fixturePath, trialsRaw, outputPath] = positional;
+  if (!fixturePath || (!serverMode && (!trialsRaw || !outputPath))) {
+    throw new Error(
+      "usage: runner.ts <fixture.json> <trials> <output.jsonl> | runner.ts --server <fixture.json>",
+    );
+  }
+  const fixture = JSON.parse(fs.readFileSync(fixturePath, "utf8")) as Fixture;
+  if (serverMode) {
+    process.stdin.setEncoding("utf8");
+    let buffer = "";
+    process.stdin.on("data", async (chunk: string) => {
+      buffer += chunk;
+      const lines = buffer.split(/\r?\n/);
+      buffer = lines.pop() ?? "";
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        const request = JSON.parse(line);
+        const trial = Number(request.trial_idx);
+        const record = await runTrial(fixture, trial);
+        process.stdout.write(`${JSON.stringify(record)}\n`);
+      }
+    });
+    return;
   }
   const trials = Number.parseInt(trialsRaw, 10);
-  const fixture = JSON.parse(fs.readFileSync(fixturePath, "utf8")) as Fixture;
   fs.mkdirSync(path.dirname(outputPath), { recursive: true });
   const lines: string[] = [];
   for (let trial = 1; trial <= trials; trial += 1) {

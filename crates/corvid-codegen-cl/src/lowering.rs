@@ -272,6 +272,35 @@ fn declare_runtime_funcs(
         .map_err(|e| {
             CodegenError::cranelift(format!("declare print_string: {e}"), Span::new(0, 0))
         })?;
+    let mut bench_enabled_sig = module.make_signature();
+    bench_enabled_sig.returns.push(AbiParam::new(I64));
+    let bench_server_enabled_id = module
+        .declare_function(BENCH_SERVER_ENABLED_SYMBOL, Linkage::Import, &bench_enabled_sig)
+        .map_err(|e| {
+            CodegenError::cranelift(
+                format!("declare bench_server_enabled: {e}"),
+                Span::new(0, 0),
+            )
+        })?;
+
+    let mut bench_next_sig = module.make_signature();
+    bench_next_sig.returns.push(AbiParam::new(I64));
+    let bench_next_trial_id = module
+        .declare_function(BENCH_NEXT_TRIAL_SYMBOL, Linkage::Import, &bench_next_sig)
+        .map_err(|e| {
+            CodegenError::cranelift(format!("declare bench_next_trial: {e}"), Span::new(0, 0))
+        })?;
+
+    let mut bench_finish_sig = module.make_signature();
+    bench_finish_sig.params.push(AbiParam::new(I64));
+    let bench_finish_trial_id = module
+        .declare_function(BENCH_FINISH_TRIAL_SYMBOL, Linkage::Import, &bench_finish_sig)
+        .map_err(|e| {
+            CodegenError::cranelift(
+                format!("declare bench_finish_trial: {e}"),
+                Span::new(0, 0),
+            )
+        })?;
 
     // Runtime bridge imports.
     let mut tool_call_sync_int_sig = module.make_signature();
@@ -405,6 +434,9 @@ fn declare_runtime_funcs(
         print_bool: print_bool_id,
         print_f64: print_f64_id,
         print_string: print_string_id,
+        bench_server_enabled: bench_server_enabled_id,
+        bench_next_trial: bench_next_trial_id,
+        bench_finish_trial: bench_finish_trial_id,
         tool_call_sync_int: tool_call_sync_int_id,
         runtime_init: runtime_init_id,
         runtime_shutdown: runtime_shutdown_id,
@@ -1283,6 +1315,9 @@ pub const PRINT_I64_SYMBOL: &str = "corvid_print_i64";
 pub const PRINT_BOOL_SYMBOL: &str = "corvid_print_bool";
 pub const PRINT_F64_SYMBOL: &str = "corvid_print_f64";
 pub const PRINT_STRING_SYMBOL: &str = "corvid_print_string";
+pub const BENCH_SERVER_ENABLED_SYMBOL: &str = "corvid_bench_server_enabled";
+pub const BENCH_NEXT_TRIAL_SYMBOL: &str = "corvid_bench_next_trial";
+pub const BENCH_FINISH_TRIAL_SYMBOL: &str = "corvid_bench_finish_trial";
 
 // Async tool dispatch bridge. Signature in Rust:
 //   corvid_tool_call_sync_int(name_ptr: *const u8, name_len: usize) -> i64
@@ -1370,6 +1405,9 @@ pub struct RuntimeFuncs {
     pub print_bool: FuncId,
     pub print_f64: FuncId,
     pub print_string: FuncId,
+    pub bench_server_enabled: FuncId,
+    pub bench_next_trial: FuncId,
+    pub bench_finish_trial: FuncId,
     // Async tool bridge + runtime init/shutdown.
     pub tool_call_sync_int: FuncId,
     pub runtime_init: FuncId,
@@ -2013,22 +2051,56 @@ fn emit_entry_main(
             decoded_refcounted.push(is_refcounted_type(&p.ty));
         }
 
-        // 4. Call the entry agent.
         let entry_ref = module.declare_func_in_func(entry_func_id, builder.func);
+        let bench_enabled_ref =
+            module.declare_func_in_func(runtime.bench_server_enabled, builder.func);
+        let bench_next_ref =
+            module.declare_func_in_func(runtime.bench_next_trial, builder.func);
+        let bench_finish_ref =
+            module.declare_func_in_func(runtime.bench_finish_trial, builder.func);
+
+        let bench_mode = builder.ins().call(bench_enabled_ref, &[]);
+        let bench_enabled = builder.inst_results(bench_mode)[0];
+        let bench_check_b = builder.create_block();
+        let bench_body_b = builder.create_block();
+        builder.append_block_param(bench_body_b, I64);
+        let bench_done_b = builder.create_block();
+        let normal_call_b = builder.create_block();
+        let bench_cmp = builder.ins().icmp_imm(IntCC::NotEqual, bench_enabled, 0);
+        builder
+            .ins()
+            .brif(bench_cmp, bench_check_b, &[], normal_call_b, &[]);
+
+        builder.switch_to_block(bench_check_b);
+        let next_trial_call = builder.ins().call(bench_next_ref, &[]);
+        let trial_idx = builder.inst_results(next_trial_call)[0];
+        let has_trial = builder.ins().icmp_imm(IntCC::NotEqual, trial_idx, 0);
+        builder
+            .ins()
+            .brif(has_trial, bench_body_b, &[trial_idx], bench_done_b, &[]);
+
+        builder.switch_to_block(bench_body_b);
+        let trial_idx = builder.block_params(bench_body_b)[0];
+        let entry_call = builder.ins().call(entry_ref, &decoded_args);
+        if let Some(result_val) = builder.inst_results(entry_call).first().copied() {
+            emit_entry_result_print(
+                &mut builder,
+                module,
+                runtime,
+                &entry_agent.return_ty,
+                result_val,
+            );
+        }
+        builder.ins().call(bench_finish_ref, &[trial_idx]);
+        builder.ins().jump(bench_check_b, &[]);
+        builder.seal_block(bench_body_b);
+        builder.seal_block(bench_check_b);
+
+        builder.switch_to_block(normal_call_b);
+        builder.seal_block(normal_call_b);
         let entry_call = builder.ins().call(entry_ref, &decoded_args);
         let result = builder.inst_results(entry_call).first().copied();
 
-        // Release each refcounted argument's +1 — the callee took its
-        // own ownership via parameter retain (per the +0 ABI).
-        //
-        // Under the .6d unified pass, the callee skips its entry-
-        // retain, meaning the arg's +1 flows straight into the
-        // callee's Variable. When the callee returns a bare param
-        // (echo-style pass-through), the returned value IS that same
-        // +1 — releasing the arg here AND the return below would
-        // double-free. Skip the arg release; entry-main's return-
-        // value release below is sufficient to drop the +1 after
-        // print.
         if !runtime.dup_drop_enabled {
             for (v, is_ref) in decoded_args.iter().zip(decoded_refcounted.iter()) {
                 if *is_ref {
@@ -2036,55 +2108,20 @@ fn emit_entry_main(
                 }
             }
         }
-
-        // 5. Print the result based on return type.
-        //
-        // Safepoint-crossing invariant: any
-        // refcounted SSA value live across a call instruction must be
-        // declared via `declare_value_needs_stack_map` on the same
-        // value, in the same function. Under pre-.6d codegen the
-        // retain scatter in the agent body incidentally produced
-        // intermediate declared Values that trickled into the
-        // trampoline's liveness; the unified pass eliminates those
-        // retains so the trampoline must declare explicitly.
-        //
-        // For Int / Bool / Float returns the result isn't refcounted —
-        // no declaration needed. String returns are refcounted; the
-        // result is consumed by `corvid_print_string` then released,
-        // so it's live across at least the print_string call.
         if let Some(result_val) = result {
-            match &entry_agent.return_ty {
-                Type::Int => {
-                    let r = module.declare_func_in_func(runtime.print_i64, builder.func);
-                    builder.ins().call(r, &[result_val]);
-                }
-                Type::Bool => {
-                    let widened = builder.ins().uextend(I64, result_val);
-                    let r =
-                        module.declare_func_in_func(runtime.print_bool, builder.func);
-                    builder.ins().call(r, &[widened]);
-                }
-                Type::Float => {
-                    let r = module.declare_func_in_func(runtime.print_f64, builder.func);
-                    builder.ins().call(r, &[result_val]);
-                }
-                Type::String => {
-                    // Declare BEFORE the call so Cranelift's
-                    // safepoint-liveness pass sees the declaration
-                    // and emits a stack map entry covering
-                    // result_val at the print_string safepoint.
-                    builder.declare_value_needs_stack_map(result_val);
-                    let r =
-                        module.declare_func_in_func(runtime.print_string, builder.func);
-                    builder.ins().call(r, &[result_val]);
-                    // Release the entry's returned String (Owned +1).
-                    emit_release(&mut builder, module, runtime, result_val);
-                }
-                _ => unreachable!("boundary check rejected non-printable returns"),
-            }
+            emit_entry_result_print(
+                &mut builder,
+                module,
+                runtime,
+                &entry_agent.return_ty,
+                result_val,
+            );
         }
+        let zero = builder.ins().iconst(I32, 0);
+        builder.ins().return_(&[zero]);
 
-        // 6. Return 0.
+        builder.switch_to_block(bench_done_b);
+        builder.seal_block(bench_done_b);
         let zero = builder.ins().iconst(I32, 0);
         builder.ins().return_(&[zero]);
         builder.finalize();
@@ -2126,6 +2163,37 @@ fn check_entry_boundary_type(
             format!("entry agent {role} has un-printable type `{}`", ty.display_name()),
             span,
         )),
+    }
+}
+
+fn emit_entry_result_print(
+    builder: &mut FunctionBuilder<'_>,
+    module: &mut ObjectModule,
+    runtime: &RuntimeFuncs,
+    return_ty: &Type,
+    result_val: ClValue,
+) {
+    match return_ty {
+        Type::Int => {
+            let r = module.declare_func_in_func(runtime.print_i64, builder.func);
+            builder.ins().call(r, &[result_val]);
+        }
+        Type::Bool => {
+            let widened = builder.ins().uextend(I64, result_val);
+            let r = module.declare_func_in_func(runtime.print_bool, builder.func);
+            builder.ins().call(r, &[widened]);
+        }
+        Type::Float => {
+            let r = module.declare_func_in_func(runtime.print_f64, builder.func);
+            builder.ins().call(r, &[result_val]);
+        }
+        Type::String => {
+            builder.declare_value_needs_stack_map(result_val);
+            let r = module.declare_func_in_func(runtime.print_string, builder.func);
+            builder.ins().call(r, &[result_val]);
+            emit_release(builder, module, runtime, result_val);
+        }
+        _ => unreachable!("boundary check rejected non-printable returns"),
     }
 }
 

@@ -42,6 +42,7 @@ def run_trial(fixture: dict, trial: int) -> dict:
     trace_bytes = len("\n".join(events).encode("utf-8"))
     return {
         "implementation": "python-asyncio-stdlib",
+        "process_mode": "persistent",
         "fixture": fixture["name"],
         "trial": trial,
         "success": True,
@@ -62,11 +63,27 @@ def run_trial(fixture: dict, trial: int) -> dict:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("fixture")
-    parser.add_argument("trials", type=int)
-    parser.add_argument("output")
+    parser.add_argument("trials", type=int, nargs="?")
+    parser.add_argument("output", nargs="?")
+    parser.add_argument("--server", action="store_true")
     args = parser.parse_args()
 
     fixture = json.loads(pathlib.Path(args.fixture).read_text(encoding="utf-8"))
+    if args.server:
+        import sys
+
+        for line in sys.stdin:
+            line = line.strip()
+            if not line:
+                continue
+            request = json.loads(line)
+            trial = int(request["trial_idx"])
+            print(json.dumps(run_trial(fixture, trial)), flush=True)
+        return
+
+    if args.trials is None or args.output is None:
+        raise SystemExit("usage: runner.py <fixture.json> <trials> <output.jsonl> | runner.py --server <fixture.json>")
+
     output_path = pathlib.Path(args.output)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with output_path.open("w", encoding="utf-8") as f:
