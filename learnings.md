@@ -1321,6 +1321,31 @@ Why it matters:
 - public API docs should describe the feature, not the project-management history behind it
 - roadmap identifiers still exist where they are useful: `ROADMAP.md`, `dev-log.md`, `learnings.md`, and the close-out / deferral docs
 
+### Residual native hot-path profiling
+
+Once startup cost, wait-accounting bias, and benchmark-path overhead were out
+of the way, the remaining native orchestration cost turned out to be much
+smaller than the earlier investigation suggested.
+
+What the residual profiling slice found:
+
+- the remaining benchmark-path orchestration bucket is already sub-millisecond
+  on all four shipped workflows
+- bridge / string-conversion work is the largest named remaining component
+- prompt rendering, mock dispatch, and release-path time are all small in
+  absolute terms
+- the unattributed remainder is still a large share of the now-tiny total, but
+  only a few hundredths of a millisecond in absolute terms
+
+Why it matters:
+
+- this is the point where micro-optimization stops being the obvious next move
+- if we chase another benchmark-only win, the bridge path is the only sensible
+  near-term target
+- otherwise the correct engineering decision is to move on, because the
+  residual cost is no longer large enough to dominate the shipped workflow
+  fixtures
+
 ## Contributing / feedback
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). The rules of the road are: design chat before code, per-scope commits at every boundary, dev-log entry for every session, no shortcuts. The `learnings.md` file you're reading gets updated when each user-visible feature ships.

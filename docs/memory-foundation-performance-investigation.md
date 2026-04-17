@@ -226,6 +226,8 @@ This follow-up needs careful coordination with the published memory-foundation m
 
 This is the slice where prompt rendering, string conversion, JSON bridge work, and runtime init should be separately profiled.
 
+This follow-up has now been completed. See [Residual Cost Partition (Post-Internal-Timing)](#residual-cost-partition-post-internal-timing). The earlier `13-30 ms` estimate is stale after the later harness and benchmark-path optimizations.
+
 ### 4. RC/GC tuning
 
 - **What it targets:** remaining runtime housekeeping
@@ -248,10 +250,167 @@ This becomes worth doing only once the benchmark stops being dominated by proces
 
 - Detailed native binary disassembly review on the investigation host
 - ETW/WPA or equivalent scheduler tracing to explain why Corvid's prompt/tool waits overshoot nominal more than Python's on this host
-- Fine-grained attribution of the residual `13-30 ms` non-wait bucket into prompt rendering vs runtime init vs JSON bridge cost
 - Cross-host replication of the same findings on a clean quiet calibration machine
 
 Those are all valid next tools, but none were required to identify the top two contributors in this slice.
+
+## Residual Cost Partition (Post-Internal-Timing)
+
+The later benchmark-path fixes materially changed the size of the residual
+native orchestration bucket. The earlier `13-30 ms` estimate is no longer the
+live number after:
+
+- persistent native execution
+- actual-wait subtraction
+- direct wait counters
+- internal trial timing
+- buffered trace writes and trace-disabled fast paths
+- direct typed tool wrappers
+- compile-time constant prompt folding
+
+Residual profiling archive:
+
+- `benches/results/2026-04-17-residual-profiling/`
+
+This session keeps the four shipped workflow fixtures and the same `3` warm-up
+plus `30` measured interleaved trials. It adds Corvid-only component timers so
+the current hot path can be partitioned before any further optimization work.
+
+### Attribution Rule
+
+- `prompt_render`: runtime string helper time used by prompt assembly
+- `json_bridge`: prompt bridge overhead after subtracting measured wait and
+  mock dispatch time
+- `mock_llm_dispatch`: mock lookup and reply construction, excluding sleep
+- `trial_init`: per-trial reset/setup inside the persistent native entry loop
+- `trace_overhead`: direct trace emit counter inside the runtime
+- `rc_release_time`: time spent inside `corvid_release`
+- `unattributed`: `orchestration_ms - sum(profiled components)` at the
+  per-trial record level
+
+The bridge timer explicitly excludes prompt wait and mock dispatch deltas, so
+the component buckets are intended to be additive rather than overlapping.
+
+### Control Disclosure
+
+Control remains near zero, so coefficient of variation is unstable and should
+not be used as the primary noise summary here. Absolute values are more useful:
+
+- profile session control: median `0.000244 ms`, IQR `[0.000000, 0.000244]`
+- trace-on session control: median `0.000610 ms`, IQR `[0.000488, 0.000732]`
+- same-tree control session: median `0.000244 ms`, IQR `[0.000244, 0.000488]`
+
+### `tool_loop`
+
+Corvid median orchestration: `0.205238 ms`
+
+| Component | Median ms | % of orchestration |
+|---|---:|---:|
+| `prompt_render` | `0.009100` | `4.4%` |
+| `json_bridge` | `0.040150` | `19.6%` |
+| `mock_llm_dispatch` | `0.007400` | `3.6%` |
+| `trial_init` | `0.000000` | `0.0%` |
+| `trace_overhead` | `0.000000` | `0.0%` |
+| `rc_release_time` | `0.006950` | `3.4%` |
+| `unattributed` | `0.136826` | `66.7%` |
+
+Supplemental notes:
+
+- trace-on delta vs trace-off: `+0.002469 ms` (`+1.20%`)
+- same-tree profile-vs-control delta: `-0.117518 ms` (`-36.41%`)
+
+### `retry_workflow`
+
+Corvid median orchestration: `0.104940 ms`
+
+| Component | Median ms | % of orchestration |
+|---|---:|---:|
+| `prompt_render` | `0.000000` | `0.0%` |
+| `json_bridge` | `0.023100` | `22.0%` |
+| `mock_llm_dispatch` | `0.003550` | `3.4%` |
+| `trial_init` | `0.000000` | `0.0%` |
+| `trace_overhead` | `0.000000` | `0.0%` |
+| `rc_release_time` | `0.006500` | `6.2%` |
+| `unattributed` | `0.067317` | `64.1%` |
+
+Supplemental notes:
+
+- trace-on delta vs trace-off: `+0.005512 ms` (`+5.25%`)
+- same-tree profile-vs-control delta: `-0.030232 ms` (`-22.37%`)
+
+### `approval_workflow`
+
+Corvid median orchestration: `0.060575 ms`
+
+| Component | Median ms | % of orchestration |
+|---|---:|---:|
+| `prompt_render` | `0.000000` | `0.0%` |
+| `json_bridge` | `0.022450` | `37.1%` |
+| `mock_llm_dispatch` | `0.003800` | `6.3%` |
+| `trial_init` | `0.000000` | `0.0%` |
+| `trace_overhead` | `0.000000` | `0.0%` |
+| `rc_release_time` | `0.002350` | `3.9%` |
+| `unattributed` | `0.032138` | `53.1%` |
+
+Supplemental notes:
+
+- trace-on delta vs trace-off: `+0.010895 ms` (`+17.98%`)
+- same-tree profile-vs-control delta: `-0.030073 ms` (`-33.18%`)
+
+### `replay_trace`
+
+Corvid median orchestration: `0.175868 ms`
+
+| Component | Median ms | % of orchestration |
+|---|---:|---:|
+| `prompt_render` | `0.005100` | `2.9%` |
+| `json_bridge` | `0.042750` | `24.3%` |
+| `mock_llm_dispatch` | `0.007000` | `4.0%` |
+| `trial_init` | `0.000000` | `0.0%` |
+| `trace_overhead` | `0.000000` | `0.0%` |
+| `rc_release_time` | `0.009750` | `5.5%` |
+| `unattributed` | `0.107779` | `61.3%` |
+
+Supplemental notes:
+
+- trace-on delta vs trace-off: `+0.005747 ms` (`+3.27%`)
+- same-tree profile-vs-control delta: `-0.101272 ms` (`-36.54%`)
+
+### Post-Partition Recommendation
+
+The remaining named buckets are now tiny in absolute terms:
+
+- `json_bridge` is the largest explicit component at roughly `0.022-0.043 ms`
+- `prompt_render` is `0.000-0.009 ms`
+- `mock_llm_dispatch` is `0.004-0.007 ms`
+- `rc_release_time` is `0.002-0.010 ms`
+- `trial_init` is effectively zero in persistent mode
+
+Two conclusions follow:
+
+1. the old residual estimate is stale; the benchmark-path residual is now
+   sub-millisecond on all four shipped workflows
+2. the unattributed bucket is still a large share of the remaining total, but
+   only `0.032-0.137 ms` in absolute terms
+
+That makes the optimization recommendation much narrower than it was in the
+original investigation:
+
+- if the goal is another benchmark-only win, the only plausible near-term
+  target is the bridge / string-conversion path, because it is the largest
+  named remaining bucket
+- if the goal is roadmap progress rather than squeezing the last few tenths of
+  a millisecond out of the fixture path, further micro-optimization is not
+  justified before moving on
+
+The profile-vs-control A/B did **not** produce a stable timer-tax estimate.
+The profiled session sometimes came out faster than the same-tree control
+session, which means host noise was larger than the expected profiling
+overhead. So the correct statement is:
+
+- no stable large profiling tax was observed
+- this slice does **not** prove instrumentation overhead stayed below `5%`
+- the overhead disclosure remains inconclusive rather than cleanly low
 
 ## Resolution
 

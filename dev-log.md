@@ -3304,6 +3304,45 @@ Interpretation:
 - the gain is smaller than the earlier harness-alignment wins, but it is a
   real native-code reduction rather than another accounting correction
 
+## Day 38 [B] - 2026-04-17 - Residual native hot-path profiling
+
+Finished the finer-grained profiling pass for the remaining native benchmark
+hot path after the startup, wait-accounting, and benchmark-path reductions had
+already landed.
+
+What changed:
+
+- added env-gated component timers for:
+  - prompt rendering helpers
+  - prompt bridge / string-conversion overhead
+  - mock LLM dispatch excluding sleep
+  - per-trial setup in the persistent entry loop
+  - release-path time inside `corvid_release`
+  - direct trace emit cost
+- added a reproducible breakdown tool:
+  - `benches/analysis/residual_breakdown.py`
+- archived the profiled session plus breakdown tables under:
+  - `benches/results/2026-04-17-residual-profiling/`
+
+What the numbers say:
+
+- the residual native orchestration bucket is already sub-millisecond on all
+  four shipped workflows
+- the largest named remaining bucket is now bridge / string-conversion work at
+  roughly `0.022-0.043 ms`
+- prompt rendering, mock dispatch, and release time are all small in absolute
+  terms
+- there is still a non-trivial unattributed remainder as a share of the now
+  tiny total, but only `0.032-0.137 ms` in absolute terms
+
+Recommendation:
+
+- if the goal is one more benchmark-only win, the bridge path is the only
+  plausible near-term target
+- if the goal is roadmap progress, further micro-optimization is no longer the
+  highest-value move; the residual cost is already too small to dominate the
+  current workflow fixtures
+
 
 
 
