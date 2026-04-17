@@ -1389,6 +1389,19 @@ Why it matters:
 - it strengthens the fixture-scoped benchmark claim again without changing the
   measurement methodology
 
+### RC/GC tuning assessment
+
+Once the benchmark-path orchestration cost became small, the remaining question
+was whether refcounting or the native cycle collector would become the next
+obvious bottleneck under heavier allocation pressure. The answer is "not yet."
+The stress matrix stays linear through `100000` releases per trial, the
+ownership pass still suppresses retains to `0`, the default GC cadence remains
+reasonable on the immediate-release shape, and the native cycle collector
+handles `10000` mutual-reference pairs without a pathological spike. That
+means RC/GC tuning is not the next roadmap lever; the evidence says to move on
+to codegen quality / hot-loop analysis instead of spending another slice on
+collector micro-tuning.
+
 ## Contributing / feedback
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). The rules of the road are: design chat before code, per-scope commits at every boundary, dev-log entry for every session, no shortcuts. The `learnings.md` file you're reading gets updated when each user-visible feature ships.

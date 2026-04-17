@@ -3406,6 +3406,35 @@ Interpretation:
 - the biggest extra gains show up on `retry_workflow` and `replay_trace`,
   where the fixture paths reuse queued replies most heavily
 
+## Day 40 [B] - 2026-04-17 - RC/GC tuning assessment
+
+Measured the refcount / native cycle-collector scaling story directly instead
+of inferring from the lightweight shipped workflow fixtures.
+
+What changed:
+
+- added a Corvid-only stress runner for allocation scaling, GC-cadence
+  sensitivity, and mutual-reference cycle stress
+- added runtime counters for GC wall time, mark count, sweep count,
+  cycle-reclaimed object count, and peak live objects
+- archived the full `30`-trial matrix under
+  `benches/results/2026-04-17-rc-gc-tuning/`
+
+What the numbers say:
+
+- allocation scaling stays linear through `100000` releases / trial
+- retain suppression holds at `0` across the full scaling range
+- the default GC cadence (`10000`) is already reasonable on the immediate
+  alloc/release shape
+- the native cycle collector remains linear through `10000` mutual-reference
+  pairs
+
+Interpretation:
+
+- RC/GC tuning is not the next performance lever
+- the correct next move after this slice is codegen quality / hot-loop
+  analysis, not more collector micro-tuning
+
 
 
 

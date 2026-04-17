@@ -525,3 +525,124 @@ string-ownership path, and reused reply ownership turned out to be the next
 piece of that bucket worth removing.
 
 For the current published interpretation, see [memory-foundation-results.md](memory-foundation-results.md).
+
+## RC/GC Tuning Assessment
+
+Archive:
+
+- `benches/results/2026-04-17-rc-gc-tuning/`
+
+This follow-up answers a different question from the earlier orchestration
+investigation:
+
+- not "is RC/GC active on the shipped 4-6 step workflow fixtures?" — that was
+  already effectively answered as "no"
+- but "when allocation pressure and cycle load scale far beyond those shipped
+  workflows, does Corvid's current RC/GC tuning stay linear and well-behaved?"
+
+Important methodology note:
+
+- `allocation_scaling` and `cycle_stress` use explicit `corvid_gc_from_roots`
+  calls and measure their wall time directly
+- `gc_trigger_sensitivity` uses an explicit GC cadence every `N` allocations
+  rather than the raw auto-trigger path inside `corvid_alloc_typed`
+- that deviation is intentional: the stress harness is a direct Rust FFI caller,
+  not a compiled Corvid program with Corvid stack-map roots for the in-flight
+  allocation
+- the slice is therefore measuring **collector cadence sensitivity**, which is
+  the tuning question we care about here
+
+### Allocation-pressure scaling
+
+| Target releases / trial | Median orchestration ms | Median GC ms | GC % of orchestration | Median mark count | Median sweep count | Median peak live objects |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| `19` | `0.002700` | `0.000200` | `7.4%` | `21` | `21` | `21` |
+| `100` | `0.011900` | `0.000600` | `5.0%` | `102` | `102` | `102` |
+| `1000` | `0.217950` | `0.027300` | `12.5%` | `1002` | `1002` | `1002` |
+| `10000` | `1.707750` | `0.213300` | `12.5%` | `10002` | `10002` | `10002` |
+| `100000` | `32.913450` | `10.411400` | `31.6%` | `100002` | `100002` | `100002` |
+
+Interpretation:
+
+- scaling stays linear through five orders of magnitude of release traffic
+- the ownership pass still suppresses retains to `0` even at `100000` releases
+  per trial
+- GC cost rises with object count, as expected, but does not show a superlinear
+  knee
+- the `100000` point is intentionally far beyond the shipped fixtures
+  (`12-19` releases / trial) and also beyond a rough heavy v0.1 workflow
+  estimate (`~5000` releases / trial for `50` steps x `100` releases / step)
+
+### GC trigger threshold sensitivity
+
+| GC cadence | Median orchestration ms | Median GC ms | GC % of orchestration | Median GC count | Median peak live objects |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `disabled` | `1.780550` | `0.000000` | `0.0%` | `0` | `1` |
+| `100` | `2.272000` | `0.052400` | `2.3%` | `1000` | `1` |
+| `1000` | `2.246800` | `0.007050` | `0.3%` | `100` | `1` |
+| `10000` | `2.544600` | `0.001650` | `0.1%` | `10` | `1` |
+| `50000` | `2.508350` | `0.001050` | `0.0%` | `2` | `1` |
+
+Interpretation:
+
+- on an immediate alloc/release workload with peak live set `1`, GC cadence is a
+  second-order effect
+- the current default (`10000`) is reasonable
+- even an aggressive cadence of `100` adds only about `0.052 ms` of measured GC
+  work at `100000` releases / trial
+- there is no evidence here that the default threshold needs to move before the
+  next roadmap item
+
+### Cycle collector stress
+
+| Cycle pairs / trial | Median orchestration ms | Median GC ms | GC % of orchestration | Median reclaimed cycle objects | Median sweep count | Median peak live objects |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| `10` | `0.001950` | `0.000300` | `15.4%` | `20` | `20` | `20` |
+| `100` | `0.006700` | `0.002650` | `39.6%` | `200` | `200` | `200` |
+| `1000` | `0.070550` | `0.034600` | `49.0%` | `2000` | `2000` | `2000` |
+| `10000` | `0.835550` | `0.499650` | `59.8%` | `20000` | `20000` | `20000` |
+
+Interpretation:
+
+- the native cycle collector is doing real work under load
+- reclaimed cycle count scales exactly with the synthetic graph size
+- cost stays linear up through `10000` mutual-reference pairs (`20000`
+  reclaimed objects)
+- there is no pathological spike here that would justify interrupting the
+  roadmap for collector surgery
+
+### Ownership pass at scale
+
+| Target releases / trial | Median retain count | Median release count |
+| --- | ---: | ---: |
+| `19` | `0` | `21` |
+| `100` | `0` | `102` |
+| `1000` | `0` | `1002` |
+| `10000` | `0` | `10002` |
+| `100000` | `0` | `100002` |
+
+Interpretation:
+
+- scaling this workload up does **not** expose a retain-elision cliff
+- the ownership pass remains robust under the higher release counts used in this
+  slice
+
+### Recommendation
+
+RC/GC tuning is **not needed before moving to codegen quality / hot-loop
+analysis**.
+
+Quantitatively:
+
+- the shipped fixtures are still orders of magnitude lighter than the top end
+  of this stress matrix
+- the stress matrix remains linear at `100000` releases / trial
+- the default GC cadence is already reasonable on the immediate-release shape
+- the cycle collector handles `10000` mutual-reference pairs in under `1 ms`
+  median orchestration time and about `0.5 ms` median GC time
+
+If a later product workload shows a very different live-set shape — large
+surviving heaps, deep nested struct graphs, or long-lived replay histories —
+revisit tuning with a workload-specific stress harness. Based on the current
+data, the right next step is to move on rather than spend another slice on
+RC/GC micro-tuning.
