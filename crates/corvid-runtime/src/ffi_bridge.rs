@@ -351,6 +351,11 @@ extern "C" {
     /// pointer with refcount 1.
     fn corvid_string_from_bytes(bytes: *const u8, length: i64) -> *const u8;
 
+    /// Allocate an immortal Corvid String from `bytes` + `length`.
+    /// Used for repeated runtime fixture values where per-use release
+    /// work is pure overhead.
+    fn corvid_string_from_static_bytes(bytes: *const u8, length: i64) -> *const u8;
+
     /// Decrement a Corvid String's refcount, freeing when it hits 0.
     /// The refcount sentinel `i64::MIN` short-circuits for immortal
     /// `.rodata` literals.
@@ -373,6 +378,17 @@ pub fn string_from_rust(s: String) -> CorvidString {
     // layout is sound. Using `transmute_copy` is overkill — a plain
     // pointer cast is enough, but we use an unsafe block to make the
     // layout assumption auditable.
+    unsafe { std::mem::transmute(descriptor) }
+}
+
+/// Allocate an immortal Corvid String from a borrowed Rust string.
+/// The returned value can be copied and released arbitrarily; the
+/// immortal refcount sentinel makes release a no-op.
+pub fn string_from_static_str(s: &str) -> CorvidString {
+    let bytes = s.as_bytes();
+    let ptr = bytes.as_ptr();
+    let len = bytes.len() as i64;
+    let descriptor = unsafe { corvid_string_from_static_bytes(ptr, len) };
     unsafe { std::mem::transmute(descriptor) }
 }
 

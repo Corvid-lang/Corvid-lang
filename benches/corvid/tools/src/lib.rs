@@ -1,4 +1,5 @@
-use corvid_runtime::abi::{CorvidString, IntoCorvidAbi};
+use corvid_runtime::abi::CorvidString;
+use corvid_runtime::ffi_bridge::string_from_static_str;
 use serde_json::Value;
 use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -20,24 +21,34 @@ fn parse_string_queues(var: &str) -> Queues {
         .ok()
         .and_then(|raw| serde_json::from_str::<HashMap<String, Value>>(&raw).ok())
         .map(|map| {
+            let mut cache: HashMap<String, CorvidString> = HashMap::new();
             map.into_iter()
                 .map(|(name, value)| {
                     let queue = match value {
                         Value::Array(values) => values
                             .into_iter()
-                            .map(|v| match v {
-                                Value::String(s) => s.into_corvid_abi(),
-                                other => other.to_string().into_corvid_abi(),
-                            })
+                            .map(|v| cached_corvid_string(&mut cache, v))
                             .collect(),
-                        Value::String(s) => VecDeque::from([s.into_corvid_abi()]),
-                        other => VecDeque::from([other.to_string().into_corvid_abi()]),
+                        other => VecDeque::from([cached_corvid_string(&mut cache, other)]),
                     };
                     (name, queue)
                 })
                 .collect()
         })
         .unwrap_or_default()
+}
+
+fn cached_corvid_string(cache: &mut HashMap<String, CorvidString>, value: Value) -> CorvidString {
+    let text = match value {
+        Value::String(s) => s,
+        other => other.to_string(),
+    };
+    if let Some(existing) = cache.get(&text) {
+        return *existing;
+    }
+    let abi = string_from_static_str(&text);
+    cache.insert(text, abi);
+    abi
 }
 
 fn parse_latency_queues(var: &str) -> LatencyQueues {

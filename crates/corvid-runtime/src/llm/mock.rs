@@ -6,7 +6,8 @@
 
 use crate::errors::RuntimeError;
 use crate::llm::{LlmAdapter, LlmRequest, LlmResponse, TokenUsage};
-use crate::abi::{CorvidString, IntoCorvidAbi};
+use crate::abi::CorvidString;
+use crate::ffi_bridge::string_from_static_str;
 use futures::future::BoxFuture;
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Mutex, OnceLock};
@@ -36,18 +37,15 @@ fn sync_string_replies() -> &'static Mutex<HashMap<String, VecDeque<CorvidString
             .ok()
             .and_then(|raw| serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(&raw).ok())
             .map(|map| {
+                let mut cache: HashMap<String, CorvidString> = HashMap::new();
                 map.into_iter()
                     .map(|(prompt, value)| {
                         let queue = match value {
                             serde_json::Value::Array(values) => values
                                 .into_iter()
-                                .map(|value| match value {
-                                    serde_json::Value::String(s) => s.into_corvid_abi(),
-                                    other => other.to_string().into_corvid_abi(),
-                                })
+                                .map(|value| cached_corvid_string(&mut cache, value))
                                 .collect(),
-                            serde_json::Value::String(s) => VecDeque::from([s.into_corvid_abi()]),
-                            other => VecDeque::from([other.to_string().into_corvid_abi()]),
+                            other => VecDeque::from([cached_corvid_string(&mut cache, other)]),
                         };
                         (prompt, queue)
                     })
@@ -56,6 +54,22 @@ fn sync_string_replies() -> &'static Mutex<HashMap<String, VecDeque<CorvidString
             .unwrap_or_default();
         Mutex::new(replies)
     })
+}
+
+fn cached_corvid_string(
+    cache: &mut HashMap<String, CorvidString>,
+    value: serde_json::Value,
+) -> CorvidString {
+    let text = match value {
+        serde_json::Value::String(s) => s,
+        other => other.to_string(),
+    };
+    if let Some(existing) = cache.get(&text) {
+        return *existing;
+    }
+    let abi = string_from_static_str(&text);
+    cache.insert(text, abi);
+    abi
 }
 
 fn sync_latencies() -> &'static Mutex<HashMap<String, VecDeque<u64>>> {

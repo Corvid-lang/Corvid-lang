@@ -24,8 +24,10 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <stdio.h>
 
 #define CORVID_HEADER_BYTES 16
+#define CORVID_REFCOUNT_IMMORTAL ((long long)INT64_MIN)
 
 static uint64_t corvid_bench_prompt_render_ns_total = 0;
 
@@ -152,6 +154,41 @@ void* corvid_string_from_bytes(const char* bytes, long long length) {
     return alloc_string(bytes, length);
 }
 
+/* Wrap an explicit-length byte slice as an immortal Corvid String.
+ * Used by benchmark/runtime fixture paths that repeatedly return the
+ * same canned reply and do not benefit from per-use heap allocation.
+ *
+ * Layout matches a normal String payload:
+ *   [ corvid_header ][ corvid_string descriptor ][ bytes ]
+ * but the header refcount is the immortal sentinel, so retain/release
+ * short-circuit and the descriptor can be reused indefinitely.
+ *
+ * The allocation is intentionally leaked for process lifetime.
+ */
+void* corvid_string_from_static_bytes(const char* bytes, long long length) {
+    if (length < 0) length = 0;
+    size_t total = CORVID_HEADER_BYTES + sizeof(corvid_string) + (size_t)length;
+    char* raw = (char*)malloc(total);
+    if (raw == NULL) {
+        fprintf(stderr, "corvid: out of memory allocating immortal string (%lld bytes)\n", length);
+        abort();
+    }
+    long long* refcount_word = (long long*)raw;
+    *refcount_word = CORVID_REFCOUNT_IMMORTAL;
+    const struct corvid_typeinfo** typeinfo_ptr =
+        (const struct corvid_typeinfo**)(raw + sizeof(long long));
+    *typeinfo_ptr = &corvid_typeinfo_String;
+
+    corvid_string* desc = (corvid_string*)(raw + CORVID_HEADER_BYTES);
+    char* out_bytes = (char*)desc + sizeof(corvid_string);
+    if (length > 0 && bytes != NULL) {
+        memcpy(out_bytes, bytes, (size_t)length);
+    }
+    desc->bytes_ptr = out_bytes;
+    desc->length = length;
+    return desc;
+}
+
 /* Scalar-to-String stringification helpers used by the
  * Cranelift codegen when interpolating prompt-template `{var}`
  * placeholders whose argument is a non-String scalar. The rendered
@@ -161,9 +198,6 @@ void* corvid_string_from_bytes(const char* bytes, long long length) {
  * Each returns a fresh refcounted Corvid String at refcount = 1;
  * caller takes ownership.
  */
-
-#include <stdio.h>
-
 void* corvid_string_from_int(long long n) {
     uint64_t start_ns = corvid_profile_runtime_enabled() ? corvid_now_ns() : 0;
     /* `%lld` with a 32-byte buffer covers every possible i64 (max
