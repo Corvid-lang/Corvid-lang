@@ -132,45 +132,71 @@ pub fn collect_cycles() -> usize {
     collected
 }
 
-fn mark_gray(object: &ObjectRef) {
-    if object.color() == Color::Gray {
-        return;
-    }
-    object.set_color(Color::Gray);
-    object.set_shadow(object.strong_count());
-    for child in object.children() {
-        mark_gray(&child);
-        child.dec_shadow();
-    }
+enum MarkTask {
+    Visit(ObjectRef),
+    DecShadow(ObjectRef),
 }
 
-fn scan(object: &ObjectRef) {
-    if object.color() != Color::Gray {
-        return;
-    }
-
-    if object.shadow_count() > 0 {
-        scan_black(object);
-    } else {
-        object.set_color(Color::White);
-        for child in object.children() {
-            scan(&child);
+fn mark_gray(object: &ObjectRef) {
+    let mut stack = vec![MarkTask::Visit(object.clone())];
+    while let Some(task) = stack.pop() {
+        match task {
+            MarkTask::Visit(object) => {
+                if object.color() == Color::Gray {
+                    continue;
+                }
+                object.set_color(Color::Gray);
+                object.set_shadow(object.strong_count());
+                let children = object.children();
+                for child in children.into_iter().rev() {
+                    stack.push(MarkTask::DecShadow(child.clone()));
+                    stack.push(MarkTask::Visit(child));
+                }
+            }
+            MarkTask::DecShadow(child) => child.dec_shadow(),
         }
     }
 }
 
-fn scan_black(object: &ObjectRef) {
-    if object.color() == Color::Black {
-        object.set_buffered(false);
-        return;
-    }
+fn scan(object: &ObjectRef) {
+    let mut stack = vec![ScanTask::Scan(object.clone())];
+    while let Some(task) = stack.pop() {
+        match task {
+            ScanTask::Scan(object) => {
+                if object.color() != Color::Gray {
+                    continue;
+                }
 
-    object.set_color(Color::Black);
-    object.set_buffered(false);
-    for child in object.children() {
-        child.inc_shadow();
-        scan_black(&child);
+                if object.shadow_count() > 0 {
+                    stack.push(ScanTask::ScanBlack(object));
+                } else {
+                    object.set_color(Color::White);
+                    for child in object.children().into_iter().rev() {
+                        stack.push(ScanTask::Scan(child));
+                    }
+                }
+            }
+            ScanTask::ScanBlack(object) => {
+                if object.color() == Color::Black {
+                    object.set_buffered(false);
+                    continue;
+                }
+
+                object.set_color(Color::Black);
+                object.set_buffered(false);
+                let children = object.children();
+                for child in children.into_iter().rev() {
+                    child.inc_shadow();
+                    stack.push(ScanTask::ScanBlack(child));
+                }
+            }
+        }
     }
+}
+
+enum ScanTask {
+    Scan(ObjectRef),
+    ScanBlack(ObjectRef),
 }
 
 fn collect_white(
@@ -178,17 +204,20 @@ fn collect_white(
     seen: &mut HashSet<usize>,
     out: &mut Vec<ObjectRef>,
 ) {
-    if !seen.insert(object.ptr_key()) {
-        return;
-    }
-
-    if object.color() == Color::White {
-        out.push(object.clone());
-        for child in object.children() {
-            collect_white(&child, seen, out);
+    let mut stack = vec![object.clone()];
+    while let Some(object) = stack.pop() {
+        if !seen.insert(object.ptr_key()) {
+            continue;
         }
-    } else {
-        object.set_color(Color::Black);
-        object.set_buffered(false);
+
+        if object.color() == Color::White {
+            out.push(object.clone());
+            for child in object.children().into_iter().rev() {
+                stack.push(child);
+            }
+        } else {
+            object.set_color(Color::Black);
+            object.set_buffered(false);
+        }
     }
 }
