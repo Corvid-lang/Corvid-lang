@@ -646,3 +646,95 @@ surviving heaps, deep nested struct graphs, or long-lived replay histories —
 revisit tuning with a workload-specific stress harness. Based on the current
 data, the right next step is to move on rather than spend another slice on
 RC/GC micro-tuning.
+
+## Codegen Quality / Hot-Loop Assessment
+
+Archive:
+
+- `benches/results/2026-04-17-codegen-quality/`
+
+This slice asked whether machine-code quality is the next obvious benchmark
+lever on the **shipped workflow fixtures**.
+
+### What we checked
+
+1. Native build configuration
+   - Cranelift `opt_level = "speed"` in
+     [module.rs](C:/Users/SBW/OneDrive%20-%20Axon%20Group/Documents/GitHub/corvid/crates/corvid-codegen-cl/src/module.rs)
+   - workspace release profile:
+     - `opt-level = 3`
+     - `lto = "thin"`
+     - `codegen-units = 1`
+2. Representative current cached workflow binaries
+   - `tool_loop`:
+     `benches/corvid/workloads/target/cache/native/9731f01716a0c651.exe`
+   - `approval_workflow`:
+     `benches/corvid/workloads/target/cache/native/a8203500a077da72.exe`
+3. Representative workload source shape
+   - `tool_loop.cor`
+   - `approval_workflow.cor`
+4. PE headers + disassembly excerpts via `dumpbin.exe`
+
+Important constraint:
+
+- the current worktree contains unrelated `corvid-resolve` compile errors, so
+  this slice analyzed the **current cached shipped benchmark binaries** rather
+  than forcing a fresh full rebuild
+- that is sufficient for the question at hand because the goal is structural
+  analysis of the shipped benchmark path, not a fresh timing session
+
+### Findings
+
+#### 1. The native benchmark path is already using optimized build settings
+
+There is no evidence here of a trivial "we accidentally benchmarked debug code"
+failure mode.
+
+#### 2. The shipped workflow fixtures are not hot-loop workloads
+
+The current `.cor` benchmark programs are short orchestration sequences:
+
+- prompt call
+- tool call
+- prompt/tool call
+- return
+
+They do **not** contain numeric kernels, long collection transforms, or
+compute-heavy loops where code scheduling and instruction selection would be
+expected to dominate runtime.
+
+#### 3. The representative disassembly is call-dense bridge code, not a compute loop
+
+The `tool_loop` PE header shows:
+
+- PE32+ executable
+- `.text` size about `0x284E00`
+- entry point `0x140273920`
+
+The disassembly excerpts for `tool_loop` and `approval_workflow` show:
+
+- dense helper-call sequences in the generated entry/bridge region
+- short straight-line setup around those calls
+- no obvious long-running arithmetic loop in the benchmark-shaped path
+
+That matches the workload source: these fixtures spend their time crossing
+runtime / prompt / tool boundaries, not chewing through a native compute loop.
+
+### Recommendation
+
+For the **current shipped workflow benchmark sheet**, codegen-quality /
+hot-loop work is **not** the next performance lever.
+
+Why:
+
+- the workloads themselves are orchestration-shaped rather than compute-shaped
+- the binaries are already built with optimized native settings
+- the disassembly evidence points at bridge-heavy execution rather than a bad
+  inner loop
+
+So the correct decision is:
+
+- for current shipped workflow benchmarks, machine-code tuning can defer
+- if future Corvid benchmarks add numeric or collection-heavy compute loops,
+  revisit codegen-quality analysis with a workload that actually contains a
+  hot loop worth tuning

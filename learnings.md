@@ -1402,6 +1402,19 @@ means RC/GC tuning is not the next roadmap lever; the evidence says to move on
 to codegen quality / hot-loop analysis instead of spending another slice on
 collector micro-tuning.
 
+### Codegen quality / hot-loop assessment
+
+The right time to do machine-code investigation is when the workload actually
+contains a hot loop. The shipped benchmark fixtures do not: they are short
+prompt/tool orchestration sequences. The native build is already using
+optimized settings (`opt_level = "speed"`, release `opt-level = 3`, thin LTO),
+and representative disassembly of the shipped binaries shows dense bridge/helper
+call sequences rather than a compute-heavy loop body. That means codegen
+quality is not the next benchmark lever for the current workflow sheet.
+Machine-code tuning should be revisited when Corvid adds compute-heavy
+benchmarks, not treated as the default next step just because other obvious
+bottlenecks have already been removed.
+
 ## Contributing / feedback
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). The rules of the road are: design chat before code, per-scope commits at every boundary, dev-log entry for every session, no shortcuts. The `learnings.md` file you're reading gets updated when each user-visible feature ships.

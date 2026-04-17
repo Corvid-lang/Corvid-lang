@@ -3435,6 +3435,35 @@ Interpretation:
 - the correct next move after this slice is codegen quality / hot-loop
   analysis, not more collector micro-tuning
 
+## Day 40 [B] - 2026-04-17 - Codegen quality / hot-loop assessment
+
+Closed the machine-code question for the shipped workflow fixtures with a
+binary/archive review instead of another benchmark pass.
+
+What changed:
+
+- reviewed the native build settings end to end:
+  - Cranelift `opt_level = "speed"`
+  - workspace release `opt-level = 3`, `lto = "thin"`, `codegen-units = 1`
+- archived PE headers + disassembly excerpts for representative current cached
+  `tool_loop` and `approval_workflow` benchmark binaries under
+  `benches/results/2026-04-17-codegen-quality/`
+
+What the evidence says:
+
+- the shipped workflow programs are straight-line orchestration code, not
+  compute-heavy loop kernels
+- the representative disassembly is call-dense bridge/runtime code, not a bad
+  native hot loop
+- for the shipped workflow benchmark sheet, codegen-quality is not the next
+  performance lever
+
+Interpretation:
+
+- machine-code tuning can defer for the current workflow fixtures
+- if future benchmarks add real compute loops, revisit this with a workload
+  that actually makes code scheduling and instruction selection matter
+
 
 
 
