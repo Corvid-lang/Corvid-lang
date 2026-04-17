@@ -16,6 +16,9 @@ Cargo.lock
 **/target/wasm/
 **/target/trace/
 
+# Benchmark generated files
+benches/corvid/generated/
+
 # Snapshot test pending
 **/*.snap.new
 
