@@ -479,18 +479,21 @@ Corvid's moat: effects carry typed dimensions (cost, trust, reversibility, data,
 - [x] Composition algebra: `EffectRegistry` built from declarations. 6 built-in dimension schemas. `compose()` applies per-dimension rules. `check_constraints()` validates composed profiles against annotations. `ConstraintViolation` with dimensional error messages. Committed `66bb4d1`.
 - [x] Call-graph analyzer: `analyze_effects()` walks agent bodies, collects effects from tool/prompt/agent calls, produces per-agent composed dimensional profiles. Committed `66bb4d1`.
 - [x] Parser: `effect Name:` block syntax. `uses` clause on declarations. `@budget($)` / `@trust()` / `@reversible` annotation syntax. Committed `3bfefaf`.
-- [ ] Typechecker integration: wire the analyzer into `typecheck()` so dimensional constraint violations produce compile errors alongside the existing `approve`-before-`dangerous` check.
-- [ ] Legacy bridge: `dangerous` keyword maps to a built-in `dangerous` effect with `trust: human_required, reversible: false`. Existing code compiles unchanged.
-- [ ] Revisits the Day-4 `Safe | Dangerous` decision — additive, no breaking change.
+- [x] Typechecker integration: `typecheck()` runs the dimensional analyzer, produces `EffectConstraintViolation` errors with actionable messages. Committed `b344e3f`.
+- [x] Legacy bridge: built-in `dangerous` effect with `trust: human_required, reversible: false`. Existing `dangerous` keyword code compiles unchanged. Committed `f229aba`.
+- [x] Revisits the Day-4 `Safe | Dangerous` decision — additive, no breaking change to existing code.
 
-#### Slice 20b — Grounding + citation as data dimension (~2 weeks)
+#### Slice 20b — Compile-time provenance verification + `Grounded<T>` (~3 weeks)
 
-Grounding is a data-classification dimension, not a separate feature. `cites` is an effect with `data: grounded`.
+The invention: groundedness is not an annotation — it's a compile-time provenance property that the compiler infers by tracing data flow from retrieval tools through prompts to return types. No other language does this.
 
-- [ ] `grounds_on ctx` annotation on prompts; template must reference `ctx` or raise `E0201`.
-- [ ] `cites ctx` as a declared effect with `data: grounded` dimension; return type must be `Grounded<T>` or `E0202`.
-- [ ] `Grounded<T>` compiler-known stdlib type; unwrap via `.unwrap_discarding_sources()`.
-- [ ] `cites ctx strictly` for runtime citation verification.
+- [ ] `Grounded<T>` as a compiler-known stdlib type (like `Result`, `Option`). AST `TypeRef` variant + `Type::Grounded(Box<Type>)` + IR lowering.
+- [ ] Provenance analyzer in the typechecker: walks each agent's data flow graph to determine which values inherit groundedness from tools with `data: grounded` in their effect declaration. If a value's provenance chain includes at least one grounded source, the value is provably grounded.
+- [ ] Compile error `E0201` when an agent returns `Grounded<T>` but no path from a `data: grounded` tool feeds into the return value. Error message names the missing provenance link.
+- [ ] Provenance flows compositionally across agent boundaries: if agent B calls a grounded tool and agent A calls B, A's return inherits B's groundedness.
+- [ ] `cites ctx strictly` runtime annotation: compile-time proves groundedness exists; runtime verifies the LLM's cited passages actually appear in the context. Emits citation-checking code in the interpreter + native codegen.
+- [ ] `.unwrap_discarding_sources()` method on `Grounded<T>` for when the caller consciously drops provenance.
+- [ ] Built-in `retrieval` effect with `data: grounded` dimension registered in the `EffectRegistry` so tools can declare themselves as grounded sources.
 
 #### Slice 20c — `eval ... assert ...` language syntax (~2 weeks)
 - [ ] Parser + typechecker + lowering for `eval name: body ... assert expr` declarations.
