@@ -12,6 +12,9 @@ This directory holds the publication tooling for the memory-foundation close.
 4. `investigate.py` consumes the same JSONL and emits:
    - `investigation.json`
    - `investigation.md`
+5. `residual_breakdown.py` consumes the profiled Corvid JSONL sessions and emits:
+   - `components.json`
+   - `components.md`
 
 ## Protocol encoded here
 
@@ -32,3 +35,4 @@ JSONL captures:
 - RC call counts
 - GC trigger counts
 - safepoint and stack-map counts
+- component timers for residual orchestration attribution

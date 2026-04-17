@@ -1,0 +1,264 @@
+{
+  "generated_at": "2026-04-17T11:56:33.778881Z",
+  "profile_control": {
+    "median_orchestration_ms": 0.000244,
+    "iqr_low_ms": 0.0,
+    "iqr_high_ms": 0.00024400000000000002
+  },
+  "trace_control": {
+    "median_orchestration_ms": 0.00061,
+    "iqr_low_ms": 0.000488,
+    "iqr_high_ms": 0.000732
+  },
+  "control_session_control": {
+    "median_orchestration_ms": 0.00024400000000000002,
+    "iqr_low_ms": 0.000244,
+    "iqr_high_ms": 0.000488
+  },
+  "scenarios": {
+    "tool_loop": {
+      "median_orchestration_ms": 0.2052380000000369,
+      "components": [
+        {
+          "field": "prompt_render_ms",
+          "label": "prompt_render",
+          "median_ms": 0.0091,
+          "pct_of_orchestration": 4.43387676745942
+        },
+        {
+          "field": "json_bridge_ms",
+          "label": "json_bridge",
+          "median_ms": 0.04015,
+          "pct_of_orchestration": 19.56265408939513
+        },
+        {
+          "field": "mock_llm_dispatch_ms",
+          "label": "mock_llm_dispatch",
+          "median_ms": 0.0074,
+          "pct_of_orchestration": 3.6055701185933744
+        },
+        {
+          "field": "trial_init_ms",
+          "label": "trial_init",
+          "median_ms": 0.0,
+          "pct_of_orchestration": 0.0
+        },
+        {
+          "field": "trace_overhead_ms",
+          "label": "trace_overhead",
+          "median_ms": 0.0,
+          "pct_of_orchestration": 0.0
+        },
+        {
+          "field": "rc_release_time_ms",
+          "label": "rc_release_time",
+          "median_ms": 0.00695,
+          "pct_of_orchestration": 3.3863124762464802
+        },
+        {
+          "field": "unattributed_ms",
+          "label": "unattributed",
+          "median_ms": 0.1368260000000423,
+          "pct_of_orchestration": 66.6669914928121
+        }
+      ],
+      "total_profiled_ms": 0.0646005
+    },
+    "retry_workflow": {
+      "median_orchestration_ms": 0.10493950000000041,
+      "components": [
+        {
+          "field": "prompt_render_ms",
+          "label": "prompt_render",
+          "median_ms": 0.0,
+          "pct_of_orchestration": 0.0
+        },
+        {
+          "field": "json_bridge_ms",
+          "label": "json_bridge",
+          "median_ms": 0.0231,
+          "pct_of_orchestration": 22.012683498587197
+        },
+        {
+          "field": "mock_llm_dispatch_ms",
+          "label": "mock_llm_dispatch",
+          "median_ms": 0.00355,
+          "pct_of_orchestration": 3.3829015766227077
+        },
+        {
+          "field": "trial_init_ms",
+          "label": "trial_init",
+          "median_ms": 0.0,
+          "pct_of_orchestration": 0.0
+        },
+        {
+          "field": "trace_overhead_ms",
+          "label": "trace_overhead",
+          "median_ms": 0.0,
+          "pct_of_orchestration": 0.0
+        },
+        {
+          "field": "rc_release_time_ms",
+          "label": "rc_release_time",
+          "median_ms": 0.0065,
+          "pct_of_orchestration": 6.194045140295098
+        },
+        {
+          "field": "unattributed_ms",
+          "label": "unattributed",
+          "median_ms": 0.06731700000003221,
+          "pct_of_orchestration": 64.14839026299148
+        }
+      ],
+      "total_profiled_ms": 0.033850000000000005
+    },
+    "approval_workflow": {
+      "median_orchestration_ms": 0.06057549999998457,
+      "components": [
+        {
+          "field": "prompt_render_ms",
+          "label": "prompt_render",
+          "median_ms": 0.0,
+          "pct_of_orchestration": 0.0
+        },
+        {
+          "field": "json_bridge_ms",
+          "label": "json_bridge",
+          "median_ms": 0.022449999999999998,
+          "pct_of_orchestration": 37.061188104110926
+        },
+        {
+          "field": "mock_llm_dispatch_ms",
+          "label": "mock_llm_dispatch",
+          "median_ms": 0.0038,
+          "pct_of_orchestration": 6.273163242566661
+        },
+        {
+          "field": "trial_init_ms",
+          "label": "trial_init",
+          "median_ms": 0.0,
+          "pct_of_orchestration": 0.0
+        },
+        {
+          "field": "trace_overhead_ms",
+          "label": "trace_overhead",
+          "median_ms": 0.0,
+          "pct_of_orchestration": 0.0
+        },
+        {
+          "field": "rc_release_time_ms",
+          "label": "rc_release_time",
+          "median_ms": 0.0023499999999999997,
+          "pct_of_orchestration": 3.879456215797803
+        },
+        {
+          "field": "unattributed_ms",
+          "label": "unattributed",
+          "median_ms": 0.032138499999984624,
+          "pct_of_orchestration": 53.055278123982156
+        }
+      ],
+      "total_profiled_ms": 0.0293
+    },
+    "replay_trace": {
+      "median_orchestration_ms": 0.17586799999997993,
+      "components": [
+        {
+          "field": "prompt_render_ms",
+          "label": "prompt_render",
+          "median_ms": 0.0051,
+          "pct_of_orchestration": 2.8999021993771366
+        },
+        {
+          "field": "json_bridge_ms",
+          "label": "json_bridge",
+          "median_ms": 0.042749999999999996,
+          "pct_of_orchestration": 24.308003730073054
+        },
+        {
+          "field": "mock_llm_dispatch_ms",
+          "label": "mock_llm_dispatch",
+          "median_ms": 0.007,
+          "pct_of_orchestration": 3.9802579207137168
+        },
+        {
+          "field": "trial_init_ms",
+          "label": "trial_init",
+          "median_ms": 0.0,
+          "pct_of_orchestration": 0.0
+        },
+        {
+          "field": "trace_overhead_ms",
+          "label": "trace_overhead",
+          "median_ms": 0.0,
+          "pct_of_orchestration": 0.0
+        },
+        {
+          "field": "rc_release_time_ms",
+          "label": "rc_release_time",
+          "median_ms": 0.00975,
+          "pct_of_orchestration": 5.543930675279819
+        },
+        {
+          "field": "unattributed_ms",
+          "label": "unattributed",
+          "median_ms": 0.10777949999999614,
+          "pct_of_orchestration": 61.2843155093641
+        }
+      ],
+      "total_profiled_ms": 0.06695100000000001
+    }
+  },
+  "trace_deltas": {
+    "tool_loop": {
+      "trace_off_median_ms": 0.2052380000000369,
+      "trace_on_median_ms": 0.2077069999999992,
+      "delta_ms": 0.002468999999962307,
+      "delta_pct": 1.2029935976582617
+    },
+    "retry_workflow": {
+      "trace_off_median_ms": 0.10493950000000041,
+      "trace_on_median_ms": 0.11045149999998216,
+      "delta_ms": 0.005511999999981754,
+      "delta_pct": 5.252550278952857
+    },
+    "approval_workflow": {
+      "trace_off_median_ms": 0.06057549999998457,
+      "trace_on_median_ms": 0.07147000000000503,
+      "delta_ms": 0.010894500000020457,
+      "delta_pct": 17.984993933229163
+    },
+    "replay_trace": {
+      "trace_off_median_ms": 0.17586799999997993,
+      "trace_on_median_ms": 0.18161500000002206,
+      "delta_ms": 0.005747000000042135,
+      "delta_pct": 3.2677917529299196
+    }
+  },
+  "profiling_overhead_ab": {
+    "tool_loop": {
+      "control_median_ms": 0.32275599999999827,
+      "profile_median_ms": 0.2052380000000369,
+      "delta_ms": -0.11751799999996138,
+      "delta_pct": -36.41078709612277
+    },
+    "retry_workflow": {
+      "control_median_ms": 0.13517100000001392,
+      "profile_median_ms": 0.10493950000000041,
+      "delta_ms": -0.03023150000001351,
+      "delta_pct": -22.365374229687134
+    },
+    "approval_workflow": {
+      "control_median_ms": 0.09064850000001456,
+      "profile_median_ms": 0.06057549999998457,
+      "delta_ms": -0.030073000000029992,
+      "delta_pct": -33.175397276320254
+    },
+    "replay_trace": {
+      "control_median_ms": 0.2771395000000041,
+      "profile_median_ms": 0.17586799999997993,
+      "delta_ms": -0.10127150000002416,
+      "delta_pct": -36.54170553097724
+    }
+  }
+}
