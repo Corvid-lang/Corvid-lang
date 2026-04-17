@@ -1,11 +1,18 @@
 use corvid_macros::tool;
 use serde_json::Value;
 use std::collections::{HashMap, VecDeque};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 type Queues = HashMap<String, VecDeque<String>>;
 type LatencyQueues = HashMap<String, VecDeque<u64>>;
+static BENCH_TOOL_WAIT_NS: AtomicU64 = AtomicU64::new(0);
+
+#[no_mangle]
+pub extern "C" fn corvid_bench_tool_wait_ns() -> u64 {
+    BENCH_TOOL_WAIT_NS.load(Ordering::Relaxed)
+}
 
 fn parse_string_queues(var: &str) -> Queues {
     std::env::var(var)
@@ -82,6 +89,7 @@ async fn maybe_sleep(tool: &str) {
         let start = Instant::now();
         tokio::time::sleep(Duration::from_millis(latency)).await;
         let actual_ms = start.elapsed().as_secs_f64() * 1000.0;
+        BENCH_TOOL_WAIT_NS.fetch_add((actual_ms * 1_000_000.0) as u64, Ordering::Relaxed);
         if profile_enabled() {
             let event = serde_json::json!({
                 "kind": "wait",

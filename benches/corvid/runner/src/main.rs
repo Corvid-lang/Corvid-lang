@@ -223,11 +223,11 @@ fn start_native_server(
         .env("CORVID_BENCH_TOOL_RESPONSES", serde_json::to_string(&tool_replies)?)
         .env("CORVID_BENCH_TOOL_LATENCIES_MS", serde_json::to_string(&tool_latencies)?)
         .env("CORVID_BENCH_SERVER", "1")
-        .env("CORVID_PROFILE_EVENTS", "1")
         .env("CORVID_BENCH_COMPILE_TO_IR_MS", format!("{compile_to_ir_ms:.6}"))
         .env("CORVID_BENCH_CACHE_RESOLVE_MS", format!("{cache_resolve_ms:.6}"))
         .env("CORVID_BENCH_CACHE_HIT", if cached.from_cache { "1" } else { "0" });
     if profile_enabled {
+        command.env("CORVID_PROFILE_EVENTS", "1");
         command.env("CORVID_PROFILE_RUNTIME", "1");
     }
 
@@ -355,6 +355,16 @@ fn read_trial_profile(reader: &mut BufReader<ChildStderr>) -> Result<TrialProfil
         }
         if let Some(raw) = line.trim().strip_prefix("CORVID_BENCH_TRIAL=") {
             let value: Value = serde_json::from_str(raw).context("parse benchmark trial profile")?;
+            profile.prompt_wait_actual_ms = value
+                .get("prompt_wait_actual_ms")
+                .and_then(Value::as_f64)
+                .unwrap_or(0.0);
+            profile.tool_wait_actual_ms = value
+                .get("tool_wait_actual_ms")
+                .and_then(Value::as_f64)
+                .unwrap_or(0.0);
+            profile.actual_external_wait_ms =
+                profile.prompt_wait_actual_ms + profile.tool_wait_actual_ms;
             profile.allocs = value.get("allocs").and_then(Value::as_i64);
             profile.releases = value.get("releases").and_then(Value::as_i64);
             profile.retain_calls = value.get("retain_calls").and_then(Value::as_i64);

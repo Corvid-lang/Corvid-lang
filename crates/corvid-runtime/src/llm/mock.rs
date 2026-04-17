@@ -9,10 +9,17 @@ use crate::llm::{LlmAdapter, LlmRequest, LlmResponse, TokenUsage};
 use futures::future::BoxFuture;
 use std::collections::{HashMap, VecDeque};
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 
 fn profile_enabled() -> bool {
     std::env::var("CORVID_PROFILE_EVENTS").ok().as_deref() == Some("1")
+}
+
+static BENCH_PROMPT_WAIT_NS: AtomicU64 = AtomicU64::new(0);
+
+pub fn bench_prompt_wait_ns() -> u64 {
+    BENCH_PROMPT_WAIT_NS.load(Ordering::Relaxed)
 }
 
 fn emit_wait_profile(kind: &str, name: &str, nominal_ms: u64, actual_ms: f64) {
@@ -198,6 +205,7 @@ impl LlmAdapter for EnvVarMockAdapter {
                 let start = Instant::now();
                 tokio::time::sleep(std::time::Duration::from_millis(latency_ms)).await;
                 let actual_ms = start.elapsed().as_secs_f64() * 1000.0;
+                BENCH_PROMPT_WAIT_NS.fetch_add((actual_ms * 1_000_000.0) as u64, Ordering::Relaxed);
                 emit_wait_profile(
                     "prompt",
                     &prompt,

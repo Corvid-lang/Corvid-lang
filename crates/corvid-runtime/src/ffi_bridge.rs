@@ -44,7 +44,7 @@ use crate::abi::{CorvidString, REGISTERED_TOOL_COUNT};
 use crate::approvals::{ProgrammaticApprover, StdinApprover};
 use crate::llm::anthropic::AnthropicAdapter;
 use crate::llm::gemini::GeminiAdapter;
-use crate::llm::mock::EnvVarMockAdapter;
+use crate::llm::mock::{bench_prompt_wait_ns, EnvVarMockAdapter};
 use crate::llm::ollama::OllamaAdapter;
 use crate::llm::openai::OpenAiAdapter;
 use crate::llm::openai_compat::OpenAiCompatibleAdapter;
@@ -121,6 +121,11 @@ fn bridge() -> &'static BridgeState {
 #[no_mangle]
 pub extern "C" fn corvid_runtime_probe() -> i64 {
     42
+}
+
+#[no_mangle]
+pub extern "C" fn corvid_bench_prompt_wait_ns() -> u64 {
+    bench_prompt_wait_ns()
 }
 
 /// Construct the tokio runtime + the Corvid `Runtime` and store them
