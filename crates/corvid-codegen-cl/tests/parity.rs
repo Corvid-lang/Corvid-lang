@@ -2176,6 +2176,38 @@ fn nullable_option_string_try_propagates_into_wide_outer_option_type() {
 }
 
 #[test]
+fn native_option_retry_retries_until_some() {
+    assert_parity_bool_with_mock_llm_queue(
+        "prompt probe() -> String:\n    \"Probe\"\n\nagent fetch() -> Option<Int>:\n    value = probe()\n    if value == \"ok\":\n        return Some(7)\n    return None\n\nagent main() -> Bool:\n    outcome = try fetch() on error retry 3 times backoff linear 0\n    return probe() == \"marker\"\n",
+        "probe",
+        vec![
+            serde_json::json!("bad"),
+            serde_json::json!("bad"),
+            serde_json::json!("ok"),
+            serde_json::json!("marker"),
+        ],
+        true,
+        "mock-1",
+    );
+}
+
+#[test]
+fn native_option_retry_returns_none_after_exhausting_attempts() {
+    assert_parity_bool_with_mock_llm_queue(
+        "prompt probe() -> String:\n    \"Probe\"\n\nagent fetch() -> Option<Int>:\n    value = probe()\n    if value == \"ok\":\n        return Some(7)\n    return None\n\nagent main() -> Bool:\n    outcome = try fetch() on error retry 3 times backoff exponential 0\n    return outcome == None and probe() == \"marker\"\n",
+        "probe",
+        vec![
+            serde_json::json!("bad"),
+            serde_json::json!("bad"),
+            serde_json::json!("bad"),
+            serde_json::json!("marker"),
+        ],
+        true,
+        "mock-1",
+    );
+}
+
+#[test]
 fn wide_option_bool_none_compares_equal_to_none() {
     assert_parity_bool_without_tools(
         "agent maybe(flag: Bool) -> Option<Bool>:\n    if flag:\n        return Some(true)\n    return None\n\nagent main() -> Bool:\n    return maybe(false) == None and maybe(true) != None\n",

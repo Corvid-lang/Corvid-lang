@@ -3829,6 +3829,41 @@ Interpretation:
 - the next honest native step is richer retry / result policy semantics or a
   truly broader representation boundary, not more leaf-shape proof alone
 
+Day 52 — Retry now widens across both native failure carriers
+
+What shipped:
+
+- tightened the typechecker so `try ... on error retry ...` is only valid on
+  `Result<T, E>` and `Option<T>` expressions; non-failure values now error
+  cleanly instead of inheriting the body's type silently
+- widened native retry lowering from `Result<T, E>` only to the shipped native
+  `Option<T>` subset, where `None` is the retryable branch and the exhausted
+  value remains `None`
+- aligned interpreter retry semantics with the same rule, so `Err(...)` and
+  `None` are the retryable outcomes across both tiers
+- added native-ability coverage and parity coverage proving `Option<Int>` retry
+  succeeds on a later `Some(...)` and returns final `None` after exhausting all
+  attempts
+
+What the evidence says:
+
+- retry policy was the real remaining gap in Phase 18 more than raw tagged
+  union representation; the native subset was broad enough, but the language
+  contract around retry was still under-specified
+- `Option<T>` is a real failure carrier in Corvid's shipped surface, so
+  excluding it from native retry made the language model narrower than the
+  existing `?` and tagged-union semantics implied
+- the right widening was semantic, not representational: teach both tiers that
+  `None` is the retry branch and keep the existing native option layouts
+
+Interpretation:
+
+- this closes a meaningful part of the remaining Phase 18 work without adding a
+  shortcut layout or a runtime-only special case
+- the next honest Phase 18 step is broader native tagged-union representation
+  and richer retry classification/policy, not re-litigating the basic retry
+  carrier semantics
+
 
 
 

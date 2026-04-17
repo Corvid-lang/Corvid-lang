@@ -734,10 +734,14 @@ impl<'ir> Interpreter<'ir> {
                 let total = (*attempts).max(1);
                 let mut last_runtime_error: Option<InterpError> = None;
                 let mut last_result_err: Option<Value> = None;
+                let mut saw_option_retry = false;
                 for _ in 0..total {
                     match self.eval_expr(body).await {
                         Ok(ExprFlow::Value(Value::ResultErr(err))) => {
                             last_result_err = Some(Value::ResultErr(err));
+                        }
+                        Ok(ExprFlow::Value(Value::OptionNone)) => {
+                            saw_option_retry = true;
                         }
                         Ok(ExprFlow::Value(v)) => return Ok(ExprFlow::Value(v)),
                         Ok(ExprFlow::Propagate(v)) => return Ok(ExprFlow::Propagate(v)),
@@ -746,6 +750,8 @@ impl<'ir> Interpreter<'ir> {
                 }
                 if let Some(v) = last_result_err {
                     Ok(ExprFlow::Value(v))
+                } else if saw_option_retry {
+                    Ok(ExprFlow::Value(Value::OptionNone))
                 } else if let Some(err) = last_runtime_error {
                     Err(err)
                 } else {

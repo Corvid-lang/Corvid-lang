@@ -1219,6 +1219,21 @@ agent main() -> Bool:
     return true
 "#;
 
+    const NATIVE_OPTION_RETRY_SRC: &str = r#"
+agent fetch(flag: Bool) -> Option<Int>:
+    if flag:
+        return Some(7)
+    return None
+
+agent retrying(flag: Bool) -> Option<Int>:
+    return try fetch(flag) on error retry 3 times backoff linear 0
+
+agent main() -> Bool:
+    first = retrying(true)
+    second = retrying(false)
+    return true
+"#;
+
     const NATIVE_RESULT_OPTION_INT_SRC: &str = r#"
 agent fetch(flag: Bool) -> Result<Option<Int>, String>:
     if flag:
@@ -1512,6 +1527,15 @@ agent load(id: String) -> String:
     }
 
     #[test]
+    fn native_ability_accepts_native_option_retry_subset() {
+        let ir = compile_to_ir(NATIVE_OPTION_RETRY_SRC).expect("compile");
+        assert!(
+            native_ability(&ir).is_ok(),
+            "retry over the native Option<T> subset should now compile natively"
+        );
+    }
+
+    #[test]
     fn native_ability_accepts_native_result_with_wide_option_payload() {
         let ir = compile_to_ir(NATIVE_RESULT_OPTION_INT_SRC).expect("compile");
         assert!(
@@ -1602,7 +1626,7 @@ agent load(id: String) -> String:
     }
 
     #[test]
-    fn native_ability_rejects_retry_over_non_result_body() {
+    fn native_ability_rejects_retry_over_non_result_or_option_body() {
         let ir = compile_to_ir(NATIVE_STRING_RETRY_REJECTED_SRC).expect("compile");
         match native_ability(&ir) {
             Err(NotNativeReason::TaggedUnionRetryNotNative) => {}

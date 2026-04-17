@@ -75,6 +75,10 @@ pub enum TypeErrorKind {
         got: String,
     },
 
+    /// `try expr on error retry ...` was used on a value that is neither
+    /// `Result` nor `Option`.
+    InvalidRetryTarget { got: String },
+
     /// A compiler-known generic received the wrong number of type arguments.
     GenericArityMismatch {
         name: String,
@@ -156,6 +160,9 @@ impl TypeErrorKind {
                     "`?` return context mismatch: expected enclosing return type `{expected}`, got `{got}`"
                 )
             }
+            Self::InvalidRetryTarget { got } => {
+                format!("`try ... on error retry ...` can only be used on `Result` or `Option`, got `{got}`")
+            }
             Self::GenericArityMismatch { name, expected, got } => {
                 format!(
                     "wrong number of type arguments for `{name}`: expected {expected}, got {got}"
@@ -220,6 +227,9 @@ impl TypeErrorKind {
             Self::TryPropagateReturnMismatch { expected, .. } => Some(format!(
                 "change the enclosing return type to `{expected}`, or remove `?`"
             )),
+            Self::InvalidRetryTarget { .. } => Some(
+                "apply retry only to `Result<T, E>` or `Option<T>` expressions".into(),
+            ),
             Self::GenericArityMismatch { name, expected, .. } => Some(format!(
                 "`{name}` requires {expected} type argument{}",
                 if *expected == 1 { "" } else { "s" }

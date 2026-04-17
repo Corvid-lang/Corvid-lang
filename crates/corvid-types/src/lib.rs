@@ -517,6 +517,28 @@ agent load(id: String) -> String:
     return value
 ";
         let c = check(src);
+        assert!(
+            c.errors
+                .iter()
+                .any(|e| matches!(e.kind, TypeErrorKind::InvalidRetryTarget { .. })),
+            "got: {:?}",
+            c.errors
+        );
+    }
+
+    #[test]
+    fn retry_expression_accepts_result_and_option_bodies() {
+        let src = "\
+tool fetch_name(id: String) -> Result<String, String>
+tool maybe_name(id: String) -> Option<String>
+
+agent load_result(id: String) -> Result<String, String>:
+    return try fetch_name(id) on error retry 3 times backoff linear 25
+
+agent load_option(id: String) -> Option<String>:
+    return try maybe_name(id) on error retry 3 times backoff exponential 10
+";
+        let c = check(src);
         assert!(c.errors.is_empty(), "errors: {:?}", c.errors);
     }
 

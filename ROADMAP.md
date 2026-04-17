@@ -427,11 +427,13 @@ Pre-phase chat caught two limiting shortcuts in my brief and reshaped the phase 
 - [x] Native one-word `Result<T, E>` subset with ownership integration.
 - [x] Native postfix `?` for `Result<T, E>`, including `Result<A, E>?` inside `Result<B, E>` when both shapes remain in the current native subset.
 - [x] Native deterministic retry lowering over the native `Result<T, E>` subset with explicit backoff control flow and ownership-correct cleanup between attempts.
+- [x] Native deterministic retry lowering over the native `Option<T>` subset, where `None` is the retryable branch and the final exhausted value remains `None`.
 - [x] Native compositional proof points for nested one-word shapes such as `Result<Option<Int>, String>` and nested `Result` envelopes.
 - [x] Native structured payload proof points inside the current subset, including `Result<Boxed, String>` and `Result<List<Int>, String>`.
 
 **Corvid inventions already landed in this phase:**
 - [x] **Deterministic native retry as compiled control flow.** Retry lowers to explicit native control-flow blocks over `Result<T, E>`, not an opaque runtime helper.
+- [x] **Failure-carrier-aligned retry semantics.** Native and interpreter retry now agree that `Err(...)` and `None` are the retryable branches for the shipped subset.
 - [x] **Compositional tagged-union subset.** Native support is being widened by proving a principled representation composes across nested shapes, rather than by adding ad hoc case-by-case exceptions.
 
 **Remaining work before this phase can be called closed:**

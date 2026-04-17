@@ -548,7 +548,7 @@ impl<'a> Checker<'a> {
                 Type::List(Box::new(elem_ty))
             }
             Expr::TryPropagate { inner, span } => self.check_try_propagate(inner, *span),
-            Expr::TryRetry { body, .. } => self.check_expr(body),
+            Expr::TryRetry { body, span, .. } => self.check_try_retry(body, *span),
         };
         self.types.insert(e.span(), ty.clone());
         ty
@@ -1348,6 +1348,22 @@ impl<'a> Checker<'a> {
             other => {
                 self.errors.push(TypeError::new(
                     TypeErrorKind::InvalidTryPropagate {
+                        got: other.display_name(),
+                    },
+                    span,
+                ));
+                Type::Unknown
+            }
+        }
+    }
+
+    fn check_try_retry(&mut self, body: &Expr, span: Span) -> Type {
+        let body_ty = self.check_expr(body);
+        match body_ty {
+            Type::Result(_, _) | Type::Option(_) | Type::Unknown => body_ty,
+            other => {
+                self.errors.push(TypeError::new(
+                    TypeErrorKind::InvalidRetryTarget {
                         got: other.display_name(),
                     },
                     span,

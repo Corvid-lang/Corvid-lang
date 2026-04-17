@@ -1613,6 +1613,20 @@ forward. The lesson is simple: when an unblock reveals a subsystem that is only
 partially switched over, complete that subsystem to one internally consistent
 state instead of layering more local exceptions on top.
 
+### Retry should follow Corvid's actual failure carriers, not a narrower implementation subset
+
+Once native `Result<T, E>`, native `Option<T>`, and postfix `?` were all
+shipped, retry remaining `Result`-only was too narrow. In the language model
+Corvid already exposed, both `Err(...)` and `None` are first-class "did not
+produce a usable value" branches. Corvid now makes that explicit: the
+typechecker accepts `try ... on error retry ...` only on `Result<T, E>` and
+`Option<T>`, the interpreter retries on `Err(...)` and `None`, and native AOT
+does the same for the shipped `Option<T>` subset. The lesson is that widening
+Phase 18 correctly is often about aligning semantics across the language,
+interpreter, and native tier, not just adding one more native representation
+case. If a construct is already a language-level failure carrier, retry policy
+should treat it coherently across both tiers.
+
 ## Contributing / feedback
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). The rules of the road are: design chat before code, per-scope commits at every boundary, dev-log entry for every session, no shortcuts. The `learnings.md` file you're reading gets updated when each user-visible feature ships.
