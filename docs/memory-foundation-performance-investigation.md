@@ -259,19 +259,30 @@ The two top-ranked harness fixes from this investigation have now landed:
 
 1. persistent native benchmark execution, so measured Corvid trials no longer pay binary startup per trial
 2. actual-wait subtraction, so orchestration cost subtracts measured external wait instead of nominal fixture wait
+3. direct native wait counters, so measured Corvid trials no longer pay per-wait stderr JSON profiling overhead
 
 Corrected same-session ratios are archived under:
 
 - `benches/results/2026-04-17-corrected-session/`
 - publication commit: `74abcd6`
 
+A later low-overhead session applies the third correction above:
+
+- `benches/results/2026-04-17-direct-counter-session/`
+- publication commit: `dbb6bc2`
+
 What changed:
 
 - the Corvid / Python gap narrowed from roughly `25x-36x` to roughly `3x-4x`
 - the Corvid / TypeScript gap widened from roughly `1.7x-2.6x` to roughly `8x-10x`
 
+After the direct-counter correction:
+
+- the Corvid / Python gap narrowed further to roughly `1.2x-1.8x`
+- the Corvid / TypeScript gap narrowed to roughly `2.4x-4.9x`
+
 Those two moves come from the same correction. The historical session was overstating Corvid's gap to Python by charging startup and wait-accounting artifacts to orchestration cost, and it was understating Corvid's gap to TypeScript by charging Node's sleep overshoot to orchestration cost.
 
-The corrected session still does **not** support a claim that Corvid is faster than either stack. It does support a more accurate statement: once the harness artifacts are removed, Corvid's remaining orchestration gap to Python is materially smaller and sits in the residual execution bucket identified above.
+The low-overhead session still does **not** support a claim that Corvid is faster than either stack. It does support a more accurate statement: once the measurable harness artifacts are removed, Corvid's remaining orchestration gap is in the low-single-digit multiples rather than the double-digit multiples that originally published.
 
 For the current published interpretation, see [memory-foundation-results.md](memory-foundation-results.md).

@@ -161,6 +161,70 @@ All three consume the canonical fixtures under `benchmarks/cases/` and emit JSON
 
 ## Same-session ratio sessions
 
+### Current low-overhead harness session
+
+Source archive:
+
+- `benches/results/2026-04-17-direct-counter-session/`
+- publication commit: `dbb6bc2`
+
+Methodology corrections relative to the prior corrected harness session:
+
+- prompt and tool wait accounting now comes from direct per-trial native counters in the benchmark summary
+- ordinary measured Corvid runs no longer emit per-wait profiling JSON to stderr
+
+This does not change the orchestration metric. It removes Corvid-only serialization and parsing overhead from the measured path.
+
+Session disclosure:
+
+- control values are close to zero on all three stacks, so CV is unstable as a primary noise summary
+- absolute control disclosure:
+  - `corvid`: median `0.11265 ms`, IQR `[0.08502, 0.12668]`, CV `46.41%`
+  - `python`: median `0.00130 ms`, IQR `[0.00110, 0.00150]`, CV `25.60%`
+  - `typescript`: median `0.00125 ms`, IQR `[0.00103, 0.00213]`, CV `65.58%`
+
+#### Corrected vs low-overhead medians
+
+| Scenario | Corvid / Python corrected | Corvid / Python low-overhead | Corvid / TypeScript corrected | Corvid / TypeScript low-overhead |
+|---|---:|---:|---:|---:|
+| `tool_loop` | `3.528` | `1.818` | `8.338` | `3.608` |
+| `retry_workflow` | `2.978` | `1.188` | `7.657` | `2.378` |
+| `approval_workflow` | `3.486` | `1.787` | `10.207` | `4.938` |
+| `replay_trace` | `3.780` | `1.695` | `8.531` | `2.956` |
+
+#### Corvid vs Python
+
+| Scenario | Median ratio | 95% CI |
+|---|---:|---:|
+| `tool_loop` | `1.818` | `[1.628, 1.938]` |
+| `retry_workflow` | `1.188` | `[1.127, 1.305]` |
+| `approval_workflow` | `1.787` | `[1.628, 1.940]` |
+| `replay_trace` | `1.695` | `[1.485, 1.817]` |
+
+#### Corvid vs TypeScript
+
+| Scenario | Median ratio | 95% CI |
+|---|---:|---:|
+| `tool_loop` | `3.608` | `[3.015, 4.173]` |
+| `retry_workflow` | `2.378` | `[2.145, 2.732]` |
+| `approval_workflow` | `4.938` | `[3.420, 5.589]` |
+| `replay_trace` | `2.956` | `[2.513, 3.609]` |
+
+Interpretation:
+
+- every low-overhead ratio is still greater than `1.0`
+- every low-overhead 95% CI stays above `1.0`
+- so this session still does **not** support any claim that Corvid is faster than either Python or TypeScript on these workflow runners
+
+What this session does support:
+
+- Corvid is now within roughly `1.2x-1.8x` of Python on these orchestration workloads
+- Corvid is now within roughly `2.4x-4.9x` of TypeScript / Node on these orchestration workloads
+- the remaining gap is now small enough to treat as ordinary optimization work rather than a benchmark-validity crisis
+- this is the first session that is plausibly useful for both developer evaluation and early marketing, provided the claim stays at "competitive overhead with stronger safety" rather than "faster than the glue stacks"
+
+The low-overhead archive includes the full ratio-shape tables (`p50` / `p90` / `p99`) in `ratios.md`. This document keeps only the headline medians and confidence intervals.
+
 ### Corrected harness session
 
 Source archive:
