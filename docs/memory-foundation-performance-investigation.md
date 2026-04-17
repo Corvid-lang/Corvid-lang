@@ -278,6 +278,12 @@ measured-path runtime reductions:
 - runtime / harness commit: `df54889`
 - publication commit: `7df3e4d`
 
+A later constant-prompt session applies one more native-code optimization:
+
+- `benches/results/2026-04-17-constant-prompt-session/`
+- codegen commit: `0ce3c14`
+- publication commit: `f281e5e`
+
 What changed:
 
 - the Corvid / Python gap narrowed from roughly `25x-36x` to roughly `3x-4x`
@@ -295,6 +301,11 @@ After the internal-timing correction and benchmark-path runtime reductions:
 - the published medians now sit around `0.19x-0.31x` vs Python and
   `0.39x-0.63x` vs TypeScript
 
+After constant prompt rendering for compile-time literal arguments:
+
+- Corvid / Python ratios improve further to about `0.17x-0.29x`
+- Corvid / TypeScript ratios improve further to about `0.37x-0.61x`
+
 That last step matters for a different reason than the earlier corrections.
 The investigation identified startup and wait-accounting artifacts as the
 largest measured distortions. The internal-timing session confirms that
@@ -310,5 +321,9 @@ fixture-scoped claim that Corvid is faster than the current Python and
 TypeScript benchmark runners on these four shipped scenarios. That is still a
 same-session ratio result, not an absolute-throughput claim and not a blanket
 "Corvid is always faster" statement.
+
+The constant-prompt session strengthens that same scoped claim. It does not
+change the measurement methodology; it reduces real native work on prompt calls
+that can be rendered entirely at compile time.
 
 For the current published interpretation, see [memory-foundation-results.md](memory-foundation-results.md).

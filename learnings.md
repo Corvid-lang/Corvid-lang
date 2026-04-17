@@ -1284,6 +1284,27 @@ That statement is intentionally narrow:
 - it is the correct developer and marketing claim only because the earlier
   harness artifacts are now explicitly archived and superseded, not erased
 
+### Compile-time constant prompt rendering
+
+Native prompt lowering now folds a prompt call down to one immortal string
+literal when every interpolated argument is a compile-time string / int / bool
+literal.
+
+What that means in practice:
+
+- no runtime stringify for those arguments
+- no runtime concat chain for the rendered prompt
+- the native binary calls the prompt bridge with one pre-rendered literal
+  instead of rebuilding the same text every trial
+
+Why it matters:
+
+- several shipped benchmark workflows contain constant prompt calls
+- after the internal-timing alignment, those prompt rebuilds were one of the
+  clearest remaining avoidable costs
+- the new same-session session improves again on both Python and TypeScript,
+  especially on the more prompt-heavy workflows
+
 ### Professional naming in source
 
 Source code now uses behavioral names rather than roadmap numbering.

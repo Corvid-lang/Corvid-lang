@@ -167,7 +167,79 @@ All three consume the canonical fixtures under `benchmarks/cases/` and emit JSON
 
 ## Same-session ratio sessions
 
-### Current internal-timing session
+### Current constant-prompt session
+
+Source archive:
+
+- `benches/results/2026-04-17-constant-prompt-session/`
+- codegen commit: `0ce3c14`
+- publication commit: `f281e5e`
+
+Methodology and measured-path changes relative to the earlier internal-timing session:
+
+- prompt templates whose interpolated arguments are compile-time
+  string / int / bool literals are now rendered to one immortal string literal
+  during native lowering instead of being rebuilt at runtime through
+  stringify + concat operations
+
+Session disclosure:
+
+- control values are close to zero on all three stacks, so CV is unstable as a
+  primary noise summary
+- absolute control disclosure:
+  - `corvid`: median `0.000488 ms`, IQR `[0.000244, 0.000732]`, CV `37.34%`
+  - `python`: median `0.001100 ms`, IQR `[0.000700, 0.001600]`, CV `53.56%`
+  - `typescript`: median `0.001000 ms`, IQR `[0.000900, 0.001800]`, CV `75.68%`
+
+#### Internal-timing vs constant-prompt medians
+
+| Scenario | Corvid / Python internal-timing | Corvid / Python constant-prompt | Corvid / TypeScript internal-timing | Corvid / TypeScript constant-prompt |
+|---|---:|---:|---:|---:|
+| `tool_loop` | `0.284` | `0.267` | `0.611` | `0.528` |
+| `retry_workflow` | `0.186` | `0.173` | `0.392` | `0.367` |
+| `approval_workflow` | `0.286` | `0.230` | `0.626` | `0.606` |
+| `replay_trace` | `0.312` | `0.287` | `0.608` | `0.601` |
+
+#### Corvid vs Python
+
+| Scenario | Median ratio | 95% CI |
+|---|---:|---:|
+| `tool_loop` | `0.267` | `[0.251, 0.291]` |
+| `retry_workflow` | `0.173` | `[0.161, 0.184]` |
+| `approval_workflow` | `0.230` | `[0.217, 0.251]` |
+| `replay_trace` | `0.287` | `[0.271, 0.304]` |
+
+#### Corvid vs TypeScript
+
+| Scenario | Median ratio | 95% CI |
+|---|---:|---:|
+| `tool_loop` | `0.528` | `[0.481, 0.590]` |
+| `retry_workflow` | `0.367` | `[0.297, 0.413]` |
+| `approval_workflow` | `0.606` | `[0.547, 0.665]` |
+| `replay_trace` | `0.601` | `[0.543, 0.645]` |
+
+Interpretation:
+
+- every constant-prompt ratio is below `1.0`
+- every constant-prompt 95% CI stays below `1.0`
+- so this session strengthens the same fixture-scoped claim as the
+  internal-timing archive: Corvid is faster than the current Python and
+  TypeScript benchmark runners on these four shipped workflow fixtures
+
+What this session supports:
+
+- Corvid pushed the current fixture-set lead a little further on the most
+  prompt-heavy workflows
+- compile-time prompt rendering for constant arguments is a real native-code
+  win, not benchmark-only accounting
+- the remaining comparative work should focus on dynamic prompt / bridge cost,
+  because the constant prompt path is now largely out of the way
+
+The constant-prompt archive includes the full ratio-shape tables (`p50` /
+`p90` / `p99`) in `ratios.md`. This document keeps only the headline medians
+and confidence intervals.
+
+### Earlier internal-timing session
 
 Source archive:
 
@@ -226,7 +298,7 @@ Session disclosure:
 | `approval_workflow` | `0.626` | `[0.536, 0.740]` |
 | `replay_trace` | `0.608` | `[0.547, 0.701]` |
 
-Interpretation:
+Historical interpretation:
 
 - every internal-timing ratio is below `1.0`
 - every internal-timing 95% CI stays below `1.0`

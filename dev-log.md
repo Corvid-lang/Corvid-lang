@@ -3272,6 +3272,38 @@ Interpretation:
   than Python or Node orchestration code
 - absolute milliseconds remain held until a verified-quiet host is available
 
+## Day 37 [B] - 2026-04-17 - Compile-time constant prompt rendering
+
+Took one more pass at the native workflow path after the internal-timing win.
+
+What changed:
+
+- prompt calls whose interpolated arguments are compile-time string / int / bool
+  literals now render the full prompt at compile time
+- native lowering emits one immortal string literal for the rendered prompt
+  instead of runtime stringify + concat work
+
+Why this was the right next cut:
+
+- the shipped workflow fixtures still contain several constant prompt calls
+- after the runner-geometry fixes, those rebuilds were one of the clearest
+  remaining avoidable prompt costs
+
+Published archive:
+
+- `benches/results/2026-04-17-constant-prompt-session/`
+
+Top-line outcome on the shipped workflow fixtures:
+
+- Corvid / Python ratios: `0.173x-0.287x`
+- Corvid / TypeScript ratios: `0.367x-0.606x`
+
+Interpretation:
+
+- Corvid stays ahead of both comparison stacks on all four shipped scenarios
+- the gain is smaller than the earlier harness-alignment wins, but it is a
+  real native-code reduction rather than another accounting correction
+
 
 
 
