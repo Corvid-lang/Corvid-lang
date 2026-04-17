@@ -20,6 +20,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <time.h>
 
 #if defined(_MSC_VER)
 /* MSVC intrinsic to get the address of the current function's
@@ -94,8 +95,33 @@ extern long long corvid_safepoint_count;
 static corvid_gc_trigger_record corvid_gc_trigger_log[CORVID_GC_TRIGGER_LOG_CAP];
 static long long corvid_gc_trigger_log_len = 0;
 static long long corvid_gc_cycle_count = 0;
+static uint64_t corvid_gc_total_ns_total = 0;
+static uint64_t corvid_gc_mark_count_total = 0;
+static uint64_t corvid_gc_sweep_count_total = 0;
+static uint64_t corvid_gc_cycle_reclaimed_total = 0;
+static uint64_t corvid_gc_mark_count_current = 0;
+static uint64_t corvid_gc_sweep_count_current = 0;
+static uint64_t corvid_gc_cycle_reclaimed_current = 0;
 
 long long corvid_gc_trigger_log_length(void) { return corvid_gc_trigger_log_len; }
+uint64_t corvid_gc_total_ns(void) { return corvid_gc_total_ns_total; }
+uint64_t corvid_gc_mark_count(void) { return corvid_gc_mark_count_total; }
+uint64_t corvid_gc_sweep_count(void) { return corvid_gc_sweep_count_total; }
+uint64_t corvid_gc_cycle_reclaimed_count(void) { return corvid_gc_cycle_reclaimed_total; }
+
+static uint64_t corvid_now_ns(void) {
+    struct timespec ts;
+    timespec_get(&ts, TIME_UTC);
+    return ((uint64_t)ts.tv_sec * 1000000000ULL) + (uint64_t)ts.tv_nsec;
+}
+
+static int corvid_profile_runtime_enabled(void) {
+    static int cached = -1;
+    if (cached < 0) {
+        cached = getenv("CORVID_PROFILE_RUNTIME") != NULL ? 1 : 0;
+    }
+    return cached;
+}
 
 int corvid_gc_trigger_log_at(long long index,
                              long long* out_alloc,
@@ -141,6 +167,7 @@ static void corvid_gc_mark_marker(void* payload, void* ctx) {
     if (payload == NULL) return;
     corvid_header* h = (corvid_header*)((char*)payload - CORVID_HEADER_BYTES);
     if (!corvid_mark_block(h)) return;
+    corvid_gc_mark_count_current++;
     if (h->typeinfo != NULL && h->typeinfo->trace_fn != NULL) {
         h->typeinfo->trace_fn(payload, corvid_gc_mark_marker, NULL);
     }
@@ -220,12 +247,14 @@ static void corvid_gc_sweep(void) {
     while (node != NULL) {
         corvid_tracking_node* next = node->next;
         corvid_header* h = (corvid_header*)((char*)node + CORVID_TRACKING_BYTES);
+        corvid_gc_sweep_count_current++;
         if (h->refcount_word != CORVID_REFCOUNT_IMMORTAL) {
             if ((h->refcount_word & CORVID_MARK_BIT) == 0) {
                 if (h->typeinfo != NULL && h->typeinfo->weak_fn != NULL) {
                     h->typeinfo->weak_fn((void*)((char*)h + CORVID_HEADER_BYTES));
                 }
                 corvid_release_count++;
+                corvid_gc_cycle_reclaimed_current++;
                 corvid_free_block(h);
             } else {
                 h->refcount_word &= ~CORVID_MARK_BIT;
@@ -242,6 +271,10 @@ static int corvid_gc_running = 0;
 void corvid_gc(void) {
     if (corvid_gc_running) return;
     corvid_gc_running = 1;
+    uint64_t gc_start_ns = corvid_profile_runtime_enabled() ? corvid_now_ns() : 0;
+    corvid_gc_mark_count_current = 0;
+    corvid_gc_sweep_count_current = 0;
+    corvid_gc_cycle_reclaimed_current = 0;
 
     corvid_gc_record_trigger();
 
@@ -254,12 +287,23 @@ void corvid_gc(void) {
 
     corvid_gc_sweep();
 
+    corvid_gc_mark_count_total += corvid_gc_mark_count_current;
+    corvid_gc_sweep_count_total += corvid_gc_sweep_count_current;
+    corvid_gc_cycle_reclaimed_total += corvid_gc_cycle_reclaimed_current;
+    if (gc_start_ns != 0) {
+        corvid_gc_total_ns_total += corvid_now_ns() - gc_start_ns;
+    }
+
     corvid_gc_running = 0;
 }
 
 void corvid_gc_from_roots(void** roots, size_t n_roots) {
     if (corvid_gc_running) return;
     corvid_gc_running = 1;
+    uint64_t gc_start_ns = corvid_profile_runtime_enabled() ? corvid_now_ns() : 0;
+    corvid_gc_mark_count_current = 0;
+    corvid_gc_sweep_count_current = 0;
+    corvid_gc_cycle_reclaimed_current = 0;
 
     corvid_gc_record_trigger();
 
@@ -274,6 +318,13 @@ void corvid_gc_from_roots(void** roots, size_t n_roots) {
     }
 
     corvid_gc_sweep();
+
+    corvid_gc_mark_count_total += corvid_gc_mark_count_current;
+    corvid_gc_sweep_count_total += corvid_gc_sweep_count_current;
+    corvid_gc_cycle_reclaimed_total += corvid_gc_cycle_reclaimed_current;
+    if (gc_start_ns != 0) {
+        corvid_gc_total_ns_total += corvid_now_ns() - gc_start_ns;
+    }
 
     corvid_gc_running = 0;
 }

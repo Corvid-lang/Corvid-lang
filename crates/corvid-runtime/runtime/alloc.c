@@ -225,6 +225,8 @@ long long corvid_alloc_count = 0;
 long long corvid_release_count = 0;
 long long corvid_retain_call_count = 0;
 long long corvid_release_call_count = 0;
+static long long corvid_live_object_count_total = 0;
+static long long corvid_live_object_peak_total = 0;
 static uint64_t corvid_bench_rc_release_ns_total = 0;
 
 long long corvid_safepoint_count = 0;
@@ -277,6 +279,10 @@ void* corvid_alloc_typed(long long payload_bytes, const corvid_typeinfo* typeinf
         corvid_live_head->prev = node;
     }
     corvid_live_head = node;
+    corvid_live_object_count_total++;
+    if (corvid_live_object_count_total > corvid_live_object_peak_total) {
+        corvid_live_object_peak_total = corvid_live_object_count_total;
+    }
 
     corvid_alloc_count++;
     corvid_allocs_since_gc++;
@@ -300,6 +306,9 @@ void corvid_free_block(corvid_header* h) {
     }
     if (node->next != NULL) {
         node->next->prev = node->prev;
+    }
+    if (corvid_live_object_count_total > 0) {
+        corvid_live_object_count_total--;
     }
     corvid_pool_put(node, h->typeinfo);
 }
@@ -357,4 +366,20 @@ void corvid_release(void* payload) {
 
 uint64_t corvid_bench_rc_release_ns(void) {
     return corvid_bench_rc_release_ns_total;
+}
+
+long long corvid_live_object_count(void) {
+    return corvid_live_object_count_total;
+}
+
+long long corvid_live_object_peak(void) {
+    return corvid_live_object_peak_total;
+}
+
+void corvid_reset_live_object_peak(void) {
+    corvid_live_object_peak_total = corvid_live_object_count_total;
+}
+
+void corvid_reset_gc_alloc_counter(void) {
+    corvid_allocs_since_gc = 0;
 }

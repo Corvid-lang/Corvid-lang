@@ -50,6 +50,12 @@ extern uint64_t corvid_bench_json_bridge_ns(void);
 extern uint64_t corvid_bench_mock_dispatch_ns(void);
 extern uint64_t corvid_bench_trace_overhead_ns(void);
 extern uint64_t corvid_bench_rc_release_ns(void);
+extern uint64_t corvid_gc_total_ns(void);
+extern uint64_t corvid_gc_mark_count(void);
+extern uint64_t corvid_gc_sweep_count(void);
+extern uint64_t corvid_gc_cycle_reclaimed_count(void);
+extern long long corvid_live_object_peak(void);
+extern void corvid_reset_live_object_peak(void);
 
 static long long corvid_bench_allocs_before = 0;
 static long long corvid_bench_releases_before = 0;
@@ -67,6 +73,10 @@ static uint64_t corvid_bench_json_bridge_ns_before = 0;
 static uint64_t corvid_bench_mock_dispatch_ns_before = 0;
 static uint64_t corvid_bench_trace_overhead_ns_before = 0;
 static uint64_t corvid_bench_rc_release_ns_before = 0;
+static uint64_t corvid_bench_gc_total_ns_before = 0;
+static uint64_t corvid_bench_gc_mark_count_before = 0;
+static uint64_t corvid_bench_gc_sweep_count_before = 0;
+static uint64_t corvid_bench_gc_cycle_reclaimed_before = 0;
 static uint64_t corvid_bench_trial_init_ns_total = 0;
 static uint64_t corvid_bench_trial_init_ns_before = 0;
 static double corvid_bench_trial_start_ms = 0.0;
@@ -301,6 +311,11 @@ long long corvid_bench_next_trial(void) {
     corvid_bench_mock_dispatch_ns_before = corvid_bench_mock_dispatch_ns();
     corvid_bench_trace_overhead_ns_before = corvid_bench_trace_overhead_ns();
     corvid_bench_rc_release_ns_before = corvid_bench_rc_release_ns();
+    corvid_bench_gc_total_ns_before = corvid_gc_total_ns();
+    corvid_bench_gc_mark_count_before = corvid_gc_mark_count();
+    corvid_bench_gc_sweep_count_before = corvid_gc_sweep_count();
+    corvid_bench_gc_cycle_reclaimed_before = corvid_gc_cycle_reclaimed_count();
+    corvid_reset_live_object_peak();
     if (init_start_ns != 0) {
         corvid_bench_trial_init_ns_total += corvid_now_ns() - init_start_ns;
     }
@@ -338,8 +353,10 @@ void corvid_bench_finish_trial(long long trial_idx) {
     double trial_init_ms =
         (double)(corvid_bench_trial_init_ns_total - corvid_bench_trial_init_ns_before)
         / 1000000.0;
+    double gc_total_ms =
+        (double)(corvid_gc_total_ns() - corvid_bench_gc_total_ns_before) / 1000000.0;
     fprintf(stderr,
-            "CORVID_BENCH_TRIAL={\"trial_idx\":%lld,\"trial_wall_ms\":%.6f,\"allocs\":%lld,\"releases\":%lld,\"retain_calls\":%lld,\"release_calls\":%lld,\"gc_trigger_count\":%lld,\"safepoint_count\":%lld,\"stack_map_entry_count\":%llu,\"verify_drift_count\":%lld,\"approval_wait_actual_ms\":%.6f,\"prompt_wait_actual_ms\":%.6f,\"tool_wait_actual_ms\":%.6f,\"prompt_render_ms\":%.6f,\"json_bridge_ms\":%.6f,\"mock_llm_dispatch_ms\":%.6f,\"trial_init_ms\":%.6f,\"trace_overhead_ms\":%.6f,\"rc_release_time_ms\":%.6f}\n",
+            "CORVID_BENCH_TRIAL={\"trial_idx\":%lld,\"trial_wall_ms\":%.6f,\"allocs\":%lld,\"releases\":%lld,\"retain_calls\":%lld,\"release_calls\":%lld,\"gc_trigger_count\":%lld,\"gc_total_ms\":%.6f,\"gc_mark_count\":%llu,\"gc_sweep_count\":%llu,\"gc_cycle_count\":%llu,\"live_peak_objects\":%lld,\"safepoint_count\":%lld,\"stack_map_entry_count\":%llu,\"verify_drift_count\":%lld,\"approval_wait_actual_ms\":%.6f,\"prompt_wait_actual_ms\":%.6f,\"tool_wait_actual_ms\":%.6f,\"prompt_render_ms\":%.6f,\"json_bridge_ms\":%.6f,\"mock_llm_dispatch_ms\":%.6f,\"trial_init_ms\":%.6f,\"trace_overhead_ms\":%.6f,\"rc_release_time_ms\":%.6f}\n",
             trial_idx,
             trial_wall_ms,
             corvid_alloc_count - corvid_bench_allocs_before,
@@ -347,6 +364,12 @@ void corvid_bench_finish_trial(long long trial_idx) {
             corvid_retain_call_count - corvid_bench_retain_calls_before,
             corvid_release_call_count - corvid_bench_release_calls_before,
             corvid_gc_trigger_log_length() - corvid_bench_gc_trigger_count_before,
+            gc_total_ms,
+            (unsigned long long)(corvid_gc_mark_count() - corvid_bench_gc_mark_count_before),
+            (unsigned long long)(corvid_gc_sweep_count() - corvid_bench_gc_sweep_count_before),
+            (unsigned long long)(corvid_gc_cycle_reclaimed_count()
+                                 - corvid_bench_gc_cycle_reclaimed_before),
+            corvid_live_object_peak(),
             corvid_safepoint_count - corvid_bench_safepoint_count_before,
             (unsigned long long)(corvid_stack_maps_entry_count()
                                  - corvid_bench_stack_map_entry_count_before),
