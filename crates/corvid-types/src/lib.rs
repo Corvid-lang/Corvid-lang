@@ -27,7 +27,7 @@ pub use types::Type;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use corvid_resolve::resolve;
+    use corvid_resolve::{resolve, ResolveErrorKind};
     use corvid_syntax::{lex, parse_file};
 
     fn check(src: &str) -> Checked {
@@ -42,6 +42,105 @@ mod tests {
         );
         typecheck(&file, &resolved)
     }
+
+    fn resolve_errors(src: &str) -> Vec<corvid_resolve::ResolveError> {
+        let tokens = lex(src).expect("lex failed");
+        let (file, perr) = parse_file(&tokens);
+        assert!(perr.is_empty(), "parse errors: {perr:?}");
+        resolve(&file).errors
+    }
+
+    fn mutate_once(base: &str, from: &str, to: &str) -> String {
+        assert!(base.contains(from), "mutation source missing `{from}`");
+        base.replacen(from, to, 1)
+    }
+
+    fn has_effect_violation(c: &Checked, dimension: &str) -> bool {
+        c.errors.iter().any(|e| matches!(
+            &e.kind,
+            TypeErrorKind::EffectConstraintViolation { dimension: d, .. } if d == dimension
+        ))
+    }
+
+    const MUTATION_APPROVAL_BASE: &str = r#"
+type Receipt:
+    id: String
+
+tool issue_refund(id: String, amount: Float) -> Receipt dangerous
+
+agent refund(flag: Bool, id: String, amount: Float) -> Receipt:
+    if flag:
+        approve IssueRefund(id, amount)
+        return issue_refund(id, amount)
+    approve IssueRefund(id, amount)
+    return issue_refund(id, amount)
+"#;
+
+    const MUTATION_EFFECT_BASE: &str = r#"
+effect transfer_money:
+    cost: $0.50
+    reversible: false
+    trust: human_required
+    data: financial
+
+effect audit_log:
+    cost: $0.25
+    trust: supervisor_required
+
+type Ticket:
+    order_id: String
+
+type Order:
+    id: String
+    amount: Float
+
+type Decision:
+    should_refund: Bool
+
+type Receipt:
+    id: String
+
+tool get_order(id: String) -> Order
+tool issue_refund(id: String, amount: Float) -> Receipt dangerous uses transfer_money
+tool log_refund(id: String) -> Nothing uses audit_log
+
+prompt decide(ticket: Ticket, order: Order) -> Decision:
+    "Decide."
+
+@budget($2.00)
+@trust(autonomous)
+agent safe_bot(ticket: Ticket) -> Decision:
+    order = get_order(ticket.order_id)
+    decision = decide(ticket, order)
+    if decision.should_refund:
+        approve IssueRefund(order.id, order.amount)
+        issue_refund(order.id, order.amount)
+    return decision
+"#;
+
+    const MUTATION_PROVENANCE_BASE: &str = r#"
+effect retrieval:
+    data: grounded
+
+type Ticket:
+    order_id: String
+
+type Order:
+    id: String
+
+type Decision:
+    verdict: Bool
+
+tool get_order(id: String) -> Grounded<Order> uses retrieval
+
+prompt decide(ticket: Ticket, order: Order) -> Grounded<Decision>:
+    "Decide."
+
+agent grounded_bot(ticket: Ticket) -> Grounded<Decision>:
+    order = get_order(ticket.order_id)
+    decision = decide(ticket, order)
+    return decision
+"#;
 
     // =================================================================
     // Effect checks — the killer feature.
@@ -641,5 +740,486 @@ agent bad(x: Int) -> Weak<Int, {tool_call}>:
             "got: {:?}",
             c.errors
         );
+    }
+
+    // =================================================================
+    // Mutation suite — dimensional effects, provenance, approval.
+    // =================================================================
+
+    #[test]
+    fn mutation_remove_approve_line_errors() {
+        // Removing the approve line must be caught — this is the core safety invariant.
+        let src = mutate_once(
+            MUTATION_APPROVAL_BASE,
+            "        approve IssueRefund(id, amount)\n",
+            "",
+        );
+        let c = check(&src);
+        assert!(c.errors.iter().any(|e| matches!(
+            e.kind,
+            TypeErrorKind::UnapprovedDangerousCall { .. }
+        )), "got: {:?}", c.errors);
+    }
+
+    #[test]
+    fn mutation_wrong_arity_approve_errors() {
+        // A mismatched approval shape must not authorize a dangerous call.
+        let src = mutate_once(
+            MUTATION_APPROVAL_BASE,
+            "approve IssueRefund(id, amount)",
+            "approve IssueRefund(id)",
+        );
+        let c = check(&src);
+        assert!(c.errors.iter().any(|e| matches!(
+            e.kind,
+            TypeErrorKind::UnapprovedDangerousCall { .. }
+        )), "got: {:?}", c.errors);
+    }
+
+    #[test]
+    fn mutation_approve_outside_if_authorizes_inner_call() {
+        // An outer approval should still authorize the inner dangerous call.
+        let src = "\
+type Receipt:
+    id: String
+
+tool issue_refund(id: String, amount: Float) -> Receipt dangerous
+
+agent refund(flag: Bool, id: String, amount: Float) -> Receipt:
+    approve IssueRefund(id, amount)
+    if flag:
+        return issue_refund(id, amount)
+    return issue_refund(id, amount)
+";
+        let c = check(src);
+        assert!(c.errors.is_empty(), "errors: {:?}", c.errors);
+    }
+
+    #[test]
+    fn mutation_nested_inner_approve_does_not_authorize_outer_call() {
+        // Approval inside a nested branch must not leak outward.
+        let src = "\
+type Receipt:
+    id: String
+
+tool issue_refund(id: String, amount: Float) -> Receipt dangerous
+
+agent refund(flag: Bool, id: String, amount: Float) -> Receipt:
+    if flag:
+        if true:
+            approve IssueRefund(id, amount)
+        return issue_refund(id, amount)
+    approve IssueRefund(id, amount)
+    return issue_refund(id, amount)
+";
+        let c = check(src);
+        assert!(c.errors.iter().any(|e| matches!(
+            e.kind,
+            TypeErrorKind::UnapprovedDangerousCall { .. }
+        )), "got: {:?}", c.errors);
+    }
+
+    #[test]
+    fn mutation_effect_declaration_with_dimensions_typechecks_cleanly() {
+        // A declared effect row with dimensions should parse, resolve, and typecheck.
+        let src = "\
+effect audit_log:
+    cost: $0.25
+    trust: supervisor_required
+
+tool log_refund(id: String) -> Nothing uses audit_log
+
+agent record(id: String) -> Nothing:
+    return log_refund(id)
+";
+        let c = check(src);
+        assert!(c.errors.is_empty(), "errors: {:?}", c.errors);
+    }
+
+    #[test]
+    fn mutation_tool_uses_declared_effect_is_ok() {
+        // A tool referencing a declared effect should resolve and typecheck cleanly.
+        let src = "\
+effect retrieval:
+    data: grounded
+
+tool lookup(id: String) -> Grounded<String> uses retrieval
+
+agent load(id: String) -> Grounded<String>:
+    return lookup(id)
+";
+        let c = check(src);
+        assert!(c.errors.is_empty(), "errors: {:?}", c.errors);
+    }
+
+    #[test]
+    fn mutation_tool_uses_undefined_effect_is_resolution_error() {
+        // Undefined effects in a uses clause must fail during resolution.
+        let src = "\
+tool lookup(id: String) -> String uses retrieval
+
+agent load(id: String) -> String:
+    return lookup(id)
+";
+        let errors = resolve_errors(src);
+        assert!(errors.iter().any(|e| matches!(
+            &e.kind,
+            ResolveErrorKind::UndefinedName(name) if name == "retrieval"
+        )), "got: {:?}", errors);
+    }
+
+    #[test]
+    fn mutation_baseline_trust_violation_exists() {
+        // The baseline should fail on trust: autonomous vs human_required.
+        let c = check(MUTATION_EFFECT_BASE);
+        assert!(has_effect_violation(&c, "trust"), "got: {:?}", c.errors);
+    }
+
+    #[test]
+    fn mutation_budget_within_limit_is_ok() {
+        // A budget above the composed effect cost should pass.
+        let src = "\
+effect transfer_money:
+    cost: $0.50
+    trust: human_required
+    reversible: false
+
+effect audit_log:
+    cost: $0.25
+    trust: supervisor_required
+
+type Receipt:
+    id: String
+
+tool issue_refund(id: String, amount: Float) -> Receipt dangerous uses transfer_money
+tool log_refund(id: String) -> Nothing uses audit_log
+
+@budget($1.00)
+@trust(human_required)
+agent ok(id: String, amount: Float) -> Receipt:
+    approve IssueRefund(id, amount)
+    log_refund(id)
+    return issue_refund(id, amount)
+";
+        let c = check(src);
+        assert!(c.errors.is_empty(), "errors: {:?}", c.errors);
+    }
+
+    #[test]
+    fn mutation_budget_exceeded_is_effect_violation() {
+        // Composed cost over budget must produce a budget violation.
+        let src = "\
+effect transfer_money:
+    cost: $0.50
+    trust: human_required
+    reversible: false
+
+effect audit_log:
+    cost: $0.25
+    trust: supervisor_required
+
+type Receipt:
+    id: String
+
+tool issue_refund(id: String, amount: Float) -> Receipt dangerous uses transfer_money
+tool log_refund(id: String) -> Nothing uses audit_log
+
+@budget($0.50)
+@trust(human_required)
+agent bad(id: String, amount: Float) -> Receipt:
+    approve IssueRefund(id, amount)
+    log_refund(id)
+    return issue_refund(id, amount)
+";
+        let c = check(src);
+        assert!(has_effect_violation(&c, "cost"), "got: {:?}", c.errors);
+    }
+
+    #[test]
+    fn mutation_reversible_constraint_rejects_irreversible_tool() {
+        // Bare @reversible must reject an irreversible call chain.
+        let src = "\
+type Receipt:
+    id: String
+
+tool issue_refund(id: String, amount: Float) -> Receipt dangerous
+
+@reversible
+@trust(human_required)
+agent bad(id: String, amount: Float) -> Receipt:
+    approve IssueRefund(id, amount)
+    return issue_refund(id, amount)
+";
+        let c = check(src);
+        assert!(has_effect_violation(&c, "reversible"), "got: {:?}", c.errors);
+    }
+
+    #[test]
+    fn mutation_inner_agent_effects_propagate_to_outer_agent() {
+        // Declared inner effects must constrain the outer caller.
+        let src = "\
+effect transfer_money:
+    cost: $0.50
+    trust: human_required
+    reversible: false
+
+type Receipt:
+    id: String
+
+tool issue_refund(id: String, amount: Float) -> Receipt dangerous uses transfer_money
+
+agent helper(id: String, amount: Float) -> Receipt uses transfer_money:
+    approve IssueRefund(id, amount)
+    return issue_refund(id, amount)
+
+@trust(autonomous)
+agent outer(id: String, amount: Float) -> Receipt:
+    return helper(id, amount)
+";
+        let c = check(src);
+        assert!(has_effect_violation(&c, "trust"), "got: {:?}", c.errors);
+    }
+
+    #[test]
+    fn mutation_multiple_effects_on_one_tool_compose_cost_and_trust() {
+        // Multiple effects on one tool should compose by cost-sum and trust-max.
+        let src = "\
+effect pay:
+    cost: $0.50
+    trust: autonomous
+
+effect audit:
+    cost: $0.25
+    trust: supervisor_required
+
+tool settle() -> Nothing uses pay, audit
+
+@budget($0.60)
+@trust(autonomous)
+agent bad() -> Nothing:
+    return settle()
+";
+        let c = check(src);
+        assert!(has_effect_violation(&c, "cost"), "got: {:?}", c.errors);
+        assert!(has_effect_violation(&c, "trust"), "got: {:?}", c.errors);
+    }
+
+    #[test]
+    fn mutation_legacy_dangerous_keyword_still_works_with_dimensional_effects() {
+        // Legacy dangerous must still participate when a tool also declares dimensional effects.
+        let src = "\
+effect audit_log:
+    cost: $0.25
+    trust: supervisor_required
+
+type Receipt:
+    id: String
+
+tool issue_refund(id: String, amount: Float) -> Receipt dangerous uses audit_log
+
+@trust(autonomous)
+agent bad(id: String, amount: Float) -> Receipt:
+    approve IssueRefund(id, amount)
+    return issue_refund(id, amount)
+";
+        let c = check(src);
+        assert!(has_effect_violation(&c, "trust"), "got: {:?}", c.errors);
+    }
+
+    #[test]
+    fn mutation_direct_grounded_return_with_retrieval_chain_is_ok() {
+        // A direct retrieval source should satisfy Grounded<T> returns.
+        let src = "\
+effect retrieval:
+    data: grounded
+
+tool fetch_doc(id: String) -> Grounded<String> uses retrieval
+
+agent load(id: String) -> Grounded<String>:
+    doc = fetch_doc(id)
+    return doc
+";
+        let c = check(src);
+        assert!(c.errors.is_empty(), "errors: {:?}", c.errors);
+    }
+
+    #[test]
+    fn mutation_grounded_return_without_retrieval_errors() {
+        // Removing retrieval must be caught as an ungrounded return.
+        let src = "\
+tool fetch_doc(id: String) -> Grounded<String>
+
+agent load(id: String) -> Grounded<String>:
+    doc = fetch_doc(id)
+    return doc
+";
+        let c = check(src);
+        assert!(c.errors.iter().any(|e| matches!(
+            e.kind,
+            TypeErrorKind::UngroundedReturn { .. }
+        )), "got: {:?}", c.errors);
+    }
+
+    #[test]
+    fn mutation_grounded_provenance_flows_through_prompts() {
+        // Grounded input into a prompt should ground the prompt result.
+        let c = check(MUTATION_PROVENANCE_BASE);
+        assert!(c.errors.is_empty(), "errors: {:?}", c.errors);
+    }
+
+    #[test]
+    fn mutation_ungrounded_prompt_inputs_do_not_create_grounded_output() {
+        // A prompt with only ungrounded inputs must not fabricate provenance.
+        let src = r#"
+type Ticket:
+    order_id: String
+
+type Order:
+    id: String
+
+type Decision:
+    verdict: Bool
+
+tool get_order(id: String) -> Grounded<Order>
+
+prompt decide(ticket: Ticket, order: Order) -> Grounded<Decision>:
+    "Decide."
+
+agent grounded_bot(ticket: Ticket) -> Grounded<Decision>:
+    order = get_order(ticket.order_id)
+    decision = decide(ticket, order)
+    return decision
+"#;
+        let c = check(src);
+        assert!(c.errors.iter().any(|e| matches!(
+            e.kind,
+            TypeErrorKind::UngroundedReturn { .. }
+        )), "got: {:?}", c.errors);
+    }
+
+    #[test]
+    fn mutation_cross_agent_grounded_provenance_flows() {
+        // Grounded provenance should survive an agent-to-agent hop.
+        let src = r#"
+effect retrieval:
+    data: grounded
+
+type Ticket:
+    order_id: String
+
+type Order:
+    id: String
+
+type Decision:
+    verdict: Bool
+
+tool get_order(id: String) -> Grounded<Order> uses retrieval
+
+prompt decide(ticket: Ticket, order: Order) -> Grounded<Decision>:
+    "Decide."
+
+agent lookup(id: String) -> Grounded<Order>:
+    return get_order(id)
+
+agent grounded_bot(ticket: Ticket) -> Grounded<Decision>:
+    order = lookup(ticket.order_id)
+    decision = decide(ticket, order)
+    return decision
+"#;
+        let c = check(src);
+        assert!(c.errors.is_empty(), "errors: {:?}", c.errors);
+    }
+
+    #[test]
+    fn mutation_intermediate_local_preserves_grounded_provenance() {
+        // Passing grounded data through a local must preserve provenance.
+        let src = "\
+effect retrieval:
+    data: grounded
+
+tool fetch_doc(id: String) -> Grounded<String> uses retrieval
+
+agent load(id: String) -> Grounded<String>:
+    doc = fetch_doc(id)
+    copy = doc
+    return copy
+";
+        let c = check(src);
+        assert!(c.errors.is_empty(), "errors: {:?}", c.errors);
+    }
+
+    #[test]
+    fn mutation_missing_approve_and_ungrounded_return_report_both() {
+        // Safety checks must accumulate; one violation must not hide the other.
+        let src = r#"
+type Receipt:
+    id: String
+
+tool issue_refund(id: String, amount: Float) -> Receipt dangerous
+
+prompt summarize(id: String) -> Grounded<String>:
+    "Summarize."
+
+agent bad(id: String, amount: Float) -> Grounded<String>:
+    issue_refund(id, amount)
+    return summarize(id)
+"#;
+        let c = check(src);
+        assert!(c.errors.iter().any(|e| matches!(
+            e.kind,
+            TypeErrorKind::UnapprovedDangerousCall { .. }
+        )), "got: {:?}", c.errors);
+        assert!(c.errors.iter().any(|e| matches!(
+            e.kind,
+            TypeErrorKind::UngroundedReturn { .. }
+        )), "got: {:?}", c.errors);
+    }
+
+    #[test]
+    fn mutation_budget_and_trust_violations_report_together() {
+        // Multiple dimensional violations must all be reported.
+        let src = "\
+effect transfer_money:
+    cost: $0.75
+    trust: human_required
+    reversible: false
+
+type Receipt:
+    id: String
+
+tool issue_refund(id: String, amount: Float) -> Receipt dangerous uses transfer_money
+
+@budget($0.50)
+@trust(autonomous)
+agent bad(id: String, amount: Float) -> Receipt:
+    approve IssueRefund(id, amount)
+    return issue_refund(id, amount)
+";
+        let c = check(src);
+        assert!(has_effect_violation(&c, "cost"), "got: {:?}", c.errors);
+        assert!(has_effect_violation(&c, "trust"), "got: {:?}", c.errors);
+    }
+
+    #[test]
+    fn mutation_grounded_dangerous_tool_requires_approve_and_preserves_provenance() {
+        // A grounded dangerous tool should satisfy provenance but still require approval.
+        let src = "\
+effect retrieval:
+    data: grounded
+
+tool retrieve_secret(id: String) -> Grounded<String> dangerous uses retrieval
+
+agent bad(id: String) -> Grounded<String>:
+    return retrieve_secret(id)
+";
+        let c = check(src);
+        assert!(c.errors.iter().any(|e| matches!(
+            e.kind,
+            TypeErrorKind::UnapprovedDangerousCall { .. }
+        )), "got: {:?}", c.errors);
+        assert!(!c.errors.iter().any(|e| matches!(
+            e.kind,
+            TypeErrorKind::UngroundedReturn { .. }
+        )), "got: {:?}", c.errors);
     }
 }

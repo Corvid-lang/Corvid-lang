@@ -220,14 +220,26 @@ impl EffectRegistry {
 
         for constraint in constraints {
             let dim_name = &constraint.dimension.name;
-            let Some(actual) = profile.dimensions.get(dim_name.as_str()) else {
+            let canonical_dim = if dim_name == "budget" {
+                "cost"
+            } else {
+                dim_name.as_str()
+            };
+            let Some(actual) = profile.dimensions.get(canonical_dim) else {
                 continue;
             };
-            if let Some(ref expected) = constraint.value {
-                if !dimension_satisfies(actual, expected, dim_name) {
+            let expected = match (&constraint.value, actual) {
+                (Some(expected), _) => Some(expected.clone()),
+                // Bare boolean constraints like `@reversible` mean
+                // "this dimension must stay true".
+                (None, DimensionValue::Bool(_)) => Some(DimensionValue::Bool(true)),
+                (None, _) => None,
+            };
+            if let Some(expected) = expected {
+                if !dimension_satisfies(actual, &expected, canonical_dim) {
                     violations.push(ConstraintViolation {
-                        dimension: dim_name.clone(),
-                        constraint: expected.clone(),
+                        dimension: canonical_dim.to_string(),
+                        constraint: expected,
                         actual: actual.clone(),
                         span: constraint.span,
                     });
