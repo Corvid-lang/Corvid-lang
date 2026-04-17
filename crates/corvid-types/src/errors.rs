@@ -120,6 +120,14 @@ pub enum TypeErrorKind {
         dimension: String,
         message: String,
     },
+
+    /// An agent returns `Grounded<T>` but the compiler cannot prove a
+    /// provenance path from a `data: grounded` source feeds into the
+    /// return value.
+    UngroundedReturn {
+        agent: String,
+        message: String,
+    },
 }
 
 impl TypeErrorKind {
@@ -194,6 +202,9 @@ impl TypeErrorKind {
             Self::EffectConstraintViolation { agent, message, .. } => {
                 format!("effect constraint violated in agent `{agent}`: {message}")
             }
+            Self::UngroundedReturn { agent, message } => {
+                format!("ungrounded return in agent `{agent}`: {message}")
+            }
         }
     }
 
@@ -266,6 +277,11 @@ impl TypeErrorKind {
             Self::EffectConstraintViolation { dimension, .. } => Some(format!(
                 "relax the `@{dimension}` constraint, or remove the call that violates it"
             )),
+            Self::UngroundedReturn { .. } => Some(
+                "call a tool declared `uses retrieval` (or any effect with `data: grounded`) \
+                 and pass its result to the return value, directly or through a prompt"
+                    .into(),
+            ),
         }
     }
 }

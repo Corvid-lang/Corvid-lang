@@ -37,6 +37,12 @@ pub enum Type {
     /// Compiler-known `Weak<T>` / `Weak<T, {effects}>`.
     Weak(Box<Type>, WeakEffectRow),
 
+    /// Compiler-known `Grounded<T>` — a value whose provenance chain
+    /// includes at least one `data: grounded` source. The compiler
+    /// verifies this statically by tracing data flow from retrieval
+    /// tools through prompts to return types.
+    Grounded(Box<Type>),
+
     /// Placeholder when the checker can't determine a precise type.
     /// Propagates without cascading errors.
     Unknown,
@@ -75,6 +81,7 @@ impl Type {
                     format!("Weak<{}, {{{names}}}>", inner.display_name())
                 }
             }
+            Type::Grounded(inner) => format!("Grounded<{}>", inner.display_name()),
             Type::Unknown => "<unknown>".into(),
         }
     }
@@ -96,6 +103,10 @@ impl Type {
             (Type::Weak(inner_a, effects_a), Type::Weak(inner_b, effects_b)) => {
                 inner_a.is_assignable_to(inner_b) && effects_a == effects_b
             }
+            (Type::Grounded(a), Type::Grounded(b)) => a.is_assignable_to(b),
+            // A Grounded<T> is assignable to T (unwrapping provenance is safe;
+            // the other direction requires .unwrap_discarding_sources()).
+            (Type::Grounded(inner), other) => inner.is_assignable_to(other),
             (a, b) => a == b,
         }
     }

@@ -19,8 +19,8 @@ pub use checker::{typecheck, Checked};
 pub use errors::{TypeError, TypeErrorKind};
 pub use repl::{CheckedTurn, ReplLocal, ReplSession, ReplTurnBuild, REPL_RESULT_NAME};
 pub use effects::{
-    analyze_effects, AgentEffectSummary, ComposedProfile, ConstraintViolation, EffectProfile,
-    EffectRegistry,
+    analyze_effects, check_grounded_returns, AgentEffectSummary, ComposedProfile,
+    ConstraintViolation, EffectProfile, EffectRegistry, ProvenanceViolation,
 };
 pub use types::Type;
 

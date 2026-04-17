@@ -60,6 +60,25 @@ pub fn typecheck(file: &File, resolved: &Resolved) -> Checked {
         }
     }
 
+    // Provenance verification: check that agents returning Grounded<T>
+    // actually have a provenance path from a data: grounded source.
+    {
+        let owned_decls: Vec<corvid_ast::EffectDecl> = file.decls.iter().filter_map(|d| {
+            if let Decl::Effect(e) = d { Some(e.clone()) } else { None }
+        }).collect();
+        let registry = crate::effects::EffectRegistry::from_decls(&owned_decls);
+        let provenance_violations = crate::effects::check_grounded_returns(file, resolved, &registry);
+        for violation in provenance_violations {
+            c.errors.push(TypeError::new(
+                TypeErrorKind::UngroundedReturn {
+                    agent: violation.agent_name,
+                    message: violation.message,
+                },
+                violation.span,
+            ));
+        }
+    }
+
     Checked {
         types: c.types,
         local_types: c.local_types,
@@ -577,7 +596,8 @@ impl<'a> Checker<'a> {
                 | BuiltIn::List
                 | BuiltIn::Result
                 | BuiltIn::Option
-                | BuiltIn::Weak => {
+                | BuiltIn::Weak
+                | BuiltIn::Grounded => {
                     self.errors.push(TypeError::new(
                         TypeErrorKind::TypeAsValue {
                             name: id.name.clone(),
@@ -837,7 +857,16 @@ impl<'a> Checker<'a> {
                     }
                     return Type::Option(Box::new(Type::Unknown));
                 }
-                Type::Option(Box::new(self.check_expr(&args[0])))
+                let expected_inner = match expected {
+                    Some(Type::Option(inner)) => Some(&**inner),
+                    _ => None,
+                };
+                let inner_ty = self.check_expr_as(&args[0], expected_inner);
+                let final_inner_ty = match expected_inner {
+                    Some(exp) if inner_ty.is_assignable_to(exp) => exp.clone(),
+                    _ => inner_ty,
+                };
+                Type::Option(Box::new(final_inner_ty))
             }
             BuiltIn::WeakNew => {
                 if args.len() != 1 {
@@ -1445,6 +1474,20 @@ impl<'a> Checker<'a> {
                         Box::new(self.type_ref_to_type(&args[0])),
                         Box::new(self.type_ref_to_type(&args[1])),
                     )
+                }
+                "Grounded" => {
+                    if args.len() != 1 {
+                        self.errors.push(TypeError::new(
+                            TypeErrorKind::GenericArityMismatch {
+                                name: name.name.clone(),
+                                expected: 1,
+                                got: args.len(),
+                            },
+                            *span,
+                        ));
+                        return Type::Unknown;
+                    }
+                    Type::Grounded(Box::new(self.type_ref_to_type(&args[0])))
                 }
                 _ => Type::Unknown,
             },

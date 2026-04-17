@@ -55,7 +55,7 @@ impl std::fmt::Display for NotNativeReason {
 fn is_refcounted_type(ty: &Type) -> bool {
     match ty {
         Type::String | Type::Struct(_) | Type::List(_) | Type::Weak(_, _) | Type::Result(_, _) => true,
-        Type::Option(inner) => is_refcounted_type(inner),
+        Type::Option(inner) => is_native_wide_option_type(ty) || is_refcounted_type(inner),
         _ => false,
     }
 }
@@ -66,6 +66,7 @@ fn is_native_value_type(ty: &Type) -> bool {
         Type::Struct(_) | Type::List(_) | Type::Weak(_, _) => true,
         Type::Option(_) => is_native_option_type(ty),
         Type::Result(ok, err) => is_native_value_type(ok) && is_native_value_type(err),
+        Type::Grounded(inner) => is_native_value_type(inner),
         Type::Nothing | Type::Function { .. } | Type::Unknown => false,
     }
 }

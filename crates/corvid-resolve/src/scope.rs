@@ -40,6 +40,7 @@ pub enum BuiltIn {
     Err,
     Some,
     None,
+    Grounded,
     WeakNew,
     WeakUpgrade,
     // Structural sentinels (surface as Idents today; real variants later).
@@ -93,6 +94,7 @@ impl SymbolTable {
         self.builtins.insert("Result".into(), BuiltIn::Result);
         self.builtins.insert("Option".into(), BuiltIn::Option);
         self.builtins.insert("Weak".into(), BuiltIn::Weak);
+        self.builtins.insert("Grounded".into(), BuiltIn::Grounded);
         self.builtins.insert("Ok".into(), BuiltIn::Ok);
         self.builtins.insert("Err".into(), BuiltIn::Err);
         self.builtins.insert("Some".into(), BuiltIn::Some);
