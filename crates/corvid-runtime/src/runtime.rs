@@ -7,7 +7,7 @@
 
 use crate::approvals::{Approver, ApprovalDecision, ApprovalRequest, StdinApprover};
 use crate::errors::RuntimeError;
-use crate::llm::{LlmAdapter, LlmRegistry, LlmRequest, LlmResponse};
+use crate::llm::{LlmAdapter, LlmRegistry, LlmRequest, LlmRequestRef, LlmResponse};
 use crate::tools::ToolRegistry;
 use crate::tracing::{fresh_run_id, now_ms, TraceEvent, Tracer};
 use std::path::Path;
@@ -75,18 +75,30 @@ impl Runtime {
         if req.model.is_empty() {
             req.model = self.default_model.clone();
         }
+        self.call_llm_ref(req.as_ref()).await
+    }
+
+    /// Borrowed LLM-call path for native bridges that already hold prompt and
+    /// rendered text as borrowed strings and only need owned clones when
+    /// tracing or provider JSON construction requires them.
+    pub async fn call_llm_ref(&self, req: LlmRequestRef<'_>) -> Result<LlmResponse, RuntimeError> {
+        let req = if req.model.is_empty() {
+            req.with_model(&self.default_model)
+        } else {
+            req
+        };
         if self.tracer.is_enabled() {
             self.tracer.emit(TraceEvent::LlmCall {
                 ts_ms: now_ms(),
                 run_id: self.tracer.run_id().to_string(),
-                prompt: req.prompt.clone(),
+                prompt: req.prompt.to_string(),
                 model: if req.model.is_empty() {
                     None
                 } else {
-                    Some(req.model.clone())
+                    Some(req.model.to_string())
                 },
-                rendered: Some(req.rendered.clone()),
-                args: req.args.clone(),
+                rendered: Some(req.rendered.to_string()),
+                args: req.args.to_vec(),
             });
         }
         let resp = self.llms.call(&req).await?;
@@ -94,7 +106,7 @@ impl Runtime {
             self.tracer.emit(TraceEvent::LlmResult {
                 ts_ms: now_ms(),
                 run_id: self.tracer.run_id().to_string(),
-                prompt: req.prompt.clone(),
+                prompt: req.prompt.to_string(),
                 result: resp.value.clone(),
             });
         }

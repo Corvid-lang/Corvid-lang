@@ -18,6 +18,7 @@ pub mod openai_compat;
 
 use crate::errors::RuntimeError;
 use futures::future::BoxFuture;
+use std::borrow::Cow;
 use std::sync::Arc;
 
 /// Request handed to an adapter.
@@ -40,6 +41,48 @@ pub struct LlmRequest {
     /// `None` means the caller doesn't care about structure — the adapter
     /// returns whatever the model produced.
     pub output_schema: Option<serde_json::Value>,
+}
+
+/// Borrowed request shape for hot paths that already hold prompt/model/rendered
+/// as borrowed strings and do not need to allocate an owned wrapper just to
+/// cross the runtime boundary.
+#[derive(Debug, Clone, Copy)]
+pub struct LlmRequestRef<'a> {
+    pub prompt: &'a str,
+    pub model: &'a str,
+    pub rendered: &'a str,
+    pub args: &'a [serde_json::Value],
+    pub output_schema: Option<&'a serde_json::Value>,
+}
+
+impl LlmRequest {
+    pub fn as_ref(&self) -> LlmRequestRef<'_> {
+        LlmRequestRef {
+            prompt: &self.prompt,
+            model: &self.model,
+            rendered: &self.rendered,
+            args: &self.args,
+            output_schema: self.output_schema.as_ref(),
+        }
+    }
+}
+
+impl<'a> LlmRequestRef<'a> {
+    pub fn with_model(self, model: &'a str) -> Self {
+        Self { model, ..self }
+    }
+
+    pub fn prompt_cow(&self) -> Cow<'a, str> {
+        Cow::Borrowed(self.prompt)
+    }
+
+    pub fn model_cow(&self) -> Cow<'a, str> {
+        Cow::Borrowed(self.model)
+    }
+
+    pub fn rendered_cow(&self) -> Cow<'a, str> {
+        Cow::Borrowed(self.rendered)
+    }
 }
 
 /// Response returned by an adapter. The `value` is the JSON shape that
@@ -80,7 +123,7 @@ pub trait LlmAdapter: Send + Sync {
     /// the interpreter awaits.
     fn call<'a>(
         &'a self,
-        req: &'a LlmRequest,
+        req: &'a LlmRequestRef<'a>,
     ) -> BoxFuture<'a, Result<LlmResponse, RuntimeError>>;
 }
 
@@ -100,11 +143,11 @@ impl LlmRegistry {
     }
 
     /// Dispatch `req` to the first adapter whose `handles` returns true.
-    pub async fn call(&self, req: &LlmRequest) -> Result<LlmResponse, RuntimeError> {
+    pub async fn call(&self, req: &LlmRequestRef<'_>) -> Result<LlmResponse, RuntimeError> {
         let model = if req.model.is_empty() {
             return Err(RuntimeError::NoModelConfigured);
         } else {
-            req.model.as_str()
+            req.model
         };
         let adapter = self
             .adapters
@@ -140,7 +183,7 @@ mod tests {
             args: vec![],
             output_schema: None,
         };
-        let resp = reg.call(&req).await.unwrap();
+        let resp = reg.call(&req.as_ref()).await.unwrap();
         assert_eq!(resp.value, serde_json::json!({"should_refund": true}));
     }
 
@@ -154,7 +197,7 @@ mod tests {
             args: vec![],
             output_schema: None,
         };
-        let err = reg.call(&req).await.unwrap_err();
+        let err = reg.call(&req.as_ref()).await.unwrap_err();
         assert!(matches!(err, RuntimeError::NoAdapter(ref m) if m == "claude-opus-4-6"));
     }
 
@@ -168,7 +211,7 @@ mod tests {
             args: vec![],
             output_schema: None,
         };
-        let err = reg.call(&req).await.unwrap_err();
+        let err = reg.call(&req.as_ref()).await.unwrap_err();
         assert!(matches!(err, RuntimeError::NoModelConfigured));
     }
 }

@@ -13,7 +13,7 @@
 //! Out of scope (deferred): streaming, prompt caching, vision, batch.
 
 use crate::errors::RuntimeError;
-use crate::llm::{LlmAdapter, LlmRequest, LlmResponse};
+use crate::llm::{LlmAdapter, LlmRequestRef, LlmResponse};
 use futures::future::BoxFuture;
 use serde_json::{json, Value};
 use std::time::Duration;
@@ -68,7 +68,7 @@ impl LlmAdapter for AnthropicAdapter {
 
     fn call<'a>(
         &'a self,
-        req: &'a LlmRequest,
+        req: &'a LlmRequestRef<'a>,
     ) -> BoxFuture<'a, Result<LlmResponse, RuntimeError>> {
         Box::pin(async move {
             let url = format!("{}/v1/messages", self.base_url.trim_end_matches('/'));
@@ -111,7 +111,7 @@ impl LlmAdapter for AnthropicAdapter {
     }
 }
 
-fn build_request_body(req: &LlmRequest) -> Value {
+fn build_request_body(req: &LlmRequestRef<'_>) -> Value {
     let mut body = json!({
         "model": req.model,
         "max_tokens": DEFAULT_MAX_TOKENS,
@@ -207,6 +207,7 @@ fn extract_usage(parsed: &Value) -> crate::llm::TokenUsage {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::llm::LlmRequest;
 
     #[test]
     fn handles_only_claude_prefixed_models() {
@@ -230,7 +231,7 @@ mod tests {
                 "required": ["x"],
             })),
         };
-        let body = build_request_body(&req);
+        let body = build_request_body(&req.as_ref());
         assert_eq!(body["model"], "claude-opus-4-6");
         assert_eq!(body["messages"][0]["content"], "decide pls");
         assert_eq!(body["tools"][0]["name"], "respond_with_decide");
@@ -247,7 +248,7 @@ mod tests {
             args: vec![],
             output_schema: None,
         };
-        let body = build_request_body(&req);
+        let body = build_request_body(&req.as_ref());
         assert!(body.get("tools").is_none());
         assert!(body.get("tool_choice").is_none());
     }

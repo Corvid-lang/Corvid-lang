@@ -53,7 +53,7 @@ async fn structured_call_sends_tool_definition_and_extracts_input() {
         })),
     };
 
-    let resp = adapter.call(&req).await.expect("adapter call");
+    let resp = adapter.call(&req.as_ref()).await.expect("adapter call");
     assert_eq!(
         resp.value,
         json!({"should_refund": true, "reason": "legit complaint"})
@@ -93,7 +93,7 @@ async fn unstructured_call_concatenates_text_blocks() {
         args: vec![],
         output_schema: None,
     };
-    let resp = adapter.call(&req).await.unwrap();
+    let resp = adapter.call(&req.as_ref()).await.unwrap();
     assert_eq!(resp.value, json!("hello world"));
 }
 
@@ -114,7 +114,7 @@ async fn http_error_surfaces_as_adapter_failed() {
         args: vec![],
         output_schema: None,
     };
-    let err = adapter.call(&req).await.unwrap_err();
+    let err = adapter.call(&req.as_ref()).await.unwrap_err();
     let msg = format!("{err}");
     assert!(msg.contains("anthropic"));
     assert!(msg.contains("401"));

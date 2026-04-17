@@ -455,7 +455,7 @@ pub(crate) fn record_registered_tool_count(n: i64) {
 // better LLM behavior because the model has the type contract.
 // ------------------------------------------------------------
 
-use crate::llm::LlmRequest;
+use crate::llm::LlmRequestRef;
 
 /// Default retry count when `CORVID_PROMPT_MAX_RETRIES` env is unset.
 const DEFAULT_PROMPT_MAX_RETRIES: u32 = 3;
@@ -537,25 +537,27 @@ fn call_llm_once(
     system_prompt: &str,
 ) -> Result<String, String> {
     let runtime = state.corvid_runtime();
-    let prompt_owned = prompt_name.to_string();
-    let model_owned = model.to_string();
     let combined = if using_env_mock_llm() {
-        rendered.to_string()
+        rendered.to_owned()
     } else {
         // Combine system prompt + user-side rendered prompt with two
         // newlines. Adapters that have native system-prompt support could
         // separate these later; for now the concat is universal.
-        format!("{system_prompt}\n\n{rendered}")
+        let mut combined = String::with_capacity(system_prompt.len() + 2 + rendered.len());
+        combined.push_str(system_prompt);
+        combined.push_str("\n\n");
+        combined.push_str(rendered);
+        combined
     };
-    let req = LlmRequest {
-        prompt: prompt_owned,
-        model: model_owned,
-        rendered: combined,
-        args: Vec::new(),
+    let req = LlmRequestRef {
+        prompt: prompt_name,
+        model,
+        rendered: &combined,
+        args: &[],
         output_schema: None,
     };
     let resp = state.tokio_handle().block_on(async move {
-        runtime.call_llm(req).await
+        runtime.call_llm_ref(req).await
     });
     match resp {
         Ok(r) => match r.value {

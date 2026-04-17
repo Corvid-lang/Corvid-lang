@@ -26,7 +26,7 @@
 //! architectural shape.
 
 use crate::errors::RuntimeError;
-use crate::llm::{LlmAdapter, LlmRequest, LlmResponse};
+use crate::llm::{LlmAdapter, LlmRequestRef, LlmResponse};
 use futures::future::BoxFuture;
 use serde_json::{json, Value};
 use std::time::Duration;
@@ -63,7 +63,7 @@ impl LlmAdapter for OpenAiCompatibleAdapter {
 
     fn call<'a>(
         &'a self,
-        req: &'a LlmRequest,
+        req: &'a LlmRequestRef<'a>,
     ) -> BoxFuture<'a, Result<LlmResponse, RuntimeError>> {
         Box::pin(async move {
             let (base_url, model_name) = parse_spec(&req.model)?;

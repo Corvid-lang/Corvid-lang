@@ -22,7 +22,7 @@
 //! sampling parameters.
 
 use crate::errors::RuntimeError;
-use crate::llm::{LlmAdapter, LlmRequest, LlmResponse, TokenUsage};
+use crate::llm::{LlmAdapter, LlmRequestRef, LlmResponse, TokenUsage};
 use futures::future::BoxFuture;
 use serde_json::{json, Value};
 use std::time::Duration;
@@ -75,7 +75,7 @@ impl LlmAdapter for OllamaAdapter {
 
     fn call<'a>(
         &'a self,
-        req: &'a LlmRequest,
+        req: &'a LlmRequestRef<'a>,
     ) -> BoxFuture<'a, Result<LlmResponse, RuntimeError>> {
         Box::pin(async move {
             let model_name = req
@@ -93,7 +93,7 @@ impl LlmAdapter for OllamaAdapter {
                     {"role": "user", "content": req.rendered}
                 ],
             });
-            if let Some(schema) = &req.output_schema {
+            if let Some(schema) = req.output_schema {
                 // Newer Ollama (≥ 0.5.x) accepts a JSON schema
                 // directly in `format`. Older versions accepted
                 // only `format: "json"`. We send the schema; Ollama

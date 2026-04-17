@@ -12,7 +12,7 @@
 //! reasoning-effort knobs for o-series.
 
 use crate::errors::RuntimeError;
-use crate::llm::{LlmAdapter, LlmRequest, LlmResponse, TokenUsage};
+use crate::llm::{LlmAdapter, LlmRequestRef, LlmResponse, TokenUsage};
 use futures::future::BoxFuture;
 use serde_json::{json, Value};
 use std::time::Duration;
@@ -64,7 +64,7 @@ impl LlmAdapter for OpenAiAdapter {
 
     fn call<'a>(
         &'a self,
-        req: &'a LlmRequest,
+        req: &'a LlmRequestRef<'a>,
     ) -> BoxFuture<'a, Result<LlmResponse, RuntimeError>> {
         Box::pin(async move {
             let url = format!(
@@ -109,7 +109,7 @@ impl LlmAdapter for OpenAiAdapter {
     }
 }
 
-fn build_request_body(req: &LlmRequest) -> Value {
+fn build_request_body(req: &LlmRequestRef<'_>) -> Value {
     let mut body = json!({
         "model": req.model,
         "messages": [
@@ -193,6 +193,7 @@ pub(crate) fn extract_usage(parsed: &Value) -> TokenUsage {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::llm::LlmRequest;
 
     #[test]
     fn handles_gpt_and_o_series_models() {
@@ -220,7 +221,7 @@ mod tests {
                 "additionalProperties": false,
             })),
         };
-        let body = build_request_body(&req);
+        let body = build_request_body(&req.as_ref());
         let rf = &body["response_format"];
         assert_eq!(rf["type"], "json_schema");
         assert_eq!(rf["json_schema"]["name"], "respond_with_decide");
@@ -237,7 +238,7 @@ mod tests {
             args: vec![],
             output_schema: None,
         };
-        let body = build_request_body(&req);
+        let body = build_request_body(&req.as_ref());
         assert!(body.get("response_format").is_none());
     }
 

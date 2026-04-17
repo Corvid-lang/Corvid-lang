@@ -5,7 +5,7 @@
 //! tests do not silently pass on missing setup.
 
 use crate::errors::RuntimeError;
-use crate::llm::{LlmAdapter, LlmRequest, LlmResponse, TokenUsage};
+use crate::llm::{LlmAdapter, LlmRequestRef, LlmResponse, TokenUsage};
 use crate::abi::CorvidString;
 use crate::ffi_bridge::string_from_static_str;
 use futures::future::BoxFuture;
@@ -186,14 +186,14 @@ impl LlmAdapter for MockAdapter {
 
     fn call<'a>(
         &'a self,
-        req: &'a LlmRequest,
+        req: &'a LlmRequestRef<'a>,
     ) -> BoxFuture<'a, Result<LlmResponse, RuntimeError>> {
         Box::pin(async move {
             let value = self
                 .replies
                 .lock()
                 .unwrap()
-                .get(&req.prompt)
+                .get(req.prompt)
                 .cloned()
                 .ok_or_else(|| RuntimeError::AdapterFailed {
                     adapter: self.name.clone(),
@@ -294,13 +294,13 @@ impl LlmAdapter for EnvVarMockAdapter {
 
     fn call<'a>(
         &'a self,
-        req: &'a LlmRequest,
+        req: &'a LlmRequestRef<'a>,
     ) -> BoxFuture<'a, Result<LlmResponse, RuntimeError>> {
-        let prompt = req.prompt.clone();
+        let prompt = req.prompt;
         let value = {
             let mut replies = self.replies.lock().unwrap();
             replies
-                .get_mut(&prompt)
+                .get_mut(prompt)
                 .and_then(|queue| queue.pop_front())
                 .unwrap_or_else(|| self.fallback.clone())
         };
@@ -308,7 +308,7 @@ impl LlmAdapter for EnvVarMockAdapter {
             let latency_lookup_start = Instant::now();
             let mut latencies = self.latencies_ms.lock().unwrap();
             let value = latencies
-                .get_mut(&prompt)
+                .get_mut(prompt)
                 .and_then(|queue| queue.pop_front())
                 .unwrap_or(0);
             BENCH_MOCK_DISPATCH_NS.fetch_add(

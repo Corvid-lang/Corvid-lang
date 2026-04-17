@@ -18,7 +18,7 @@
 //! message, multi-modal inputs.
 
 use crate::errors::RuntimeError;
-use crate::llm::{LlmAdapter, LlmRequest, LlmResponse, TokenUsage};
+use crate::llm::{LlmAdapter, LlmRequestRef, LlmResponse, TokenUsage};
 use futures::future::BoxFuture;
 use serde_json::{json, Value};
 use std::time::Duration;
@@ -60,7 +60,7 @@ impl LlmAdapter for GeminiAdapter {
 
     fn call<'a>(
         &'a self,
-        req: &'a LlmRequest,
+        req: &'a LlmRequestRef<'a>,
     ) -> BoxFuture<'a, Result<LlmResponse, RuntimeError>> {
         Box::pin(async move {
             let url = format!(
