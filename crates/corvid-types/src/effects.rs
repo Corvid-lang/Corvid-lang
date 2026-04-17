@@ -55,6 +55,11 @@ impl EffectRegistry {
         // Register built-in dimension schemas with default composition rules.
         registry.register_builtin_dimensions();
 
+        // Legacy bridge: the `dangerous` keyword on tools maps to a built-in
+        // effect with `trust: human_required, reversible: false`. Existing
+        // code using `dangerous` gets dimensional tracking for free.
+        registry.register_dangerous_effect();
+
         for decl in decls {
             let mut profile = EffectProfile {
                 name: decl.name.name.clone(),
@@ -133,6 +138,19 @@ impl EffectRegistry {
                 name: "confidence".into(),
                 composition: CompositionRule::Min,
                 default: DimensionValue::Number(1.0),
+            },
+        );
+    }
+
+    fn register_dangerous_effect(&mut self) {
+        let mut dims = HashMap::new();
+        dims.insert("trust".into(), DimensionValue::Name("human_required".into()));
+        dims.insert("reversible".into(), DimensionValue::Bool(false));
+        self.effects.insert(
+            "dangerous".into(),
+            EffectProfile {
+                name: "dangerous".into(),
+                dimensions: dims,
             },
         );
     }

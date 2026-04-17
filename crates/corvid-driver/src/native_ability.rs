@@ -9,7 +9,7 @@
 //! Rationale for a pre-flight IR scan (vs. "try compile, catch
 //! NotSupported"): (a) names the native-ability rule explicitly so it's
 //! testable and documentable; (b) yields a driver-level error message
-//! rather than a codegen-internal one; (c) cheap — O(IR nodes) walk
+//! rather than a codegen-internal one; (c) cheap - O(IR nodes) walk
 //! with early exit.
 
 use corvid_ir::{IrBlock, IrCallKind, IrExpr, IrExprKind, IrFile, IrImportSource, IrStmt};
@@ -24,11 +24,12 @@ pub enum NotNativeReason {
     /// supplies a tools staticlib (`--with-tools-lib`). Without one,
     /// the scan reports this reason and the dispatcher falls back.
     ToolCall { name: String },
-    /// Wider tagged unions and non-Result retry bodies still route to
-    /// the interpreter. Nullable-pointer `Option<T>` with a
+    /// Wider tagged unions and retry bodies outside the supported
+    /// native `Result` / `Option` subset still route to the
+    /// interpreter. Nullable-pointer `Option<T>` with a
     /// refcounted payload, wide scalar `Option<Int|Bool|Float>`, and
-    /// the one-word `Result<T, E>` subset are the supported native
-    /// forms today.
+    /// the compositional native `Result<T, E>` subset are the
+    /// supported native forms today.
     TaggedUnionRetryNotNative,
 }
 
@@ -37,15 +38,15 @@ impl std::fmt::Display for NotNativeReason {
         match self {
             Self::PythonImport { module } => write!(
                 f,
-                "program imports Python module `{module}` — native Python FFI is not implemented yet"
+                "program imports Python module `{module}` - native Python FFI is not implemented yet"
             ),
             Self::ToolCall { name } => write!(
                 f,
-                "program calls tool `{name}` — pass `--with-tools-lib <path>` pointing at your compiled `#[tool]` staticlib, or let auto-dispatch fall back to the interpreter"
+                "program calls tool `{name}` - pass `--with-tools-lib <path>` pointing at your compiled `#[tool]` staticlib, or let auto-dispatch fall back to the interpreter"
             ),
             Self::TaggedUnionRetryNotNative => write!(
                 f,
-                "program uses a tagged-union or retry shape outside the current native subset — native AOT supports nullable-pointer `Option<T>`, wide scalar `Option<Int|Bool|Float>`, one-word `Result<T, E>`, postfix `?`, and `try ... retry` over native `Result<T, E>` bodies; wider shapes still run in the interpreter"
+                "program uses a tagged-union or retry shape outside the current native subset - native AOT supports nullable-pointer `Option<T>`, wide scalar `Option<Int|Bool|Float>`, compositional native `Result<T, E>`, postfix `?`, and `try ... retry` over native `Result<T, E>` and `Option<T>` bodies; wider shapes still run in the interpreter"
             ),
         }
     }
@@ -90,7 +91,7 @@ fn is_native_result_type(ty: &Type) -> bool {
 }
 
 /// Walk the IR and return `Ok(())` if every construct is native-able,
-/// else the first reason found (early exit — one reason is enough to
+/// else the first reason found (early exit - one reason is enough to
 /// route the caller to the interpreter tier).
 pub fn native_ability(ir: &IrFile) -> Result<(), NotNativeReason> {
     for import in &ir.imports {
@@ -258,7 +259,9 @@ fn scan_expr(expr: &IrExpr, current_return_ty: &Type) -> Result<(), NotNativeRea
         }
         IrExprKind::TryRetry { body, .. } => {
             scan_expr(body, current_return_ty)?;
-            if &body.ty == &expr.ty && is_native_result_type(&body.ty) {
+            if &body.ty == &expr.ty
+                && (is_native_result_type(&body.ty) || is_native_option_expr_type(&body.ty))
+            {
                 Ok(())
             } else {
                 Err(NotNativeReason::TaggedUnionRetryNotNative)
