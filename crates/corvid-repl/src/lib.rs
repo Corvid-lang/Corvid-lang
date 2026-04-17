@@ -1,6 +1,10 @@
 //! Interactive Corvid REPL.
 
+mod file_watch;
 mod replay;
+mod source_import;
+mod step_hook;
+mod trace_import;
 
 use std::collections::HashSet;
 use std::io::IsTerminal;
@@ -13,7 +17,10 @@ use corvid_resolve::{ReplResolveSession, ResolvedTurn};
 use corvid_runtime::Runtime;
 use corvid_syntax::{lex, parse_repl_input, ReplItem};
 use corvid_types::{Checked, ReplLocal, ReplSession, Type};
-use corvid_vm::{render_value, run_agent_with_env, Env, InterpError, InterpErrorKind, Value};
+use corvid_vm::{
+    render_value, run_agent_stepping, run_agent_with_env, Env, ExecutionTrace, InterpError,
+    InterpErrorKind, RecordingHook, ReplayForkHook, StepMode, Value,
+};
 use replay::ReplaySession;
 use rustyline::error::ReadlineError;
 use rustyline::DefaultEditor;
@@ -37,6 +44,10 @@ pub struct Repl {
     runtime: Runtime,
     tokio: tokio::runtime::Runtime,
     replay: Option<ReplayState>,
+    step_mode: StepMode,
+    last_trace: Option<ExecutionTrace>,
+    last_ir: Option<IrFile>,
+    watcher: Option<file_watch::FileWatchManager>,
 }
 
 enum ReadTurn {
@@ -70,6 +81,10 @@ impl Repl {
             runtime: Runtime::builder().build(),
             tokio,
             replay: None,
+            step_mode: StepMode::Run,
+            last_trace: None,
+            last_ir: None,
+            watcher: None,
         })
     }
 
@@ -108,6 +123,7 @@ impl Repl {
         }
 
         loop {
+            self.check_hot_reload(&mut io::stderr().lock())?;
             match self.read_turn_interactive(&mut editor)? {
                 ReadTurn::Source(source) => {
                     self.process_source(&source, &mut io::stdout().lock(), true)?;
@@ -285,6 +301,127 @@ impl Repl {
                 self.quit_replay(output)?;
                 Ok(true)
             }
+            ":stepon" => {
+                self.step_mode = StepMode::Boundary;
+                writeln!(output, "step-through enabled (pauses at tool/prompt/approval boundaries)")?;
+                output.flush()?;
+                Ok(true)
+            }
+            ":stepinto" => {
+                self.step_mode = StepMode::Statement;
+                writeln!(output, "step-through enabled (pauses at every statement)")?;
+                output.flush()?;
+                Ok(true)
+            }
+            ":stepoff" => {
+                self.step_mode = StepMode::Run;
+                writeln!(output, "step-through disabled")?;
+                output.flush()?;
+                Ok(true)
+            }
+            ":whatif" => {
+                let rest = trimmed[command.len()..].trim();
+                let (target, json_str) = match rest.split_once(" returns ") {
+                    Some((t, j)) => (t.trim(), j.trim()),
+                    None => {
+                        writeln!(output, "usage: :whatif <tool_or_prompt> returns <json>")?;
+                        output.flush()?;
+                        return Ok(true);
+                    }
+                };
+                match serde_json::from_str::<serde_json::Value>(json_str) {
+                    Ok(val) => self.eval_whatif(target, val, output)?,
+                    Err(e) => {
+                        writeln!(output, "invalid JSON: {e}")?;
+                        output.flush()?;
+                    }
+                }
+                Ok(true)
+            }
+            ":trace" => {
+                match &self.last_trace {
+                    Some(trace) => {
+                        let boundaries = trace.boundaries();
+                        if boundaries.is_empty() {
+                            writeln!(output, "last trace: {} checkpoint(s), no boundary events", trace.len())?;
+                        } else {
+                            writeln!(output, "last trace: {} checkpoint(s), {} boundary event(s):", trace.len(), boundaries.len())?;
+                            for cp in &boundaries {
+                                let label = match &cp.event {
+                                    corvid_vm::StepEvent::BeforeToolCall { tool_name, .. } => format!("  [{:>3}] tool call: {tool_name}", cp.index),
+                                    corvid_vm::StepEvent::AfterToolCall { tool_name, elapsed_ms, .. } => format!("  [{:>3}] tool result: {tool_name} ({elapsed_ms}ms)", cp.index),
+                                    corvid_vm::StepEvent::BeforePromptCall { prompt_name, .. } => format!("  [{:>3}] prompt call: {prompt_name}", cp.index),
+                                    corvid_vm::StepEvent::AfterPromptCall { prompt_name, elapsed_ms, .. } => format!("  [{:>3}] prompt result: {prompt_name} ({elapsed_ms}ms)", cp.index),
+                                    corvid_vm::StepEvent::BeforeApproval { label, .. } => format!("  [{:>3}] approval: {label}", cp.index),
+                                    corvid_vm::StepEvent::AfterApproval { label, approved, .. } => format!("  [{:>3}] approval result: {label} -> {}", cp.index, if *approved { "yes" } else { "no" }),
+                                    corvid_vm::StepEvent::BeforeAgentCall { agent_name, .. } => format!("  [{:>3}] agent call: {agent_name}", cp.index),
+                                    corvid_vm::StepEvent::AfterAgentCall { agent_name, .. } => format!("  [{:>3}] agent result: {agent_name}", cp.index),
+                                    _ => continue,
+                                };
+                                writeln!(output, "{label}")?;
+                            }
+                        }
+                    }
+                    None => {
+                        writeln!(output, "no execution trace available (run with :stepon first)")?;
+                    }
+                }
+                output.flush()?;
+                Ok(true)
+            }
+            ":help" | ":h" => {
+                self.cmd_help(output)?;
+                Ok(true)
+            }
+            ":type" | ":t" => {
+                let rest = trimmed[command.len()..].trim();
+                if rest.is_empty() {
+                    writeln!(output, "usage: :type <expression>")?;
+                    output.flush()?;
+                } else {
+                    self.cmd_type(rest, output)?;
+                }
+                Ok(true)
+            }
+            ":reset" => {
+                let rest = trimmed[command.len()..].trim();
+                self.cmd_reset(rest, output)?;
+                Ok(true)
+            }
+            ":inspect" | ":i" => {
+                let rest = trimmed[command.len()..].trim();
+                if rest.is_empty() {
+                    writeln!(output, "usage: :inspect <name>")?;
+                    output.flush()?;
+                } else {
+                    self.cmd_inspect(rest, output)?;
+                }
+                Ok(true)
+            }
+            ":locals" | ":env" => {
+                self.cmd_locals(output)?;
+                Ok(true)
+            }
+            ":import-trace" => {
+                let path = trimmed[command.len()..].trim().trim_matches('"');
+                if path.is_empty() {
+                    writeln!(output, "usage: :import-trace <trace.jsonl>")?;
+                    output.flush()?;
+                } else {
+                    self.cmd_import_trace(path, output)?;
+                }
+                Ok(true)
+            }
+            ":import" => {
+                let rest = trimmed[command.len()..].trim();
+                if rest.is_empty() {
+                    writeln!(output, "usage: :import \"<path.cor>\" or :import <name> from \"<path.cor>\"")?;
+                    output.flush()?;
+                } else {
+                    self.cmd_import_source(rest, output)?;
+                }
+                Ok(true)
+            }
             _ => Ok(false),
         }
     }
@@ -309,17 +446,61 @@ impl Repl {
             return Ok(());
         }
 
-        let turn = self.resolver.resolve_decl_turn(decl.clone());
-        if self.write_resolve_errors(&turn, output)? {
-            return Ok(());
-        }
+        let name = corvid_resolve::decl_name(&decl).map(|s| s.to_string());
+        let is_redefine = name
+            .as_deref()
+            .is_some_and(|n| self.resolver.has_decl(n));
 
-        let checked = self.typer.typecheck_decl_turn(&turn.file, &turn.resolved);
-        if self.write_type_errors(&checked, output)? {
-            return Ok(());
-        }
+        if is_redefine {
+            match self.resolver.redefine_decl(decl) {
+                Some(result) => {
+                    if !result.resolved.resolved.errors.is_empty() {
+                        self.write_resolve_errors(&result.resolved, output)?;
+                        return Ok(());
+                    }
 
-        self.resolver.commit_decl(decl);
+                    let checked = self.typer.typecheck_decl_turn(
+                        &result.resolved.file,
+                        &result.resolved.resolved,
+                    );
+                    if self.write_type_errors(&checked, output)? {
+                        return Ok(());
+                    }
+
+                    writeln!(
+                        output,
+                        "\x1b[33m(redefined {kind} `{name}`)\x1b[0m",
+                        kind = result.new_kind,
+                        name = result.name,
+                    )?;
+
+                    if !result.affected_names.is_empty() {
+                        writeln!(
+                            output,
+                            "  \x1b[2maffected: {}\x1b[0m",
+                            result.affected_names.join(", ")
+                        )?;
+                    }
+                    output.flush()?;
+                }
+                None => {
+                    writeln!(output, "failed to redefine declaration")?;
+                    output.flush()?;
+                }
+            }
+        } else {
+            let turn = self.resolver.resolve_decl_turn(decl.clone());
+            if self.write_resolve_errors(&turn, output)? {
+                return Ok(());
+            }
+
+            let checked = self.typer.typecheck_decl_turn(&turn.file, &turn.resolved);
+            if self.write_type_errors(&checked, output)? {
+                return Ok(());
+            }
+
+            self.resolver.commit_decl(decl);
+        }
         Ok(())
     }
 
@@ -407,9 +588,22 @@ impl Repl {
         output: &mut W,
         allow_interrupt: bool,
     ) -> io::Result<Option<Env>> {
-        let args = self.locals.iter().map(|local| local.value.clone()).collect();
+        self.last_ir = Some(ir.clone());
+        let args: Vec<Value> = self.locals.iter().map(|local| local.value.clone()).collect();
+        let step_mode = self.step_mode;
+
         let outcome = self.tokio.block_on(async {
-            if allow_interrupt {
+            if step_mode != StepMode::Run {
+                let hook: std::sync::Arc<dyn corvid_vm::StepHook> =
+                    std::sync::Arc::new(step_hook::ReplStepHook);
+                match run_agent_stepping(
+                    ir, REPL_AGENT_NAME, args, &self.runtime,
+                    hook, step_mode,
+                ).await {
+                    Ok((_, env)) => TurnEval::Completed(env),
+                    Err(error) => TurnEval::Error(error),
+                }
+            } else if allow_interrupt {
                 tokio::select! {
                     result = run_agent_with_env(ir, REPL_AGENT_NAME, args, &self.runtime) => {
                         match result {
@@ -448,6 +642,634 @@ impl Repl {
                 Ok(None)
             }
         }
+    }
+
+    fn eval_turn_recording<W: Write>(
+        &mut self,
+        ir: &IrFile,
+        output: &mut W,
+        step_mode: StepMode,
+    ) -> io::Result<(Option<Env>, Option<ExecutionTrace>)> {
+        self.last_ir = Some(ir.clone());
+        let args: Vec<Value> = self.locals.iter().map(|local| local.value.clone()).collect();
+
+        let trace_store = std::sync::Arc::new(std::sync::Mutex::new(ExecutionTrace::default()));
+        let trace_clone = std::sync::Arc::clone(&trace_store);
+
+        let outcome = self.tokio.block_on(async {
+            let inner: std::sync::Arc<dyn corvid_vm::StepHook> =
+                std::sync::Arc::new(step_hook::ReplStepHook);
+            let recording = std::sync::Arc::new(RecordingHook::new(inner));
+            let trace_ref = recording.trace_ref();
+            let result = run_agent_stepping(
+                ir, REPL_AGENT_NAME, args, &self.runtime,
+                recording, step_mode,
+            ).await;
+            let trace = trace_ref.lock().unwrap().clone();
+            *trace_clone.lock().unwrap() = trace;
+            match result {
+                Ok((_, env)) => TurnEval::Completed(env),
+                Err(error) => TurnEval::Error(error),
+            }
+        });
+
+        let trace = trace_store.lock().unwrap().clone();
+        self.last_trace = Some(trace.clone());
+
+        match outcome {
+            TurnEval::Completed(env) => Ok((Some(env), Some(trace))),
+            TurnEval::Cancelled => {
+                writeln!(output, "^C")?;
+                output.flush()?;
+                Ok((None, Some(trace)))
+            }
+            TurnEval::Error(error) => {
+                writeln!(output, "{error}")?;
+                output.flush()?;
+                Ok((None, Some(trace)))
+            }
+        }
+    }
+
+    fn eval_whatif<W: Write>(
+        &mut self,
+        target: &str,
+        override_json: serde_json::Value,
+        output: &mut W,
+    ) -> io::Result<()> {
+        let trace = match self.last_trace.as_ref() {
+            Some(t) => t.clone(),
+            None => {
+                writeln!(output, "no execution trace available (run with :stepon first)")?;
+                output.flush()?;
+                return Ok(());
+            }
+        };
+        let ir = match self.last_ir.as_ref() {
+            Some(ir) => ir.clone(),
+            None => {
+                writeln!(output, "no IR available from the last execution")?;
+                output.flush()?;
+                return Ok(());
+            }
+        };
+
+        let fork_at = trace
+            .find_tool_call(target)
+            .or_else(|| trace.find_prompt_call(target))
+            .or_else(|| trace.find_approval(target));
+
+        let fork_at = match fork_at {
+            Some(idx) => idx,
+            None => {
+                writeln!(output, "no tool, prompt, or approval named `{target}` in the last trace")?;
+                output.flush()?;
+                return Ok(());
+            }
+        };
+
+        writeln!(
+            output,
+            "forking at checkpoint {fork_at}, overriding `{target}` with {}",
+            serde_json::to_string(&override_json).unwrap_or_default()
+        )?;
+        output.flush()?;
+
+        let args: Vec<Value> = self.locals.iter().map(|local| local.value.clone()).collect();
+        let outcome = self.tokio.block_on(async {
+            let live: std::sync::Arc<dyn corvid_vm::StepHook> =
+                std::sync::Arc::new(step_hook::ReplStepHook);
+            let fork_hook = std::sync::Arc::new(ReplayForkHook::new(
+                trace, fork_at, Some(override_json), live,
+            ));
+            match run_agent_stepping(
+                &ir, REPL_AGENT_NAME, args, &self.runtime,
+                fork_hook, StepMode::Boundary,
+            ).await {
+                Ok((_, env)) => TurnEval::Completed(env),
+                Err(error) => TurnEval::Error(error),
+            }
+        });
+
+        match outcome {
+            TurnEval::Completed(env) => {
+                // For whatif runs we show the return value directly without
+                // committing locals — the session state stays as it was
+                // before the counterfactual.
+                let agent = ir.agents.iter().find(|a| a.name == REPL_AGENT_NAME);
+                if let Some(agent) = agent {
+                    if let Some(last_param) = agent.params.last() {
+                        if let Some(val) = env.lookup(last_param.local_id) {
+                            writeln!(output, "= {}", render_value(&val))?;
+                            output.flush()?;
+                        }
+                    }
+                }
+            }
+            TurnEval::Cancelled => {
+                writeln!(output, "^C")?;
+                output.flush()?;
+            }
+            TurnEval::Error(error) => {
+                writeln!(output, "{error}")?;
+                output.flush()?;
+            }
+        }
+        Ok(())
+    }
+
+    fn cmd_help<W: Write>(&self, output: &mut W) -> io::Result<()> {
+        let step_status = match self.step_mode {
+            StepMode::Run => "off",
+            StepMode::Boundary => "on (boundary)",
+            StepMode::Statement => "on (statement)",
+        };
+
+        writeln!(output, "\x1b[1mCorvid REPL\x1b[0m")?;
+        writeln!(output)?;
+        writeln!(output, "\x1b[1mExecution:\x1b[0m")?;
+        writeln!(output, "  <expression>     evaluate and print result")?;
+        writeln!(output, "  <statement>      execute (let, if, for, return)")?;
+        writeln!(output, "  <declaration>    define agent/type/tool/prompt")?;
+        writeln!(output)?;
+        writeln!(output, "\x1b[1mStep-through:\x1b[0m  (current: {step_status})")?;
+        writeln!(output, "  :stepon          pause at tool/prompt/approval boundaries")?;
+        writeln!(output, "  :stepinto        pause at every statement")?;
+        writeln!(output, "  :stepoff         normal execution")?;
+        writeln!(output, "  :trace           show last execution trace")?;
+        writeln!(output, "  :whatif <name> returns <json>")?;
+        writeln!(output, "                   re-run with a counterfactual result")?;
+        writeln!(output)?;
+        writeln!(output, "\x1b[1mInspection:\x1b[0m")?;
+        writeln!(output, "  :type <expr>     show inferred type without executing")?;
+        writeln!(output, "  :inspect <name>  show declaration details + dependencies")?;
+        writeln!(output, "  :locals          show current local bindings")?;
+        writeln!(output)?;
+        writeln!(output, "\x1b[1mImport:\x1b[0m")?;
+        writeln!(output, "  :import \"path.cor\"          import all declarations from file")?;
+        writeln!(output, "  :import name from \"path.cor\" import one decl + dependencies")?;
+        writeln!(output, "  :import-trace \"trace.jsonl\"  mock tools/prompts from trace")?;
+        writeln!(output)?;
+        writeln!(output, "\x1b[1mSession:\x1b[0m")?;
+        writeln!(output, "  :reset           clear everything (locals + declarations)")?;
+        writeln!(output, "  :reset locals    clear local values, keep declarations")?;
+        writeln!(output, "  :help            this message")?;
+        writeln!(output)?;
+        writeln!(output, "\x1b[1mReplay:\x1b[0m")?;
+        writeln!(output, "  :replay <path>   load a JSONL trace file")?;
+        writeln!(output, "  :step [n]        advance n replay steps")?;
+        writeln!(output, "  :run             run remaining replay steps")?;
+        writeln!(output, "  :show            re-display current replay step")?;
+        writeln!(output, "  :where           show replay position")?;
+        writeln!(output, "  :quit            exit replay mode")?;
+        writeln!(output)?;
+
+        // Session state summary
+        let decls = self.resolver.decls();
+        let agents: Vec<&str> = decls.iter().filter_map(|d| match d {
+            Decl::Agent(a) => Some(a.name.name.as_str()),
+            _ => None,
+        }).collect();
+        let types: Vec<&str> = decls.iter().filter_map(|d| match d {
+            Decl::Type(t) => Some(t.name.name.as_str()),
+            _ => None,
+        }).collect();
+        let tools: Vec<&str> = decls.iter().filter_map(|d| match d {
+            Decl::Tool(t) => Some(t.name.name.as_str()),
+            _ => None,
+        }).collect();
+        let prompts: Vec<&str> = decls.iter().filter_map(|d| match d {
+            Decl::Prompt(p) => Some(p.name.name.as_str()),
+            _ => None,
+        }).collect();
+
+        if !agents.is_empty() || !types.is_empty() || !tools.is_empty() || !prompts.is_empty() {
+            writeln!(output, "\x1b[1mSession:\x1b[0m")?;
+            if !agents.is_empty() {
+                writeln!(output, "  agents:  {}", agents.join(", "))?;
+            }
+            if !types.is_empty() {
+                writeln!(output, "  types:   {}", types.join(", "))?;
+            }
+            if !tools.is_empty() {
+                writeln!(output, "  tools:   {}", tools.join(", "))?;
+            }
+            if !prompts.is_empty() {
+                writeln!(output, "  prompts: {}", prompts.join(", "))?;
+            }
+        }
+        if !self.locals.is_empty() {
+            writeln!(output, "  locals:  {}", self.locals.iter().map(|l| l.name.as_str()).collect::<Vec<_>>().join(", "))?;
+        }
+
+        output.flush()
+    }
+
+    fn cmd_type<W: Write>(&mut self, expr_src: &str, output: &mut W) -> io::Result<()> {
+        let tokens = match lex(expr_src) {
+            Ok(t) => t,
+            Err(errors) => {
+                self.write_errors(errors, output)?;
+                return Ok(());
+            }
+        };
+        let item = match parse_repl_input(&tokens) {
+            Ok(ReplItem::Expr(expr)) => expr,
+            Ok(_) => {
+                writeln!(output, ":type expects an expression, not a statement or declaration")?;
+                output.flush()?;
+                return Ok(());
+            }
+            Err(errors) => {
+                self.write_errors(errors, output)?;
+                return Ok(());
+            }
+        };
+
+        let base = self.resolver.resolve_current();
+        if !base.resolved.errors.is_empty() {
+            self.write_resolve_errors(&base, output)?;
+            return Ok(());
+        }
+
+        let build = self.typer.build_expr_turn(item, &base.resolved.symbols);
+        let turn = self.resolver.resolve_agent_turn(build.agent.clone());
+        if !turn.resolved.errors.is_empty() {
+            self.write_resolve_errors(&turn, output)?;
+            return Ok(());
+        }
+
+        let checked_turn = self.typer.typecheck_turn(&turn.file, &turn.resolved, build);
+        if !checked_turn.checked.errors.is_empty() {
+            self.write_type_errors(&checked_turn.checked, output)?;
+            return Ok(());
+        }
+
+        // Find the result type. The synthetic agent wraps the expression
+        // in a `let __repl_result__ = <expr>`, so the result type is the
+        // type assigned to that local.
+        let result_name = checked_turn.build.result_name.as_deref();
+        let result_ty = if let Some(_name) = result_name {
+            checked_turn
+                .checked
+                .local_types
+                .values()
+                .next()
+                .cloned()
+        } else {
+            None
+        };
+
+        match result_ty {
+            Some(ty) => {
+                let display = display_type_rich(&ty, &turn.resolved.symbols);
+                writeln!(output, "{display}")?;
+            }
+            None => {
+                writeln!(output, "<could not infer type>")?;
+            }
+        }
+        output.flush()
+    }
+
+    fn cmd_reset<W: Write>(&mut self, scope: &str, output: &mut W) -> io::Result<()> {
+        match scope {
+            "" | "all" => {
+                self.resolver = corvid_resolve::ReplResolveSession::new();
+                self.typer = ReplSession::new();
+                self.locals.clear();
+                self.last_trace = None;
+                self.last_ir = None;
+                writeln!(output, "session reset (all declarations and locals cleared)")?;
+            }
+            "locals" => {
+                self.locals.clear();
+                self.typer.commit_locals(Vec::new());
+                writeln!(output, "locals cleared (declarations preserved)")?;
+            }
+            other => {
+                writeln!(output, "unknown reset scope `{other}` (use :reset, :reset all, or :reset locals)")?;
+            }
+        }
+        output.flush()
+    }
+
+    fn cmd_inspect<W: Write>(&self, name: &str, output: &mut W) -> io::Result<()> {
+        // Check locals first
+        if let Some(local) = self.locals.iter().find(|l| l.name == name) {
+            writeln!(output, "\x1b[1m{name}\x1b[0m: {} = {}",
+                local.ty.display_name(),
+                render_value(&local.value)
+            )?;
+            output.flush()?;
+            return Ok(());
+        }
+
+        // Check declarations
+        let decls = self.resolver.decls();
+        let decl = decls.iter().find(|d| corvid_resolve::decl_name(d) == Some(name));
+        let decl = match decl {
+            Some(d) => d,
+            None => {
+                writeln!(output, "`{name}` is not defined in this session")?;
+                output.flush()?;
+                return Ok(());
+            }
+        };
+
+        match decl {
+            Decl::Agent(a) => {
+                let params: Vec<String> = a.params.iter().map(|p| {
+                    format!("{}: {}", p.name.name, format_typeref(&p.ty))
+                }).collect();
+                writeln!(output, "\x1b[1magent {name}\x1b[0m({}) -> {}",
+                    params.join(", "),
+                    format_typeref(&a.return_ty),
+                )?;
+                writeln!(output, "  body: {} statement(s)", a.body.stmts.len())?;
+            }
+            Decl::Type(t) => {
+                writeln!(output, "\x1b[1mtype {name}\x1b[0m:")?;
+                for field in &t.fields {
+                    writeln!(output, "    {}: {}", field.name.name, format_typeref(&field.ty))?;
+                }
+            }
+            Decl::Tool(t) => {
+                let params: Vec<String> = t.params.iter().map(|p| {
+                    format!("{}: {}", p.name.name, format_typeref(&p.ty))
+                }).collect();
+                let effect = match t.effect {
+                    corvid_ast::Effect::Safe => "",
+                    corvid_ast::Effect::Dangerous => " dangerous",
+                };
+                writeln!(output, "\x1b[1mtool {name}\x1b[0m({}) -> {}{effect}",
+                    params.join(", "),
+                    format_typeref(&t.return_ty),
+                )?;
+            }
+            Decl::Prompt(p) => {
+                let params: Vec<String> = p.params.iter().map(|pp| {
+                    format!("{}: {}", pp.name.name, format_typeref(&pp.ty))
+                }).collect();
+                writeln!(output, "\x1b[1mprompt {name}\x1b[0m({}) -> {}",
+                    params.join(", "),
+                    format_typeref(&p.return_ty),
+                )?;
+                writeln!(output, "  template: \"{}\"",
+                    if p.template.len() > 80 {
+                        format!("{}...", &p.template[..80])
+                    } else {
+                        p.template.clone()
+                    }
+                )?;
+            }
+            _ => {
+                writeln!(output, "{name}: (no details available)")?;
+            }
+        }
+
+        // Show dependency info
+        let turn = self.resolver.resolve_current();
+        let dep_graph = corvid_resolve::build_dep_graph(&turn.file, &turn.resolved);
+        if let Some(def_id) = turn.resolved.symbols.lookup_def(name) {
+            let uses = dep_graph.dependencies_of(def_id);
+            let used_by = dep_graph.dependents_of(def_id);
+
+            if !uses.is_empty() {
+                let names: Vec<String> = uses.iter().filter_map(|&id| {
+                    Some(turn.resolved.symbols.get(id).name.clone())
+                }).collect();
+                writeln!(output, "  \x1b[2muses: {}\x1b[0m", names.join(", "))?;
+            }
+            if !used_by.is_empty() {
+                let names: Vec<String> = used_by.iter().filter_map(|&id| {
+                    Some(turn.resolved.symbols.get(id).name.clone())
+                }).collect();
+                writeln!(output, "  \x1b[2mused by: {}\x1b[0m", names.join(", "))?;
+            }
+        }
+
+        output.flush()
+    }
+
+    fn cmd_import_trace<W: Write>(&mut self, path: &str, output: &mut W) -> io::Result<()> {
+        let path = std::path::Path::new(path);
+        let mocks = match trace_import::load_trace(path) {
+            Ok(m) => m,
+            Err(e) => {
+                writeln!(output, "{e}")?;
+                output.flush()?;
+                return Ok(());
+            }
+        };
+
+        if mocks.tools.is_empty() && mocks.prompts.is_empty() {
+            writeln!(output, "trace contains no tool or prompt calls to import")?;
+            output.flush()?;
+            return Ok(());
+        }
+
+        let result = trace_import::build_import(&mocks);
+
+        // Add generated declarations to the session.
+        for decl in &result.decls {
+            let name = corvid_resolve::decl_name(decl).map(|s| s.to_string());
+            if let Some(ref n) = name {
+                if self.resolver.has_decl(n) {
+                    self.resolver.redefine_decl(decl.clone());
+                } else {
+                    self.resolver.commit_decl(decl.clone());
+                }
+            } else {
+                self.resolver.commit_decl(decl.clone());
+            }
+        }
+
+        // Replace the runtime with the one carrying mock handlers.
+        self.runtime = result.runtime;
+
+        writeln!(output, "\x1b[1mimported from trace:\x1b[0m")?;
+        for name in &result.tool_names {
+            let call_count = mocks.tools.get(name).map(|c| c.len()).unwrap_or(0);
+            writeln!(output, "  tool \x1b[36m{name}\x1b[0m ({call_count} recorded call(s))")?;
+        }
+        for name in &result.prompt_names {
+            let call_count = mocks.prompts.get(name).map(|c| c.len()).unwrap_or(0);
+            writeln!(output, "  prompt \x1b[35m{name}\x1b[0m ({call_count} recorded call(s))")?;
+        }
+        output.flush()
+    }
+
+    fn cmd_import_source<W: Write>(&mut self, rest: &str, output: &mut W) -> io::Result<()> {
+        // Parse: `:import "path.cor"` or `:import name from "path.cor"`
+        //        optionally with "watching" suffix
+        let watching = rest.trim_end().ends_with(" watching")
+            || rest.trim_end().ends_with("\" watching");
+        let rest_clean = if watching {
+            rest.trim_end()
+                .strip_suffix(" watching")
+                .unwrap_or(rest)
+                .trim()
+        } else {
+            rest.trim()
+        };
+
+        let (target_name, path_str) = if let Some(idx) = rest_clean.find(" from ") {
+            let name = rest_clean[..idx].trim().to_string();
+            let path = rest_clean[idx + 6..].trim().trim_matches('"').to_string();
+            (Some(name), path)
+        } else {
+            let path = rest_clean.trim().trim_matches('"').to_string();
+            (None, path)
+        };
+
+        let path = std::path::Path::new(&path_str);
+        let source = match source_import::parse_source(path) {
+            Ok(s) => s,
+            Err(e) => {
+                writeln!(output, "{e}")?;
+                output.flush()?;
+                return Ok(());
+            }
+        };
+
+        if !source.errors.is_empty() {
+            writeln!(output, "resolution errors in `{}`:", path.display())?;
+            for err in &source.errors {
+                writeln!(output, "  {err}")?;
+            }
+            output.flush()?;
+            return Ok(());
+        }
+
+        let import_result = if let Some(ref name) = target_name {
+            match source_import::import_selective(&source, name) {
+                Ok(r) => r,
+                Err(e) => {
+                    writeln!(output, "{e}")?;
+                    output.flush()?;
+                    return Ok(());
+                }
+            }
+        } else {
+            source_import::import_all(&source)
+        };
+
+        for decl in &import_result.decls {
+            let name = corvid_resolve::decl_name(decl).map(|s| s.to_string());
+            if let Some(ref n) = name {
+                if self.resolver.has_decl(n) {
+                    self.resolver.redefine_decl(decl.clone());
+                } else {
+                    self.resolver.commit_decl(decl.clone());
+                }
+            } else {
+                self.resolver.commit_decl(decl.clone());
+            }
+        }
+
+        writeln!(output, "\x1b[1mimported from `{}`:\x1b[0m", path.display())?;
+        for name in &import_result.imported_names {
+            writeln!(output, "  \x1b[32m{name}\x1b[0m")?;
+        }
+        if !import_result.dependency_names.is_empty() {
+            writeln!(
+                output,
+                "  \x1b[2m+ {} dependencies: {}\x1b[0m",
+                import_result.dependency_names.len(),
+                import_result.dependency_names.join(", ")
+            )?;
+        }
+
+        if watching {
+            let watcher = self.watcher.get_or_insert_with(|| {
+                file_watch::FileWatchManager::new()
+                    .expect("failed to create file watcher")
+            });
+            match watcher.watch(path) {
+                Ok(()) => {
+                    writeln!(output, "  \x1b[34mwatching {} for changes\x1b[0m", path.display())?;
+                }
+                Err(e) => {
+                    writeln!(output, "  \x1b[31mfailed to watch: {e}\x1b[0m")?;
+                }
+            }
+        }
+
+        output.flush()
+    }
+
+    fn check_hot_reload<W: Write>(&mut self, output: &mut W) -> io::Result<()> {
+        let changes = match self.watcher.as_mut() {
+            Some(w) => w.poll_changes(),
+            None => return Ok(()),
+        };
+
+        for change in changes {
+            let display_path = change.path.display().to_string();
+            match source_import::parse_source(&change.path) {
+                Ok(source) => {
+                    if !source.errors.is_empty() {
+                        writeln!(
+                            output,
+                            "\x1b[33m(hot-reload) `{}` has resolution errors; skipping\x1b[0m",
+                            display_path
+                        )?;
+                        continue;
+                    }
+
+                    let result = source_import::import_all(&source);
+                    let mut redefined = Vec::new();
+                    for decl in &result.decls {
+                        let name = corvid_resolve::decl_name(decl).map(|s| s.to_string());
+                        if let Some(ref n) = name {
+                            if self.resolver.has_decl(n) {
+                                if let Some(redef) = self.resolver.redefine_decl(decl.clone()) {
+                                    redefined.push(redef.name.clone());
+                                }
+                            } else {
+                                self.resolver.commit_decl(decl.clone());
+                                if let Some(n) = name {
+                                    redefined.push(n);
+                                }
+                            }
+                        }
+                    }
+
+                    if !redefined.is_empty() {
+                        writeln!(
+                            output,
+                            "\x1b[34m(hot-reload)\x1b[0m `{}`: redefined {}",
+                            display_path,
+                            redefined.join(", ")
+                        )?;
+                    }
+                }
+                Err(e) => {
+                    writeln!(
+                        output,
+                        "\x1b[33m(hot-reload) `{}`: {e}\x1b[0m",
+                        display_path
+                    )?;
+                }
+            }
+        }
+        output.flush()
+    }
+
+    fn cmd_locals<W: Write>(&self, output: &mut W) -> io::Result<()> {
+        if self.locals.is_empty() {
+            writeln!(output, "(no locals)")?;
+        } else {
+            for local in &self.locals {
+                writeln!(output, "  {}: {} = {}",
+                    local.name,
+                    local.ty.display_name(),
+                    render_value(&local.value),
+                )?;
+            }
+        }
+        output.flush()
     }
 
     fn commit_turn_locals(
@@ -629,6 +1451,33 @@ impl Repl {
             writeln!(output, "replay mode is not active")?;
         }
         output.flush()
+    }
+}
+
+fn display_type_rich(ty: &Type, symbols: &corvid_resolve::SymbolTable) -> String {
+    match ty {
+        Type::Struct(def_id) => {
+            let entry = symbols.get(*def_id);
+            entry.name.clone()
+        }
+        other => other.display_name(),
+    }
+}
+
+fn format_typeref(ty: &corvid_ast::TypeRef) -> String {
+    match ty {
+        corvid_ast::TypeRef::Named { name, .. } => name.name.clone(),
+        corvid_ast::TypeRef::Generic { name, args, .. } => {
+            let inner: Vec<String> = args.iter().map(format_typeref).collect();
+            format!("{}<{}>", name.name, inner.join(", "))
+        }
+        corvid_ast::TypeRef::Weak { inner, .. } => {
+            format!("Weak<{}>", format_typeref(inner))
+        }
+        corvid_ast::TypeRef::Function { params, ret, .. } => {
+            let ps: Vec<String> = params.iter().map(format_typeref).collect();
+            format!("({}) -> {}", ps.join(", "), format_typeref(ret))
+        }
     }
 }
 

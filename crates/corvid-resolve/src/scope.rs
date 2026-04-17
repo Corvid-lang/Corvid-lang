@@ -127,6 +127,38 @@ impl SymbolTable {
         Ok(id)
     }
 
+    /// Insert or replace a top-level declaration. If a declaration with
+    /// the same name already exists, it is replaced: the old entry is
+    /// updated in place and the same `DefId` is reused. Returns the
+    /// `DefId` and whether a replacement occurred (with the old entry).
+    pub fn declare_or_replace(
+        &mut self,
+        name: &str,
+        kind: DeclKind,
+        span: Span,
+    ) -> (DefId, Option<DeclEntry>) {
+        if let Some(&existing_id) = self.by_name.get(name) {
+            let old = self.entries[existing_id.0 as usize].clone();
+            self.entries[existing_id.0 as usize] = DeclEntry {
+                id: existing_id,
+                name: name.to_string(),
+                kind,
+                span,
+            };
+            (existing_id, Some(old))
+        } else {
+            let id = DefId(self.entries.len() as u32);
+            self.entries.push(DeclEntry {
+                id,
+                name: name.to_string(),
+                kind,
+                span,
+            });
+            self.by_name.insert(name.to_string(), id);
+            (id, None)
+        }
+    }
+
     /// Allocate a fresh `DefId` for a declaration that lives in a
     /// scoped table (NOT the file-level by-name namespace). Used for
     /// Methods inside `extend T:` blocks — they share names

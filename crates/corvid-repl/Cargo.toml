@@ -13,6 +13,8 @@ corvid-runtime = { workspace = true }
 corvid-syntax = { workspace = true }
 corvid-types = { workspace = true }
 corvid-vm = { workspace = true }
+async-trait = "0.1"
+notify = { version = "7", features = ["macos_kqueue"] }
 rustyline = { version = "17.0.2", features = ["with-file-history"] }
 serde_json = { workspace = true }
 tokio = { workspace = true }

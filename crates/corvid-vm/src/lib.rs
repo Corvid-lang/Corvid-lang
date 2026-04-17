@@ -25,15 +25,20 @@ pub mod errors;
 pub mod interp;
 pub mod repl_display;
 pub mod schema;
+pub mod step;
 pub mod value;
 
 pub use conv::{json_to_value, value_to_json, ConvError};
 pub use cycle_collector::collect_cycles;
 pub use env::Env;
 pub use errors::{InterpError, InterpErrorKind};
-pub use interp::{bind_and_run_agent, build_struct, run_agent, run_agent_with_env};
+pub use interp::{bind_and_run_agent, build_struct, run_agent, run_agent_stepping, run_agent_with_env};
 pub use repl_display::render_value;
 pub use schema::schema_for;
+pub use step::{
+    Checkpoint, EnvSnapshot, ExecutionTrace, NoOpHook, RecordingHook, ReplayForkHook,
+    StepAction, StepController, StepEvent, StepHook, StepMode, StmtKind,
+};
 pub use value::{StructValue, Value};
 
 #[cfg(test)]

@@ -8,13 +8,15 @@
 
 #![allow(dead_code)]
 
+pub mod depgraph;
 pub mod errors;
 pub mod repl;
 pub mod resolver;
 pub mod scope;
 
+pub use depgraph::{build_dep_graph, decl_name, DepGraph};
 pub use errors::{ResolveError, ResolveErrorKind};
-pub use repl::{ReplResolveSession, ResolvedTurn};
+pub use repl::{RedefinitionResult, ReplResolveSession, ResolvedTurn};
 pub use resolver::{resolve, Resolved};
 pub use scope::{Binding, BuiltIn, DeclEntry, DeclKind, DefId, LocalId, LocalScope, SymbolTable};
 

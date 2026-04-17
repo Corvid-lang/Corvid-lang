@@ -19,6 +19,7 @@ use corvid_ir::{
 };
 use corvid_resolve::{DefId, LocalId};
 use corvid_runtime::{LlmRequest, Runtime, TraceEvent};
+use crate::step::{self, StepAction, StepController, StepEvent, StepMode, StmtKind};
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -79,6 +80,60 @@ pub async fn run_agent_with_env(
             .as_ref()
             .ok()
             .map(|(value, _env)| value_to_json(value)),
+        error: outcome.as_ref().err().map(|error| error.to_string()),
+    });
+    outcome
+}
+
+/// Run an agent with step-through control. The `hook` receives events at
+/// tool/prompt/approval/agent-call boundaries (and optionally at every
+/// statement) and decides whether to continue, override, or abort.
+pub async fn run_agent_stepping(
+    ir: &IrFile,
+    agent_name: &str,
+    args: Vec<Value>,
+    runtime: &Runtime,
+    hook: Arc<dyn crate::step::StepHook>,
+    mode: StepMode,
+) -> Result<(Value, Env), InterpError> {
+    let agent = ir
+        .agents
+        .iter()
+        .find(|a| a.name == agent_name)
+        .ok_or_else(|| {
+            InterpError::new(
+                InterpErrorKind::DispatchFailed(format!("no agent named `{agent_name}`")),
+                Span::new(0, 0),
+            )
+        })?;
+
+    runtime.tracer().emit(TraceEvent::RunStarted {
+        ts_ms: corvid_runtime::now_ms(),
+        run_id: runtime.tracer().run_id().to_string(),
+        agent: agent_name.to_string(),
+        args: args.iter().map(value_to_json).collect(),
+    });
+
+    let mut interp = Interpreter::new(ir, runtime);
+    interp.stepper = Some(StepController::new(hook, mode));
+    let bind_result = interp.bind_params(agent, args);
+    let outcome = match bind_result {
+        Ok(()) => interp.run_body(agent).await.map(|value| (value, interp.env.clone())),
+        Err(e) => Err(e),
+    };
+
+    let _ = interp.maybe_yield(StepEvent::Completed {
+        agent_name: agent_name.to_string(),
+        ok: outcome.is_ok(),
+        result: outcome.as_ref().ok().map(|(v, _)| v.clone()),
+        error: outcome.as_ref().err().map(|e| e.to_string()),
+    }).await;
+
+    runtime.tracer().emit(TraceEvent::RunCompleted {
+        ts_ms: corvid_runtime::now_ms(),
+        run_id: runtime.tracer().run_id().to_string(),
+        ok: outcome.is_ok(),
+        result: outcome.as_ref().ok().map(|(value, _)| value_to_json(value)),
         error: outcome.as_ref().err().map(|error| error.to_string()),
     });
     outcome
@@ -155,6 +210,8 @@ struct Interpreter<'ir> {
     prompts_by_id: HashMap<DefId, &'ir IrPrompt>,
     agents_by_id: HashMap<DefId, &'ir IrAgent>,
     runtime: &'ir Runtime,
+    local_names: HashMap<LocalId, String>,
+    stepper: Option<StepController>,
 }
 
 impl<'ir> Interpreter<'ir> {
@@ -175,6 +232,8 @@ impl<'ir> Interpreter<'ir> {
             prompts_by_id,
             agents_by_id,
             runtime,
+            local_names: HashMap::new(),
+            stepper: None,
         }
     }
 
@@ -195,9 +254,37 @@ impl<'ir> Interpreter<'ir> {
             ));
         }
         for (p, v) in agent.params.iter().zip(args) {
-            self.env.bind(p.local_id, v);
+            self.env.bind(p.local_id, v.clone());
+            self.local_names.insert(p.local_id, p.name.clone());
         }
         Ok(())
+    }
+
+    fn env_snapshot(&self) -> step::EnvSnapshot {
+        step::snapshot_env(&self.env, &self.local_names)
+    }
+
+    async fn maybe_yield(&mut self, event: StepEvent) -> Result<StepAction, InterpError> {
+        if let Some(stepper) = self.stepper.as_mut() {
+            let action = stepper.yield_event(event).await;
+            if matches!(action, StepAction::Abort) {
+                return Err(InterpError::new(
+                    InterpErrorKind::Other("execution aborted by step controller".into()),
+                    Span::new(0, 0),
+                ));
+            }
+            Ok(action)
+        } else {
+            Ok(StepAction::Resume)
+        }
+    }
+
+    fn should_yield_statement(&self) -> bool {
+        self.stepper.as_ref().is_some_and(|s| s.should_yield_on_statement())
+    }
+
+    fn should_yield_boundary(&self) -> bool {
+        self.stepper.as_ref().is_some_and(|s| s.should_yield_on_boundary())
     }
 
     async fn run_body(&mut self, agent: &'ir IrAgent) -> Result<Value, InterpError> {
@@ -227,12 +314,20 @@ impl<'ir> Interpreter<'ir> {
     #[async_recursion]
     async fn eval_stmt(&mut self, stmt: &'ir IrStmt) -> Result<Flow, InterpError> {
         match stmt {
-            IrStmt::Let { local_id, value, .. } => {
+            IrStmt::Let { local_id, name, value, .. } => {
+                if self.should_yield_statement() {
+                    self.maybe_yield(StepEvent::BeforeStatement {
+                        kind: StmtKind::Let { name: name.clone() },
+                        span: value.span,
+                        env: self.env_snapshot(),
+                    }).await?;
+                }
                 let v = match self.eval_expr(value).await?.into_value() {
                     Ok(v) => v,
                     Err(v) => return Ok(Flow::Return(v)),
                 };
                 self.env.bind(*local_id, v);
+                self.local_names.insert(*local_id, name.clone());
                 Ok(Flow::Normal)
             }
             IrStmt::Return { value, .. } => {
@@ -321,10 +416,61 @@ impl<'ir> Interpreter<'ir> {
                     };
                     json_args.push(value_to_json(&v));
                 }
-                self.runtime
+
+                if self.should_yield_boundary() {
+                    let action = self.maybe_yield(StepEvent::BeforeApproval {
+                        label: label.clone(),
+                        args: json_args.clone(),
+                        span: *span,
+                        env: self.env_snapshot(),
+                    }).await?;
+
+                    match action {
+                        StepAction::Approve => {
+                            if self.should_yield_boundary() {
+                                self.maybe_yield(StepEvent::AfterApproval {
+                                    label: label.clone(),
+                                    approved: true,
+                                    span: *span,
+                                }).await?;
+                            }
+                            return Ok(Flow::Normal);
+                        }
+                        StepAction::Deny => {
+                            if self.should_yield_boundary() {
+                                self.maybe_yield(StepEvent::AfterApproval {
+                                    label: label.clone(),
+                                    approved: false,
+                                    span: *span,
+                                }).await?;
+                            }
+                            return Err(InterpError::new(
+                                InterpErrorKind::Runtime(
+                                    corvid_runtime::RuntimeError::ApprovalDenied {
+                                        action: label.clone(),
+                                    },
+                                ),
+                                *span,
+                            ));
+                        }
+                        _ => {}
+                    }
+                }
+
+                let result = self.runtime
                     .approval_gate(label, json_args)
-                    .await
-                    .map_err(|e| InterpError::new(InterpErrorKind::Runtime(e), *span))?;
+                    .await;
+                let approved = result.is_ok();
+
+                if self.should_yield_boundary() {
+                    self.maybe_yield(StepEvent::AfterApproval {
+                        label: label.clone(),
+                        approved,
+                        span: *span,
+                    }).await?;
+                }
+
+                result.map_err(|e| InterpError::new(InterpErrorKind::Runtime(e), *span))?;
                 Ok(Flow::Normal)
             }
             IrStmt::Expr { expr, .. } => {
@@ -641,11 +787,49 @@ impl<'ir> Interpreter<'ir> {
                 })?;
                 let json_args: Vec<serde_json::Value> =
                     arg_values.iter().map(value_to_json).collect();
+
+                if self.should_yield_boundary() {
+                    let action = self.maybe_yield(StepEvent::BeforeToolCall {
+                        tool_name: callee_name.to_string(),
+                        args: json_args.clone(),
+                        span,
+                        env: self.env_snapshot(),
+                    }).await?;
+                    if let StepAction::Override(val) = action {
+                        return json_to_value(val, &tool.return_ty, &self.types_by_id)
+                            .map(ExprFlow::Value)
+                            .map_err(|e| InterpError::new(
+                                InterpErrorKind::Marshal(format!("tool `{callee_name}` override: {e}")),
+                                span,
+                            ));
+                    }
+                }
+
+                let start = std::time::Instant::now();
                 let result = self
                     .runtime
                     .call_tool(callee_name, json_args)
                     .await
                     .map_err(|e| InterpError::new(InterpErrorKind::Runtime(e), span))?;
+                let elapsed_ms = start.elapsed().as_millis() as u64;
+
+                if self.should_yield_boundary() {
+                    let action = self.maybe_yield(StepEvent::AfterToolCall {
+                        tool_name: callee_name.to_string(),
+                        result: result.clone(),
+                        elapsed_ms,
+                        span,
+                    }).await?;
+                    if let StepAction::Override(val) = action {
+                        return json_to_value(val, &tool.return_ty, &self.types_by_id)
+                            .map(ExprFlow::Value)
+                            .map_err(|e| InterpError::new(
+                                InterpErrorKind::Marshal(format!("tool `{callee_name}` override: {e}")),
+                                span,
+                            ));
+                    }
+                }
+
                 json_to_value(result, &tool.return_ty, &self.types_by_id)
                     .map(ExprFlow::Value)
                     .map_err(|e| {
@@ -667,6 +851,25 @@ impl<'ir> Interpreter<'ir> {
                 let json_args: Vec<serde_json::Value> =
                     arg_values.iter().map(value_to_json).collect();
                 let rendered = render_prompt(prompt, &arg_values);
+
+                if self.should_yield_boundary() {
+                    let action = self.maybe_yield(StepEvent::BeforePromptCall {
+                        prompt_name: callee_name.to_string(),
+                        rendered: rendered.clone(),
+                        model: None,
+                        span,
+                        env: self.env_snapshot(),
+                    }).await?;
+                    if let StepAction::Override(val) = action {
+                        return json_to_value(val, &prompt.return_ty, &self.types_by_id)
+                            .map(ExprFlow::Value)
+                            .map_err(|e| InterpError::new(
+                                InterpErrorKind::Marshal(format!("prompt `{callee_name}` override: {e}")),
+                                span,
+                            ));
+                    }
+                }
+
                 let output_schema =
                     Some(crate::schema::schema_for(&prompt.return_ty, &self.types_by_id));
                 let req = LlmRequest {
@@ -676,11 +879,31 @@ impl<'ir> Interpreter<'ir> {
                     args: json_args,
                     output_schema,
                 };
+                let start = std::time::Instant::now();
                 let resp = self
                     .runtime
                     .call_llm(req)
                     .await
                     .map_err(|e| InterpError::new(InterpErrorKind::Runtime(e), span))?;
+                let elapsed_ms = start.elapsed().as_millis() as u64;
+
+                if self.should_yield_boundary() {
+                    let action = self.maybe_yield(StepEvent::AfterPromptCall {
+                        prompt_name: callee_name.to_string(),
+                        result: resp.value.clone(),
+                        elapsed_ms,
+                        span,
+                    }).await?;
+                    if let StepAction::Override(val) = action {
+                        return json_to_value(val, &prompt.return_ty, &self.types_by_id)
+                            .map(ExprFlow::Value)
+                            .map_err(|e| InterpError::new(
+                                InterpErrorKind::Marshal(format!("prompt `{callee_name}` override: {e}")),
+                                span,
+                            ));
+                    }
+                }
+
                 json_to_value(resp.value, &prompt.return_ty, &self.types_by_id)
                     .map(ExprFlow::Value)
                     .map_err(|e| {
@@ -701,9 +924,42 @@ impl<'ir> Interpreter<'ir> {
                         span,
                     )
                 })?;
+
+                if self.should_yield_boundary() {
+                    let json_args: Vec<serde_json::Value> =
+                        arg_values.iter().map(value_to_json).collect();
+                    self.maybe_yield(StepEvent::BeforeAgentCall {
+                        agent_name: callee_name.to_string(),
+                        args: json_args,
+                        span,
+                    }).await?;
+                }
+
                 let mut sub = Interpreter::new(self.ir, self.runtime);
+                // Propagate the step controller into sub-agent calls so
+                // step-through continues across agent boundaries.
+                if let Some(ref stepper) = self.stepper {
+                    sub.stepper = Some(StepController::new(
+                        Arc::clone(&stepper.hook_ref()),
+                        stepper.mode,
+                    ));
+                }
                 sub.bind_params(agent, arg_values)?;
-                sub.run_body(agent).await.map(ExprFlow::Value)
+                let result = sub.run_body(agent).await.map(ExprFlow::Value);
+
+                if self.should_yield_boundary() {
+                    let result_json = match &result {
+                        Ok(ExprFlow::Value(v)) => value_to_json(v),
+                        _ => serde_json::Value::Null,
+                    };
+                    self.maybe_yield(StepEvent::AfterAgentCall {
+                        agent_name: callee_name.to_string(),
+                        result: result_json,
+                        span,
+                    }).await?;
+                }
+
+                result
             }
             IrCallKind::StructConstructor { def_id } => {
                 // Build a `Value::Struct` from the constructor args, in
