@@ -7,10 +7,19 @@
 //! backend, which will also be async-native. Behavioural parity is what
 //! makes this interpreter useful as a correctness oracle.
 
+#[path = "interp/effect_compose.rs"]
+mod effect_compose;
+
 use crate::conv::{json_to_value, value_to_json};
 use crate::env::Env;
 use crate::errors::{InterpError, InterpErrorKind};
+use crate::step::{self, StepAction, StepController, StepEvent, StepMode, StmtKind};
 use crate::value::{BoxedValue, ListValue, StreamChunk, StreamSender, StreamValue, StructValue, Value};
+use effect_compose::{
+    citation_verified, composed_confidence, default_stream_backpressure, estimate_tokens,
+    overflow, prompt_backpressure, prompt_effective_confidence,
+    stream_start_is_retryable, vote_text, with_value_confidence,
+};
 use async_recursion::async_recursion;
 use corvid_ast::{BackpressurePolicy, BinaryOp, Span, UnaryOp};
 use corvid_ir::{
@@ -22,7 +31,6 @@ use corvid_runtime::{
     contradiction_flag, majority_vote, trace_text, LlmRequest, Runtime, TokenUsage, TraceEvent,
 };
 use corvid_types::Type;
-use crate::step::{self, StepAction, StepController, StepEvent, StepMode, StmtKind};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::task::JoinSet;
@@ -2281,119 +2289,3 @@ fn require_bool(v: &Value, span: Span, context: &str) -> Result<bool, InterpErro
     }
 }
 
-fn overflow(span: Span) -> InterpError {
-    InterpError::new(
-        InterpErrorKind::Arithmetic("integer overflow".into()),
-        span,
-    )
-}
-
-/// Compute the composed confidence of a set of input values using
-/// the Min composition rule. Non-Grounded values contribute 1.0
-/// (deterministic). Grounded values contribute their tracked confidence.
-fn composed_confidence(args: &[Value]) -> f64 {
-    let mut min_conf = 1.0_f64;
-    for arg in args {
-        if let Value::Grounded(g) = arg {
-            if g.confidence < min_conf {
-                min_conf = g.confidence;
-            }
-        }
-    }
-    min_conf
-}
-
-/// Citation verification for `cites ctx strictly`. Checks that the
-/// LLM response contains at least one substantial substring from the
-/// context. "Substantial" means a contiguous run of words (≥ 4 words)
-/// from the context appears verbatim in the response.
-fn citation_verified(context: &str, response: &str) -> bool {
-    let ctx_lower = context.to_lowercase();
-    let resp_lower = response.to_lowercase();
-
-    // Extract word sequences from context and check for matches.
-    let ctx_words: Vec<&str> = ctx_lower.split_whitespace().collect();
-    if ctx_words.len() < 4 {
-        // Short context: check if the whole thing appears.
-        return resp_lower.contains(&ctx_lower);
-    }
-
-    // Sliding window: check if any 4-word sequence from context
-    // appears in the response.
-    let window_size = 4;
-    for window in ctx_words.windows(window_size) {
-        let phrase = window.join(" ");
-        if resp_lower.contains(&phrase) {
-            return true;
-        }
-    }
-
-    false
-}
-
-// Suppress dead-field warnings on the few fields the interpreter holds
-// but doesn't yet read directly (the IR is read indirectly via the
-// per-kind id maps).
-#[allow(dead_code)]
-fn _force_use(i: &Interpreter<'_>) {
-    let _ = &i.ir;
-    let _ = &i.types_by_id;
-}
-
-fn default_stream_backpressure() -> BackpressurePolicy {
-    BackpressurePolicy::Bounded(16)
-}
-
-fn estimate_tokens(text: &str) -> u64 {
-    let chars = text.chars().count() as u64;
-    if chars == 0 {
-        0
-    } else {
-        (chars / 4).max(1)
-    }
-}
-
-fn prompt_backpressure(prompt: &IrPrompt) -> BackpressurePolicy {
-    prompt
-        .backpressure
-        .clone()
-        .unwrap_or_else(default_stream_backpressure)
-}
-
-fn prompt_effective_confidence(prompt: &IrPrompt, value: &Value) -> f64 {
-    let value_confidence = match value {
-        Value::Grounded(g) => g.confidence,
-        _ => 1.0,
-    };
-    prompt.effect_confidence.min(value_confidence)
-}
-
-fn stream_start_is_retryable(value: &Value) -> bool {
-    matches!(value, Value::ResultErr(_) | Value::OptionNone)
-}
-
-fn vote_text(value: &Value) -> String {
-    match value {
-        Value::String(s) => s.to_string(),
-        Value::Grounded(g) => vote_text(&g.inner.get()),
-        other => value_to_json(other).to_string(),
-    }
-}
-
-fn with_value_confidence(value: Value, confidence: f64) -> Value {
-    match value {
-        Value::Grounded(g) => Value::Grounded(crate::value::GroundedValue::with_confidence(
-            g.inner.get(),
-            g.provenance.clone(),
-            confidence,
-        )),
-        other if confidence < 1.0 => {
-            Value::Grounded(crate::value::GroundedValue::with_confidence(
-                other,
-                crate::value::ProvenanceChain::new(),
-                confidence,
-            ))
-        }
-        other => other,
-    }
-}
