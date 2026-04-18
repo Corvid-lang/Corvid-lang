@@ -393,6 +393,19 @@ impl Resolver {
                 }
             }
         }
+        // Phase 20h slice I: resolve the `rollout` variant + baseline.
+        if let Some(spec) = &p.rollout {
+            for ident in [&spec.variant, &spec.baseline] {
+                if let Some(def_id) = self.symbols.lookup_def(&ident.name) {
+                    self.bindings.insert(ident.span, Binding::Decl(def_id));
+                } else {
+                    self.errors.push(ResolveError {
+                        kind: ResolveErrorKind::UndefinedName(ident.name.clone()),
+                        span: ident.span,
+                    });
+                }
+            }
+        }
         self.pop_scope();
     }
 

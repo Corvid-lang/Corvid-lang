@@ -12,8 +12,8 @@ use corvid_ast::{
     DimensionValue, Effect, EffectConstraint, EffectDecl, EffectRef, EffectRow, EvalAssert,
     EvalDecl, Expr, ExtendDecl, ExtendMethod, ExtendMethodKind, Field, File, Ident, ImportDecl,
     ImportSource, Literal, ModelDecl, ModelField, Param, ProgressiveChain, ProgressiveStage,
-    PromptDecl, PromptStreamSettings, RouteArm, RoutePattern, RouteTable, Span, Stmt, ToolDecl,
-    TypeDecl, TypeRef, UnaryOp, Visibility, WeakEffect, WeakEffectRow,
+    PromptDecl, PromptStreamSettings, RolloutSpec, RouteArm, RoutePattern, RouteTable, Span,
+    Stmt, ToolDecl, TypeDecl, TypeRef, UnaryOp, Visibility, WeakEffect, WeakEffectRow,
 };
 
 #[derive(Debug, Clone, PartialEq)]
@@ -1391,6 +1391,23 @@ impl<'a> Parser<'a> {
             None
         };
 
+        // Phase 20h slice I: optional `rollout ...` one-liner.
+        // Mutually exclusive with both `route:` and `progressive:`.
+        let rollout = if matches!(self.peek(), TokKind::KwRollout) {
+            if route.is_some() || progressive.is_some() {
+                return Err(ParseError {
+                    kind: ParseErrorKind::UnexpectedToken {
+                        got: "`rollout` after another dispatch clause".into(),
+                        expected: "a prompt template string (a prompt uses exactly one of `route:`, `progressive:`, or `rollout`)".into(),
+                    },
+                    span: self.peek_span(),
+                });
+            }
+            Some(self.parse_prompt_rollout_clause()?)
+        } else {
+            None
+        };
+
         let stream = self.parse_prompt_stream_settings()?;
 
         // Expect a single string literal as the template.
@@ -1427,6 +1444,50 @@ impl<'a> Parser<'a> {
             capability_required,
             route,
             progressive,
+            rollout,
+            span: start.merge(end),
+        })
+    }
+
+    /// Parse `rollout N% <variant>, else <baseline>`. Caller has
+    /// already positioned at the `rollout` keyword.
+    fn parse_prompt_rollout_clause(&mut self) -> Result<RolloutSpec, ParseError> {
+        let start = self.peek_span();
+        self.bump(); // rollout
+
+        // Percentage — accept Int or Float, mandatory `%`.
+        let variant_percent = match self.peek().clone() {
+            TokKind::Float(n) => {
+                self.bump();
+                n
+            }
+            TokKind::Int(n) => {
+                self.bump();
+                n as f64
+            }
+            other => {
+                return Err(ParseError {
+                    kind: ParseErrorKind::UnexpectedToken {
+                        got: describe_token(&other),
+                        expected: "a percentage after `rollout`".into(),
+                    },
+                    span: self.peek_span(),
+                });
+            }
+        };
+        self.expect(TokKind::Percent, "`%` after rollout percentage")?;
+
+        let (variant_name, variant_span) = self.expect_ident()?;
+        self.expect(TokKind::Comma, "`,` after rollout variant")?;
+        self.expect(TokKind::KwElse, "`else` before rollout baseline")?;
+        let (baseline_name, baseline_span) = self.expect_ident()?;
+        let end = self.prev_span();
+        self.expect_newline()?;
+
+        Ok(RolloutSpec {
+            variant_percent,
+            variant: Ident::new(variant_name, variant_span),
+            baseline: Ident::new(baseline_name, baseline_span),
             span: start.merge(end),
         })
     }
@@ -3836,6 +3897,111 @@ prompt classify(q: String) -> String:
             !errs.is_empty(),
             "non-terminal stages must declare `below <threshold>`"
         );
+    }
+
+    // -------------------- Phase 20h slice I: `rollout` --------------------
+
+    #[test]
+    fn parses_basic_rollout() {
+        let src = "\
+model opus_v1:
+    capability: expert
+
+model opus_v2:
+    capability: expert
+
+prompt summarize(doc: String) -> String:
+    rollout 10% opus_v2, else opus_v1
+    \"Summarize\"
+";
+        let file = parse_file_src(src);
+        let p = file
+            .decls
+            .iter()
+            .find_map(|d| match d {
+                Decl::Prompt(p) => Some(p),
+                _ => None,
+            })
+            .unwrap();
+        let spec = p.rollout.as_ref().expect("rollout");
+        assert!((spec.variant_percent - 10.0).abs() < 1e-9);
+        assert_eq!(spec.variant.name, "opus_v2");
+        assert_eq!(spec.baseline.name, "opus_v1");
+    }
+
+    #[test]
+    fn parses_rollout_with_fractional_percent() {
+        let src = "\
+model a:
+    capability: basic
+
+model b:
+    capability: basic
+
+prompt p(q: String) -> String:
+    rollout 2.5% a, else b
+    \"X\"
+";
+        let file = parse_file_src(src);
+        let p = file
+            .decls
+            .iter()
+            .find_map(|d| match d {
+                Decl::Prompt(p) => Some(p),
+                _ => None,
+            })
+            .unwrap();
+        assert!((p.rollout.as_ref().unwrap().variant_percent - 2.5).abs() < 1e-9);
+    }
+
+    #[test]
+    fn rejects_rollout_without_percent_sign() {
+        let src = "\
+model a:
+    capability: basic
+
+model b:
+    capability: basic
+
+prompt p(q: String) -> String:
+    rollout 10 a, else b
+    \"X\"
+";
+        let (_file, errs) = parse_file_errs(src);
+        assert!(!errs.is_empty());
+    }
+
+    #[test]
+    fn rejects_rollout_without_else_clause() {
+        let src = "\
+model a:
+    capability: basic
+
+prompt p(q: String) -> String:
+    rollout 10% a
+    \"X\"
+";
+        let (_file, errs) = parse_file_errs(src);
+        assert!(!errs.is_empty());
+    }
+
+    #[test]
+    fn rejects_rollout_combined_with_route() {
+        let src = "\
+model a:
+    capability: basic
+
+model b:
+    capability: basic
+
+prompt p(q: String) -> String:
+    route:
+        _ -> a
+    rollout 10% b, else a
+    \"X\"
+";
+        let (_file, errs) = parse_file_errs(src);
+        assert!(!errs.is_empty());
     }
 
     #[test]

@@ -107,6 +107,12 @@ pub struct IrPrompt {
     /// stage. The final stage has `threshold = None` and always
     /// runs as the terminal fallback.
     pub progressive: Vec<IrProgressiveStage>,
+    /// Phase 20h slice I: A/B rollout. `None` means no rollout
+    /// is configured. `Some(spec)` routes a fraction of calls to
+    /// `spec.variant_def_id` and the rest to `spec.baseline_def_id`.
+    /// Runtime chooses per-call (deterministic or random — that's
+    /// Dev B's C-rt cohort decision).
+    pub rollout: Option<IrRolloutSpec>,
     pub span: Span,
 }
 
@@ -133,6 +139,18 @@ pub struct IrProgressiveStage {
     pub model_def_id: DefId,
     pub model_name: String,
     pub threshold: Option<f64>,
+    pub span: Span,
+}
+
+/// Lowered A/B rollout spec.
+#[derive(Debug, Clone)]
+pub struct IrRolloutSpec {
+    /// Percentage of calls routed to the variant (0.0 – 100.0).
+    pub variant_percent: f64,
+    pub variant_def_id: DefId,
+    pub variant_name: String,
+    pub baseline_def_id: DefId,
+    pub baseline_name: String,
     pub span: Span,
 }
 

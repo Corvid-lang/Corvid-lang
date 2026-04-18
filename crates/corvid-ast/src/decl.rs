@@ -245,6 +245,25 @@ pub struct PromptDecl {
     /// exclusive with `route:`. See Phase 20h slice E.
     #[serde(default)]
     pub progressive: Option<ProgressiveChain>,
+    /// `rollout N% <variant>, else <baseline>` — probabilistic
+    /// A/B dispatch. A fraction of calls go to the variant model;
+    /// the rest go to the baseline. Mutually exclusive with
+    /// `route:` and `progressive:`. See Phase 20h slice I.
+    #[serde(default)]
+    pub rollout: Option<RolloutSpec>,
+    pub span: Span,
+}
+
+/// `rollout N% <variant>, else <baseline>` — probabilistic A/B
+/// variant dispatch.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RolloutSpec {
+    /// Percentage of calls routed to the variant. Stored as the
+    /// literal percentage (0.0 to 100.0) the user wrote, so error
+    /// messages can surface the original number unchanged.
+    pub variant_percent: f64,
+    pub variant: Ident,
+    pub baseline: Ident,
     pub span: Span,
 }
 

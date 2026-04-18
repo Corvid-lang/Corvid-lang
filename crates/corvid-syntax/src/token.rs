@@ -67,6 +67,10 @@ pub enum TokKind {
     /// `below` — used inside a `progressive:` stage to declare the
     /// confidence threshold below which escalation fires.
     KwBelow,
+    /// `rollout` — one-liner A/B variant dispatch on a prompt.
+    /// `rollout 10% variant, else baseline` routes ~10% of calls
+    /// to `variant` and the rest to `baseline`.
+    KwRollout,
 
     // --- keywords: control flow ---
     KwIf,
@@ -165,6 +169,7 @@ impl TokKind {
             "route" => TokKind::KwRoute,
             "progressive" => TokKind::KwProgressive,
             "below" => TokKind::KwBelow,
+            "rollout" => TokKind::KwRollout,
             "if" => TokKind::KwIf,
             "else" => TokKind::KwElse,
             "for" => TokKind::KwFor,

@@ -550,6 +550,37 @@ impl<'a> Checker<'a> {
                 }
             }
         }
+
+        // Phase 20h slice I: validate the rollout percentage is in
+        // [0.0, 100.0] and both idents are Models.
+        if let Some(spec) = &p.rollout {
+            if !(0.0..=100.0).contains(&spec.variant_percent) {
+                self.errors.push(TypeError::new(
+                    TypeErrorKind::RolloutPercentOutOfRange {
+                        prompt: p.name.name.clone(),
+                        got: spec.variant_percent,
+                    },
+                    spec.span,
+                ));
+            }
+            for ident in [&spec.variant, &spec.baseline] {
+                if let Some(Binding::Decl(def_id)) = self.bindings.get(&ident.span) {
+                    let def_id = *def_id;
+                    let entry = self.symbols.get(def_id);
+                    if entry.kind != corvid_resolve::DeclKind::Model {
+                        let got = format!("{:?}", entry.kind).to_lowercase();
+                        self.errors.push(TypeError::new(
+                            TypeErrorKind::RouteTargetNotModel {
+                                prompt: p.name.name.clone(),
+                                target: ident.name.clone(),
+                                got_kind: got,
+                            },
+                            ident.span,
+                        ));
+                    }
+                }
+            }
+        }
     }
 
     fn check_eval(&mut self, e: &EvalDecl) {

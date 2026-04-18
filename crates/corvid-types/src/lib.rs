@@ -2032,6 +2032,72 @@ prompt classify(q: String) -> String:
         );
     }
 
+    // --- Phase 20h slice I: rollout validation ---
+
+    #[test]
+    fn rollout_with_valid_models_and_percent_passes() {
+        let src = "\
+model v1:
+    capability: expert
+
+model v2:
+    capability: expert
+
+prompt summarize(doc: String) -> String:
+    rollout 10% v2, else v1
+    \"Summarize\"
+";
+        let c = check(src);
+        assert!(c.errors.is_empty(), "errors: {:?}", c.errors);
+    }
+
+    #[test]
+    fn rollout_pointing_at_non_model_is_rejected() {
+        let src = "\
+tool not_a_model(q: String) -> String
+
+model v1:
+    capability: expert
+
+prompt summarize(doc: String) -> String:
+    rollout 10% not_a_model, else v1
+    \"Summarize\"
+";
+        let c = check(src);
+        assert!(
+            c.errors.iter().any(|e| matches!(
+                &e.kind,
+                TypeErrorKind::RouteTargetNotModel { target, .. } if target == "not_a_model"
+            )),
+            "expected RouteTargetNotModel, got {:?}",
+            c.errors
+        );
+    }
+
+    #[test]
+    fn rollout_percent_out_of_range_is_rejected() {
+        let src = "\
+model a:
+    capability: basic
+
+model b:
+    capability: basic
+
+prompt p(q: String) -> String:
+    rollout 150% a, else b
+    \"X\"
+";
+        let c = check(src);
+        assert!(
+            c.errors.iter().any(|e| matches!(
+                &e.kind,
+                TypeErrorKind::RolloutPercentOutOfRange { got, .. } if (*got - 150.0).abs() < 1e-9
+            )),
+            "expected RolloutPercentOutOfRange, got {:?}",
+            c.errors
+        );
+    }
+
     #[test]
     fn progressive_threshold_out_of_range_is_rejected() {
         let src = "\

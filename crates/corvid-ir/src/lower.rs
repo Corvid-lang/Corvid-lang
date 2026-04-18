@@ -317,6 +317,18 @@ impl<'a> Lowerer<'a> {
             .as_ref()
             .map(|chain| self.lower_progressive_stages(&chain.stages))
             .unwrap_or_default();
+        let rollout = p.rollout.as_ref().and_then(|spec| {
+            let variant = self.symbols.lookup_def(&spec.variant.name)?;
+            let baseline = self.symbols.lookup_def(&spec.baseline.name)?;
+            Some(IrRolloutSpec {
+                variant_percent: spec.variant_percent,
+                variant_def_id: variant,
+                variant_name: spec.variant.name.clone(),
+                baseline_def_id: baseline,
+                baseline_name: spec.baseline.name.clone(),
+                span: spec.span,
+            })
+        });
         IrPrompt {
             id,
             name: p.name.name.clone(),
@@ -333,6 +345,7 @@ impl<'a> Lowerer<'a> {
             capability_required: p.capability_required.as_ref().map(|c| c.name.clone()),
             route,
             progressive,
+            rollout,
             span: p.span,
         }
     }

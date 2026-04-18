@@ -200,6 +200,12 @@ pub enum TypeErrorKind {
         prompt: String,
         got: String,
     },
+
+    /// A `rollout N%` clause's percentage is outside `[0.0, 100.0]`.
+    RolloutPercentOutOfRange {
+        prompt: String,
+        got: f64,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -320,6 +326,9 @@ impl TypeErrorKind {
             Self::RouteGuardNotBool { prompt, got } => {
                 format!("route arm guard in prompt `{prompt}` must evaluate to `Bool`, got `{got}`")
             }
+            Self::RolloutPercentOutOfRange { prompt, got } => {
+                format!("rollout percentage on prompt `{prompt}` must be in [0.0, 100.0], got `{got}`")
+            }
         }
     }
 
@@ -428,6 +437,10 @@ impl TypeErrorKind {
             )),
             Self::RouteGuardNotBool { .. } => Some(
                 "use a comparison or boolean expression for the guard, e.g. `length(q) > 1000`"
+                    .into(),
+            ),
+            Self::RolloutPercentOutOfRange { .. } => Some(
+                "use a percentage between 0 and 100, e.g. `rollout 10% new_v2, else old_v1`"
                     .into(),
             ),
         }
