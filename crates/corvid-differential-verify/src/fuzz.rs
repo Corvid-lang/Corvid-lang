@@ -207,6 +207,85 @@ agent main() -> Int:
         ]
     }
 
+    fn swap_fixtures() -> &'static [&'static str] {
+        &[
+            r#"
+agent main() -> Int:
+    left = 1 + 2
+    right = 3 + 4
+    return left
+"#,
+            r#"
+agent main() -> String:
+    prefix = "a" + "b"
+    suffix = "c" + "d"
+    return prefix
+"#,
+        ]
+    }
+
+    fn reorder_fixtures() -> &'static [&'static str] {
+        &[
+            r#"
+effect first_effect:
+    cost: $0.01
+
+effect second_effect:
+    cost: $0.02
+
+agent main() -> Int:
+    return 7
+"#,
+            r#"
+prompt alpha() -> String:
+    "alpha"
+
+prompt beta() -> String:
+    "beta"
+
+agent main() -> String:
+    return alpha()
+"#,
+        ]
+    }
+
+    fn branch_swap_fixtures() -> &'static [&'static str] {
+        &[
+            r#"
+agent main() -> Int:
+    if true:
+        return 1
+    else:
+        return 2
+"#,
+            r#"
+agent main() -> String:
+    if false:
+        return "left"
+    else:
+        return "right"
+"#,
+        ]
+    }
+
+    fn constant_fold_fixtures() -> &'static [&'static str] {
+        &[
+            r#"
+agent main() -> Int:
+    return 1 + 2
+"#,
+            r#"
+agent main() -> String:
+    return "a" + "b"
+"#,
+            r#"
+agent main() -> Int:
+    total = 1 + 2
+    return total
+"#,
+        ]
+    }
+
     fn corpus_index() -> impl Strategy<Value = usize> {
         0usize..clean_corpus_programs().len()
     }
@@ -249,6 +328,54 @@ agent main() -> Int:
             prop_assert!(rewritten.changed, "let-inline should change the fixture");
             prop_assert!(assert_effect_equivalence(original, &rewritten.source).is_ok());
         }
+
+        #[test]
+        fn commutative_sibling_swap_preserves_effect_summaries(
+            fixture_index in 0usize..swap_fixtures().len(),
+            _corpus_index in corpus_index(),
+        ) {
+            let original = swap_fixtures()[fixture_index];
+            let rewritten = apply_rewrite(original, RewriteRule::CommutativeSiblingSwap)
+                .expect("commutative-sibling-swap");
+            prop_assert!(rewritten.changed, "commutative-sibling-swap should change the fixture");
+            prop_assert!(assert_effect_equivalence(original, &rewritten.source).is_ok());
+        }
+
+        #[test]
+        fn top_level_reorder_preserves_effect_summaries(
+            fixture_index in 0usize..reorder_fixtures().len(),
+            _corpus_index in corpus_index(),
+        ) {
+            let original = reorder_fixtures()[fixture_index];
+            let rewritten = apply_rewrite(original, RewriteRule::TopLevelReorder)
+                .expect("top-level-reorder");
+            prop_assert!(rewritten.changed, "top-level-reorder should change the fixture");
+            prop_assert!(assert_effect_equivalence(original, &rewritten.source).is_ok());
+        }
+
+        #[test]
+        fn if_branch_swap_preserves_effect_summaries(
+            fixture_index in 0usize..branch_swap_fixtures().len(),
+            _corpus_index in corpus_index(),
+        ) {
+            let original = branch_swap_fixtures()[fixture_index];
+            let rewritten = apply_rewrite(original, RewriteRule::IfBranchSwap)
+                .expect("if-branch-swap");
+            prop_assert!(rewritten.changed, "if-branch-swap should change the fixture");
+            prop_assert!(assert_effect_equivalence(original, &rewritten.source).is_ok());
+        }
+
+        #[test]
+        fn constant_folding_preserves_effect_summaries(
+            fixture_index in 0usize..constant_fold_fixtures().len(),
+            _corpus_index in corpus_index(),
+        ) {
+            let original = constant_fold_fixtures()[fixture_index];
+            let rewritten = apply_rewrite(original, RewriteRule::ConstantFolding)
+                .expect("constant-folding");
+            prop_assert!(rewritten.changed, "constant-folding should change the fixture");
+            prop_assert!(assert_effect_equivalence(original, &rewritten.source).is_ok());
+        }
     }
 
     #[test]
@@ -259,6 +386,10 @@ agent main() -> Int:
                 RewriteRule::AlphaConversion,
                 RewriteRule::LetExtract,
                 RewriteRule::LetInline,
+                RewriteRule::CommutativeSiblingSwap,
+                RewriteRule::TopLevelReorder,
+                RewriteRule::IfBranchSwap,
+                RewriteRule::ConstantFolding,
             ]
         );
     }

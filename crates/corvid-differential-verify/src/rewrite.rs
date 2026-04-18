@@ -4,7 +4,7 @@ use corvid_ast::{
     EffectConstraint, EvalAssert, Expr, ExtendMethod, ExtendMethodKind, File, ImportSource, Ident,
     Literal, Param, PromptDecl, Span, Stmt, ToolDecl, TypeRef, UnaryOp, Visibility,
 };
-use corvid_resolve::{resolve, Binding, LocalId, Resolved};
+use corvid_resolve::{build_dep_graph, resolve, Binding, LocalId, Resolved};
 use corvid_syntax::{lex, parse_file};
 use std::collections::BTreeSet;
 
@@ -13,6 +13,10 @@ pub enum RewriteRule {
     AlphaConversion,
     LetExtract,
     LetInline,
+    CommutativeSiblingSwap,
+    TopLevelReorder,
+    IfBranchSwap,
+    ConstantFolding,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -33,6 +37,10 @@ pub fn rewrite_rules() -> &'static [RewriteRule] {
         RewriteRule::AlphaConversion,
         RewriteRule::LetExtract,
         RewriteRule::LetInline,
+        RewriteRule::CommutativeSiblingSwap,
+        RewriteRule::TopLevelReorder,
+        RewriteRule::IfBranchSwap,
+        RewriteRule::ConstantFolding,
     ]
 }
 
@@ -50,6 +58,22 @@ pub fn law_ref(rule: RewriteRule) -> LawRef {
             name: "binder-elimination",
             rationale: "Inlining a pure single-use binder preserves the composed row.",
         },
+        RewriteRule::CommutativeSiblingSwap => LawRef {
+            name: "locality",
+            rationale: "Independent pure sibling bindings compose through a commutative row operator.",
+        },
+        RewriteRule::TopLevelReorder => LawRef {
+            name: "declaration-order-irrelevance",
+            rationale: "Top-level declaration order is not type-relevant when dependencies do not cross.",
+        },
+        RewriteRule::IfBranchSwap => LawRef {
+            name: "branch-symmetry",
+            rationale: "Swapping same-context branches while negating the guard preserves the branch join row.",
+        },
+        RewriteRule::ConstantFolding => LawRef {
+            name: "constant-subexpression-equivalence",
+            rationale: "Literal-only subexpressions carry an empty row, so folding them preserves effects.",
+        },
     }
 }
 
@@ -59,6 +83,10 @@ pub fn apply_rewrite(source: &str, rule: RewriteRule) -> Result<RewriteResult> {
         RewriteRule::AlphaConversion => alpha_convert(&mut file)?,
         RewriteRule::LetExtract => let_extract(&mut file)?,
         RewriteRule::LetInline => let_inline(&mut file)?,
+        RewriteRule::CommutativeSiblingSwap => commutative_sibling_swap(&mut file)?,
+        RewriteRule::TopLevelReorder => top_level_reorder(&mut file)?,
+        RewriteRule::IfBranchSwap => if_branch_swap(&mut file)?,
+        RewriteRule::ConstantFolding => constant_folding(&mut file)?,
     };
     Ok(RewriteResult {
         source: render_file(&file),
@@ -131,6 +159,60 @@ fn let_inline(file: &mut File) -> Result<bool> {
         let Decl::Agent(agent) = decl else { continue };
         let binding_counts = collect_local_binding_counts(agent, &resolved);
         if inline_in_block(&mut agent.body, &resolved, &binding_counts) {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+fn commutative_sibling_swap(file: &mut File) -> Result<bool> {
+    let resolved = resolve(file);
+    if !resolved.errors.is_empty() {
+        bail!(
+            "resolve failed before commutative-sibling-swap: {:?}",
+            resolved.errors
+        );
+    }
+    for decl in &mut file.decls {
+        let Decl::Agent(agent) = decl else { continue };
+        if swap_independent_lets_in_block(&mut agent.body, &resolved) {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+fn top_level_reorder(file: &mut File) -> Result<bool> {
+    let resolved = resolve(file);
+    if !resolved.errors.is_empty() {
+        bail!("resolve failed before top-level-reorder: {:?}", resolved.errors);
+    }
+    let graph = build_dep_graph(file, &resolved);
+    for index in 0..file.decls.len().saturating_sub(1) {
+        if can_reorder_top_level_pair(&file.decls[index], &file.decls[index + 1], file, &resolved, &graph)
+        {
+            file.decls.swap(index, index + 1);
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+fn if_branch_swap(file: &mut File) -> Result<bool> {
+    let mut allocator = SpanAllocator::new(file);
+    for decl in &mut file.decls {
+        let Decl::Agent(agent) = decl else { continue };
+        if swap_if_branches_in_block(&mut agent.body, &mut allocator) {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+fn constant_folding(file: &mut File) -> Result<bool> {
+    for decl in &mut file.decls {
+        let Decl::Agent(agent) = decl else { continue };
+        if fold_constants_in_block(&mut agent.body) {
             return Ok(true);
         }
     }
@@ -481,6 +563,331 @@ fn apply_inline_to_stmt(stmt: &mut Stmt, resolved: &Resolved, replacement: Expr)
         }
     }
     let _ = resolved;
+}
+
+fn swap_independent_lets_in_block(block: &mut Block, resolved: &Resolved) -> bool {
+    let mut index = 0;
+    while index + 1 < block.stmts.len() {
+        if can_swap_independent_lets(&block.stmts[index], &block.stmts[index + 1], resolved) {
+            block.stmts.swap(index, index + 1);
+            return true;
+        }
+        match &mut block.stmts[index] {
+            Stmt::If {
+                then_block,
+                else_block,
+                ..
+            } => {
+                if swap_independent_lets_in_block(then_block, resolved) {
+                    return true;
+                }
+                if let Some(block) = else_block {
+                    if swap_independent_lets_in_block(block, resolved) {
+                        return true;
+                    }
+                }
+            }
+            Stmt::For { body, .. } => {
+                if swap_independent_lets_in_block(body, resolved) {
+                    return true;
+                }
+            }
+            _ => {}
+        }
+        index += 1;
+    }
+    if let Some(last) = block.stmts.last_mut() {
+        match last {
+            Stmt::If {
+                then_block,
+                else_block,
+                ..
+            } => {
+                if swap_independent_lets_in_block(then_block, resolved) {
+                    return true;
+                }
+                if let Some(block) = else_block {
+                    if swap_independent_lets_in_block(block, resolved) {
+                        return true;
+                    }
+                }
+            }
+            Stmt::For { body, .. } => {
+                if swap_independent_lets_in_block(body, resolved) {
+                    return true;
+                }
+            }
+            _ => {}
+        }
+    }
+    false
+}
+
+fn can_swap_independent_lets(left: &Stmt, right: &Stmt, resolved: &Resolved) -> bool {
+    let Stmt::Let {
+        name: left_name,
+        value: left_value,
+        ..
+    } = left
+    else {
+        return false;
+    };
+    let Stmt::Let {
+        name: right_name,
+        value: right_value,
+        ..
+    } = right
+    else {
+        return false;
+    };
+    if !is_pure_expr(left_value) || !is_pure_expr(right_value) {
+        return false;
+    }
+    let Some(Binding::Local(left_local)) = resolved.bindings.get(&left_name.span) else {
+        return false;
+    };
+    let Some(Binding::Local(right_local)) = resolved.bindings.get(&right_name.span) else {
+        return false;
+    };
+    if left_local == right_local {
+        return false;
+    }
+    !expr_mentions_local(left_value, resolved, *right_local)
+        && !expr_mentions_local(right_value, resolved, *left_local)
+}
+
+fn expr_mentions_local(expr: &Expr, resolved: &Resolved, local: LocalId) -> bool {
+    match expr {
+        Expr::Literal { .. } => false,
+        Expr::Ident { name, .. } => matches!(
+            resolved.bindings.get(&name.span),
+            Some(Binding::Local(id)) if *id == local
+        ),
+        Expr::Call { callee, args, .. } => {
+            expr_mentions_local(callee, resolved, local)
+                || args.iter().any(|arg| expr_mentions_local(arg, resolved, local))
+        }
+        Expr::FieldAccess { target, .. } => expr_mentions_local(target, resolved, local),
+        Expr::Index { target, index, .. } => {
+            expr_mentions_local(target, resolved, local)
+                || expr_mentions_local(index, resolved, local)
+        }
+        Expr::BinOp { left, right, .. } => {
+            expr_mentions_local(left, resolved, local)
+                || expr_mentions_local(right, resolved, local)
+        }
+        Expr::UnOp { operand, .. } => expr_mentions_local(operand, resolved, local),
+        Expr::List { items, .. } => items.iter().any(|item| expr_mentions_local(item, resolved, local)),
+        Expr::TryPropagate { inner, .. } => expr_mentions_local(inner, resolved, local),
+        Expr::TryRetry { body, .. } => expr_mentions_local(body, resolved, local),
+    }
+}
+
+fn can_reorder_top_level_pair(
+    left: &Decl,
+    right: &Decl,
+    file: &File,
+    resolved: &Resolved,
+    graph: &corvid_resolve::DepGraph,
+) -> bool {
+    if !is_reorderable_top_level_decl(left) || !is_reorderable_top_level_decl(right) {
+        return false;
+    }
+    if matches!(left, Decl::Effect(_)) || matches!(right, Decl::Effect(_)) {
+        return true;
+    }
+    let Some(left_id) = top_level_decl_id(left, resolved) else {
+        return false;
+    };
+    let Some(right_id) = top_level_decl_id(right, resolved) else {
+        return false;
+    };
+    let _ = file;
+    !depends_transitively(graph, left_id, right_id) && !depends_transitively(graph, right_id, left_id)
+}
+
+fn is_reorderable_top_level_decl(decl: &Decl) -> bool {
+    matches!(
+        decl,
+        Decl::Effect(_) | Decl::Tool(_) | Decl::Prompt(_) | Decl::Agent(_)
+    )
+}
+
+fn top_level_decl_id(decl: &Decl, resolved: &Resolved) -> Option<corvid_resolve::DefId> {
+    let name = match decl {
+        Decl::Tool(tool) => &tool.name.name,
+        Decl::Prompt(prompt) => &prompt.name.name,
+        Decl::Agent(agent) => &agent.name.name,
+        Decl::Effect(effect) => &effect.name.name,
+        _ => return None,
+    };
+    resolved.symbols.lookup_def(name)
+}
+
+fn depends_transitively(
+    graph: &corvid_resolve::DepGraph,
+    start: corvid_resolve::DefId,
+    target: corvid_resolve::DefId,
+) -> bool {
+    let mut pending = vec![start];
+    let mut visited = BTreeSet::new();
+    while let Some(current) = pending.pop() {
+        if !visited.insert(current.0) {
+            continue;
+        }
+        if current == target {
+            return true;
+        }
+        if let Some(next) = graph.forward.get(&current) {
+            pending.extend(next.iter().copied());
+        }
+    }
+    false
+}
+
+fn swap_if_branches_in_block(block: &mut Block, allocator: &mut SpanAllocator) -> bool {
+    for stmt in &mut block.stmts {
+        match stmt {
+            Stmt::If {
+                cond,
+                then_block,
+                else_block,
+                ..
+            } => {
+                if let Some(else_block) = else_block {
+                    let original = std::mem::replace(
+                        cond,
+                        Expr::UnOp {
+                            op: UnaryOp::Not,
+                            operand: Box::new(cond.clone()),
+                            span: allocator.fresh_span(),
+                        },
+                    );
+                    *cond = negate_expr(original, allocator);
+                    std::mem::swap(then_block, else_block);
+                    return true;
+                }
+                if swap_if_branches_in_block(then_block, allocator) {
+                    return true;
+                }
+            }
+            Stmt::For { body, .. } => {
+                if swap_if_branches_in_block(body, allocator) {
+                    return true;
+                }
+            }
+            _ => {}
+        }
+    }
+    false
+}
+
+fn negate_expr(expr: Expr, allocator: &mut SpanAllocator) -> Expr {
+    Expr::UnOp {
+        op: UnaryOp::Not,
+        operand: Box::new(expr),
+        span: allocator.fresh_span(),
+    }
+}
+
+fn fold_constants_in_block(block: &mut Block) -> bool {
+    for stmt in &mut block.stmts {
+        if fold_constants_in_stmt(stmt) {
+            return true;
+        }
+        match stmt {
+            Stmt::If {
+                then_block,
+                else_block,
+                ..
+            } => {
+                if fold_constants_in_block(then_block) {
+                    return true;
+                }
+                if let Some(block) = else_block {
+                    if fold_constants_in_block(block) {
+                        return true;
+                    }
+                }
+            }
+            Stmt::For { body, .. } => {
+                if fold_constants_in_block(body) {
+                    return true;
+                }
+            }
+            _ => {}
+        }
+    }
+    false
+}
+
+fn fold_constants_in_stmt(stmt: &mut Stmt) -> bool {
+    match stmt {
+        Stmt::Let { value, .. }
+        | Stmt::Yield { value, .. }
+        | Stmt::Expr { expr: value, .. }
+        | Stmt::Approve { action: value, .. } => fold_constants_in_expr(value),
+        Stmt::Return { value, .. } => value.as_mut().is_some_and(fold_constants_in_expr),
+        Stmt::If { cond, .. } => fold_constants_in_expr(cond),
+        Stmt::For { iter, .. } => fold_constants_in_expr(iter),
+    }
+}
+
+fn fold_constants_in_expr(expr: &mut Expr) -> bool {
+    if let Expr::BinOp { op, left, right, span } = expr {
+        if let (Expr::Literal { value: left, .. }, Expr::Literal { value: right, .. }) =
+            (&**left, &**right)
+        {
+            if let Some(value) = fold_literal_binop(*op, left, right) {
+                *expr = Expr::Literal { value, span: *span };
+                return true;
+            }
+        }
+    }
+    match expr {
+        Expr::Literal { .. } | Expr::Ident { .. } => false,
+        Expr::Call { callee, args, .. } => {
+            if fold_constants_in_expr(callee) {
+                return true;
+            }
+            for arg in args {
+                if fold_constants_in_expr(arg) {
+                    return true;
+                }
+            }
+            false
+        }
+        Expr::FieldAccess { target, .. } => fold_constants_in_expr(target),
+        Expr::Index { target, index, .. } => {
+            fold_constants_in_expr(target) || fold_constants_in_expr(index)
+        }
+        Expr::BinOp { left, right, .. } => {
+            fold_constants_in_expr(left) || fold_constants_in_expr(right)
+        }
+        Expr::UnOp { operand, .. } => fold_constants_in_expr(operand),
+        Expr::List { items, .. } => {
+            for item in items {
+                if fold_constants_in_expr(item) {
+                    return true;
+                }
+            }
+            false
+        }
+        Expr::TryPropagate { inner, .. } => fold_constants_in_expr(inner),
+        Expr::TryRetry { body, .. } => fold_constants_in_expr(body),
+    }
+}
+
+fn fold_literal_binop(op: BinaryOp, left: &Literal, right: &Literal) -> Option<Literal> {
+    match (op, left, right) {
+        (BinaryOp::Add, Literal::Int(left), Literal::Int(right)) => {
+            Some(Literal::Int(left + right))
+        }
+        (BinaryOp::Add, Literal::String(left), Literal::String(right)) => {
+            Some(Literal::String(format!("{left}{right}")))
+        }
+        _ => None,
+    }
 }
 
 fn collect_local_binding_counts(
