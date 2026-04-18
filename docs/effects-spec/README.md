@@ -11,8 +11,8 @@ This directory is the normative specification of Corvid's dimensional effect sys
 | [00 — Overview and motivation](./00-overview.md) | What the effect system is, why Corvid has one, how it differs from prior art |
 | [01 — Dimensional syntax](./01-dimensional-syntax.md) | `effect` declarations, `uses` clauses, `@constraint(...)` annotations, custom dimensions via `corvid.toml`, proof-carrying dimensions, spec↔compiler sync, cross-language counter-proofs |
 | [02 — Composition algebra](./02-composition-algebra.md) | Five composition archetypes, derivation from first principles, counter-design demonstrations, category-theoretic framing, effect-diff tooling, community dimension registry, self-verifying verification |
-| [03 — Typing rules](./03-typing-rules.md) | Inference-rule notation, side conditions, soundness statement |
-| [04 — Built-in dimensions](./04-builtin-dimensions.md) | Cost, trust, reversible, data, latency, confidence — with worked examples |
+| [03 — Typing rules](./03-typing-rules.md) | Inference-rule notation, expression/statement rules, constraint satisfaction, Grounded<T> data-flow, soundness theorem, worked example |
+| [04 — Built-in dimensions](./04-builtin-dimensions.md) | Cost, trust, reversible, data, latency, confidence + tokens/latency_ms helpers — each with physical meaning, composition rule, constraint form, worked example, counter-design, attack-surface review |
 | [05 — Grounding and provenance](./05-grounding.md) | `Grounded<T>`, data-flow verification, `cites ctx strictly` |
 | [06 — Confidence-gated trust](./06-confidence-gates.md) | `autonomous_if_confident(T)`, dynamic authorization, `@min_confidence` |
 | [07 — Cost analysis and budgets](./07-cost-budgets.md) | Multi-dimensional `@budget`, worst-case path analysis, cost tree |
