@@ -653,6 +653,20 @@ agent load_option(id: String) -> Option<String>:
     }
 
     #[test]
+    fn retry_expression_accepts_stream_bodies() {
+        let src = "\
+agent flaky() -> Stream<Result<String, String>>:
+    yield Err(\"boom\")
+
+agent caller() -> Stream<Result<String, String>>:
+    for item in try flaky() on error retry 3 times backoff exponential 10:
+        yield item
+";
+        let c = check(src);
+        assert!(c.errors.is_empty(), "errors: {:?}", c.errors);
+    }
+
+    #[test]
     fn weak_new_is_fresh_immediately_on_construction() {
         let src = "\
 agent make(name: String) -> Weak<String, {tool_call}>:

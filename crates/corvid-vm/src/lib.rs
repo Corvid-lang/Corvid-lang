@@ -553,6 +553,68 @@ agent relay(ctx: String) -> Stream<String>:
     }
 
     #[tokio::test]
+    async fn try_retry_retries_stream_when_first_element_is_err() {
+        let src = "\
+tool next_mode() -> Int
+
+agent flaky_stream() -> Stream<Result<String, String>>:
+    mode = next_mode()
+    if mode == 0:
+        yield Err(\"network\")
+    yield Ok(\"done\")
+
+agent caller() -> Stream<Result<String, String>>:
+    for item in try flaky_stream() on error retry 3 times backoff exponential 1:
+        yield item
+";
+        let ir = ir_of(src);
+        let modes = Arc::new(std::sync::Mutex::new(std::collections::VecDeque::from([0_i64, 1])));
+        let rt = Runtime::builder()
+            .approver(Arc::new(ProgrammaticApprover::always_yes()))
+            .tool("next_mode", {
+                let modes = Arc::clone(&modes);
+                move |_| {
+                    let modes = Arc::clone(&modes);
+                    async move {
+                        let next = modes.lock().unwrap().pop_front().unwrap_or(1);
+                        Ok(json!(next))
+                    }
+                }
+            })
+            .build();
+        let stream = run_agent(&ir, "caller", vec![], &rt).await.expect("run");
+        let items = collect_stream(stream).await.expect("collect");
+        assert_eq!(
+            items,
+            vec![Value::ResultOk(crate::value::BoxedValue::new(Value::String(Arc::from("done"))))]
+        );
+    }
+
+    #[tokio::test]
+    async fn try_retry_does_not_retry_mid_stream_err() {
+        let src = "\
+agent flaky_stream() -> Stream<Result<String, String>>:
+    yield Ok(\"first\")
+    yield Err(\"boom\")
+
+agent caller() -> Stream<Result<String, String>>:
+    for item in try flaky_stream() on error retry 3 times backoff exponential 1:
+        yield item
+";
+        let ir = ir_of(src);
+        let rt = empty_runtime();
+        let stream = run_agent(&ir, "caller", vec![], &rt).await.expect("run");
+        let items = collect_stream(stream).await.expect("collect");
+        assert_eq!(
+            items,
+            vec![
+                Value::ResultOk(crate::value::BoxedValue::new(Value::String(Arc::from("first")))),
+                Value::ResultErr(crate::value::BoxedValue::new(Value::String(Arc::from("boom")))),
+            ]
+        );
+    }
+
+    #[tokio::test]
     async fn bounded_stream_channel_round_trips_values() {
         let (sender, stream) = crate::value::StreamValue::channel(BackpressurePolicy::Bounded(2));
         assert!(sender.send(Ok(Value::Int(1))).await);

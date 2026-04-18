@@ -370,6 +370,26 @@ impl<'ir> Interpreter<'ir> {
         Ok(Value::Stream(stream))
     }
 
+    fn prepend_stream_chunk(
+        &self,
+        first: StreamChunk,
+        stream: StreamValue,
+    ) -> Value {
+        let backpressure = stream.backpressure().clone();
+        let (sender, combined) = StreamValue::channel(backpressure);
+        tokio::spawn(async move {
+            if !sender.send_chunk(Ok(first)).await {
+                return;
+            }
+            while let Some(item) = stream.next_chunk().await {
+                if !sender.send_chunk(item).await {
+                    break;
+                }
+            }
+        });
+        Value::Stream(combined)
+    }
+
     fn chunk_for_expr(&self, expr: &IrExpr, value: Value) -> StreamChunk {
         if let IrExprKind::Local { local_id, .. } = &expr.kind {
             if let Some(chunk) = self.stream_locals.get(local_id) {
@@ -885,9 +905,30 @@ impl<'ir> Interpreter<'ir> {
                 let total = (*attempts).max(1);
                 let mut last_runtime_error: Option<InterpError> = None;
                 let mut last_result_err: Option<Value> = None;
+                let mut last_stream_start_err: Option<InterpError> = None;
+                let mut last_stream_start_chunk: Option<StreamChunk> = None;
                 let mut saw_option_retry = false;
                 for _ in 0..total {
                     match self.eval_expr(body).await {
+                        Ok(ExprFlow::Value(Value::Stream(stream))) => {
+                            match stream.next_chunk().await {
+                                Some(Ok(chunk)) if stream_start_is_retryable(&chunk.value) => {
+                                    if matches!(chunk.value, Value::OptionNone) {
+                                        saw_option_retry = true;
+                                    } else {
+                                        last_stream_start_chunk = Some(chunk);
+                                    }
+                                }
+                                Some(Ok(chunk)) => {
+                                    let combined = self.prepend_stream_chunk(chunk, stream);
+                                    return Ok(ExprFlow::Value(combined));
+                                }
+                                Some(Err(err)) => {
+                                    last_stream_start_err = Some(err);
+                                }
+                                None => return Ok(ExprFlow::Value(Value::Stream(stream))),
+                            }
+                        }
                         Ok(ExprFlow::Value(Value::ResultErr(err))) => {
                             last_result_err = Some(Value::ResultErr(err));
                         }
@@ -901,8 +942,17 @@ impl<'ir> Interpreter<'ir> {
                 }
                 if let Some(v) = last_result_err {
                     Ok(ExprFlow::Value(v))
+                } else if let Some(chunk) = last_stream_start_chunk {
+                    Ok(ExprFlow::Value(self.singleton_stream(
+                        chunk,
+                        default_stream_backpressure(),
+                    ).await?))
                 } else if saw_option_retry {
                     Ok(ExprFlow::Value(Value::OptionNone))
+                } else if let Some(err) = last_stream_start_err {
+                    Ok(ExprFlow::Value(
+                        self.singleton_stream_error(err, default_stream_backpressure()).await?,
+                    ))
                 } else if let Some(err) = last_runtime_error {
                     Err(err)
                 } else {
@@ -1561,4 +1611,8 @@ fn prompt_effective_confidence(prompt: &IrPrompt, value: &Value) -> f64 {
         _ => 1.0,
     };
     prompt.effect_confidence.min(value_confidence)
+}
+
+fn stream_start_is_retryable(value: &Value) -> bool {
+    matches!(value, Value::ResultErr(_) | Value::OptionNone)
 }

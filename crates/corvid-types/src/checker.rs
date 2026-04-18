@@ -1635,7 +1635,7 @@ impl<'a> Checker<'a> {
     fn check_try_retry(&mut self, body: &Expr, span: Span) -> Type {
         let body_ty = self.check_expr(body);
         match body_ty {
-            Type::Result(_, _) | Type::Option(_) | Type::Unknown => body_ty,
+            Type::Result(_, _) | Type::Option(_) | Type::Stream(_) | Type::Unknown => body_ty,
             other => {
                 self.errors.push(TypeError::new(
                     TypeErrorKind::InvalidRetryTarget {
