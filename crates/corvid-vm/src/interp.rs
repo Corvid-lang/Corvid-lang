@@ -10,15 +10,16 @@
 use crate::conv::{json_to_value, value_to_json};
 use crate::env::Env;
 use crate::errors::{InterpError, InterpErrorKind};
-use crate::value::{BoxedValue, ListValue, StructValue, Value};
+use crate::value::{BoxedValue, ListValue, StreamSender, StreamValue, StructValue, Value};
 use async_recursion::async_recursion;
-use corvid_ast::{BinaryOp, Span, UnaryOp};
+use corvid_ast::{BackpressurePolicy, BinaryOp, Span, UnaryOp};
 use corvid_ir::{
     IrAgent, IrBlock, IrCallKind, IrExpr, IrExprKind, IrFile, IrLiteral, IrPrompt, IrStmt,
     IrTool, IrType,
 };
 use corvid_resolve::{DefId, LocalId};
 use corvid_runtime::{LlmRequest, Runtime, TraceEvent};
+use corvid_types::Type;
 use crate::step::{self, StepAction, StepController, StepEvent, StepMode, StmtKind};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -212,6 +213,7 @@ struct Interpreter<'ir> {
     runtime: &'ir Runtime,
     local_names: HashMap<LocalId, String>,
     stepper: Option<StepController>,
+    stream_sender: Option<StreamSender>,
 }
 
 impl<'ir> Interpreter<'ir> {
@@ -234,6 +236,7 @@ impl<'ir> Interpreter<'ir> {
             runtime,
             local_names: HashMap::new(),
             stepper: None,
+            stream_sender: None,
         }
     }
 
@@ -288,6 +291,9 @@ impl<'ir> Interpreter<'ir> {
     }
 
     async fn run_body(&mut self, agent: &'ir IrAgent) -> Result<Value, InterpError> {
+        if matches!(&agent.return_ty, Type::Stream(_)) {
+            return self.spawn_stream_agent(agent).await;
+        }
         match self.eval_block(&agent.body).await? {
             Flow::Return(v) => Ok(v),
             Flow::Normal => Ok(Value::Nothing),
@@ -298,6 +304,52 @@ impl<'ir> Interpreter<'ir> {
                 agent.span,
             )),
         }
+    }
+
+    async fn spawn_stream_agent(&mut self, agent: &'ir IrAgent) -> Result<Value, InterpError> {
+        let (sender, stream) = StreamValue::channel(default_stream_backpressure());
+        let ir = self.ir.clone();
+        let runtime = self.runtime.clone();
+        let agent = agent.clone();
+        let env = self.env.clone();
+        let local_names = self.local_names.clone();
+        tokio::spawn(async move {
+            let mut sub = Interpreter::new(&ir, &runtime);
+            sub.env = env;
+            sub.local_names = local_names;
+            sub.stream_sender = Some(sender);
+            let outcome = sub.eval_block(&agent.body).await;
+            let maybe_sender = sub.stream_sender.take();
+            match outcome {
+                Ok(Flow::Normal) | Ok(Flow::Return(_)) => {}
+                Ok(Flow::Break) | Ok(Flow::Continue) => {
+                    if let Some(sender) = maybe_sender {
+                        let _ = sender.send(Err(InterpError::new(
+                            InterpErrorKind::Other(
+                                "loop control flow escaped its enclosing loop".into(),
+                            ),
+                            agent.span,
+                        ))).await;
+                    }
+                }
+                Err(err) => {
+                    if let Some(sender) = maybe_sender {
+                        let _ = sender.send(Err(err)).await;
+                    }
+                }
+            }
+        });
+        Ok(Value::Stream(stream))
+    }
+
+    async fn singleton_stream(
+        &self,
+        value: Value,
+        backpressure: BackpressurePolicy,
+    ) -> Result<Value, InterpError> {
+        let (sender, stream) = StreamValue::channel(backpressure);
+        let _ = sender.send(Ok(value)).await;
+        Ok(Value::Stream(stream))
     }
 
     #[async_recursion]
@@ -339,10 +391,21 @@ impl<'ir> Interpreter<'ir> {
                 };
                 Ok(Flow::Return(v))
             }
-            IrStmt::Yield { span, .. } => Err(InterpError::new(
-                InterpErrorKind::NotImplemented("stream yield statements".into()),
-                *span,
-            )),
+            IrStmt::Yield { value, span } => {
+                let yielded = match self.eval_expr(value).await?.into_value() {
+                    Ok(v) | Err(v) => v,
+                };
+                let Some(sender) = self.stream_sender.as_ref() else {
+                    return Err(InterpError::new(
+                        InterpErrorKind::NotImplemented("stream yield statements".into()),
+                        *span,
+                    ));
+                };
+                if !sender.send(Ok(yielded)).await {
+                    return Ok(Flow::Return(Value::Nothing));
+                }
+                Ok(Flow::Normal)
+            }
             IrStmt::If {
                 cond,
                 then_block,
@@ -384,29 +447,46 @@ impl<'ir> Interpreter<'ir> {
                     Ok(v) => v,
                     Err(v) => return Ok(Flow::Return(v)),
                 };
-                let items = match iter_val {
-                    Value::List(items) => items.iter_cloned(),
+                match iter_val {
+                    Value::List(items) => {
+                        for item in items.iter_cloned() {
+                            self.env.bind(*var_local, item);
+                            match self.eval_block(body).await? {
+                                Flow::Normal | Flow::Continue => continue,
+                                Flow::Break => return Ok(Flow::Normal),
+                                Flow::Return(v) => return Ok(Flow::Return(v)),
+                            }
+                        }
+                    }
                     Value::String(s) => {
-                        s.chars()
-                            .map(|c| Value::String(Arc::from(c.to_string())))
-                            .collect()
+                        for item in s.chars().map(|c| Value::String(Arc::from(c.to_string()))) {
+                            self.env.bind(*var_local, item);
+                            match self.eval_block(body).await? {
+                                Flow::Normal | Flow::Continue => continue,
+                                Flow::Break => return Ok(Flow::Normal),
+                                Flow::Return(v) => return Ok(Flow::Return(v)),
+                            }
+                        }
+                    }
+                    Value::Stream(stream) => {
+                        while let Some(item) = stream.next().await {
+                            let item = item?;
+                            self.env.bind(*var_local, item);
+                            match self.eval_block(body).await? {
+                                Flow::Normal | Flow::Continue => continue,
+                                Flow::Break => return Ok(Flow::Normal),
+                                Flow::Return(v) => return Ok(Flow::Return(v)),
+                            }
+                        }
                     }
                     other => {
                         return Err(InterpError::new(
                             InterpErrorKind::TypeMismatch {
-                                expected: "List or String".into(),
+                                expected: "List, Stream, or String".into(),
                                 got: other.type_name(),
                             },
                             *span,
                         ))
-                    }
-                };
-                for item in items {
-                    self.env.bind(*var_local, item);
-                    match self.eval_block(body).await? {
-                        Flow::Normal | Flow::Continue => continue,
-                        Flow::Break => return Ok(Flow::Normal),
-                        Flow::Return(v) => return Ok(Flow::Return(v)),
                     }
                 }
                 Ok(Flow::Normal)
@@ -917,8 +997,11 @@ impl<'ir> Interpreter<'ir> {
                     }
                 }
 
-                let output_schema =
-                    Some(crate::schema::schema_for(&prompt.return_ty, &self.types_by_id));
+                let result_ty = match &prompt.return_ty {
+                    Type::Stream(inner) => inner.as_ref(),
+                    other => other,
+                };
+                let output_schema = Some(crate::schema::schema_for(result_ty, &self.types_by_id));
                 let req = LlmRequest {
                     prompt: callee_name.to_string(),
                     model: String::new(),
@@ -951,7 +1034,7 @@ impl<'ir> Interpreter<'ir> {
                     }
                 }
 
-                let value = json_to_value(resp.value, &prompt.return_ty, &self.types_by_id)
+                let value = json_to_value(resp.value, result_ty, &self.types_by_id)
                     .map_err(|e| {
                         InterpError::new(
                             InterpErrorKind::Marshal(format!(
@@ -992,11 +1075,19 @@ impl<'ir> Interpreter<'ir> {
                         has_grounded_input = true;
                     }
                 }
-                if has_grounded_input {
+                let value = if has_grounded_input {
                     merged_chain.add_prompt_transform(callee_name, corvid_runtime::now_ms());
-                    Ok(ExprFlow::Value(Value::Grounded(
+                    Value::Grounded(
                         crate::value::GroundedValue::new(value, merged_chain),
-                    )))
+                    )
+                } else {
+                    value
+                };
+
+                if matches!(&prompt.return_ty, Type::Stream(_)) {
+                    Ok(ExprFlow::Value(
+                        self.singleton_stream(value, prompt_backpressure(prompt)).await?,
+                    ))
                 } else {
                     Ok(ExprFlow::Value(value))
                 }
@@ -1331,10 +1422,6 @@ fn citation_verified(context: &str, response: &str) -> bool {
     false
 }
 
-// `Type` import: needed by `eval_call`'s signature. Imported here at the
-// bottom so the file's structure stays close to the original.
-use corvid_types::Type;
-
 // Suppress dead-field warnings on the few fields the interpreter holds
 // but doesn't yet read directly (the IR is read indirectly via the
 // per-kind id maps).
@@ -1342,4 +1429,15 @@ use corvid_types::Type;
 fn _force_use(i: &Interpreter<'_>) {
     let _ = &i.ir;
     let _ = &i.types_by_id;
+}
+
+fn default_stream_backpressure() -> BackpressurePolicy {
+    BackpressurePolicy::Bounded(16)
+}
+
+fn prompt_backpressure(prompt: &IrPrompt) -> BackpressurePolicy {
+    prompt
+        .backpressure
+        .clone()
+        .unwrap_or_else(default_stream_backpressure)
 }

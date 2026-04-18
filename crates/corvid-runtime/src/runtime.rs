@@ -13,6 +13,7 @@ use crate::tracing::{fresh_run_id, now_ms, TraceEvent, Tracer};
 use std::path::Path;
 use std::sync::Arc;
 
+#[derive(Clone)]
 pub struct Runtime {
     tools: ToolRegistry,
     llms: LlmRegistry,

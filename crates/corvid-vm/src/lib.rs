@@ -39,15 +39,18 @@ pub use step::{
     Checkpoint, EnvSnapshot, ExecutionTrace, NoOpHook, RecordingHook, ReplayForkHook,
     StepAction, StepController, StepEvent, StepHook, StepMode, StmtKind,
 };
-pub use value::{GroundedValue, ProvenanceChain, ProvenanceEntry, ProvenanceKind, StructValue, Value};
+pub use value::{
+    GroundedValue, ProvenanceChain, ProvenanceEntry, ProvenanceKind, StreamValue, StructValue,
+    Value,
+};
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use corvid_ast::Span;
+    use corvid_ast::{BackpressurePolicy, Span};
     use corvid_ir::lower;
     use corvid_resolve::resolve;
-    use corvid_runtime::{ProgrammaticApprover, Runtime, RuntimeError};
+    use corvid_runtime::{llm::mock::MockAdapter, ProgrammaticApprover, Runtime, RuntimeError};
     use corvid_syntax::{lex, parse_file};
     use corvid_types::typecheck;
     use serde_json::json;
@@ -72,6 +75,17 @@ mod tests {
         Runtime::builder()
             .approver(Arc::new(ProgrammaticApprover::always_yes()))
             .build()
+    }
+
+    async fn collect_stream(value: Value) -> Result<Vec<Value>, InterpError> {
+        let Value::Stream(stream) = value else {
+            panic!("expected stream value");
+        };
+        let mut out = Vec::new();
+        while let Some(item) = stream.next().await {
+            out.push(item?);
+        }
+        Ok(out)
     }
 
     // ----------------------------- Value tests ------------------------------
@@ -305,6 +319,94 @@ agent noop(x: Int) -> Int:
         let rt = empty_runtime();
         let v = run_agent(&ir, "noop", vec![Value::Int(5)], &rt).await.expect("run");
         assert_eq!(v, Value::Int(5));
+    }
+
+    #[tokio::test]
+    async fn stream_agent_yields_values_over_mpsc() {
+        let src = "\
+agent chunks(text: String) -> Stream<String>:
+    yield text
+    yield text + \"!\"
+";
+        let ir = ir_of(src);
+        let rt = empty_runtime();
+        let stream = run_agent(&ir, "chunks", vec![Value::String(Arc::from("hi"))], &rt)
+            .await
+            .expect("run");
+        let items = collect_stream(stream).await.expect("collect");
+        assert_eq!(
+            items,
+            vec![
+                Value::String(Arc::from("hi")),
+                Value::String(Arc::from("hi!")),
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn for_loop_consumes_stream_values() {
+        let src = "\
+agent source() -> Stream<Int>:
+    yield 1
+    yield 2
+    yield 3
+
+agent sum_stream() -> Int:
+    total = 0
+    for x in source():
+        total = total + x
+    return total
+";
+        let ir = ir_of(src);
+        let rt = empty_runtime();
+        let value = run_agent(&ir, "sum_stream", vec![], &rt).await.expect("run");
+        assert_eq!(value, Value::Int(6));
+    }
+
+    #[tokio::test]
+    async fn stream_prompt_is_wrapped_as_singleton_stream() {
+        let src = "\
+prompt generate(ctx: String) -> Stream<String>:
+    with backpressure unbounded
+    \"Generate {ctx}\"
+
+agent relay(ctx: String) -> Stream<String>:
+    for chunk in generate(ctx):
+        yield chunk
+";
+        let ir = ir_of(src);
+        let rt = Runtime::builder()
+            .approver(Arc::new(ProgrammaticApprover::always_yes()))
+            .llm(Arc::new(MockAdapter::new("mock-1").reply("generate", json!("hello"))))
+            .default_model("mock-1")
+            .build();
+        let stream = run_agent(&ir, "relay", vec![Value::String(Arc::from("ctx"))], &rt)
+            .await
+            .expect("run");
+        let items = collect_stream(stream).await.expect("collect");
+        assert_eq!(items, vec![Value::String(Arc::from("hello"))]);
+    }
+
+    #[tokio::test]
+    async fn bounded_stream_channel_round_trips_values() {
+        let (sender, stream) = crate::value::StreamValue::channel(BackpressurePolicy::Bounded(2));
+        assert!(sender.send(Ok(Value::Int(1))).await);
+        assert!(sender.send(Ok(Value::Int(2))).await);
+        drop(sender);
+        let mut items = Vec::new();
+        while let Some(item) = stream.next().await {
+            items.push(item.expect("item"));
+        }
+        assert_eq!(items, vec![Value::Int(1), Value::Int(2)]);
+    }
+
+    #[tokio::test]
+    async fn unbounded_stream_channel_round_trips_values() {
+        let (sender, stream) = crate::value::StreamValue::channel(BackpressurePolicy::Unbounded);
+        assert!(sender.send(Ok(Value::String(Arc::from("a")))).await);
+        drop(sender);
+        let items = collect_stream(Value::Stream(stream)).await.expect("collect");
+        assert_eq!(items, vec![Value::String(Arc::from("a"))]);
     }
 
     // ------------------------------ Field access ---------------------------

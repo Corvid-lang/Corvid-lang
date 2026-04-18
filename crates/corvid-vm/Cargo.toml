@@ -14,6 +14,7 @@ corvid-runtime = { workspace = true }
 serde_json = { workspace = true }
 async-recursion = "1"
 async-trait = "0.1"
+tokio = { workspace = true }
 
 [dev-dependencies]
 corvid-syntax = { workspace = true }

@@ -12,11 +12,14 @@
 //! ownership and participate in the VM collector.
 
 use crate::cycle_collector;
+use crate::errors::InterpError;
+use corvid_ast::BackpressurePolicy;
 use corvid_resolve::DefId;
 use std::collections::HashMap;
 use std::fmt;
 use std::sync::atomic::{AtomicBool, AtomicU8, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, Weak};
+use tokio::sync::{mpsc, Mutex as AsyncMutex};
 
 /// A runtime value.
 #[derive(Debug)]
@@ -34,7 +37,10 @@ pub enum Value {
     OptionSome(BoxedValue),
     OptionNone,
     Grounded(GroundedValue),
+    Stream(StreamValue),
 }
+
+const UNBOUNDED_STREAM_WARN_THRESHOLD: usize = 1024;
 
 /// A value with a provenance chain proving it derives from a grounded source.
 #[derive(Debug, Clone)]
@@ -276,6 +282,30 @@ pub struct ListValue(Arc<ListInner>);
 
 #[derive(Debug)]
 pub struct BoxedValue(Arc<BoxedInner>);
+
+pub struct StreamValue(Arc<StreamInner>);
+
+struct StreamInner {
+    receiver: AsyncMutex<StreamReceiver>,
+    backpressure: BackpressurePolicy,
+    pending: AtomicUsize,
+    warned_unbounded: AtomicBool,
+}
+
+enum StreamReceiver {
+    Bounded(mpsc::Receiver<Result<Value, InterpError>>),
+    Unbounded(mpsc::UnboundedReceiver<Result<Value, InterpError>>),
+}
+
+pub(crate) struct StreamSender {
+    inner: Arc<StreamInner>,
+    kind: StreamSenderKind,
+}
+
+enum StreamSenderKind {
+    Bounded(mpsc::Sender<Result<Value, InterpError>>),
+    Unbounded(mpsc::UnboundedSender<Result<Value, InterpError>>),
+}
 
 pub enum WeakValue {
     String(Weak<str>),
@@ -694,6 +724,7 @@ impl Clone for Value {
             Value::OptionSome(v) => Value::OptionSome(v.clone()),
             Value::OptionNone => Value::OptionNone,
             Value::Grounded(g) => Value::Grounded(g.clone()),
+            Value::Stream(stream) => Value::Stream(stream.clone()),
         }
     }
 }
@@ -712,6 +743,9 @@ impl Value {
             Value::ResultOk(_) | Value::ResultErr(_) => "Result".into(),
             Value::OptionSome(_) | Value::OptionNone => "Option".into(),
             Value::Grounded(g) => format!("Grounded<{}>", g.inner.get().type_name()),
+            Value::Stream(stream) => {
+                format!("Stream<{}>", stream.backpressure_label())
+            }
         }
     }
 
@@ -793,6 +827,7 @@ impl fmt::Display for Value {
                 }
                 write!(f, "])")
             }
+            Value::Stream(stream) => write!(f, "Stream({})", stream.backpressure_label()),
         }
     }
 }
@@ -829,8 +864,118 @@ impl PartialEq for Value {
             (Value::OptionSome(a), Value::OptionSome(b)) => a == b,
             (Value::OptionNone, Value::OptionNone) => true,
             (Value::Grounded(a), Value::Grounded(b)) => a.inner == b.inner,
+            (Value::Stream(a), Value::Stream(b)) => a == b,
             _ => false,
         }
+    }
+}
+
+impl StreamValue {
+    pub(crate) fn channel(backpressure: BackpressurePolicy) -> (StreamSender, Self) {
+        match backpressure {
+            BackpressurePolicy::Bounded(size) => {
+                let (sender, receiver) = mpsc::channel(size as usize);
+                let inner = Arc::new(StreamInner {
+                    receiver: AsyncMutex::new(StreamReceiver::Bounded(receiver)),
+                    backpressure: BackpressurePolicy::Bounded(size),
+                    pending: AtomicUsize::new(0),
+                    warned_unbounded: AtomicBool::new(false),
+                });
+                let stream = Self(Arc::clone(&inner));
+                let sender = StreamSender {
+                    inner,
+                    kind: StreamSenderKind::Bounded(sender),
+                };
+                (sender, stream)
+            }
+            BackpressurePolicy::Unbounded => {
+                let (sender, receiver) = mpsc::unbounded_channel();
+                let inner = Arc::new(StreamInner {
+                    receiver: AsyncMutex::new(StreamReceiver::Unbounded(receiver)),
+                    backpressure: BackpressurePolicy::Unbounded,
+                    pending: AtomicUsize::new(0),
+                    warned_unbounded: AtomicBool::new(false),
+                });
+                let stream = Self(Arc::clone(&inner));
+                let sender = StreamSender {
+                    inner,
+                    kind: StreamSenderKind::Unbounded(sender),
+                };
+                (sender, stream)
+            }
+        }
+    }
+
+    pub async fn next(&self) -> Option<Result<Value, InterpError>> {
+        let mut receiver = self.0.receiver.lock().await;
+        let item = match &mut *receiver {
+            StreamReceiver::Bounded(rx) => rx.recv().await,
+            StreamReceiver::Unbounded(rx) => rx.recv().await,
+        };
+        if item.is_some() {
+            self.0.pending.fetch_sub(1, Ordering::AcqRel);
+        }
+        item
+    }
+
+    pub fn backpressure(&self) -> &BackpressurePolicy {
+        &self.0.backpressure
+    }
+
+    fn backpressure_label(&self) -> String {
+        match self.backpressure() {
+            BackpressurePolicy::Bounded(size) => format!("bounded({size})"),
+            BackpressurePolicy::Unbounded => "unbounded".into(),
+        }
+    }
+}
+
+impl Clone for StreamValue {
+    fn clone(&self) -> Self {
+        Self(self.0.clone())
+    }
+}
+
+impl PartialEq for StreamValue {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+    }
+}
+
+impl fmt::Debug for StreamValue {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("StreamValue")
+            .field("backpressure", self.backpressure())
+            .finish()
+    }
+}
+
+impl StreamSender {
+    pub async fn send(&self, item: Result<Value, InterpError>) -> bool {
+        let pending_after_send = self.inner.pending.fetch_add(1, Ordering::AcqRel) + 1;
+        match &self.kind {
+            StreamSenderKind::Bounded(sender) => {
+                if sender.send(item).await.is_err() {
+                    self.inner.pending.fetch_sub(1, Ordering::AcqRel);
+                    return false;
+                }
+            }
+            StreamSenderKind::Unbounded(sender) => {
+                if sender.send(item).is_err() {
+                    self.inner.pending.fetch_sub(1, Ordering::AcqRel);
+                    return false;
+                }
+                if pending_after_send > UNBOUNDED_STREAM_WARN_THRESHOLD
+                    && !self.inner.warned_unbounded.swap(true, Ordering::AcqRel)
+                {
+                    eprintln!(
+                        "warning: unbounded stream buffer exceeded {} queued items",
+                        UNBOUNDED_STREAM_WARN_THRESHOLD
+                    );
+                }
+            }
+        }
+        true
     }
 }
 

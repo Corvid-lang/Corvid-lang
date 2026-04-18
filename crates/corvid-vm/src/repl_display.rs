@@ -1,6 +1,7 @@
 //! REPL-oriented value rendering with cycle and depth guards.
 
 use crate::value::Value;
+use corvid_ast::BackpressurePolicy;
 use std::collections::HashSet;
 
 const MAX_DEPTH: usize = 32;
@@ -113,6 +114,14 @@ fn render_value_inner(
                 format!("Grounded({inner}, sources: [{}])", sources.join(", "))
             }
         }
+        Value::Stream(stream) => match stream.backpressure() {
+            BackpressurePolicy::Bounded(size) => {
+                format!("Stream(backpressure: bounded({size}))")
+            }
+            BackpressurePolicy::Unbounded => {
+                "Stream(backpressure: unbounded)".to_string()
+            }
+        },
     }
 }
 
