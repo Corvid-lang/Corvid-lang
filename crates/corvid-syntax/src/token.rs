@@ -52,6 +52,9 @@ pub enum TokKind {
     KwUses,
     KwAssert,
 
+    // --- keywords: typed model substrate (Phase 20h) ---
+    KwModel,
+
     // --- keywords: control flow ---
     KwIf,
     KwElse,
@@ -144,6 +147,7 @@ impl TokKind {
             "effect" => TokKind::KwEffect,
             "uses" => TokKind::KwUses,
             "assert" => TokKind::KwAssert,
+            "model" => TokKind::KwModel,
             "if" => TokKind::KwIf,
             "else" => TokKind::KwElse,
             "for" => TokKind::KwFor,

@@ -79,7 +79,7 @@ pub fn decl_name(decl: &Decl) -> Option<&str> {
         Decl::Prompt(d) => Some(&d.name.name),
         Decl::Agent(d) => Some(&d.name.name),
         Decl::Eval(d) => Some(&d.name.name),
-        Decl::Extend(_) | Decl::Effect(_) => None,
+        Decl::Extend(_) | Decl::Effect(_) | Decl::Model(_) => None,
     }
 }
 
@@ -127,7 +127,7 @@ fn collect_decl_deps(decl: &Decl, resolved: &Resolved, deps: &mut HashSet<DefId>
                 collect_typeref_dep(&field.ty, resolved, deps);
             }
         }
-        Decl::Import(_) | Decl::Extend(_) | Decl::Effect(_) => {}
+        Decl::Import(_) | Decl::Extend(_) | Decl::Effect(_) | Decl::Model(_) => {}
     }
 }
 

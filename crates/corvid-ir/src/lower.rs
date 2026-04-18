@@ -83,6 +83,13 @@ impl<'a> Lowerer<'a> {
                 Decl::Agent(a) => agents.push(self.lower_agent(a)),
                 Decl::Eval(e) => evals.push(self.lower_eval(e)),
                 Decl::Effect(_) => {}
+                Decl::Model(_) => {
+                    // Phase 20h slice A: model declarations are a
+                    // static catalog with no runtime lowering yet.
+                    // Slice B adds IR fields on IrPrompt for
+                    // capability requirements; slice C adds the
+                    // route table.
+                }
                 Decl::Extend(ext) => {
                     // Lower each method into the appropriate per-kind
                     // IR vector. Methods get

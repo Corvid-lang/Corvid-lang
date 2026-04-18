@@ -118,6 +118,7 @@ impl Resolver {
                 Decl::Agent(a) => (a.name.name.clone(), DeclKind::Agent, a.span),
                 Decl::Eval(e) => (e.name.name.clone(), DeclKind::Eval, e.span),
                 Decl::Effect(e) => (e.name.name.clone(), DeclKind::Effect, e.span),
+                Decl::Model(m) => (m.name.name.clone(), DeclKind::Model, m.span),
                 Decl::Extend(_) => {
                     // The parser accepts `extend T:`
                     // blocks; method registration into a per-type
@@ -266,6 +267,18 @@ impl Resolver {
                 Decl::Agent(a) => self.resolve_agent_decl(a),
                 Decl::Eval(e) => self.resolve_eval_decl(e),
                 Decl::Effect(e) => self.resolve_effect_decl(e),
+                Decl::Model(_) => {
+                    // Phase 20h slice A: model decls register a name
+                    // in the symbol table and carry a key-value field
+                    // map. The fields don't reference anything in
+                    // scope (values are literals — strings, numbers,
+                    // cost literals, bools, or names treated as
+                    // enum-ish tags), so resolution is a no-op beyond
+                    // the name registration done in `collect_decls`.
+                    // Slice B wires the fields into capability /
+                    // dimension validation; slice C wires `route:`
+                    // clauses that reference model names.
+                }
                 Decl::Extend(ext) => {
                     // Resolve each method body
                     // the same way free agents/prompts/tools are

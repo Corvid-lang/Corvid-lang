@@ -60,6 +60,8 @@ pub enum DeclKind {
     Agent,
     Eval,
     Effect,
+    /// `model Name:` catalog entry (Phase 20h typed model substrate).
+    Model,
 }
 
 /// An entry in the file-level symbol table.

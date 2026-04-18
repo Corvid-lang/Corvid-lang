@@ -27,6 +27,9 @@ pub enum Decl {
     Extend(ExtendDecl),
     /// `effect Name:` dimensional effect declaration.
     Effect(EffectDecl),
+    /// `model Name:` typed-model-substrate declaration (Phase 20h).
+    /// A catalog entry for an LLM the project can dispatch to.
+    Model(ModelDecl),
 }
 
 impl Decl {
@@ -40,6 +43,7 @@ impl Decl {
             Decl::Eval(d) => d.span,
             Decl::Extend(d) => d.span,
             Decl::Effect(d) => d.span,
+            Decl::Model(d) => d.span,
         }
     }
 }
@@ -282,4 +286,40 @@ pub enum EvalAssert {
         after: Ident,
         span: Span,
     },
+}
+
+/// `model Name:` declaration — a catalog entry for an LLM.
+///
+/// Each model carries a map of property name → value describing
+/// cost, capability, latency, jurisdiction, privacy tier, specialty,
+/// and so on. The set of valid property names is *not* hardcoded:
+/// any property that corresponds to a declared dimension (built-in
+/// or custom via `corvid.toml`) is accepted. This mirrors Phase 20g
+/// invention #6 — the effect system is user-extensible, and the
+/// model catalog extends alongside it without compiler changes.
+///
+/// Example:
+///
+/// ```text
+/// model haiku:
+///     cost_per_token_in: $0.00000025
+///     cost_per_token_out: $0.00000125
+///     capability: basic
+///     latency: fast
+///     max_context: 200000
+///     jurisdiction: us_hosted
+/// ```
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ModelDecl {
+    pub name: Ident,
+    pub fields: Vec<ModelField>,
+    pub span: Span,
+}
+
+/// One property on a `model` block — a name and its value.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ModelField {
+    pub name: Ident,
+    pub value: crate::effect::DimensionValue,
+    pub span: Span,
 }

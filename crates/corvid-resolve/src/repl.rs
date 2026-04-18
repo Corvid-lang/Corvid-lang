@@ -148,5 +148,6 @@ fn decl_kind_name(decl: &Decl) -> String {
         Decl::Eval(_) => "eval".into(),
         Decl::Extend(_) => "extend".into(),
         Decl::Effect(_) => "effect".into(),
+        Decl::Model(_) => "model".into(),
     }
 }

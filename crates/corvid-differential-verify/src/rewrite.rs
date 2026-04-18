@@ -1021,6 +1021,12 @@ fn collect_all_names(file: &File) -> BTreeSet<String> {
                     names.insert(method.name().name.clone());
                 }
             }
+            Decl::Model(model) => {
+                names.insert(model.name.name.clone());
+                for field in &model.fields {
+                    names.insert(field.name.name.clone());
+                }
+            }
         }
     }
     names
@@ -1156,6 +1162,21 @@ fn render_decl(decl: &Decl, indent: usize, out: &mut String) {
                 out.push_str(&dimension.name.name);
                 out.push_str(": ");
                 out.push_str(&render_dimension_value(&dimension.value));
+            }
+        }
+        Decl::Model(model) => {
+            push_indent(indent, out);
+            out.push_str("model ");
+            out.push_str(&model.name.name);
+            out.push_str(":\n");
+            for (index, field) in model.fields.iter().enumerate() {
+                if index > 0 {
+                    out.push('\n');
+                }
+                push_indent(indent + 1, out);
+                out.push_str(&field.name.name);
+                out.push_str(": ");
+                out.push_str(&render_dimension_value(&field.value));
             }
         }
     }

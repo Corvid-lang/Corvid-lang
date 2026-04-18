@@ -427,4 +427,84 @@ extend Line:
             "different types' methods should have distinct DefIds"
         );
     }
+
+    // -------------------- Phase 20h: `model` decls --------------------
+
+    #[test]
+    fn resolves_model_decl_into_symbol_table() {
+        let src = "\
+model haiku:
+    capability: basic
+    cost_per_token_in: $0.00000025
+";
+        let r = resolve_src(src);
+        assert!(r.errors.is_empty(), "errors: {:?}", r.errors);
+        let def_id = r
+            .symbols
+            .lookup_def("haiku")
+            .expect("haiku should be registered");
+        let entry = r.symbols.get(def_id);
+        assert_eq!(entry.kind, crate::scope::DeclKind::Model);
+    }
+
+    #[test]
+    fn detects_duplicate_model_decls() {
+        let src = "\
+model haiku:
+    capability: basic
+
+model haiku:
+    capability: expert
+";
+        let r = resolve_src(src);
+        assert!(
+            r.errors.iter().any(|e| matches!(
+                e.kind,
+                ResolveErrorKind::DuplicateDecl { .. }
+            )),
+            "expected DuplicateDecl on repeated model name, got {:?}",
+            r.errors
+        );
+    }
+
+    #[test]
+    fn model_name_collides_with_other_declaration_kinds() {
+        // Models share the single top-level namespace with tools,
+        // prompts, agents, effects. Same-name declarations across
+        // kinds are a collision.
+        let src = "\
+tool haiku(q: String) -> String
+
+model haiku:
+    capability: basic
+";
+        let r = resolve_src(src);
+        assert!(
+            r.errors.iter().any(|e| matches!(
+                e.kind,
+                ResolveErrorKind::DuplicateDecl { .. }
+            )),
+            "expected DuplicateDecl on tool/model name clash, got {:?}",
+            r.errors
+        );
+    }
+
+    #[test]
+    fn multiple_distinct_models_compile_cleanly() {
+        let src = "\
+model haiku:
+    capability: basic
+
+model sonnet:
+    capability: standard
+
+model opus:
+    capability: expert
+";
+        let r = resolve_src(src);
+        assert!(r.errors.is_empty(), "errors: {:?}", r.errors);
+        assert!(r.symbols.lookup_def("haiku").is_some());
+        assert!(r.symbols.lookup_def("sonnet").is_some());
+        assert!(r.symbols.lookup_def("opus").is_some());
+    }
 }

@@ -331,6 +331,12 @@ impl<'a> Checker<'a> {
                 }
                 Decl::Import(_) => {}
                 Decl::Effect(_) => {}
+                Decl::Model(_) => {
+                    // Phase 20h slice A: models are catalog entries
+                    // without a body; they contribute no typed
+                    // values yet. Slice B wires them into prompt
+                    // dispatch.
+                }
                 Decl::Extend(ext) => {
                     // Index method decls by their allocated DefIds
                     // (from the resolver's
@@ -397,7 +403,11 @@ impl<'a> Checker<'a> {
                 Decl::Agent(a) => self.check_agent(a),
                 Decl::Eval(e) => self.check_eval(e),
                 Decl::Prompt(p) => self.check_prompt(p),
-                Decl::Tool(_) | Decl::Type(_) | Decl::Import(_) | Decl::Effect(_) => {}
+                Decl::Tool(_)
+                | Decl::Type(_)
+                | Decl::Import(_)
+                | Decl::Effect(_)
+                | Decl::Model(_) => {}
                 Decl::Extend(ext) => {
                     // Typecheck agent method bodies the same way free
                     // agents are checked.
@@ -938,7 +948,9 @@ impl<'a> Checker<'a> {
                 ));
                 Type::Unknown
             }
-            DeclKind::Import | DeclKind::Eval | DeclKind::Effect => Type::Unknown,
+            DeclKind::Import | DeclKind::Eval | DeclKind::Effect | DeclKind::Model => {
+                Type::Unknown
+            }
         }
     }
 
@@ -984,7 +996,10 @@ impl<'a> Checker<'a> {
                     DeclKind::Tool => self.check_tool_call(def_id, &name.name, args, span),
                     DeclKind::Prompt => self.check_prompt_call(def_id, &name.name, args),
                     DeclKind::Agent => self.check_agent_call(def_id, &name.name, args),
-                    DeclKind::Import | DeclKind::Eval | DeclKind::Effect => {
+                    DeclKind::Import
+                    | DeclKind::Eval
+                    | DeclKind::Effect
+                    | DeclKind::Model => {
                         for a in args {
                             let _ = self.check_expr(a);
                         }

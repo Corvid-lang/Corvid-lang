@@ -11,8 +11,8 @@ use corvid_ast::{
     AgentDecl, Backoff, BackpressurePolicy, BinaryOp, Block, Decl, DimensionDecl,
     DimensionValue, Effect, EffectConstraint, EffectDecl, EffectRef, EffectRow, EvalAssert,
     EvalDecl, Expr, ExtendDecl, ExtendMethod, ExtendMethodKind, Field, File, Ident, ImportDecl,
-    ImportSource, Literal, Param, PromptDecl, PromptStreamSettings, Span, Stmt, ToolDecl,
-    TypeDecl, TypeRef, UnaryOp, Visibility, WeakEffect, WeakEffectRow,
+    ImportSource, Literal, ModelDecl, ModelField, Param, PromptDecl, PromptStreamSettings, Span,
+    Stmt, ToolDecl, TypeDecl, TypeRef, UnaryOp, Visibility, WeakEffect, WeakEffectRow,
 };
 
 #[derive(Debug, Clone, PartialEq)]
@@ -891,6 +891,7 @@ impl<'a> Parser<'a> {
                 | TokKind::KwAgent
                 | TokKind::KwExtend
                 | TokKind::KwEffect
+                | TokKind::KwModel
                 | TokKind::At
         ) {
             return self.parse_decl().map(ReplItem::Decl);
@@ -935,6 +936,7 @@ impl<'a> Parser<'a> {
                 | TokKind::KwEval
                 | TokKind::KwAgent
                 | TokKind::KwEffect
+                | TokKind::KwModel
                 | TokKind::At
                 | TokKind::KwExtend
                 | TokKind::Eof => return,
@@ -955,6 +957,7 @@ impl<'a> Parser<'a> {
             TokKind::KwAgent => self.parse_agent_decl().map(Decl::Agent),
             TokKind::KwExtend => self.parse_extend_decl().map(Decl::Extend),
             TokKind::KwEffect => self.parse_effect_decl().map(Decl::Effect),
+            TokKind::KwModel => self.parse_model_decl().map(Decl::Model),
             TokKind::At => {
                 let constraints = self.parse_constraints()?;
                 if !matches!(self.peek(), TokKind::KwAgent) {
@@ -1175,6 +1178,59 @@ impl<'a> Parser<'a> {
         let end = self.prev_span();
         self.expect_newline()?;
         Ok(DimensionDecl {
+            name: Ident::new(name, name_span),
+            value,
+            span: start.merge(end),
+        })
+    }
+
+    // -- model (Phase 20h) --------------------------------------
+
+    fn parse_model_decl(&mut self) -> Result<ModelDecl, ParseError> {
+        let start = self.peek_span();
+        self.bump(); // model
+
+        let (name, name_span) = self.expect_ident()?;
+        self.expect(TokKind::Colon, "`:` after model name")?;
+        self.expect_newline()?;
+
+        if !matches!(self.peek(), TokKind::Indent) {
+            return Err(ParseError {
+                kind: ParseErrorKind::ExpectedBlock,
+                span: self.peek_span(),
+            });
+        }
+        self.bump(); // Indent
+
+        let mut fields = Vec::new();
+        while !matches!(self.peek(), TokKind::Dedent | TokKind::Eof) {
+            self.skip_newlines();
+            if matches!(self.peek(), TokKind::Dedent | TokKind::Eof) {
+                break;
+            }
+            fields.push(self.parse_model_field()?);
+        }
+
+        let end = self.peek_span();
+        if matches!(self.peek(), TokKind::Dedent) {
+            self.bump();
+        }
+
+        Ok(ModelDecl {
+            name: Ident::new(name, name_span),
+            fields,
+            span: start.merge(end),
+        })
+    }
+
+    fn parse_model_field(&mut self) -> Result<ModelField, ParseError> {
+        let start = self.peek_span();
+        let (name, name_span) = self.expect_ident()?;
+        self.expect(TokKind::Colon, "`:` after model field name")?;
+        let value = self.parse_dimension_value()?;
+        let end = self.prev_span();
+        self.expect_newline()?;
+        Ok(ModelField {
             name: Ident::new(name, name_span),
             value,
             span: start.merge(end),
@@ -3190,6 +3246,87 @@ agent good(x: String) -> String:
         assert!(
             !errs.is_empty(),
             "expected parse error for `public(secret)` — only `public(package)` is valid today"
+        );
+    }
+
+    // -------------------- Phase 20h: `model` decls --------------------
+
+    #[test]
+    fn parses_minimal_model_decl() {
+        let file = parse_file_src(
+            "model haiku:\n    cost_per_token_in: $0.00000025\n    capability: basic\n",
+        );
+        assert_eq!(file.decls.len(), 1);
+        match &file.decls[0] {
+            Decl::Model(m) => {
+                assert_eq!(m.name.name, "haiku");
+                assert_eq!(m.fields.len(), 2);
+                assert_eq!(m.fields[0].name.name, "cost_per_token_in");
+                assert!(matches!(
+                    m.fields[0].value,
+                    corvid_ast::DimensionValue::Cost(_)
+                ));
+                assert_eq!(m.fields[1].name.name, "capability");
+                assert!(matches!(
+                    m.fields[1].value,
+                    corvid_ast::DimensionValue::Name(ref s) if s == "basic"
+                ));
+            }
+            other => panic!("expected Model, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_model_with_mixed_value_types() {
+        let file = parse_file_src(
+            "model opus:\n    cost_per_token_in: $0.000015\n    capability: expert\n    max_context: 200000\n    streaming: true\n",
+        );
+        let m = match &file.decls[0] {
+            Decl::Model(m) => m,
+            other => panic!("expected Model, got {other:?}"),
+        };
+        assert_eq!(m.fields.len(), 4);
+        // Bool value parses.
+        assert!(
+            m.fields
+                .iter()
+                .any(|f| f.name.name == "streaming"
+                    && matches!(f.value, corvid_ast::DimensionValue::Bool(true)))
+        );
+        // Number value parses (200000 without duration suffix).
+        assert!(m.fields.iter().any(|f| f.name.name == "max_context"
+            && matches!(f.value, corvid_ast::DimensionValue::Number(n) if (n - 200000.0).abs() < 1e-6)));
+    }
+
+    #[test]
+    fn parses_multiple_model_decls_in_one_file() {
+        let file = parse_file_src(
+            "model haiku:\n    capability: basic\n\nmodel opus:\n    capability: expert\n",
+        );
+        assert_eq!(file.decls.len(), 2);
+        assert!(file
+            .decls
+            .iter()
+            .all(|d| matches!(d, Decl::Model(_))));
+    }
+
+    #[test]
+    fn rejects_model_decl_without_block() {
+        let (_file, errs) = parse_file_errs("model haiku:\n");
+        assert!(
+            !errs.is_empty(),
+            "expected parse error — `model` requires at least one field in the indented block"
+        );
+    }
+
+    #[test]
+    fn rejects_model_field_without_value() {
+        let (_file, errs) = parse_file_errs(
+            "model haiku:\n    capability:\n",
+        );
+        assert!(
+            !errs.is_empty(),
+            "expected parse error — field without a value should be rejected"
         );
     }
 }
