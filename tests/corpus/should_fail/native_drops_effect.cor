@@ -1,0 +1,20 @@
+# Native list-loop lowering currently exits before the later prompt runs.
+# The verifier should keep the native partial trace and report that the
+# `late_effect` trust requirement never appeared in the native tier.
+effect early_effect:
+    cost: $0.10
+
+effect late_effect:
+    trust: human_required
+
+prompt early() -> String uses early_effect:
+    "early"
+
+prompt late() -> String uses late_effect:
+    "late"
+
+agent main() -> String:
+    acc = ""
+    for i in [1, 2, 3, 4, 5, 6, 7, 8]:
+        acc = acc + early()
+    return late()

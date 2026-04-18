@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use anyhow::{anyhow, bail, Context, Result};
 use corvid_ast::{BackpressurePolicy, Decl, DimensionValue, PromptDecl, ToolDecl, TypeRef};
@@ -121,7 +121,7 @@ pub fn verify_program(path: &Path) -> Result<DivergenceReport> {
     let frontend = Frontend::load(path)?;
     let checker = checker_report(&frontend)?;
     let interpreter = interpreter_report(&frontend)?;
-    let native = native_report(&frontend, &interpreter)?;
+    let native = native_report(&frontend)?;
     let replay = replay_report(&frontend, interpreter.trace_path.as_deref())?;
     let reports = [checker, interpreter, native, replay];
     let divergences = diff_reports(&reports)?;
@@ -351,9 +351,11 @@ fn interpreter_report(frontend: &Frontend) -> Result<TierReport> {
     })
 }
 
-fn native_report(frontend: &Frontend, interpreter: &TierReport) -> Result<TierReport> {
+fn native_report(frontend: &Frontend) -> Result<TierReport> {
+    ensure_native_runtime_staticlib()?;
     let run_root = persistent_verify_dir("native")?;
     let bin_path = run_root.join("verify_program");
+    let trace_path = run_root.join("native-trace.jsonl");
     let binary = build_native_to_disk(&frontend.ir, "corvid_verify", &bin_path, &[])
         .map_err(|err| anyhow!("native build failed for `{}`: {err}", frontend.path.display()))?;
     let replies = serde_json::to_string(&mock_reply_map(frontend)?)
@@ -364,35 +366,32 @@ fn native_report(frontend: &Frontend, interpreter: &TierReport) -> Result<TierRe
         .env("CORVID_TEST_MOCK_LLM", "1")
         .env("CORVID_TEST_MOCK_LLM_REPLIES", replies)
         .env("CORVID_MODEL", VERIFY_MODEL)
+        .env("CORVID_TRACE_PATH", &trace_path)
         .output()
         .with_context(|| format!("failed to run native binary `{}`", binary.display()))?;
-    if !output.status.success() {
-        bail!(
-            "native execution failed for `{}`: stdout=`{}` stderr=`{}`",
+    let events = load_trace_events(&trace_path).with_context(|| {
+        format!(
+            "native run for `{}` did not produce a readable trace at `{}`",
             frontend.path.display(),
+            trace_path.display()
+        )
+    })?;
+    let (profile, effect_names) = profile_from_trace(frontend, &events)?;
+    let mut notes = vec![
+        "dynamic profile reconstructed from native runtime trace".into(),
+        format!(
+            "executed native binary, read trace from CORVID_TRACE_PATH={}",
+            trace_path.display()
+        ),
+    ];
+    if !output.status.success() {
+        notes.push(format!(
+            "native binary exited non-zero (status={}): stdout=`{}` stderr=`{}`",
+            output.status,
             String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr)
-        );
+        ));
     }
-    let trace_path = newest_trace(&run_root.join("target").join("trace"))?;
-    let events = load_trace_events(&trace_path)?;
-    let (profile, effect_names, notes) = if has_effect_events(&events) {
-        let (profile, effect_names) = profile_from_trace(frontend, &events)?;
-        (
-            profile,
-            effect_names,
-            vec!["dynamic profile reconstructed from native runtime trace".into()],
-        )
-    } else {
-        (
-            interpreter.profile.clone(),
-            interpreter.effect_names.clone(),
-            vec![
-                "native trace contained no prompt/tool events".into(),
-                "falling back to interpreter-executed effect set for native tier parity".into(),
-            ],
-        )
-    };
     Ok(TierReport {
         tier: Tier::Native,
         profile,
@@ -495,72 +494,59 @@ fn profile_from_trace(frontend: &Frontend, events: &[TraceEvent]) -> Result<(Eff
 }
 
 fn diff_reports(reports: &[TierReport; 4]) -> Result<Vec<Divergence>> {
-    let checker = &reports[0].profile;
-    let interpreter = &reports[1].profile;
-    let native = &reports[2].profile;
-    let replay = &reports[3].profile;
-
     let mut divergences = Vec::new();
 
     maybe_push_divergence(
         &mut divergences,
         "cost",
         value_map(reports, |profile| serde_json::json!(profile.cost)),
-        checker.cost == interpreter.cost
-            && interpreter.cost == native.cost
-            && native.cost == replay.cost,
-        checker,
-        interpreter,
+        reports.iter().all(|report| report.profile.cost == reports[0].profile.cost),
+        reports,
     )?;
     maybe_push_divergence(
         &mut divergences,
         "trust",
         value_map(reports, |profile| serde_json::json!(render_trust(&profile.trust))),
-        checker.trust == interpreter.trust
-            && interpreter.trust == native.trust
-            && native.trust == replay.trust,
-        checker,
-        interpreter,
+        reports
+            .iter()
+            .all(|report| report.profile.trust == reports[0].profile.trust),
+        reports,
     )?;
     maybe_push_divergence(
         &mut divergences,
         "reversible",
         value_map(reports, |profile| serde_json::json!(profile.reversible)),
-        checker.reversible == interpreter.reversible
-            && interpreter.reversible == native.reversible
-            && native.reversible == replay.reversible,
-        checker,
-        interpreter,
+        reports
+            .iter()
+            .all(|report| report.profile.reversible == reports[0].profile.reversible),
+        reports,
     )?;
     maybe_push_divergence(
         &mut divergences,
         "data",
         value_map(reports, |profile| serde_json::json!(render_data(&profile.data))),
-        checker.data == interpreter.data
-            && interpreter.data == native.data
-            && native.data == replay.data,
-        checker,
-        interpreter,
+        reports
+            .iter()
+            .all(|report| report.profile.data == reports[0].profile.data),
+        reports,
     )?;
     maybe_push_divergence(
         &mut divergences,
         "latency",
         value_map(reports, |profile| serde_json::json!(render_latency(&profile.latency))),
-        checker.latency == interpreter.latency
-            && interpreter.latency == native.latency
-            && native.latency == replay.latency,
-        checker,
-        interpreter,
+        reports
+            .iter()
+            .all(|report| report.profile.latency == reports[0].profile.latency),
+        reports,
     )?;
     maybe_push_divergence(
         &mut divergences,
         "confidence",
         value_map(reports, |profile| serde_json::json!(profile.confidence)),
-        checker.confidence == interpreter.confidence
-            && interpreter.confidence == native.confidence
-            && native.confidence == replay.confidence,
-        checker,
-        interpreter,
+        reports
+            .iter()
+            .all(|report| report.profile.confidence == reports[0].profile.confidence),
+        reports,
     )?;
 
     let extra_keys: BTreeSet<_> = reports
@@ -590,15 +576,14 @@ fn maybe_push_divergence(
     dimension: &str,
     values: BTreeMap<Tier, serde_json::Value>,
     all_equal: bool,
-    checker: &EffectProfile,
-    runtime: &EffectProfile,
+    reports: &[TierReport; 4],
 ) -> Result<()> {
     if all_equal {
         return Ok(());
     }
-    let classification = if is_static_overapproximation(dimension, checker, runtime) {
+    let classification = if has_tier_overapproximation(dimension, reports) {
         DivergenceClass::StaticOverapproximated
-    } else if is_static_too_loose(dimension, checker, runtime) {
+    } else if has_tier_too_loose(dimension, reports) {
         DivergenceClass::StaticTooLoose
     } else {
         DivergenceClass::TierMismatch
@@ -612,6 +597,24 @@ fn maybe_push_divergence(
     Ok(())
 }
 
+fn has_tier_overapproximation(dimension: &str, reports: &[TierReport; 4]) -> bool {
+    let interpreter = &reports[1].profile;
+    reports
+        .iter()
+        .enumerate()
+        .filter(|(idx, _)| *idx != 1)
+        .any(|(_, report)| is_profile_overapproximation(dimension, &report.profile, interpreter))
+}
+
+fn has_tier_too_loose(dimension: &str, reports: &[TierReport; 4]) -> bool {
+    let interpreter = &reports[1].profile;
+    reports
+        .iter()
+        .enumerate()
+        .filter(|(idx, _)| *idx != 1)
+        .any(|(_, report)| is_profile_too_loose(dimension, &report.profile, interpreter))
+}
+
 fn value_map(
     reports: &[TierReport; 4],
     value_of: impl Fn(&EffectProfile) -> serde_json::Value,
@@ -622,26 +625,34 @@ fn value_map(
         .collect()
 }
 
-fn is_static_overapproximation(dimension: &str, checker: &EffectProfile, runtime: &EffectProfile) -> bool {
+fn is_profile_overapproximation(
+    dimension: &str,
+    candidate: &EffectProfile,
+    baseline: &EffectProfile,
+) -> bool {
     match dimension {
-        "cost" => checker.cost > runtime.cost,
-        "trust" => trust_rank(&checker.trust) > trust_rank(&runtime.trust),
-        "reversible" => !checker.reversible && runtime.reversible,
-        "data" => checker.data.is_superset(&runtime.data) && checker.data != runtime.data,
-        "latency" => latency_rank(&checker.latency) > latency_rank(&runtime.latency),
-        "confidence" => checker.confidence < runtime.confidence,
+        "cost" => candidate.cost > baseline.cost,
+        "trust" => trust_rank(&candidate.trust) > trust_rank(&baseline.trust),
+        "reversible" => !candidate.reversible && baseline.reversible,
+        "data" => candidate.data.is_superset(&baseline.data) && candidate.data != baseline.data,
+        "latency" => latency_rank(&candidate.latency) > latency_rank(&baseline.latency),
+        "confidence" => candidate.confidence < baseline.confidence,
         _ => false,
     }
 }
 
-fn is_static_too_loose(dimension: &str, checker: &EffectProfile, runtime: &EffectProfile) -> bool {
+fn is_profile_too_loose(
+    dimension: &str,
+    candidate: &EffectProfile,
+    baseline: &EffectProfile,
+) -> bool {
     match dimension {
-        "cost" => checker.cost < runtime.cost,
-        "trust" => trust_rank(&checker.trust) < trust_rank(&runtime.trust),
-        "reversible" => checker.reversible && !runtime.reversible,
-        "data" => !checker.data.is_superset(&runtime.data),
-        "latency" => latency_rank(&checker.latency) < latency_rank(&runtime.latency),
-        "confidence" => checker.confidence > runtime.confidence,
+        "cost" => candidate.cost < baseline.cost,
+        "trust" => trust_rank(&candidate.trust) < trust_rank(&baseline.trust),
+        "reversible" => candidate.reversible && !baseline.reversible,
+        "data" => !candidate.data.is_superset(&baseline.data),
+        "latency" => latency_rank(&candidate.latency) < latency_rank(&baseline.latency),
+        "confidence" => candidate.confidence > baseline.confidence,
         _ => false,
     }
 }
@@ -787,12 +798,6 @@ fn load_trace_events(path: &Path) -> Result<Vec<TraceEvent>> {
         .collect()
 }
 
-fn has_effect_events(events: &[TraceEvent]) -> bool {
-    events.iter().any(|event| {
-        matches!(event, TraceEvent::LlmCall { .. } | TraceEvent::ToolCall { .. })
-    })
-}
-
 fn collect_programs(dir: &Path) -> Result<Vec<PathBuf>> {
     let mut out = Vec::new();
     for entry in std::fs::read_dir(dir)
@@ -809,16 +814,32 @@ fn collect_programs(dir: &Path) -> Result<Vec<PathBuf>> {
     Ok(out)
 }
 
-fn newest_trace(dir: &Path) -> Result<PathBuf> {
-    let mut traces: Vec<PathBuf> = std::fs::read_dir(dir)
-        .with_context(|| format!("cannot read native trace dir `{}`", dir.display()))?
-        .filter_map(|entry| entry.ok().map(|entry| entry.path()))
-        .filter(|path| path.extension().and_then(|ext| ext.to_str()) == Some("jsonl"))
-        .collect();
-    traces.sort();
-    traces
-        .pop()
-        .ok_or_else(|| anyhow!("no trace files found in `{}`", dir.display()))
+fn ensure_native_runtime_staticlib() -> Result<()> {
+    static READY: OnceLock<Result<(), String>> = OnceLock::new();
+    READY
+        .get_or_init(|| {
+            let output = Command::new("cargo")
+                .arg("rustc")
+                .arg("-p")
+                .arg("corvid-runtime")
+                .arg("--")
+                .arg("--crate-type")
+                .arg("staticlib")
+                .current_dir(workspace_root())
+                .output()
+                .map_err(|err| format!("failed to spawn cargo rustc for corvid-runtime: {err}"))?;
+            if output.status.success() {
+                Ok(())
+            } else {
+                Err(format!(
+                    "cargo rustc -p corvid-runtime -- --crate-type staticlib failed: stdout=`{}` stderr=`{}`",
+                    String::from_utf8_lossy(&output.stdout),
+                    String::from_utf8_lossy(&output.stderr)
+                ))
+            }
+        })
+        .clone()
+        .map_err(|err| anyhow!(err))
 }
 
 fn persistent_verify_dir(prefix: &str) -> Result<PathBuf> {
@@ -844,6 +865,13 @@ fn persistent_verify_dir(prefix: &str) -> Result<PathBuf> {
     std::fs::create_dir_all(&dir)
         .with_context(|| format!("failed to create `{}`", dir.display()))?;
     Ok(dir)
+}
+
+fn workspace_root() -> &'static Path {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .ancestors()
+        .nth(2)
+        .expect("workspace root from crate manifest path")
 }
 
 fn select_entry_agent(ir: &corvid_ir::IrFile) -> Result<String> {
@@ -949,6 +977,22 @@ mod tests {
         assert!(
             !report.divergences.is_empty(),
             "expected divergence report"
+        );
+    }
+
+    #[test]
+    fn native_drop_fixture_is_classified_as_too_loose() {
+        let report = verify_program(
+            &repo_root().join("tests/corpus/should_fail/native_drops_effect.cor"),
+        )
+        .expect("verify native drop fixture");
+        assert!(
+            report.divergences.iter().any(|divergence| {
+                divergence.dimension == "trust"
+                    && divergence.classification == DivergenceClass::StaticTooLoose
+            }),
+            "expected native trust drop to classify as static-too-loose: {:?}",
+            report.divergences
         );
     }
 
