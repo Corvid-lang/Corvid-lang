@@ -9,6 +9,7 @@
 
 pub mod add_dimension;
 pub mod effect_diff;
+pub mod meta_verify;
 mod native_ability;
 mod native_cache;
 mod render;
@@ -18,6 +19,9 @@ pub use add_dimension::{add_dimension as install_dimension, AddDimensionOutcome}
 pub use effect_diff::{
     diff_snapshots, render_effect_diff, snapshot_revision, AgentDiff, AgentSnapshot,
     DimensionChange, EffectDiff, RevisionSnapshot,
+};
+pub use meta_verify::{
+    render_meta_report, verify_counterexample_corpus, Counterexample, MetaKind, MetaVerdict, CORPUS,
 };
 pub use native_ability::{native_ability, NotNativeReason};
 pub use render::{render_all_pretty, render_pretty};

@@ -385,13 +385,21 @@ fn cmd_test_spec() -> Result<u8> {
 
 fn cmd_test_spec_meta() -> Result<u8> {
     println!("corvid test spec --meta — self-verifying verification\n");
-    println!("Mutates the composition-algebra checker, confirms each historical");
-    println!("counter-example (docs/effects-spec/counterexamples/) is caught, then");
-    println!("restores the checker and re-verifies.");
-    println!();
-    println!("Implementation tracked in ROADMAP Phase 20g — harness not yet built.");
-    println!("See docs/effects-spec/02-composition-algebra.md §11.");
-    Ok(0)
+    let corpus_dir = PathBuf::from("docs/effects-spec/counterexamples/composition");
+    if !corpus_dir.exists() {
+        anyhow::bail!(
+            "counter-example corpus not found at `{}`; run from the repository root",
+            corpus_dir.display()
+        );
+    }
+    let verdicts = corvid_driver::verify_counterexample_corpus(&corpus_dir)
+        .context("failed to run meta-verification harness")?;
+    print!("{}", corvid_driver::render_meta_report(&verdicts));
+    let failed = verdicts
+        .iter()
+        .filter(|v| !matches!(v.kind, corvid_driver::MetaKind::Distinguishes))
+        .count();
+    Ok(if failed == 0 { 0 } else { 1 })
 }
 
 fn cmd_test_adversarial(count: u32, model: &str) -> Result<u8> {

@@ -421,6 +421,13 @@ fn compose_dimension(
             (DimensionValue::Cost(a), DimensionValue::Cost(b)) => {
                 DimensionValue::Cost(a.min(*b))
             }
+            (DimensionValue::Name(a), DimensionValue::Name(b)) => {
+                // Min on Name is lattice-aware for the trust lattice.
+                // For unknown Name values, fall back to lexicographic
+                // so the result is at least deterministic (not
+                // hash-order-dependent).
+                DimensionValue::Name(trust_min(a, b).to_string())
+            }
             _ => incoming.clone(),
         },
         CompositionRule::Union => match (current, incoming) {
@@ -532,6 +539,33 @@ fn trust_max<'a>(a: &'a str, b: &'a str) -> &'a str {
         }
     };
     if rank(a) >= rank(b) { a } else { b }
+}
+
+fn trust_min<'a>(a: &'a str, b: &'a str) -> &'a str {
+    let rank = |s: &str| -> u8 {
+        match s {
+            "autonomous" => 0,
+            "supervisor_required" => 1,
+            "human_required" => 2,
+            _ => u8::MAX,
+        }
+    };
+    let ra = rank(a);
+    let rb = rank(b);
+    // If either side isn't on the lattice, pick lexicographically so
+    // the result is deterministic across runs (HashMap iteration
+    // would otherwise make `a` vs `b` non-reproducible).
+    if ra == u8::MAX || rb == u8::MAX {
+        if a <= b {
+            a
+        } else {
+            b
+        }
+    } else if ra <= rb {
+        a
+    } else {
+        b
+    }
 }
 
 fn dimension_satisfies(actual: &DimensionValue, constraint: &DimensionValue, dim_name: &str) -> bool {

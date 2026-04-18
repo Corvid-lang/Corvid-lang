@@ -29,10 +29,10 @@ pub use law_check::{
 pub use errors::{TypeError, TypeErrorKind, TypeWarning, TypeWarningKind};
 pub use repl::{CheckedTurn, ReplLocal, ReplSession, ReplTurnBuild, REPL_RESULT_NAME};
 pub use effects::{
-    analyze_effects, check_grounded_returns, compute_worst_case_cost, render_cost_tree,
-    AgentEffectSummary, ComposedProfile, ConstraintViolation, CostEstimate, CostNodeKind,
-    CostTreeNode, CostWarning, CostWarningKind, EffectProfile, EffectRegistry,
-    ProvenanceViolation,
+    analyze_effects, check_grounded_returns, compose_dimension_public,
+    compute_worst_case_cost, render_cost_tree, AgentEffectSummary, ComposedProfile,
+    ConstraintViolation, CostEstimate, CostNodeKind, CostTreeNode, CostWarning,
+    CostWarningKind, EffectProfile, EffectRegistry, ProvenanceViolation,
 };
 pub use types::Type;
 

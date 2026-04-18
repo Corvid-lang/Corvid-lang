@@ -1,17 +1,24 @@
-# Attack: if cost composed via Max instead of Sum, splitting spend across two calls hides the true budget impact.
-# Expected: compile error mentioning the `cost` dimension exceeds budget when both calls compose.
+# Attack: if cost composed via Max instead of Sum, two independent
+# costly calls report only the larger one, not their sum — letting a
+# @budget-annotated agent silently overspend.
+#
+# Under correct Sum: $0.30 + $0.90 = $1.20 (exceeds @budget($1.00) — caught).
+# Under attacker Max: max($0.30, $0.90) = $0.90 (below @budget($1.00) — bypass).
 
-effect lookup:
-    cost: $0.60
+effect cheap_lookup:
+    cost: $0.30
 
-prompt first() -> String uses lookup:
-    "First"
+effect expensive_lookup:
+    cost: $0.90
 
-prompt second() -> String uses lookup:
-    "Second"
+prompt cheap() -> String uses cheap_lookup:
+    "cheap"
+
+prompt pricey() -> String uses expensive_lookup:
+    "pricey"
 
 @budget($1.00)
 agent main() -> String:
-    a = first()
-    b = second()
+    a = cheap()
+    b = pricey()
     return a + b
