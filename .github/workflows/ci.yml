@@ -1,0 +1,101 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  workspace-tests:
+    name: cargo test --workspace
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache cargo registry + target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
+      - name: cargo check --workspace
+        run: cargo check --workspace --all-targets
+
+      - name: cargo test --workspace
+        run: cargo test --workspace --lib --tests
+
+  effect-system-gates:
+    # Every one of these gates enforces a Phase 20g invention. If
+    # any of them fails, the effect system has silently regressed.
+    name: 20g effect-system gates
+    runs-on: ubuntu-latest
+    needs: workspace-tests
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry + target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
+      - name: Build CLI
+        run: cargo build -p corvid-cli --release
+
+      # Invention #6 + #7: every built-in dimension and every custom
+      # dimension declared in the project's corvid.toml must satisfy
+      # its archetype's algebraic laws.
+      - name: corvid test dimensions
+        run: ./target/release/corvid test dimensions
+
+      # Invention #8: every ```corvid example in the spec must match
+      # its declared `# expect:` outcome against the current compiler.
+      - name: corvid test spec
+        run: ./target/release/corvid test spec
+
+      # Invention #10: every historical counter-example under
+      # docs/effects-spec/counterexamples/composition/ must still
+      # distinguish its correct composition rule from the attacker's.
+      - name: corvid test spec --meta
+        run: ./target/release/corvid test spec --meta
+
+      # Invention #1 + #4: cross-tier differential verification over
+      # the full corpus. `tests/corpus/should_fail/*` is expected to
+      # exit 1 — that's the fail-safe that proves the harness catches
+      # divergences. A `0` exit code here would mean the harness
+      # stopped catching the known-bad cases.
+      - name: corvid verify --corpus tests/corpus (must report divergences)
+        run: |
+          set +e
+          ./target/release/corvid verify --corpus tests/corpus
+          code=$?
+          if [ $code -eq 0 ]; then
+            echo "::error::corvid verify exited 0 but the corpus contains deliberate-fail fixtures that should diverge"
+            exit 1
+          fi
+          if [ $code -ne 1 ]; then
+            echo "::error::corvid verify exited $code; expected 1 (divergences detected)"
+            exit $code
+          fi
+          echo "ok: corvid verify exited 1 as expected"
