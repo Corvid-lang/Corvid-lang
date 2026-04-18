@@ -41,6 +41,15 @@ pub enum InterpErrorKind {
     /// Indexing a list with an out-of-range index.
     IndexOutOfBounds { len: usize, index: i64 },
 
+    /// A streaming computation crossed the active cost budget.
+    BudgetExceeded { budget: f64, used: f64 },
+
+    /// A streaming prompt fell below its declared confidence floor.
+    ConfidenceFloorBreached { floor: f64, actual: f64 },
+
+    /// A streaming prompt exceeded its token ceiling.
+    TokenLimitExceeded { limit: u64, used: u64 },
+
     /// The interpreter encountered a construct it doesn't implement yet.
     /// Expected only during staged rollout — should never fire in shipped code.
     NotImplemented(String),
@@ -78,6 +87,18 @@ impl fmt::Display for InterpErrorKind {
             Self::Arithmetic(msg) => write!(f, "arithmetic error: {msg}"),
             Self::IndexOutOfBounds { len, index } => {
                 write!(f, "index {index} out of bounds for list of length {len}")
+            }
+            Self::BudgetExceeded { budget, used } => {
+                write!(f, "stream budget exceeded: used ${used:.4} over budget ${budget:.4}")
+            }
+            Self::ConfidenceFloorBreached { floor, actual } => {
+                write!(
+                    f,
+                    "stream confidence floor breached: actual {actual:.3} below required {floor:.3}"
+                )
+            }
+            Self::TokenLimitExceeded { limit, used } => {
+                write!(f, "stream token limit exceeded: used {used} over limit {limit}")
             }
             Self::NotImplemented(what) => {
                 write!(f, "interpreter does not yet support: {what}")

@@ -50,7 +50,7 @@ mod tests {
     use corvid_ast::{BackpressurePolicy, Span};
     use corvid_ir::lower;
     use corvid_resolve::resolve;
-    use corvid_runtime::{llm::mock::MockAdapter, ProgrammaticApprover, Runtime, RuntimeError};
+    use corvid_runtime::{llm::{mock::MockAdapter, TokenUsage}, ProgrammaticApprover, Runtime, RuntimeError};
     use corvid_syntax::{lex, parse_file};
     use corvid_types::typecheck;
     use serde_json::json;
@@ -234,6 +234,7 @@ agent pick(flag: Bool) -> Int:
             name: "bad".into(),
             params: vec![],
             return_ty: Type::Int,
+            cost_budget: None,
             body: IrBlock {
                 stmts: vec![if_stmt, fallback],
                 span: sp,
@@ -385,6 +386,170 @@ agent relay(ctx: String) -> Stream<String>:
             .expect("run");
         let items = collect_stream(stream).await.expect("collect");
         assert_eq!(items, vec![Value::String(Arc::from("hello"))]);
+    }
+
+    #[tokio::test]
+    async fn stream_prompt_confidence_floor_breaches_mid_stream() {
+        let src = "\
+effect shaky:
+    confidence: 0.40
+
+prompt generate(ctx: String) -> Stream<String> uses shaky:
+    with min_confidence 0.80
+    \"Generate {ctx}\"
+
+agent relay(ctx: String) -> Stream<String>:
+    for chunk in generate(ctx):
+        yield chunk
+";
+        let ir = ir_of(src);
+        let rt = Runtime::builder()
+            .approver(Arc::new(ProgrammaticApprover::always_yes()))
+            .llm(Arc::new(MockAdapter::new("mock-1").reply("generate", json!("hello"))))
+            .default_model("mock-1")
+            .build();
+        let stream = run_agent(&ir, "relay", vec![Value::String(Arc::from("ctx"))], &rt)
+            .await
+            .expect("run");
+        let err = collect_stream(stream).await.unwrap_err();
+        assert!(matches!(
+            err.kind,
+            InterpErrorKind::ConfidenceFloorBreached { floor, actual }
+                if (floor - 0.80).abs() < 0.001 && (actual - 0.40).abs() < 0.001
+        ));
+    }
+
+    #[tokio::test]
+    async fn stream_prompt_token_limit_breaches_mid_stream() {
+        let src = "\
+prompt generate(ctx: String) -> Stream<String>:
+    with max_tokens 10
+    \"Generate {ctx}\"
+
+agent relay(ctx: String) -> Stream<String>:
+    for chunk in generate(ctx):
+        yield chunk
+";
+        let ir = ir_of(src);
+        let rt = Runtime::builder()
+            .approver(Arc::new(ProgrammaticApprover::always_yes()))
+            .llm(Arc::new(
+                MockAdapter::new("mock-1").reply_with_usage(
+                    "generate",
+                    json!("hello"),
+                    TokenUsage {
+                        prompt_tokens: 4,
+                        completion_tokens: 25,
+                        total_tokens: 29,
+                    },
+                ),
+            ))
+            .default_model("mock-1")
+            .build();
+        let stream = run_agent(&ir, "relay", vec![Value::String(Arc::from("ctx"))], &rt)
+            .await
+            .expect("run");
+        let err = collect_stream(stream).await.unwrap_err();
+        assert!(matches!(
+            err.kind,
+            InterpErrorKind::TokenLimitExceeded { limit: 10, used: 25 }
+        ));
+    }
+
+    #[tokio::test]
+    async fn stream_budget_termination_fires_before_over_budget_yield() {
+        use corvid_ir::{
+            IrAgent, IrBlock, IrCallKind, IrExpr, IrExprKind, IrFile, IrParam, IrPrompt,
+            IrStmt,
+        };
+        use corvid_resolve::{DefId, LocalId};
+        use corvid_types::Type;
+
+        let sp = Span::new(0, 0);
+        let prompt_id = DefId(1);
+        let loop_local = LocalId(0);
+        let prompt_call = IrExpr {
+            kind: IrExprKind::Call {
+                kind: IrCallKind::Prompt { def_id: prompt_id },
+                callee_name: "generate".into(),
+                args: vec![],
+            },
+            ty: Type::Stream(Box::new(Type::String)),
+            span: sp,
+        };
+        let yielded_local = IrExpr {
+            kind: IrExprKind::Local {
+                local_id: loop_local,
+                name: "chunk".into(),
+            },
+            ty: Type::String,
+            span: sp,
+        };
+        let ir = IrFile {
+            imports: vec![],
+            types: vec![],
+            tools: vec![],
+            prompts: vec![IrPrompt {
+                id: prompt_id,
+                name: "generate".into(),
+                params: vec![],
+                return_ty: Type::Stream(Box::new(Type::String)),
+                template: "Generate".into(),
+                effect_names: vec!["expensive".into()],
+                effect_cost: 0.75,
+                effect_confidence: 1.0,
+                cites_strictly_param: None,
+                min_confidence: None,
+                max_tokens: None,
+                backpressure: Some(BackpressurePolicy::Bounded(1)),
+                span: sp,
+            }],
+            agents: vec![IrAgent {
+                id: DefId(2),
+                name: "relay".into(),
+                params: vec![IrParam {
+                    name: "ctx".into(),
+                    local_id: LocalId(1),
+                    ty: Type::String,
+                    span: sp,
+                }],
+                return_ty: Type::Stream(Box::new(Type::String)),
+                cost_budget: Some(0.50),
+                body: IrBlock {
+                    stmts: vec![IrStmt::For {
+                        var_local: loop_local,
+                        var_name: "chunk".into(),
+                        iter: prompt_call,
+                        body: IrBlock {
+                            stmts: vec![IrStmt::Yield {
+                                value: yielded_local,
+                                span: sp,
+                            }],
+                            span: sp,
+                        },
+                        span: sp,
+                    }],
+                    span: sp,
+                },
+                span: sp,
+                borrow_sig: None,
+            }],
+            evals: vec![],
+        };
+        let rt = Runtime::builder()
+            .approver(Arc::new(ProgrammaticApprover::always_yes()))
+            .llm(Arc::new(MockAdapter::new("mock-1").reply("generate", json!("chunk"))))
+            .default_model("mock-1")
+            .build();
+        let stream = run_agent(&ir, "relay", vec![Value::String(Arc::from("ctx"))], &rt)
+            .await
+            .expect("run");
+        let err = collect_stream(stream).await.unwrap_err();
+        assert!(matches!(
+            err.kind,
+            InterpErrorKind::BudgetExceeded { budget, used }
+                if (budget - 0.50).abs() < 0.001 && (used - 0.75).abs() < 0.001
+        ));
     }
 
     #[tokio::test]

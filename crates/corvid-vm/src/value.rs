@@ -292,9 +292,17 @@ struct StreamInner {
     warned_unbounded: AtomicBool,
 }
 
+#[derive(Debug, Clone)]
+pub(crate) struct StreamChunk {
+    pub value: Value,
+    pub cost: f64,
+    pub confidence: f64,
+    pub tokens: u64,
+}
+
 enum StreamReceiver {
-    Bounded(mpsc::Receiver<Result<Value, InterpError>>),
-    Unbounded(mpsc::UnboundedReceiver<Result<Value, InterpError>>),
+    Bounded(mpsc::Receiver<Result<StreamChunk, InterpError>>),
+    Unbounded(mpsc::UnboundedReceiver<Result<StreamChunk, InterpError>>),
 }
 
 pub(crate) struct StreamSender {
@@ -303,8 +311,8 @@ pub(crate) struct StreamSender {
 }
 
 enum StreamSenderKind {
-    Bounded(mpsc::Sender<Result<Value, InterpError>>),
-    Unbounded(mpsc::UnboundedSender<Result<Value, InterpError>>),
+    Bounded(mpsc::Sender<Result<StreamChunk, InterpError>>),
+    Unbounded(mpsc::UnboundedSender<Result<StreamChunk, InterpError>>),
 }
 
 pub enum WeakValue {
@@ -907,6 +915,12 @@ impl StreamValue {
     }
 
     pub async fn next(&self) -> Option<Result<Value, InterpError>> {
+        self.next_chunk()
+            .await
+            .map(|item| item.map(|chunk| chunk.value))
+    }
+
+    pub(crate) async fn next_chunk(&self) -> Option<Result<StreamChunk, InterpError>> {
         let mut receiver = self.0.receiver.lock().await;
         let item = match &mut *receiver {
             StreamReceiver::Bounded(rx) => rx.recv().await,
@@ -952,6 +966,10 @@ impl fmt::Debug for StreamValue {
 
 impl StreamSender {
     pub async fn send(&self, item: Result<Value, InterpError>) -> bool {
+        self.send_chunk(item.map(StreamChunk::new)).await
+    }
+
+    pub(crate) async fn send_chunk(&self, item: Result<StreamChunk, InterpError>) -> bool {
         let pending_after_send = self.inner.pending.fetch_add(1, Ordering::AcqRel) + 1;
         match &self.kind {
             StreamSenderKind::Bounded(sender) => {
@@ -976,6 +994,33 @@ impl StreamSender {
             }
         }
         true
+    }
+}
+
+impl StreamChunk {
+    pub fn new(value: Value) -> Self {
+        Self {
+            confidence: value_confidence(&value),
+            value,
+            cost: 0.0,
+            tokens: 0,
+        }
+    }
+
+    pub fn with_metrics(value: Value, cost: f64, confidence: f64, tokens: u64) -> Self {
+        Self {
+            value,
+            cost,
+            confidence,
+            tokens,
+        }
+    }
+}
+
+fn value_confidence(value: &Value) -> f64 {
+    match value {
+        Value::Grounded(g) => g.confidence,
+        _ => 1.0,
     }
 }
 

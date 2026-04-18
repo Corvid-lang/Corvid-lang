@@ -303,6 +303,7 @@ mod tests {
                 name: "streamer".into(),
                 params: vec![],
                 return_ty: Type::Stream(Box::new(Type::String)),
+                cost_budget: None,
                 body: IrBlock {
                     stmts: vec![],
                     span,

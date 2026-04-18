@@ -38,6 +38,7 @@ fn test_agent(body: Vec<IrStmt>) -> IrAgent {
             span: span(),
         }],
         return_ty: Type::Int,
+        cost_budget: None,
         body: IrBlock { stmts: body, span: span() },
         span: span(),
         borrow_sig: None,

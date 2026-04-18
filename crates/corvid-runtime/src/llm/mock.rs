@@ -150,9 +150,9 @@ fn emit_wait_profile(kind: &str, name: &str, nominal_ms: u64, actual_ms: f64) {
 
 pub struct MockAdapter {
     name: String,
-    /// Prompt name to canned JSON. Behind a Mutex so `reply` can be called
+    /// Prompt name to canned response. Behind a Mutex so `reply` can be called
     /// after the adapter has been wrapped in `Arc`.
-    replies: Mutex<HashMap<String, serde_json::Value>>,
+    replies: Mutex<HashMap<String, LlmResponse>>,
 }
 
 impl MockAdapter {
@@ -165,13 +165,37 @@ impl MockAdapter {
 
     /// Builder-style: register a canned response for `prompt`.
     pub fn reply(self, prompt: impl Into<String>, value: serde_json::Value) -> Self {
-        self.replies.lock().unwrap().insert(prompt.into(), value);
+        self.reply_with_usage(prompt, value, TokenUsage::default())
+    }
+
+    pub fn reply_with_usage(
+        self,
+        prompt: impl Into<String>,
+        value: serde_json::Value,
+        usage: TokenUsage,
+    ) -> Self {
+        self.replies
+            .lock()
+            .unwrap()
+            .insert(prompt.into(), LlmResponse { value, usage });
         self
     }
 
     /// Mutating variant for use after the adapter is shared.
     pub fn add_reply(&self, prompt: impl Into<String>, value: serde_json::Value) {
-        self.replies.lock().unwrap().insert(prompt.into(), value);
+        self.add_reply_with_usage(prompt, value, TokenUsage::default());
+    }
+
+    pub fn add_reply_with_usage(
+        &self,
+        prompt: impl Into<String>,
+        value: serde_json::Value,
+        usage: TokenUsage,
+    ) {
+        self.replies
+            .lock()
+            .unwrap()
+            .insert(prompt.into(), LlmResponse { value, usage });
     }
 }
 
@@ -189,7 +213,7 @@ impl LlmAdapter for MockAdapter {
         req: &'a LlmRequestRef<'a>,
     ) -> BoxFuture<'a, Result<LlmResponse, RuntimeError>> {
         Box::pin(async move {
-            let value = self
+            let response = self
                 .replies
                 .lock()
                 .unwrap()
@@ -202,12 +226,7 @@ impl LlmAdapter for MockAdapter {
                         req.prompt
                     ),
                 })?;
-            Ok(LlmResponse {
-                value,
-                // Mocks have no real token counts. Zeros are the
-                // documented "no usage info" sentinel.
-                usage: TokenUsage::default(),
-            })
+            Ok(response)
         })
     }
 }

@@ -74,6 +74,9 @@ pub struct IrPrompt {
     pub params: Vec<IrParam>,
     pub return_ty: Type,
     pub template: String,
+    pub effect_names: Vec<String>,
+    pub effect_cost: f64,
+    pub effect_confidence: f64,
     /// Index of the parameter whose content must appear in the LLM response.
     /// Set when the prompt declares `cites <param> strictly`.
     pub cites_strictly_param: Option<usize>,
@@ -91,6 +94,7 @@ pub struct IrAgent {
     pub name: String,
     pub params: Vec<IrParam>,
     pub return_ty: Type,
+    pub cost_budget: Option<f64>,
     pub body: IrBlock,
     pub span: Span,
     /// Per-parameter ownership at the callee ABI.

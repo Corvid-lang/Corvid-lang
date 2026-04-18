@@ -10,7 +10,7 @@
 use crate::conv::{json_to_value, value_to_json};
 use crate::env::Env;
 use crate::errors::{InterpError, InterpErrorKind};
-use crate::value::{BoxedValue, ListValue, StreamSender, StreamValue, StructValue, Value};
+use crate::value::{BoxedValue, ListValue, StreamChunk, StreamSender, StreamValue, StructValue, Value};
 use async_recursion::async_recursion;
 use corvid_ast::{BackpressurePolicy, BinaryOp, Span, UnaryOp};
 use corvid_ir::{
@@ -214,6 +214,9 @@ struct Interpreter<'ir> {
     local_names: HashMap<LocalId, String>,
     stepper: Option<StepController>,
     stream_sender: Option<StreamSender>,
+    stream_locals: HashMap<LocalId, StreamChunk>,
+    stream_cost_budget: Option<f64>,
+    stream_cost_used: f64,
 }
 
 impl<'ir> Interpreter<'ir> {
@@ -237,6 +240,9 @@ impl<'ir> Interpreter<'ir> {
             local_names: HashMap::new(),
             stepper: None,
             stream_sender: None,
+            stream_locals: HashMap::new(),
+            stream_cost_budget: None,
+            stream_cost_used: 0.0,
         }
     }
 
@@ -259,6 +265,7 @@ impl<'ir> Interpreter<'ir> {
         for (p, v) in agent.params.iter().zip(args) {
             self.env.bind(p.local_id, v.clone());
             self.local_names.insert(p.local_id, p.name.clone());
+            self.stream_locals.remove(&p.local_id);
         }
         Ok(())
     }
@@ -318,6 +325,7 @@ impl<'ir> Interpreter<'ir> {
             sub.env = env;
             sub.local_names = local_names;
             sub.stream_sender = Some(sender);
+            sub.stream_cost_budget = agent.cost_budget;
             let outcome = sub.eval_block(&agent.body).await;
             let maybe_sender = sub.stream_sender.take();
             match outcome {
@@ -344,12 +352,49 @@ impl<'ir> Interpreter<'ir> {
 
     async fn singleton_stream(
         &self,
-        value: Value,
+        chunk: StreamChunk,
         backpressure: BackpressurePolicy,
     ) -> Result<Value, InterpError> {
         let (sender, stream) = StreamValue::channel(backpressure);
-        let _ = sender.send(Ok(value)).await;
+        let _ = sender.send_chunk(Ok(chunk)).await;
         Ok(Value::Stream(stream))
+    }
+
+    async fn singleton_stream_error(
+        &self,
+        err: InterpError,
+        backpressure: BackpressurePolicy,
+    ) -> Result<Value, InterpError> {
+        let (sender, stream) = StreamValue::channel(backpressure);
+        let _ = sender.send_chunk(Err(err)).await;
+        Ok(Value::Stream(stream))
+    }
+
+    fn chunk_for_expr(&self, expr: &IrExpr, value: Value) -> StreamChunk {
+        if let IrExprKind::Local { local_id, .. } = &expr.kind {
+            if let Some(chunk) = self.stream_locals.get(local_id) {
+                return StreamChunk {
+                    value,
+                    cost: chunk.cost,
+                    confidence: chunk.confidence,
+                    tokens: chunk.tokens,
+                };
+            }
+        }
+        StreamChunk::new(value)
+    }
+
+    fn stream_limit_violation(&self, chunk: &StreamChunk, span: Span) -> Option<InterpError> {
+        let budget = self.stream_cost_budget?;
+        let used = self.stream_cost_used + chunk.cost;
+        if used > budget {
+            Some(InterpError::new(
+                InterpErrorKind::BudgetExceeded { budget, used },
+                span,
+            ))
+        } else {
+            None
+        }
     }
 
     #[async_recursion]
@@ -380,6 +425,18 @@ impl<'ir> Interpreter<'ir> {
                 };
                 self.env.bind(*local_id, v);
                 self.local_names.insert(*local_id, name.clone());
+                if let IrExprKind::Local { local_id: source_local, .. } = &value.kind {
+                    if let Some(chunk) = self.stream_locals.get(source_local).cloned() {
+                        self.stream_locals.insert(
+                            *local_id,
+                            StreamChunk { value: self.env.lookup(*local_id).unwrap_or(Value::Nothing), ..chunk },
+                        );
+                    } else {
+                        self.stream_locals.remove(local_id);
+                    }
+                } else {
+                    self.stream_locals.remove(local_id);
+                }
                 Ok(Flow::Normal)
             }
             IrStmt::Return { value, .. } => {
@@ -401,7 +458,13 @@ impl<'ir> Interpreter<'ir> {
                         *span,
                     ));
                 };
-                if !sender.send(Ok(yielded)).await {
+                let chunk = self.chunk_for_expr(value, yielded);
+                if let Some(err) = self.stream_limit_violation(&chunk, *span) {
+                    let _ = sender.send_chunk(Err(err)).await;
+                    return Ok(Flow::Return(Value::Nothing));
+                }
+                self.stream_cost_used += chunk.cost;
+                if !sender.send_chunk(Ok(chunk)).await {
                     return Ok(Flow::Return(Value::Nothing));
                 }
                 Ok(Flow::Normal)
@@ -449,6 +512,7 @@ impl<'ir> Interpreter<'ir> {
                 };
                 match iter_val {
                     Value::List(items) => {
+                        self.stream_locals.remove(var_local);
                         for item in items.iter_cloned() {
                             self.env.bind(*var_local, item);
                             match self.eval_block(body).await? {
@@ -459,6 +523,7 @@ impl<'ir> Interpreter<'ir> {
                         }
                     }
                     Value::String(s) => {
+                        self.stream_locals.remove(var_local);
                         for item in s.chars().map(|c| Value::String(Arc::from(c.to_string()))) {
                             self.env.bind(*var_local, item);
                             match self.eval_block(body).await? {
@@ -469,15 +534,17 @@ impl<'ir> Interpreter<'ir> {
                         }
                     }
                     Value::Stream(stream) => {
-                        while let Some(item) = stream.next().await {
-                            let item = item?;
-                            self.env.bind(*var_local, item);
+                        while let Some(item) = stream.next_chunk().await {
+                            let chunk = item?;
+                            self.env.bind(*var_local, chunk.value.clone());
+                            self.stream_locals.insert(*var_local, chunk);
                             match self.eval_block(body).await? {
                                 Flow::Normal | Flow::Continue => continue,
                                 Flow::Break => return Ok(Flow::Normal),
                                 Flow::Return(v) => return Ok(Flow::Return(v)),
                             }
                         }
+                        self.stream_locals.remove(var_local);
                     }
                     other => {
                         return Err(InterpError::new(
@@ -1085,8 +1152,54 @@ impl<'ir> Interpreter<'ir> {
                 };
 
                 if matches!(&prompt.return_ty, Type::Stream(_)) {
+                    let tokens = if resp.usage.completion_tokens > 0 {
+                        resp.usage.completion_tokens as u64
+                    } else {
+                        resp.usage.total_tokens as u64
+                    };
+                    let actual_confidence = prompt_effective_confidence(prompt, &value);
+                    let chunk = StreamChunk::with_metrics(
+                        value,
+                        prompt.effect_cost,
+                        actual_confidence,
+                        tokens,
+                    );
+                    if let Some(limit) = prompt.max_tokens {
+                        if chunk.tokens > limit {
+                            return self
+                                .singleton_stream_error(
+                                    InterpError::new(
+                                        InterpErrorKind::TokenLimitExceeded {
+                                            limit,
+                                            used: chunk.tokens,
+                                        },
+                                        span,
+                                    ),
+                                    prompt_backpressure(prompt),
+                                )
+                                .await
+                                .map(ExprFlow::Value);
+                        }
+                    }
+                    if let Some(floor) = prompt.min_confidence {
+                        if chunk.confidence < floor {
+                            return self
+                                .singleton_stream_error(
+                                    InterpError::new(
+                                        InterpErrorKind::ConfidenceFloorBreached {
+                                            floor,
+                                            actual: chunk.confidence,
+                                        },
+                                        span,
+                                    ),
+                                    prompt_backpressure(prompt),
+                                )
+                                .await
+                                .map(ExprFlow::Value);
+                        }
+                    }
                     Ok(ExprFlow::Value(
-                        self.singleton_stream(value, prompt_backpressure(prompt)).await?,
+                        self.singleton_stream(chunk, prompt_backpressure(prompt)).await?,
                     ))
                 } else {
                     Ok(ExprFlow::Value(value))
@@ -1440,4 +1553,12 @@ fn prompt_backpressure(prompt: &IrPrompt) -> BackpressurePolicy {
         .backpressure
         .clone()
         .unwrap_or_else(default_stream_backpressure)
+}
+
+fn prompt_effective_confidence(prompt: &IrPrompt, value: &Value) -> f64 {
+    let value_confidence = match value {
+        Value::Grounded(g) => g.confidence,
+        _ => 1.0,
+    };
+    prompt.effect_confidence.min(value_confidence)
 }

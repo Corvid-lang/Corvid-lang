@@ -12,6 +12,7 @@ use corvid_resolve::{
     resolver::MethodEntry, Binding, BuiltIn, DeclKind, DefId, LocalId, Resolved, SymbolTable,
 };
 use corvid_types::{Checked, Type};
+use corvid_types::effects::{canonical_dimension_name, numeric_constraint_value, EffectRegistry};
 use std::collections::HashMap;
 
 /// Entry point: produce an `IrFile` from parsed/resolved/checked sources.
@@ -33,6 +34,7 @@ struct Lowerer<'a> {
     /// `EffectDecl`s with `trust: autonomous_if_confident(T)` dimension.
     /// Used during tool lowering to set `IrTool.confidence_gate`.
     confidence_gates: HashMap<String, f64>,
+    effect_registry: EffectRegistry,
 }
 
 impl<'a> Lowerer<'a> {
@@ -43,6 +45,7 @@ impl<'a> Lowerer<'a> {
             types: &checked.types,
             methods: &resolved.methods,
             confidence_gates: HashMap::new(),
+            effect_registry: EffectRegistry::default(),
         }
     }
 
@@ -63,6 +66,7 @@ impl<'a> Lowerer<'a> {
 
     fn lower_file(&mut self, file: &File) -> IrFile {
         self.populate_confidence_gates(file);
+        self.populate_effect_registry(file);
         let mut imports = Vec::new();
         let mut types = Vec::new();
         let mut tools = Vec::new();
@@ -288,12 +292,23 @@ impl<'a> Lowerer<'a> {
         let cites_strictly_param = p.cites_strictly.as_ref().and_then(|param_name| {
             p.params.iter().position(|param| param.name.name == *param_name)
         });
+        let effect_names: Vec<String> = p
+            .effect_row
+            .effects
+            .iter()
+            .map(|e| e.name.name.clone())
+            .collect();
+        let effect_refs: Vec<&str> = effect_names.iter().map(|name| name.as_str()).collect();
+        let profile = self.effect_registry.compose(&effect_refs);
         IrPrompt {
             id,
             name: p.name.name.clone(),
             params: self.lower_params(&p.params),
             return_ty: self.type_ref_to_type(&p.return_ty),
             template: p.template.clone(),
+            effect_names,
+            effect_cost: numeric_profile_dimension(&profile, "cost"),
+            effect_confidence: confidence_profile_dimension(&profile),
             cites_strictly_param,
             min_confidence: p.stream.min_confidence,
             max_tokens: p.stream.max_tokens,
@@ -316,6 +331,7 @@ impl<'a> Lowerer<'a> {
             name: a.name.name.clone(),
             params: self.lower_params(&a.params),
             return_ty: self.type_ref_to_type(&a.return_ty),
+            cost_budget: agent_cost_budget(a),
             body: self.lower_block(&a.body),
             span: a.span,
             // Populated by corvid-codegen-cl's ownership pass. `None`
@@ -323,6 +339,18 @@ impl<'a> Lowerer<'a> {
             // Owned" at codegen (matches pre-17b semantics).
             borrow_sig: None,
         }
+    }
+
+    fn populate_effect_registry(&mut self, file: &File) {
+        let decls: Vec<_> = file
+            .decls
+            .iter()
+            .filter_map(|decl| match decl {
+                Decl::Effect(effect) => Some(effect.clone()),
+                _ => None,
+            })
+            .collect();
+        self.effect_registry = EffectRegistry::from_decls(&decls);
     }
 
     fn lower_params(&self, ps: &[Param]) -> Vec<IrParam> {
@@ -701,6 +729,33 @@ impl<'a> Lowerer<'a> {
             TypeRef::Function { .. } => Type::Unknown,
         }
     }
+}
+
+fn numeric_profile_dimension(
+    profile: &corvid_types::effects::ComposedProfile,
+    dim: &str,
+) -> f64 {
+    match profile.dimensions.get(dim) {
+        Some(corvid_ast::DimensionValue::Cost(value)) => *value,
+        Some(corvid_ast::DimensionValue::Number(value)) => *value,
+        _ => 0.0,
+    }
+}
+
+fn confidence_profile_dimension(profile: &corvid_types::effects::ComposedProfile) -> f64 {
+    match profile.dimensions.get("confidence") {
+        Some(corvid_ast::DimensionValue::Number(value)) => *value,
+        _ => 1.0,
+    }
+}
+
+fn agent_cost_budget(agent: &AgentDecl) -> Option<f64> {
+    agent
+        .constraints
+        .iter()
+        .filter(|constraint| canonical_dimension_name(&constraint.dimension.name) == "cost")
+        .filter_map(numeric_constraint_value)
+        .reduce(f64::min)
 }
 
 /// Retrieve a tool's declared effect by its `DefId`.

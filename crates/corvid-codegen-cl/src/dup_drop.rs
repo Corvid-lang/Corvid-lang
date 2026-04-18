@@ -628,6 +628,7 @@ mod tests {
                 })
                 .collect(),
             return_ty: ret,
+            cost_budget: None,
             body: IrBlock { stmts: body, span: span() },
             span: span(),
             borrow_sig: None,

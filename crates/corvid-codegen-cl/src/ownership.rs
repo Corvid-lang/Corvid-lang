@@ -432,6 +432,7 @@ fn transform_agent(
         name: agent.name.clone(),
         params: agent.params.clone(),
         return_ty: agent.return_ty.clone(),
+        cost_budget: agent.cost_budget,
         body,
         span: agent.span,
         borrow_sig: Some(borrow_sig),
