@@ -1,6 +1,8 @@
 # 09 — Typed model substrate (Phase 20h preview)
 
-**This section previews Phase 20h — the typed compute substrate for AI models. The mechanism is specified here for design-review purposes; shipping implementation lands in 20h.**
+**This section previews Phase 20h — the typed compute substrate for AI models. It was written before any of the machinery existed. For the canonical reference of what actually shipped — with examples that compile against the current toolchain — see [§ 13 — Typed model substrate: what shipped](./13-model-substrate-shipped.md).**
+
+**Status as of §13 shipping:** six compiler-side slices live (A model decls, B `requires:`, C `route:`, D jurisdiction/compliance/privacy, E `progressive:`, I `rollout`). Runtime dispatch landed for capability-based routing (B-rt). Ensemble voting (F) and adversarial validation (G) remain unshipped on both the compiler and runtime sides and are scheduled as co-designed slices. See § 13.8 for the current gap list and § 13.10 for the commit-by-commit shipping trail.
 
 The conceptual leap: Corvid doesn't just *call* LLMs. It provides a **typed compute substrate** for models, where each model is a typed resource with declared capabilities, and the language proves regulatory / cost / quality properties at the type level.
 

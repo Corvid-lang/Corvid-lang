@@ -1,19 +1,23 @@
 # 04 — Built-in dimensions
 
-The six dimensions every Corvid program sees without declaring, plus two streaming helpers. Each has a physical meaning, an algebraic archetype, an identity element, a constraint form, and a counter-design that shows what would break with any other rule.
+Eleven dimensions every Corvid program sees without declaring. The first eight drive the core effect system; the last three came online with Phase 20h's typed model substrate and are documented in full in [§ 13](./13-model-substrate-shipped.md). Each has a physical meaning, an algebraic archetype, an identity element, a constraint form, and a counter-design that shows what would break with any other rule.
 
-| Dimension | Archetype | Value type | Identity | Constraint |
-|---|---|---|---|---|
-| `cost` | Sum (Cumulative) | `Cost` | `$0.00` | `@budget($N)` |
-| `trust` | Max (Dominant) | `Name` lattice | `autonomous` | `@trust(level)` |
-| `reversible` | LeastReversible (Conservative) | `Bool` | `true` | `@reversible` |
-| `data` | Union (Accumulative) | `Name` set | `none` | `@data(c₁, …)` |
-| `latency` | Max (Dominant) | `Name` lattice | `instant` | *(no direct constraint)* |
-| `confidence` | Min (Weakest-link) | `Number ∈ [0, 1]` | `1.0` | `@min_confidence(C)` |
-| `tokens` | Sum (Cumulative) | `Number` | `0` | `@budget(tokens=T)` |
-| `latency_ms` | Sum (Cumulative) | `Number` | `0` | `@budget(latency=M)` |
+| Dimension | Archetype | Value type | Identity | Constraint | Surface |
+|---|---|---|---|---|---|
+| `cost` | Sum (Cumulative) | `Cost` | `$0.00` | `@budget($N)` | § 4.1 |
+| `trust` | Max (Dominant) | `Name` lattice | `autonomous` | `@trust(level)` | § 4.2 |
+| `reversible` | LeastReversible (Conservative) | `Bool` | `true` | `@reversible` | § 4.3 |
+| `data` | Union (Accumulative) | `Name` set | `none` | `@data(c₁, …)` | § 4.4 |
+| `latency` | Max (Dominant) | `Name` lattice | `instant` | *(no direct constraint)* | § 4.5 |
+| `confidence` | Min (Weakest-link) | `Number ∈ [0, 1]` | `1.0` | `@min_confidence(C)` | § 4.6 |
+| `tokens` | Sum (Cumulative) | `Number` | `0` | `@budget(tokens=T)` | § 4.7 |
+| `latency_ms` | Sum (Cumulative) | `Number` | `0` | `@budget(latency=M)` | § 4.8 |
+| `capability` | Max (Dominant) | `Name` lattice | `basic` | `requires: <level>` on prompts | [§ 13.2](./13-model-substrate-shipped.md#132-capability-based-routing-slice-b) |
+| `jurisdiction` | Max (Dominant) | `Name` lattice | `none` | *(model-field-only)* | [§ 13.4](./13-model-substrate-shipped.md#134-regulatory--compliance--privacy-dimensions-slice-d) |
+| `compliance` | Union (Accumulative) | `Name` set | `none` | *(model-field-only)* | [§ 13.4](./13-model-substrate-shipped.md#134-regulatory--compliance--privacy-dimensions-slice-d) |
+| `privacy_tier` | Max (Dominant) | `Name` lattice | `standard` | *(model-field-only)* | [§ 13.4](./13-model-substrate-shipped.md#134-regulatory--compliance--privacy-dimensions-slice-d) |
 
-Each dimension's archetype is verified against its algebraic laws on every CI run via `corvid test dimensions` — see [02 § 3.2](./02-composition-algebra.md) for the law suite and [../../crates/corvid-types/src/law_check.rs](../../crates/corvid-types/src/law_check.rs) for the implementation.
+Each dimension's archetype is verified against its algebraic laws on every CI run via `corvid test dimensions` — the harness reports **all 11 dimensions satisfy their archetype's laws** on every passing build. See [02 § 3.2](./02-composition-algebra.md) for the law suite and [../../crates/corvid-types/src/law_check.rs](../../crates/corvid-types/src/law_check.rs) for the implementation.
 
 ---
 
@@ -286,17 +290,29 @@ Parallel execution isn't yet modeled. When v0.2 adds `spawn` / `join` constructs
 
 ---
 
-## 4.9 Attack-surface review
+## 4.9 Model-substrate dimensions (Phase 20h)
+
+`capability`, `jurisdiction`, `compliance`, and `privacy_tier` shipped in Phase 20h as built-in dimensions of the typed model substrate. They compose identically to the first eight — `corvid test dimensions` covers all eleven on every run. Full semantics, grammar (`requires:` / `route:` / `progressive:` / `rollout`), and worked examples live in [§ 13](./13-model-substrate-shipped.md):
+
+- [`capability`](./13-model-substrate-shipped.md#132-capability-based-routing-slice-b) — Max over the `basic < standard < expert` lattice.
+- [`jurisdiction`](./13-model-substrate-shipped.md#134-regulatory--compliance--privacy-dimensions-slice-d) — Max over user-declared regulatory tier names.
+- [`compliance`](./13-model-substrate-shipped.md#134-regulatory--compliance--privacy-dimensions-slice-d) — Union over comma-separated compliance tag sets.
+- [`privacy_tier`](./13-model-substrate-shipped.md#134-regulatory--compliance--privacy-dimensions-slice-d) — Max over `standard < strict < air_gapped`.
+
+§ 13.4 documents two real `trust_max` bugs the law-check harness caught during this slice — the commutativity tie-break and the `"none"` identity absorption. Both fixes shipped alongside the dimension registrations.
+
+## 4.10 Attack-surface review
 
 Each built-in survives every bypass attempt we've tried. The current corpus of attempted bypasses lives in [`counterexamples/composition/`](./counterexamples/composition/). New attacks are added to [`counterexamples/`](./counterexamples/) as bounty-driven regressions per [12 — Verification methodology](./12-verification.md).
 
 Current attack coverage:
-- Composition-rule confusion (sum_with_max, max_with_min, and_with_or, union_with_intersection, min_with_mean) — caught.
+- Composition-rule confusion — [`sum_with_max.cor`](./counterexamples/composition/sum_with_max.cor), [`max_with_min.cor`](./counterexamples/composition/max_with_min.cor), [`and_with_or.cor`](./counterexamples/composition/and_with_or.cor), [`union_with_intersection.cor`](./counterexamples/composition/union_with_intersection.cor), [`min_with_mean.cor`](./counterexamples/composition/min_with_mean.cor) — all caught by the meta-verifier at [`crates/corvid-driver/src/meta_verify.rs`](../../crates/corvid-driver/src/meta_verify.rs).
 - Unbounded loop cost hiding — caught by `CostWarningKind::UnboundedLoop`.
 - Statically-dead-branch cost undercounting — caught by the worst-case path analysis (the checker treats `if false: expensive()` as if the branch *could* execute).
 - Union substring-dedup non-associativity — **caught in development** by the law-check harness itself (commit `66b3075`); the original implementation ran in production-adjacent tests without triggering this bug until 20g invention #7 landed.
+- `trust_max` commutativity tie-break + `"none"` identity absorption — both **caught in development** by the law-check harness during slice D (commit `b88307a`).
 
-The Union bug story is the clearest argument for algebraic law-checking as a first-class verification technique. No amount of example tests caught that the dedup was broken across reorder; only the archetype law check, running 10,000 random cases specifically for associativity, surfaced the counter-example. The checker shipped; the law-check ships alongside and catches its next mistake.
+The Union bug story is the clearest argument for algebraic law-checking as a first-class verification technique. No amount of example tests caught that the dedup was broken across reorder; only the archetype law check, running 10,000 random cases specifically for associativity, surfaced the counter-example. The trust_max fixes are the slice-D rerun of that lesson — law-check keeps finding bugs the example suite misses.
 
 ## Next
 
