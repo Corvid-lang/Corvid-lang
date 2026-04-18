@@ -180,6 +180,7 @@ pub fn build_import(mocks: &TraceMocks) -> TraceImportResult {
             stream: corvid_ast::PromptStreamSettings::default(),
             capability_required: None,
             route: None,
+            progressive: None,
             span: sp,
         }));
     }

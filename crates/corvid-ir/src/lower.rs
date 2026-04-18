@@ -312,6 +312,11 @@ impl<'a> Lowerer<'a> {
             .as_ref()
             .map(|rt| self.lower_route_arms(&rt.arms))
             .unwrap_or_default();
+        let progressive = p
+            .progressive
+            .as_ref()
+            .map(|chain| self.lower_progressive_stages(&chain.stages))
+            .unwrap_or_default();
         IrPrompt {
             id,
             name: p.name.name.clone(),
@@ -327,8 +332,28 @@ impl<'a> Lowerer<'a> {
             backpressure: p.stream.backpressure.clone(),
             capability_required: p.capability_required.as_ref().map(|c| c.name.clone()),
             route,
+            progressive,
             span: p.span,
         }
+    }
+
+    fn lower_progressive_stages(
+        &self,
+        stages: &[corvid_ast::ProgressiveStage],
+    ) -> Vec<IrProgressiveStage> {
+        let mut out = Vec::with_capacity(stages.len());
+        for stage in stages {
+            let Some(def_id) = self.symbols.lookup_def(&stage.model.name) else {
+                continue;
+            };
+            out.push(IrProgressiveStage {
+                model_def_id: def_id,
+                model_name: stage.model.name.clone(),
+                threshold: stage.threshold,
+                span: stage.span,
+            });
+        }
+        out
     }
 
     fn lower_route_arms(&self, arms: &[corvid_ast::RouteArm]) -> Vec<IrRouteArm> {

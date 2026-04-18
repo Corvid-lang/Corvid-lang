@@ -11,9 +11,9 @@ use corvid_ast::{
     AgentDecl, Backoff, BackpressurePolicy, BinaryOp, Block, Decl, DimensionDecl,
     DimensionValue, Effect, EffectConstraint, EffectDecl, EffectRef, EffectRow, EvalAssert,
     EvalDecl, Expr, ExtendDecl, ExtendMethod, ExtendMethodKind, Field, File, Ident, ImportDecl,
-    ImportSource, Literal, ModelDecl, ModelField, Param, PromptDecl, PromptStreamSettings,
-    RouteArm, RoutePattern, RouteTable, Span, Stmt, ToolDecl, TypeDecl, TypeRef, UnaryOp,
-    Visibility, WeakEffect, WeakEffectRow,
+    ImportSource, Literal, ModelDecl, ModelField, Param, ProgressiveChain, ProgressiveStage,
+    PromptDecl, PromptStreamSettings, RouteArm, RoutePattern, RouteTable, Span, Stmt, ToolDecl,
+    TypeDecl, TypeRef, UnaryOp, Visibility, WeakEffect, WeakEffectRow,
 };
 
 #[derive(Debug, Clone, PartialEq)]
@@ -1373,6 +1373,24 @@ impl<'a> Parser<'a> {
             None
         };
 
+        // Phase 20h slice E: optional `progressive:` block. Mutually
+        // exclusive with `route:`; the parser reports a dedicated
+        // error if both appear on the same prompt.
+        let progressive = if matches!(self.peek(), TokKind::KwProgressive) {
+            if route.is_some() {
+                return Err(ParseError {
+                    kind: ParseErrorKind::UnexpectedToken {
+                        got: "`progressive:` after `route:`".into(),
+                        expected: "a prompt template string (a prompt uses either `route:` or `progressive:`, not both)".into(),
+                    },
+                    span: self.peek_span(),
+                });
+            }
+            Some(self.parse_prompt_progressive_block()?)
+        } else {
+            None
+        };
+
         let stream = self.parse_prompt_stream_settings()?;
 
         // Expect a single string literal as the template.
@@ -1408,6 +1426,7 @@ impl<'a> Parser<'a> {
             stream,
             capability_required,
             route,
+            progressive,
             span: start.merge(end),
         })
     }
@@ -1484,6 +1503,117 @@ impl<'a> Parser<'a> {
     /// Is the next token a lone `_` identifier?
     fn is_wildcard_token(&self) -> bool {
         matches!(self.peek(), TokKind::Ident(name) if name == "_")
+    }
+
+    /// Parse a `progressive:` block inside a prompt body. Caller has
+    /// already positioned at the `progressive` keyword.
+    fn parse_prompt_progressive_block(
+        &mut self,
+    ) -> Result<ProgressiveChain, ParseError> {
+        let start = self.peek_span();
+        self.bump(); // progressive
+        self.expect(TokKind::Colon, "`:` after `progressive`")?;
+        self.expect_newline()?;
+
+        if !matches!(self.peek(), TokKind::Indent) {
+            return Err(ParseError {
+                kind: ParseErrorKind::ExpectedBlock,
+                span: self.peek_span(),
+            });
+        }
+        self.bump(); // Indent
+
+        let mut stages = Vec::new();
+        while !matches!(self.peek(), TokKind::Dedent | TokKind::Eof) {
+            self.skip_newlines();
+            if matches!(self.peek(), TokKind::Dedent | TokKind::Eof) {
+                break;
+            }
+            stages.push(self.parse_progressive_stage()?);
+        }
+
+        let end = self.peek_span();
+        if matches!(self.peek(), TokKind::Dedent) {
+            self.bump();
+        }
+
+        if stages.len() < 2 {
+            return Err(ParseError {
+                kind: ParseErrorKind::UnexpectedToken {
+                    got: format!("{} stage(s)", stages.len()),
+                    expected: "at least two `progressive:` stages (primary + terminal fallback)".into(),
+                },
+                span: start,
+            });
+        }
+
+        // Every stage except the last must declare a threshold.
+        // The last stage must NOT declare one — it's the terminal
+        // fallback that always runs.
+        for (idx, stage) in stages.iter().enumerate() {
+            let is_last = idx == stages.len() - 1;
+            if is_last && stage.threshold.is_some() {
+                return Err(ParseError {
+                    kind: ParseErrorKind::UnexpectedToken {
+                        got: "`below <threshold>` on the terminal stage".into(),
+                        expected: "a bare model name on the last stage (terminal fallback always runs)".into(),
+                    },
+                    span: stage.span,
+                });
+            }
+            if !is_last && stage.threshold.is_none() {
+                return Err(ParseError {
+                    kind: ParseErrorKind::UnexpectedToken {
+                        got: "a non-terminal stage without `below <threshold>`".into(),
+                        expected: "`<model> below <threshold>` on every stage except the last".into(),
+                    },
+                    span: stage.span,
+                });
+            }
+        }
+
+        Ok(ProgressiveChain {
+            stages,
+            span: start.merge(end),
+        })
+    }
+
+    fn parse_progressive_stage(&mut self) -> Result<ProgressiveStage, ParseError> {
+        let start = self.peek_span();
+        let (model_name, model_span) = self.expect_ident()?;
+
+        let threshold = if matches!(self.peek(), TokKind::KwBelow) {
+            self.bump(); // below
+            match self.peek().clone() {
+                TokKind::Float(n) => {
+                    self.bump();
+                    Some(n)
+                }
+                TokKind::Int(n) => {
+                    self.bump();
+                    Some(n as f64)
+                }
+                other => {
+                    return Err(ParseError {
+                        kind: ParseErrorKind::UnexpectedToken {
+                            got: describe_token(&other),
+                            expected: "a numeric confidence threshold after `below`".into(),
+                        },
+                        span: self.peek_span(),
+                    });
+                }
+            }
+        } else {
+            None
+        };
+
+        let end = self.prev_span();
+        self.expect_newline()?;
+        Ok(ProgressiveStage {
+            model: Ident::new(model_name, model_span),
+            threshold,
+            span: start.merge(end),
+        })
     }
 
     // -- agent ---------------------------------------------------
@@ -3578,6 +3708,156 @@ prompt answer(q: String) -> String:
 
     // -------------------- Phase 20h slice D: model fields for
     // jurisdiction / compliance / privacy_tier parse cleanly
+
+    // -------------------- Phase 20h slice E: `progressive:` --------------------
+
+    #[test]
+    fn parses_progressive_chain_with_two_stages() {
+        let src = "\
+model cheap:
+    capability: basic
+
+model expensive:
+    capability: expert
+
+prompt classify(q: String) -> String:
+    progressive:
+        cheap below 0.95
+        expensive
+    \"Classify\"
+";
+        let file = parse_file_src(src);
+        let p = file
+            .decls
+            .iter()
+            .find_map(|d| match d {
+                Decl::Prompt(p) => Some(p),
+                _ => None,
+            })
+            .unwrap();
+        let chain = p.progressive.as_ref().expect("progressive block");
+        assert_eq!(chain.stages.len(), 2);
+        assert_eq!(chain.stages[0].model.name, "cheap");
+        assert_eq!(chain.stages[0].threshold, Some(0.95));
+        assert_eq!(chain.stages[1].model.name, "expensive");
+        assert_eq!(chain.stages[1].threshold, None);
+    }
+
+    #[test]
+    fn parses_progressive_chain_with_three_stages() {
+        let src = "\
+model a:
+    capability: basic
+
+model b:
+    capability: standard
+
+model c:
+    capability: expert
+
+prompt classify(q: String) -> String:
+    progressive:
+        a below 0.90
+        b below 0.98
+        c
+    \"Classify\"
+";
+        let file = parse_file_src(src);
+        let p = file
+            .decls
+            .iter()
+            .find_map(|d| match d {
+                Decl::Prompt(p) => Some(p),
+                _ => None,
+            })
+            .unwrap();
+        let chain = p.progressive.as_ref().unwrap();
+        assert_eq!(chain.stages.len(), 3);
+        assert_eq!(chain.stages[2].threshold, None);
+    }
+
+    #[test]
+    fn rejects_progressive_with_single_stage() {
+        let src = "\
+model only:
+    capability: basic
+
+prompt classify(q: String) -> String:
+    progressive:
+        only
+    \"Classify\"
+";
+        let (_file, errs) = parse_file_errs(src);
+        assert!(
+            !errs.is_empty(),
+            "progressive with <2 stages must fail to parse"
+        );
+    }
+
+    #[test]
+    fn rejects_progressive_last_stage_with_threshold() {
+        let src = "\
+model a:
+    capability: basic
+
+model b:
+    capability: basic
+
+prompt classify(q: String) -> String:
+    progressive:
+        a below 0.90
+        b below 0.99
+    \"Classify\"
+";
+        let (_file, errs) = parse_file_errs(src);
+        assert!(
+            !errs.is_empty(),
+            "last stage must be a terminal fallback without `below`"
+        );
+    }
+
+    #[test]
+    fn rejects_progressive_non_last_stage_without_threshold() {
+        let src = "\
+model a:
+    capability: basic
+
+model b:
+    capability: basic
+
+prompt classify(q: String) -> String:
+    progressive:
+        a
+        b
+    \"Classify\"
+";
+        let (_file, errs) = parse_file_errs(src);
+        assert!(
+            !errs.is_empty(),
+            "non-terminal stages must declare `below <threshold>`"
+        );
+    }
+
+    #[test]
+    fn rejects_route_and_progressive_on_same_prompt() {
+        let src = "\
+model a:
+    capability: basic
+
+model b:
+    capability: expert
+
+prompt classify(q: String) -> String:
+    route:
+        _ -> a
+    progressive:
+        a below 0.95
+        b
+    \"Classify\"
+";
+        let (_file, errs) = parse_file_errs(src);
+        assert!(!errs.is_empty());
+    }
 
     #[test]
     fn parses_model_with_regulatory_fields() {

@@ -98,6 +98,15 @@ pub struct IrPrompt {
     /// runtime evaluates each arm's guard in order and dispatches
     /// to the first match's model.
     pub route: Vec<IrRouteArm>,
+    /// Phase 20h slice E: progressive refinement chain. Empty
+    /// means the prompt doesn't use progressive dispatch. Non-empty
+    /// means the runtime runs stages in order; each non-final
+    /// stage's `threshold` is the minimum output confidence at
+    /// which to accept the stage's result. If a stage's output is
+    /// below its threshold, the runtime escalates to the next
+    /// stage. The final stage has `threshold = None` and always
+    /// runs as the terminal fallback.
+    pub progressive: Vec<IrProgressiveStage>,
     pub span: Span,
 }
 
@@ -115,6 +124,16 @@ pub struct IrRouteArm {
 pub enum IrRoutePattern {
     Wildcard,
     Guard(IrExpr),
+}
+
+/// One stage of a prompt's `progressive:` chain at IR level.
+/// `threshold = None` marks the terminal fallback (always runs).
+#[derive(Debug, Clone)]
+pub struct IrProgressiveStage {
+    pub model_def_id: DefId,
+    pub model_name: String,
+    pub threshold: Option<f64>,
+    pub span: Span,
 }
 
 /// An agent declaration with a typed body.

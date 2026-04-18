@@ -377,6 +377,22 @@ impl Resolver {
                 }
             }
         }
+        // Phase 20h slice E: resolve each `progressive:` stage's
+        // model ident. Thresholds are numeric literals (no resolution
+        // needed). Unknown model names produce `UndefinedName`.
+        if let Some(chain) = &p.progressive {
+            for stage in &chain.stages {
+                if let Some(def_id) = self.symbols.lookup_def(&stage.model.name) {
+                    self.bindings
+                        .insert(stage.model.span, Binding::Decl(def_id));
+                } else {
+                    self.errors.push(ResolveError {
+                        kind: ResolveErrorKind::UndefinedName(stage.model.name.clone()),
+                        span: stage.model.span,
+                    });
+                }
+            }
+        }
         self.pop_scope();
     }
 

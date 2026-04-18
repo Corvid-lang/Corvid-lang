@@ -1985,4 +1985,76 @@ prompt answer(q: String) -> String:
             resolve_errs
         );
     }
+
+    // --- Phase 20h slice E: progressive refinement validation ---
+
+    #[test]
+    fn progressive_with_valid_models_and_thresholds_passes() {
+        let src = "\
+model cheap:
+    capability: basic
+
+model expensive:
+    capability: expert
+
+prompt classify(q: String) -> String:
+    progressive:
+        cheap below 0.95
+        expensive
+    \"Classify\"
+";
+        let c = check(src);
+        assert!(c.errors.is_empty(), "errors: {:?}", c.errors);
+    }
+
+    #[test]
+    fn progressive_stage_pointing_at_non_model_is_rejected() {
+        let src = "\
+tool not_a_model(q: String) -> String
+
+model fallback:
+    capability: expert
+
+prompt classify(q: String) -> String:
+    progressive:
+        not_a_model below 0.95
+        fallback
+    \"Classify\"
+";
+        let c = check(src);
+        assert!(
+            c.errors.iter().any(|e| matches!(
+                &e.kind,
+                TypeErrorKind::RouteTargetNotModel { target, .. } if target == "not_a_model"
+            )),
+            "expected RouteTargetNotModel for non-model stage, got {:?}",
+            c.errors
+        );
+    }
+
+    #[test]
+    fn progressive_threshold_out_of_range_is_rejected() {
+        let src = "\
+model a:
+    capability: basic
+
+model b:
+    capability: expert
+
+prompt classify(q: String) -> String:
+    progressive:
+        a below 1.5
+        b
+    \"Classify\"
+";
+        let c = check(src);
+        assert!(
+            c.errors.iter().any(|e| matches!(
+                &e.kind,
+                TypeErrorKind::InvalidConfidence { value } if (*value - 1.5).abs() < 1e-9
+            )),
+            "expected InvalidConfidence for threshold=1.5, got {:?}",
+            c.errors
+        );
+    }
 }

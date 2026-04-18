@@ -60,6 +60,13 @@ pub enum TokKind {
     /// `route:` clause on a prompt — pattern-dispatched model
     /// selection per-call.
     KwRoute,
+    /// `progressive:` clause on a prompt — try cheap model first,
+    /// escalate to a stronger model if output confidence falls
+    /// below the declared threshold.
+    KwProgressive,
+    /// `below` — used inside a `progressive:` stage to declare the
+    /// confidence threshold below which escalation fires.
+    KwBelow,
 
     // --- keywords: control flow ---
     KwIf,
@@ -156,6 +163,8 @@ impl TokKind {
             "model" => TokKind::KwModel,
             "requires" => TokKind::KwRequires,
             "route" => TokKind::KwRoute,
+            "progressive" => TokKind::KwProgressive,
+            "below" => TokKind::KwBelow,
             "if" => TokKind::KwIf,
             "else" => TokKind::KwElse,
             "for" => TokKind::KwFor,

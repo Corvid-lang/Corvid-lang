@@ -238,6 +238,33 @@ pub struct PromptDecl {
     /// See Phase 20h slice C.
     #[serde(default)]
     pub route: Option<RouteTable>,
+    /// `progressive:` clause — sequential dispatch with confidence
+    /// escalation. Try the first model; if its output confidence is
+    /// below the declared threshold, escalate to the next model; and
+    /// so on. The final stage always runs (no threshold). Mutually
+    /// exclusive with `route:`. See Phase 20h slice E.
+    #[serde(default)]
+    pub progressive: Option<ProgressiveChain>,
+    pub span: Span,
+}
+
+/// A `progressive:` clause body — a linear chain of
+/// (model, optional threshold) stages. The final stage has
+/// `threshold: None` and acts as the terminal fallback.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ProgressiveChain {
+    pub stages: Vec<ProgressiveStage>,
+    pub span: Span,
+}
+
+/// One stage in a progressive chain.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ProgressiveStage {
+    pub model: Ident,
+    /// `below N` — escalate to the next stage when output confidence
+    /// is strictly less than this value. `None` on the last stage,
+    /// which is always run as the terminal fallback.
+    pub threshold: Option<f64>,
     pub span: Span,
 }
 

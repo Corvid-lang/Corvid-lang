@@ -516,6 +516,40 @@ impl<'a> Checker<'a> {
                 }
             }
         }
+
+        // Phase 20h slice E: validate each progressive stage. Model
+        // refs must be Models (reuse `RouteTargetNotModel` — the
+        // underlying invariant is identical). Thresholds must be in
+        // [0.0, 1.0] — a confidence outside that range is ill-formed.
+        if let Some(chain) = &p.progressive {
+            for stage in &chain.stages {
+                if let Some(Binding::Decl(def_id)) =
+                    self.bindings.get(&stage.model.span)
+                {
+                    let def_id = *def_id;
+                    let entry = self.symbols.get(def_id);
+                    if entry.kind != corvid_resolve::DeclKind::Model {
+                        let got = format!("{:?}", entry.kind).to_lowercase();
+                        self.errors.push(TypeError::new(
+                            TypeErrorKind::RouteTargetNotModel {
+                                prompt: p.name.name.clone(),
+                                target: stage.model.name.clone(),
+                                got_kind: got,
+                            },
+                            stage.model.span,
+                        ));
+                    }
+                }
+                if let Some(t) = stage.threshold {
+                    if !(0.0..=1.0).contains(&t) {
+                        self.errors.push(TypeError::new(
+                            TypeErrorKind::InvalidConfidence { value: t },
+                            stage.span,
+                        ));
+                    }
+                }
+            }
+        }
     }
 
     fn check_eval(&mut self, e: &EvalDecl) {

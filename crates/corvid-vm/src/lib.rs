@@ -504,6 +504,7 @@ agent relay(ctx: String) -> Stream<String>:
                 backpressure: Some(BackpressurePolicy::Bounded(1)),
                 capability_required: None,
                 route: Vec::new(),
+                progressive: Vec::new(),
                 span: sp,
             }],
             agents: vec![IrAgent {
