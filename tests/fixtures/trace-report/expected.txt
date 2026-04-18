@@ -1,0 +1,19 @@
+Model usage
+prompt                model                calls  mean_cost  mean_conf  p50_ms  recommendation
+--------------------- -------------------- ------ ---------- ---------- ------- ---------------------------------------------
+legal_answer          mini                      1     0.0010        n/a      40 healthy
+legal_answer          opus                      1     0.0800        n/a     158 healthy
+summarize             haiku                     2     0.0020        n/a     100 promote haiku to default — used 100% of calls at n/a confidence
+
+Escalation patterns
+prompt                stage  model                entries  escalations  exhaustions  % escalated  recommendation
+--------------------- ------ -------------------- -------- ------------ ------------ ----------- ---------------------------------------------
+legal_answer               0 mini                        1            1            0       100.0 frequently escalates — strengthen or remove this stage
+legal_answer               1 opus                        1            0            1         0.0 terminal always reached — promote cheaper model out of the chain
+
+A/B + ensemble + adversarial
+prompt                strategy      winners                          agree_mean  contradiction  rollout%  recommendation
+--------------------- ------------- -------------------------------- ----------- ------------- --------- ---------------------------------------------
+answer                ensemble      yes:2                                   0.83           n/a       n/a promote yes to default — wins 100% of votes
+classify              rollout       gpt-4o:1, gpt-4o-mini:2                  n/a           n/a      33.3 cohort ratio stable
+verify                adversarial   accepted:0, contradiction:1              n/a          1.00       n/a high contradiction rate — keep the adversarial pipeline; proposer is catching real errors

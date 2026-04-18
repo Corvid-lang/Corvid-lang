@@ -179,6 +179,11 @@ impl Runtime {
                 ts_ms: now_ms(),
                 run_id: self.tracer.run_id().to_string(),
                 prompt: req.prompt.to_string(),
+                model: if req.model.is_empty() {
+                    None
+                } else {
+                    Some(req.model.to_string())
+                },
                 result: resp.value.clone(),
             });
         }

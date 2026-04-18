@@ -10,6 +10,9 @@
 //!   corvid verify             cross-tier effect-profile verification
 //!   corvid effect-diff        diff composed effect profiles between two revisions
 //!   corvid add-dimension      install a dimension from the effect registry
+//!   corvid routing-report     aggregate dispatch traces into routing guidance
+
+mod routing_report;
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -19,6 +22,7 @@ use clap::{Parser, Subcommand};
 use corvid_differential_verify::{
     render_corpus_grid, render_report, shrink_program, verify_corpus,
 };
+use routing_report::{build_report, render_report as render_routing_report, RoutingReportOptions};
 
 #[allow(unused_imports)]
 use corvid_driver::{
@@ -126,6 +130,21 @@ enum Command {
         /// Dimension spec in `name@version` form (e.g. `fairness@1.2`).
         spec: String,
     },
+    /// Aggregate routing and dispatch traces into an optimization report.
+    RoutingReport {
+        /// Only include events at or after this RFC3339 timestamp.
+        #[arg(long)]
+        since: Option<String>,
+        /// Only include events at or after this git commit timestamp.
+        #[arg(long)]
+        since_commit: Option<String>,
+        /// Emit the structured report as JSON.
+        #[arg(long)]
+        json: bool,
+        /// Trace directory. Defaults to `target/trace`.
+        #[arg(long, value_name = "PATH")]
+        trace_dir: Option<PathBuf>,
+    },
     /// Start the interactive Corvid REPL.
     Repl,
     /// Check the local environment for required tools.
@@ -155,6 +174,17 @@ fn main() -> ExitCode {
         }
         Some(Command::EffectDiff { before, after }) => cmd_effect_diff(&before, &after),
         Some(Command::AddDimension { spec }) => cmd_add_dimension(&spec),
+        Some(Command::RoutingReport {
+            since,
+            since_commit,
+            json,
+            trace_dir,
+        }) => cmd_routing_report(
+            trace_dir.as_deref(),
+            since.as_deref(),
+            since_commit.as_deref(),
+            json,
+        ),
         Some(Command::Repl) => cmd_repl(),
         Some(Command::Doctor) => cmd_doctor(),
         None => {
@@ -461,6 +491,26 @@ fn cmd_add_dimension(spec: &str) -> Result<u8> {
             Ok(1)
         }
     }
+}
+
+fn cmd_routing_report(
+    trace_dir: Option<&Path>,
+    since: Option<&str>,
+    since_commit: Option<&str>,
+    json: bool,
+) -> Result<u8> {
+    let trace_dir = trace_dir.unwrap_or_else(|| Path::new("target/trace"));
+    let report = build_report(RoutingReportOptions {
+        trace_dir,
+        since,
+        since_commit,
+    })?;
+    if json {
+        println!("{}", serde_json::to_string_pretty(&report)?);
+    } else {
+        print!("{}", render_routing_report(&report));
+    }
+    Ok(if report.healthy { 0 } else { 1 })
 }
 
 // ------------------------------------------------------------

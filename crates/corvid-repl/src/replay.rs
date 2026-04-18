@@ -185,6 +185,7 @@ impl ReplaySession {
                                 run_id,
                                 prompt: result_prompt,
                                 result,
+                                ..
                             }) if run_id == session_run_id && result_prompt == prompt => {
                                 (Some(*ts_ms), Some(result.clone()), 2, false)
                             }

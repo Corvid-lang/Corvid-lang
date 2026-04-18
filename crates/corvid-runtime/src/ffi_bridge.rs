@@ -372,6 +372,11 @@ fn trace_mock_llm_attempt(
         ts_ms: crate::tracing::now_ms(),
         run_id: tracer.run_id().to_string(),
         prompt: prompt_name.to_string(),
+        model: if model.is_empty() {
+            None
+        } else {
+            Some(model.to_string())
+        },
         result: serde_json::from_str(reply)
             .unwrap_or_else(|_| serde_json::Value::String(reply.to_string())),
     });

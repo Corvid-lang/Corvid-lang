@@ -219,11 +219,13 @@ impl Tracer {
                 ts_ms,
                 run_id,
                 prompt,
+                model,
                 result,
             } => TraceEvent::LlmResult {
                 ts_ms,
                 run_id,
                 prompt,
+                model,
                 result: r.redact(result),
             },
             TraceEvent::LlmCall {

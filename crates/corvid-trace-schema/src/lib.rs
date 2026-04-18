@@ -45,6 +45,8 @@ pub enum TraceEvent {
         ts_ms: u64,
         run_id: String,
         prompt: String,
+        #[serde(default)]
+        model: Option<String>,
         result: serde_json::Value,
     },
     ApprovalRequest {
@@ -71,6 +73,8 @@ pub enum TraceEvent {
         cost_estimate: f64,
         #[serde(default)]
         arm_index: Option<usize>,
+        #[serde(default)]
+        stage_index: Option<usize>,
     },
     ProgressiveEscalation {
         ts_ms: u64,

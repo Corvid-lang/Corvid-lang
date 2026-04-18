@@ -1,0 +1,21 @@
+{"kind":"model_selected","ts_ms":1000,"run_id":"run-1","prompt":"summarize","model":"haiku","capability_required":null,"capability_picked":null,"cost_estimate":0.002,"arm_index":null,"stage_index":null}
+{"kind":"llm_call","ts_ms":1000,"run_id":"run-1","prompt":"summarize","model":"haiku","rendered":"Summarize A","args":[]}
+{"kind":"llm_result","ts_ms":1100,"run_id":"run-1","prompt":"summarize","model":"haiku","result":"short"}
+{"kind":"model_selected","ts_ms":1200,"run_id":"run-1","prompt":"summarize","model":"haiku","capability_required":null,"capability_picked":null,"cost_estimate":0.002,"arm_index":null,"stage_index":null}
+{"kind":"llm_call","ts_ms":1200,"run_id":"run-1","prompt":"summarize","model":"haiku","rendered":"Summarize B","args":[]}
+{"kind":"llm_result","ts_ms":1280,"run_id":"run-1","prompt":"summarize","model":"haiku","result":"shorter"}
+{"kind":"model_selected","ts_ms":1300,"run_id":"run-1","prompt":"legal_answer","model":"mini","capability_required":null,"capability_picked":null,"cost_estimate":0.001,"arm_index":null,"stage_index":0}
+{"kind":"llm_call","ts_ms":1300,"run_id":"run-1","prompt":"legal_answer","model":"mini","rendered":"Cheap stage","args":[]}
+{"kind":"llm_result","ts_ms":1340,"run_id":"run-1","prompt":"legal_answer","model":"mini","result":"draft"}
+{"kind":"progressive_escalation","ts_ms":1341,"run_id":"run-1","prompt":"legal_answer","from_stage":0,"to_stage":1,"confidence_observed":0.40,"threshold":0.80}
+{"kind":"model_selected","ts_ms":1342,"run_id":"run-1","prompt":"legal_answer","model":"opus","capability_required":null,"capability_picked":null,"cost_estimate":0.08,"arm_index":null,"stage_index":1}
+{"kind":"llm_call","ts_ms":1342,"run_id":"run-1","prompt":"legal_answer","model":"opus","rendered":"Strong stage","args":[]}
+{"kind":"llm_result","ts_ms":1500,"run_id":"run-1","prompt":"legal_answer","model":"opus","result":"final"}
+{"kind":"progressive_exhausted","ts_ms":1501,"run_id":"run-1","prompt":"legal_answer","stages":["mini","opus"]}
+{"kind":"ab_variant_chosen","ts_ms":1600,"run_id":"run-1","prompt":"classify","variant":"gpt-4o","baseline":"gpt-4o-mini","rollout_pct":25.0,"chosen":"gpt-4o-mini"}
+{"kind":"ab_variant_chosen","ts_ms":1700,"run_id":"run-1","prompt":"classify","variant":"gpt-4o","baseline":"gpt-4o-mini","rollout_pct":25.0,"chosen":"gpt-4o-mini"}
+{"kind":"ab_variant_chosen","ts_ms":1800,"run_id":"run-1","prompt":"classify","variant":"gpt-4o","baseline":"gpt-4o-mini","rollout_pct":25.0,"chosen":"gpt-4o"}
+{"kind":"ensemble_vote","ts_ms":1900,"run_id":"run-1","prompt":"answer","members":["haiku","sonnet","opus"],"results":["yes","yes","yes"],"winner":"yes","agreement_rate":1.0,"strategy":"majority"}
+{"kind":"ensemble_vote","ts_ms":1910,"run_id":"run-1","prompt":"answer","members":["haiku","sonnet","opus"],"results":["yes","yes","no"],"winner":"yes","agreement_rate":0.6666666667,"strategy":"majority"}
+{"kind":"adversarial_pipeline_completed","ts_ms":2000,"run_id":"run-1","prompt":"verify","contradiction":true}
+{"kind":"adversarial_contradiction","ts_ms":2001,"run_id":"run-1","prompt":"verify","proposed":"draft","challenge":"fatal flaw","verdict":{"contradiction":true,"rationale":"reject"}}

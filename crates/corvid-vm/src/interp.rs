@@ -299,6 +299,7 @@ impl<'ir> Interpreter<'ir> {
         capability_picked: Option<String>,
         cost_estimate: f64,
         arm_index: Option<usize>,
+        stage_index: Option<usize>,
     ) {
         self.runtime.tracer().emit(TraceEvent::ModelSelected {
             ts_ms: corvid_runtime::now_ms(),
@@ -309,6 +310,7 @@ impl<'ir> Interpreter<'ir> {
             capability_picked,
             cost_estimate,
             arm_index,
+            stage_index,
         });
     }
 
@@ -319,6 +321,7 @@ impl<'ir> Interpreter<'ir> {
         prompt_tokens: u64,
         completion_tokens: u64,
         arm_index: Option<usize>,
+        stage_index: Option<usize>,
         span: Span,
     ) -> Result<String, InterpError> {
         let selection = self
@@ -332,6 +335,7 @@ impl<'ir> Interpreter<'ir> {
             selection.capability_picked,
             selection.cost_estimate,
             arm_index,
+            stage_index,
         );
         Ok(selection.model)
     }
@@ -385,6 +389,7 @@ impl<'ir> Interpreter<'ir> {
             selection.capability_picked,
             selection.cost_estimate,
             None,
+            None,
         );
         Ok(Some(selection.model))
     }
@@ -417,6 +422,7 @@ impl<'ir> Interpreter<'ir> {
                     prompt_tokens,
                     completion_tokens,
                     Some(arm_index),
+                    None,
                     span,
                 )
                 .map(Some);
@@ -796,6 +802,7 @@ impl<'ir> Interpreter<'ir> {
                     prompt_tokens,
                     completion_tokens,
                     None,
+                    None,
                     span,
                 )?;
                 requests.push((
@@ -1060,6 +1067,7 @@ impl<'ir> Interpreter<'ir> {
                 prompt_tokens,
                 completion_tokens,
                 None,
+                None,
                 span,
             )?;
             self.execute_prompt_call(
@@ -1088,6 +1096,7 @@ impl<'ir> Interpreter<'ir> {
                     prompt_tokens,
                     completion_tokens,
                     None,
+                    Some(stage_index),
                     span,
                 )?;
                 let result = self
