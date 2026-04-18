@@ -1,0 +1,8 @@
+effect lookup_cost:
+    cost: $0.02
+
+prompt answer() -> String uses lookup_cost:
+    "Answer"
+
+agent main() -> String:
+    return answer()

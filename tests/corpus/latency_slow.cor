@@ -1,0 +1,8 @@
+effect slow_effect:
+    latency: slow
+
+prompt wait() -> String uses slow_effect:
+    "Wait"
+
+agent main() -> String:
+    return wait()

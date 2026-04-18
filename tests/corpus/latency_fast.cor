@@ -1,0 +1,8 @@
+effect fast_effect:
+    latency: fast
+
+prompt ping() -> String uses fast_effect:
+    "Ping"
+
+agent main() -> String:
+    return ping()

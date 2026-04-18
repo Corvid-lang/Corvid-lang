@@ -1,0 +1,20 @@
+effect search_effect:
+    cost: $0.01
+    latency: fast
+    confidence: 0.94
+
+effect audit_effect:
+    trust: supervisor_required
+    reversible: false
+    data: grounded
+
+prompt search() -> String uses search_effect:
+    "Search"
+
+prompt audit() -> String uses audit_effect:
+    "Audit"
+
+agent main() -> String:
+    first = search()
+    second = audit()
+    return first + second

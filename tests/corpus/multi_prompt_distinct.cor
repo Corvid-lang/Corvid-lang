@@ -1,0 +1,16 @@
+effect first_effect:
+    cost: $0.01
+
+effect second_effect:
+    confidence: 0.92
+
+prompt first() -> String uses first_effect:
+    "First"
+
+prompt second() -> String uses second_effect:
+    "Second"
+
+agent main() -> String:
+    a = first()
+    b = second()
+    return a + b

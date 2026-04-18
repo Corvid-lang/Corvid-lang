@@ -1,0 +1,8 @@
+effect token_effect:
+    tokens: 128
+
+prompt summarize() -> String uses token_effect:
+    "Summarize"
+
+agent main() -> String:
+    return summarize()

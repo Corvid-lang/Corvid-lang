@@ -1,0 +1,9 @@
+effect paid_lookup:
+    cost: $0.03
+    trust: human_required
+
+prompt settle() -> String uses paid_lookup:
+    "Settle"
+
+agent main() -> String:
+    return settle()

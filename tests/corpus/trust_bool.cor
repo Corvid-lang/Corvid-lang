@@ -1,0 +1,8 @@
+effect supervised:
+    trust: supervisor_required
+
+prompt approved() -> Bool uses supervised:
+    "Approved"
+
+agent main() -> Bool:
+    return approved()

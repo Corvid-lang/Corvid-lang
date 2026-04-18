@@ -1,0 +1,11 @@
+effect helper_effect:
+    cost: $0.05
+
+prompt answer() -> String uses helper_effect:
+    "Answer"
+
+agent helper() -> String uses helper_effect:
+    return answer()
+
+agent main() -> String:
+    return helper()

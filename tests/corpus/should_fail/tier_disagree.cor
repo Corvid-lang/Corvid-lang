@@ -1,0 +1,11 @@
+effect expensive_lookup:
+    cost: $0.75
+    trust: human_required
+
+prompt maybe() -> String uses expensive_lookup:
+    "Maybe"
+
+agent main() -> String:
+    if false:
+        return maybe()
+    return "ok"

@@ -15,6 +15,7 @@ members = [
     "crates/corvid-macros",
     "crates/corvid-test-tools",
     "crates/corvid-driver",
+    "crates/corvid-differential-verify",
     "crates/corvid-cli",
     "crates/corvid-lsp",
     "examples/refund_bot_demo",
@@ -68,6 +69,7 @@ corvid-runtime  = { path = "crates/corvid-runtime" }
 corvid-macros   = { path = "crates/corvid-macros" }
 corvid-test-tools = { path = "crates/corvid-test-tools" }
 corvid-driver   = { path = "crates/corvid-driver" }
+corvid-differential-verify = { path = "crates/corvid-differential-verify" }
 
 # Proc-macro deps used by corvid-macros.
 proc-macro2 = "1"

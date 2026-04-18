@@ -1,0 +1,8 @@
+effect float_effect:
+    confidence: 0.91
+
+prompt ratio() -> Float uses float_effect:
+    "Ratio"
+
+agent main() -> Float:
+    return ratio()

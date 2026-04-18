@@ -7,6 +7,7 @@
 //!   corvid run <file>         build + invoke python on the output
 //!   corvid repl               start the interactive REPL
 //!   corvid test <what>        run verification suites (dimensions, spec, adversarial)
+//!   corvid verify             cross-tier effect-profile verification
 //!   corvid effect-diff        diff composed effect profiles between two revisions
 //!   corvid add-dimension      install a dimension from the effect registry
 
@@ -15,11 +16,14 @@ use std::process::ExitCode;
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
+use corvid_differential_verify::{
+    render_corpus_grid, render_report, shrink_program, verify_corpus,
+};
 
 #[allow(unused_imports)]
 use corvid_driver::{
-    build_native_to_disk, build_to_disk, compile, load_dotenv_walking, render_all_pretty,
-    run_native, run_with_target, scaffold_new, RunTarget,
+    build_native_to_disk, build_to_disk, compile, compile_with_config, load_corvid_config_for,
+    load_dotenv_walking, render_all_pretty, run_native, run_with_target, scaffold_new, RunTarget,
 };
 
 #[derive(Parser)]
@@ -90,6 +94,19 @@ enum Command {
         #[arg(long, default_value = "opus")]
         model: String,
     },
+    /// Cross-verify effect profiles across checker, interpreter,
+    /// native, and replay tiers.
+    Verify {
+        /// Verify every `.cor` file under this directory recursively.
+        #[arg(long, value_name = "DIR", conflicts_with = "shrink")]
+        corpus: Option<PathBuf>,
+        /// Shrink a divergent program to a smaller reproducer.
+        #[arg(long, value_name = "FILE", conflicts_with = "corpus")]
+        shrink: Option<PathBuf>,
+        /// Emit the structured report as JSON to stderr.
+        #[arg(long)]
+        json: bool,
+    },
     /// Diff the composed effect profile between two revisions.
     /// Reports dimension-value drift per agent and constraints that
     /// newly fire or release because of the change.
@@ -130,6 +147,9 @@ fn main() -> ExitCode {
             count,
             model,
         }) => cmd_test(target.as_deref(), meta, count, &model),
+        Some(Command::Verify { corpus, shrink, json }) => {
+            cmd_verify(corpus.as_deref(), shrink.as_deref(), json)
+        }
         Some(Command::EffectDiff { before, after }) => cmd_effect_diff(&before, &after),
         Some(Command::AddDimension { spec }) => cmd_add_dimension(&spec),
         Some(Command::Repl) => cmd_repl(),
@@ -167,7 +187,8 @@ fn cmd_new(name: &str) -> Result<u8> {
 fn cmd_check(file: &Path) -> Result<u8> {
     let source = std::fs::read_to_string(file)
         .with_context(|| format!("cannot read `{}`", file.display()))?;
-    let result = compile(&source);
+    let config = load_corvid_config_for(file);
+    let result = compile_with_config(&source, config.as_ref());
     if result.ok() {
         println!("ok: {} — no errors", file.display());
         Ok(0)
@@ -239,6 +260,49 @@ fn cmd_run(file: &Path, target: &str, tools_lib: Option<&Path>) -> Result<u8> {
 fn cmd_repl() -> Result<u8> {
     corvid_repl::Repl::run_stdio().context("failed to run `corvid repl`")?;
     Ok(0)
+}
+
+fn cmd_verify(corpus: Option<&Path>, shrink: Option<&Path>, json: bool) -> Result<u8> {
+    match (corpus, shrink) {
+        (Some(dir), None) => {
+            let reports = verify_corpus(dir)?;
+            let divergent: Vec<_> = reports
+                .iter()
+                .filter(|report| !report.divergences.is_empty())
+                .collect();
+            println!("{}", render_corpus_grid(&reports));
+            if !divergent.is_empty() {
+                println!();
+                for (index, report) in divergent.iter().enumerate() {
+                    if index > 0 {
+                        println!();
+                    }
+                    println!("{}", render_report(report));
+                }
+            }
+            if json {
+                eprintln!("{}", serde_json::to_string_pretty(&reports)?);
+            }
+            Ok(if divergent.is_empty() { 0 } else { 1 })
+        }
+        (None, Some(file)) => {
+            let result = shrink_program(file)?;
+            println!(
+                "shrunk reproducer: {} -> {} (removed {} line(s))",
+                result.original.display(),
+                result.output.display(),
+                result.removed_lines
+            );
+            if json {
+                eprintln!("{}", serde_json::to_string_pretty(&result)?);
+            }
+            Ok(0)
+        }
+        (None, None) => anyhow::bail!(
+            "use `corvid verify --corpus <dir>` or `corvid verify --shrink <file>`"
+        ),
+        (Some(_), Some(_)) => unreachable!("clap enforces conflicts"),
+    }
 }
 
 // ------------------------------------------------------------

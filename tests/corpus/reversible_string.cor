@@ -1,0 +1,8 @@
+effect irreversible_effect:
+    reversible: false
+
+prompt act() -> String uses irreversible_effect:
+    "Act"
+
+agent main() -> String:
+    return act()

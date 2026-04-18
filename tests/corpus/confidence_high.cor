@@ -1,0 +1,8 @@
+effect confident_effect:
+    confidence: 0.97
+
+prompt decide() -> Bool uses confident_effect:
+    "Decide"
+
+agent main() -> Bool:
+    return decide()

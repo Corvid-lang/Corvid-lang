@@ -1,0 +1,8 @@
+effect latency_budget_effect:
+    latency_ms: 250
+
+prompt hop() -> String uses latency_budget_effect:
+    "Hop"
+
+agent main() -> String:
+    return hop()

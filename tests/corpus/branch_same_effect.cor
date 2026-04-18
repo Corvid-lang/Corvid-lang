@@ -1,0 +1,13 @@
+effect branch_effect:
+    latency: medium
+
+prompt left() -> String uses branch_effect:
+    "Left"
+
+prompt right() -> String uses branch_effect:
+    "Right"
+
+agent main() -> String:
+    if true:
+        return left()
+    return right()

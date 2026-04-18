@@ -1,0 +1,8 @@
+effect retrieval_effect:
+    data: grounded
+
+prompt cite() -> String uses retrieval_effect:
+    "Cite"
+
+agent main() -> String:
+    return cite()

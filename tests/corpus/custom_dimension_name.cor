@@ -1,0 +1,8 @@
+effect fairness_effect:
+    fairness: audited
+
+prompt score() -> String uses fairness_effect:
+    "Score"
+
+agent main() -> String:
+    return score()

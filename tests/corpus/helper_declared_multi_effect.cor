@@ -1,0 +1,19 @@
+effect alpha_effect:
+    cost: $0.01
+
+effect beta_effect:
+    trust: supervisor_required
+
+prompt alpha() -> String uses alpha_effect:
+    "Alpha"
+
+prompt beta() -> String uses beta_effect:
+    "Beta"
+
+agent helper() -> String uses alpha_effect, beta_effect:
+    left = alpha()
+    right = beta()
+    return left + right
+
+agent main() -> String:
+    return helper()

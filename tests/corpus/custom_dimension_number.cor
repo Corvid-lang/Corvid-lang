@@ -1,0 +1,8 @@
+effect stability_effect:
+    stability: 0.88
+
+prompt stable() -> String uses stability_effect:
+    "Stable"
+
+agent main() -> String:
+    return stable()

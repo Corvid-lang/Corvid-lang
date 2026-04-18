@@ -1,0 +1,8 @@
+effect int_effect:
+    cost: $0.01
+
+prompt count() -> Int uses int_effect:
+    "Count"
+
+agent main() -> Int:
+    return count()
