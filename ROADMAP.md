@@ -1180,7 +1180,27 @@ Users register local models (Ollama, vLLM, llama.cpp) with declared capabilities
 - Launch materials: 2-minute GIF/video showing the time-travel replay moment + effect-checker catching a bug + compile-time cost budget. HN + Reddit + ProductHunt announcement drafts reviewed with 3 external readers.
 - Beta round: 20 external developers build something real in Corvid; their feedback gates the final cut.
 
-**v1.0 cuts here. Launch day.**
+### Phase 34 — Inventions readme + landing page (~2 weeks)
+
+**Goal.** Every Corvid invention documented in one place, visible from the repo's front door. The README and landing page must answer: "what does this language do that no other language does?" — in code, not in prose.
+
+**Hard dep:** everything. This is the final writing pass before launch. Every feature referenced must be shipped and runnable.
+
+**Why this phase exists.** Phase 33 ships v1.0 with documentation (reference, tutorial, cookbook, migration guide). Phase 34 adds a **dedicated inventions catalog** — a single authoritative document listing every feature Corvid has that no other language has, with runnable examples for each. This is the artifact developers link to, cite on HN, and scan before deciding to try Corvid. Without it, the inventions are buried across Phase 20 slices, the eval docs, the streaming spec, the typed model substrate spec, and the replay flagship docs.
+
+**Scope:**
+
+- [ ] Rewrite the repo root `README.md` with the full inventions catalog up top, above the install instructions. Every entry has a 2-line pitch + code example + link to spec.
+- [ ] Category structure matching the moat: **Safety at compile time** (approve gates, dimensional effects, Grounded<T>, @min_confidence, @budget), **AI-native ergonomics** (agent/tool/prompt/approve/effect/model keywords, evals with trace assertions, replay), **Adaptive routing** (20h model substrate — capability routing, content-aware dispatch, progressive refinement, ensemble voting, adversarial validation, jurisdiction/compliance, privacy tiers, cost-frontier exploration), **Streaming** (20f — live cost termination, per-element provenance, mid-stream escalation, progressive structured types, resumption tokens, fan-out/fan-in), **Verification** (20g — cross-tier differential verification, LLM-driven adversarial bypass generation, executable interactive spec, preserved-semantics fuzzing, bounty-fed regression corpus).
+- [ ] Landing page rewrite (`docs/site/`): every invention gets a runnable playground example. "Corvid is faster than Python at X" / "safer than TypeScript at Y" claims are supported with side-by-side comparisons that actually run.
+- [ ] Runnable invention index: `corvid tour --topic <name>` CLI command that opens the REPL pre-loaded with a runnable demo of each invention. `corvid tour --list` shows the full catalog.
+- [ ] Cross-references: each invention in the README links to (a) the roadmap slice that shipped it, (b) the spec section that formalizes it, (c) the example in the tour, (d) the test that validates it.
+- [ ] Headline inventions page (`docs/inventions.md`): the standalone artifact HN threads link to. No install prerequisite, no build system context — just the inventions, their syntax, and why each is unique.
+- [ ] Update `CLAUDE.md` (or equivalent contributor doc) to require that every new invention ships with a README catalog entry + tour demo.
+
+**Non-scope:** marketing copy, video scripts, social-media assets — those belong to Phase 33's launch materials. Phase 34 is the authoritative technical catalog; Phase 33 is the launch campaign that points to it.
+
+**v1.0 final cut here. Launch day.**
 
 ---
 
