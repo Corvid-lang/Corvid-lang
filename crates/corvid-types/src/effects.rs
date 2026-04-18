@@ -369,6 +369,36 @@ impl std::fmt::Display for ConstraintViolation {
 
 // ---- Composition rules ----
 
+/// Merge two comma-separated category sets into a single canonical
+/// form: deduplicated, sorted. The `"none"` sentinel is absorbed by
+/// any non-empty category.
+fn merge_comma_sets(a: &str, b: &str) -> String {
+    let mut categories: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    for part in a.split(',').chain(b.split(',')) {
+        let trimmed = part.trim();
+        if trimmed.is_empty() || trimmed == "none" {
+            continue;
+        }
+        categories.insert(trimmed.to_string());
+    }
+    if categories.is_empty() {
+        return "none".into();
+    }
+    categories.into_iter().collect::<Vec<_>>().join(", ")
+}
+
+/// Public re-export of `compose_dimension` for the law-check harness.
+/// Naming keeps the private helper private while making the same
+/// composition logic available to `corvid test dimensions`.
+pub fn compose_dimension_public(
+    rule: CompositionRule,
+    current: &DimensionValue,
+    incoming: &DimensionValue,
+    dim_name: &str,
+) -> DimensionValue {
+    compose_dimension(rule, current, incoming, dim_name)
+}
+
 fn compose_dimension(
     rule: CompositionRule,
     current: &DimensionValue,
@@ -395,15 +425,13 @@ fn compose_dimension(
         },
         CompositionRule::Union => match (current, incoming) {
             (DimensionValue::Name(a), DimensionValue::Name(b)) => {
-                if a == "none" {
-                    DimensionValue::Name(b.clone())
-                } else if b == "none" {
-                    DimensionValue::Name(a.clone())
-                } else if a.contains(b.as_str()) {
-                    DimensionValue::Name(a.clone())
-                } else {
-                    DimensionValue::Name(format!("{a}, {b}"))
-                }
+                // Parse each side as a comma-separated set, union them,
+                // then re-render in sorted order. Substring-based dedup
+                // was not associative: "pii" ⊕ ("financial" ⊕ "pii")
+                // diverged from ("pii" ⊕ "financial") ⊕ "pii" because
+                // the substring check missed the already-present
+                // category. Law-checking the Union archetype caught it.
+                DimensionValue::Name(merge_comma_sets(a, b))
             }
             _ => incoming.clone(),
         },

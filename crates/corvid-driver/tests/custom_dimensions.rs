@@ -4,7 +4,10 @@
 
 use std::fs;
 
-use corvid_driver::{compile_with_config, load_corvid_config_for};
+use corvid_driver::{
+    compile_with_config, load_corvid_config_for, render_law_check_report, run_law_checks,
+    LawVerdict, DEFAULT_SAMPLES,
+};
 use tempfile::TempDir;
 
 fn write_project(root: &std::path::Path, corvid_toml: &str, main_cor: &str) {
@@ -135,6 +138,66 @@ type = "cost"
         msg.contains("cost") && msg.contains("built-in"),
         "expected built-in collision message, got:\n{msg}"
     );
+}
+
+#[test]
+fn law_check_runs_against_real_custom_dimension() {
+    let tmp = TempDir::new().unwrap();
+    let root = tmp.path();
+    write_project(
+        root,
+        r#"
+[effect-system.dimensions.freshness]
+composition = "Max"
+type = "number"
+default = "0"
+
+[effect-system.dimensions.carbon]
+composition = "Sum"
+type = "number"
+default = "0"
+"#,
+        "agent noop() -> String:\n    return \"x\"\n",
+    );
+
+    let src_path = root.join("src").join("main.cor");
+    let config = load_corvid_config_for(&src_path).expect("config loads");
+    let results = run_law_checks(Some(&config), 500);
+
+    // Every built-in + every custom dimension got checked.
+    let dims: std::collections::BTreeSet<_> =
+        results.iter().map(|r| r.dimension.as_str()).collect();
+    assert!(dims.contains("freshness"), "freshness should be checked");
+    assert!(dims.contains("carbon"), "carbon should be checked");
+    assert!(dims.contains("cost"), "built-in cost should be checked");
+
+    // No counter-examples for correctly-declared dimensions.
+    let failures: Vec<_> = results
+        .iter()
+        .filter(|r| matches!(r.verdict, LawVerdict::CounterExample { .. }))
+        .collect();
+    assert!(
+        failures.is_empty(),
+        "unexpected law failures for well-formed dimensions: {:?}",
+        failures
+            .iter()
+            .map(|r| format!("{} / {}", r.dimension, r.law.as_str()))
+            .collect::<Vec<_>>()
+    );
+
+    // Human-readable render mentions each dimension by name.
+    let rendered = render_law_check_report(&results);
+    assert!(rendered.contains("freshness"));
+    assert!(rendered.contains("carbon"));
+    assert!(rendered.contains("cost"));
+}
+
+#[test]
+fn law_check_default_samples_matches_expected() {
+    // Regression: DEFAULT_SAMPLES is exported through the driver so CLI
+    // callers don't guess at the sample count. If this constant ever
+    // changes deliberately, this test surfaces it.
+    assert_eq!(DEFAULT_SAMPLES, 10_000);
 }
 
 #[test]

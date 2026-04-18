@@ -23,7 +23,8 @@ use corvid_differential_verify::{
 #[allow(unused_imports)]
 use corvid_driver::{
     build_native_to_disk, build_to_disk, compile, compile_with_config, load_corvid_config_for,
-    load_dotenv_walking, render_all_pretty, run_native, run_with_target, scaffold_new, RunTarget,
+    load_dotenv_walking, render_all_pretty, render_law_check_report, run_law_checks, run_native,
+    run_with_target, scaffold_new, RunTarget, DEFAULT_SAMPLES,
 };
 
 #[derive(Parser)]
@@ -336,14 +337,30 @@ fn cmd_test(
 }
 
 fn cmd_test_dimensions() -> Result<u8> {
-    println!("corvid test dimensions — algebraic-law checks on custom dimensions\n");
-    println!("This command reads corvid.toml, loads each [effect-system.dimensions.*]");
-    println!("entry, then proptests the archetype's laws (associativity, commutativity,");
-    println!("identity, idempotence, monotonicity) with 10,000 cases per law.");
-    println!();
-    println!("Implementation tracked in ROADMAP Phase 20g — not yet wired to the checker.");
-    println!("See docs/effects-spec/01-dimensional-syntax.md §5 for the spec.");
-    Ok(0)
+    println!("corvid test dimensions — archetype law-check suite");
+    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let config = corvid_driver::load_corvid_config_for(&cwd.join("anywhere.cor"));
+    match config.as_ref() {
+        Some(cfg) => {
+            let n = cfg.effect_system.dimensions.len();
+            println!(
+                "reading corvid.toml — {n} custom dimension{}",
+                if n == 1 { "" } else { "s" }
+            );
+        }
+        None => println!("no corvid.toml found — running law checks on built-ins only"),
+    }
+    println!("running {DEFAULT_SAMPLES} cases per law…");
+    let results = run_law_checks(config.as_ref(), DEFAULT_SAMPLES);
+    print!("{}", render_law_check_report(&results));
+    let failures = results
+        .iter()
+        .filter(|r| matches!(
+            r.verdict,
+            corvid_driver::LawVerdict::CounterExample { .. }
+        ))
+        .count();
+    Ok(if failures == 0 { 0 } else { 1 })
 }
 
 fn cmd_test_spec() -> Result<u8> {

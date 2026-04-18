@@ -13,6 +13,7 @@ pub mod checker;
 pub mod config;
 pub mod effects;
 pub mod errors;
+pub mod law_check;
 pub mod repl;
 pub mod types;
 
@@ -20,6 +21,10 @@ pub use checker::{typecheck, typecheck_with_config, Checked};
 pub use config::{
     CorvidConfig, CustomDimensionConfig, CustomDimensionMeta, DimensionConfigError,
     DimensionValueType, EffectSystemConfig, BUILTIN_DIMENSION_NAMES,
+};
+pub use law_check::{
+    check_dimension, laws_for_rule, DimensionUnderTest, Law, LawCheckResult, Verdict,
+    DEFAULT_SAMPLES,
 };
 pub use errors::{TypeError, TypeErrorKind, TypeWarning, TypeWarningKind};
 pub use repl::{CheckedTurn, ReplLocal, ReplSession, ReplTurnBuild, REPL_RESULT_NAME};
