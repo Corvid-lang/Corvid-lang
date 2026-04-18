@@ -58,6 +58,7 @@ A smaller set (only `Name` and `Number`) forces clean semantics and forces users
 A tool, prompt, or agent declares the effects it consumes.
 
 ```corvid
+# expect: skip
 @tool
 transfer(account: String, amount: Money) -> Result<Receipt, Error>
     uses transfer_money
@@ -87,6 +88,7 @@ We considered three alternatives:
 A constraint is an assertion the compiler proves against the composed effect profile.
 
 ```corvid
+# expect: skip
 @trust(autonomous)
 @budget($0.50)
 @min_confidence(0.90)

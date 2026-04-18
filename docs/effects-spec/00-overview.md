@@ -39,6 +39,7 @@ This is the observation no other language has made: **the different safety conce
 The compiler rejects programs that violate dimensional constraints:
 
 ```corvid
+# expect: skip
 @trust(autonomous)
 agent fast_lookup(query: String) -> String:
     result = search_knowledge(query)    # trust: autonomous — OK
@@ -48,6 +49,7 @@ agent fast_lookup(query: String) -> String:
 ```
 
 ```corvid
+# expect: skip
 @budget($1.00)
 agent planner(query: String) -> Plan:
     for item in expensive_list:         # 34 iterations of a $0.030 prompt
@@ -58,6 +60,7 @@ agent planner(query: String) -> Plan:
 ```
 
 ```corvid
+# expect: skip
 agent researcher(query: String) -> Grounded<String>:
     answer = hallucinate(query)         # no grounded source in chain
     return answer                       # COMPILE ERROR

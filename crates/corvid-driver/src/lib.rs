@@ -10,9 +10,14 @@
 mod native_ability;
 mod native_cache;
 mod render;
+pub mod spec_check;
 
 pub use native_ability::{native_ability, NotNativeReason};
 pub use render::{render_all_pretty, render_pretty};
+pub use spec_check::{
+    extract_spec_examples, render_spec_report, verify_spec_examples, Expectation, SpecExample,
+    SpecVerdict, VerdictKind,
+};
 
 // Re-export the runtime + interpreter surface so consumers (CLI, demo
 // runner binaries, embedding hosts) only need to depend on the driver.

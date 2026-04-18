@@ -201,6 +201,64 @@ fn law_check_default_samples_matches_expected() {
 }
 
 #[test]
+fn spec_check_passes_compile_and_skip_examples_and_fails_on_mismatch() {
+    use corvid_driver::{verify_spec_examples, VerdictKind};
+    let tmp = TempDir::new().unwrap();
+    let root = tmp.path();
+    fs::write(
+        root.join("section.md"),
+        "\
+# Section
+
+A compilable example:
+
+```corvid
+# expect: compile
+tool echo(id: String) -> String
+
+agent run(id: String) -> String:
+    return echo(id)
+```
+
+An illustrative fragment:
+
+```corvid
+# expect: skip
+pseudo-code with undefined references
+```
+
+An example that should produce an error:
+
+```corvid
+# expect: error
+agent bad() -> String:
+    return nonexistent_callee()
+```
+
+A mismatched example (claims compile, but doesn't):
+
+```corvid
+# expect: compile
+agent also_bad() -> String:
+    return also_unknown()
+```
+",
+    )
+    .unwrap();
+
+    let verdicts = verify_spec_examples(root).expect("spec verification runs");
+    assert_eq!(verdicts.len(), 4);
+    assert!(matches!(verdicts[0].kind, VerdictKind::Pass));
+    assert!(matches!(verdicts[1].kind, VerdictKind::Skipped));
+    assert!(matches!(verdicts[2].kind, VerdictKind::Pass));
+    assert!(
+        matches!(verdicts[3].kind, VerdictKind::Fail { .. }),
+        "mismatched block must fail; got {:?}",
+        verdicts[3].kind
+    );
+}
+
+#[test]
 fn missing_corvid_toml_returns_none_no_error() {
     let tmp = TempDir::new().unwrap();
     let src_path = tmp.path().join("nested").join("main.cor");

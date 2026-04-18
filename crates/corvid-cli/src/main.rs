@@ -23,8 +23,9 @@ use corvid_differential_verify::{
 #[allow(unused_imports)]
 use corvid_driver::{
     build_native_to_disk, build_to_disk, compile, compile_with_config, load_corvid_config_for,
-    load_dotenv_walking, render_all_pretty, render_law_check_report, run_law_checks, run_native,
-    run_with_target, scaffold_new, RunTarget, DEFAULT_SAMPLES,
+    load_dotenv_walking, render_all_pretty, render_law_check_report, render_spec_report,
+    run_law_checks, run_native, run_with_target, scaffold_new, verify_spec_examples, RunTarget,
+    VerdictKind, DEFAULT_SAMPLES,
 };
 
 #[derive(Parser)]
@@ -364,12 +365,21 @@ fn cmd_test_dimensions() -> Result<u8> {
 }
 
 fn cmd_test_spec() -> Result<u8> {
-    println!("corvid test spec — re-compile every example in docs/effects-spec/\n");
-    println!("Walks docs/effects-spec/examples/, runs `corvid check` on each .cor file,");
-    println!("reports any example whose compile result no longer matches the spec's claim.");
-    println!();
-    println!("Implementation tracked in ROADMAP Phase 20g — not yet wired to CI.");
-    Ok(0)
+    let spec_dir = PathBuf::from("docs/effects-spec");
+    if !spec_dir.exists() {
+        anyhow::bail!(
+            "`docs/effects-spec/` not found; run `corvid test spec` from the repository root"
+        );
+    }
+    println!("corvid test spec — verify every fenced corvid block in {}\n", spec_dir.display());
+    let verdicts = verify_spec_examples(&spec_dir)
+        .with_context(|| format!("failed to verify `{}`", spec_dir.display()))?;
+    print!("{}", render_spec_report(&verdicts));
+    let failed = verdicts
+        .iter()
+        .filter(|v| matches!(v.kind, VerdictKind::Fail { .. }))
+        .count();
+    Ok(if failed == 0 { 0 } else { 1 })
 }
 
 fn cmd_test_spec_meta() -> Result<u8> {
