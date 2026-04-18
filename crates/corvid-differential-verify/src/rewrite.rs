@@ -27,9 +27,22 @@ pub struct LawRef {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RewriteResult {
+    pub rule: RewriteRule,
     pub source: String,
     pub changed: bool,
     pub law: LawRef,
+}
+
+pub fn rule_name(rule: RewriteRule) -> &'static str {
+    match rule {
+        RewriteRule::AlphaConversion => "alpha-conversion",
+        RewriteRule::LetExtract => "let-extract",
+        RewriteRule::LetInline => "let-inline",
+        RewriteRule::CommutativeSiblingSwap => "commutative-sibling-swap",
+        RewriteRule::TopLevelReorder => "top-level-reorder",
+        RewriteRule::IfBranchSwap => "if-branch-swap",
+        RewriteRule::ConstantFolding => "constant-folding",
+    }
 }
 
 pub fn rewrite_rules() -> &'static [RewriteRule] {
@@ -89,6 +102,7 @@ pub fn apply_rewrite(source: &str, rule: RewriteRule) -> Result<RewriteResult> {
         RewriteRule::ConstantFolding => constant_folding(&mut file)?,
     };
     Ok(RewriteResult {
+        rule,
         source: render_file(&file),
         changed,
         law: law_ref(rule),
