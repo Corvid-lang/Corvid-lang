@@ -366,6 +366,10 @@ impl<'a> Lowerer<'a> {
                 value: value.as_ref().map(|e| self.lower_expr(e)),
                 span: *span,
             },
+            Stmt::Yield { value, span } => IrStmt::Expr {
+                expr: self.lower_expr(value),
+                span: *span,
+            },
             Stmt::If { cond, then_block, else_block, span } => IrStmt::If {
                 cond: self.lower_expr(cond),
                 then_block: self.lower_block(then_block),

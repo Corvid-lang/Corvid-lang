@@ -592,6 +592,9 @@ impl<'a> Checker<'a> {
                     &else_refresh,
                 );
             }
+            Stmt::Yield { value, .. } => {
+                let _ = self.check_expr(value);
+            }
             Stmt::For { var, iter, body, .. } => {
                 let iter_ty = self.check_expr(iter);
                 // Derive the loop variable's type from the iterable.

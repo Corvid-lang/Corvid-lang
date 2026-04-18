@@ -2572,7 +2572,12 @@ prompt generate(ctx: String) -> Stream<String>:
             Decl::Prompt(prompt) => prompt,
             other => panic!("expected Prompt, got {other:?}"),
         };
-        assert_eq!(prompt.return_ty.to_string(), "Stream<String>");
+        assert!(matches!(
+            &prompt.return_ty,
+            TypeRef::Generic { name, args, .. }
+                if name.name == "Stream"
+                    && matches!(&args[0], TypeRef::Named { name, .. } if name.name == "String")
+        ));
         assert_eq!(prompt.stream.min_confidence, Some(0.80));
         assert_eq!(prompt.stream.max_tokens, Some(5000));
         assert_eq!(

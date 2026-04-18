@@ -523,6 +523,7 @@ pub fn canonical_dimension_name(name: &str) -> String {
     match name {
         "budget" => "cost".into(),
         "latency" => "latency_ms".into(),
+        "min_confidence" => "confidence".into(),
         other => other.to_string(),
     }
 }
@@ -617,6 +618,9 @@ fn collect_stmt_effects(
             collect_expr_effects(v, file, resolved, registry, effects);
         }
         corvid_ast::Stmt::Return { value: None, .. } => {}
+        corvid_ast::Stmt::Yield { value, .. } => {
+            collect_expr_effects(value, file, resolved, registry, effects);
+        }
         corvid_ast::Stmt::If { cond, then_block, else_block, .. } => {
             collect_expr_effects(cond, file, resolved, registry, effects);
             collect_body_effects(then_block, file, resolved, registry, effects);
@@ -864,6 +868,7 @@ impl<'a> CostAnalyzer<'a> {
     fn analyze_stmt(&mut self, stmt: &corvid_ast::Stmt, agent_name: &str) -> CostEstimate {
         match stmt {
             corvid_ast::Stmt::Let { value, span, .. }
+            | corvid_ast::Stmt::Yield { value, span }
             | corvid_ast::Stmt::Expr { expr: value, span }
             | corvid_ast::Stmt::Approve { action: value, span } => {
                 let mut estimate = self.analyze_expr(value, agent_name);
@@ -1473,6 +1478,7 @@ fn analyze_stmt_provenance(
                 grounded.insert(name.name.clone());
             }
         }
+        corvid_ast::Stmt::Yield { .. } => {}
         corvid_ast::Stmt::If { then_block, else_block, .. } => {
             for s in &then_block.stmts {
                 analyze_stmt_provenance(s, file, resolved, registry, grounded);
@@ -1592,6 +1598,7 @@ fn check_return_grounded(
                     return true;
                 }
             }
+            corvid_ast::Stmt::Yield { .. } => {}
             corvid_ast::Stmt::If { then_block, else_block, .. } => {
                 let then_grounded = check_return_grounded(then_block, grounded, file, resolved, registry);
                 let else_grounded = else_block.as_ref().map_or(false, |eb| {

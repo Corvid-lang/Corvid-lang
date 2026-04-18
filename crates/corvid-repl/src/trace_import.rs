@@ -177,6 +177,7 @@ pub fn build_import(mocks: &TraceMocks) -> TraceImportResult {
             template: first.rendered.clone().unwrap_or_default(),
             effect_row: EffectRow::default(),
             cites_strictly: None,
+            stream: corvid_ast::PromptStreamSettings::default(),
             span: sp,
         }));
     }

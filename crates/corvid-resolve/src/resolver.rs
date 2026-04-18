@@ -442,6 +442,7 @@ impl Resolver {
                     self.resolve_expr(e);
                 }
             }
+            Stmt::Yield { value, .. } => self.resolve_expr(value),
             Stmt::If {
                 cond,
                 then_block,

@@ -179,6 +179,9 @@ fn collect_stmt_deps(stmt: &Stmt, resolved: &Resolved, deps: &mut HashSet<DefId>
             collect_expr_deps(value, resolved, deps);
         }
         Stmt::Return { value: None, .. } => {}
+        Stmt::Yield { value, .. } => {
+            collect_expr_deps(value, resolved, deps);
+        }
         Stmt::If {
             cond,
             then_block,
