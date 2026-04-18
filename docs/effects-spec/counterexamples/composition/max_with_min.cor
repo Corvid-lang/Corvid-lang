@@ -1,0 +1,20 @@
+# Attack: if trust composed via Min instead of Max, one autonomous edge launders a human-required edge.
+# Expected: compile error mentioning the `trust` dimension.
+
+effect autonomous_lookup:
+    trust: autonomous
+
+effect human_gate:
+    trust: human_required
+
+prompt search() -> String uses autonomous_lookup:
+    "Search"
+
+prompt approve_me() -> String uses human_gate:
+    "Approve"
+
+@trust(autonomous)
+agent main() -> String:
+    a = search()
+    b = approve_me()
+    return a + b

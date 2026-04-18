@@ -1,0 +1,20 @@
+# Attack: if reversibility composed via OR instead of AND/least-reversible, one reversible edge hides an irreversible action.
+# Expected: compile error mentioning the `reversible` dimension.
+
+effect safe_effect:
+    reversible: true
+
+effect destructive_effect:
+    reversible: false
+
+prompt safe_call() -> String uses safe_effect:
+    "Safe"
+
+prompt destroy() -> String uses destructive_effect:
+    "Destroy"
+
+@reversible
+agent main() -> String:
+    left = safe_call()
+    right = destroy()
+    return left + right

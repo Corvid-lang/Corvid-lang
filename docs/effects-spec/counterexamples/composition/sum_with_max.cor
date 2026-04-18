@@ -1,0 +1,17 @@
+# Attack: if cost composed via Max instead of Sum, splitting spend across two calls hides the true budget impact.
+# Expected: compile error mentioning the `cost` dimension exceeds budget when both calls compose.
+
+effect lookup:
+    cost: $0.60
+
+prompt first() -> String uses lookup:
+    "First"
+
+prompt second() -> String uses lookup:
+    "Second"
+
+@budget($1.00)
+agent main() -> String:
+    a = first()
+    b = second()
+    return a + b

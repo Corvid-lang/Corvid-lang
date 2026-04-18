@@ -1,0 +1,19 @@
+# Attack: if data composed via Intersection instead of Union, mixed data classes disappear unless every edge shares them.
+# Expected: compile error or composed profile showing both categories remain visible.
+
+effect pii_source:
+    data: pii
+
+effect financial_source:
+    data: financial
+
+prompt load_profile() -> String uses pii_source:
+    "Profile"
+
+prompt load_invoice() -> String uses financial_source:
+    "Invoice"
+
+agent main() -> String:
+    profile = load_profile()
+    invoice = load_invoice()
+    return profile + invoice

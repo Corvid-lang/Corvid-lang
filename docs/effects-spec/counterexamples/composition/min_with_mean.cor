@@ -1,0 +1,20 @@
+# Attack: if confidence composed via Mean instead of Min, one low-confidence edge is averaged upward and looks safer than it is.
+# Expected: compile error mentioning the `confidence` dimension.
+
+effect strong_signal:
+    confidence: 0.99
+
+effect weak_signal:
+    confidence: 0.40
+
+prompt good() -> String uses strong_signal:
+    "Good"
+
+prompt bad() -> String uses weak_signal:
+    "Bad"
+
+@min_confidence(0.90)
+agent main() -> String:
+    a = good()
+    b = bad()
+    return a + b
