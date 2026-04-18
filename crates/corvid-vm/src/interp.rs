@@ -18,7 +18,7 @@ use corvid_ir::{
     IrRoutePattern, IrStmt, IrTool, IrType,
 };
 use corvid_resolve::{DefId, LocalId};
-use corvid_runtime::{LlmRequest, Runtime, TraceEvent};
+use corvid_runtime::{LlmRequest, Runtime, TokenUsage, TraceEvent};
 use corvid_types::Type;
 use crate::step::{self, StepAction, StepController, StepEvent, StepMode, StmtKind};
 use std::collections::HashMap;
@@ -205,6 +205,13 @@ impl ExprFlow {
     }
 }
 
+struct PromptCallResult {
+    value: Value,
+    cost: f64,
+    confidence: f64,
+    tokens: u64,
+}
+
 struct Interpreter<'ir> {
     ir: &'ir IrFile,
     env: Env,
@@ -217,6 +224,8 @@ struct Interpreter<'ir> {
     stepper: Option<StepController>,
     stream_sender: Option<StreamSender>,
     stream_locals: HashMap<LocalId, StreamChunk>,
+    cost_budget: Option<f64>,
+    cost_used: f64,
     stream_cost_budget: Option<f64>,
     stream_cost_used: f64,
 }
@@ -243,6 +252,8 @@ impl<'ir> Interpreter<'ir> {
             stepper: None,
             stream_sender: None,
             stream_locals: HashMap::new(),
+            cost_budget: None,
+            cost_used: 0.0,
             stream_cost_budget: None,
             stream_cost_used: 0.0,
         }
@@ -274,6 +285,51 @@ impl<'ir> Interpreter<'ir> {
 
     fn env_snapshot(&self) -> step::EnvSnapshot {
         step::snapshot_env(&self.env, &self.local_names)
+    }
+
+    fn emit_model_selected(
+        &self,
+        callee_name: &str,
+        model: String,
+        capability_required: Option<String>,
+        capability_picked: Option<String>,
+        cost_estimate: f64,
+        arm_index: Option<usize>,
+    ) {
+        self.runtime.tracer().emit(TraceEvent::ModelSelected {
+            ts_ms: corvid_runtime::now_ms(),
+            run_id: self.runtime.tracer().run_id().to_string(),
+            prompt: callee_name.to_string(),
+            model,
+            capability_required,
+            capability_picked,
+            cost_estimate,
+            arm_index,
+        });
+    }
+
+    fn select_named_prompt_model(
+        &self,
+        callee_name: &str,
+        model_name: &str,
+        prompt_tokens: u64,
+        completion_tokens: u64,
+        arm_index: Option<usize>,
+        span: Span,
+    ) -> Result<String, InterpError> {
+        let selection = self
+            .runtime
+            .describe_named_model(model_name, prompt_tokens, completion_tokens)
+            .map_err(|err| InterpError::new(InterpErrorKind::Runtime(err), span))?;
+        self.emit_model_selected(
+            callee_name,
+            selection.model.clone(),
+            selection.capability_required,
+            selection.capability_picked,
+            selection.cost_estimate,
+            arm_index,
+        );
+        Ok(selection.model)
     }
 
     async fn select_prompt_model(
@@ -318,16 +374,14 @@ impl<'ir> Interpreter<'ir> {
             prompt_tokens,
             completion_tokens,
         ).map_err(|err| InterpError::new(InterpErrorKind::Runtime(err), span))?;
-        self.runtime.tracer().emit(TraceEvent::ModelSelected {
-            ts_ms: corvid_runtime::now_ms(),
-            run_id: self.runtime.tracer().run_id().to_string(),
-            prompt: callee_name.to_string(),
-            model: selection.model.clone(),
-            capability_required: selection.capability_required,
-            capability_picked: selection.capability_picked,
-            cost_estimate: selection.cost_estimate,
-            arm_index: None,
-        });
+        self.emit_model_selected(
+            callee_name,
+            selection.model.clone(),
+            selection.capability_required,
+            selection.capability_picked,
+            selection.cost_estimate,
+            None,
+        );
         Ok(Some(selection.model))
     }
 
@@ -352,21 +406,16 @@ impl<'ir> Interpreter<'ir> {
             if !matched {
                 continue;
             }
-            let selection = self
-                .runtime
-                .describe_named_model(&arm.model_name, prompt_tokens, completion_tokens)
-                .map_err(|err| InterpError::new(InterpErrorKind::Runtime(err), span))?;
-            self.runtime.tracer().emit(TraceEvent::ModelSelected {
-                ts_ms: corvid_runtime::now_ms(),
-                run_id: self.runtime.tracer().run_id().to_string(),
-                prompt: callee_name.to_string(),
-                model: selection.model.clone(),
-                capability_required: selection.capability_required,
-                capability_picked: selection.capability_picked,
-                cost_estimate: selection.cost_estimate,
-                arm_index: Some(arm_index),
-            });
-            return Ok(Some(selection.model));
+            return self
+                .select_named_prompt_model(
+                    callee_name,
+                    &arm.model_name,
+                    prompt_tokens,
+                    completion_tokens,
+                    Some(arm_index),
+                    span,
+                )
+                .map(Some);
         }
 
         Err(InterpError::new(
@@ -375,6 +424,270 @@ impl<'ir> Interpreter<'ir> {
             }),
             span,
         ))
+    }
+
+    fn prompt_call_cost(
+        &self,
+        prompt: &IrPrompt,
+        model_name: &str,
+        rendered: &str,
+        usage: TokenUsage,
+    ) -> f64 {
+        let prompt_tokens = if usage.prompt_tokens > 0 {
+            usage.prompt_tokens as u64
+        } else {
+            estimate_tokens(rendered)
+        };
+        let completion_tokens = if usage.completion_tokens > 0 {
+            usage.completion_tokens as u64
+        } else if usage.total_tokens > usage.prompt_tokens {
+            (usage.total_tokens - usage.prompt_tokens) as u64
+        } else if usage.total_tokens > 0 {
+            usage.total_tokens as u64
+        } else {
+            0
+        };
+        match self
+            .runtime
+            .describe_named_model(model_name, prompt_tokens, completion_tokens)
+        {
+            Ok(selection) if selection.cost_estimate > 0.0 => selection.cost_estimate,
+            _ => prompt.effect_cost,
+        }
+    }
+
+    async fn execute_prompt_call(
+        &mut self,
+        prompt: &'ir IrPrompt,
+        callee_name: &str,
+        arg_values: &[Value],
+        rendered: &str,
+        selected_model: Option<String>,
+        span: Span,
+    ) -> Result<PromptCallResult, InterpError> {
+        let json_args: Vec<serde_json::Value> = arg_values.iter().map(value_to_json).collect();
+
+        if self.should_yield_boundary() {
+            let action = self.maybe_yield(StepEvent::BeforePromptCall {
+                prompt_name: callee_name.to_string(),
+                rendered: rendered.to_string(),
+                model: selected_model.clone(),
+                span,
+                env: self.env_snapshot(),
+            }).await?;
+            if let StepAction::Override(val) = action {
+                let result_ty = match &prompt.return_ty {
+                    Type::Stream(inner) => inner.as_ref(),
+                    other => other,
+                };
+                let value = json_to_value(val, result_ty, &self.types_by_id).map_err(|e| {
+                    InterpError::new(
+                        InterpErrorKind::Marshal(format!(
+                            "prompt `{callee_name}` override: {e}"
+                        )),
+                        span,
+                    )
+                })?;
+                let confidence = prompt_effective_confidence(prompt, &value);
+                let tokens = estimate_tokens(&value_to_json(&value).to_string());
+                let model_name = selected_model
+                    .clone()
+                    .unwrap_or_else(|| self.runtime.default_model().to_string());
+                let cost = self.prompt_call_cost(
+                    prompt,
+                    &model_name,
+                    rendered,
+                    TokenUsage {
+                        prompt_tokens: estimate_tokens(rendered) as u32,
+                        completion_tokens: tokens as u32,
+                        total_tokens: (estimate_tokens(rendered) + tokens) as u32,
+                    },
+                );
+                return Ok(PromptCallResult {
+                    value,
+                    cost,
+                    confidence,
+                    tokens,
+                });
+            }
+        }
+
+        let result_ty = match &prompt.return_ty {
+            Type::Stream(inner) => inner.as_ref(),
+            other => other,
+        };
+        let output_schema = Some(crate::schema::schema_for(result_ty, &self.types_by_id));
+        let req = LlmRequest {
+            prompt: callee_name.to_string(),
+            model: selected_model.clone().unwrap_or_default(),
+            rendered: rendered.to_string(),
+            args: json_args,
+            output_schema,
+        };
+        let actual_model = if req.model.is_empty() {
+            self.runtime.default_model().to_string()
+        } else {
+            req.model.clone()
+        };
+        let start = std::time::Instant::now();
+        let resp = self
+            .runtime
+            .call_llm(req)
+            .await
+            .map_err(|e| InterpError::new(InterpErrorKind::Runtime(e), span))?;
+        let elapsed_ms = start.elapsed().as_millis() as u64;
+
+        if self.should_yield_boundary() {
+            let action = self.maybe_yield(StepEvent::AfterPromptCall {
+                prompt_name: callee_name.to_string(),
+                result: resp.value.clone(),
+                elapsed_ms,
+                span,
+            }).await?;
+            if let StepAction::Override(val) = action {
+                let value = json_to_value(val, result_ty, &self.types_by_id).map_err(|e| {
+                    InterpError::new(
+                        InterpErrorKind::Marshal(format!(
+                            "prompt `{callee_name}` override: {e}"
+                        )),
+                        span,
+                    )
+                })?;
+                let confidence = prompt_effective_confidence(prompt, &value);
+                let tokens = estimate_tokens(&value_to_json(&value).to_string());
+                let cost = self.prompt_call_cost(
+                    prompt,
+                    &actual_model,
+                    rendered,
+                    TokenUsage {
+                        prompt_tokens: estimate_tokens(rendered) as u32,
+                        completion_tokens: tokens as u32,
+                        total_tokens: (estimate_tokens(rendered) + tokens) as u32,
+                    },
+                );
+                return Ok(PromptCallResult {
+                    value,
+                    cost,
+                    confidence,
+                    tokens,
+                });
+            }
+        }
+
+        let value = json_to_value(resp.value, result_ty, &self.types_by_id)
+            .map_err(|e| {
+                InterpError::new(
+                    InterpErrorKind::Marshal(format!("prompt `{callee_name}`: {e}")),
+                    span,
+                )
+            })?;
+
+        if let Some(param_idx) = prompt.cites_strictly_param {
+            if let Some(ctx_value) = arg_values.get(param_idx) {
+                let ctx_text = value_to_json(ctx_value).to_string();
+                let response_text = value_to_json(&value).to_string();
+                if !citation_verified(&ctx_text, &response_text) {
+                    return Err(InterpError::new(
+                        InterpErrorKind::Other(format!(
+                            "citation verification failed for prompt `{callee_name}`: \
+                             response does not reference content from the cited context parameter"
+                        )),
+                        span,
+                    ));
+                }
+            }
+        }
+
+        let mut merged_chain = crate::value::ProvenanceChain::new();
+        let mut has_grounded_input = false;
+        for arg in arg_values {
+            if let Value::Grounded(g) = arg {
+                merged_chain.merge(&g.provenance);
+                has_grounded_input = true;
+            }
+        }
+        let value = if has_grounded_input {
+            merged_chain.add_prompt_transform(callee_name, corvid_runtime::now_ms());
+            Value::Grounded(crate::value::GroundedValue::with_confidence(
+                value,
+                merged_chain,
+                composed_confidence(arg_values),
+            ))
+        } else {
+            value
+        };
+
+        let confidence = prompt_effective_confidence(prompt, &value);
+        let tokens = if resp.usage.completion_tokens > 0 {
+            resp.usage.completion_tokens as u64
+        } else if resp.usage.total_tokens > 0 {
+            resp.usage.total_tokens as u64
+        } else {
+            estimate_tokens(&value_to_json(&value).to_string())
+        };
+        let cost = self.prompt_call_cost(prompt, &actual_model, rendered, resp.usage);
+
+        Ok(PromptCallResult {
+            value,
+            cost,
+            confidence,
+            tokens,
+        })
+    }
+
+    async fn finalize_prompt_result(
+        &self,
+        prompt: &'ir IrPrompt,
+        result: PromptCallResult,
+        span: Span,
+    ) -> Result<ExprFlow, InterpError> {
+        if matches!(&prompt.return_ty, Type::Stream(_)) {
+            let chunk = StreamChunk::with_metrics(
+                result.value,
+                result.cost,
+                result.confidence,
+                result.tokens,
+            );
+            if let Some(limit) = prompt.max_tokens {
+                if chunk.tokens > limit {
+                    return self
+                        .singleton_stream_error(
+                            InterpError::new(
+                                InterpErrorKind::TokenLimitExceeded {
+                                    limit,
+                                    used: chunk.tokens,
+                                },
+                                span,
+                            ),
+                            prompt_backpressure(prompt),
+                        )
+                        .await
+                        .map(ExprFlow::Value);
+                }
+            }
+            if let Some(floor) = prompt.min_confidence {
+                if chunk.confidence < floor {
+                    return self
+                        .singleton_stream_error(
+                            InterpError::new(
+                                InterpErrorKind::ConfidenceFloorBreached {
+                                    floor,
+                                    actual: chunk.confidence,
+                                },
+                                span,
+                            ),
+                            prompt_backpressure(prompt),
+                        )
+                        .await
+                        .map(ExprFlow::Value);
+                }
+            }
+            Ok(ExprFlow::Value(
+                self.singleton_stream(chunk, prompt_backpressure(prompt)).await?,
+            ))
+        } else {
+            Ok(ExprFlow::Value(result.value))
+        }
     }
 
     async fn maybe_yield(&mut self, event: StepEvent) -> Result<StepAction, InterpError> {
@@ -404,7 +717,14 @@ impl<'ir> Interpreter<'ir> {
         if matches!(&agent.return_ty, Type::Stream(_)) {
             return self.spawn_stream_agent(agent).await;
         }
-        match self.eval_block(&agent.body).await? {
+        let saved_budget = self.cost_budget;
+        let saved_used = self.cost_used;
+        self.cost_budget = agent.cost_budget;
+        self.cost_used = 0.0;
+        let flow = self.eval_block(&agent.body).await;
+        self.cost_budget = saved_budget;
+        self.cost_used = saved_used;
+        match flow? {
             Flow::Return(v) => Ok(v),
             Flow::Normal => Ok(Value::Nothing),
             Flow::Break | Flow::Continue => Err(InterpError::new(
@@ -518,6 +838,22 @@ impl<'ir> Interpreter<'ir> {
         } else {
             None
         }
+    }
+
+    fn charge_cost(&mut self, cost: f64, span: Span) -> Result<(), InterpError> {
+        let Some(budget) = self.cost_budget else {
+            self.cost_used += cost;
+            return Ok(());
+        };
+        let used = self.cost_used + cost;
+        if used > budget {
+            return Err(InterpError::new(
+                InterpErrorKind::BudgetExceeded { budget, used },
+                span,
+            ));
+        }
+        self.cost_used = used;
+        Ok(())
     }
 
     #[async_recursion]
@@ -1195,170 +1531,90 @@ impl<'ir> Interpreter<'ir> {
                         span,
                     )
                 })?;
-                let json_args: Vec<serde_json::Value> =
-                    arg_values.iter().map(value_to_json).collect();
                 let rendered = render_prompt(prompt, &arg_values);
-                let selected_model = self
-                    .select_prompt_model(prompt, callee_name, &rendered, &arg_values, span)
-                    .await?;
-
-                if self.should_yield_boundary() {
-                    let action = self.maybe_yield(StepEvent::BeforePromptCall {
-                        prompt_name: callee_name.to_string(),
-                        rendered: rendered.clone(),
-                        model: selected_model.clone(),
-                        span,
-                        env: self.env_snapshot(),
-                    }).await?;
-                    if let StepAction::Override(val) = action {
-                        return json_to_value(val, &prompt.return_ty, &self.types_by_id)
-                            .map(ExprFlow::Value)
-                            .map_err(|e| InterpError::new(
-                                InterpErrorKind::Marshal(format!("prompt `{callee_name}` override: {e}")),
+                if !prompt.progressive.is_empty() {
+                    let prompt_tokens = estimate_tokens(&rendered);
+                    let completion_tokens = prompt
+                        .max_tokens
+                        .unwrap_or(DEFAULT_COMPLETION_TOKEN_ESTIMATE);
+                    let stage_sequence: Vec<String> = prompt
+                        .progressive
+                        .iter()
+                        .map(|stage| stage.model_name.clone())
+                        .collect();
+                    for (stage_index, stage) in prompt.progressive.iter().enumerate() {
+                        let selected_model = self.select_named_prompt_model(
+                            callee_name,
+                            &stage.model_name,
+                            prompt_tokens,
+                            completion_tokens,
+                            None,
+                            span,
+                        )?;
+                        let result = self
+                            .execute_prompt_call(
+                                prompt,
+                                callee_name,
+                                &arg_values,
+                                &rendered,
+                                Some(selected_model),
                                 span,
-                            ));
+                            )
+                            .await?;
+                        if !matches!(&prompt.return_ty, Type::Stream(_)) {
+                            self.charge_cost(result.cost, span)?;
+                        }
+                        match stage.threshold {
+                            None => {
+                                if stage_index > 0 {
+                                    self.runtime.tracer().emit(
+                                        TraceEvent::ProgressiveExhausted {
+                                            ts_ms: corvid_runtime::now_ms(),
+                                            run_id: self.runtime.tracer().run_id().to_string(),
+                                            prompt: callee_name.to_string(),
+                                            stages: stage_sequence.clone(),
+                                        },
+                                    );
+                                }
+                                return self.finalize_prompt_result(prompt, result, span).await;
+                            }
+                            Some(threshold) if result.confidence >= threshold => {
+                                return self.finalize_prompt_result(prompt, result, span).await;
+                            }
+                            Some(threshold) => {
+                                self.runtime.tracer().emit(
+                                    TraceEvent::ProgressiveEscalation {
+                                        ts_ms: corvid_runtime::now_ms(),
+                                        run_id: self.runtime.tracer().run_id().to_string(),
+                                        prompt: callee_name.to_string(),
+                                        from_stage: stage_index,
+                                        to_stage: stage_index + 1,
+                                        confidence_observed: result.confidence,
+                                        threshold,
+                                    },
+                                );
+                            }
+                        }
                     }
-                }
-
-                let result_ty = match &prompt.return_ty {
-                    Type::Stream(inner) => inner.as_ref(),
-                    other => other,
-                };
-                let output_schema = Some(crate::schema::schema_for(result_ty, &self.types_by_id));
-                let req = LlmRequest {
-                    prompt: callee_name.to_string(),
-                    model: selected_model.unwrap_or_default(),
-                    rendered,
-                    args: json_args,
-                    output_schema,
-                };
-                let start = std::time::Instant::now();
-                let resp = self
-                    .runtime
-                    .call_llm(req)
-                    .await
-                    .map_err(|e| InterpError::new(InterpErrorKind::Runtime(e), span))?;
-                let elapsed_ms = start.elapsed().as_millis() as u64;
-
-                if self.should_yield_boundary() {
-                    let action = self.maybe_yield(StepEvent::AfterPromptCall {
-                        prompt_name: callee_name.to_string(),
-                        result: resp.value.clone(),
-                        elapsed_ms,
-                        span,
-                    }).await?;
-                    if let StepAction::Override(val) = action {
-                        return json_to_value(val, &prompt.return_ty, &self.types_by_id)
-                            .map(ExprFlow::Value)
-                            .map_err(|e| InterpError::new(
-                                InterpErrorKind::Marshal(format!("prompt `{callee_name}` override: {e}")),
-                                span,
-                            ));
-                    }
-                }
-
-                let value = json_to_value(resp.value, result_ty, &self.types_by_id)
-                    .map_err(|e| {
-                        InterpError::new(
-                            InterpErrorKind::Marshal(format!(
-                                "prompt `{callee_name}`: {e}"
-                            )),
+                    unreachable!("progressive prompt has at least one stage")
+                } else {
+                    let selected_model = self
+                        .select_prompt_model(prompt, callee_name, &rendered, &arg_values, span)
+                        .await?;
+                    let result = self
+                        .execute_prompt_call(
+                            prompt,
+                            callee_name,
+                            &arg_values,
+                            &rendered,
+                            selected_model,
                             span,
                         )
-                    })?;
-
-                // `cites ctx strictly` runtime verification: check that
-                // the LLM response references content from the cited param.
-                if let Some(param_idx) = prompt.cites_strictly_param {
-                    if let Some(ctx_value) = arg_values.get(param_idx) {
-                        let ctx_text = value_to_json(ctx_value).to_string();
-                        let response_text = value_to_json(&value).to_string();
-                        // Verify overlap: at least one substantial substring
-                        // from the context appears in the response.
-                        if !citation_verified(&ctx_text, &response_text) {
-                            return Err(InterpError::new(
-                                InterpErrorKind::Other(format!(
-                                    "citation verification failed for prompt `{callee_name}`: \
-                                     response does not reference content from the cited context parameter"
-                                )),
-                                span,
-                            ));
-                        }
+                        .await?;
+                    if !matches!(&prompt.return_ty, Type::Stream(_)) {
+                        self.charge_cost(result.cost, span)?;
                     }
-                }
-
-                // Provenance propagation: if any argument was Grounded,
-                // the prompt's output inherits the provenance chain with
-                // a PromptTransform entry added.
-                let mut merged_chain = crate::value::ProvenanceChain::new();
-                let mut has_grounded_input = false;
-                for arg in &arg_values {
-                    if let Value::Grounded(g) = arg {
-                        merged_chain.merge(&g.provenance);
-                        has_grounded_input = true;
-                    }
-                }
-                let value = if has_grounded_input {
-                    merged_chain.add_prompt_transform(callee_name, corvid_runtime::now_ms());
-                    Value::Grounded(
-                        crate::value::GroundedValue::new(value, merged_chain),
-                    )
-                } else {
-                    value
-                };
-
-                if matches!(&prompt.return_ty, Type::Stream(_)) {
-                    let tokens = if resp.usage.completion_tokens > 0 {
-                        resp.usage.completion_tokens as u64
-                    } else {
-                        resp.usage.total_tokens as u64
-                    };
-                    let actual_confidence = prompt_effective_confidence(prompt, &value);
-                    let chunk = StreamChunk::with_metrics(
-                        value,
-                        prompt.effect_cost,
-                        actual_confidence,
-                        tokens,
-                    );
-                    if let Some(limit) = prompt.max_tokens {
-                        if chunk.tokens > limit {
-                            return self
-                                .singleton_stream_error(
-                                    InterpError::new(
-                                        InterpErrorKind::TokenLimitExceeded {
-                                            limit,
-                                            used: chunk.tokens,
-                                        },
-                                        span,
-                                    ),
-                                    prompt_backpressure(prompt),
-                                )
-                                .await
-                                .map(ExprFlow::Value);
-                        }
-                    }
-                    if let Some(floor) = prompt.min_confidence {
-                        if chunk.confidence < floor {
-                            return self
-                                .singleton_stream_error(
-                                    InterpError::new(
-                                        InterpErrorKind::ConfidenceFloorBreached {
-                                            floor,
-                                            actual: chunk.confidence,
-                                        },
-                                        span,
-                                    ),
-                                    prompt_backpressure(prompt),
-                                )
-                                .await
-                                .map(ExprFlow::Value);
-                        }
-                    }
-                    Ok(ExprFlow::Value(
-                        self.singleton_stream(chunk, prompt_backpressure(prompt)).await?,
-                    ))
-                } else {
-                    Ok(ExprFlow::Value(value))
+                    self.finalize_prompt_result(prompt, result, span).await
                 }
             }
             IrCallKind::Agent { def_id } => {

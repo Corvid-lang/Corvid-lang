@@ -1216,6 +1216,253 @@ agent run(q: String) -> String:
     }
 
     #[tokio::test]
+    async fn progressive_dispatch_returns_stage_zero_when_confidence_is_high() {
+        let src = r#"
+model cheap:
+    capability: basic
+
+model expensive:
+    capability: expert
+
+prompt answer(q: String) -> String:
+    progressive:
+        cheap below 0.95
+        expensive
+    "Answer {q}."
+
+agent run(q: String) -> String:
+    return answer(q)
+"#;
+        let ir = ir_of(src);
+        let trace_dir = std::env::temp_dir().join(format!(
+            "corvid-vm-progressive-high-{}",
+            corvid_runtime::now_ms()
+        ));
+        std::fs::create_dir_all(&trace_dir).unwrap();
+        let rt = Runtime::builder()
+            .tracer(corvid_runtime::Tracer::open(&trace_dir, "run-progressive-high"))
+            .llm(Arc::new(MockAdapter::new("cheap").reply("answer", json!("cheap"))))
+            .model(RegisteredModel::new("cheap").capability("basic"))
+            .model(RegisteredModel::new("expensive").capability("expert"))
+            .default_model("cheap")
+            .build();
+
+        let v = run_agent(&ir, "run", vec![Value::String(Arc::from("easy"))], &rt)
+            .await
+            .expect("run");
+        assert_eq!(v, Value::String(Arc::from("cheap")));
+        drop(rt);
+
+        let body = std::fs::read_to_string(trace_dir.join("run-progressive-high.jsonl"))
+            .expect("trace file");
+        let events: Vec<TraceEvent> = body
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .map(|line| serde_json::from_str(line).expect("valid trace event"))
+            .collect();
+        let llm_calls = events
+            .iter()
+            .filter(|event| matches!(event, TraceEvent::LlmCall { prompt, .. } if prompt == "answer"))
+            .count();
+        assert_eq!(llm_calls, 1);
+        assert!(!events.iter().any(|event| matches!(event, TraceEvent::ProgressiveEscalation { .. })));
+        assert!(!events.iter().any(|event| matches!(event, TraceEvent::ProgressiveExhausted { .. })));
+    }
+
+    #[tokio::test]
+    async fn progressive_dispatch_exhausts_all_stages_when_confidence_stays_low() {
+        let src = r#"
+model cheap:
+    capability: basic
+
+model medium:
+    capability: standard
+
+model expensive:
+    capability: expert
+
+prompt answer(q: String) -> String:
+    progressive:
+        cheap below 0.95
+        medium below 0.99
+        expensive
+    "Answer {q}."
+
+agent run(q: String) -> String:
+    return answer(q)
+"#;
+        let ir = ir_of(src);
+        let trace_dir = std::env::temp_dir().join(format!(
+            "corvid-vm-progressive-exhausted-{}",
+            corvid_runtime::now_ms()
+        ));
+        std::fs::create_dir_all(&trace_dir).unwrap();
+        let rt = Runtime::builder()
+            .tracer(corvid_runtime::Tracer::open(&trace_dir, "run-progressive-exhausted"))
+            .llm(Arc::new(MockAdapter::new("cheap").reply("answer", json!("cheap"))))
+            .llm(Arc::new(MockAdapter::new("medium").reply("answer", json!("medium"))))
+            .llm(Arc::new(MockAdapter::new("expensive").reply("answer", json!("expensive"))))
+            .model(RegisteredModel::new("cheap").capability("basic"))
+            .model(RegisteredModel::new("medium").capability("standard"))
+            .model(RegisteredModel::new("expensive").capability("expert"))
+            .default_model("cheap")
+            .build();
+        let grounded = Value::Grounded(GroundedValue::with_confidence(
+            Value::String(Arc::from("hard")),
+            ProvenanceChain::new(),
+            0.40,
+        ));
+
+        let v = run_agent(&ir, "run", vec![grounded], &rt)
+            .await
+            .expect("run");
+        assert_eq!(v, Value::Grounded(GroundedValue::new(
+            Value::String(Arc::from("expensive")),
+            ProvenanceChain::new(),
+        )));
+        drop(rt);
+
+        let body = std::fs::read_to_string(
+            trace_dir.join("run-progressive-exhausted.jsonl"),
+        )
+        .expect("trace file");
+        let events: Vec<TraceEvent> = body
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .map(|line| serde_json::from_str(line).expect("valid trace event"))
+            .collect();
+        let llm_calls = events
+            .iter()
+            .filter(|event| matches!(event, TraceEvent::LlmCall { prompt, .. } if prompt == "answer"))
+            .count();
+        assert_eq!(llm_calls, 3);
+        let escalations: Vec<_> = events
+            .iter()
+            .filter_map(|event| match event {
+                TraceEvent::ProgressiveEscalation {
+                    from_stage,
+                    to_stage,
+                    confidence_observed,
+                    threshold,
+                    ..
+                } => Some((*from_stage, *to_stage, *confidence_observed, *threshold)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(escalations.len(), 2);
+        assert_eq!(escalations[0].0, 0);
+        assert_eq!(escalations[0].1, 1);
+        assert!((escalations[0].2 - 0.40).abs() < 1e-9);
+        assert!((escalations[0].3 - 0.95).abs() < 1e-9);
+        assert_eq!(escalations[1].0, 1);
+        assert_eq!(escalations[1].1, 2);
+        assert!(events.iter().any(|event| matches!(
+            event,
+            TraceEvent::ProgressiveExhausted { prompt, stages, .. }
+                if prompt == "answer"
+                    && stages == &vec![
+                        "cheap".to_string(),
+                        "medium".to_string(),
+                        "expensive".to_string(),
+                    ]
+        )));
+    }
+
+    #[tokio::test]
+    async fn progressive_dispatch_halts_when_budget_is_exceeded_mid_chain() {
+        let src = r#"
+model cheap:
+    capability: basic
+
+model expensive:
+    capability: expert
+
+prompt answer(q: String) -> String:
+    progressive:
+        cheap below 0.95
+        expensive
+    "Answer {q}."
+
+@budget($0.50)
+agent run(q: String) -> String:
+    return answer(q)
+"#;
+        let ir = ir_of(src);
+        let trace_dir = std::env::temp_dir().join(format!(
+            "corvid-vm-progressive-budget-{}",
+            corvid_runtime::now_ms()
+        ));
+        std::fs::create_dir_all(&trace_dir).unwrap();
+        let rt = Runtime::builder()
+            .tracer(corvid_runtime::Tracer::open(&trace_dir, "run-progressive-budget"))
+            .llm(Arc::new(MockAdapter::new("cheap").reply_with_usage(
+                "answer",
+                json!("cheap"),
+                TokenUsage {
+                    prompt_tokens: 1,
+                    completion_tokens: 1,
+                    total_tokens: 2,
+                },
+            )))
+            .llm(Arc::new(MockAdapter::new("expensive").reply_with_usage(
+                "answer",
+                json!("expensive"),
+                TokenUsage {
+                    prompt_tokens: 1,
+                    completion_tokens: 1,
+                    total_tokens: 2,
+                },
+            )))
+            .model(
+                RegisteredModel::new("cheap")
+                    .capability("basic")
+                    .cost_per_token_in(0.15)
+                    .cost_per_token_out(0.15),
+            )
+            .model(
+                RegisteredModel::new("expensive")
+                    .capability("expert")
+                    .cost_per_token_in(0.15)
+                    .cost_per_token_out(0.15),
+            )
+            .default_model("cheap")
+            .build();
+        let grounded = Value::Grounded(GroundedValue::with_confidence(
+            Value::String(Arc::from("hard")),
+            ProvenanceChain::new(),
+            0.40,
+        ));
+
+        let err = run_agent(&ir, "run", vec![grounded], &rt)
+            .await
+            .unwrap_err();
+        match err.kind {
+            InterpErrorKind::BudgetExceeded { budget, used } => {
+                assert!((budget - 0.50).abs() < 1e-9);
+                assert!((used - 0.60).abs() < 1e-9);
+            }
+            other => panic!("expected BudgetExceeded, got {other:?}"),
+        }
+        drop(rt);
+
+        let body = std::fs::read_to_string(
+            trace_dir.join("run-progressive-budget.jsonl"),
+        )
+        .expect("trace file");
+        let events: Vec<TraceEvent> = body
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .map(|line| serde_json::from_str(line).expect("valid trace event"))
+            .collect();
+        assert!(events.iter().any(|event| matches!(
+            event,
+            TraceEvent::ProgressiveEscalation { from_stage, to_stage, .. }
+                if *from_stage == 0 && *to_stage == 1
+        )));
+        assert!(!events.iter().any(|event| matches!(event, TraceEvent::ProgressiveExhausted { .. })));
+    }
+
+    #[tokio::test]
     async fn agent_to_agent_call_recurses() {
         let src = "\
 agent inner(n: Int) -> Int:

@@ -72,4 +72,19 @@ pub enum TraceEvent {
         #[serde(default)]
         arm_index: Option<usize>,
     },
+    ProgressiveEscalation {
+        ts_ms: u64,
+        run_id: String,
+        prompt: String,
+        from_stage: usize,
+        to_stage: usize,
+        confidence_observed: f64,
+        threshold: f64,
+    },
+    ProgressiveExhausted {
+        ts_ms: u64,
+        run_id: String,
+        prompt: String,
+        stages: Vec<String>,
+    },
 }
