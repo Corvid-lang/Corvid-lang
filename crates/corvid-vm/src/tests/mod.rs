@@ -1,0 +1,2096 @@
+
+use super::*;
+use corvid_ast::{BackpressurePolicy, Span};
+use corvid_ir::lower;
+use corvid_resolve::resolve;
+use corvid_runtime::{
+    llm::{mock::MockAdapter, TokenUsage},
+    ProgrammaticApprover, RegisteredModel, Runtime, RuntimeError, TraceEvent,
+};
+use corvid_syntax::{lex, parse_file};
+use corvid_types::typecheck;
+use serde_json::json;
+use std::sync::Arc;
+
+/// Compile source text all the way down to IR. Panics on any frontend
+/// error — tests should pass clean programs.
+fn ir_of(src: &str) -> corvid_ir::IrFile {
+    let tokens = lex(src).expect("lex");
+    let (file, perr) = parse_file(&tokens);
+    assert!(perr.is_empty(), "parse: {perr:?}");
+    let resolved = resolve(&file);
+    assert!(resolved.errors.is_empty(), "resolve: {:?}", resolved.errors);
+    let checked = typecheck(&file, &resolved);
+    assert!(checked.errors.is_empty(), "typecheck: {:?}", checked.errors);
+    lower(&file, &resolved, &checked)
+}
+
+/// A runtime with no tools, no LLMs, and an always-yes approver.
+/// Suitable for tests that only exercise pure computation.
+fn empty_runtime() -> Runtime {
+    Runtime::builder()
+        .approver(Arc::new(ProgrammaticApprover::always_yes()))
+        .build()
+}
+
+async fn collect_stream(value: Value) -> Result<Vec<Value>, InterpError> {
+    let Value::Stream(stream) = value else {
+        panic!("expected stream value");
+    };
+    let mut out = Vec::new();
+    while let Some(item) = stream.next().await {
+        out.push(item?);
+    }
+    Ok(out)
+}
+
+// ----------------------------- Value tests ------------------------------
+
+#[test]
+fn value_equality_is_structural() {
+    let a = Value::String(Arc::from("hi"));
+    let b = Value::String(Arc::from("hi"));
+    assert_eq!(a, b);
+    assert_ne!(a, Value::String(Arc::from("bye")));
+}
+
+#[test]
+fn numeric_equality_crosses_int_and_float() {
+    assert_eq!(Value::Int(3), Value::Float(3.0));
+    assert_eq!(Value::Float(3.0), Value::Int(3));
+    assert_ne!(Value::Int(3), Value::Float(3.5));
+}
+
+// -------------------------- Literal & arithmetic ------------------------
+
+#[tokio::test]
+async fn returns_integer_literal() {
+    let ir = ir_of("agent answer() -> Int:\n    return 42\n");
+    let rt = empty_runtime();
+    let v = run_agent(&ir, "answer", vec![], &rt).await.expect("run");
+    assert_eq!(v, Value::Int(42));
+}
+
+#[tokio::test]
+async fn arithmetic_follows_precedence() {
+    let ir = ir_of("agent calc() -> Int:\n    return 1 + 2 * 3\n");
+    let rt = empty_runtime();
+    let v = run_agent(&ir, "calc", vec![], &rt).await.expect("run");
+    assert_eq!(v, Value::Int(7));
+}
+
+#[tokio::test]
+async fn division_by_zero_is_a_runtime_error() {
+    let ir = ir_of("agent bad() -> Int:\n    x = 0\n    return 10 / x\n");
+    let rt = empty_runtime();
+    let err = run_agent(&ir, "bad", vec![], &rt).await.unwrap_err();
+    assert!(matches!(err.kind, InterpErrorKind::Arithmetic(ref m) if m.contains("division")));
+}
+
+#[tokio::test]
+async fn integer_overflow_is_a_runtime_error() {
+    let src = "agent oops() -> Int:\n    return 9223372036854775807 + 1\n";
+    let ir = ir_of(src);
+    let rt = empty_runtime();
+    let err = run_agent(&ir, "oops", vec![], &rt).await.unwrap_err();
+    assert!(matches!(err.kind, InterpErrorKind::Arithmetic(ref m) if m.contains("overflow")));
+}
+
+#[tokio::test]
+async fn int_float_mixing_widens_to_float() {
+    let ir = ir_of("agent mix() -> Float:\n    return 3 + 0.5\n");
+    let rt = empty_runtime();
+    let v = run_agent(&ir, "mix", vec![], &rt).await.expect("run");
+    assert_eq!(v, Value::Float(3.5));
+}
+
+#[tokio::test]
+async fn strings_concatenate_with_plus() {
+    let ir = ir_of("agent hi() -> String:\n    return \"hello \" + \"world\"\n");
+    let rt = empty_runtime();
+    let v = run_agent(&ir, "hi", vec![], &rt).await.expect("run");
+    assert_eq!(v, Value::String(Arc::from("hello world")));
+}
+
+// ------------------------------ Control flow ---------------------------
+
+#[tokio::test]
+async fn if_true_takes_then_branch() {
+    let src = "\
+agent pick(flag: Bool) -> Int:
+    if flag:
+        return 1
+    else:
+        return 2
+";
+    let ir = ir_of(src);
+    let rt = empty_runtime();
+    let v = run_agent(&ir, "pick", vec![Value::Bool(true)], &rt).await.expect("run");
+    assert_eq!(v, Value::Int(1));
+}
+
+#[tokio::test]
+async fn if_false_takes_else_branch() {
+    let src = "\
+agent pick(flag: Bool) -> Int:
+    if flag:
+        return 1
+    else:
+        return 2
+";
+    let ir = ir_of(src);
+    let rt = empty_runtime();
+    let v = run_agent(&ir, "pick", vec![Value::Bool(false)], &rt).await.expect("run");
+    assert_eq!(v, Value::Int(2));
+}
+
+#[tokio::test]
+async fn if_non_bool_condition_is_defensive_runtime_error() {
+    // The type checker normally catches this. We construct IR by hand
+    // to prove the interpreter's defensive branch still produces a
+    // clean TypeMismatch if something ever bypasses the checker.
+    use corvid_ir::{
+        IrAgent, IrBlock, IrExpr, IrExprKind, IrFile, IrLiteral, IrStmt,
+    };
+    use corvid_resolve::DefId;
+    use corvid_types::Type;
+
+    let sp = Span::new(0, 0);
+    let cond = IrExpr {
+        kind: IrExprKind::Literal(IrLiteral::Int(1)),
+        ty: Type::Int,
+        span: sp,
+    };
+    let if_stmt = IrStmt::If {
+        cond,
+        then_block: IrBlock {
+            stmts: vec![IrStmt::Return {
+                value: Some(IrExpr {
+                    kind: IrExprKind::Literal(IrLiteral::Int(1)),
+                    ty: Type::Int,
+                    span: sp,
+                }),
+                span: sp,
+            }],
+            span: sp,
+        },
+        else_block: None,
+        span: sp,
+    };
+    let fallback = IrStmt::Return {
+        value: Some(IrExpr {
+            kind: IrExprKind::Literal(IrLiteral::Int(0)),
+            ty: Type::Int,
+            span: sp,
+        }),
+        span: sp,
+    };
+    let agent = IrAgent {
+        id: DefId(0),
+        name: "bad".into(),
+        params: vec![],
+        return_ty: Type::Int,
+        cost_budget: None,
+        body: IrBlock {
+            stmts: vec![if_stmt, fallback],
+            span: sp,
+        },
+        span: sp,
+        borrow_sig: None,
+    };
+    let ir = IrFile {
+        imports: vec![],
+        types: vec![],
+        tools: vec![],
+        prompts: vec![],
+        agents: vec![agent],
+        evals: vec![],
+    };
+    let rt = empty_runtime();
+    let err = run_agent(&ir, "bad", vec![], &rt).await.unwrap_err();
+    assert!(
+        matches!(err.kind, InterpErrorKind::TypeMismatch { .. }),
+        "expected TypeMismatch, got {:?}",
+        err.kind
+    );
+}
+
+#[tokio::test]
+async fn for_loop_iterates_a_list() {
+    let src = "\
+agent sum_list() -> Int:
+    total = 0
+    for x in [1, 2, 3, 4]:
+        total = total + x
+    return total
+";
+    let ir = ir_of(src);
+    let rt = empty_runtime();
+    let v = run_agent(&ir, "sum_list", vec![], &rt).await.expect("run");
+    assert_eq!(v, Value::Int(10));
+}
+
+#[tokio::test]
+async fn break_exits_loop_early() {
+    let src = "\
+agent early() -> Int:
+    total = 0
+    for x in [1, 2, 3, 4]:
+        if x == 3:
+            break
+        total = total + x
+    return total
+";
+    let ir = ir_of(src);
+    let rt = empty_runtime();
+    let v = run_agent(&ir, "early", vec![], &rt).await.expect("run");
+    assert_eq!(v, Value::Int(3));
+}
+
+#[tokio::test]
+async fn continue_skips_to_next_iteration() {
+    let src = "\
+agent skip_odd() -> Int:
+    total = 0
+    for x in [1, 2, 3, 4]:
+        if x == 3:
+            continue
+        total = total + x
+    return total
+";
+    let ir = ir_of(src);
+    let rt = empty_runtime();
+    let v = run_agent(&ir, "skip_odd", vec![], &rt).await.expect("run");
+    assert_eq!(v, Value::Int(7));
+}
+
+#[tokio::test]
+async fn pass_is_a_noop() {
+    let src = "\
+agent noop(x: Int) -> Int:
+    if x > 0:
+        pass
+    return x
+";
+    let ir = ir_of(src);
+    let rt = empty_runtime();
+    let v = run_agent(&ir, "noop", vec![Value::Int(5)], &rt).await.expect("run");
+    assert_eq!(v, Value::Int(5));
+}
+
+#[tokio::test]
+async fn stream_agent_yields_values_over_mpsc() {
+    let src = "\
+agent chunks(text: String) -> Stream<String>:
+    yield text
+    yield text + \"!\"
+";
+    let ir = ir_of(src);
+    let rt = empty_runtime();
+    let stream = run_agent(&ir, "chunks", vec![Value::String(Arc::from("hi"))], &rt)
+        .await
+        .expect("run");
+    let items = collect_stream(stream).await.expect("collect");
+    assert_eq!(
+        items,
+        vec![
+            Value::String(Arc::from("hi")),
+            Value::String(Arc::from("hi!")),
+        ]
+    );
+}
+
+#[tokio::test]
+async fn for_loop_consumes_stream_values() {
+    let src = "\
+agent source() -> Stream<Int>:
+    yield 1
+    yield 2
+    yield 3
+
+agent sum_stream() -> Int:
+    total = 0
+    for x in source():
+        total = total + x
+    return total
+";
+    let ir = ir_of(src);
+    let rt = empty_runtime();
+    let value = run_agent(&ir, "sum_stream", vec![], &rt).await.expect("run");
+    assert_eq!(value, Value::Int(6));
+}
+
+#[tokio::test]
+async fn stream_prompt_is_wrapped_as_singleton_stream() {
+    let src = "\
+prompt generate(ctx: String) -> Stream<String>:
+    with backpressure unbounded
+    \"Generate {ctx}\"
+
+agent relay(ctx: String) -> Stream<String>:
+    for chunk in generate(ctx):
+        yield chunk
+";
+    let ir = ir_of(src);
+    let rt = Runtime::builder()
+        .approver(Arc::new(ProgrammaticApprover::always_yes()))
+        .llm(Arc::new(MockAdapter::new("mock-1").reply("generate", json!("hello"))))
+        .default_model("mock-1")
+        .build();
+    let stream = run_agent(&ir, "relay", vec![Value::String(Arc::from("ctx"))], &rt)
+        .await
+        .expect("run");
+    let items = collect_stream(stream).await.expect("collect");
+    assert_eq!(items, vec![Value::String(Arc::from("hello"))]);
+}
+
+#[tokio::test]
+async fn stream_prompt_confidence_floor_breaches_mid_stream() {
+    let src = "\
+effect shaky:
+    confidence: 0.40
+
+prompt generate(ctx: String) -> Stream<String> uses shaky:
+    with min_confidence 0.80
+    \"Generate {ctx}\"
+
+agent relay(ctx: String) -> Stream<String>:
+    for chunk in generate(ctx):
+        yield chunk
+";
+    let ir = ir_of(src);
+    let rt = Runtime::builder()
+        .approver(Arc::new(ProgrammaticApprover::always_yes()))
+        .llm(Arc::new(MockAdapter::new("mock-1").reply("generate", json!("hello"))))
+        .default_model("mock-1")
+        .build();
+    let stream = run_agent(&ir, "relay", vec![Value::String(Arc::from("ctx"))], &rt)
+        .await
+        .expect("run");
+    let err = collect_stream(stream).await.unwrap_err();
+    assert!(matches!(
+        err.kind,
+        InterpErrorKind::ConfidenceFloorBreached { floor, actual }
+            if (floor - 0.80).abs() < 0.001 && (actual - 0.40).abs() < 0.001
+    ));
+}
+
+#[tokio::test]
+async fn stream_prompt_token_limit_breaches_mid_stream() {
+    let src = "\
+prompt generate(ctx: String) -> Stream<String>:
+    with max_tokens 10
+    \"Generate {ctx}\"
+
+agent relay(ctx: String) -> Stream<String>:
+    for chunk in generate(ctx):
+        yield chunk
+";
+    let ir = ir_of(src);
+    let rt = Runtime::builder()
+        .approver(Arc::new(ProgrammaticApprover::always_yes()))
+        .llm(Arc::new(
+            MockAdapter::new("mock-1").reply_with_usage(
+                "generate",
+                json!("hello"),
+                TokenUsage {
+                    prompt_tokens: 4,
+                    completion_tokens: 25,
+                    total_tokens: 29,
+                },
+            ),
+        ))
+        .default_model("mock-1")
+        .build();
+    let stream = run_agent(&ir, "relay", vec![Value::String(Arc::from("ctx"))], &rt)
+        .await
+        .expect("run");
+    let err = collect_stream(stream).await.unwrap_err();
+    assert!(matches!(
+        err.kind,
+        InterpErrorKind::TokenLimitExceeded { limit: 10, used: 25 }
+    ));
+}
+
+#[tokio::test]
+async fn stream_budget_termination_fires_before_over_budget_yield() {
+    use corvid_ir::{
+        IrAgent, IrBlock, IrCallKind, IrExpr, IrExprKind, IrFile, IrParam, IrPrompt,
+        IrStmt,
+    };
+    use corvid_resolve::{DefId, LocalId};
+    use corvid_types::Type;
+
+    let sp = Span::new(0, 0);
+    let prompt_id = DefId(1);
+    let loop_local = LocalId(0);
+    let prompt_call = IrExpr {
+        kind: IrExprKind::Call {
+            kind: IrCallKind::Prompt { def_id: prompt_id },
+            callee_name: "generate".into(),
+            args: vec![],
+        },
+        ty: Type::Stream(Box::new(Type::String)),
+        span: sp,
+    };
+    let yielded_local = IrExpr {
+        kind: IrExprKind::Local {
+            local_id: loop_local,
+            name: "chunk".into(),
+        },
+        ty: Type::String,
+        span: sp,
+    };
+    let ir = IrFile {
+        imports: vec![],
+        types: vec![],
+        tools: vec![],
+        prompts: vec![IrPrompt {
+            id: prompt_id,
+            name: "generate".into(),
+            params: vec![],
+            return_ty: Type::Stream(Box::new(Type::String)),
+            template: "Generate".into(),
+            effect_names: vec!["expensive".into()],
+            effect_cost: 0.75,
+            effect_confidence: 1.0,
+            cites_strictly_param: None,
+            min_confidence: None,
+            max_tokens: None,
+            backpressure: Some(BackpressurePolicy::Bounded(1)),
+            capability_required: None,
+            route: Vec::new(),
+            progressive: Vec::new(),
+            rollout: None,
+            ensemble: None,
+            adversarial: None,
+            span: sp,
+        }],
+        agents: vec![IrAgent {
+            id: DefId(2),
+            name: "relay".into(),
+            params: vec![IrParam {
+                name: "ctx".into(),
+                local_id: LocalId(1),
+                ty: Type::String,
+                span: sp,
+            }],
+            return_ty: Type::Stream(Box::new(Type::String)),
+            cost_budget: Some(0.50),
+            body: IrBlock {
+                stmts: vec![IrStmt::For {
+                    var_local: loop_local,
+                    var_name: "chunk".into(),
+                    iter: prompt_call,
+                    body: IrBlock {
+                        stmts: vec![IrStmt::Yield {
+                            value: yielded_local,
+                            span: sp,
+                        }],
+                        span: sp,
+                    },
+                    span: sp,
+                }],
+                span: sp,
+            },
+            span: sp,
+            borrow_sig: None,
+        }],
+        evals: vec![],
+    };
+    let rt = Runtime::builder()
+        .approver(Arc::new(ProgrammaticApprover::always_yes()))
+        .llm(Arc::new(MockAdapter::new("mock-1").reply("generate", json!("chunk"))))
+        .default_model("mock-1")
+        .build();
+    let stream = run_agent(&ir, "relay", vec![Value::String(Arc::from("ctx"))], &rt)
+        .await
+        .expect("run");
+    let err = collect_stream(stream).await.unwrap_err();
+    assert!(matches!(
+        err.kind,
+        InterpErrorKind::BudgetExceeded { budget, used }
+            if (budget - 0.50).abs() < 0.001 && (used - 0.75).abs() < 0.001
+    ));
+}
+
+#[tokio::test]
+async fn try_retry_retries_stream_when_first_element_is_err() {
+    let src = "\
+tool next_mode() -> Int
+
+agent flaky_stream() -> Stream<Result<String, String>>:
+    mode = next_mode()
+    if mode == 0:
+        yield Err(\"network\")
+    yield Ok(\"done\")
+
+agent caller() -> Stream<Result<String, String>>:
+    for item in try flaky_stream() on error retry 3 times backoff exponential 1:
+        yield item
+";
+    let ir = ir_of(src);
+    let modes = Arc::new(std::sync::Mutex::new(std::collections::VecDeque::from([0_i64, 1])));
+    let rt = Runtime::builder()
+        .approver(Arc::new(ProgrammaticApprover::always_yes()))
+        .tool("next_mode", {
+            let modes = Arc::clone(&modes);
+            move |_| {
+                let modes = Arc::clone(&modes);
+                async move {
+                    let next = modes.lock().unwrap().pop_front().unwrap_or(1);
+                    Ok(json!(next))
+                }
+            }
+        })
+        .build();
+    let stream = run_agent(&ir, "caller", vec![], &rt).await.expect("run");
+    let items = collect_stream(stream).await.expect("collect");
+    assert_eq!(
+        items,
+        vec![Value::ResultOk(crate::value::BoxedValue::new(Value::String(Arc::from("done"))))]
+    );
+}
+
+#[tokio::test]
+async fn try_retry_does_not_retry_mid_stream_err() {
+    let src = "\
+agent flaky_stream() -> Stream<Result<String, String>>:
+    yield Ok(\"first\")
+    yield Err(\"boom\")
+
+agent caller() -> Stream<Result<String, String>>:
+    for item in try flaky_stream() on error retry 3 times backoff exponential 1:
+        yield item
+";
+    let ir = ir_of(src);
+    let rt = empty_runtime();
+    let stream = run_agent(&ir, "caller", vec![], &rt).await.expect("run");
+    let items = collect_stream(stream).await.expect("collect");
+    assert_eq!(
+        items,
+        vec![
+            Value::ResultOk(crate::value::BoxedValue::new(Value::String(Arc::from("first")))),
+            Value::ResultErr(crate::value::BoxedValue::new(Value::String(Arc::from("boom")))),
+        ]
+    );
+}
+
+#[tokio::test]
+async fn bounded_stream_channel_round_trips_values() {
+    let (sender, stream) = crate::value::StreamValue::channel(BackpressurePolicy::Bounded(2));
+    assert!(sender.send(Ok(Value::Int(1))).await);
+    assert!(sender.send(Ok(Value::Int(2))).await);
+    drop(sender);
+    let mut items = Vec::new();
+    while let Some(item) = stream.next().await {
+        items.push(item.expect("item"));
+    }
+    assert_eq!(items, vec![Value::Int(1), Value::Int(2)]);
+}
+
+#[tokio::test]
+async fn unbounded_stream_channel_round_trips_values() {
+    let (sender, stream) = crate::value::StreamValue::channel(BackpressurePolicy::Unbounded);
+    assert!(sender.send(Ok(Value::String(Arc::from("a")))).await);
+    drop(sender);
+    let items = collect_stream(Value::Stream(stream)).await.expect("collect");
+    assert_eq!(items, vec![Value::String(Arc::from("a"))]);
+}
+
+// ------------------------------ Field access ---------------------------
+
+#[tokio::test]
+async fn field_access_reads_struct_field() {
+    let src = "\
+type Ticket:
+    order_id: String
+    count: Int
+
+agent read(t: Ticket) -> String:
+    return t.order_id
+";
+    let ir = ir_of(src);
+    let ticket_id = ir.types[0].id;
+    let ticket = build_struct(
+        ticket_id,
+        "Ticket",
+        [
+            ("order_id".to_string(), Value::String(Arc::from("ord_42"))),
+            ("count".to_string(), Value::Int(3)),
+        ],
+    );
+    let rt = empty_runtime();
+    let v = run_agent(&ir, "read", vec![ticket], &rt).await.expect("run");
+    assert_eq!(v, Value::String(Arc::from("ord_42")));
+}
+
+#[tokio::test]
+async fn missing_field_is_runtime_error() {
+    let ir = ir_of(
+        "type Ticket:\n    order_id: String\n\nagent grab(t: Ticket) -> String:\n    return t.order_id\n",
+    );
+    let ticket_id = ir.types[0].id;
+    let empty = Value::Struct(StructValue::new(
+        ticket_id,
+        "Ticket",
+        std::collections::HashMap::new(),
+    ));
+    let rt = empty_runtime();
+    let err = run_agent(&ir, "grab", vec![empty], &rt).await.unwrap_err();
+    assert!(matches!(err.kind, InterpErrorKind::UnknownField { .. }));
+}
+
+// ---------------------------- Comparisons / logic ----------------------
+
+#[tokio::test]
+async fn comparison_ops() {
+    let src = "agent lt(a: Int, b: Int) -> Bool:\n    return a < b\n";
+    let ir = ir_of(src);
+    let rt = empty_runtime();
+    let v = run_agent(&ir, "lt", vec![Value::Int(1), Value::Int(2)], &rt).await.expect("run");
+    assert_eq!(v, Value::Bool(true));
+    let v = run_agent(&ir, "lt", vec![Value::Int(2), Value::Int(1)], &rt).await.expect("run");
+    assert_eq!(v, Value::Bool(false));
+}
+
+#[tokio::test]
+async fn logical_ops_short_circuit_semantics() {
+    let src = "agent both(a: Bool, b: Bool) -> Bool:\n    return a and b\n";
+    let ir = ir_of(src);
+    let rt = empty_runtime();
+    let v = run_agent(
+        &ir,
+        "both",
+        vec![Value::Bool(true), Value::Bool(false)],
+        &rt,
+    )
+    .await
+    .expect("run");
+    assert_eq!(v, Value::Bool(false));
+}
+
+#[tokio::test]
+async fn not_negates_bool() {
+    let src = "agent nope(b: Bool) -> Bool:\n    return not b\n";
+    let ir = ir_of(src);
+    let rt = empty_runtime();
+    assert_eq!(
+        run_agent(&ir, "nope", vec![Value::Bool(true)], &rt).await.expect("run"),
+        Value::Bool(false)
+    );
+}
+
+// ---------------------------- Runtime integration ----------------------
+
+#[tokio::test]
+async fn tool_call_with_no_handler_surfaces_unknown_tool() {
+    let src = "\
+tool echo(x: String) -> String
+
+agent caller(s: String) -> String:
+    return echo(s)
+";
+    let ir = ir_of(src);
+    let rt = empty_runtime();
+    let err = run_agent(&ir, "caller", vec![Value::String(Arc::from("hi"))], &rt)
+        .await
+        .unwrap_err();
+    match err.kind {
+        InterpErrorKind::Runtime(RuntimeError::UnknownTool(ref name)) => {
+            assert_eq!(name, "echo");
+        }
+        other => panic!("expected Runtime(UnknownTool), got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn tool_call_with_registered_handler_returns_value() {
+    let src = "\
+tool double(x: Int) -> Int
+
+agent run(n: Int) -> Int:
+    return double(n)
+";
+    let ir = ir_of(src);
+    let rt = Runtime::builder()
+        .tool("double", |args| async move {
+            let n = args[0].as_i64().unwrap();
+            Ok(json!(n * 2))
+        })
+        .build();
+    let v = run_agent(&ir, "run", vec![Value::Int(21)], &rt).await.expect("run");
+    assert_eq!(v, Value::Int(42));
+}
+
+#[tokio::test]
+async fn approve_then_dangerous_tool_call_succeeds_with_yes_approver() {
+    let src = "\
+type Receipt:
+    id: String
+
+tool issue_refund(id: String, amount: Float) -> Receipt dangerous
+
+agent run(id: String, amount: Float) -> Receipt:
+    approve IssueRefund(id, amount)
+    return issue_refund(id, amount)
+";
+    let ir = ir_of(src);
+    let rt = Runtime::builder()
+        .tool("issue_refund", |args| async move {
+            let id = args[0].as_str().unwrap_or("");
+            Ok(json!({"id": id}))
+        })
+        .approver(Arc::new(ProgrammaticApprover::always_yes()))
+        .build();
+    let v = run_agent(
+        &ir,
+        "run",
+        vec![Value::String(Arc::from("ord_1")), Value::Float(99.99)],
+        &rt,
+    )
+    .await
+    .expect("run");
+    match v {
+        Value::Struct(s) => {
+            assert_eq!(s.type_name(), "Receipt");
+            assert_eq!(s.get_field("id").unwrap(), Value::String(Arc::from("ord_1")));
+        }
+        other => panic!("expected Receipt struct, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn approve_with_no_approver_denial_surfaces_as_runtime_error() {
+    let src = "\
+type Receipt:
+    id: String
+
+tool issue_refund(id: String, amount: Float) -> Receipt dangerous
+
+agent run(id: String, amount: Float) -> Receipt:
+    approve IssueRefund(id, amount)
+    return issue_refund(id, amount)
+";
+    let ir = ir_of(src);
+    let rt = Runtime::builder()
+        .tool("issue_refund", |_| async move {
+            Ok(json!({"id": "should_never_happen"}))
+        })
+        .approver(Arc::new(ProgrammaticApprover::always_no()))
+        .build();
+    let err = run_agent(
+        &ir,
+        "run",
+        vec![Value::String(Arc::from("ord_1")), Value::Float(99.99)],
+        &rt,
+    )
+    .await
+    .unwrap_err();
+    match err.kind {
+        InterpErrorKind::Runtime(RuntimeError::ApprovalDenied { ref action }) => {
+            assert_eq!(action, "IssueRefund");
+        }
+        other => panic!("expected Runtime(ApprovalDenied), got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn prompt_call_returns_struct_via_mock_adapter() {
+    let src = r#"
+type Decision:
+    should_refund: Bool
+
+prompt decide(reason: String) -> Decision:
+    """Decide based on {reason}."""
+
+agent run(reason: String) -> Decision:
+    return decide(reason)
+"#;
+    let ir = ir_of(src);
+    let rt = Runtime::builder()
+        .llm(Arc::new(
+            corvid_runtime::MockAdapter::new("mock-1")
+                .reply("decide", json!({"should_refund": true})),
+        ))
+        .default_model("mock-1")
+        .build();
+    let v = run_agent(&ir, "run", vec![Value::String(Arc::from("legit"))], &rt)
+        .await
+        .expect("run");
+    match v {
+        Value::Struct(s) => {
+            assert_eq!(s.type_name(), "Decision");
+            assert_eq!(s.get_field("should_refund").unwrap(), Value::Bool(true));
+        }
+        other => panic!("expected Decision struct, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn capability_dispatch_chooses_cheapest_eligible_model_and_traces_it() {
+    let src = r#"
+model haiku:
+    capability: basic
+
+model opus:
+    capability: expert
+
+prompt answer(q: String) -> String:
+    requires: expert
+    "Answer {q}."
+
+agent run(q: String) -> String:
+    return answer(q)
+"#;
+    let ir = ir_of(src);
+    let trace_dir = std::env::temp_dir().join(format!(
+        "corvid-vm-capability-{}",
+        corvid_runtime::now_ms()
+    ));
+    std::fs::create_dir_all(&trace_dir).unwrap();
+    let rt = Runtime::builder()
+        .tracer(corvid_runtime::Tracer::open(&trace_dir, "run-capability"))
+        .llm(Arc::new(MockAdapter::new("haiku").reply("answer", json!("cheap"))))
+        .llm(Arc::new(MockAdapter::new("opus").reply("answer", json!("expert"))))
+        .model(
+            RegisteredModel::new("haiku")
+                .capability("basic")
+                .cost_per_token_in(0.00000025)
+                .cost_per_token_out(0.00000125),
+        )
+        .model(
+            RegisteredModel::new("opus")
+                .capability("expert")
+                .cost_per_token_in(0.000015)
+                .cost_per_token_out(0.00002),
+        )
+        .default_model("haiku")
+        .build();
+
+    let v = run_agent(&ir, "run", vec![Value::String(Arc::from("hard"))], &rt)
+        .await
+        .expect("run");
+    assert_eq!(v, Value::String(Arc::from("expert")));
+    drop(rt);
+
+    let trace_path = trace_dir.join("run-capability.jsonl");
+    let body = std::fs::read_to_string(trace_path).expect("trace file");
+    let events: Vec<TraceEvent> = body
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| serde_json::from_str(line).expect("valid trace event"))
+        .collect();
+    assert!(events.iter().any(|event| matches!(
+        event,
+        TraceEvent::ModelSelected {
+            prompt,
+            model,
+            capability_required,
+            capability_picked,
+            ..
+        } if prompt == "answer"
+            && model == "opus"
+            && capability_required.as_deref() == Some("expert")
+            && capability_picked.as_deref() == Some("expert")
+    )));
+    assert!(events.iter().any(|event| matches!(
+        event,
+        TraceEvent::LlmCall { prompt, model, .. }
+            if prompt == "answer" && model.as_deref() == Some("opus")
+    )));
+}
+
+#[tokio::test]
+async fn capability_dispatch_errors_when_no_model_qualifies() {
+    let src = r#"
+model haiku:
+    capability: basic
+
+prompt answer(q: String) -> String:
+    requires: expert
+    "Answer {q}."
+
+agent run(q: String) -> String:
+    return answer(q)
+"#;
+    let ir = ir_of(src);
+    let rt = Runtime::builder()
+        .llm(Arc::new(MockAdapter::new("haiku").reply("answer", json!("cheap"))))
+        .model(
+            RegisteredModel::new("haiku")
+                .capability("basic")
+                .cost_per_token_in(0.00000025),
+        )
+        .build();
+
+    let err = run_agent(&ir, "run", vec![Value::String(Arc::from("hard"))], &rt)
+        .await
+        .unwrap_err();
+    match err.kind {
+        InterpErrorKind::Runtime(RuntimeError::NoEligibleModel {
+            required_capability,
+            available_models,
+        }) => {
+            assert_eq!(required_capability, "expert");
+            assert_eq!(available_models, vec!["haiku".to_string()]);
+        }
+        other => panic!("expected Runtime(NoEligibleModel), got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn route_dispatch_selects_first_matching_arm_and_traces_it() {
+    let src = r#"
+model fast:
+    capability: basic
+
+model slow:
+    capability: expert
+
+prompt answer(q: String) -> String:
+    route:
+        q == "hard" -> slow
+        _ -> fast
+    "Answer {q}."
+
+agent run(q: String) -> String:
+    return answer(q)
+"#;
+    let ir = ir_of(src);
+    let trace_dir = std::env::temp_dir().join(format!(
+        "corvid-vm-route-first-{}",
+        corvid_runtime::now_ms()
+    ));
+    std::fs::create_dir_all(&trace_dir).unwrap();
+    let rt = Runtime::builder()
+        .tracer(corvid_runtime::Tracer::open(&trace_dir, "run-route-first"))
+        .llm(Arc::new(MockAdapter::new("fast").reply("answer", json!("fast"))))
+        .llm(Arc::new(MockAdapter::new("slow").reply("answer", json!("slow"))))
+        .model(
+            RegisteredModel::new("fast")
+                .capability("basic")
+                .cost_per_token_in(0.00000025)
+                .cost_per_token_out(0.00000125),
+        )
+        .model(
+            RegisteredModel::new("slow")
+                .capability("expert")
+                .cost_per_token_in(0.000015)
+                .cost_per_token_out(0.00002),
+        )
+        .default_model("fast")
+        .build();
+
+    let v = run_agent(&ir, "run", vec![Value::String(Arc::from("hard"))], &rt)
+        .await
+        .expect("run");
+    assert_eq!(v, Value::String(Arc::from("slow")));
+    drop(rt);
+
+    let body = std::fs::read_to_string(trace_dir.join("run-route-first.jsonl"))
+        .expect("trace file");
+    let events: Vec<TraceEvent> = body
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| serde_json::from_str(line).expect("valid trace event"))
+        .collect();
+    assert!(events.iter().any(|event| matches!(
+        event,
+        TraceEvent::ModelSelected {
+            prompt,
+            model,
+            arm_index,
+            ..
+        } if prompt == "answer" && model == "slow" && *arm_index == Some(0)
+    )));
+    assert!(events.iter().any(|event| matches!(
+        event,
+        TraceEvent::LlmCall { prompt, model, .. }
+            if prompt == "answer" && model.as_deref() == Some("slow")
+    )));
+}
+
+#[tokio::test]
+async fn route_dispatch_uses_wildcard_fallback_arm() {
+    let src = r#"
+model fast:
+    capability: basic
+
+model slow:
+    capability: expert
+
+prompt answer(q: String) -> String:
+    route:
+        q == "hard" -> slow
+        _ -> fast
+    "Answer {q}."
+
+agent run(q: String) -> String:
+    return answer(q)
+"#;
+    let ir = ir_of(src);
+    let trace_dir = std::env::temp_dir().join(format!(
+        "corvid-vm-route-fallback-{}",
+        corvid_runtime::now_ms()
+    ));
+    std::fs::create_dir_all(&trace_dir).unwrap();
+    let rt = Runtime::builder()
+        .tracer(corvid_runtime::Tracer::open(&trace_dir, "run-route-fallback"))
+        .llm(Arc::new(MockAdapter::new("fast").reply("answer", json!("fast"))))
+        .llm(Arc::new(MockAdapter::new("slow").reply("answer", json!("slow"))))
+        .model(RegisteredModel::new("fast").capability("basic"))
+        .model(RegisteredModel::new("slow").capability("expert"))
+        .default_model("fast")
+        .build();
+
+    let v = run_agent(&ir, "run", vec![Value::String(Arc::from("easy"))], &rt)
+        .await
+        .expect("run");
+    assert_eq!(v, Value::String(Arc::from("fast")));
+    drop(rt);
+
+    let body = std::fs::read_to_string(trace_dir.join("run-route-fallback.jsonl"))
+        .expect("trace file");
+    let events: Vec<TraceEvent> = body
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| serde_json::from_str(line).expect("valid trace event"))
+        .collect();
+    assert!(events.iter().any(|event| matches!(
+        event,
+        TraceEvent::ModelSelected {
+            prompt,
+            model,
+            arm_index,
+            ..
+        } if prompt == "answer" && model == "fast" && *arm_index == Some(1)
+    )));
+}
+
+#[tokio::test]
+async fn route_dispatch_errors_when_no_arm_matches() {
+    let src = r#"
+model slow:
+    capability: expert
+
+prompt answer(q: String) -> String:
+    route:
+        q == "hard" -> slow
+    "Answer {q}."
+
+agent run(q: String) -> String:
+    return answer(q)
+"#;
+    let ir = ir_of(src);
+    let rt = Runtime::builder()
+        .llm(Arc::new(MockAdapter::new("slow").reply("answer", json!("slow"))))
+        .default_model("slow")
+        .build();
+
+    let err = run_agent(&ir, "run", vec![Value::String(Arc::from("easy"))], &rt)
+        .await
+        .unwrap_err();
+    match err.kind {
+        InterpErrorKind::Runtime(RuntimeError::NoMatchingRoute { prompt }) => {
+            assert_eq!(prompt, "answer");
+        }
+        other => panic!("expected Runtime(NoMatchingRoute), got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn route_dispatch_can_call_prompt_guards() {
+    let src = r#"
+model classifier:
+    capability: basic
+
+model fast:
+    capability: basic
+
+model slow:
+    capability: expert
+
+prompt is_hard(q: String) -> Bool:
+    "Is {q} hard?"
+
+prompt answer(q: String) -> String:
+    route:
+        is_hard(q) -> slow
+        _ -> fast
+    "Answer {q}."
+
+agent run(q: String) -> String:
+    return answer(q)
+"#;
+    let ir = ir_of(src);
+    let trace_dir = std::env::temp_dir().join(format!(
+        "corvid-vm-route-guard-prompt-{}",
+        corvid_runtime::now_ms()
+    ));
+    std::fs::create_dir_all(&trace_dir).unwrap();
+    let rt = Runtime::builder()
+        .tracer(corvid_runtime::Tracer::open(&trace_dir, "run-route-guard-prompt"))
+        .llm(Arc::new(MockAdapter::new("classifier").reply("is_hard", json!(true))))
+        .llm(Arc::new(MockAdapter::new("fast").reply("answer", json!("fast"))))
+        .llm(Arc::new(MockAdapter::new("slow").reply("answer", json!("slow"))))
+        .model(RegisteredModel::new("fast").capability("basic"))
+        .model(RegisteredModel::new("slow").capability("expert"))
+        .default_model("classifier")
+        .build();
+
+    let v = run_agent(&ir, "run", vec![Value::String(Arc::from("essay"))], &rt)
+        .await
+        .expect("run");
+    assert_eq!(v, Value::String(Arc::from("slow")));
+    drop(rt);
+
+    let body = std::fs::read_to_string(
+        trace_dir.join("run-route-guard-prompt.jsonl"),
+    )
+    .expect("trace file");
+    let events: Vec<TraceEvent> = body
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| serde_json::from_str(line).expect("valid trace event"))
+        .collect();
+    assert!(events.iter().any(|event| matches!(
+        event,
+        TraceEvent::LlmCall { prompt, model, .. }
+            if prompt == "is_hard" && model.as_deref() == Some("classifier")
+    )));
+    assert!(events.iter().any(|event| matches!(
+        event,
+        TraceEvent::ModelSelected {
+            prompt,
+            model,
+            arm_index,
+            ..
+        } if prompt == "answer" && model == "slow" && *arm_index == Some(0)
+    )));
+}
+
+#[tokio::test]
+async fn progressive_dispatch_returns_stage_zero_when_confidence_is_high() {
+    let src = r#"
+model cheap:
+    capability: basic
+
+model expensive:
+    capability: expert
+
+prompt answer(q: String) -> String:
+    progressive:
+        cheap below 0.95
+        expensive
+    "Answer {q}."
+
+agent run(q: String) -> String:
+    return answer(q)
+"#;
+    let ir = ir_of(src);
+    let trace_dir = std::env::temp_dir().join(format!(
+        "corvid-vm-progressive-high-{}",
+        corvid_runtime::now_ms()
+    ));
+    std::fs::create_dir_all(&trace_dir).unwrap();
+    let rt = Runtime::builder()
+        .tracer(corvid_runtime::Tracer::open(&trace_dir, "run-progressive-high"))
+        .llm(Arc::new(MockAdapter::new("cheap").reply("answer", json!("cheap"))))
+        .model(RegisteredModel::new("cheap").capability("basic"))
+        .model(RegisteredModel::new("expensive").capability("expert"))
+        .default_model("cheap")
+        .build();
+
+    let v = run_agent(&ir, "run", vec![Value::String(Arc::from("easy"))], &rt)
+        .await
+        .expect("run");
+    assert_eq!(v, Value::String(Arc::from("cheap")));
+    drop(rt);
+
+    let body = std::fs::read_to_string(trace_dir.join("run-progressive-high.jsonl"))
+        .expect("trace file");
+    let events: Vec<TraceEvent> = body
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| serde_json::from_str(line).expect("valid trace event"))
+        .collect();
+    let llm_calls = events
+        .iter()
+        .filter(|event| matches!(event, TraceEvent::LlmCall { prompt, .. } if prompt == "answer"))
+        .count();
+    assert_eq!(llm_calls, 1);
+    assert!(!events.iter().any(|event| matches!(event, TraceEvent::ProgressiveEscalation { .. })));
+    assert!(!events.iter().any(|event| matches!(event, TraceEvent::ProgressiveExhausted { .. })));
+}
+
+#[tokio::test]
+async fn progressive_dispatch_exhausts_all_stages_when_confidence_stays_low() {
+    let src = r#"
+model cheap:
+    capability: basic
+
+model medium:
+    capability: standard
+
+model expensive:
+    capability: expert
+
+prompt answer(q: String) -> String:
+    progressive:
+        cheap below 0.95
+        medium below 0.99
+        expensive
+    "Answer {q}."
+
+agent run(q: String) -> String:
+    return answer(q)
+"#;
+    let ir = ir_of(src);
+    let trace_dir = std::env::temp_dir().join(format!(
+        "corvid-vm-progressive-exhausted-{}",
+        corvid_runtime::now_ms()
+    ));
+    std::fs::create_dir_all(&trace_dir).unwrap();
+    let rt = Runtime::builder()
+        .tracer(corvid_runtime::Tracer::open(&trace_dir, "run-progressive-exhausted"))
+        .llm(Arc::new(MockAdapter::new("cheap").reply("answer", json!("cheap"))))
+        .llm(Arc::new(MockAdapter::new("medium").reply("answer", json!("medium"))))
+        .llm(Arc::new(MockAdapter::new("expensive").reply("answer", json!("expensive"))))
+        .model(RegisteredModel::new("cheap").capability("basic"))
+        .model(RegisteredModel::new("medium").capability("standard"))
+        .model(RegisteredModel::new("expensive").capability("expert"))
+        .default_model("cheap")
+        .build();
+    let grounded = Value::Grounded(GroundedValue::with_confidence(
+        Value::String(Arc::from("hard")),
+        ProvenanceChain::new(),
+        0.40,
+    ));
+
+    let v = run_agent(&ir, "run", vec![grounded], &rt)
+        .await
+        .expect("run");
+    assert_eq!(v, Value::Grounded(GroundedValue::new(
+        Value::String(Arc::from("expensive")),
+        ProvenanceChain::new(),
+    )));
+    drop(rt);
+
+    let body = std::fs::read_to_string(
+        trace_dir.join("run-progressive-exhausted.jsonl"),
+    )
+    .expect("trace file");
+    let events: Vec<TraceEvent> = body
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| serde_json::from_str(line).expect("valid trace event"))
+        .collect();
+    let llm_calls = events
+        .iter()
+        .filter(|event| matches!(event, TraceEvent::LlmCall { prompt, .. } if prompt == "answer"))
+        .count();
+    assert_eq!(llm_calls, 3);
+    let escalations: Vec<_> = events
+        .iter()
+        .filter_map(|event| match event {
+            TraceEvent::ProgressiveEscalation {
+                from_stage,
+                to_stage,
+                confidence_observed,
+                threshold,
+                ..
+            } => Some((*from_stage, *to_stage, *confidence_observed, *threshold)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(escalations.len(), 2);
+    assert_eq!(escalations[0].0, 0);
+    assert_eq!(escalations[0].1, 1);
+    assert!((escalations[0].2 - 0.40).abs() < 1e-9);
+    assert!((escalations[0].3 - 0.95).abs() < 1e-9);
+    assert_eq!(escalations[1].0, 1);
+    assert_eq!(escalations[1].1, 2);
+    assert!(events.iter().any(|event| matches!(
+        event,
+        TraceEvent::ProgressiveExhausted { prompt, stages, .. }
+            if prompt == "answer"
+                && stages == &vec![
+                    "cheap".to_string(),
+                    "medium".to_string(),
+                    "expensive".to_string(),
+                ]
+    )));
+}
+
+#[tokio::test]
+async fn progressive_dispatch_halts_when_budget_is_exceeded_mid_chain() {
+    let src = r#"
+model cheap:
+    capability: basic
+
+model expensive:
+    capability: expert
+
+prompt answer(q: String) -> String:
+    progressive:
+        cheap below 0.95
+        expensive
+    "Answer {q}."
+
+@budget($0.50)
+agent run(q: String) -> String:
+    return answer(q)
+"#;
+    let ir = ir_of(src);
+    let trace_dir = std::env::temp_dir().join(format!(
+        "corvid-vm-progressive-budget-{}",
+        corvid_runtime::now_ms()
+    ));
+    std::fs::create_dir_all(&trace_dir).unwrap();
+    let rt = Runtime::builder()
+        .tracer(corvid_runtime::Tracer::open(&trace_dir, "run-progressive-budget"))
+        .llm(Arc::new(MockAdapter::new("cheap").reply_with_usage(
+            "answer",
+            json!("cheap"),
+            TokenUsage {
+                prompt_tokens: 1,
+                completion_tokens: 1,
+                total_tokens: 2,
+            },
+        )))
+        .llm(Arc::new(MockAdapter::new("expensive").reply_with_usage(
+            "answer",
+            json!("expensive"),
+            TokenUsage {
+                prompt_tokens: 1,
+                completion_tokens: 1,
+                total_tokens: 2,
+            },
+        )))
+        .model(
+            RegisteredModel::new("cheap")
+                .capability("basic")
+                .cost_per_token_in(0.15)
+                .cost_per_token_out(0.15),
+        )
+        .model(
+            RegisteredModel::new("expensive")
+                .capability("expert")
+                .cost_per_token_in(0.15)
+                .cost_per_token_out(0.15),
+        )
+        .default_model("cheap")
+        .build();
+    let grounded = Value::Grounded(GroundedValue::with_confidence(
+        Value::String(Arc::from("hard")),
+        ProvenanceChain::new(),
+        0.40,
+    ));
+
+    let err = run_agent(&ir, "run", vec![grounded], &rt)
+        .await
+        .unwrap_err();
+    match err.kind {
+        InterpErrorKind::BudgetExceeded { budget, used } => {
+            assert!((budget - 0.50).abs() < 1e-9);
+            assert!((used - 0.60).abs() < 1e-9);
+        }
+        other => panic!("expected BudgetExceeded, got {other:?}"),
+    }
+    drop(rt);
+
+    let body = std::fs::read_to_string(
+        trace_dir.join("run-progressive-budget.jsonl"),
+    )
+    .expect("trace file");
+    let events: Vec<TraceEvent> = body
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| serde_json::from_str(line).expect("valid trace event"))
+        .collect();
+    assert!(events.iter().any(|event| matches!(
+        event,
+        TraceEvent::ProgressiveEscalation { from_stage, to_stage, .. }
+            if *from_stage == 0 && *to_stage == 1
+    )));
+    assert!(!events.iter().any(|event| matches!(event, TraceEvent::ProgressiveExhausted { .. })));
+}
+
+#[tokio::test]
+async fn rollout_dispatch_zero_percent_always_uses_baseline() {
+    let src = r#"
+model baseline:
+    capability: basic
+
+model variant:
+    capability: expert
+
+prompt answer(q: String) -> String:
+    rollout 0% variant, else baseline
+    "Answer {q}."
+
+agent run(q: String) -> String:
+    return answer(q)
+"#;
+    let ir = ir_of(src);
+    let trace_dir = std::env::temp_dir().join(format!(
+        "corvid-vm-rollout-zero-{}",
+        corvid_runtime::now_ms()
+    ));
+    std::fs::create_dir_all(&trace_dir).unwrap();
+    let rt = Runtime::builder()
+        .tracer(corvid_runtime::Tracer::open(&trace_dir, "run-rollout-zero"))
+        .llm(Arc::new(MockAdapter::new("baseline").reply("answer", json!("baseline"))))
+        .llm(Arc::new(MockAdapter::new("variant").reply("answer", json!("variant"))))
+        .model(RegisteredModel::new("baseline").capability("basic"))
+        .model(RegisteredModel::new("variant").capability("expert"))
+        .rollout_seed(42)
+        .default_model("baseline")
+        .build();
+
+    let v = run_agent(&ir, "run", vec![Value::String(Arc::from("x"))], &rt)
+        .await
+        .expect("run");
+    assert_eq!(v, Value::String(Arc::from("baseline")));
+    drop(rt);
+
+    let body = std::fs::read_to_string(trace_dir.join("run-rollout-zero.jsonl"))
+        .expect("trace file");
+    let events: Vec<TraceEvent> = body
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| serde_json::from_str(line).expect("valid trace event"))
+        .collect();
+    assert!(events.iter().any(|event| matches!(
+        event,
+        TraceEvent::AbVariantChosen {
+            prompt,
+            variant,
+            baseline,
+            rollout_pct,
+            chosen,
+            ..
+        } if prompt == "answer"
+            && variant == "variant"
+            && baseline == "baseline"
+            && (*rollout_pct - 0.0).abs() < 1e-9
+            && chosen == "baseline"
+    )));
+    assert!(events.iter().any(|event| matches!(
+        event,
+        TraceEvent::LlmCall { prompt, model, .. }
+            if prompt == "answer" && model.as_deref() == Some("baseline")
+    )));
+}
+
+#[tokio::test]
+async fn rollout_dispatch_hundred_percent_always_uses_variant() {
+    let src = r#"
+model baseline:
+    capability: basic
+
+model variant:
+    capability: expert
+
+prompt answer(q: String) -> String:
+    rollout 100% variant, else baseline
+    "Answer {q}."
+
+agent run(q: String) -> String:
+    return answer(q)
+"#;
+    let ir = ir_of(src);
+    let trace_dir = std::env::temp_dir().join(format!(
+        "corvid-vm-rollout-hundred-{}",
+        corvid_runtime::now_ms()
+    ));
+    std::fs::create_dir_all(&trace_dir).unwrap();
+    let rt = Runtime::builder()
+        .tracer(corvid_runtime::Tracer::open(&trace_dir, "run-rollout-hundred"))
+        .llm(Arc::new(MockAdapter::new("baseline").reply("answer", json!("baseline"))))
+        .llm(Arc::new(MockAdapter::new("variant").reply("answer", json!("variant"))))
+        .model(RegisteredModel::new("baseline").capability("basic"))
+        .model(RegisteredModel::new("variant").capability("expert"))
+        .rollout_seed(42)
+        .default_model("baseline")
+        .build();
+
+    let v = run_agent(&ir, "run", vec![Value::String(Arc::from("x"))], &rt)
+        .await
+        .expect("run");
+    assert_eq!(v, Value::String(Arc::from("variant")));
+    drop(rt);
+
+    let body = std::fs::read_to_string(trace_dir.join("run-rollout-hundred.jsonl"))
+        .expect("trace file");
+    let events: Vec<TraceEvent> = body
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| serde_json::from_str(line).expect("valid trace event"))
+        .collect();
+    assert!(events.iter().any(|event| matches!(
+        event,
+        TraceEvent::AbVariantChosen {
+            rollout_pct,
+            chosen,
+            ..
+        } if (*rollout_pct - 100.0).abs() < 1e-9 && chosen == "variant"
+    )));
+    assert!(events.iter().any(|event| matches!(
+        event,
+        TraceEvent::LlmCall { prompt, model, .. }
+            if prompt == "answer" && model.as_deref() == Some("variant")
+    )));
+}
+
+#[tokio::test]
+async fn rollout_dispatch_is_stable_for_same_seed_across_restarts() {
+    let src = r#"
+model baseline:
+    capability: basic
+
+model variant:
+    capability: expert
+
+prompt answer(q: String) -> String:
+    rollout 35% variant, else baseline
+    "Answer {q}."
+
+agent run(q: String) -> String:
+    return answer(q)
+"#;
+    let ir = ir_of(src);
+
+    async fn run_sequence(
+        ir: &corvid_ir::IrFile,
+        seed: u64,
+    ) -> Vec<String> {
+        let rt = Runtime::builder()
+            .llm(Arc::new(MockAdapter::new("baseline").reply("answer", json!("baseline"))))
+            .llm(Arc::new(MockAdapter::new("variant").reply("answer", json!("variant"))))
+            .model(RegisteredModel::new("baseline").capability("basic"))
+            .model(RegisteredModel::new("variant").capability("expert"))
+            .rollout_seed(seed)
+            .default_model("baseline")
+            .build();
+
+        let mut out = Vec::new();
+        for _ in 0..8 {
+            let value = run_agent(ir, "run", vec![Value::String(Arc::from("x"))], &rt)
+                .await
+                .expect("run");
+            match value {
+                Value::String(s) => out.push(s.to_string()),
+                other => panic!("expected string result, got {other:?}"),
+            }
+        }
+        out
+    }
+
+    let first = run_sequence(&ir, 1337).await;
+    let second = run_sequence(&ir, 1337).await;
+    assert_eq!(first, second);
+}
+
+#[tokio::test]
+async fn ensemble_dispatch_uses_majority_winner_and_emits_vote() {
+    let src = r#"
+model a:
+    capability: basic
+
+model b:
+    capability: standard
+
+model c:
+    capability: expert
+
+prompt answer(q: String) -> String:
+    ensemble [a, b, c] vote majority
+    "Answer {q}."
+
+agent run(q: String) -> String:
+    return answer(q)
+"#;
+    let ir = ir_of(src);
+    let trace_dir = std::env::temp_dir().join(format!(
+        "corvid-vm-ensemble-majority-{}",
+        corvid_runtime::now_ms()
+    ));
+    std::fs::create_dir_all(&trace_dir).unwrap();
+    let rt = Runtime::builder()
+        .tracer(corvid_runtime::Tracer::open(&trace_dir, "run-ensemble-majority"))
+        .llm(Arc::new(MockAdapter::new("a").reply("answer", json!("alpha"))))
+        .llm(Arc::new(MockAdapter::new("b").reply("answer", json!("alpha"))))
+        .llm(Arc::new(MockAdapter::new("c").reply("answer", json!("beta"))))
+        .model(RegisteredModel::new("a").capability("basic"))
+        .model(RegisteredModel::new("b").capability("standard"))
+        .model(RegisteredModel::new("c").capability("expert"))
+        .default_model("a")
+        .build();
+
+    let value = run_agent(&ir, "run", vec![Value::String(Arc::from("x"))], &rt)
+        .await
+        .expect("run");
+    match value {
+        Value::Grounded(g) => {
+            assert_eq!(g.inner.get(), Value::String(Arc::from("alpha")));
+            assert!((g.confidence - (2.0 / 3.0)).abs() < 1e-9);
+        }
+        other => panic!("expected grounded majority winner, got {other:?}"),
+    }
+    drop(rt);
+
+    let body = std::fs::read_to_string(trace_dir.join("run-ensemble-majority.jsonl"))
+        .expect("trace file");
+    let events: Vec<TraceEvent> = body
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| serde_json::from_str(line).expect("valid trace event"))
+        .collect();
+    assert!(events.iter().any(|event| matches!(
+        event,
+        TraceEvent::EnsembleVote {
+            prompt,
+            members,
+            results,
+            winner,
+            agreement_rate,
+            strategy,
+            ..
+        } if prompt == "answer"
+            && members == &vec!["a".to_string(), "b".to_string(), "c".to_string()]
+            && results == &vec!["alpha".to_string(), "alpha".to_string(), "beta".to_string()]
+            && winner == "alpha"
+            && (*agreement_rate - (2.0 / 3.0)).abs() < 1e-9
+            && strategy == "majority"
+    )));
+}
+
+#[tokio::test]
+async fn ensemble_dispatch_breaks_ties_alphabetically() {
+    let src = r#"
+model a:
+    capability: basic
+
+model b:
+    capability: standard
+
+prompt answer(q: String) -> String:
+    ensemble [a, b] vote majority
+    "Answer {q}."
+
+agent run(q: String) -> String:
+    return answer(q)
+"#;
+    let ir = ir_of(src);
+    let rt = Runtime::builder()
+        .llm(Arc::new(MockAdapter::new("a").reply("answer", json!("zulu"))))
+        .llm(Arc::new(MockAdapter::new("b").reply("answer", json!("alpha"))))
+        .model(RegisteredModel::new("a").capability("basic"))
+        .model(RegisteredModel::new("b").capability("standard"))
+        .default_model("a")
+        .build();
+
+    let value = run_agent(&ir, "run", vec![Value::String(Arc::from("x"))], &rt)
+        .await
+        .expect("run");
+    match value {
+        Value::Grounded(g) => {
+            assert_eq!(g.inner.get(), Value::String(Arc::from("alpha")));
+            assert!((g.confidence - 0.5).abs() < 1e-9);
+        }
+        other => panic!("expected grounded alphabetical tie-break winner, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn ensemble_dispatch_charges_sum_of_member_costs() {
+    let src = r#"
+model a:
+    capability: basic
+
+model b:
+    capability: standard
+
+model c:
+    capability: expert
+
+prompt answer(q: String) -> String:
+    ensemble [a, b, c] vote majority
+    "Answer {q}."
+
+@budget($0.50)
+agent run(q: String) -> String:
+    return answer(q)
+"#;
+    let ir = ir_of(src);
+    let rt = Runtime::builder()
+        .llm(Arc::new(MockAdapter::new("a").reply_with_usage(
+            "answer",
+            json!("alpha"),
+            TokenUsage {
+                prompt_tokens: 1,
+                completion_tokens: 1,
+                total_tokens: 2,
+            },
+        )))
+        .llm(Arc::new(MockAdapter::new("b").reply_with_usage(
+            "answer",
+            json!("alpha"),
+            TokenUsage {
+                prompt_tokens: 1,
+                completion_tokens: 1,
+                total_tokens: 2,
+            },
+        )))
+        .llm(Arc::new(MockAdapter::new("c").reply_with_usage(
+            "answer",
+            json!("beta"),
+            TokenUsage {
+                prompt_tokens: 1,
+                completion_tokens: 1,
+                total_tokens: 2,
+            },
+        )))
+        .model(
+            RegisteredModel::new("a")
+                .capability("basic")
+                .cost_per_token_in(0.1)
+                .cost_per_token_out(0.1),
+        )
+        .model(
+            RegisteredModel::new("b")
+                .capability("standard")
+                .cost_per_token_in(0.1)
+                .cost_per_token_out(0.1),
+        )
+        .model(
+            RegisteredModel::new("c")
+                .capability("expert")
+                .cost_per_token_in(0.1)
+                .cost_per_token_out(0.1),
+        )
+        .default_model("a")
+        .build();
+
+    let err = run_agent(&ir, "run", vec![Value::String(Arc::from("x"))], &rt)
+        .await
+        .unwrap_err();
+    match err.kind {
+        InterpErrorKind::BudgetExceeded { budget, used } => {
+            assert!((budget - 0.50).abs() < 1e-9);
+            assert!((used - 0.60).abs() < 1e-9);
+        }
+        other => panic!("expected BudgetExceeded, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn adversarial_pipeline_returns_adjudicator_result_and_emits_completion() {
+    let src = r#"
+type Verdict:
+    contradiction: Bool
+    rationale: String
+
+prompt propose_answer(q: String) -> String:
+    "Answer: {q}"
+
+prompt critique(proposed: String) -> String:
+    "Flaws in: {proposed}"
+
+prompt adjudicate_fn(proposed: String, flaws: String) -> Verdict:
+    "Verdict"
+
+prompt verify(q: String) -> Verdict:
+    adversarial:
+        propose: propose_answer
+        challenge: critique
+        adjudicate: adjudicate_fn
+    "Verify"
+
+agent run(q: String) -> Verdict:
+    return verify(q)
+"#;
+    let ir = ir_of(src);
+    let trace_dir = std::env::temp_dir().join(format!(
+        "corvid-vm-adversarial-ok-{}",
+        corvid_runtime::now_ms()
+    ));
+    std::fs::create_dir_all(&trace_dir).unwrap();
+    let rt = Runtime::builder()
+        .tracer(corvid_runtime::Tracer::open(&trace_dir, "run-adversarial-ok"))
+        .llm(Arc::new(
+            MockAdapter::new("mock-1")
+                .reply("propose_answer", json!("draft"))
+                .reply("critique", json!("needs citations"))
+                .reply(
+                    "adjudicate_fn",
+                    json!({"contradiction": false, "rationale": "accepted"}),
+                ),
+        ))
+        .default_model("mock-1")
+        .build();
+
+    let value = run_agent(&ir, "run", vec![Value::String(Arc::from("q"))], &rt)
+        .await
+        .expect("run");
+    match value {
+        Value::Struct(s) => {
+            assert_eq!(s.type_name(), "Verdict");
+            assert_eq!(s.get_field("contradiction").unwrap(), Value::Bool(false));
+            assert_eq!(
+                s.get_field("rationale").unwrap(),
+                Value::String(Arc::from("accepted"))
+            );
+        }
+        other => panic!("expected Verdict struct, got {other:?}"),
+    }
+    drop(rt);
+
+    let body = std::fs::read_to_string(trace_dir.join("run-adversarial-ok.jsonl"))
+        .expect("trace file");
+    let events: Vec<TraceEvent> = body
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| serde_json::from_str(line).expect("valid trace event"))
+        .collect();
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| matches!(event, TraceEvent::LlmCall { .. }))
+            .count(),
+        3
+    );
+    assert!(events.iter().any(|event| matches!(
+        event,
+        TraceEvent::AdversarialPipelineCompleted {
+            prompt,
+            contradiction,
+            ..
+        } if prompt == "verify" && !contradiction
+    )));
+    assert!(!events.iter().any(|event| matches!(
+        event,
+        TraceEvent::AdversarialContradiction { .. }
+    )));
+}
+
+#[tokio::test]
+async fn adversarial_pipeline_emits_contradiction_event_when_flagged() {
+    let src = r#"
+type Verdict:
+    contradiction: Bool
+    rationale: String
+
+prompt propose_answer(q: String) -> String:
+    "Answer: {q}"
+
+prompt critique(proposed: String) -> String:
+    "Flaws in: {proposed}"
+
+prompt adjudicate_fn(proposed: String, flaws: String) -> Verdict:
+    "Verdict"
+
+prompt verify(q: String) -> Verdict:
+    adversarial:
+        propose: propose_answer
+        challenge: critique
+        adjudicate: adjudicate_fn
+    "Verify"
+
+agent run(q: String) -> Verdict:
+    return verify(q)
+"#;
+    let ir = ir_of(src);
+    let trace_dir = std::env::temp_dir().join(format!(
+        "corvid-vm-adversarial-contradiction-{}",
+        corvid_runtime::now_ms()
+    ));
+    std::fs::create_dir_all(&trace_dir).unwrap();
+    let rt = Runtime::builder()
+        .tracer(corvid_runtime::Tracer::open(
+            &trace_dir,
+            "run-adversarial-contradiction",
+        ))
+        .llm(Arc::new(
+            MockAdapter::new("mock-1")
+                .reply("propose_answer", json!("draft"))
+                .reply("critique", json!("fatal flaw"))
+                .reply(
+                    "adjudicate_fn",
+                    json!({"contradiction": true, "rationale": "reject"}),
+                ),
+        ))
+        .default_model("mock-1")
+        .build();
+
+    run_agent(&ir, "run", vec![Value::String(Arc::from("q"))], &rt)
+        .await
+        .expect("run");
+    drop(rt);
+
+    let body = std::fs::read_to_string(
+        trace_dir.join("run-adversarial-contradiction.jsonl"),
+    )
+    .expect("trace file");
+    let events: Vec<TraceEvent> = body
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| serde_json::from_str(line).expect("valid trace event"))
+        .collect();
+    assert!(events.iter().any(|event| matches!(
+        event,
+        TraceEvent::AdversarialContradiction {
+            prompt,
+            proposed,
+            challenge,
+            verdict,
+            ..
+        } if prompt == "verify"
+            && proposed == "draft"
+            && challenge == "fatal flaw"
+            && verdict == &json!({"contradiction": true, "rationale": "reject"})
+    )));
+    assert!(events.iter().any(|event| matches!(
+        event,
+        TraceEvent::AdversarialPipelineCompleted {
+            prompt,
+            contradiction,
+            ..
+        } if prompt == "verify" && *contradiction
+    )));
+}
+
+#[tokio::test]
+async fn adversarial_pipeline_halts_on_budget_before_adjudicator() {
+    let src = r#"
+type Verdict:
+    contradiction: Bool
+    rationale: String
+
+prompt propose_answer(q: String) -> String:
+    "Answer: {q}"
+
+prompt critique(proposed: String) -> String:
+    "Flaws in: {proposed}"
+
+prompt adjudicate_fn(proposed: String, flaws: String) -> Verdict:
+    "Verdict"
+
+prompt verify(q: String) -> Verdict:
+    adversarial:
+        propose: propose_answer
+        challenge: critique
+        adjudicate: adjudicate_fn
+    "Verify"
+
+@budget($0.50)
+agent run(q: String) -> Verdict:
+    return verify(q)
+"#;
+    let ir = ir_of(src);
+    let trace_dir = std::env::temp_dir().join(format!(
+        "corvid-vm-adversarial-budget-{}",
+        corvid_runtime::now_ms()
+    ));
+    std::fs::create_dir_all(&trace_dir).unwrap();
+    let rt = Runtime::builder()
+        .tracer(corvid_runtime::Tracer::open(
+            &trace_dir,
+            "run-adversarial-budget",
+        ))
+        .llm(Arc::new(
+            MockAdapter::new("mock-1")
+                .reply_with_usage(
+                    "propose_answer",
+                    json!("draft"),
+                    TokenUsage {
+                        prompt_tokens: 1,
+                        completion_tokens: 1,
+                        total_tokens: 2,
+                    },
+                )
+                .reply_with_usage(
+                    "critique",
+                    json!("fatal flaw"),
+                    TokenUsage {
+                        prompt_tokens: 1,
+                        completion_tokens: 1,
+                        total_tokens: 2,
+                    },
+                )
+                .reply_with_usage(
+                    "adjudicate_fn",
+                    json!({"contradiction": true, "rationale": "reject"}),
+                    TokenUsage {
+                        prompt_tokens: 1,
+                        completion_tokens: 1,
+                        total_tokens: 2,
+                    },
+                ),
+        ))
+        .model(
+            RegisteredModel::new("mock-1")
+                .capability("basic")
+                .cost_per_token_in(0.15)
+                .cost_per_token_out(0.15),
+        )
+        .default_model("mock-1")
+        .build();
+
+    let err = run_agent(&ir, "run", vec![Value::String(Arc::from("q"))], &rt)
+        .await
+        .unwrap_err();
+    match err.kind {
+        InterpErrorKind::BudgetExceeded { budget, used } => {
+            assert!((budget - 0.50).abs() < 1e-9);
+            assert!((used - 0.60).abs() < 1e-9);
+        }
+        other => panic!("expected BudgetExceeded, got {other:?}"),
+    }
+    drop(rt);
+
+    let body = std::fs::read_to_string(trace_dir.join("run-adversarial-budget.jsonl"))
+        .expect("trace file");
+    let events: Vec<TraceEvent> = body
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| serde_json::from_str(line).expect("valid trace event"))
+        .collect();
+    let llm_calls: Vec<_> = events
+        .iter()
+        .filter_map(|event| match event {
+            TraceEvent::LlmCall { prompt, .. } => Some(prompt.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(llm_calls, vec!["propose_answer".to_string(), "critique".to_string()]);
+    assert!(!events.iter().any(|event| matches!(
+        event,
+        TraceEvent::AdversarialPipelineCompleted { .. }
+    )));
+}
+
+#[tokio::test]
+async fn agent_to_agent_call_recurses() {
+    let src = "\
+agent inner(n: Int) -> Int:
+    return n + 1
+
+agent outer(n: Int) -> Int:
+    return inner(n) + inner(n)
+";
+    let ir = ir_of(src);
+    let rt = empty_runtime();
+    let v = run_agent(&ir, "outer", vec![Value::Int(10)], &rt).await.expect("run");
+    assert_eq!(v, Value::Int(22));
+}
+
+#[tokio::test]
+async fn span_is_preserved_in_errors() {
+    let ir = ir_of("agent bad() -> Int:\n    return 10 / 0\n");
+    let rt = empty_runtime();
+    let err = run_agent(&ir, "bad", vec![], &rt).await.unwrap_err();
+    assert_ne!(err.span, Span::new(0, 0));
+}
