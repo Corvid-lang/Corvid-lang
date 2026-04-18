@@ -510,6 +510,7 @@ agent relay(ctx: String) -> Stream<String>:
                 progressive: Vec::new(),
                 rollout: None,
                 ensemble: None,
+                adversarial: None,
                 span: sp,
             }],
             agents: vec![IrAgent {

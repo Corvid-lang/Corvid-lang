@@ -118,6 +118,11 @@ pub struct IrPrompt {
     /// dispatches to every model in `spec.models` concurrently and
     /// applies `spec.vote` to pick the winner.
     pub ensemble: Option<IrEnsembleSpec>,
+    /// Phase 20h slice G: three-stage propose / challenge /
+    /// adjudicate pipeline. Runtime dispatches sequentially —
+    /// adjudicator's output is the prompt's result. Prior stages'
+    /// outputs are available as reserved template variables.
+    pub adversarial: Option<IrAdversarialSpec>,
     pub span: Span,
 }
 
@@ -179,6 +184,19 @@ pub struct IrEnsembleMember {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IrVoteStrategy {
     Majority,
+}
+
+/// Lowered adversarial pipeline. Runtime runs proposer →
+/// challenger → adjudicator; the adjudicator's output is returned.
+#[derive(Debug, Clone)]
+pub struct IrAdversarialSpec {
+    pub proposer_def_id: DefId,
+    pub proposer_name: String,
+    pub challenger_def_id: DefId,
+    pub challenger_name: String,
+    pub adjudicator_def_id: DefId,
+    pub adjudicator_name: String,
+    pub span: Span,
 }
 
 /// An agent declaration with a typed body.

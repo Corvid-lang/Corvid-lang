@@ -8,13 +8,13 @@
 use crate::errors::{ParseError, ParseErrorKind};
 use crate::token::{TokKind, Token};
 use corvid_ast::{
-    AgentDecl, Backoff, BackpressurePolicy, BinaryOp, Block, Decl, DimensionDecl,
-    DimensionValue, Effect, EffectConstraint, EffectDecl, EffectRef, EffectRow, EnsembleSpec,
-    EvalAssert, EvalDecl, Expr, ExtendDecl, ExtendMethod, ExtendMethodKind, Field, File, Ident,
-    ImportDecl, ImportSource, Literal, ModelDecl, ModelField, Param, ProgressiveChain,
-    ProgressiveStage, PromptDecl, PromptStreamSettings, RolloutSpec, RouteArm, RoutePattern,
-    RouteTable, Span, Stmt, ToolDecl, TypeDecl, TypeRef, UnaryOp, Visibility, VoteStrategy,
-    WeakEffect, WeakEffectRow,
+    AdversarialSpec, AgentDecl, Backoff, BackpressurePolicy, BinaryOp, Block, Decl,
+    DimensionDecl, DimensionValue, Effect, EffectConstraint, EffectDecl, EffectRef, EffectRow,
+    EnsembleSpec, EvalAssert, EvalDecl, Expr, ExtendDecl, ExtendMethod, ExtendMethodKind, Field,
+    File, Ident, ImportDecl, ImportSource, Literal, ModelDecl, ModelField, Param,
+    ProgressiveChain, ProgressiveStage, PromptDecl, PromptStreamSettings, RolloutSpec, RouteArm,
+    RoutePattern, RouteTable, Span, Stmt, ToolDecl, TypeDecl, TypeRef, UnaryOp, Visibility,
+    VoteStrategy, WeakEffect, WeakEffectRow,
 };
 
 #[derive(Debug, Clone, PartialEq)]
@@ -1416,12 +1416,33 @@ impl<'a> Parser<'a> {
                 return Err(ParseError {
                     kind: ParseErrorKind::UnexpectedToken {
                         got: "`ensemble` after another dispatch clause".into(),
-                        expected: "a prompt template string (a prompt uses exactly one of `route:`, `progressive:`, `rollout`, or `ensemble`)".into(),
+                        expected: "a prompt template string (a prompt uses exactly one of `route:`, `progressive:`, `rollout`, `ensemble`, or `adversarial:`)".into(),
                     },
                     span: self.peek_span(),
                 });
             }
             Some(self.parse_prompt_ensemble_clause()?)
+        } else {
+            None
+        };
+
+        // Phase 20h slice G: optional `adversarial:` block.
+        // Mutually exclusive with every other dispatch clause.
+        let adversarial = if matches!(self.peek(), TokKind::KwAdversarial) {
+            if route.is_some()
+                || progressive.is_some()
+                || rollout.is_some()
+                || ensemble.is_some()
+            {
+                return Err(ParseError {
+                    kind: ParseErrorKind::UnexpectedToken {
+                        got: "`adversarial:` after another dispatch clause".into(),
+                        expected: "a prompt template string (a prompt uses exactly one of `route:`, `progressive:`, `rollout`, `ensemble`, or `adversarial:`)".into(),
+                    },
+                    span: self.peek_span(),
+                });
+            }
+            Some(self.parse_prompt_adversarial_clause()?)
         } else {
             None
         };
@@ -1464,8 +1485,78 @@ impl<'a> Parser<'a> {
             progressive,
             rollout,
             ensemble,
+            adversarial,
             span: start.merge(end),
         })
+    }
+
+    /// Parse:
+    ///
+    ///     adversarial:
+    ///         propose: <model>
+    ///         challenge: <model>
+    ///         adjudicate: <model>
+    ///
+    /// Every stage is required. Caller has already positioned at
+    /// the `adversarial` keyword.
+    fn parse_prompt_adversarial_clause(
+        &mut self,
+    ) -> Result<AdversarialSpec, ParseError> {
+        let start = self.peek_span();
+        self.bump(); // adversarial
+        self.expect(TokKind::Colon, "`:` after `adversarial`")?;
+        self.expect_newline()?;
+
+        if !matches!(self.peek(), TokKind::Indent) {
+            return Err(ParseError {
+                kind: ParseErrorKind::ExpectedBlock,
+                span: self.peek_span(),
+            });
+        }
+        self.bump(); // Indent
+
+        self.skip_newlines();
+        let proposer = self.parse_adversarial_stage(TokKind::KwPropose, "propose")?;
+        self.skip_newlines();
+        let challenger =
+            self.parse_adversarial_stage(TokKind::KwChallenge, "challenge")?;
+        self.skip_newlines();
+        let adjudicator =
+            self.parse_adversarial_stage(TokKind::KwAdjudicate, "adjudicate")?;
+        self.skip_newlines();
+
+        let end = self.peek_span();
+        if matches!(self.peek(), TokKind::Dedent) {
+            self.bump();
+        }
+
+        Ok(AdversarialSpec {
+            proposer,
+            challenger,
+            adjudicator,
+            span: start.merge(end),
+        })
+    }
+
+    fn parse_adversarial_stage(
+        &mut self,
+        expected_kw: TokKind,
+        label: &str,
+    ) -> Result<Ident, ParseError> {
+        if !matches!(self.peek(), k if k == &expected_kw) {
+            return Err(ParseError {
+                kind: ParseErrorKind::UnexpectedToken {
+                    got: describe_token(self.peek()),
+                    expected: format!("`{label}:` stage in adversarial block"),
+                },
+                span: self.peek_span(),
+            });
+        }
+        self.bump(); // propose / challenge / adjudicate
+        self.expect(TokKind::Colon, "`:` after adversarial stage")?;
+        let (name, span) = self.expect_ident()?;
+        self.expect_newline()?;
+        Ok(Ident::new(name, span))
     }
 
     /// Parse `ensemble [<m1>, <m2>, <m3>] vote <strategy>`. Caller has
@@ -4178,6 +4269,111 @@ model b:
 
 prompt answer(q: String) -> String:
     ensemble [a, b] vote plurality
+    \"Answer\"
+";
+        let (_file, errs) = parse_file_errs(src);
+        assert!(!errs.is_empty());
+    }
+
+    // -------------------- Phase 20h slice G: `adversarial:` --------------------
+
+    #[test]
+    fn parses_basic_adversarial_block() {
+        let src = "\
+model haiku:
+    capability: basic
+
+model sonnet:
+    capability: standard
+
+model opus:
+    capability: expert
+
+prompt verify(q: String) -> String:
+    adversarial:
+        propose: opus
+        challenge: sonnet
+        adjudicate: opus
+    \"Answer\"
+";
+        let file = parse_file_src(src);
+        let p = file
+            .decls
+            .iter()
+            .find_map(|d| match d {
+                Decl::Prompt(p) => Some(p),
+                _ => None,
+            })
+            .unwrap();
+        let spec = p.adversarial.as_ref().expect("adversarial");
+        assert_eq!(spec.proposer.name, "opus");
+        assert_eq!(spec.challenger.name, "sonnet");
+        assert_eq!(spec.adjudicator.name, "opus");
+    }
+
+    #[test]
+    fn rejects_adversarial_missing_stage() {
+        let src = "\
+model a:
+    capability: basic
+
+model b:
+    capability: expert
+
+prompt verify(q: String) -> String:
+    adversarial:
+        propose: a
+        challenge: b
+    \"Answer\"
+";
+        let (_file, errs) = parse_file_errs(src);
+        assert!(!errs.is_empty());
+    }
+
+    #[test]
+    fn rejects_adversarial_stages_out_of_order() {
+        let src = "\
+model a:
+    capability: basic
+
+model b:
+    capability: expert
+
+model c:
+    capability: expert
+
+prompt verify(q: String) -> String:
+    adversarial:
+        challenge: b
+        propose: a
+        adjudicate: c
+    \"Answer\"
+";
+        let (_file, errs) = parse_file_errs(src);
+        assert!(
+            !errs.is_empty(),
+            "stages must appear in canonical order: propose, challenge, adjudicate"
+        );
+    }
+
+    #[test]
+    fn rejects_adversarial_combined_with_ensemble() {
+        let src = "\
+model a:
+    capability: basic
+
+model b:
+    capability: basic
+
+model c:
+    capability: basic
+
+prompt verify(q: String) -> String:
+    ensemble [a, b] vote majority
+    adversarial:
+        propose: a
+        challenge: b
+        adjudicate: c
     \"Answer\"
 ";
         let (_file, errs) = parse_file_errs(src);

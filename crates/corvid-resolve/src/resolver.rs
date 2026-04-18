@@ -419,6 +419,19 @@ impl Resolver {
                 }
             }
         }
+        // Phase 20h slice G: resolve the three `adversarial:` stages.
+        if let Some(spec) = &p.adversarial {
+            for ident in [&spec.proposer, &spec.challenger, &spec.adjudicator] {
+                if let Some(def_id) = self.symbols.lookup_def(&ident.name) {
+                    self.bindings.insert(ident.span, Binding::Decl(def_id));
+                } else {
+                    self.errors.push(ResolveError {
+                        kind: ResolveErrorKind::UndefinedName(ident.name.clone()),
+                        span: ident.span,
+                    });
+                }
+            }
+        }
         self.pop_scope();
     }
 

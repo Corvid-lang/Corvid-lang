@@ -79,6 +79,15 @@ pub enum TokKind {
     /// `vote` — names the voting strategy inside an `ensemble`
     /// clause. Currently only `majority` is supported.
     KwVote,
+    /// `adversarial:` — block opening a three-stage
+    /// propose / challenge / adjudicate pipeline.
+    KwAdversarial,
+    /// `propose:` — stage 1 of an adversarial pipeline.
+    KwPropose,
+    /// `challenge:` — stage 2 of an adversarial pipeline.
+    KwChallenge,
+    /// `adjudicate:` — stage 3 of an adversarial pipeline.
+    KwAdjudicate,
 
     // --- keywords: control flow ---
     KwIf,
@@ -180,6 +189,10 @@ impl TokKind {
             "rollout" => TokKind::KwRollout,
             "ensemble" => TokKind::KwEnsemble,
             "vote" => TokKind::KwVote,
+            "adversarial" => TokKind::KwAdversarial,
+            "propose" => TokKind::KwPropose,
+            "challenge" => TokKind::KwChallenge,
+            "adjudicate" => TokKind::KwAdjudicate,
             "if" => TokKind::KwIf,
             "else" => TokKind::KwElse,
             "for" => TokKind::KwFor,

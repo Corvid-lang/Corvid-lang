@@ -616,6 +616,33 @@ impl<'a> Checker<'a> {
                 }
             }
         }
+
+        // Phase 20h slice G: each adversarial stage must resolve to a
+        // `Decl::Model`. Reuse `RouteTargetNotModel` with the stage
+        // role in the target name so the message stays diagnostic.
+        if let Some(spec) = &p.adversarial {
+            for (role, ident) in [
+                ("propose", &spec.proposer),
+                ("challenge", &spec.challenger),
+                ("adjudicate", &spec.adjudicator),
+            ] {
+                if let Some(Binding::Decl(def_id)) = self.bindings.get(&ident.span) {
+                    let def_id = *def_id;
+                    let entry = self.symbols.get(def_id);
+                    if entry.kind != corvid_resolve::DeclKind::Model {
+                        let got = format!("{:?}", entry.kind).to_lowercase();
+                        self.errors.push(TypeError::new(
+                            TypeErrorKind::RouteTargetNotModel {
+                                prompt: p.name.name.clone(),
+                                target: format!("{role} {}", ident.name),
+                                got_kind: got,
+                            },
+                            ident.span,
+                        ));
+                    }
+                }
+            }
+        }
     }
 
     fn check_eval(&mut self, e: &EvalDecl) {

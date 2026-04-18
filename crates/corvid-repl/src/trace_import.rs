@@ -183,6 +183,7 @@ pub fn build_import(mocks: &TraceMocks) -> TraceImportResult {
             progressive: None,
             rollout: None,
             ensemble: None,
+            adversarial: None,
             span: sp,
         }));
     }

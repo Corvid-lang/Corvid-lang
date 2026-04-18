@@ -257,6 +257,28 @@ pub struct PromptDecl {
     /// `rollout`. See Phase 20h slice F.
     #[serde(default)]
     pub ensemble: Option<EnsembleSpec>,
+    /// `adversarial:` block — a three-stage propose / challenge /
+    /// adjudicate pipeline. Each stage runs sequentially against a
+    /// different model; the adjudicator's output is returned.
+    /// Mutually exclusive with every other dispatch clause.
+    /// See Phase 20h slice G.
+    #[serde(default)]
+    pub adversarial: Option<AdversarialSpec>,
+    pub span: Span,
+}
+
+/// A three-stage adversarial validation pipeline.
+///
+/// At runtime the proposer produces a candidate, the challenger
+/// inspects it for flaws, and the adjudicator returns the final
+/// verdict given both prior outputs. Each stage dispatches to its
+/// own model so the adjudicator is structurally distinct from the
+/// proposer — the type system enforces three positional stages.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AdversarialSpec {
+    pub proposer: Ident,
+    pub challenger: Ident,
+    pub adjudicator: Ident,
     pub span: Span,
 }
 

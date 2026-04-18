@@ -2143,6 +2143,57 @@ prompt answer(q: String) -> String:
         );
     }
 
+    // --- Phase 20h slice G: adversarial validation ---
+
+    #[test]
+    fn adversarial_with_valid_models_passes() {
+        let src = "\
+model haiku:
+    capability: basic
+
+model opus:
+    capability: expert
+
+prompt verify(q: String) -> String:
+    adversarial:
+        propose: opus
+        challenge: haiku
+        adjudicate: opus
+    \"Verify\"
+";
+        let c = check(src);
+        assert!(c.errors.is_empty(), "errors: {:?}", c.errors);
+    }
+
+    #[test]
+    fn adversarial_stage_pointing_at_non_model_is_rejected() {
+        let src = "\
+tool not_a_model(q: String) -> String
+
+model real_a:
+    capability: expert
+
+model real_b:
+    capability: expert
+
+prompt verify(q: String) -> String:
+    adversarial:
+        propose: not_a_model
+        challenge: real_a
+        adjudicate: real_b
+    \"Verify\"
+";
+        let c = check(src);
+        assert!(
+            c.errors.iter().any(|e| matches!(
+                &e.kind,
+                TypeErrorKind::RouteTargetNotModel { target, .. } if target.contains("not_a_model")
+            )),
+            "expected RouteTargetNotModel for non-model stage, got {:?}",
+            c.errors
+        );
+    }
+
     #[test]
     fn rollout_percent_out_of_range_is_rejected() {
         let src = "\

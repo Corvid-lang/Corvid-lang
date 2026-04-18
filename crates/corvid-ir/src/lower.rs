@@ -351,6 +351,20 @@ impl<'a> Lowerer<'a> {
                 span: spec.span,
             }
         });
+        let adversarial = p.adversarial.as_ref().and_then(|spec| {
+            let proposer = self.symbols.lookup_def(&spec.proposer.name)?;
+            let challenger = self.symbols.lookup_def(&spec.challenger.name)?;
+            let adjudicator = self.symbols.lookup_def(&spec.adjudicator.name)?;
+            Some(IrAdversarialSpec {
+                proposer_def_id: proposer,
+                proposer_name: spec.proposer.name.clone(),
+                challenger_def_id: challenger,
+                challenger_name: spec.challenger.name.clone(),
+                adjudicator_def_id: adjudicator,
+                adjudicator_name: spec.adjudicator.name.clone(),
+                span: spec.span,
+            })
+        });
         IrPrompt {
             id,
             name: p.name.name.clone(),
@@ -369,6 +383,7 @@ impl<'a> Lowerer<'a> {
             progressive,
             rollout,
             ensemble,
+            adversarial,
             span: p.span,
         }
     }
