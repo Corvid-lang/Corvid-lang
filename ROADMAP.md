@@ -521,14 +521,26 @@ The invention: confidence isn't a number — it's a dynamic authorization gate. 
 - [ ] `calibrated` modifier on prompts: runtime accumulates accuracy statistics, flags miscalibrated models when self-reported confidence drifts from actual accuracy.
 - [ ] REPL integration: step-through shows confidence at each step. Confidence gates show threshold vs. actual when they fire.
 
-#### Slice 20f — `Stream<T>` + latency dimension (~2 weeks)
+#### Slice 20f — `Stream<T>` + latency dimension + streaming effect integration (~3 weeks)
 
-Streaming is a latency class. `latency: streaming` is a dimension value, not a separate type system concept.
+Streaming in Corvid isn't just async iteration — streams are **first-class participants in the dimensional effect system**. Every dimension (cost, confidence, provenance, trust, latency) flows through stream types. No other language can do this because no other language has dimensional effects.
 
+**Foundation:**
 - [ ] `Stream<T>` as compiler-known stdlib type. Prompts + tools can declare streaming returns.
 - [ ] `for x in stream:` consumes the stream. `yield` in agent bodies produces streams.
-- [ ] `latency: streaming` dimension on declarations that return streams.
-- [ ] Integrates with the native async runtime — streams back-pressure via Tokio channels.
+- [ ] `latency: streaming(backpressure: bounded(N) | unbounded)` dimension value.
+- [ ] Tokio `mpsc::Receiver` backing; agent bodies with `yield` run as async tasks.
+
+**Streaming effect integration (the inventions):**
+- [ ] **Live cost termination mid-stream.** `@budget($1.00)` on an agent calling a streaming prompt tracks cumulative cost per yielded token. If the budget is exceeded while the stream is still producing, the runtime terminates and raises `BudgetExceeded`. No framework terminates streams by accumulated cost.
+- [ ] **Per-element provenance in `Stream<Grounded<T>>`.** Each yielded element carries its own `ProvenanceChain`. Aggregate stream provenance is the union. Step-through REPL shows provenance building up in real time.
+- [ ] **`try ... retry` over streams — stream-start semantics.** Retries fire at stream-open, not per-element. Transient connection failures retry with backoff; mid-stream errors propagate.
+- [ ] **Confidence-floor termination.** `with min_confidence 0.80` on a streaming prompt terminates the stream if streaming confidence drops below threshold, raising `ConfidenceFloorBreached`.
+- [ ] **Mid-stream model escalation** (paired with 20h). On confidence drop, the runtime opens a continuation stream on a stronger model, feeding the partial output as continuation context. Consumer sees seamless tokens with a `StreamUpgradeEvent` in the trace. No framework has this.
+- [ ] **Progressive structured types: `Stream<Partial<T>>`.** Compiler-known `Partial<T>` where each field is `Complete(V)` or `Streaming`. Users access fields the moment they're complete without waiting for the full response. Type-level progressive structure.
+- [ ] **Resumption tokens.** Cancellation produces a typed `resume_token` capturing elements delivered + provider session state. `resume(prompt, token)` continues from the interruption point, using provider continuation APIs when available, local re-run with accumulated context otherwise.
+- [ ] **Declarative fan-out / fan-in.** `stream.split_by(key)` partitions a stream into sub-streams by key extractor. `merge(streams) ordered_by(policy)` combines with ordering guarantees (FIFO, sorted, fair round-robin). Compile-time type + effect checking.
+- [ ] **Backpressure propagation.** A slow consumer pulls from a producer at its consumption rate. The effect system captures this: `backpressure: pulls_from(producer_rate)`. Cross-stream coordination when streams share a trace ID.
 
 #### Slice 20g — Bypass tests + effect-system specification (~2 weeks)
 - [ ] Property-based bypass tests proving the dimensional effect checker cannot be circumvented via FFI, generics, or indirect calls. `proptest`-driven.
