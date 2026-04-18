@@ -7,11 +7,16 @@
 
 #![allow(dead_code)]
 
+pub mod effect_diff;
 mod native_ability;
 mod native_cache;
 mod render;
 pub mod spec_check;
 
+pub use effect_diff::{
+    diff_snapshots, render_effect_diff, snapshot_revision, AgentDiff, AgentSnapshot,
+    DimensionChange, EffectDiff, RevisionSnapshot,
+};
 pub use native_ability::{native_ability, NotNativeReason};
 pub use render::{render_all_pretty, render_pretty};
 pub use spec_check::{

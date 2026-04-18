@@ -22,10 +22,11 @@ use corvid_differential_verify::{
 
 #[allow(unused_imports)]
 use corvid_driver::{
-    build_native_to_disk, build_to_disk, compile, compile_with_config, load_corvid_config_for,
-    load_dotenv_walking, render_all_pretty, render_law_check_report, render_spec_report,
-    run_law_checks, run_native, run_with_target, scaffold_new, verify_spec_examples, RunTarget,
-    VerdictKind, DEFAULT_SAMPLES,
+    build_native_to_disk, build_to_disk, compile, compile_with_config, diff_snapshots,
+    load_corvid_config_for, load_dotenv_walking, render_all_pretty, render_effect_diff,
+    render_law_check_report, render_spec_report, run_law_checks, run_native, run_with_target,
+    scaffold_new, snapshot_revision, verify_spec_examples, RunTarget, VerdictKind,
+    DEFAULT_SAMPLES,
 };
 
 #[derive(Parser)]
@@ -409,13 +410,24 @@ fn cmd_test_adversarial(count: u32, model: &str) -> Result<u8> {
 // ------------------------------------------------------------
 
 fn cmd_effect_diff(before: &str, after: &str) -> Result<u8> {
-    println!("corvid effect-diff {before} {after}\n");
-    println!("Reports dimension-value drift per agent and constraints that newly");
-    println!("fire or release between the two revisions.");
-    println!();
-    println!("Implementation tracked in ROADMAP Phase 20g — diff pipeline not yet");
-    println!("wired. See docs/effects-spec/02-composition-algebra.md §9.");
-    Ok(0)
+    let before_path = PathBuf::from(before);
+    let after_path = PathBuf::from(after);
+    println!(
+        "corvid effect-diff {} -> {}\n",
+        before_path.display(),
+        after_path.display(),
+    );
+    let before_snap = snapshot_revision(&before_path)
+        .with_context(|| format!("failed to snapshot `{}`", before_path.display()))?;
+    let after_snap = snapshot_revision(&after_path)
+        .with_context(|| format!("failed to snapshot `{}`", after_path.display()))?;
+    let diff = diff_snapshots(&before_snap, &after_snap);
+    print!("{}", render_effect_diff(&diff));
+    // Exit 1 when the diff is non-empty so CI can gate on
+    // "unexpected effect-shape drift" if the user wants it.
+    let any_change =
+        !diff.added.is_empty() || !diff.removed.is_empty() || !diff.changed.is_empty();
+    Ok(if any_change { 1 } else { 0 })
 }
 
 // ------------------------------------------------------------
