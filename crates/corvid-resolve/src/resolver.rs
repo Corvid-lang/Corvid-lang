@@ -406,6 +406,19 @@ impl Resolver {
                 }
             }
         }
+        // Phase 20h slice F: resolve each `ensemble [...]` model ident.
+        if let Some(spec) = &p.ensemble {
+            for model in &spec.models {
+                if let Some(def_id) = self.symbols.lookup_def(&model.name) {
+                    self.bindings.insert(model.span, Binding::Decl(def_id));
+                } else {
+                    self.errors.push(ResolveError {
+                        kind: ResolveErrorKind::UndefinedName(model.name.clone()),
+                        span: model.span,
+                    });
+                }
+            }
+        }
         self.pop_scope();
     }
 

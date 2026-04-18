@@ -251,7 +251,40 @@ pub struct PromptDecl {
     /// `route:` and `progressive:`. See Phase 20h slice I.
     #[serde(default)]
     pub rollout: Option<RolloutSpec>,
+    /// `ensemble [m1, m2, m3] vote majority` — concurrent dispatch
+    /// to every listed model; deterministic vote picks the winner.
+    /// Mutually exclusive with `route:`, `progressive:`, and
+    /// `rollout`. See Phase 20h slice F.
+    #[serde(default)]
+    pub ensemble: Option<EnsembleSpec>,
     pub span: Span,
+}
+
+/// `ensemble` clause — concurrent voting dispatch.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct EnsembleSpec {
+    /// Models to dispatch to concurrently. Must have ≥ 2 entries;
+    /// ties are broken deterministically by the vote strategy.
+    pub models: Vec<Ident>,
+    /// Vote strategy. Currently only `Majority` is supported — see
+    /// `VoteStrategy` for future extensions.
+    pub vote: VoteStrategy,
+    pub span: Span,
+}
+
+/// Vote strategy for an ensemble. Reserved for future extension
+/// (weighted, plurality, unanimity) — slice F ships only Majority.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum VoteStrategy {
+    Majority,
+}
+
+impl VoteStrategy {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Majority => "majority",
+        }
+    }
 }
 
 /// `rollout N% <variant>, else <baseline>` — probabilistic A/B

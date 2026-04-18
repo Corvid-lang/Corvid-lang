@@ -113,6 +113,11 @@ pub struct IrPrompt {
     /// Runtime chooses per-call (deterministic or random — that's
     /// Dev B's C-rt cohort decision).
     pub rollout: Option<IrRolloutSpec>,
+    /// Phase 20h slice F: concurrent voting across multiple models.
+    /// `None` means no ensemble. `Some(spec)` means the runtime
+    /// dispatches to every model in `spec.models` concurrently and
+    /// applies `spec.vote` to pick the winner.
+    pub ensemble: Option<IrEnsembleSpec>,
     pub span: Span,
 }
 
@@ -152,6 +157,28 @@ pub struct IrRolloutSpec {
     pub baseline_def_id: DefId,
     pub baseline_name: String,
     pub span: Span,
+}
+
+/// Lowered ensemble voting spec.
+#[derive(Debug, Clone)]
+pub struct IrEnsembleSpec {
+    /// Models to dispatch to concurrently. Runtime fires them via
+    /// `tokio::join!` and applies the vote strategy to the results.
+    pub models: Vec<IrEnsembleMember>,
+    pub vote: IrVoteStrategy,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone)]
+pub struct IrEnsembleMember {
+    pub def_id: DefId,
+    pub name: String,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IrVoteStrategy {
+    Majority,
 }
 
 /// An agent declaration with a typed body.

@@ -206,6 +206,14 @@ pub enum TypeErrorKind {
         prompt: String,
         got: f64,
     },
+
+    /// An `ensemble [..]` list names the same model more than once.
+    /// Voting where two slots share a model degenerates to voting
+    /// over fewer opinions than intended.
+    EnsembleDuplicateModel {
+        prompt: String,
+        model: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -329,6 +337,9 @@ impl TypeErrorKind {
             Self::RolloutPercentOutOfRange { prompt, got } => {
                 format!("rollout percentage on prompt `{prompt}` must be in [0.0, 100.0], got `{got}`")
             }
+            Self::EnsembleDuplicateModel { prompt, model } => {
+                format!("ensemble on prompt `{prompt}` lists model `{model}` more than once")
+            }
         }
     }
 
@@ -441,6 +452,10 @@ impl TypeErrorKind {
             ),
             Self::RolloutPercentOutOfRange { .. } => Some(
                 "use a percentage between 0 and 100, e.g. `rollout 10% new_v2, else old_v1`"
+                    .into(),
+            ),
+            Self::EnsembleDuplicateModel { .. } => Some(
+                "list each ensemble model at most once; dispatch to distinct providers to get independent votes"
                     .into(),
             ),
         }

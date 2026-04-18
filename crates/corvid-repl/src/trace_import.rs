@@ -182,6 +182,7 @@ pub fn build_import(mocks: &TraceMocks) -> TraceImportResult {
             route: None,
             progressive: None,
             rollout: None,
+            ensemble: None,
             span: sp,
         }));
     }

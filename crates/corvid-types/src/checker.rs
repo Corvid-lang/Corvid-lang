@@ -581,6 +581,41 @@ impl<'a> Checker<'a> {
                 }
             }
         }
+
+        // Phase 20h slice F: every ensemble model must resolve to a
+        // `Decl::Model`. Duplicate model names in the list are flagged
+        // as `EnsembleDuplicateModel` — a vote where two slots are the
+        // same provider-model pair degenerates to voting only twice,
+        // which is almost always unintended.
+        if let Some(spec) = &p.ensemble {
+            let mut seen = std::collections::BTreeSet::new();
+            for model in &spec.models {
+                if !seen.insert(model.name.clone()) {
+                    self.errors.push(TypeError::new(
+                        TypeErrorKind::EnsembleDuplicateModel {
+                            prompt: p.name.name.clone(),
+                            model: model.name.clone(),
+                        },
+                        model.span,
+                    ));
+                }
+                if let Some(Binding::Decl(def_id)) = self.bindings.get(&model.span) {
+                    let def_id = *def_id;
+                    let entry = self.symbols.get(def_id);
+                    if entry.kind != corvid_resolve::DeclKind::Model {
+                        let got = format!("{:?}", entry.kind).to_lowercase();
+                        self.errors.push(TypeError::new(
+                            TypeErrorKind::RouteTargetNotModel {
+                                prompt: p.name.name.clone(),
+                                target: model.name.clone(),
+                                got_kind: got,
+                            },
+                            model.span,
+                        ));
+                    }
+                }
+            }
+        }
     }
 
     fn check_eval(&mut self, e: &EvalDecl) {

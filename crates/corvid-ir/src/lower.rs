@@ -329,6 +329,28 @@ impl<'a> Lowerer<'a> {
                 span: spec.span,
             })
         });
+        let ensemble = p.ensemble.as_ref().map(|spec| {
+            let members = spec
+                .models
+                .iter()
+                .filter_map(|model| {
+                    let def_id = self.symbols.lookup_def(&model.name)?;
+                    Some(IrEnsembleMember {
+                        def_id,
+                        name: model.name.clone(),
+                        span: model.span,
+                    })
+                })
+                .collect();
+            let vote = match spec.vote {
+                corvid_ast::VoteStrategy::Majority => IrVoteStrategy::Majority,
+            };
+            IrEnsembleSpec {
+                models: members,
+                vote,
+                span: spec.span,
+            }
+        });
         IrPrompt {
             id,
             name: p.name.name.clone(),
@@ -346,6 +368,7 @@ impl<'a> Lowerer<'a> {
             route,
             progressive,
             rollout,
+            ensemble,
             span: p.span,
         }
     }

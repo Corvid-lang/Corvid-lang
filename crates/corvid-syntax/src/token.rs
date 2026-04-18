@@ -71,6 +71,14 @@ pub enum TokKind {
     /// `rollout 10% variant, else baseline` routes ~10% of calls
     /// to `variant` and the rest to `baseline`.
     KwRollout,
+    /// `ensemble` — concurrent dispatch to multiple models with
+    /// a deterministic vote strategy. `ensemble [m1, m2, m3] vote
+    /// majority` fires all three in parallel and returns the
+    /// majority's answer.
+    KwEnsemble,
+    /// `vote` — names the voting strategy inside an `ensemble`
+    /// clause. Currently only `majority` is supported.
+    KwVote,
 
     // --- keywords: control flow ---
     KwIf,
@@ -170,6 +178,8 @@ impl TokKind {
             "progressive" => TokKind::KwProgressive,
             "below" => TokKind::KwBelow,
             "rollout" => TokKind::KwRollout,
+            "ensemble" => TokKind::KwEnsemble,
+            "vote" => TokKind::KwVote,
             "if" => TokKind::KwIf,
             "else" => TokKind::KwElse,
             "for" => TokKind::KwFor,

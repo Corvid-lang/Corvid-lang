@@ -9,11 +9,12 @@ use crate::errors::{ParseError, ParseErrorKind};
 use crate::token::{TokKind, Token};
 use corvid_ast::{
     AgentDecl, Backoff, BackpressurePolicy, BinaryOp, Block, Decl, DimensionDecl,
-    DimensionValue, Effect, EffectConstraint, EffectDecl, EffectRef, EffectRow, EvalAssert,
-    EvalDecl, Expr, ExtendDecl, ExtendMethod, ExtendMethodKind, Field, File, Ident, ImportDecl,
-    ImportSource, Literal, ModelDecl, ModelField, Param, ProgressiveChain, ProgressiveStage,
-    PromptDecl, PromptStreamSettings, RolloutSpec, RouteArm, RoutePattern, RouteTable, Span,
-    Stmt, ToolDecl, TypeDecl, TypeRef, UnaryOp, Visibility, WeakEffect, WeakEffectRow,
+    DimensionValue, Effect, EffectConstraint, EffectDecl, EffectRef, EffectRow, EnsembleSpec,
+    EvalAssert, EvalDecl, Expr, ExtendDecl, ExtendMethod, ExtendMethodKind, Field, File, Ident,
+    ImportDecl, ImportSource, Literal, ModelDecl, ModelField, Param, ProgressiveChain,
+    ProgressiveStage, PromptDecl, PromptStreamSettings, RolloutSpec, RouteArm, RoutePattern,
+    RouteTable, Span, Stmt, ToolDecl, TypeDecl, TypeRef, UnaryOp, Visibility, VoteStrategy,
+    WeakEffect, WeakEffectRow,
 };
 
 #[derive(Debug, Clone, PartialEq)]
@@ -1398,12 +1399,29 @@ impl<'a> Parser<'a> {
                 return Err(ParseError {
                     kind: ParseErrorKind::UnexpectedToken {
                         got: "`rollout` after another dispatch clause".into(),
-                        expected: "a prompt template string (a prompt uses exactly one of `route:`, `progressive:`, or `rollout`)".into(),
+                        expected: "a prompt template string (a prompt uses exactly one of `route:`, `progressive:`, `rollout`, or `ensemble`)".into(),
                     },
                     span: self.peek_span(),
                 });
             }
             Some(self.parse_prompt_rollout_clause()?)
+        } else {
+            None
+        };
+
+        // Phase 20h slice F: optional `ensemble [...] vote <strategy>`.
+        // Mutually exclusive with route / progressive / rollout.
+        let ensemble = if matches!(self.peek(), TokKind::KwEnsemble) {
+            if route.is_some() || progressive.is_some() || rollout.is_some() {
+                return Err(ParseError {
+                    kind: ParseErrorKind::UnexpectedToken {
+                        got: "`ensemble` after another dispatch clause".into(),
+                        expected: "a prompt template string (a prompt uses exactly one of `route:`, `progressive:`, `rollout`, or `ensemble`)".into(),
+                    },
+                    span: self.peek_span(),
+                });
+            }
+            Some(self.parse_prompt_ensemble_clause()?)
         } else {
             None
         };
@@ -1445,6 +1463,79 @@ impl<'a> Parser<'a> {
             route,
             progressive,
             rollout,
+            ensemble,
+            span: start.merge(end),
+        })
+    }
+
+    /// Parse `ensemble [<m1>, <m2>, <m3>] vote <strategy>`. Caller has
+    /// already positioned at the `ensemble` keyword.
+    fn parse_prompt_ensemble_clause(&mut self) -> Result<EnsembleSpec, ParseError> {
+        let start = self.peek_span();
+        self.bump(); // ensemble
+
+        self.expect(TokKind::LBracket, "`[` after `ensemble`")?;
+
+        let mut models = Vec::new();
+        loop {
+            if matches!(self.peek(), TokKind::RBracket) {
+                break;
+            }
+            let (name, span) = self.expect_ident()?;
+            models.push(Ident::new(name, span));
+            match self.peek() {
+                TokKind::Comma => {
+                    self.bump();
+                }
+                TokKind::RBracket => break,
+                other => {
+                    return Err(ParseError {
+                        kind: ParseErrorKind::UnexpectedToken {
+                            got: describe_token(other),
+                            expected: "`,` or `]` after ensemble model".into(),
+                        },
+                        span: self.peek_span(),
+                    });
+                }
+            }
+        }
+        self.expect(TokKind::RBracket, "`]` after ensemble models")?;
+
+        if models.len() < 2 {
+            return Err(ParseError {
+                kind: ParseErrorKind::UnexpectedToken {
+                    got: format!("{} ensemble model(s)", models.len()),
+                    expected: "at least two models in the ensemble — voting is undefined with fewer".into(),
+                },
+                span: start,
+            });
+        }
+
+        self.expect(TokKind::KwVote, "`vote` after ensemble model list")?;
+
+        // Strategy ident. Currently only `majority` is supported.
+        let vote = match self.peek().clone() {
+            TokKind::Ident(name) if name == "majority" => {
+                self.bump();
+                VoteStrategy::Majority
+            }
+            other => {
+                return Err(ParseError {
+                    kind: ParseErrorKind::UnexpectedToken {
+                        got: describe_token(&other),
+                        expected: "a vote strategy (`majority`)".into(),
+                    },
+                    span: self.peek_span(),
+                });
+            }
+        };
+
+        let end = self.prev_span();
+        self.expect_newline()?;
+
+        Ok(EnsembleSpec {
+            models,
+            vote,
             span: start.merge(end),
         })
     }
@@ -3980,6 +4071,133 @@ model a:
 prompt p(q: String) -> String:
     rollout 10% a
     \"X\"
+";
+        let (_file, errs) = parse_file_errs(src);
+        assert!(!errs.is_empty());
+    }
+
+    // -------------------- Phase 20h slice F: `ensemble` --------------------
+
+    #[test]
+    fn parses_basic_ensemble_majority() {
+        let src = "\
+model haiku:
+    capability: basic
+
+model sonnet:
+    capability: standard
+
+model opus:
+    capability: expert
+
+prompt answer(q: String) -> String:
+    ensemble [haiku, sonnet, opus] vote majority
+    \"Answer {q}\"
+";
+        let file = parse_file_src(src);
+        let p = file
+            .decls
+            .iter()
+            .find_map(|d| match d {
+                Decl::Prompt(p) => Some(p),
+                _ => None,
+            })
+            .unwrap();
+        let spec = p.ensemble.as_ref().expect("ensemble");
+        assert_eq!(spec.models.len(), 3);
+        assert_eq!(spec.models[0].name, "haiku");
+        assert_eq!(spec.models[1].name, "sonnet");
+        assert_eq!(spec.models[2].name, "opus");
+        assert_eq!(spec.vote, corvid_ast::VoteStrategy::Majority);
+    }
+
+    #[test]
+    fn parses_ensemble_with_two_models_minimum() {
+        let src = "\
+model a:
+    capability: basic
+
+model b:
+    capability: expert
+
+prompt answer(q: String) -> String:
+    ensemble [a, b] vote majority
+    \"Answer\"
+";
+        let file = parse_file_src(src);
+        let p = file
+            .decls
+            .iter()
+            .find_map(|d| match d {
+                Decl::Prompt(p) => Some(p),
+                _ => None,
+            })
+            .unwrap();
+        assert_eq!(p.ensemble.as_ref().unwrap().models.len(), 2);
+    }
+
+    #[test]
+    fn rejects_ensemble_with_single_model() {
+        let src = "\
+model only:
+    capability: basic
+
+prompt answer(q: String) -> String:
+    ensemble [only] vote majority
+    \"Answer\"
+";
+        let (_file, errs) = parse_file_errs(src);
+        assert!(!errs.is_empty());
+    }
+
+    #[test]
+    fn rejects_ensemble_without_vote_strategy() {
+        let src = "\
+model a:
+    capability: basic
+
+model b:
+    capability: basic
+
+prompt answer(q: String) -> String:
+    ensemble [a, b]
+    \"Answer\"
+";
+        let (_file, errs) = parse_file_errs(src);
+        assert!(!errs.is_empty());
+    }
+
+    #[test]
+    fn rejects_unknown_vote_strategy() {
+        let src = "\
+model a:
+    capability: basic
+
+model b:
+    capability: basic
+
+prompt answer(q: String) -> String:
+    ensemble [a, b] vote plurality
+    \"Answer\"
+";
+        let (_file, errs) = parse_file_errs(src);
+        assert!(!errs.is_empty());
+    }
+
+    #[test]
+    fn rejects_ensemble_combined_with_route() {
+        let src = "\
+model a:
+    capability: basic
+
+model b:
+    capability: basic
+
+prompt answer(q: String) -> String:
+    route:
+        _ -> a
+    ensemble [a, b] vote majority
+    \"Answer\"
 ";
         let (_file, errs) = parse_file_errs(src);
         assert!(!errs.is_empty());

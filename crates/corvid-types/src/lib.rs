@@ -2074,6 +2074,75 @@ prompt summarize(doc: String) -> String:
         );
     }
 
+    // --- Phase 20h slice F: ensemble validation ---
+
+    #[test]
+    fn ensemble_with_valid_models_passes() {
+        let src = "\
+model a:
+    capability: basic
+
+model b:
+    capability: standard
+
+model c:
+    capability: expert
+
+prompt answer(q: String) -> String:
+    ensemble [a, b, c] vote majority
+    \"Answer\"
+";
+        let c_out = check(src);
+        assert!(c_out.errors.is_empty(), "errors: {:?}", c_out.errors);
+    }
+
+    #[test]
+    fn ensemble_model_pointing_at_non_model_is_rejected() {
+        let src = "\
+tool not_a_model(q: String) -> String
+
+model real:
+    capability: expert
+
+prompt answer(q: String) -> String:
+    ensemble [not_a_model, real] vote majority
+    \"Answer\"
+";
+        let c = check(src);
+        assert!(
+            c.errors.iter().any(|e| matches!(
+                &e.kind,
+                TypeErrorKind::RouteTargetNotModel { target, .. } if target == "not_a_model"
+            )),
+            "expected RouteTargetNotModel, got {:?}",
+            c.errors
+        );
+    }
+
+    #[test]
+    fn ensemble_with_duplicate_model_is_rejected() {
+        let src = "\
+model a:
+    capability: basic
+
+model b:
+    capability: expert
+
+prompt answer(q: String) -> String:
+    ensemble [a, b, a] vote majority
+    \"Answer\"
+";
+        let c = check(src);
+        assert!(
+            c.errors.iter().any(|e| matches!(
+                &e.kind,
+                TypeErrorKind::EnsembleDuplicateModel { model, .. } if model == "a"
+            )),
+            "expected EnsembleDuplicateModel, got {:?}",
+            c.errors
+        );
+    }
+
     #[test]
     fn rollout_percent_out_of_range_is_rejected() {
         let src = "\
