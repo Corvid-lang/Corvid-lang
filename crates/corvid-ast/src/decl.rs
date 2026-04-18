@@ -231,7 +231,40 @@ pub struct PromptDecl {
     /// field satisfies the requirement. See Phase 20h slice B.
     #[serde(default)]
     pub capability_required: Option<Ident>,
+    /// `route:` clause — pattern-dispatched per-call model selection.
+    /// Each arm pairs a guard expression (or the `_` wildcard) with
+    /// a `model` reference. At runtime, arms are evaluated top-to-
+    /// bottom and the first match's model executes the template.
+    /// See Phase 20h slice C.
+    #[serde(default)]
+    pub route: Option<RouteTable>,
     pub span: Span,
+}
+
+/// A `route:` clause body.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RouteTable {
+    pub arms: Vec<RouteArm>,
+    pub span: Span,
+}
+
+/// One arm inside a `route:` clause. `pattern -> model`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RouteArm {
+    pub pattern: RoutePattern,
+    pub model: Ident,
+    pub span: Span,
+}
+
+/// What an arm matches against.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum RoutePattern {
+    /// `_` — catches anything not matched by an earlier arm.
+    Wildcard { span: Span },
+    /// A boolean-valued expression evaluated against the prompt's
+    /// inputs. The arm fires when the expression is `true` at the
+    /// call site.
+    Guard(Expr),
 }
 
 /// An agent declaration:

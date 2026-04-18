@@ -57,6 +57,9 @@ pub enum TokKind {
     /// `requires:` clause on a prompt — sets the minimum capability
     /// level the LLM dispatch must satisfy.
     KwRequires,
+    /// `route:` clause on a prompt — pattern-dispatched model
+    /// selection per-call.
+    KwRoute,
 
     // --- keywords: control flow ---
     KwIf,
@@ -152,6 +155,7 @@ impl TokKind {
             "assert" => TokKind::KwAssert,
             "model" => TokKind::KwModel,
             "requires" => TokKind::KwRequires,
+            "route" => TokKind::KwRoute,
             "if" => TokKind::KwIf,
             "else" => TokKind::KwElse,
             "for" => TokKind::KwFor,

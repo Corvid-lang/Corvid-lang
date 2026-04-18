@@ -307,6 +307,11 @@ impl<'a> Lowerer<'a> {
             .collect();
         let effect_refs: Vec<&str> = effect_names.iter().map(|name| name.as_str()).collect();
         let profile = self.effect_registry.compose(&effect_refs);
+        let route = p
+            .route
+            .as_ref()
+            .map(|rt| self.lower_route_arms(&rt.arms))
+            .unwrap_or_default();
         IrPrompt {
             id,
             name: p.name.name.clone(),
@@ -321,8 +326,34 @@ impl<'a> Lowerer<'a> {
             max_tokens: p.stream.max_tokens,
             backpressure: p.stream.backpressure.clone(),
             capability_required: p.capability_required.as_ref().map(|c| c.name.clone()),
+            route,
             span: p.span,
         }
+    }
+
+    fn lower_route_arms(&self, arms: &[corvid_ast::RouteArm]) -> Vec<IrRouteArm> {
+        use corvid_ast::RoutePattern;
+        let mut out = Vec::with_capacity(arms.len());
+        for arm in arms {
+            let pattern = match &arm.pattern {
+                RoutePattern::Wildcard { .. } => IrRoutePattern::Wildcard,
+                RoutePattern::Guard(expr) => IrRoutePattern::Guard(self.lower_expr(expr)),
+            };
+            // Arms whose model ident didn't resolve to a Decl::Model
+            // were already flagged by the checker. At IR time we
+            // best-effort resolve again; unresolved arms are skipped
+            // so IR doesn't carry broken references.
+            let Some(def_id) = self.symbols.lookup_def(&arm.model.name) else {
+                continue;
+            };
+            out.push(IrRouteArm {
+                pattern,
+                model_def_id: def_id,
+                model_name: arm.model.name.clone(),
+                span: arm.span,
+            });
+        }
+        out
     }
 
     fn lower_agent(&self, a: &AgentDecl) -> IrAgent {

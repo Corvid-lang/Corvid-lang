@@ -92,7 +92,29 @@ pub struct IrPrompt {
     /// catalog, or the `default_model`-backed pipeline that shipped
     /// before the model substrate existed).
     pub capability_required: Option<String>,
+    /// Phase 20h slice C: pattern-dispatched per-call model
+    /// selection. Empty `arms` means the prompt uses the standard
+    /// capability-based dispatch (slice B). Non-empty means the
+    /// runtime evaluates each arm's guard in order and dispatches
+    /// to the first match's model.
+    pub route: Vec<IrRouteArm>,
     pub span: Span,
+}
+
+/// One arm of a prompt's `route:` clause at IR level.
+#[derive(Debug, Clone)]
+pub struct IrRouteArm {
+    pub pattern: IrRoutePattern,
+    /// DefId of the target `model` declaration.
+    pub model_def_id: DefId,
+    pub model_name: String,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone)]
+pub enum IrRoutePattern {
+    Wildcard,
+    Guard(IrExpr),
 }
 
 /// An agent declaration with a typed body.

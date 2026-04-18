@@ -478,6 +478,44 @@ impl<'a> Checker<'a> {
                 ));
             }
         }
+
+        // Phase 20h slice C: validate each route arm.
+        if let Some(route) = &p.route {
+            // Bind the prompt's params into scope so guard expressions
+            // can reference them — guards typically look like
+            // `domain(question) == math` where `question` is a param.
+            self.bind_params(&p.params);
+            for arm in &route.arms {
+                if let corvid_ast::RoutePattern::Guard(expr) = &arm.pattern {
+                    let ty = self.check_expr(expr);
+                    if !matches!(ty, Type::Bool | Type::Unknown) {
+                        self.errors.push(TypeError::new(
+                            TypeErrorKind::RouteGuardNotBool {
+                                prompt: p.name.name.clone(),
+                                got: ty.display_name(),
+                            },
+                            expr.span(),
+                        ));
+                    }
+                }
+                // Model ref — must resolve to a Decl::Model.
+                if let Some(Binding::Decl(def_id)) = self.bindings.get(&arm.model.span) {
+                    let def_id = *def_id;
+                    let entry = self.symbols.get(def_id);
+                    if entry.kind != corvid_resolve::DeclKind::Model {
+                        let got = format!("{:?}", entry.kind).to_lowercase();
+                        self.errors.push(TypeError::new(
+                            TypeErrorKind::RouteTargetNotModel {
+                                prompt: p.name.name.clone(),
+                                target: arm.model.name.clone(),
+                                got_kind: got,
+                            },
+                            arm.model.span,
+                        ));
+                    }
+                }
+            }
+        }
     }
 
     fn check_eval(&mut self, e: &EvalDecl) {

@@ -1900,4 +1900,89 @@ agent outer(t: String) -> String:
         let cap = compose_capability_of(src, "outer");
         assert_eq!(cap.as_deref(), Some("expert"));
     }
+
+    // --- Phase 20h slice C: `route:` clause validation ---
+
+    #[test]
+    fn route_arm_pointing_at_non_model_is_rejected() {
+        let src = "\
+tool not_a_model(q: String) -> String
+
+prompt answer(q: String) -> String:
+    route:
+        _ -> not_a_model
+    \"Answer\"
+";
+        let c = check(src);
+        assert!(
+            c.errors.iter().any(|e| matches!(
+                &e.kind,
+                TypeErrorKind::RouteTargetNotModel { target, .. } if target == "not_a_model"
+            )),
+            "expected RouteTargetNotModel error, got {:?}",
+            c.errors
+        );
+    }
+
+    #[test]
+    fn route_guard_not_bool_is_rejected() {
+        let src = "\
+model m1:
+    capability: basic
+
+prompt answer(q: String) -> String:
+    route:
+        q -> m1
+        _ -> m1
+    \"Answer\"
+";
+        // `q` is a String, not a Bool — guard should fail type check.
+        let c = check(src);
+        assert!(
+            c.errors.iter().any(|e| matches!(
+                &e.kind,
+                TypeErrorKind::RouteGuardNotBool { prompt, .. } if prompt == "answer"
+            )),
+            "expected RouteGuardNotBool error, got {:?}",
+            c.errors
+        );
+    }
+
+    #[test]
+    fn route_with_valid_model_and_bool_guard_passes() {
+        let src = "\
+model fast:
+    capability: basic
+
+model slow:
+    capability: expert
+
+prompt answer(q: String) -> String:
+    route:
+        q == \"hard\" -> slow
+        _ -> fast
+    \"Answer\"
+";
+        let c = check(src);
+        assert!(c.errors.is_empty(), "errors: {:?}", c.errors);
+    }
+
+    #[test]
+    fn route_with_undefined_model_target_is_rejected() {
+        let src = "\
+prompt answer(q: String) -> String:
+    route:
+        _ -> nonexistent_model
+    \"Answer\"
+";
+        let resolve_errs = resolve_errors(src);
+        assert!(
+            resolve_errs.iter().any(|e| matches!(
+                &e.kind,
+                corvid_resolve::ResolveErrorKind::UndefinedName(n) if n == "nonexistent_model"
+            )),
+            "expected UndefinedName on unresolved route target, got {:?}",
+            resolve_errs
+        );
+    }
 }

@@ -11,8 +11,9 @@ use corvid_ast::{
     AgentDecl, Backoff, BackpressurePolicy, BinaryOp, Block, Decl, DimensionDecl,
     DimensionValue, Effect, EffectConstraint, EffectDecl, EffectRef, EffectRow, EvalAssert,
     EvalDecl, Expr, ExtendDecl, ExtendMethod, ExtendMethodKind, Field, File, Ident, ImportDecl,
-    ImportSource, Literal, ModelDecl, ModelField, Param, PromptDecl, PromptStreamSettings, Span,
-    Stmt, ToolDecl, TypeDecl, TypeRef, UnaryOp, Visibility, WeakEffect, WeakEffectRow,
+    ImportSource, Literal, ModelDecl, ModelField, Param, PromptDecl, PromptStreamSettings,
+    RouteArm, RoutePattern, RouteTable, Span, Stmt, ToolDecl, TypeDecl, TypeRef, UnaryOp,
+    Visibility, WeakEffect, WeakEffectRow,
 };
 
 #[derive(Debug, Clone, PartialEq)]
@@ -1353,13 +1354,21 @@ impl<'a> Parser<'a> {
 
         // Phase 20h: optional `requires: <capability>` clause.
         // Must appear before `with ...` stream settings and the
-        // template, so the body order is: requires → with → template.
+        // template, so the body order is: requires → route → with → template.
         let capability_required = if matches!(self.peek(), TokKind::KwRequires) {
             self.bump(); // requires
             self.expect(TokKind::Colon, "`:` after `requires`")?;
             let (ident, ident_span) = self.expect_ident()?;
             self.expect_newline()?;
             Some(Ident::new(ident, ident_span))
+        } else {
+            None
+        };
+
+        // Phase 20h slice C: optional `route:` block. Each arm is
+        // `<guard-expr> -> <model-ident>` or `_ -> <model-ident>`.
+        let route = if matches!(self.peek(), TokKind::KwRoute) {
+            Some(self.parse_prompt_route_block()?)
         } else {
             None
         };
@@ -1398,8 +1407,83 @@ impl<'a> Parser<'a> {
             cites_strictly: None,
             stream,
             capability_required,
+            route,
             span: start.merge(end),
         })
+    }
+
+    /// Parse a `route:` block inside a prompt body. Caller has
+    /// already positioned at the `route` keyword.
+    fn parse_prompt_route_block(&mut self) -> Result<RouteTable, ParseError> {
+        let start = self.peek_span();
+        self.bump(); // route
+        self.expect(TokKind::Colon, "`:` after `route`")?;
+        self.expect_newline()?;
+
+        if !matches!(self.peek(), TokKind::Indent) {
+            return Err(ParseError {
+                kind: ParseErrorKind::ExpectedBlock,
+                span: self.peek_span(),
+            });
+        }
+        self.bump(); // Indent
+
+        let mut arms = Vec::new();
+        while !matches!(self.peek(), TokKind::Dedent | TokKind::Eof) {
+            self.skip_newlines();
+            if matches!(self.peek(), TokKind::Dedent | TokKind::Eof) {
+                break;
+            }
+            arms.push(self.parse_route_arm()?);
+        }
+
+        let end = self.peek_span();
+        if matches!(self.peek(), TokKind::Dedent) {
+            self.bump();
+        }
+
+        if arms.is_empty() {
+            return Err(ParseError {
+                kind: ParseErrorKind::ExpectedBlock,
+                span: start,
+            });
+        }
+
+        Ok(RouteTable {
+            arms,
+            span: start.merge(end),
+        })
+    }
+
+    fn parse_route_arm(&mut self) -> Result<RouteArm, ParseError> {
+        let arm_start = self.peek_span();
+
+        // A bare `_` on its own is the wildcard pattern. Anything
+        // else is a guard expression, which we parse with the full
+        // expression grammar (boolean ops, comparisons, calls).
+        let pattern = if self.is_wildcard_token() {
+            let span = self.peek_span();
+            self.bump();
+            RoutePattern::Wildcard { span }
+        } else {
+            RoutePattern::Guard(self.parse_expr()?)
+        };
+
+        self.expect(TokKind::Arrow, "`->` after route pattern")?;
+        let (model_name, model_span) = self.expect_ident()?;
+        let end = self.prev_span();
+        self.expect_newline()?;
+
+        Ok(RouteArm {
+            pattern,
+            model: Ident::new(model_name, model_span),
+            span: arm_start.merge(end),
+        })
+    }
+
+    /// Is the next token a lone `_` identifier?
+    fn is_wildcard_token(&self) -> bool {
+        matches!(self.peek(), TokKind::Ident(name) if name == "_")
     }
 
     // -- agent ---------------------------------------------------
@@ -3391,6 +3475,104 @@ agent good(x: String) -> String:
         let (_file, errs) = parse_file_errs(
             "prompt classify(t: String) -> String:\n    requires:\n    \"Classify {t}\"\n",
         );
+        assert!(!errs.is_empty());
+    }
+
+    // -------------------- Phase 20h: `route:` on prompts --------------------
+
+    #[test]
+    fn parses_prompt_with_route_block() {
+        let src = "\
+model fast_model:
+    capability: basic
+
+model slow_model:
+    capability: expert
+
+prompt answer(question: String) -> String:
+    route:
+        length(question) > 1000 -> slow_model
+        _ -> fast_model
+    \"Answer {question}\"
+";
+        let file = parse_file_src(src);
+        let p = file
+            .decls
+            .iter()
+            .find_map(|d| match d {
+                Decl::Prompt(p) => Some(p),
+                _ => None,
+            })
+            .expect("prompt");
+        let rt = p.route.as_ref().expect("route block");
+        assert_eq!(rt.arms.len(), 2);
+        assert!(matches!(
+            rt.arms[0].pattern,
+            corvid_ast::RoutePattern::Guard(_)
+        ));
+        assert!(matches!(
+            rt.arms[1].pattern,
+            corvid_ast::RoutePattern::Wildcard { .. }
+        ));
+        assert_eq!(rt.arms[0].model.name, "slow_model");
+        assert_eq!(rt.arms[1].model.name, "fast_model");
+    }
+
+    #[test]
+    fn parses_route_with_requires_above_it() {
+        // Grammar is requires -> route -> with -> template.
+        let src = "\
+model m1:
+    capability: basic
+
+prompt answer(q: String) -> String:
+    requires: basic
+    route:
+        _ -> m1
+    \"Answer\"
+";
+        let file = parse_file_src(src);
+        let p = file
+            .decls
+            .iter()
+            .find_map(|d| match d {
+                Decl::Prompt(p) => Some(p),
+                _ => None,
+            })
+            .unwrap();
+        assert_eq!(p.capability_required.as_ref().unwrap().name, "basic");
+        assert_eq!(p.route.as_ref().unwrap().arms.len(), 1);
+    }
+
+    #[test]
+    fn rejects_empty_route_block() {
+        let src = "\
+model m1:
+    capability: basic
+
+prompt answer(q: String) -> String:
+    route:
+    \"Answer\"
+";
+        let (_file, errs) = parse_file_errs(src);
+        assert!(
+            !errs.is_empty(),
+            "empty `route:` block must fail to parse"
+        );
+    }
+
+    #[test]
+    fn rejects_arm_missing_arrow() {
+        let src = "\
+model m1:
+    capability: basic
+
+prompt answer(q: String) -> String:
+    route:
+        _ m1
+    \"Answer\"
+";
+        let (_file, errs) = parse_file_errs(src);
         assert!(!errs.is_empty());
     }
 }

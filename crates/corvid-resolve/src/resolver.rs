@@ -356,6 +356,27 @@ impl Resolver {
         }
         self.resolve_type_ref(&p.return_ty);
         self.resolve_effect_row(&p.effect_row);
+        // Phase 20h slice C: resolve each `route:` arm in the prompt's
+        // parameter scope. Guard expressions can reference the prompt's
+        // params and any declaration in the file. Model idents must
+        // bind to a `model` declaration; non-model bindings are left
+        // for the type checker to report.
+        if let Some(route) = &p.route {
+            for arm in &route.arms {
+                if let corvid_ast::RoutePattern::Guard(expr) = &arm.pattern {
+                    self.resolve_expr(expr);
+                }
+                if let Some(def_id) = self.symbols.lookup_def(&arm.model.name) {
+                    self.bindings
+                        .insert(arm.model.span, Binding::Decl(def_id));
+                } else {
+                    self.errors.push(ResolveError {
+                        kind: ResolveErrorKind::UndefinedName(arm.model.name.clone()),
+                        span: arm.model.span,
+                    });
+                }
+            }
+        }
         self.pop_scope();
     }
 

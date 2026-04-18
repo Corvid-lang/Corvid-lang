@@ -185,6 +185,21 @@ pub enum TypeErrorKind {
         dimension: String,
         message: String,
     },
+
+    /// A `route:` arm inside a prompt points at a name that is not a
+    /// `model` declaration. The runtime can only dispatch to models,
+    /// so the target must be a `Decl::Model`.
+    RouteTargetNotModel {
+        prompt: String,
+        target: String,
+        got_kind: String,
+    },
+
+    /// A `route:` arm's guard expression is not a Bool.
+    RouteGuardNotBool {
+        prompt: String,
+        got: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -297,6 +312,14 @@ impl TypeErrorKind {
             Self::InvalidCustomDimension { dimension, message } => {
                 format!("invalid custom dimension `{dimension}` in corvid.toml: {message}")
             }
+            Self::RouteTargetNotModel { prompt, target, got_kind } => {
+                format!(
+                    "route arm in prompt `{prompt}` points at `{target}`, which is a {got_kind}, not a `model`"
+                )
+            }
+            Self::RouteGuardNotBool { prompt, got } => {
+                format!("route arm guard in prompt `{prompt}` must evaluate to `Bool`, got `{got}`")
+            }
         }
     }
 
@@ -398,6 +421,13 @@ impl TypeErrorKind {
             Self::InvalidCustomDimension { .. } => Some(
                 "see docs/effects-spec/01-dimensional-syntax.md §4 for the supported \
                  composition rules, value types, and default-value shapes"
+                    .into(),
+            ),
+            Self::RouteTargetNotModel { target, .. } => Some(format!(
+                "declare `{target}` as a `model ...:` block, or route to an existing model"
+            )),
+            Self::RouteGuardNotBool { .. } => Some(
+                "use a comparison or boolean expression for the guard, e.g. `length(q) > 1000`"
                     .into(),
             ),
         }
