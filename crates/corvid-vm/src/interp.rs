@@ -14,8 +14,8 @@ use crate::value::{BoxedValue, ListValue, StreamChunk, StreamSender, StreamValue
 use async_recursion::async_recursion;
 use corvid_ast::{BackpressurePolicy, BinaryOp, Span, UnaryOp};
 use corvid_ir::{
-    IrAgent, IrBlock, IrCallKind, IrExpr, IrExprKind, IrFile, IrLiteral, IrPrompt, IrStmt,
-    IrTool, IrType,
+    IrAgent, IrBlock, IrCallKind, IrExpr, IrExprKind, IrFile, IrLiteral, IrPrompt,
+    IrRoutePattern, IrStmt, IrTool, IrType,
 };
 use corvid_resolve::{DefId, LocalId};
 use corvid_runtime::{LlmRequest, Runtime, TraceEvent};
@@ -276,21 +276,48 @@ impl<'ir> Interpreter<'ir> {
         step::snapshot_env(&self.env, &self.local_names)
     }
 
-    fn select_prompt_model(
-        &self,
+    async fn select_prompt_model(
+        &mut self,
         prompt: &'ir IrPrompt,
         callee_name: &str,
         rendered: &str,
-        _span: Span,
-    ) -> Result<Option<String>, corvid_runtime::RuntimeError> {
+        arg_values: &[Value],
+        span: Span,
+    ) -> Result<Option<String>, InterpError> {
+        let prompt_tokens = estimate_tokens(rendered);
+        let completion_tokens = prompt
+            .max_tokens
+            .unwrap_or(DEFAULT_COMPLETION_TOKEN_ESTIMATE);
+
+        if !prompt.route.is_empty() {
+            let saved_env = self.env.clone();
+            let saved_names = self.local_names.clone();
+            for (param, value) in prompt.params.iter().zip(arg_values.iter()) {
+                self.env.bind(param.local_id, value.clone());
+                self.local_names.insert(param.local_id, param.name.clone());
+            }
+            let outcome = self
+                .select_prompt_route_model(
+                    prompt,
+                    callee_name,
+                    prompt_tokens,
+                    completion_tokens,
+                    span,
+                )
+                .await;
+            self.env = saved_env;
+            self.local_names = saved_names;
+            return outcome;
+        }
+
         let Some(required) = prompt.capability_required.as_deref() else {
             return Ok(None);
         };
         let selection = self.runtime.select_cheapest_model_for_capability(
             required,
-            estimate_tokens(rendered),
-            prompt.max_tokens.unwrap_or(DEFAULT_COMPLETION_TOKEN_ESTIMATE),
-        )?;
+            prompt_tokens,
+            completion_tokens,
+        ).map_err(|err| InterpError::new(InterpErrorKind::Runtime(err), span))?;
         self.runtime.tracer().emit(TraceEvent::ModelSelected {
             ts_ms: corvid_runtime::now_ms(),
             run_id: self.runtime.tracer().run_id().to_string(),
@@ -302,6 +329,52 @@ impl<'ir> Interpreter<'ir> {
             arm_index: None,
         });
         Ok(Some(selection.model))
+    }
+
+    async fn select_prompt_route_model(
+        &mut self,
+        prompt: &'ir IrPrompt,
+        callee_name: &str,
+        prompt_tokens: u64,
+        completion_tokens: u64,
+        span: Span,
+    ) -> Result<Option<String>, InterpError> {
+        for (arm_index, arm) in prompt.route.iter().enumerate() {
+            let matched = match &arm.pattern {
+                IrRoutePattern::Wildcard => true,
+                IrRoutePattern::Guard(expr) => {
+                    let guard_value = match self.eval_expr(expr).await?.into_value() {
+                        Ok(v) | Err(v) => v,
+                    };
+                    require_bool(&guard_value, expr.span, "route guard")?
+                }
+            };
+            if !matched {
+                continue;
+            }
+            let selection = self
+                .runtime
+                .describe_named_model(&arm.model_name, prompt_tokens, completion_tokens)
+                .map_err(|err| InterpError::new(InterpErrorKind::Runtime(err), span))?;
+            self.runtime.tracer().emit(TraceEvent::ModelSelected {
+                ts_ms: corvid_runtime::now_ms(),
+                run_id: self.runtime.tracer().run_id().to_string(),
+                prompt: callee_name.to_string(),
+                model: selection.model.clone(),
+                capability_required: selection.capability_required,
+                capability_picked: selection.capability_picked,
+                cost_estimate: selection.cost_estimate,
+                arm_index: Some(arm_index),
+            });
+            return Ok(Some(selection.model));
+        }
+
+        Err(InterpError::new(
+            InterpErrorKind::Runtime(corvid_runtime::RuntimeError::NoMatchingRoute {
+                prompt: callee_name.to_string(),
+            }),
+            span,
+        ))
     }
 
     async fn maybe_yield(&mut self, event: StepEvent) -> Result<StepAction, InterpError> {
@@ -1126,8 +1199,8 @@ impl<'ir> Interpreter<'ir> {
                     arg_values.iter().map(value_to_json).collect();
                 let rendered = render_prompt(prompt, &arg_values);
                 let selected_model = self
-                    .select_prompt_model(prompt, callee_name, &rendered, span)
-                    .map_err(|err| InterpError::new(InterpErrorKind::Runtime(err), span))?;
+                    .select_prompt_model(prompt, callee_name, &rendered, &arg_values, span)
+                    .await?;
 
                 if self.should_yield_boundary() {
                     let action = self.maybe_yield(StepEvent::BeforePromptCall {

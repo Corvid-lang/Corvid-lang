@@ -51,6 +51,11 @@ pub enum RuntimeError {
         available_models: Vec<String>,
     },
 
+    /// A `route:` prompt evaluated every arm and found no match.
+    NoMatchingRoute {
+        prompt: String,
+    },
+
     /// Catch-all. Prefer adding a dedicated variant.
     Other(String),
 }
@@ -95,6 +100,9 @@ impl fmt::Display for RuntimeError {
                     available_models.join(", ")
                 }
             ),
+            Self::NoMatchingRoute { prompt } => {
+                write!(f, "no matching route arm for prompt `{prompt}`")
+            }
             Self::Other(msg) => f.write_str(msg),
         }
     }

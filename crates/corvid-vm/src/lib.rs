@@ -985,6 +985,237 @@ agent run(q: String) -> String:
     }
 
     #[tokio::test]
+    async fn route_dispatch_selects_first_matching_arm_and_traces_it() {
+        let src = r#"
+model fast:
+    capability: basic
+
+model slow:
+    capability: expert
+
+prompt answer(q: String) -> String:
+    route:
+        q == "hard" -> slow
+        _ -> fast
+    "Answer {q}."
+
+agent run(q: String) -> String:
+    return answer(q)
+"#;
+        let ir = ir_of(src);
+        let trace_dir = std::env::temp_dir().join(format!(
+            "corvid-vm-route-first-{}",
+            corvid_runtime::now_ms()
+        ));
+        std::fs::create_dir_all(&trace_dir).unwrap();
+        let rt = Runtime::builder()
+            .tracer(corvid_runtime::Tracer::open(&trace_dir, "run-route-first"))
+            .llm(Arc::new(MockAdapter::new("fast").reply("answer", json!("fast"))))
+            .llm(Arc::new(MockAdapter::new("slow").reply("answer", json!("slow"))))
+            .model(
+                RegisteredModel::new("fast")
+                    .capability("basic")
+                    .cost_per_token_in(0.00000025)
+                    .cost_per_token_out(0.00000125),
+            )
+            .model(
+                RegisteredModel::new("slow")
+                    .capability("expert")
+                    .cost_per_token_in(0.000015)
+                    .cost_per_token_out(0.00002),
+            )
+            .default_model("fast")
+            .build();
+
+        let v = run_agent(&ir, "run", vec![Value::String(Arc::from("hard"))], &rt)
+            .await
+            .expect("run");
+        assert_eq!(v, Value::String(Arc::from("slow")));
+        drop(rt);
+
+        let body = std::fs::read_to_string(trace_dir.join("run-route-first.jsonl"))
+            .expect("trace file");
+        let events: Vec<TraceEvent> = body
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .map(|line| serde_json::from_str(line).expect("valid trace event"))
+            .collect();
+        assert!(events.iter().any(|event| matches!(
+            event,
+            TraceEvent::ModelSelected {
+                prompt,
+                model,
+                arm_index,
+                ..
+            } if prompt == "answer" && model == "slow" && *arm_index == Some(0)
+        )));
+        assert!(events.iter().any(|event| matches!(
+            event,
+            TraceEvent::LlmCall { prompt, model, .. }
+                if prompt == "answer" && model.as_deref() == Some("slow")
+        )));
+    }
+
+    #[tokio::test]
+    async fn route_dispatch_uses_wildcard_fallback_arm() {
+        let src = r#"
+model fast:
+    capability: basic
+
+model slow:
+    capability: expert
+
+prompt answer(q: String) -> String:
+    route:
+        q == "hard" -> slow
+        _ -> fast
+    "Answer {q}."
+
+agent run(q: String) -> String:
+    return answer(q)
+"#;
+        let ir = ir_of(src);
+        let trace_dir = std::env::temp_dir().join(format!(
+            "corvid-vm-route-fallback-{}",
+            corvid_runtime::now_ms()
+        ));
+        std::fs::create_dir_all(&trace_dir).unwrap();
+        let rt = Runtime::builder()
+            .tracer(corvid_runtime::Tracer::open(&trace_dir, "run-route-fallback"))
+            .llm(Arc::new(MockAdapter::new("fast").reply("answer", json!("fast"))))
+            .llm(Arc::new(MockAdapter::new("slow").reply("answer", json!("slow"))))
+            .model(RegisteredModel::new("fast").capability("basic"))
+            .model(RegisteredModel::new("slow").capability("expert"))
+            .default_model("fast")
+            .build();
+
+        let v = run_agent(&ir, "run", vec![Value::String(Arc::from("easy"))], &rt)
+            .await
+            .expect("run");
+        assert_eq!(v, Value::String(Arc::from("fast")));
+        drop(rt);
+
+        let body = std::fs::read_to_string(trace_dir.join("run-route-fallback.jsonl"))
+            .expect("trace file");
+        let events: Vec<TraceEvent> = body
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .map(|line| serde_json::from_str(line).expect("valid trace event"))
+            .collect();
+        assert!(events.iter().any(|event| matches!(
+            event,
+            TraceEvent::ModelSelected {
+                prompt,
+                model,
+                arm_index,
+                ..
+            } if prompt == "answer" && model == "fast" && *arm_index == Some(1)
+        )));
+    }
+
+    #[tokio::test]
+    async fn route_dispatch_errors_when_no_arm_matches() {
+        let src = r#"
+model slow:
+    capability: expert
+
+prompt answer(q: String) -> String:
+    route:
+        q == "hard" -> slow
+    "Answer {q}."
+
+agent run(q: String) -> String:
+    return answer(q)
+"#;
+        let ir = ir_of(src);
+        let rt = Runtime::builder()
+            .llm(Arc::new(MockAdapter::new("slow").reply("answer", json!("slow"))))
+            .default_model("slow")
+            .build();
+
+        let err = run_agent(&ir, "run", vec![Value::String(Arc::from("easy"))], &rt)
+            .await
+            .unwrap_err();
+        match err.kind {
+            InterpErrorKind::Runtime(RuntimeError::NoMatchingRoute { prompt }) => {
+                assert_eq!(prompt, "answer");
+            }
+            other => panic!("expected Runtime(NoMatchingRoute), got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn route_dispatch_can_call_prompt_guards() {
+        let src = r#"
+model classifier:
+    capability: basic
+
+model fast:
+    capability: basic
+
+model slow:
+    capability: expert
+
+prompt is_hard(q: String) -> Bool:
+    "Is {q} hard?"
+
+prompt answer(q: String) -> String:
+    route:
+        is_hard(q) -> slow
+        _ -> fast
+    "Answer {q}."
+
+agent run(q: String) -> String:
+    return answer(q)
+"#;
+        let ir = ir_of(src);
+        let trace_dir = std::env::temp_dir().join(format!(
+            "corvid-vm-route-guard-prompt-{}",
+            corvid_runtime::now_ms()
+        ));
+        std::fs::create_dir_all(&trace_dir).unwrap();
+        let rt = Runtime::builder()
+            .tracer(corvid_runtime::Tracer::open(&trace_dir, "run-route-guard-prompt"))
+            .llm(Arc::new(MockAdapter::new("classifier").reply("is_hard", json!(true))))
+            .llm(Arc::new(MockAdapter::new("fast").reply("answer", json!("fast"))))
+            .llm(Arc::new(MockAdapter::new("slow").reply("answer", json!("slow"))))
+            .model(RegisteredModel::new("fast").capability("basic"))
+            .model(RegisteredModel::new("slow").capability("expert"))
+            .default_model("classifier")
+            .build();
+
+        let v = run_agent(&ir, "run", vec![Value::String(Arc::from("essay"))], &rt)
+            .await
+            .expect("run");
+        assert_eq!(v, Value::String(Arc::from("slow")));
+        drop(rt);
+
+        let body = std::fs::read_to_string(
+            trace_dir.join("run-route-guard-prompt.jsonl"),
+        )
+        .expect("trace file");
+        let events: Vec<TraceEvent> = body
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .map(|line| serde_json::from_str(line).expect("valid trace event"))
+            .collect();
+        assert!(events.iter().any(|event| matches!(
+            event,
+            TraceEvent::LlmCall { prompt, model, .. }
+                if prompt == "is_hard" && model.as_deref() == Some("classifier")
+        )));
+        assert!(events.iter().any(|event| matches!(
+            event,
+            TraceEvent::ModelSelected {
+                prompt,
+                model,
+                arm_index,
+                ..
+            } if prompt == "answer" && model == "slow" && *arm_index == Some(0)
+        )));
+    }
+
+    #[tokio::test]
     async fn agent_to_agent_call_recurses() {
         let src = "\
 agent inner(n: Int) -> Int:

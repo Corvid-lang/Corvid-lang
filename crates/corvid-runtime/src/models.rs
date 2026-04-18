@@ -142,6 +142,28 @@ impl ModelCatalog {
             cost_estimate: selected.estimated_cost(prompt_tokens, completion_tokens),
         })
     }
+
+    pub fn describe_named_model(
+        &self,
+        model_name: &str,
+        prompt_tokens: u64,
+        completion_tokens: u64,
+    ) -> ModelSelection {
+        match self.get(model_name) {
+            Some(model) => ModelSelection {
+                model: model.name.clone(),
+                capability_required: None,
+                capability_picked: model.capability.clone(),
+                cost_estimate: model.estimated_cost(prompt_tokens, completion_tokens),
+            },
+            None => ModelSelection {
+                model: model_name.to_string(),
+                capability_required: None,
+                capability_picked: None,
+                cost_estimate: 0.0,
+            },
+        }
+    }
 }
 
 fn parse_catalog_toml(path: &Path, value: toml::Value) -> Result<ModelCatalog, RuntimeError> {
@@ -308,5 +330,29 @@ cost_per_token_in = 0.000015
             }
             other => panic!("expected NoEligibleModel, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn describe_named_model_uses_catalog_metadata_when_present() {
+        let mut catalog = ModelCatalog::new();
+        catalog.register(
+            RegisteredModel::new("opus")
+                .capability("expert")
+                .cost_per_token_in(0.1)
+                .cost_per_token_out(0.2),
+        );
+
+        let selection = catalog.describe_named_model("opus", 2, 3);
+        assert_eq!(selection.model, "opus");
+        assert_eq!(selection.capability_picked.as_deref(), Some("expert"));
+        assert!((selection.cost_estimate - 0.8).abs() < 1e-12);
+    }
+
+    #[test]
+    fn describe_named_model_falls_back_when_model_is_not_registered() {
+        let selection = ModelCatalog::new().describe_named_model("custom", 10, 10);
+        assert_eq!(selection.model, "custom");
+        assert_eq!(selection.capability_picked, None);
+        assert_eq!(selection.cost_estimate, 0.0);
     }
 }

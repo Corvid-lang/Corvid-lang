@@ -68,6 +68,22 @@ impl Runtime {
         )
     }
 
+    pub fn describe_named_model(
+        &self,
+        model_name: &str,
+        prompt_tokens: u64,
+        completion_tokens: u64,
+    ) -> Result<ModelSelection, RuntimeError> {
+        if let Some(err) = &self.model_catalog_error {
+            return Err(err.clone());
+        }
+        Ok(self.model_catalog.describe_named_model(
+            model_name,
+            prompt_tokens,
+            completion_tokens,
+        ))
+    }
+
     // ---- dispatch helpers ----
 
     /// Call a tool by name. Emits trace events bracketing the call.
@@ -389,5 +405,22 @@ cost_per_token_in = 0.000015
             .select_cheapest_model_for_capability("expert", 10, 10)
             .unwrap();
         assert_eq!(selected.model, "opus");
+    }
+
+    #[test]
+    fn describe_named_model_uses_runtime_catalog_when_available() {
+        let runtime = Runtime::builder()
+            .model(
+                RegisteredModel::new("fast")
+                    .capability("basic")
+                    .cost_per_token_in(0.25)
+                    .cost_per_token_out(0.5),
+            )
+            .build();
+
+        let selected = runtime.describe_named_model("fast", 2, 3).unwrap();
+        assert_eq!(selected.model, "fast");
+        assert_eq!(selected.capability_picked.as_deref(), Some("basic"));
+        assert!((selected.cost_estimate - 2.0).abs() < 1e-12);
     }
 }
