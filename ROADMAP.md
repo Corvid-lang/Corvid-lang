@@ -565,10 +565,12 @@ for each test program P:
 
 If the type checker says "this agent is `@trust(autonomous)`" but the interpreter triggers a human-approval gate at runtime, that's a **soundness divergence** — one of the tiers is lying. The test harness catches it. No other language tests soundness this way because no other language has four execution tiers seeing the same effect profile.
 
-- [ ] Build the `differential-verify` test harness crate
-- [ ] Run every existing test program across all four tiers and compare
-- [ ] Machine-readable divergence reports when tiers disagree
+- [x] Build the `differential-verify` test harness crate — shipped as `crates/corvid-differential-verify`
+- [x] Run every existing test program across all four tiers and compare — runnable corpus under `tests/corpus/`, `should_fail/tier_disagree.cor` proves the harness catches real divergence
+- [x] Machine-readable divergence reports when tiers disagree — `corvid verify --json`, `DivergenceReport` serde structure, divergence classification (`static-overapprox` / `static-too-loose` / `tier-mismatch`)
+- [x] Shrinker for divergent programs — `corvid verify --shrink <file>` produces a smaller reproducer
 - [ ] CI gate: any divergence fails the build
+- [ ] **Follow-up — native-tier trace emission.** The current native tier falls back to the interpreter-observed effect set when the compiled binary emits no prompt/tool trace events. The fallback is recorded in the report's `notes` field rather than silently treated as "no effects." Proper native-tier trace emission is tracked here so `static-too-loose` and `tier-mismatch` classifications get their full fidelity
 
 ##### 2. Adversarial LLM-driven bypass generation
 
