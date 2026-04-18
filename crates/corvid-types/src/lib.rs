@@ -16,11 +16,13 @@ pub mod repl;
 pub mod types;
 
 pub use checker::{typecheck, Checked};
-pub use errors::{TypeError, TypeErrorKind};
+pub use errors::{TypeError, TypeErrorKind, TypeWarning, TypeWarningKind};
 pub use repl::{CheckedTurn, ReplLocal, ReplSession, ReplTurnBuild, REPL_RESULT_NAME};
 pub use effects::{
-    analyze_effects, check_grounded_returns, AgentEffectSummary, ComposedProfile,
-    ConstraintViolation, EffectProfile, EffectRegistry, ProvenanceViolation,
+    analyze_effects, check_grounded_returns, compute_worst_case_cost, render_cost_tree,
+    AgentEffectSummary, ComposedProfile, ConstraintViolation, CostEstimate, CostNodeKind,
+    CostTreeNode, CostWarning, CostWarningKind, EffectProfile, EffectRegistry,
+    ProvenanceViolation,
 };
 pub use types::Type;
 
@@ -48,6 +50,15 @@ mod tests {
         let (file, perr) = parse_file(&tokens);
         assert!(perr.is_empty(), "parse errors: {perr:?}");
         resolve(&file).errors
+    }
+
+    fn checked_with_file(src: &str) -> (corvid_ast::File, corvid_resolve::Resolved, Checked) {
+        let tokens = lex(src).expect("lex failed");
+        let (file, perr) = parse_file(&tokens);
+        assert!(perr.is_empty(), "parse errors: {perr:?}");
+        let resolved = resolve(&file);
+        let checked = typecheck(&file, &resolved);
+        (file, resolved, checked)
     }
 
     fn mutate_once(base: &str, from: &str, to: &str) -> String {
@@ -1221,5 +1232,216 @@ agent bad(id: String) -> Grounded<String>:
             e.kind,
             TypeErrorKind::UngroundedReturn { .. }
         )), "got: {:?}", c.errors);
+    }
+
+    #[test]
+    fn eval_value_and_trace_assertions_typecheck_cleanly() {
+        let src = "\
+type Ticket:
+    order_id: String
+
+type Order:
+    id: String
+
+tool get_order(id: String) -> Order
+tool issue_refund(id: String) -> String dangerous
+
+eval refund_process:
+    ticket = Ticket(\"ord_42\")
+    order = get_order(ticket.order_id)
+    assert called get_order before issue_refund
+    assert approved IssueRefund
+    assert cost < $0.50
+    assert order.id == order.id with confidence 0.95 over 50 runs
+";
+        let (_file, resolved, checked) = checked_with_file(src);
+        assert!(resolved.errors.is_empty(), "resolve errors: {:?}", resolved.errors);
+        assert!(checked.errors.is_empty(), "type errors: {:?}", checked.errors);
+    }
+
+    #[test]
+    fn eval_non_bool_assert_is_flagged() {
+        let src = r#"
+tool get_order(id: String) -> String
+
+eval bad_eval:
+    order = get_order("ord_42")
+    assert order
+"#;
+        let c = check(src);
+        assert!(c.errors.iter().any(|e| matches!(
+            e.kind,
+            TypeErrorKind::AssertNotBool { .. }
+        )), "got: {:?}", c.errors);
+    }
+
+    #[test]
+    fn eval_called_unknown_name_fails_in_resolution() {
+        let src = "\
+eval bad_eval:
+    assert called missing_tool
+";
+        let errors = resolve_errors(src);
+        assert!(errors.iter().any(|e| matches!(
+            e.kind,
+            ResolveErrorKind::UndefinedName(ref name) if name == "missing_tool"
+        )), "got: {:?}", errors);
+    }
+
+    #[test]
+    fn eval_called_non_callable_is_flagged() {
+        let src = "\
+type Ticket:
+    order_id: String
+
+eval bad_eval:
+    assert called Ticket
+";
+        let c = check(src);
+        assert!(c.errors.iter().any(|e| matches!(
+            e.kind,
+            TypeErrorKind::EvalUnknownTool { ref name } if name == "Ticket"
+        )), "got: {:?}", c.errors);
+    }
+
+    #[test]
+    fn eval_unknown_approval_label_is_flagged() {
+        let src = "\
+tool issue_refund(id: String) -> String dangerous
+
+eval bad_eval:
+    assert approved MissingApproval
+";
+        let c = check(src);
+        assert!(c.errors.iter().any(|e| matches!(
+            e.kind,
+            TypeErrorKind::EvalUnknownApproval { ref label } if label == "MissingApproval"
+        )), "got: {:?}", c.errors);
+    }
+
+    #[test]
+    fn eval_invalid_confidence_is_flagged() {
+        let src = "\
+eval bad_eval:
+    assert true with confidence 1.5 over 5 runs
+";
+        let c = check(src);
+        assert!(c.errors.iter().any(|e| matches!(
+            e.kind,
+            TypeErrorKind::InvalidConfidence { .. }
+        )), "got: {:?}", c.errors);
+    }
+
+    #[test]
+    fn multi_dimensional_budget_within_bound_is_clean() {
+        let src = r#"
+effect search_effect:
+    cost: $0.001
+    tokens: 12
+    latency_ms: 100
+
+effect plan_effect:
+    cost: $0.030
+    tokens: 835
+    latency_ms: 1100
+
+tool search(query: String) -> String uses search_effect
+prompt generate_plan(results: String) -> String uses plan_effect:
+    "Plan."
+
+@budget($1.00, tokens: 10000, latency: 5s)
+agent planner(query: String) -> String:
+    results = search(query)
+    plan = generate_plan(results)
+    return plan
+"#;
+        let c = check(src);
+        assert!(c.errors.is_empty(), "got: {:?}", c.errors);
+        assert!(c.warnings.is_empty(), "unexpected warnings: {:?}", c.warnings);
+    }
+
+    #[test]
+    fn multi_dimensional_budget_violation_reports_path() {
+        let src = r#"
+effect search_effect:
+    cost: $0.001
+    tokens: 12
+    latency_ms: 100
+
+effect plan_effect:
+    cost: $0.030
+    tokens: 835
+    latency_ms: 1100
+
+tool search(query: String) -> String uses search_effect
+prompt generate_plan(results: String) -> String uses plan_effect:
+    "Plan."
+
+@budget($0.02, tokens: 500, latency: 1s)
+agent planner(query: String) -> String:
+    results = search(query)
+    plan = generate_plan(results)
+    return plan
+"#;
+        let c = check(src);
+        assert!(c.errors.iter().any(|e| matches!(
+            e.kind,
+            TypeErrorKind::EffectConstraintViolation { ref dimension, ref message, .. }
+                if dimension == "cost" && message.contains("search") && message.contains("generate_plan")
+        )), "got: {:?}", c.errors);
+        assert!(c.errors.iter().any(|e| matches!(
+            e.kind,
+            TypeErrorKind::EffectConstraintViolation { ref dimension, .. } if dimension == "tokens"
+        )), "got: {:?}", c.errors);
+        assert!(c.errors.iter().any(|e| matches!(
+            e.kind,
+            TypeErrorKind::EffectConstraintViolation { ref dimension, .. } if dimension == "latency_ms"
+        )), "got: {:?}", c.errors);
+    }
+
+    #[test]
+    fn unbounded_loop_budget_produces_warning_not_error() {
+        let src = r#"
+effect search_effect:
+    cost: $0.010
+    tokens: 100
+    latency_ms: 300
+
+tool search(query: String) -> String uses search_effect
+
+@budget($0.05, tokens: 1000, latency: 5s)
+agent planner(items: List<String>) -> String:
+    total = ""
+    for item in items:
+        total = search(item)
+    return total
+"#;
+        let c = check(src);
+        assert!(c.errors.is_empty(), "unexpected errors: {:?}", c.errors);
+        assert!(c.warnings.iter().any(|warning| matches!(
+            warning.kind,
+            TypeWarningKind::UnboundedCostAnalysis { .. }
+        )), "got: {:?}", c.warnings);
+    }
+
+    #[test]
+    fn sub_agent_costs_propagate_into_outer_agent() {
+        let src = "\
+effect search_effect:
+    cost: $0.010
+    tokens: 100
+    latency_ms: 300
+
+tool search(query: String) -> String uses search_effect
+
+agent inner(query: String) -> String:
+    return search(query)
+
+@budget($0.02, tokens: 200, latency: 1s)
+agent outer(query: String) -> String:
+    return inner(query)
+";
+        let c = check(src);
+        assert!(c.errors.is_empty(), "got: {:?}", c.errors);
     }
 }

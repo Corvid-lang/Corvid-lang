@@ -57,6 +57,7 @@ pub enum DeclKind {
     Tool,
     Prompt,
     Agent,
+    Eval,
     Effect,
 }
 

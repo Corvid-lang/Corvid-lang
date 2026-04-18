@@ -23,6 +23,7 @@ pub enum TokKind {
     KwAgent,
     KwTool,
     KwPrompt,
+    KwEval,
     KwType,
     KwImport,
     KwAs,
@@ -49,6 +50,7 @@ pub enum TokKind {
     KwDangerous,
     KwEffect,
     KwUses,
+    KwAssert,
 
     // --- keywords: control flow ---
     KwIf,
@@ -121,6 +123,7 @@ impl TokKind {
             "agent" => TokKind::KwAgent,
             "tool" => TokKind::KwTool,
             "prompt" => TokKind::KwPrompt,
+            "eval" => TokKind::KwEval,
             "type" => TokKind::KwType,
             "import" => TokKind::KwImport,
             "as" => TokKind::KwAs,
@@ -139,6 +142,7 @@ impl TokKind {
             "dangerous" => TokKind::KwDangerous,
             "effect" => TokKind::KwEffect,
             "uses" => TokKind::KwUses,
+            "assert" => TokKind::KwAssert,
             "if" => TokKind::KwIf,
             "else" => TokKind::KwElse,
             "for" => TokKind::KwFor,

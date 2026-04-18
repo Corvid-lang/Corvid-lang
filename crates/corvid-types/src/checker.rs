@@ -7,11 +7,12 @@
 //!
 //! See `ARCHITECTURE.md` §6 and `FEATURES.md` v0.1.
 
-use crate::errors::{TypeError, TypeErrorKind};
+use crate::errors::{TypeError, TypeErrorKind, TypeWarning, TypeWarningKind};
 use crate::types::Type;
 use corvid_ast::{
-    AgentDecl, BinaryOp, Block, Decl, Effect, Expr, ExtendMethodKind, File, Ident, Literal, Param,
-    PromptDecl, Span, Stmt, ToolDecl, TypeDecl, TypeRef, UnaryOp, WeakEffect, WeakEffectRow,
+    AgentDecl, BinaryOp, Block, Decl, Effect, EvalAssert, EvalDecl, Expr, ExtendMethodKind, File,
+    Ident, Literal, Param, PromptDecl, Span, Stmt, ToolDecl, TypeDecl, TypeRef, UnaryOp,
+    WeakEffect, WeakEffectRow,
 };
 use corvid_resolve::{
     resolver::{MethodEntry, MethodKind},
@@ -28,26 +29,31 @@ pub struct Checked {
     pub local_types: HashMap<LocalId, Type>,
     /// All errors found. Reporting continues past each error.
     pub errors: Vec<TypeError>,
+    /// Non-fatal diagnostics.
+    pub warnings: Vec<TypeWarning>,
 }
 
 pub fn typecheck(file: &File, resolved: &Resolved) -> Checked {
     let mut c = Checker::new(file, resolved);
     c.check_file(file);
 
-    // Dimensional effect analysis: collect effect declarations, build
-    // the registry, analyze agents, and report constraint violations.
     let effect_decls: Vec<&corvid_ast::EffectDecl> = file.decls.iter().filter_map(|d| {
         if let Decl::Effect(e) = d { Some(e) } else { None }
     }).collect();
+    let owned_decls: Vec<corvid_ast::EffectDecl> = effect_decls.iter().cloned().cloned().collect();
+    let registry = crate::effects::EffectRegistry::from_decls(&owned_decls);
 
+    // Dimensional effect analysis: collect effect declarations, build
+    // the registry, analyze agents, and report non-cost constraint violations.
     if !effect_decls.is_empty() || file.decls.iter().any(|d| {
         matches!(d, Decl::Agent(a) if !a.constraints.is_empty())
     }) {
-        let owned_decls: Vec<corvid_ast::EffectDecl> = effect_decls.into_iter().cloned().collect();
-        let registry = crate::effects::EffectRegistry::from_decls(&owned_decls);
         let summaries = crate::effects::analyze_effects(file, resolved, &registry);
         for summary in &summaries {
             for violation in &summary.violations {
+                if matches!(violation.dimension.as_str(), "cost" | "tokens" | "latency_ms") {
+                    continue;
+                }
                 c.errors.push(TypeError::new(
                     TypeErrorKind::EffectConstraintViolation {
                         agent: summary.agent_name.clone(),
@@ -60,13 +66,73 @@ pub fn typecheck(file: &File, resolved: &Resolved) -> Checked {
         }
     }
 
+    for decl in &file.decls {
+        let Decl::Agent(agent) = decl else { continue };
+        let budget_constraints: Vec<_> = agent
+            .constraints
+            .iter()
+            .filter(|constraint| {
+                matches!(
+                    crate::effects::canonical_dimension_name(&constraint.dimension.name).as_str(),
+                    "cost" | "tokens" | "latency_ms"
+                )
+            })
+            .cloned()
+            .collect();
+        if budget_constraints.is_empty() {
+            continue;
+        }
+
+        if let Some(estimate) =
+            crate::effects::compute_worst_case_cost(file, resolved, &registry, &agent.name.name)
+        {
+            for warning in estimate.warnings {
+                let crate::effects::CostWarningKind::UnboundedLoop { agent, message } = warning.kind;
+                c.warnings.push(TypeWarning::new(
+                    TypeWarningKind::UnboundedCostAnalysis { agent, message },
+                    warning.span,
+                ));
+            }
+            if !estimate.bounded {
+                continue;
+            }
+
+            for constraint in &budget_constraints {
+                let dim = crate::effects::canonical_dimension_name(&constraint.dimension.name);
+                let actual = estimate.dimensions.get(&dim).copied().unwrap_or(0.0);
+                let Some(limit) = crate::effects::numeric_constraint_value(constraint) else {
+                    continue;
+                };
+                if actual > limit {
+                    let path = crate::effects::cost_path_for_dimension(&estimate.tree, &dim);
+                    let path_text = if path.is_empty() {
+                        "path attribution unavailable".to_string()
+                    } else {
+                        path.join(" → ")
+                    };
+                    let message = format!(
+                        "{}: {} > {} budget (path: {})",
+                        dim,
+                        crate::effects::format_numeric_dimension(&dim, actual),
+                        crate::effects::format_numeric_dimension(&dim, limit),
+                        path_text,
+                    );
+                    c.errors.push(TypeError::new(
+                        TypeErrorKind::EffectConstraintViolation {
+                            agent: agent.name.name.clone(),
+                            dimension: dim,
+                            message,
+                        },
+                        constraint.span,
+                    ));
+                }
+            }
+        }
+    }
+
     // Provenance verification: check that agents returning Grounded<T>
     // actually have a provenance path from a data: grounded source.
     {
-        let owned_decls: Vec<corvid_ast::EffectDecl> = file.decls.iter().filter_map(|d| {
-            if let Decl::Effect(e) = d { Some(e.clone()) } else { None }
-        }).collect();
-        let registry = crate::effects::EffectRegistry::from_decls(&owned_decls);
         let provenance_violations = crate::effects::check_grounded_returns(file, resolved, &registry);
         for violation in provenance_violations {
             c.errors.push(TypeError::new(
@@ -83,6 +149,7 @@ pub fn typecheck(file: &File, resolved: &Resolved) -> Checked {
         types: c.types,
         local_types: c.local_types,
         errors: c.errors,
+        warnings: c.warnings,
     }
 }
 
@@ -91,6 +158,7 @@ struct Checker<'a> {
     bindings: &'a HashMap<Span, Binding>,
     types: HashMap<Span, Type>,
     errors: Vec<TypeError>,
+    warnings: Vec<TypeWarning>,
 
     /// Indexed declarations for O(1) lookup by DefId. Methods from
     /// `extend` blocks get inserted here too — a method `extend Order: agent
@@ -210,6 +278,7 @@ impl<'a> Checker<'a> {
                         agents.insert(id, a);
                     }
                 }
+                Decl::Eval(_) => {}
                 Decl::Type(t) => {
                     if let Some(id) = resolved.symbols.lookup_def(&t.name.name) {
                         types.insert(id, t);
@@ -257,6 +326,7 @@ impl<'a> Checker<'a> {
             bindings: &resolved.bindings,
             types: HashMap::new(),
             errors: Vec::new(),
+            warnings: Vec::new(),
             tools_by_id: tools,
             prompts_by_id: prompts,
             agents_by_id: agents,
@@ -278,6 +348,7 @@ impl<'a> Checker<'a> {
         for decl in &file.decls {
             match decl {
                 Decl::Agent(a) => self.check_agent(a),
+                Decl::Eval(e) => self.check_eval(e),
                 Decl::Prompt(_) | Decl::Tool(_) | Decl::Type(_) | Decl::Import(_) | Decl::Effect(_) => {
                     // No body to check. Signatures are already well-formed
                     // by the parser, and the resolver has vetted their names.
@@ -315,6 +386,102 @@ impl<'a> Checker<'a> {
         self.current_return = prev_ret;
         // (Locals leak between agents in our single-scope model; harmless
         //  since each agent binds its params fresh at the start.)
+    }
+
+    fn check_eval(&mut self, e: &EvalDecl) {
+        let prev_ret = self.current_return.take();
+        self.check_block(&e.body);
+        for assertion in &e.assertions {
+            self.check_eval_assert(assertion);
+        }
+        self.current_return = prev_ret;
+    }
+
+    fn check_eval_assert(&mut self, assertion: &EvalAssert) {
+        match assertion {
+            EvalAssert::Value {
+                expr,
+                confidence,
+                runs,
+                span,
+            } => {
+                let ty = self.check_expr(expr);
+                if !matches!(ty, Type::Bool | Type::Unknown) {
+                    self.errors.push(TypeError::new(
+                        TypeErrorKind::AssertNotBool {
+                            got: ty.display_name(),
+                        },
+                        *span,
+                    ));
+                }
+                if let Some(value) = confidence {
+                    if !(0.0..=1.0).contains(value) {
+                        self.errors.push(TypeError::new(
+                            TypeErrorKind::InvalidConfidence { value: *value },
+                            *span,
+                        ));
+                    }
+                }
+                if matches!(runs, Some(0)) {
+                    self.errors.push(TypeError::new(
+                        TypeErrorKind::InvalidConfidence { value: 0.0 },
+                        *span,
+                    ));
+                }
+            }
+            EvalAssert::Called { tool, span } => {
+                self.check_eval_callable(tool, *span);
+            }
+            EvalAssert::Approved { label, span } => {
+                if !self.has_known_approval_label(&label.name) {
+                    self.errors.push(TypeError::new(
+                        TypeErrorKind::EvalUnknownApproval {
+                            label: label.name.clone(),
+                        },
+                        *span,
+                    ));
+                }
+            }
+            EvalAssert::Cost { .. } => {}
+            EvalAssert::Ordering {
+                before,
+                after,
+                span,
+            } => {
+                self.check_eval_callable(before, *span);
+                self.check_eval_callable(after, *span);
+            }
+        }
+    }
+
+    fn check_eval_callable(&mut self, ident: &Ident, span: Span) {
+        match self.bindings.get(&ident.span) {
+            Some(Binding::Decl(def_id)) => match self.symbols.get(*def_id).kind {
+                DeclKind::Tool | DeclKind::Prompt | DeclKind::Agent => {}
+                _ => {
+                    self.errors.push(TypeError::new(
+                        TypeErrorKind::EvalUnknownTool {
+                            name: ident.name.clone(),
+                        },
+                        span,
+                    ));
+                }
+            },
+            _ => {
+                self.errors.push(TypeError::new(
+                    TypeErrorKind::EvalUnknownTool {
+                        name: ident.name.clone(),
+                    },
+                    span,
+                ));
+            }
+        }
+    }
+
+    fn has_known_approval_label(&self, label: &str) -> bool {
+        self.tools_by_id
+            .values()
+            .any(|tool| matches!(tool.effect, Effect::Dangerous) && pascal_case(&tool.name.name) == label)
     }
 
     fn bind_params(&mut self, params: &[Param]) {
@@ -649,7 +816,7 @@ impl<'a> Checker<'a> {
                 ));
                 Type::Unknown
             }
-            DeclKind::Import | DeclKind::Effect => Type::Unknown,
+            DeclKind::Import | DeclKind::Eval | DeclKind::Effect => Type::Unknown,
         }
     }
 
@@ -695,7 +862,7 @@ impl<'a> Checker<'a> {
                     DeclKind::Tool => self.check_tool_call(def_id, &name.name, args, span),
                     DeclKind::Prompt => self.check_prompt_call(def_id, &name.name, args),
                     DeclKind::Agent => self.check_agent_call(def_id, &name.name, args),
-                    DeclKind::Import | DeclKind::Effect => {
+                    DeclKind::Import | DeclKind::Eval | DeclKind::Effect => {
                         for a in args {
                             let _ = self.check_expr(a);
                         }

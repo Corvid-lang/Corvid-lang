@@ -402,6 +402,16 @@ impl Repl {
                 self.cmd_locals(output)?;
                 Ok(true)
             }
+            ":cost" => {
+                let rest = trimmed[command.len()..].trim();
+                if rest.is_empty() {
+                    writeln!(output, "usage: :cost <agent_name>")?;
+                    output.flush()?;
+                } else {
+                    self.cmd_cost(rest, output)?;
+                }
+                Ok(true)
+            }
             ":import-trace" => {
                 let path = trimmed[command.len()..].trim().trim_matches('"');
                 if path.is_empty() {
@@ -802,6 +812,7 @@ impl Repl {
         writeln!(output)?;
         writeln!(output, "\x1b[1mInspection:\x1b[0m")?;
         writeln!(output, "  :type <expr>     show inferred type without executing")?;
+        writeln!(output, "  :cost <agent>    show worst-case multi-dimensional cost")?;
         writeln!(output, "  :inspect <name>  show declaration details + dependencies")?;
         writeln!(output, "  :locals          show current local bindings")?;
         writeln!(output)?;
@@ -1049,6 +1060,60 @@ impl Repl {
             }
         }
 
+        output.flush()
+    }
+
+    fn cmd_cost<W: Write>(&self, name: &str, output: &mut W) -> io::Result<()> {
+        let turn = self.resolver.resolve_current();
+        if !turn.resolved.errors.is_empty() {
+            self.write_resolve_errors(&turn, output)?;
+            return Ok(());
+        }
+
+        let decl = turn
+            .file
+            .decls
+            .iter()
+            .find(|decl| corvid_resolve::decl_name(decl) == Some(name));
+        let Some(Decl::Agent(agent)) = decl else {
+            writeln!(output, "`{name}` is not a known agent in this session")?;
+            output.flush()?;
+            return Ok(());
+        };
+
+        let effect_decls: Vec<_> = turn
+            .file
+            .decls
+            .iter()
+            .filter_map(|decl| match decl {
+                Decl::Effect(effect) => Some(effect.clone()),
+                _ => None,
+            })
+            .collect();
+        let registry = corvid_types::EffectRegistry::from_decls(&effect_decls);
+        let Some(estimate) =
+            corvid_types::compute_worst_case_cost(&turn.file, &turn.resolved, &registry, name)
+        else {
+            writeln!(output, "no cost estimate available for `{name}`")?;
+            output.flush()?;
+            return Ok(());
+        };
+
+        writeln!(
+            output,
+            "{}",
+            corvid_types::render_cost_tree(&estimate.tree, Some(&agent.constraints))
+        )?;
+        if !estimate.warnings.is_empty() {
+            writeln!(output)?;
+            for warning in estimate.warnings {
+                match warning.kind {
+                    corvid_types::CostWarningKind::UnboundedLoop { message, .. } => {
+                        writeln!(output, "warning: {message}")?;
+                    }
+                }
+            }
+        }
         output.flush()
     }
 
@@ -1678,5 +1743,48 @@ p.x\n",
         if let Some(parent) = temp.parent() {
             let _ = std::fs::remove_dir_all(parent);
         }
+    }
+
+    #[test]
+    fn cost_command_renders_cost_tree() {
+        let mut repl = Repl::new().expect("repl init");
+        let mut output = Vec::new();
+        repl.process_source(
+            "effect search_effect:\n    cost: $0.001\n    tokens: 12\n    latency_ms: 100\n",
+            &mut output,
+            false,
+        )
+        .expect("effect decl");
+        repl.process_source(
+            "effect plan_effect:\n    cost: $0.030\n    tokens: 835\n    latency_ms: 1100\n",
+            &mut output,
+            false,
+        )
+        .expect("effect decl");
+        repl.process_source(
+            "tool search(query: String) -> String uses search_effect",
+            &mut output,
+            false,
+        )
+        .expect("tool decl");
+        repl.process_source(
+            "prompt generate_plan(results: String) -> String uses plan_effect:\n    \"Plan.\"\n",
+            &mut output,
+            false,
+        )
+        .expect("prompt decl");
+        repl.process_source(
+            "@budget($1.00, tokens: 10000, latency: 5s)\nagent planner(query: String) -> String:\n    results = search(query)\n    plan = generate_plan(results)\n    return plan\n",
+            &mut output,
+            false,
+        )
+        .expect("agent decl");
+        repl.process_source(":cost planner", &mut output, false)
+            .expect("cost command");
+        let text = String::from_utf8(output).expect("valid utf8");
+        assert!(text.contains("planner"), "unexpected output: {text}");
+        assert!(text.contains("search"), "unexpected output: {text}");
+        assert!(text.contains("generate_plan"), "unexpected output: {text}");
+        assert!(text.contains("tokens"), "unexpected output: {text}");
     }
 }

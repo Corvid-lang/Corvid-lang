@@ -9,8 +9,8 @@
 use crate::errors::{ResolveError, ResolveErrorKind};
 use crate::scope::{Binding, DefId, DeclKind, LocalId, LocalScope, SymbolTable};
 use corvid_ast::{
-    AgentDecl, Block, Decl, Expr, ExtendDecl, ExtendMethodKind, File, Ident, PromptDecl, Span,
-    Stmt, ToolDecl, TypeDecl, TypeRef, Visibility,
+    AgentDecl, Block, Decl, EvalAssert, EvalDecl, Expr, ExtendDecl, ExtendMethodKind, File,
+    Ident, PromptDecl, Span, Stmt, ToolDecl, TypeDecl, TypeRef, Visibility,
 };
 use std::collections::HashMap;
 
@@ -116,6 +116,7 @@ impl Resolver {
                 Decl::Tool(t) => (t.name.name.clone(), DeclKind::Tool, t.span),
                 Decl::Prompt(p) => (p.name.name.clone(), DeclKind::Prompt, p.span),
                 Decl::Agent(a) => (a.name.name.clone(), DeclKind::Agent, a.span),
+                Decl::Eval(e) => (e.name.name.clone(), DeclKind::Eval, e.span),
                 Decl::Effect(e) => (e.name.name.clone(), DeclKind::Effect, e.span),
                 Decl::Extend(_) => {
                     // The parser accepts `extend T:`
@@ -263,6 +264,7 @@ impl Resolver {
                 Decl::Tool(t) => self.resolve_tool_decl(t),
                 Decl::Prompt(p) => self.resolve_prompt_decl(p),
                 Decl::Agent(a) => self.resolve_agent_decl(a),
+                Decl::Eval(e) => self.resolve_eval_decl(e),
                 Decl::Effect(e) => self.resolve_effect_decl(e),
                 Decl::Extend(ext) => {
                     // Resolve each method body
@@ -356,6 +358,28 @@ impl Resolver {
         self.resolve_effect_row(&a.effect_row);
         self.resolve_block(&a.body);
         self.pop_scope();
+    }
+
+    fn resolve_eval_decl(&mut self, e: &EvalDecl) {
+        self.push_scope();
+        self.resolve_block(&e.body);
+        for assertion in &e.assertions {
+            self.resolve_eval_assert(assertion);
+        }
+        self.pop_scope();
+    }
+
+    fn resolve_eval_assert(&mut self, assertion: &EvalAssert) {
+        match assertion {
+            EvalAssert::Value { expr, .. } => self.resolve_expr(expr),
+            EvalAssert::Called { tool, .. } => self.resolve_ident(tool),
+            EvalAssert::Approved { .. } => {}
+            EvalAssert::Cost { .. } => {}
+            EvalAssert::Ordering { before, after, .. } => {
+                self.resolve_ident(before);
+                self.resolve_ident(after);
+            }
+        }
     }
 
     fn resolve_type_ref(&mut self, ty: &TypeRef) {

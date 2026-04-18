@@ -233,6 +233,7 @@ agent pick(flag: Bool) -> Int:
             tools: vec![],
             prompts: vec![],
             agents: vec![agent],
+            evals: vec![],
         };
         let rt = empty_runtime();
         let err = run_agent(&ir, "bad", vec![], &rt).await.unwrap_err();

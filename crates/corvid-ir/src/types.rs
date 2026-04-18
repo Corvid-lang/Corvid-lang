@@ -15,6 +15,7 @@ pub struct IrFile {
     pub tools: Vec<IrTool>,
     pub prompts: Vec<IrPrompt>,
     pub agents: Vec<IrAgent>,
+    pub evals: Vec<IrEval>,
 }
 
 /// `import python "..." as alias`.
@@ -57,6 +58,11 @@ pub struct IrTool {
     pub return_ty: Type,
     pub effect: Effect,
     pub effect_names: Vec<String>,
+    /// If any declared effect has `trust: autonomous_if_confident(T)`,
+    /// this carries the confidence threshold. At runtime, the
+    /// interpreter checks composed input confidence and activates the
+    /// approval gate if confidence is below this threshold.
+    pub confidence_gate: Option<f64>,
     pub span: Span,
 }
 
@@ -94,6 +100,47 @@ pub struct IrAgent {
     /// (`corvid-vm`) ignores this field — refcount there is via `Arc`
     /// and has no ABI distinction.
     pub borrow_sig: Option<Vec<ParamBorrow>>,
+}
+
+/// An eval declaration lowered into IR.
+#[derive(Debug, Clone)]
+pub struct IrEval {
+    pub id: DefId,
+    pub name: String,
+    pub body: IrBlock,
+    pub assertions: Vec<IrEvalAssert>,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone)]
+pub enum IrEvalAssert {
+    Value {
+        expr: IrExpr,
+        confidence: Option<f64>,
+        runs: Option<u64>,
+        span: Span,
+    },
+    Called {
+        def_id: DefId,
+        name: String,
+        span: Span,
+    },
+    Approved {
+        label: String,
+        span: Span,
+    },
+    Cost {
+        op: BinaryOp,
+        bound: f64,
+        span: Span,
+    },
+    Ordering {
+        before_id: DefId,
+        before_name: String,
+        after_id: DefId,
+        after_name: String,
+        span: Span,
+    },
 }
 
 /// Callee-side ABI for a refcounted parameter. Non-refcounted params

@@ -119,6 +119,7 @@ pub fn analyze(ir: IrFile) -> (IrFile, HashMap<DefId, AgentSummary>) {
         tools: ir.tools,
         prompts: ir.prompts,
         agents: transformed_agents,
+        evals: ir.evals,
     };
     (out, summaries)
 }

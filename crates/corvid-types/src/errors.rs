@@ -29,6 +29,26 @@ impl TypeError {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub struct TypeWarning {
+    pub kind: TypeWarningKind,
+    pub span: Span,
+}
+
+impl TypeWarning {
+    pub fn new(kind: TypeWarningKind, span: Span) -> Self {
+        Self { kind, span }
+    }
+
+    pub fn message(&self) -> String {
+        self.kind.message()
+    }
+
+    pub fn hint(&self) -> Option<String> {
+        self.kind.hint()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub enum TypeErrorKind {
     /// Wrong number of arguments in a call.
     ArityMismatch {
@@ -121,10 +141,33 @@ pub enum TypeErrorKind {
         message: String,
     },
 
+    /// `assert <expr>` inside an eval must typecheck to Bool.
+    AssertNotBool { got: String },
+
+    /// `assert called <tool>` or `assert called A before B` references
+    /// a name that does not resolve to a known callable.
+    EvalUnknownTool { name: String },
+
+    /// `assert approved <label>` references an approval label that does
+    /// not match any dangerous tool label in the file.
+    EvalUnknownApproval { label: String },
+
+    /// Statistical assertion modifiers must stay in range.
+    InvalidConfidence { value: f64 },
+
     /// An agent returns `Grounded<T>` but the compiler cannot prove a
     /// provenance path from a `data: grounded` source feeds into the
     /// return value.
     UngroundedReturn {
+        agent: String,
+        message: String,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum TypeWarningKind {
+    /// The cost explorer could not prove a static upper bound.
+    UnboundedCostAnalysis {
         agent: String,
         message: String,
     },
@@ -202,6 +245,18 @@ impl TypeErrorKind {
             Self::EffectConstraintViolation { agent, message, .. } => {
                 format!("effect constraint violated in agent `{agent}`: {message}")
             }
+            Self::AssertNotBool { got } => {
+                format!("eval assertions must be `Bool`, got `{got}`")
+            }
+            Self::EvalUnknownTool { name } => {
+                format!("eval trace assertion references unknown callable `{name}`")
+            }
+            Self::EvalUnknownApproval { label } => {
+                format!("eval trace assertion references unknown approval label `{label}`")
+            }
+            Self::InvalidConfidence { value } => {
+                format!("statistical assertion confidence must be in [0.0, 1.0], got `{value}`")
+            }
             Self::UngroundedReturn { agent, message } => {
                 format!("ungrounded return in agent `{agent}`: {message}")
             }
@@ -277,6 +332,18 @@ impl TypeErrorKind {
             Self::EffectConstraintViolation { dimension, .. } => Some(format!(
                 "relax the `@{dimension}` constraint, or remove the call that violates it"
             )),
+            Self::AssertNotBool { .. } => Some(
+                "make the asserted expression evaluate to `Bool`, for example by adding a comparison".into(),
+            ),
+            Self::EvalUnknownTool { .. } => Some(
+                "declare the referenced tool, prompt, or agent before using it in `assert called ...`".into(),
+            ),
+            Self::EvalUnknownApproval { .. } => Some(
+                "use the PascalCase approval label for a dangerous tool declared in this file".into(),
+            ),
+            Self::InvalidConfidence { .. } => Some(
+                "use `with confidence P over N runs` with 0.0 <= P <= 1.0 and N > 0".into(),
+            ),
             Self::UngroundedReturn { .. } => Some(
                 "call a tool declared `uses retrieval` (or any effect with `data: grounded`) \
                  and pass its result to the return value, directly or through a prompt"
@@ -286,7 +353,35 @@ impl TypeErrorKind {
     }
 }
 
+impl TypeWarningKind {
+    pub fn message(&self) -> String {
+        match self {
+            Self::UnboundedCostAnalysis { agent, message } => {
+                format!("cost analysis warning in agent `{agent}`: {message}")
+            }
+        }
+    }
+
+    pub fn hint(&self) -> Option<String> {
+        match self {
+            Self::UnboundedCostAnalysis { .. } => Some(
+                "use a statically bounded loop or inspect `:cost <agent>` for the partial tree".into(),
+            ),
+        }
+    }
+}
+
 impl fmt::Display for TypeError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "[{}..{}] {}", self.span.start, self.span.end, self.message())?;
+        if let Some(hint) = self.hint() {
+            write!(f, "\n  help: {hint}")?;
+        }
+        Ok(())
+    }
+}
+
+impl fmt::Display for TypeWarning {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "[{}..{}] {}", self.span.start, self.span.end, self.message())?;
         if let Some(hint) = self.hint() {

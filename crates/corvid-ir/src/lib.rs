@@ -254,12 +254,13 @@ agent build(flag: Bool) -> Result<Option<String>, String>:
     fn lowers_try_propagate_and_retry() {
         let src = "\
 tool fetch(id: String) -> Result<String, String>
-tool lookup(id: String) -> String
+tool lookup(id: String) -> Result<String, String>
 
 agent load(id: String) -> Result<String, String>:
     value = fetch(id)?
     stable = try lookup(id) on error retry 3 times backoff exponential 40
-    return Ok(value + stable)
+    joined = stable?
+    return Ok(value + joined)
 ";
         let ir = lower_src(src);
         let agent = &ir.agents[0];
@@ -282,6 +283,45 @@ agent load(id: String) -> Result<String, String>:
                 other => panic!("expected TryRetry, got {other:?}"),
             },
             other => panic!("expected Let, got {other:?}"),
+        }
+        match &agent.body.stmts[2] {
+            IrStmt::Let { value, .. } => {
+                assert!(matches!(value.kind, IrExprKind::TryPropagate { .. }));
+            }
+            other => panic!("expected Let, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn lowers_evals_into_ir_nodes() {
+        let src = "\
+tool get_order(id: String) -> String
+tool issue_refund(id: String) -> String dangerous
+
+eval refund_process:
+    order = get_order(\"ord_42\")
+    assert called get_order before issue_refund
+    assert approved IssueRefund
+    assert cost < $0.50
+    assert order == order with confidence 0.95 over 50 runs
+";
+        let ir = lower_src(src);
+        assert_eq!(ir.evals.len(), 1);
+        let eval = &ir.evals[0];
+        assert_eq!(eval.name, "refund_process");
+        assert_eq!(eval.body.stmts.len(), 1);
+        assert_eq!(eval.assertions.len(), 4);
+        assert!(matches!(eval.assertions[0], IrEvalAssert::Ordering { .. }));
+        assert!(matches!(eval.assertions[1], IrEvalAssert::Approved { .. }));
+        assert!(matches!(eval.assertions[2], IrEvalAssert::Cost { .. }));
+        match &eval.assertions[3] {
+            IrEvalAssert::Value {
+                confidence, runs, ..
+            } => {
+                assert_eq!(*confidence, Some(0.95));
+                assert_eq!(*runs, Some(50));
+            }
+            other => panic!("expected value assertion, got {other:?}"),
         }
     }
 }

@@ -1,6 +1,7 @@
 //! Top-level declarations — what appears at the root of a `.cor` file.
 
 use crate::effect::{Effect, EffectConstraint, EffectDecl, EffectRow};
+use crate::expr::{BinaryOp, Expr};
 use crate::span::{Ident, Span};
 use crate::stmt::Block;
 use crate::ty::{Field, Param, TypeRef};
@@ -21,6 +22,7 @@ pub enum Decl {
     Tool(ToolDecl),
     Prompt(PromptDecl),
     Agent(AgentDecl),
+    Eval(EvalDecl),
     /// `extend T:` block attaching methods to a user type.
     Extend(ExtendDecl),
     /// `effect Name:` dimensional effect declaration.
@@ -35,6 +37,7 @@ impl Decl {
             Decl::Tool(d) => d.span,
             Decl::Prompt(d) => d.span,
             Decl::Agent(d) => d.span,
+            Decl::Eval(d) => d.span,
             Decl::Extend(d) => d.span,
             Decl::Effect(d) => d.span,
         }
@@ -228,4 +231,42 @@ pub struct AgentDecl {
     #[serde(default)]
     pub constraints: Vec<EffectConstraint>,
     pub span: Span,
+}
+
+/// An eval declaration. The body executes setup code and the trailing
+/// assertions validate either values or the execution trace shape.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct EvalDecl {
+    pub name: Ident,
+    pub body: Block,
+    pub assertions: Vec<EvalAssert>,
+    pub span: Span,
+}
+
+/// An assertion inside an `eval` block.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum EvalAssert {
+    /// `assert <expr>` or `assert <expr> with confidence P over N runs`
+    Value {
+        expr: Expr,
+        confidence: Option<f64>,
+        runs: Option<u64>,
+        span: Span,
+    },
+    /// `assert called <tool>`
+    Called { tool: Ident, span: Span },
+    /// `assert approved <label>`
+    Approved { label: Ident, span: Span },
+    /// `assert cost < $0.50`
+    Cost {
+        op: BinaryOp,
+        bound: f64,
+        span: Span,
+    },
+    /// `assert called <A> before <B>`
+    Ordering {
+        before: Ident,
+        after: Ident,
+        span: Span,
+    },
 }

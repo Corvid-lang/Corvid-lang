@@ -5,8 +5,8 @@
 
 use crate::types::*;
 use corvid_ast::{
-    AgentDecl, Block, Decl, Effect, Expr, ExtendMethodKind, File, Ident, ImportDecl,
-    ImportSource, Literal, Param, PromptDecl, Span, Stmt, ToolDecl, TypeDecl, TypeRef,
+    AgentDecl, Block, Decl, Effect, EvalAssert, EvalDecl, Expr, ExtendMethodKind, File, Ident,
+    ImportDecl, ImportSource, Literal, Param, PromptDecl, Span, Stmt, ToolDecl, TypeDecl, TypeRef,
 };
 use corvid_resolve::{
     resolver::MethodEntry, Binding, BuiltIn, DeclKind, DefId, LocalId, Resolved, SymbolTable,
@@ -47,6 +47,7 @@ impl<'a> Lowerer<'a> {
         let mut tools = Vec::new();
         let mut prompts = Vec::new();
         let mut agents = Vec::new();
+        let mut evals = Vec::new();
 
         for decl in &file.decls {
             match decl {
@@ -55,6 +56,7 @@ impl<'a> Lowerer<'a> {
                 Decl::Tool(t) => tools.push(self.lower_tool(t)),
                 Decl::Prompt(p) => prompts.push(self.lower_prompt(p)),
                 Decl::Agent(a) => agents.push(self.lower_agent(a)),
+                Decl::Eval(e) => evals.push(self.lower_eval(e)),
                 Decl::Effect(_) => {}
                 Decl::Extend(ext) => {
                     // Lower each method into the appropriate per-kind
@@ -96,6 +98,7 @@ impl<'a> Lowerer<'a> {
             tools,
             prompts,
             agents,
+            evals,
         }
     }
 
@@ -115,6 +118,81 @@ impl<'a> Lowerer<'a> {
             module: i.module.clone(),
             alias: alias_name,
             span: i.span,
+        }
+    }
+
+    fn lower_eval(&self, e: &EvalDecl) -> IrEval {
+        let id = self
+            .symbols
+            .lookup_def(&e.name.name)
+            .expect("eval missing from symbol table");
+        IrEval {
+            id,
+            name: e.name.name.clone(),
+            body: self.lower_block(&e.body),
+            assertions: e
+                .assertions
+                .iter()
+                .map(|assertion| self.lower_eval_assert(assertion))
+                .collect(),
+            span: e.span,
+        }
+    }
+
+    fn lower_eval_assert(&self, assertion: &EvalAssert) -> IrEvalAssert {
+        match assertion {
+            EvalAssert::Value {
+                expr,
+                confidence,
+                runs,
+                span,
+            } => IrEvalAssert::Value {
+                expr: self.lower_expr(expr),
+                confidence: *confidence,
+                runs: *runs,
+                span: *span,
+            },
+            EvalAssert::Called { tool, span } => {
+                let def_id = match self.bindings.get(&tool.span) {
+                    Some(Binding::Decl(def_id)) => *def_id,
+                    _ => panic!("eval called assertion missing resolved callable"),
+                };
+                IrEvalAssert::Called {
+                    def_id,
+                    name: tool.name.clone(),
+                    span: *span,
+                }
+            }
+            EvalAssert::Approved { label, span } => IrEvalAssert::Approved {
+                label: label.name.clone(),
+                span: *span,
+            },
+            EvalAssert::Cost { op, bound, span } => IrEvalAssert::Cost {
+                op: *op,
+                bound: *bound,
+                span: *span,
+            },
+            EvalAssert::Ordering {
+                before,
+                after,
+                span,
+            } => {
+                let before_id = match self.bindings.get(&before.span) {
+                    Some(Binding::Decl(def_id)) => *def_id,
+                    _ => panic!("eval ordering assertion missing resolved `before` callable"),
+                };
+                let after_id = match self.bindings.get(&after.span) {
+                    Some(Binding::Decl(def_id)) => *def_id,
+                    _ => panic!("eval ordering assertion missing resolved `after` callable"),
+                };
+                IrEvalAssert::Ordering {
+                    before_id,
+                    before_name: before.name.clone(),
+                    after_id,
+                    after_name: after.name.clone(),
+                    span: *span,
+                }
+            }
         }
     }
 
@@ -160,6 +238,7 @@ impl<'a> Lowerer<'a> {
             return_ty: self.type_ref_to_type(&t.return_ty),
             effect: t.effect,
             effect_names: t.effect_row.effects.iter().map(|e| e.name.name.clone()).collect(),
+            confidence_gate: None, // Populated by the effect system at a later pass
             span: t.span,
         }
     }

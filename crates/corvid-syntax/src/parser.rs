@@ -9,9 +9,10 @@ use crate::errors::{ParseError, ParseErrorKind};
 use crate::token::{TokKind, Token};
 use corvid_ast::{
     AgentDecl, Backoff, BinaryOp, Block, Decl, DimensionDecl, DimensionValue, Effect,
-    EffectConstraint, EffectDecl, EffectRef, EffectRow, Expr, ExtendDecl, ExtendMethod,
-    ExtendMethodKind, Field, File, Ident, ImportDecl, ImportSource, Literal, Param, PromptDecl,
-    Span, Stmt, ToolDecl, TypeDecl, TypeRef, UnaryOp, Visibility, WeakEffect, WeakEffectRow,
+    EffectConstraint, EffectDecl, EffectRef, EffectRow, EvalAssert, EvalDecl, Expr, ExtendDecl,
+    ExtendMethod, ExtendMethodKind, Field, File, Ident, ImportDecl, ImportSource, Literal, Param,
+    PromptDecl, Span, Stmt, ToolDecl, TypeDecl, TypeRef, UnaryOp, Visibility, WeakEffect,
+    WeakEffectRow,
 };
 
 #[derive(Debug, Clone, PartialEq)]
@@ -873,6 +874,7 @@ impl<'a> Parser<'a> {
                 | TokKind::KwType
                 | TokKind::KwTool
                 | TokKind::KwPrompt
+                | TokKind::KwEval
                 | TokKind::KwAgent
                 | TokKind::KwExtend
                 | TokKind::KwEffect
@@ -916,6 +918,7 @@ impl<'a> Parser<'a> {
                 | TokKind::KwType
                 | TokKind::KwTool
                 | TokKind::KwPrompt
+                | TokKind::KwEval
                 | TokKind::KwAgent
                 | TokKind::KwEffect
                 | TokKind::At
@@ -934,6 +937,7 @@ impl<'a> Parser<'a> {
             TokKind::KwType => self.parse_type_decl().map(Decl::Type),
             TokKind::KwTool => self.parse_tool_decl().map(Decl::Tool),
             TokKind::KwPrompt => self.parse_prompt_decl().map(Decl::Prompt),
+            TokKind::KwEval => self.parse_eval_decl().map(Decl::Eval),
             TokKind::KwAgent => self.parse_agent_decl().map(Decl::Agent),
             TokKind::KwExtend => self.parse_extend_decl().map(Decl::Extend),
             TokKind::KwEffect => self.parse_effect_decl().map(Decl::Effect),
@@ -955,7 +959,7 @@ impl<'a> Parser<'a> {
             other => Err(ParseError {
                 kind: ParseErrorKind::UnexpectedToken {
                     got: describe_token(other),
-                    expected: "a top-level declaration (agent, tool, prompt, type, import, extend, effect, @annotation)".into(),
+                    expected: "a top-level declaration (agent, tool, prompt, eval, type, import, extend, effect, @annotation)".into(),
                 },
                 span: self.peek_span(),
             }),
@@ -1196,11 +1200,13 @@ impl<'a> Parser<'a> {
             }
             TokKind::Int(n) => {
                 self.bump();
-                Ok(DimensionValue::Number(n as f64))
+                Ok(DimensionValue::Number(
+                    self.consume_optional_duration_suffix(n as f64),
+                ))
             }
             TokKind::Float(n) => {
                 self.bump();
-                Ok(DimensionValue::Number(n))
+                Ok(DimensionValue::Number(self.consume_optional_duration_suffix(n)))
             }
             TokKind::StringLit(s) => {
                 self.bump();
@@ -1208,7 +1214,32 @@ impl<'a> Parser<'a> {
             }
             TokKind::Ident(name) => {
                 self.bump();
-                Ok(DimensionValue::Name(name))
+                // Check for confidence-gated trust: `autonomous_if_confident(0.95)`
+                if name.ends_with("_if_confident") && matches!(self.peek(), TokKind::LParen) {
+                    self.bump(); // (
+                    let threshold = match self.peek().clone() {
+                        TokKind::Float(f) => { self.bump(); f }
+                        TokKind::Int(n) => { self.bump(); n as f64 }
+                        other => {
+                            return Err(ParseError {
+                                kind: ParseErrorKind::UnexpectedToken {
+                                    got: describe_token(&other),
+                                    expected: "a confidence threshold (0.0–1.0)".into(),
+                                },
+                                span: self.peek_span(),
+                            });
+                        }
+                    };
+                    self.expect(TokKind::RParen, "`)` after confidence threshold")?;
+                    let above = name.strip_suffix("_if_confident").unwrap_or(&name).to_string();
+                    Ok(DimensionValue::ConfidenceGated {
+                        threshold,
+                        above,
+                        below: "human_required".to_string(),
+                    })
+                } else {
+                    Ok(DimensionValue::Name(name))
+                }
             }
             other => Err(ParseError {
                 kind: ParseErrorKind::UnexpectedToken {
@@ -1304,6 +1335,238 @@ impl<'a> Parser<'a> {
         })
     }
 
+    // -- eval ----------------------------------------------------
+
+    fn parse_eval_decl(&mut self) -> Result<EvalDecl, ParseError> {
+        let start = self.peek_span();
+        self.bump(); // eval
+
+        let (name, name_span) = self.expect_ident()?;
+        self.expect(TokKind::Colon, "`:` after eval name")?;
+        self.expect_newline()?;
+
+        if !matches!(self.peek(), TokKind::Indent) {
+            return Err(ParseError {
+                kind: ParseErrorKind::ExpectedBlock,
+                span: self.peek_span(),
+            });
+        }
+        self.bump(); // Indent
+
+        let mut stmts = Vec::new();
+        let mut assertions = Vec::new();
+        let mut saw_assert = false;
+
+        while !matches!(self.peek(), TokKind::Dedent | TokKind::Eof) {
+            self.skip_newlines();
+            if matches!(self.peek(), TokKind::Dedent | TokKind::Eof) {
+                break;
+            }
+            if matches!(self.peek(), TokKind::KwAssert) {
+                saw_assert = true;
+                assertions.push(self.parse_eval_assert()?);
+                continue;
+            }
+            if saw_assert {
+                return Err(ParseError {
+                    kind: ParseErrorKind::UnexpectedToken {
+                        got: describe_token(self.peek()),
+                        expected: "only `assert ...` lines after the first eval assertion".into(),
+                    },
+                    span: self.peek_span(),
+                });
+            }
+            stmts.push(self.parse_stmt()?);
+        }
+
+        let end = self.peek_span();
+        if matches!(self.peek(), TokKind::Dedent) {
+            self.bump();
+        }
+
+        Ok(EvalDecl {
+            name: Ident::new(name, name_span),
+            body: Block {
+                stmts,
+                span: start.merge(end),
+            },
+            assertions,
+            span: start.merge(end),
+        })
+    }
+
+    fn parse_eval_assert(&mut self) -> Result<EvalAssert, ParseError> {
+        let start = self.peek_span();
+        self.bump(); // assert
+
+        let assert_node = match self.peek().clone() {
+            TokKind::Ident(keyword) if keyword == "called" => {
+                self.bump();
+                let (first_name, first_span) = self.expect_ident()?;
+                let first = Ident::new(first_name, first_span);
+                if self.peek_ident_is("before") {
+                    self.bump();
+                    let (second_name, second_span) = self.expect_ident()?;
+                    EvalAssert::Ordering {
+                        before: first,
+                        after: Ident::new(second_name, second_span),
+                        span: start.merge(second_span),
+                    }
+                } else {
+                    EvalAssert::Called {
+                        tool: first,
+                        span: start.merge(first_span),
+                    }
+                }
+            }
+            TokKind::Ident(keyword) if keyword == "approved" => {
+                self.bump();
+                let (label, span) = self.expect_ident()?;
+                EvalAssert::Approved {
+                    label: Ident::new(label, span),
+                    span: start.merge(span),
+                }
+            }
+            TokKind::Ident(keyword) if keyword == "cost" => {
+                self.bump();
+                let op = match self.peek() {
+                    TokKind::Eq => BinaryOp::Eq,
+                    TokKind::NotEq => BinaryOp::NotEq,
+                    TokKind::Lt => BinaryOp::Lt,
+                    TokKind::LtEq => BinaryOp::LtEq,
+                    TokKind::Gt => BinaryOp::Gt,
+                    TokKind::GtEq => BinaryOp::GtEq,
+                    other => {
+                        return Err(ParseError {
+                            kind: ParseErrorKind::UnexpectedToken {
+                                got: describe_token(other),
+                                expected: "a comparison operator after `assert cost`".into(),
+                            },
+                            span: self.peek_span(),
+                        })
+                    }
+                };
+                self.bump();
+                let bound_span = self.peek_span();
+                let bound = self.parse_cost_literal()?;
+                EvalAssert::Cost {
+                    op,
+                    bound,
+                    span: start.merge(bound_span),
+                }
+            }
+            _ => {
+                let expr = self.parse_expr()?;
+                let mut confidence = None;
+                let mut runs = None;
+                let mut end = expr.span();
+                if self.peek_ident_is("with") {
+                    self.bump();
+                    self.expect_contextual_ident("confidence")?;
+                    confidence = Some(self.parse_confidence_literal()?);
+                    self.expect_contextual_ident("over")?;
+                    let (run_count, run_span) = self.expect_positive_int_literal("a positive run count")?;
+                    self.expect_contextual_ident("runs")?;
+                    runs = Some(run_count);
+                    end = end.merge(run_span);
+                }
+                EvalAssert::Value {
+                    expr,
+                    confidence,
+                    runs,
+                    span: start.merge(end),
+                }
+            }
+        };
+
+        self.expect_newline()?;
+        Ok(assert_node)
+    }
+
+    fn peek_ident_is(&self, expected: &str) -> bool {
+        matches!(self.peek(), TokKind::Ident(name) if name == expected)
+    }
+
+    fn expect_contextual_ident(&mut self, expected: &str) -> Result<Span, ParseError> {
+        let span = self.peek_span();
+        match self.peek() {
+            TokKind::Ident(name) if name == expected => {
+                self.bump();
+                Ok(span)
+            }
+            other => Err(ParseError {
+                kind: ParseErrorKind::UnexpectedToken {
+                    got: describe_token(other),
+                    expected: format!("`{expected}`"),
+                },
+                span,
+            }),
+        }
+    }
+
+    fn parse_confidence_literal(&mut self) -> Result<f64, ParseError> {
+        let span = self.peek_span();
+        match self.peek().clone() {
+            TokKind::Float(value) => {
+                self.bump();
+                Ok(value)
+            }
+            TokKind::Int(value) => {
+                self.bump();
+                Ok(value as f64)
+            }
+            other => Err(ParseError {
+                kind: ParseErrorKind::UnexpectedToken {
+                    got: describe_token(&other),
+                    expected: "a numeric confidence literal".into(),
+                },
+                span,
+            }),
+        }
+    }
+
+    fn expect_positive_int_literal(
+        &mut self,
+        expected: &str,
+    ) -> Result<(u64, Span), ParseError> {
+        let span = self.peek_span();
+        match self.peek().clone() {
+            TokKind::Int(value) if value > 0 => {
+                self.bump();
+                Ok((value as u64, span))
+            }
+            other => Err(ParseError {
+                kind: ParseErrorKind::UnexpectedToken {
+                    got: describe_token(&other),
+                    expected: expected.into(),
+                },
+                span,
+            }),
+        }
+    }
+
+    fn parse_cost_literal(&mut self) -> Result<f64, ParseError> {
+        self.expect(TokKind::Dollar, "`$` before cost literal")?;
+        let span = self.peek_span();
+        match self.peek().clone() {
+            TokKind::Float(value) => {
+                self.bump();
+                Ok(value)
+            }
+            TokKind::Int(value) => {
+                self.bump();
+                Ok(value as f64)
+            }
+            other => Err(ParseError {
+                kind: ParseErrorKind::UnexpectedToken {
+                    got: describe_token(&other),
+                    expected: "a numeric cost literal after `$`".into(),
+                },
+                span,
+            }),
+        }
+    }
+
     fn parse_uses_clause(&mut self) -> Result<EffectRow, ParseError> {
         if !matches!(self.peek(), TokKind::KwUses) {
             return Ok(EffectRow::default());
@@ -1337,6 +1600,11 @@ impl<'a> Parser<'a> {
             let start = self.peek_span();
             self.bump(); // @
             let (name, name_span) = self.expect_ident()?;
+            if name == "budget" && matches!(self.peek(), TokKind::LParen) {
+                constraints.extend(self.parse_budget_constraints(start, name_span)?);
+                self.expect_newline()?;
+                continue;
+            }
             let value = if matches!(self.peek(), TokKind::LParen) {
                 self.bump();
                 if matches!(self.peek(), TokKind::RParen) {
@@ -1359,6 +1627,63 @@ impl<'a> Parser<'a> {
             });
         }
         Ok(constraints)
+    }
+
+    fn parse_budget_constraints(
+        &mut self,
+        start: Span,
+        name_span: Span,
+    ) -> Result<Vec<EffectConstraint>, ParseError> {
+        self.expect(TokKind::LParen, "`(` after `@budget`")?;
+        let mut constraints = Vec::new();
+
+        if !matches!(self.peek(), TokKind::RParen) {
+            loop {
+                if matches!(self.peek(), TokKind::Dollar) {
+                    let value = self.parse_dimension_value()?;
+                    constraints.push(EffectConstraint {
+                        dimension: Ident::new("cost", name_span),
+                        value: Some(value),
+                        span: start.merge(self.prev_span()),
+                    });
+                } else {
+                    let (dim_name, dim_span) = self.expect_ident()?;
+                    self.expect(TokKind::Colon, "`:` after budget dimension name")?;
+                    let value = self.parse_dimension_value()?;
+                    let canonical_name = match dim_name.as_str() {
+                        "latency" => "latency_ms".to_string(),
+                        other => other.to_string(),
+                    };
+                    constraints.push(EffectConstraint {
+                        dimension: Ident::new(canonical_name, dim_span),
+                        value: Some(value),
+                        span: start.merge(self.prev_span()),
+                    });
+                }
+
+                if !matches!(self.peek(), TokKind::Comma) {
+                    break;
+                }
+                self.bump();
+            }
+        }
+
+        self.expect(TokKind::RParen, "`)` after budget constraints")?;
+        Ok(constraints)
+    }
+
+    fn consume_optional_duration_suffix(&mut self, value: f64) -> f64 {
+        match self.peek() {
+            TokKind::Ident(unit) if unit == "ms" => {
+                self.bump();
+                value
+            }
+            TokKind::Ident(unit) if unit == "s" => {
+                self.bump();
+                value * 1000.0
+            }
+            _ => value,
+        }
     }
 
     // -- extend methods ------------------------------
@@ -2476,6 +2801,82 @@ agent hello(name: String) -> String:
             }
             other => panic!("expected Agent, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn parses_eval_with_trace_assertions_and_statistical_modifier() {
+        let src = "\
+tool get_order(id: String) -> String
+tool issue_refund(id: String) -> String dangerous
+
+eval refund_process:
+    order_id = \"ord_42\"
+    result = get_order(order_id)
+    assert called get_order before issue_refund
+    assert approved IssueRefund
+    assert cost < $0.50
+    assert result == result with confidence 0.95 over 50 runs
+";
+        let file = parse_file_src(src);
+        let eval = match &file.decls[2] {
+            Decl::Eval(eval_decl) => eval_decl,
+            other => panic!("expected Eval decl, got {other:?}"),
+        };
+        assert_eq!(eval.body.stmts.len(), 2);
+        assert_eq!(eval.assertions.len(), 4);
+        assert!(matches!(
+            eval.assertions[0],
+            corvid_ast::EvalAssert::Ordering { .. }
+        ));
+        assert!(matches!(
+            eval.assertions[1],
+            corvid_ast::EvalAssert::Approved { .. }
+        ));
+        assert!(matches!(eval.assertions[2], corvid_ast::EvalAssert::Cost { .. }));
+        match &eval.assertions[3] {
+            corvid_ast::EvalAssert::Value {
+                confidence, runs, ..
+            } => {
+                assert_eq!(*confidence, Some(0.95));
+                assert_eq!(*runs, Some(50));
+            }
+            other => panic!("expected value assertion, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn contextual_eval_keywords_remain_normal_identifiers_elsewhere() {
+        let src = "\
+agent keep_names() -> Int:
+    called = 1
+    approved = called
+    return approved
+";
+        let (file, errors) = parse_file_errs(src);
+        assert!(errors.is_empty(), "parse errors: {errors:?}");
+        assert!(matches!(file.decls[0], Decl::Agent(_)));
+    }
+
+    #[test]
+    fn parses_multi_dimensional_budget_constraints() {
+        let src = "\
+@budget($1.00, tokens: 10000, latency: 5s)
+agent planner(query: String) -> String:
+    return query
+";
+        let file = parse_file_src(src);
+        let agent = match &file.decls[0] {
+            Decl::Agent(agent) => agent,
+            other => panic!("expected Agent, got {other:?}"),
+        };
+        assert_eq!(agent.constraints.len(), 3);
+        assert_eq!(agent.constraints[0].dimension.name, "cost");
+        assert_eq!(agent.constraints[1].dimension.name, "tokens");
+        assert_eq!(agent.constraints[2].dimension.name, "latency_ms");
+        assert_eq!(
+            agent.constraints[2].value,
+            Some(corvid_ast::DimensionValue::Number(5000.0))
+        );
     }
 
     // -------------------- full refund_bot file --------------------
