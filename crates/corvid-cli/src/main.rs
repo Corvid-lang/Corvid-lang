@@ -435,20 +435,24 @@ fn cmd_effect_diff(before: &str, after: &str) -> Result<u8> {
 // ------------------------------------------------------------
 
 fn cmd_add_dimension(spec: &str) -> Result<u8> {
-    let (name, version) = spec
-        .split_once('@')
-        .ok_or_else(|| anyhow::anyhow!("expected `name@version`, got `{spec}`"))?;
-    if name.is_empty() || version.is_empty() {
-        anyhow::bail!("expected `name@version`, got `{spec}`");
+    let project_dir =
+        std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    println!("corvid add-dimension {spec}\n");
+    let outcome = corvid_driver::install_dimension(spec, &project_dir)?;
+    match outcome {
+        corvid_driver::AddDimensionOutcome::Added { name, target } => {
+            println!(
+                "installed `{name}` into {}",
+                target.display()
+            );
+            println!("run `corvid test dimensions` to re-verify every dimension.");
+            Ok(0)
+        }
+        corvid_driver::AddDimensionOutcome::Rejected { reason } => {
+            eprintln!("rejected: {reason}");
+            Ok(1)
+        }
     }
-    println!("corvid add-dimension {name}@{version}\n");
-    println!("Resolves the dimension from the Corvid effect registry, verifies its");
-    println!("signature, replays its algebraic-law proofs against the current");
-    println!("toolchain, and — on success — adds it to corvid.toml.");
-    println!();
-    println!("Implementation tracked in ROADMAP Phase 20g — registry client not yet");
-    println!("wired. See docs/effects-spec/02-composition-algebra.md §10.");
-    Ok(0)
 }
 
 // ------------------------------------------------------------
