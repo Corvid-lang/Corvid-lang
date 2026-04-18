@@ -1107,7 +1107,43 @@ Users register local models (Ollama, vLLM, llama.cpp) with declared capabilities
 
 **Phase 20 closed.** Dimensional effects, grounding, evals, cost analysis, confidence gates, streaming effects, bypass verification, and the typed model substrate are all shipped. The moat phase is complete.
 
-**Next phase:** 21 - Replay.
+**Next phase:** 20i - File responsibility audit (hygiene, before 21).
+
+### Phase 20i — File responsibility audit + decomposition (~3–4 weeks)
+
+**Goal.** Every source file under `crates/` holds 1–2 responsibilities per the rubric in [CLAUDE.md](./CLAUDE.md). Hygiene phase before Phase 21 Replay so the tracing plumbing lands across focused modules rather than monoliths.
+
+**Rubric.** A file fails when: (1) it mixes unrelated top-level concepts, or (2) it has 5+ public items across unrelated domains, or (3) it has 3+ internal sections that share no state. Line count is a **heuristic for where to look** — not the rule.
+
+**Process.** Audit each crate largest-file-first. For every file:
+- If it passes the rubric → record "clean" in the audit log, skip.
+- If it fails → propose a decomposition (one module per responsibility) and ship as its own slice with one commit per file extraction.
+
+**Rules.** One commit per extraction. Validation gate between every commit (`cargo check --workspace` + targeted tests + `verify --corpus` exits 1 only on deliberate fixtures). Push before next extraction. Wait for acknowledgement at slice boundaries. Zero semantic changes — `pub use` re-exports preserve the public API.
+
+**Track divided by file scope** (same boundary used through Phase 20h):
+
+#### My lane (compiler crates)
+
+- [ ] 20i-0  Bootstrap: `CLAUDE.md` responsibility rule + this ROADMAP entry
+- [ ] 20i-1  Audit + split `crates/corvid-syntax/src/parser.rs` (pilot)
+- [ ] 20i-2  Audit + split `crates/corvid-types/src/checker.rs`
+- [ ] 20i-3  Audit + split `crates/corvid-types/src/effects.rs`
+- [ ] 20i-4  Audit `crates/corvid-types/src/lib.rs`
+- [ ] 20i-audit-compiler  Rubric sweep of remaining files in `corvid-ast`, `corvid-syntax`, `corvid-resolve`, `corvid-types`, `corvid-ir`, `corvid-driver`
+
+#### Dev B's lane (runtime + codegen crates)
+
+- [ ] 20i-fix  Restore `crates/corvid-runtime/tests/gc_verify.rs` + `crates/corvid-runtime/tests/cycle_collector.rs` (unclosed delimiters from `f00ffb8`)
+- [ ] 20i-5  Audit + split `crates/corvid-codegen-cl/src/lowering.rs`
+- [ ] 20i-6  Audit + split `crates/corvid-vm/src/interp.rs`
+- [ ] 20i-7  Audit + split `crates/corvid-vm/src/lib.rs`
+- [ ] 20i-8  Audit + split `crates/corvid-codegen-cl/tests/parity.rs`
+- [ ] 20i-audit-runtime  Rubric sweep of remaining files in `corvid-vm`, `corvid-runtime`, `corvid-codegen-cl`, `corvid-differential-verify`
+
+**Success criteria.** Every file under `crates/` passes the rubric or is recorded as an explicit exception with justification. `cargo test --workspace` green (including previously broken test files). Phase 21 starts cleanly on focused modules.
+
+---
 
 ### Phase 21 — Replay (~4–5 weeks) — **THE FLAGSHIP WOW**
 
