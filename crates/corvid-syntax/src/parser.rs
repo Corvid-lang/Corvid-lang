@@ -1351,6 +1351,19 @@ impl<'a> Parser<'a> {
         }
         self.bump(); // Indent
 
+        // Phase 20h: optional `requires: <capability>` clause.
+        // Must appear before `with ...` stream settings and the
+        // template, so the body order is: requires → with → template.
+        let capability_required = if matches!(self.peek(), TokKind::KwRequires) {
+            self.bump(); // requires
+            self.expect(TokKind::Colon, "`:` after `requires`")?;
+            let (ident, ident_span) = self.expect_ident()?;
+            self.expect_newline()?;
+            Some(Ident::new(ident, ident_span))
+        } else {
+            None
+        };
+
         let stream = self.parse_prompt_stream_settings()?;
 
         // Expect a single string literal as the template.
@@ -1384,6 +1397,7 @@ impl<'a> Parser<'a> {
             effect_row,
             cites_strictly: None,
             stream,
+            capability_required,
             span: start.merge(end),
         })
     }
@@ -3328,5 +3342,55 @@ agent good(x: String) -> String:
             !errs.is_empty(),
             "expected parse error — field without a value should be rejected"
         );
+    }
+
+    // -------------------- Phase 20h: `requires:` on prompts --------------------
+
+    #[test]
+    fn parses_prompt_with_requires_clause() {
+        let file = parse_file_src(
+            "prompt classify(t: String) -> String:\n    requires: basic\n    \"Classify {t}\"\n",
+        );
+        match &file.decls[0] {
+            Decl::Prompt(p) => {
+                let req = p.capability_required.as_ref().expect("requires clause");
+                assert_eq!(req.name, "basic");
+            }
+            other => panic!("expected Prompt, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_prompt_with_requires_and_stream_settings_in_either_order() {
+        // `requires:` must appear before `with ...` per the grammar.
+        let file = parse_file_src(
+            "prompt generate(ctx: String) -> String:\n    requires: expert\n    with max_tokens 500\n    \"Generate {ctx}\"\n",
+        );
+        match &file.decls[0] {
+            Decl::Prompt(p) => {
+                assert_eq!(p.capability_required.as_ref().unwrap().name, "expert");
+                assert_eq!(p.stream.max_tokens, Some(500));
+            }
+            other => panic!("expected Prompt, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn prompt_without_requires_defaults_to_none() {
+        let file = parse_file_src(
+            "prompt classify(t: String) -> String:\n    \"Classify {t}\"\n",
+        );
+        match &file.decls[0] {
+            Decl::Prompt(p) => assert!(p.capability_required.is_none()),
+            other => panic!("expected Prompt, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn rejects_requires_without_value() {
+        let (_file, errs) = parse_file_errs(
+            "prompt classify(t: String) -> String:\n    requires:\n    \"Classify {t}\"\n",
+        );
+        assert!(!errs.is_empty());
     }
 }

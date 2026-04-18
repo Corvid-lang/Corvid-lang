@@ -320,6 +320,7 @@ impl<'a> Lowerer<'a> {
             min_confidence: p.stream.min_confidence,
             max_tokens: p.stream.max_tokens,
             backpressure: p.stream.backpressure.clone(),
+            capability_required: p.capability_required.as_ref().map(|c| c.name.clone()),
             span: p.span,
         }
     }

@@ -1799,4 +1799,105 @@ agent run(id: String) -> String:
         );
         assert!(c.errors.is_empty(), "got: {:?}", c.errors);
     }
+
+    // --- Phase 20h: capability composition end-to-end ---
+
+    fn compose_capability_of(src: &str, agent: &str) -> Option<String> {
+        let tokens = lex(src).unwrap();
+        let (file, perr) = parse_file(&tokens);
+        assert!(perr.is_empty(), "parse errors: {perr:?}");
+        let resolved = resolve(&file);
+        assert!(resolved.errors.is_empty(), "resolve errors: {:?}", resolved.errors);
+        let effect_decls: Vec<_> = file
+            .decls
+            .iter()
+            .filter_map(|d| match d {
+                corvid_ast::Decl::Effect(e) => Some(e.clone()),
+                _ => None,
+            })
+            .collect();
+        let registry = crate::effects::EffectRegistry::from_decls(&effect_decls);
+        let summaries = crate::effects::analyze_effects(&file, &resolved, &registry);
+        summaries
+            .into_iter()
+            .find(|s| s.agent_name == agent)?
+            .composed
+            .dimensions
+            .get("capability")
+            .map(|v| match v {
+                corvid_ast::DimensionValue::Name(n) => n.clone(),
+                other => format!("{other:?}"),
+            })
+    }
+
+    #[test]
+    fn agent_without_prompt_calls_sits_at_default_capability() {
+        // `capability` is a built-in dimension, so the composed
+        // profile always carries it. With no prompts declaring
+        // `requires:`, the value is the default (`basic`).
+        let src = "\
+tool echo(x: String) -> String
+
+agent passthrough(x: String) -> String:
+    return echo(x)
+";
+        let cap = compose_capability_of(src, "passthrough");
+        assert_eq!(cap.as_deref(), Some("basic"));
+    }
+
+    #[test]
+    fn prompt_requires_flows_into_agent_composed_profile() {
+        let src = "\
+prompt classify(t: String) -> String:
+    requires: standard
+    \"Classify {t}\"
+
+agent classifier(t: String) -> String:
+    return classify(t)
+";
+        let cap = compose_capability_of(src, "classifier");
+        assert_eq!(cap.as_deref(), Some("standard"));
+    }
+
+    #[test]
+    fn multiple_prompt_capabilities_compose_by_max() {
+        // Two prompts at `basic` and `expert`; agent's composed
+        // capability is `expert` (strictest).
+        let src = "\
+prompt simple(t: String) -> String:
+    requires: basic
+    \"Simple {t}\"
+
+prompt hard(t: String) -> String:
+    requires: expert
+    \"Hard {t}\"
+
+agent both(t: String) -> String:
+    a = simple(t)
+    b = hard(t)
+    return a
+";
+        let cap = compose_capability_of(src, "both");
+        assert_eq!(cap.as_deref(), Some("expert"));
+    }
+
+    #[test]
+    fn capability_propagates_through_agent_call_chains() {
+        // An inner agent calls an expert-level prompt.
+        // The outer agent calls the inner agent; its composed
+        // capability should still be `expert`.
+        let src = "\
+prompt hard(t: String) -> String:
+    requires: expert
+    \"Hard {t}\"
+
+agent inner(t: String) -> String:
+    return hard(t)
+
+agent outer(t: String) -> String:
+    return inner(t)
+";
+        let cap = compose_capability_of(src, "outer");
+        assert_eq!(cap.as_deref(), Some("expert"));
+    }
 }

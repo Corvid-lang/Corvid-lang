@@ -84,6 +84,14 @@ pub struct IrPrompt {
     pub min_confidence: Option<f64>,
     pub max_tokens: Option<u64>,
     pub backpressure: Option<BackpressurePolicy>,
+    /// Phase 20h: minimum model capability this prompt requires
+    /// (`basic` | `standard` | `expert` | custom). The runtime
+    /// uses this to pick the cheapest declared model whose own
+    /// `capability` field satisfies the requirement. `None` means
+    /// the prompt uses the default-capability model (first in the
+    /// catalog, or the `default_model`-backed pipeline that shipped
+    /// before the model substrate existed).
+    pub capability_required: Option<String>,
     pub span: Span,
 }
 

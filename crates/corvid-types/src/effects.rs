@@ -243,6 +243,17 @@ impl EffectRegistry {
                 default: DimensionValue::Number(1.0),
             },
         );
+        // Phase 20h: capability lattice for the typed model substrate.
+        // basic < standard < expert. Max-composed — a call graph's
+        // required capability is the strictest level any step requires.
+        self.dimensions.insert(
+            "capability".into(),
+            DimensionSchema {
+                name: "capability".into(),
+                composition: CompositionRule::Max,
+                default: DimensionValue::Name("basic".into()),
+            },
+        );
     }
 
     fn register_retrieval_effect(&mut self) {
@@ -459,6 +470,9 @@ fn compose_max_dimension(
     if dim_name == "latency" {
         return compose_latency_dimension(current, incoming);
     }
+    if dim_name == "capability" {
+        return compose_capability_dimension(current, incoming);
+    }
     match (current, incoming) {
         (DimensionValue::Number(a), DimensionValue::Number(b)) => DimensionValue::Number(a.max(*b)),
         (DimensionValue::Cost(a), DimensionValue::Cost(b)) => DimensionValue::Cost(a.max(*b)),
@@ -525,6 +539,48 @@ fn compose_backpressure(
         (BackpressurePolicy::Bounded(a), BackpressurePolicy::Bounded(b)) => {
             BackpressurePolicy::Bounded((*a).max(*b))
         }
+    }
+}
+
+/// Capability lattice composer: basic < standard < expert.
+/// Unknown names rank after `expert` so a user-declared tier like
+/// `superhuman` composes as stricter than any built-in level.
+fn compose_capability_dimension(
+    current: &DimensionValue,
+    incoming: &DimensionValue,
+) -> DimensionValue {
+    match (current, incoming) {
+        (DimensionValue::Name(a), DimensionValue::Name(b)) => {
+            DimensionValue::Name(capability_max(a, b).to_string())
+        }
+        _ => incoming.clone(),
+    }
+}
+
+fn capability_rank(s: &str) -> u8 {
+    match s {
+        "basic" => 0,
+        "standard" => 1,
+        "expert" => 2,
+        _ => 3,
+    }
+}
+
+fn capability_max<'a>(a: &'a str, b: &'a str) -> &'a str {
+    let ra = capability_rank(a);
+    let rb = capability_rank(b);
+    if ra == rb {
+        // Two unknowns: pick lexicographic so the result is
+        // deterministic across runs (HashMap iteration otherwise).
+        if a >= b {
+            a
+        } else {
+            b
+        }
+    } else if ra > rb {
+        a
+    } else {
+        b
     }
 }
 
@@ -774,7 +830,26 @@ pub fn analyze_effects(
 
         // Compose the dimensional profile.
         let refs: Vec<&str> = effect_names.iter().map(|s| s.as_str()).collect();
-        let composed = registry.compose(&refs);
+        let mut composed = registry.compose(&refs);
+
+        // Phase 20h: collect capability requirements from every
+        // prompt call in the body and Max-compose them into the
+        // agent's `capability` dimension. A prompt's `requires:
+        // <level>` clause sets the minimum model capability its
+        // dispatch needs; the agent-level composed requirement is
+        // the strictest capability any call needs.
+        let mut capabilities: Vec<String> = Vec::new();
+        collect_body_capabilities(&agent.body, file, resolved, &mut capabilities);
+        if !capabilities.is_empty() {
+            let mut iter = capabilities.into_iter();
+            let mut acc = iter.next().unwrap();
+            for next in iter {
+                acc = capability_max(&acc, &next).to_string();
+            }
+            composed
+                .dimensions
+                .insert("capability".into(), DimensionValue::Name(acc));
+        }
 
         // Check constraints.
         let violations = registry.check_constraints(&composed, &agent.constraints);
@@ -806,6 +881,102 @@ fn collect_body_effects(
 ) {
     for stmt in &block.stmts {
         collect_stmt_effects(stmt, file, resolved, registry, effects);
+    }
+}
+
+/// Phase 20h: walk a block and collect the `capability_required`
+/// string from every prompt call. Mirrors `collect_body_effects`'s
+/// recursion pattern but looks at prompt-level attributes instead of
+/// effect-row references.
+fn collect_body_capabilities(
+    block: &corvid_ast::Block,
+    file: &corvid_ast::File,
+    resolved: &corvid_resolve::Resolved,
+    caps: &mut Vec<String>,
+) {
+    for stmt in &block.stmts {
+        collect_stmt_capabilities(stmt, file, resolved, caps);
+    }
+}
+
+fn collect_stmt_capabilities(
+    stmt: &corvid_ast::Stmt,
+    file: &corvid_ast::File,
+    resolved: &corvid_resolve::Resolved,
+    caps: &mut Vec<String>,
+) {
+    match stmt {
+        corvid_ast::Stmt::Let { value, .. } => {
+            collect_expr_capabilities(value, file, resolved, caps);
+        }
+        corvid_ast::Stmt::Return { value: Some(v), .. } => {
+            collect_expr_capabilities(v, file, resolved, caps);
+        }
+        corvid_ast::Stmt::Return { value: None, .. } => {}
+        corvid_ast::Stmt::Yield { value, .. } => {
+            collect_expr_capabilities(value, file, resolved, caps);
+        }
+        corvid_ast::Stmt::If { cond, then_block, else_block, .. } => {
+            collect_expr_capabilities(cond, file, resolved, caps);
+            collect_body_capabilities(then_block, file, resolved, caps);
+            if let Some(eb) = else_block {
+                collect_body_capabilities(eb, file, resolved, caps);
+            }
+        }
+        corvid_ast::Stmt::For { iter, body, .. } => {
+            collect_expr_capabilities(iter, file, resolved, caps);
+            collect_body_capabilities(body, file, resolved, caps);
+        }
+        corvid_ast::Stmt::Expr { expr, .. } => {
+            collect_expr_capabilities(expr, file, resolved, caps);
+        }
+        _ => {}
+    }
+}
+
+fn collect_expr_capabilities(
+    expr: &corvid_ast::Expr,
+    file: &corvid_ast::File,
+    resolved: &corvid_resolve::Resolved,
+    caps: &mut Vec<String>,
+) {
+    match expr {
+        corvid_ast::Expr::Call { callee, args, .. } => {
+            if let corvid_ast::Expr::Ident { name: ident, .. } = callee.as_ref() {
+                if let Some(corvid_resolve::Binding::Decl(def_id)) =
+                    resolved.bindings.get(&ident.span)
+                {
+                    let entry = resolved.symbols.get(*def_id);
+                    if matches!(entry.kind, corvid_resolve::DeclKind::Prompt) {
+                        if let Some(prompt) = find_prompt(file, &entry.name) {
+                            if let Some(req) = &prompt.capability_required {
+                                caps.push(req.name.clone());
+                            }
+                        }
+                    }
+                    if matches!(entry.kind, corvid_resolve::DeclKind::Agent) {
+                        if let Some(agent) = find_agent(file, &entry.name) {
+                            collect_body_capabilities(&agent.body, file, resolved, caps);
+                        }
+                    }
+                }
+            }
+            collect_expr_capabilities(callee, file, resolved, caps);
+            for arg in args {
+                collect_expr_capabilities(arg, file, resolved, caps);
+            }
+        }
+        corvid_ast::Expr::FieldAccess { target, .. } => {
+            collect_expr_capabilities(target, file, resolved, caps);
+        }
+        corvid_ast::Expr::BinOp { left, right, .. } => {
+            collect_expr_capabilities(left, file, resolved, caps);
+            collect_expr_capabilities(right, file, resolved, caps);
+        }
+        corvid_ast::Expr::UnOp { operand, .. } => {
+            collect_expr_capabilities(operand, file, resolved, caps);
+        }
+        _ => {}
     }
 }
 

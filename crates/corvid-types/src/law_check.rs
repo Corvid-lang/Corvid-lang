@@ -364,7 +364,15 @@ fn random_value(dim: &DimensionUnderTest, rng: &mut SeededRng) -> DimensionValue
             DimensionValue::Number(rng.float_in_range(num_lo.max(0.0), num_hi.max(1e9)))
         }
         (DimensionValueType::Name, CompositionRule::Max) => {
-            DimensionValue::Name(sample_trust_level(rng))
+            // Dispatch by dimension name so the generator stays in
+            // the declared lattice. `capability` and `trust` are
+            // distinct ordered lattices; other Max+Name dimensions
+            // fall back to a generic placeholder set.
+            let sample = match dim.schema.name.as_str() {
+                "capability" => sample_capability_level(rng),
+                _ => sample_trust_level(rng),
+            };
+            DimensionValue::Name(sample)
         }
         (DimensionValueType::Name, CompositionRule::Union) => {
             DimensionValue::Name(sample_data_category(rng))
@@ -398,6 +406,11 @@ fn numeric_range(dim: &DimensionUnderTest) -> (f64, f64) {
 
 fn sample_trust_level(rng: &mut SeededRng) -> String {
     const LEVELS: &[&str] = &["autonomous", "supervisor_required", "human_required"];
+    LEVELS[rng.bounded(LEVELS.len())].into()
+}
+
+fn sample_capability_level(rng: &mut SeededRng) -> String {
+    const LEVELS: &[&str] = &["basic", "standard", "expert"];
     LEVELS[rng.bounded(LEVELS.len())].into()
 }
 

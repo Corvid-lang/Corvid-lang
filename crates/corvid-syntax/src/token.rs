@@ -54,6 +54,9 @@ pub enum TokKind {
 
     // --- keywords: typed model substrate (Phase 20h) ---
     KwModel,
+    /// `requires:` clause on a prompt — sets the minimum capability
+    /// level the LLM dispatch must satisfy.
+    KwRequires,
 
     // --- keywords: control flow ---
     KwIf,
@@ -148,6 +151,7 @@ impl TokKind {
             "uses" => TokKind::KwUses,
             "assert" => TokKind::KwAssert,
             "model" => TokKind::KwModel,
+            "requires" => TokKind::KwRequires,
             "if" => TokKind::KwIf,
             "else" => TokKind::KwElse,
             "for" => TokKind::KwFor,

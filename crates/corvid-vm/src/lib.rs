@@ -502,6 +502,7 @@ agent relay(ctx: String) -> Stream<String>:
                 min_confidence: None,
                 max_tokens: None,
                 backpressure: Some(BackpressurePolicy::Bounded(1)),
+                capability_required: None,
                 span: sp,
             }],
             agents: vec![IrAgent {

@@ -225,6 +225,12 @@ pub struct PromptDecl {
     /// Stream-only prompt modifiers such as `with min_confidence 0.80`.
     #[serde(default)]
     pub stream: PromptStreamSettings,
+    /// `requires: <capability>` — minimum model capability this prompt
+    /// needs to execute. Composed via Max through the call graph. The
+    /// runtime uses this to pick the cheapest model whose `capability`
+    /// field satisfies the requirement. See Phase 20h slice B.
+    #[serde(default)]
+    pub capability_required: Option<Ident>,
     pub span: Span,
 }
 

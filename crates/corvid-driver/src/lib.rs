@@ -268,6 +268,12 @@ fn builtin_dimensions_under_test() -> Vec<DimensionUnderTest> {
             composition: AstCompositionRule::LeastReversible,
             default: AstDimensionValue::Bool(true),
         }),
+        // Phase 20h: capability lattice (basic < standard < expert).
+        DimensionUnderTest::from_schema(AstDimensionSchema {
+            name: "capability".into(),
+            composition: AstCompositionRule::Max,
+            default: AstDimensionValue::Name("basic".into()),
+        }),
     ]
 }
 
