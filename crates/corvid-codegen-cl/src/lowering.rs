@@ -379,6 +379,15 @@ fn declare_runtime_funcs(
             CodegenError::cranelift(format!("declare string_from_float: {e}"), Span::new(0, 0))
         })?;
 
+    let mut approve_sig = module.make_signature();
+    approve_sig.params.push(AbiParam::new(I64));
+    approve_sig.returns.push(AbiParam::new(I8));
+    let approve_sync_id = module
+        .declare_function(APPROVE_SYNC_SYMBOL, Linkage::Import, &approve_sig)
+        .map_err(|e| {
+            CodegenError::cranelift(format!("declare approve_sync: {e}"), Span::new(0, 0))
+        })?;
+
     // Typed prompt bridges. Each takes 4 CorvidString descriptor
     // pointers (i64) — prompt name, signature, rendered template,
     // model — and returns the typed value.
@@ -452,6 +461,7 @@ fn declare_runtime_funcs(
         string_from_int: string_from_int_id,
         string_from_bool: string_from_bool_id,
         string_from_float: string_from_float_id,
+        approve_sync: approve_sync_id,
         prompt_call_int: prompt_call_int_id,
         prompt_call_bool: prompt_call_bool_id,
         prompt_call_float: prompt_call_float_id,
@@ -1933,6 +1943,7 @@ pub const PROMPT_CALL_INT_SYMBOL: &str = "corvid_prompt_call_int";
 pub const PROMPT_CALL_BOOL_SYMBOL: &str = "corvid_prompt_call_bool";
 pub const PROMPT_CALL_FLOAT_SYMBOL: &str = "corvid_prompt_call_float";
 pub const PROMPT_CALL_STRING_SYMBOL: &str = "corvid_prompt_call_string";
+pub const APPROVE_SYNC_SYMBOL: &str = "corvid_approve_sync";
 
 // Runtime bridge init/shutdown called from `corvid_init`
 // at the start of codegen-emitted `main` when the program uses any
@@ -2007,6 +2018,7 @@ pub struct RuntimeFuncs {
     pub string_from_int: FuncId,
     pub string_from_bool: FuncId,
     pub string_from_float: FuncId,
+    pub approve_sync: FuncId,
     // Typed prompt bridges, one per return type.
     pub prompt_call_int: FuncId,
     pub prompt_call_bool: FuncId,
@@ -3895,21 +3907,10 @@ fn lower_stmt(
             module,
             runtime,
         ),
-        IrStmt::Approve { args, .. } => {
-            // `approve` compiles to a no-op. The effect
-            // checker statically verifies that every
-            // dangerous-tool call is preceded by a matching approve
-            // — that's Corvid's primary enforcement mechanism and
-            // it already runs before codegen. Runtime approve
-            // verification (belt-and-braces against malicious IR
-            // that bypasses the checker) lands in later safety work alongside
-            // the rest of the effect-row machinery — at that point
-            // approve gains a full runtime stack with typed args.
-            // Today we still lower the arg expressions so their side
-            // effects + refcount work happens (an approve with heap
-            // String args in its argument position must still
-            // release those Strings at end of scope), we just don't
-            // push anything runtime-side.
+        IrStmt::Approve { label, args, span } => {
+            // Keep approve-arg side effects intact, then route the
+            // approval label through the runtime so native runs emit
+            // real approval trace events too.
             for a in args {
                 let v = lower_expr(
                     builder,
@@ -3925,6 +3926,28 @@ fn lower_stmt(
                     emit_release(builder, module, runtime, v);
                 }
             }
+
+            let label_val = emit_string_const(builder, module, runtime, label, *span)?;
+            let approve_fref = module.declare_func_in_func(runtime.approve_sync, builder.func);
+            let call = builder.ins().call(approve_fref, &[label_val]);
+            let results: Vec<ClValue> = builder.inst_results(call).iter().copied().collect();
+            emit_release(builder, module, runtime, label_val);
+
+            let denied = builder.ins().icmp_imm(IntCC::Equal, results[0], 0);
+            let deny_block = builder.create_block();
+            let continue_block = builder.create_block();
+            builder
+                .ins()
+                .brif(denied, deny_block, &[], continue_block, &[]);
+
+            builder.switch_to_block(deny_block);
+            builder.seal_block(deny_block);
+            builder
+                .ins()
+                .trap(cranelift_codegen::ir::TrapCode::unwrap_user(1));
+
+            builder.switch_to_block(continue_block);
+            builder.seal_block(continue_block);
             Ok(BlockOutcome::Normal)
         }
         IrStmt::Pass { .. } => Ok(BlockOutcome::Normal),

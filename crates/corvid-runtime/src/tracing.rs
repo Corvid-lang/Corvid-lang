@@ -46,8 +46,18 @@ impl Tracer {
     pub fn open(trace_dir: &Path, run_id: impl Into<String>) -> Self {
         let run_id = run_id.into();
         let path = trace_dir.join(format!("{run_id}.jsonl"));
+        Self::open_path(path, run_id)
+    }
+
+    /// Open a trace file at an exact path. Used by the differential
+    /// verifier to force native-tier runs to write a known trace file.
+    pub fn open_path(path: impl Into<PathBuf>, run_id: impl Into<String>) -> Self {
+        let run_id = run_id.into();
+        let path = path.into();
         let file = (|| -> std::io::Result<std::fs::File> {
-            std::fs::create_dir_all(trace_dir)?;
+            if let Some(parent) = path.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
             std::fs::OpenOptions::new()
                 .create(true)
                 .append(true)
@@ -297,6 +307,24 @@ mod tests {
         assert_eq!(lines.len(), 2);
         assert!(lines[0].contains("\"kind\":\"run_started\""));
         assert!(lines[1].contains("\"tool\":\"double\""));
+    }
+
+    #[test]
+    fn writes_events_to_explicit_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("nested").join("trace.jsonl");
+        let tracer = Tracer::open_path(&path, "run-explicit");
+        tracer.emit(TraceEvent::RunCompleted {
+            ts_ms: 1,
+            run_id: "run-explicit".into(),
+            ok: true,
+            result: None,
+            error: None,
+        });
+        drop(tracer);
+
+        let body = std::fs::read_to_string(&path).unwrap();
+        assert!(body.contains("\"kind\":\"run_completed\""));
     }
 
     #[test]

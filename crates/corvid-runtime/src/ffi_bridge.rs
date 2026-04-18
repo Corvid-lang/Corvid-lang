@@ -50,9 +50,10 @@ use crate::llm::mock::{
 use crate::llm::ollama::OllamaAdapter;
 use crate::llm::openai::OpenAiAdapter;
 use crate::llm::openai_compat::OpenAiCompatibleAdapter;
+use crate::redact::RedactionSet;
 use crate::runtime::{Runtime, RuntimeBuilder};
 use crate::tracing::{bench_trace_overhead_ns, fresh_run_id, Tracer};
-use crate::redact::RedactionSet;
+use corvid_trace_schema::TraceEvent;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicPtr, AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock};
@@ -343,6 +344,39 @@ pub fn runtime() -> std::sync::Arc<crate::runtime::Runtime> {
     bridge().corvid_runtime()
 }
 
+fn trace_mock_llm_attempt(
+    state: &BridgeState,
+    prompt_name: &str,
+    model: &str,
+    rendered: &str,
+    reply: &str,
+) {
+    let runtime = state.corvid_runtime();
+    let tracer = runtime.tracer();
+    if !tracer.is_enabled() {
+        return;
+    }
+    tracer.emit(TraceEvent::LlmCall {
+        ts_ms: crate::tracing::now_ms(),
+        run_id: tracer.run_id().to_string(),
+        prompt: prompt_name.to_string(),
+        model: if model.is_empty() {
+            None
+        } else {
+            Some(model.to_string())
+        },
+        rendered: Some(rendered.to_string()),
+        args: Vec::new(),
+    });
+    tracer.emit(TraceEvent::LlmResult {
+        ts_ms: crate::tracing::now_ms(),
+        run_id: tracer.run_id().to_string(),
+        prompt: prompt_name.to_string(),
+        result: serde_json::from_str(reply)
+            .unwrap_or_else(|_| serde_json::Value::String(reply.to_string())),
+    });
+}
+
 // ------------------------------------------------------------
 // String helpers consumed by `corvid_runtime::abi`'s conversion
 // traits. Declared here because they cross the FFI boundary — the
@@ -475,6 +509,10 @@ fn prompt_max_retries() -> u32 {
     })
 }
 
+fn trace_path_from_env() -> Option<PathBuf> {
+    std::env::var_os("CORVID_TRACE_PATH").map(PathBuf::from)
+}
+
 /// Read a `CorvidString` as an owned Rust `String`.
 unsafe fn read_corvid_string(cs: CorvidString) -> String {
     use crate::abi::FromCorvidAbi;
@@ -584,22 +622,32 @@ pub unsafe extern "C" fn corvid_prompt_call_int(
     let prompt_wait_before = bench_prompt_wait_ns();
     let mock_dispatch_before = bench_mock_dispatch_ns();
     let prompt_name_ref = unsafe { borrow_corvid_string(&prompt_name) };
+    let rendered_ref = unsafe { borrow_corvid_string(&rendered) };
+    let model_ref = unsafe { borrow_corvid_string(&model) };
 
     if using_env_mock_llm() {
+        let state = bridge();
         let max_retries = prompt_max_retries();
         let mut last_response: Option<String> = None;
         for _attempt in 0..=max_retries {
             match env_mock_string_reply_sync(prompt_name_ref) {
                 Some(reply) => {
-                    let parsed = parse_int(unsafe { borrow_corvid_string(&reply) });
+                    let reply_text = unsafe { borrow_corvid_string(&reply) }.to_owned();
+                    trace_mock_llm_attempt(
+                        state,
+                        prompt_name_ref,
+                        model_ref,
+                        rendered_ref,
+                        &reply_text,
+                    );
+                    let parsed = parse_int(&reply_text);
                     if let Some(value) = parsed {
                         unsafe { release_string(reply) };
                         record_json_bridge_ns(bridge_start, prompt_wait_before, mock_dispatch_before);
                         return value;
                     }
-                    let text = unsafe { borrow_corvid_string(&reply) }.to_owned();
                     unsafe { release_string(reply) };
-                    last_response = Some(text);
+                    last_response = Some(reply_text);
                 }
                 None => break,
             }
@@ -668,22 +716,32 @@ pub unsafe extern "C" fn corvid_prompt_call_bool(
     let prompt_wait_before = bench_prompt_wait_ns();
     let mock_dispatch_before = bench_mock_dispatch_ns();
     let prompt_name_ref = unsafe { borrow_corvid_string(&prompt_name) };
+    let rendered_ref = unsafe { borrow_corvid_string(&rendered) };
+    let model_ref = unsafe { borrow_corvid_string(&model) };
 
     if using_env_mock_llm() {
+        let state = bridge();
         let max_retries = prompt_max_retries();
         let mut last_response: Option<String> = None;
         for _attempt in 0..=max_retries {
             match env_mock_string_reply_sync(prompt_name_ref) {
                 Some(reply) => {
-                    let parsed = parse_bool(unsafe { borrow_corvid_string(&reply) });
+                    let reply_text = unsafe { borrow_corvid_string(&reply) }.to_owned();
+                    trace_mock_llm_attempt(
+                        state,
+                        prompt_name_ref,
+                        model_ref,
+                        rendered_ref,
+                        &reply_text,
+                    );
+                    let parsed = parse_bool(&reply_text);
                     if let Some(value) = parsed {
                         unsafe { release_string(reply) };
                         record_json_bridge_ns(bridge_start, prompt_wait_before, mock_dispatch_before);
                         return value;
                     }
-                    let text = unsafe { borrow_corvid_string(&reply) }.to_owned();
                     unsafe { release_string(reply) };
-                    last_response = Some(text);
+                    last_response = Some(reply_text);
                 }
                 None => break,
             }
@@ -752,22 +810,32 @@ pub unsafe extern "C" fn corvid_prompt_call_float(
     let prompt_wait_before = bench_prompt_wait_ns();
     let mock_dispatch_before = bench_mock_dispatch_ns();
     let prompt_name_ref = unsafe { borrow_corvid_string(&prompt_name) };
+    let rendered_ref = unsafe { borrow_corvid_string(&rendered) };
+    let model_ref = unsafe { borrow_corvid_string(&model) };
 
     if using_env_mock_llm() {
+        let state = bridge();
         let max_retries = prompt_max_retries();
         let mut last_response: Option<String> = None;
         for _attempt in 0..=max_retries {
             match env_mock_string_reply_sync(prompt_name_ref) {
                 Some(reply) => {
-                    let parsed = parse_float(unsafe { borrow_corvid_string(&reply) });
+                    let reply_text = unsafe { borrow_corvid_string(&reply) }.to_owned();
+                    trace_mock_llm_attempt(
+                        state,
+                        prompt_name_ref,
+                        model_ref,
+                        rendered_ref,
+                        &reply_text,
+                    );
+                    let parsed = parse_float(&reply_text);
                     if let Some(value) = parsed {
                         unsafe { release_string(reply) };
                         record_json_bridge_ns(bridge_start, prompt_wait_before, mock_dispatch_before);
                         return value;
                     }
-                    let text = unsafe { borrow_corvid_string(&reply) }.to_owned();
                     unsafe { release_string(reply) };
-                    last_response = Some(text);
+                    last_response = Some(reply_text);
                 }
                 None => break,
             }
@@ -837,9 +905,19 @@ pub unsafe extern "C" fn corvid_prompt_call_string(
     let prompt_wait_before = bench_prompt_wait_ns();
     let mock_dispatch_before = bench_mock_dispatch_ns();
     let prompt_name_ref = unsafe { borrow_corvid_string(&prompt_name) };
+    let rendered_ref = unsafe { borrow_corvid_string(&rendered) };
+    let model_ref = unsafe { borrow_corvid_string(&model) };
 
     if using_env_mock_llm() {
+        let state = bridge();
         if let Some(text) = env_mock_string_reply_sync(prompt_name_ref) {
+            trace_mock_llm_attempt(
+                state,
+                prompt_name_ref,
+                model_ref,
+                rendered_ref,
+                unsafe { borrow_corvid_string(&text) },
+            );
             record_json_bridge_ns(bridge_start, prompt_wait_before, mock_dispatch_before);
             return text;
         }
@@ -870,6 +948,24 @@ pub unsafe extern "C" fn corvid_prompt_call_string(
         Err(e) => panic!(
             "corvid prompt `{prompt_name}` (model `{model}`): adapter failed: {e}"
         ),
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn corvid_approve_sync(label: CorvidString) -> bool {
+    let label = unsafe { read_corvid_string(label) };
+    let state = bridge();
+    let runtime = state.corvid_runtime();
+    let label_for_call = label.clone();
+    let result = state
+        .tokio_handle()
+        .block_on(async move { runtime.approval_gate(&label_for_call, Vec::new()).await });
+    match result {
+        Ok(()) => true,
+        Err(e) => {
+            eprintln!("corvid_approve_sync: approval `{label}` failed: {e}");
+            false
+        }
     }
 }
 
@@ -932,6 +1028,9 @@ fn build_tokio_runtime() -> tokio::runtime::Runtime {
 fn build_corvid_runtime() -> Runtime {
     let tracer = if std::env::var("CORVID_TRACE_DISABLE").ok().as_deref() == Some("1") {
         Tracer::null()
+    } else if let Some(trace_path) = trace_path_from_env() {
+        Tracer::open_path(trace_path, fresh_run_id())
+            .with_redaction(RedactionSet::from_env())
     } else {
         let trace_dir = trace_dir_for_current_process();
         Tracer::open(&trace_dir, fresh_run_id())
