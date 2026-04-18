@@ -1,0 +1,11 @@
+{"kind":"run_started","ts_ms":1000,"run_id":"routing-run","agent":"router","args":[]}
+{"kind":"model_selected","ts_ms":1001,"run_id":"routing-run","prompt":"answer","model":"haiku","capability_required":"basic","capability_picked":"basic","cost_estimate":0.002,"arm_index":null,"stage_index":0}
+{"kind":"llm_call","ts_ms":1002,"run_id":"routing-run","prompt":"answer","model":"haiku","rendered":"Answer","args":[]}
+{"kind":"llm_result","ts_ms":1010,"run_id":"routing-run","prompt":"answer","model":"haiku","result":"ok"}
+{"kind":"progressive_escalation","ts_ms":1011,"run_id":"routing-run","prompt":"answer","from_stage":0,"to_stage":1,"confidence_observed":0.42,"threshold":0.80}
+{"kind":"progressive_exhausted","ts_ms":1012,"run_id":"routing-run","prompt":"answer","stages":["haiku","opus"]}
+{"kind":"ab_variant_chosen","ts_ms":1013,"run_id":"routing-run","prompt":"classify","variant":"gpt-4o","baseline":"gpt-4o-mini","rollout_pct":25.0,"chosen":"gpt-4o-mini"}
+{"kind":"ensemble_vote","ts_ms":1014,"run_id":"routing-run","prompt":"answer","members":["haiku","sonnet","opus"],"results":["yes","yes","no"],"winner":"yes","agreement_rate":0.6666666667,"strategy":"majority"}
+{"kind":"adversarial_pipeline_completed","ts_ms":1015,"run_id":"routing-run","prompt":"verify","contradiction":true}
+{"kind":"adversarial_contradiction","ts_ms":1016,"run_id":"routing-run","prompt":"verify","proposed":"draft","challenge":"fatal flaw","verdict":{"contradiction":true,"rationale":"reject"}}
+{"kind":"run_completed","ts_ms":1017,"run_id":"routing-run","ok":true,"result":"done","error":null}

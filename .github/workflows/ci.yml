@@ -38,6 +38,12 @@ jobs:
       - name: cargo test --workspace
         run: cargo test --workspace --lib --tests
 
+      # Routing/report slices extend the shared trace schema. Keep a
+      # narrow replay test in CI so new metadata-only events stay
+      # replay-loadable without relying on broader workspace coverage.
+      - name: trace replay compatibility (EnsembleVote + adversarial pipeline events)
+        run: cargo test -p corvid-repl replay_accepts_routing_trace_events --test replay
+
   effect-system-gates:
     # Every one of these gates enforces a Phase 20g invention. If
     # any of them fails, the effect system has silently regressed.

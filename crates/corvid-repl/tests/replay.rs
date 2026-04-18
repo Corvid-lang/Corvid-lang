@@ -73,3 +73,19 @@ fn replay_marks_truncated_trace_and_keeps_step_output() {
         "unexpected output: {text}"
     );
 }
+
+#[test]
+fn replay_accepts_routing_trace_events() {
+    let trace_path = format!(
+        "{}/tests/fixtures/routing_events_replay.jsonl",
+        env!("CARGO_MANIFEST_DIR")
+    );
+    let input = Cursor::new(format!(":replay {trace_path}\n:run\n:q\n"));
+    let mut output = Vec::new();
+    Repl::run(input, &mut output).expect("repl run succeeds");
+    let text = String::from_utf8(output).expect("valid utf8");
+    assert!(text.contains("loaded replay"), "unexpected output: {text}");
+    assert!(text.contains("llm call"), "unexpected output: {text}");
+    assert!(text.contains("run complete"), "unexpected output: {text}");
+    assert!(text.contains("end of replay (OK)"), "unexpected output: {text}");
+}

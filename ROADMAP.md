@@ -1082,6 +1082,33 @@ Users register local models (Ollama, vLLM, llama.cpp) with declared capabilities
 
 **Non-scope:** Runtime eval tooling CLI (Phase 27). RAG runtime infrastructure (Phase 32's `std.rag`). Custom effect annotations on Python FFI imports richer than `effects: <name>` (Phase 30 ships basic; richer stays here).
 
+##### 20h shipped - done line
+
+**Phase 20h closed.** The typed model substrate is now shipped end to end across compiler, runtime, traces, and operator tooling. Summary:
+
+| Slice | Commit | What shipped |
+|---|---|---|
+| A | `59b8663` | Model declarations + parser + resolver namespace |
+| B | `56253d4` | `requires:` capability clause + Max composition through call graph |
+| C | `0da3efc` | `route:` pattern dispatch + Bool-guard validation + Model-ref validation |
+| D | `b88307a` | jurisdiction / compliance / privacy_tier dimensions + two trust_max bug fixes |
+| E | `6accbc2` | `progressive:` chain + stage-terminal-fallback grammar + threshold range check |
+| I (syntax) | `e1476c3` | `rollout N%` one-liner + mutual-exclusion rejection with route/progressive |
+| F (syntax) | `171b68f` | `ensemble [...] vote majority` + duplicate-model rejection |
+| G (syntax) | `6047e00` | `adversarial:` propose / challenge / adjudicate block + order / arity parse checks |
+| B-rt | `a2b9160` | Runtime: capability-based model dispatch |
+| C-rt | `cf301d7` | Runtime: route-based model dispatch |
+| E-rt | `1722a7a` | Runtime: progressive refinement dispatch |
+| I-rt | `04f5c77` | Runtime: seeded rollout dispatch + `AbVariantChosen` trace |
+| F-rt | `7651420` | Runtime: ensemble voting + `EnsembleVote` trace |
+| G-contract | `a0345e7` | Adversarial stages typecheck as prompts with chaining contract |
+| G-rt | `a610894` | Runtime: adversarial sequential pipeline + contradiction traces |
+| H | `24c56fa` | `corvid routing-report` CLI + routing trace aggregation |
+
+**Phase 20 closed.** Dimensional effects, grounding, evals, cost analysis, confidence gates, streaming effects, bypass verification, and the typed model substrate are all shipped. The moat phase is complete.
+
+**Next phase:** 21 - Replay.
+
 ### Phase 21 — Replay (~4–5 weeks) — **THE FLAGSHIP WOW**
 
 **Goal.** Every run replayable by construction. The feature that ships in the v1.0 demo video.
