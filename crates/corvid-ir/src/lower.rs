@@ -679,6 +679,9 @@ impl<'a> Lowerer<'a> {
             },
             TypeRef::Generic { name, args, .. } => match name.name.as_str() {
                 "List" if args.len() == 1 => Type::List(Box::new(self.type_ref_to_type(&args[0]))),
+                "Stream" if args.len() == 1 => {
+                    Type::Stream(Box::new(self.type_ref_to_type(&args[0])))
+                }
                 "Option" if args.len() == 1 => {
                     Type::Option(Box::new(self.type_ref_to_type(&args[0])))
                 }

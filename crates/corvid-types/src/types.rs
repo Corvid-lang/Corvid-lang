@@ -28,6 +28,9 @@ pub enum Type {
     /// A list of homogeneous elements.
     List(Box<Type>),
 
+    /// Compiler-known `Stream<T>`.
+    Stream(Box<Type>),
+
     /// Compiler-known `Result<T, E>`.
     Result(Box<Type>, Box<Type>),
 
@@ -60,6 +63,7 @@ impl Type {
             Type::Struct(_) => "struct".into(),
             Type::Function { .. } => "function".into(),
             Type::List(inner) => format!("List<{}>", inner.display_name()),
+            Type::Stream(inner) => format!("Stream<{}>", inner.display_name()),
             Type::Result(ok, err) => {
                 format!("Result<{}, {}>", ok.display_name(), err.display_name())
             }
@@ -96,6 +100,7 @@ impl Type {
             (Type::Unknown, _) | (_, Type::Unknown) => true,
             (Type::Int, Type::Float) => true, // widening
             (Type::List(a), Type::List(b)) => a.is_assignable_to(b),
+            (Type::Stream(a), Type::Stream(b)) => a.is_assignable_to(b),
             (Type::Option(a), Type::Option(b)) => a.is_assignable_to(b),
             (Type::Result(ok_a, err_a), Type::Result(ok_b, err_b)) => {
                 ok_a.is_assignable_to(ok_b) && err_a.is_assignable_to(err_b)
@@ -109,5 +114,18 @@ impl Type {
             (Type::Grounded(inner), other) => inner.is_assignable_to(other),
             (a, b) => a == b,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Type;
+
+    #[test]
+    fn stream_display_name_and_assignability_follow_inner_type() {
+        let stream = Type::Stream(Box::new(Type::String));
+        assert_eq!(stream.display_name(), "Stream<String>");
+        assert!(stream.is_assignable_to(&Type::Stream(Box::new(Type::String))));
+        assert!(!stream.is_assignable_to(&Type::Stream(Box::new(Type::Int))));
     }
 }

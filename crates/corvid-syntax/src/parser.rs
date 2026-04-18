@@ -1228,6 +1228,14 @@ impl<'a> Parser<'a> {
             }
             TokKind::Ident(name) => {
                 self.bump();
+                if name == "streaming" && matches!(self.peek(), TokKind::LParen) {
+                    self.bump(); // (
+                    self.expect_contextual_ident("backpressure")?;
+                    self.expect(TokKind::Colon, "`:` after `backpressure`")?;
+                    let backpressure = self.parse_backpressure_policy()?;
+                    self.expect(TokKind::RParen, "`)` after streaming latency config")?;
+                    return Ok(DimensionValue::Streaming { backpressure });
+                }
                 // Check for confidence-gated trust: `autonomous_if_confident(0.95)`
                 if name.ends_with("_if_confident") && matches!(self.peek(), TokKind::LParen) {
                     self.bump(); // (

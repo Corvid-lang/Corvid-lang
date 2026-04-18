@@ -17,7 +17,8 @@
 //! `@budget($1.00)`) are then checked against the composed profile.
 
 use corvid_ast::{
-    CompositionRule, DimensionSchema, DimensionValue, Effect, EffectConstraint, EffectDecl,
+    BackpressurePolicy, CompositionRule, DimensionSchema, DimensionValue, Effect,
+    EffectConstraint, EffectDecl,
 };
 use corvid_resolve::DefId;
 use std::collections::{HashMap, HashSet};
@@ -261,7 +262,7 @@ impl EffectRegistry {
                     .dimensions
                     .entry(dim_name.clone())
                     .or_insert_with(|| schema.default.clone());
-                *current = compose_dimension(schema.composition, current, value);
+                *current = compose_dimension(schema.composition, current, value, &dim_name);
             }
         }
 
@@ -333,6 +334,7 @@ fn compose_dimension(
     rule: CompositionRule,
     current: &DimensionValue,
     incoming: &DimensionValue,
+    dim_name: &str,
 ) -> DimensionValue {
     match rule {
         CompositionRule::Sum => match (current, incoming) {
@@ -342,38 +344,7 @@ fn compose_dimension(
             }
             _ => incoming.clone(),
         },
-        CompositionRule::Max => match (current, incoming) {
-            (DimensionValue::Number(a), DimensionValue::Number(b)) => {
-                DimensionValue::Number(a.max(*b))
-            }
-            (DimensionValue::Cost(a), DimensionValue::Cost(b)) => {
-                DimensionValue::Cost(a.max(*b))
-            }
-            (DimensionValue::Name(a), DimensionValue::Name(b)) => {
-                DimensionValue::Name(trust_max(a, b).to_string())
-            }
-            // ConfidenceGated composes by taking its `above` level
-            // for static checking. The runtime gate handles the rest.
-            (DimensionValue::Name(a), DimensionValue::ConfidenceGated { above, .. }) => {
-                DimensionValue::Name(trust_max(a, above).to_string())
-            }
-            (DimensionValue::ConfidenceGated { above, .. }, DimensionValue::Name(b)) => {
-                DimensionValue::Name(trust_max(above, b).to_string())
-            }
-            (
-                DimensionValue::ConfidenceGated { threshold: t1, above: a1, below: b1 },
-                DimensionValue::ConfidenceGated { threshold: t2, above: a2, .. },
-            ) => {
-                // When composing two gated values, take the stricter
-                // threshold (higher) and the more restrictive trust levels.
-                DimensionValue::ConfidenceGated {
-                    threshold: t1.max(*t2),
-                    above: trust_max(a1, a2).to_string(),
-                    below: b1.clone(),
-                }
-            }
-            _ => incoming.clone(),
-        },
+        CompositionRule::Max => compose_max_dimension(current, incoming, dim_name),
         CompositionRule::Min => match (current, incoming) {
             (DimensionValue::Number(a), DimensionValue::Number(b)) => {
                 DimensionValue::Number(a.min(*b))
@@ -406,6 +377,83 @@ fn compose_dimension(
     }
 }
 
+fn compose_max_dimension(
+    current: &DimensionValue,
+    incoming: &DimensionValue,
+    dim_name: &str,
+) -> DimensionValue {
+    if dim_name == "latency" {
+        return compose_latency_dimension(current, incoming);
+    }
+    match (current, incoming) {
+        (DimensionValue::Number(a), DimensionValue::Number(b)) => DimensionValue::Number(a.max(*b)),
+        (DimensionValue::Cost(a), DimensionValue::Cost(b)) => DimensionValue::Cost(a.max(*b)),
+        (DimensionValue::Name(a), DimensionValue::Name(b)) => {
+            DimensionValue::Name(trust_max(a, b).to_string())
+        }
+        // ConfidenceGated composes by taking its `above` level
+        // for static checking. The runtime gate handles the rest.
+        (DimensionValue::Name(a), DimensionValue::ConfidenceGated { above, .. }) => {
+            DimensionValue::Name(trust_max(a, above).to_string())
+        }
+        (DimensionValue::ConfidenceGated { above, .. }, DimensionValue::Name(b)) => {
+            DimensionValue::Name(trust_max(above, b).to_string())
+        }
+        (
+            DimensionValue::ConfidenceGated {
+                threshold: t1,
+                above: a1,
+                below: b1,
+            },
+            DimensionValue::ConfidenceGated {
+                threshold: t2,
+                above: a2,
+                ..
+            },
+        ) => DimensionValue::ConfidenceGated {
+            threshold: t1.max(*t2),
+            above: trust_max(a1, a2).to_string(),
+            below: b1.clone(),
+        },
+        _ => incoming.clone(),
+    }
+}
+
+fn compose_latency_dimension(current: &DimensionValue, incoming: &DimensionValue) -> DimensionValue {
+    match (current, incoming) {
+        (
+            DimensionValue::Streaming {
+                backpressure: current_bp,
+            },
+            DimensionValue::Streaming {
+                backpressure: incoming_bp,
+            },
+        ) => DimensionValue::Streaming {
+            backpressure: compose_backpressure(current_bp, incoming_bp),
+        },
+        (DimensionValue::Streaming { .. }, _) => current.clone(),
+        (_, DimensionValue::Streaming { .. }) => incoming.clone(),
+        (DimensionValue::Name(current_name), DimensionValue::Name(incoming_name)) => {
+            DimensionValue::Name(latency_max(current_name, incoming_name).to_string())
+        }
+        _ => incoming.clone(),
+    }
+}
+
+fn compose_backpressure(
+    current: &BackpressurePolicy,
+    incoming: &BackpressurePolicy,
+) -> BackpressurePolicy {
+    match (current, incoming) {
+        (BackpressurePolicy::Unbounded, _) | (_, BackpressurePolicy::Unbounded) => {
+            BackpressurePolicy::Unbounded
+        }
+        (BackpressurePolicy::Bounded(a), BackpressurePolicy::Bounded(b)) => {
+            BackpressurePolicy::Bounded((*a).max(*b))
+        }
+    }
+}
+
 /// Trust level ordering: autonomous < supervisor_required < human_required.
 fn trust_max<'a>(a: &'a str, b: &'a str) -> &'a str {
     let rank = |s: &str| -> u8 {
@@ -431,10 +479,25 @@ fn dimension_satisfies(actual: &DimensionValue, constraint: &DimensionValue, dim
         (DimensionValue::Name(actual_name), DimensionValue::Name(required_name)) => {
             if dim_name == "trust" {
                 trust_rank(actual_name) <= trust_rank(required_name)
+            } else if dim_name == "latency" {
+                latency_rank(actual_name) <= latency_rank(required_name)
             } else {
                 actual_name == required_name
             }
         }
+        (DimensionValue::Streaming { .. }, DimensionValue::Name(required_name))
+            if dim_name == "latency" =>
+        {
+            latency_streaming_rank() <= latency_rank(required_name)
+        }
+        (
+            DimensionValue::Streaming {
+                backpressure: actual_bp,
+            },
+            DimensionValue::Streaming {
+                backpressure: required_bp,
+            },
+        ) if dim_name == "latency" => backpressure_satisfies(actual_bp, required_bp),
         (DimensionValue::Number(actual_num), DimensionValue::Number(limit)) => {
             if dim_name == "confidence" {
                 // Confidence: higher is better. Actual must be >= required.
@@ -513,6 +576,9 @@ fn format_dim_value(v: &DimensionValue) -> String {
         DimensionValue::Name(n) => n.clone(),
         DimensionValue::Cost(c) => format!("${c:.4}"),
         DimensionValue::Number(n) => format!("{n}"),
+        DimensionValue::Streaming { backpressure } => {
+            format!("streaming(backpressure: {})", format_backpressure(backpressure))
+        }
         DimensionValue::ConfidenceGated { threshold, above, below } => {
             format!("{above}_if_confident({threshold}) (below: {below})")
         }
@@ -522,9 +588,48 @@ fn format_dim_value(v: &DimensionValue) -> String {
 pub fn canonical_dimension_name(name: &str) -> String {
     match name {
         "budget" => "cost".into(),
-        "latency" => "latency_ms".into(),
         "min_confidence" => "confidence".into(),
         other => other.to_string(),
+    }
+}
+
+fn format_backpressure(policy: &BackpressurePolicy) -> String {
+    match policy {
+        BackpressurePolicy::Bounded(size) => format!("bounded({size})"),
+        BackpressurePolicy::Unbounded => "unbounded".into(),
+    }
+}
+
+fn latency_max<'a>(a: &'a str, b: &'a str) -> &'a str {
+    if latency_rank(a) >= latency_rank(b) {
+        a
+    } else {
+        b
+    }
+}
+
+fn latency_rank(name: &str) -> u8 {
+    match name {
+        "instant" => 0,
+        "fast" => 1,
+        "medium" => 2,
+        "slow" => 3,
+        "streaming" => latency_streaming_rank(),
+        _ => latency_streaming_rank() + 1,
+    }
+}
+
+fn latency_streaming_rank() -> u8 {
+    4
+}
+
+fn backpressure_satisfies(actual: &BackpressurePolicy, required: &BackpressurePolicy) -> bool {
+    match (actual, required) {
+        (_, BackpressurePolicy::Unbounded) => true,
+        (BackpressurePolicy::Unbounded, BackpressurePolicy::Bounded(_)) => false,
+        (BackpressurePolicy::Bounded(actual), BackpressurePolicy::Bounded(required)) => {
+            actual <= required
+        }
     }
 }
 
@@ -1631,5 +1736,47 @@ fn format_type_ref(ty: &corvid_ast::TypeRef) -> String {
             let ps: Vec<String> = params.iter().map(format_type_ref).collect();
             format!("({}) -> {}", ps.join(", "), format_type_ref(ret))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{compose_dimension, dimension_satisfies};
+    use corvid_ast::{BackpressurePolicy, CompositionRule, DimensionValue};
+
+    #[test]
+    fn streaming_latency_composes_above_named_classes() {
+        let actual = compose_dimension(
+            CompositionRule::Max,
+            &DimensionValue::Name("fast".into()),
+            &DimensionValue::Streaming {
+                backpressure: BackpressurePolicy::Bounded(32),
+            },
+            "latency",
+        );
+        assert_eq!(
+            actual,
+            DimensionValue::Streaming {
+                backpressure: BackpressurePolicy::Bounded(32),
+            }
+        );
+    }
+
+    #[test]
+    fn streaming_latency_constraint_rejects_fast_floor() {
+        assert!(!dimension_satisfies(
+            &DimensionValue::Streaming {
+                backpressure: BackpressurePolicy::Bounded(32),
+            },
+            &DimensionValue::Name("fast".into()),
+            "latency",
+        ));
+        assert!(dimension_satisfies(
+            &DimensionValue::Streaming {
+                backpressure: BackpressurePolicy::Bounded(32),
+            },
+            &DimensionValue::Name("streaming".into()),
+            "latency",
+        ));
     }
 }

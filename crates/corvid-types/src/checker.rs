@@ -1614,6 +1614,20 @@ impl<'a> Checker<'a> {
                     }
                     Type::List(Box::new(self.type_ref_to_type(&args[0])))
                 }
+                "Stream" => {
+                    if args.len() != 1 {
+                        self.errors.push(TypeError::new(
+                            TypeErrorKind::GenericArityMismatch {
+                                name: name.name.clone(),
+                                expected: 1,
+                                got: args.len(),
+                            },
+                            *span,
+                        ));
+                        return Type::Unknown;
+                    }
+                    Type::Stream(Box::new(self.type_ref_to_type(&args[0])))
+                }
                 "Option" => {
                     if args.len() != 1 {
                         self.errors.push(TypeError::new(

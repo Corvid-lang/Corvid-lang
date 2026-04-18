@@ -31,6 +31,7 @@ pub enum NotNativeReason {
     /// the compositional native `Result<T, E>` subset are the
     /// supported native forms today.
     TaggedUnionRetryNotNative,
+    StreamLoweringNotImplemented,
 }
 
 impl std::fmt::Display for NotNativeReason {
@@ -48,6 +49,9 @@ impl std::fmt::Display for NotNativeReason {
                 f,
                 "program uses a tagged-union or retry shape outside the current native subset - native AOT supports nullable-pointer `Option<T>`, wide scalar `Option<Int|Bool|Float>`, compositional native `Result<T, E>`, postfix `?`, and `try ... retry` over native `Result<T, E>` and `Option<T>` bodies; wider shapes still run in the interpreter"
             ),
+            Self::StreamLoweringNotImplemented => {
+                write!(f, "program uses `Stream<T>` - Stream lowering is not yet implemented")
+            }
         }
     }
 }
@@ -67,7 +71,7 @@ fn is_native_value_type(ty: &Type) -> bool {
         Type::Option(_) => is_native_option_type(ty),
         Type::Result(ok, err) => is_native_value_type(ok) && is_native_value_type(err),
         Type::Grounded(inner) => is_native_value_type(inner),
-        Type::Nothing | Type::Function { .. } | Type::Unknown => false,
+        Type::Nothing | Type::Function { .. } | Type::Stream(_) | Type::Unknown => false,
     }
 }
 
@@ -105,6 +109,9 @@ pub fn native_ability(ir: &IrFile) -> Result<(), NotNativeReason> {
         }
     }
     for agent in &ir.agents {
+        if matches!(agent.return_ty, Type::Stream(_)) {
+            return Err(NotNativeReason::StreamLoweringNotImplemented);
+        }
         scan_block(&agent.body, &agent.return_ty)?;
     }
     Ok(())
@@ -157,6 +164,9 @@ fn scan_stmt(stmt: &IrStmt, current_return_ty: &Type) -> Result<(), NotNativeRea
 }
 
 fn scan_expr(expr: &IrExpr, current_return_ty: &Type) -> Result<(), NotNativeReason> {
+    if matches!(expr.ty, Type::Stream(_)) {
+        return Err(NotNativeReason::StreamLoweringNotImplemented);
+    }
     match &expr.kind {
         IrExprKind::Literal(_) | IrExprKind::Local { .. } | IrExprKind::Decl { .. } => Ok(()),
         IrExprKind::Call {
@@ -268,5 +278,43 @@ fn scan_expr(expr: &IrExpr, current_return_ty: &Type) -> Result<(), NotNativeRea
                 Err(NotNativeReason::TaggedUnionRetryNotNative)
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{native_ability, NotNativeReason};
+    use corvid_ast::Span;
+    use corvid_ir::{IrAgent, IrBlock, IrFile};
+    use corvid_resolve::DefId;
+    use corvid_types::Type;
+
+    #[test]
+    fn stream_return_type_is_not_native() {
+        let span = Span::new(0, 0);
+        let ir = IrFile {
+            imports: vec![],
+            types: vec![],
+            tools: vec![],
+            prompts: vec![],
+            agents: vec![IrAgent {
+                id: DefId(0),
+                name: "streamer".into(),
+                params: vec![],
+                return_ty: Type::Stream(Box::new(Type::String)),
+                body: IrBlock {
+                    stmts: vec![],
+                    span,
+                },
+                span,
+                borrow_sig: Some(vec![]),
+            }],
+            evals: vec![],
+        };
+
+        assert!(matches!(
+            native_ability(&ir),
+            Err(NotNativeReason::StreamLoweringNotImplemented)
+        ));
     }
 }

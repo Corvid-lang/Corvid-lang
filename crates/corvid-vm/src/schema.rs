@@ -39,6 +39,7 @@ fn schema_for_inner(
             "type": "array",
             "items": schema_for_inner(elem, types_by_id, visiting),
         }),
+        Type::Stream(inner) => schema_for_inner(inner, types_by_id, visiting),
         Type::Option(inner) => json!({
             "oneOf": [
                 {

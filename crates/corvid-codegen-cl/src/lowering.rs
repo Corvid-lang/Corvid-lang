@@ -1456,6 +1456,7 @@ fn mangle_type_name(ty: &Type) -> String {
         Type::String => "String".into(),
         Type::Nothing => "Nothing".into(),
         Type::List(inner) => format!("List_{}", mangle_type_name(inner)),
+        Type::Stream(inner) => format!("Stream_{}", mangle_type_name(inner)),
         Type::Struct(def_id) => format!("Struct_{}", def_id.0),
         Type::Function { .. } => "Function".into(),
         // Result<T,E> and Option<T> are compiler-known
@@ -1809,7 +1810,7 @@ fn is_native_value_type(ty: &Type) -> bool {
         Type::Option(_) => is_native_option_type(ty),
         Type::Result(ok, err) => is_native_value_type(ok) && is_native_value_type(err),
         Type::Grounded(inner) => is_native_value_type(inner),
-        Type::Nothing | Type::Function { .. } | Type::Unknown => false,
+        Type::Nothing | Type::Function { .. } | Type::Stream(_) | Type::Unknown => false,
     }
 }
 
@@ -2797,7 +2798,7 @@ fn check_entry_boundary_type(
     match ty {
         Type::Int | Type::Bool | Type::Float | Type::String => Ok(()),
         Type::Struct(_) | Type::List(_) | Type::Nothing
-        | Type::Result(_, _) | Type::Option(_) | Type::Weak(_, _) => {
+        | Type::Result(_, _) | Type::Option(_) | Type::Weak(_, _) | Type::Stream(_) => {
             Err(CodegenError::not_supported(
                 format!(
                     "entry agent {role} of type `{}` — the native command-line boundary currently supports only `Int` / `Bool` / `Float` / `String`; structured types (including Result, Option, and Weak) need a dedicated serialization layer (use a wrapper agent that converts internally)",
@@ -2900,6 +2901,10 @@ fn cl_type_for(ty: &Type, span: Span) -> Result<clir::Type, CodegenError> {
         Type::Option(inner) if is_refcounted_type(inner) => Ok(I64),
         Type::Option(_) if is_native_wide_option_type(ty) => Ok(I64),
         Type::Grounded(inner) => cl_type_for(inner, span),
+        Type::Stream(_) => Err(CodegenError::not_supported(
+            "`Stream<T>` - Stream lowering is not yet implemented",
+            span,
+        )),
         Type::Nothing => Err(CodegenError::not_supported(
             "`Nothing` — use a bare `return` instead",
             span,

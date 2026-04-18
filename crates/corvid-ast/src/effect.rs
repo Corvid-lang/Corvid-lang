@@ -44,6 +44,10 @@ pub enum DimensionValue {
     Cost(f64),
     /// A numeric dimension: `latency_ms: 100`.
     Number(f64),
+    /// A streaming latency class with a backpressure policy.
+    Streaming {
+        backpressure: BackpressurePolicy,
+    },
     /// A confidence-gated trust level: `trust: autonomous_if_confident(0.95)`.
     /// At compile time, treated as `autonomous` for effect checking.
     /// At runtime, checks composed confidence against the threshold;

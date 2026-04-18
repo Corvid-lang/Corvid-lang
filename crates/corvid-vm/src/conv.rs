@@ -103,6 +103,10 @@ pub fn json_to_value(
             }
             Ok(Value::List(ListValue::new(out)))
         }
+        (Type::Stream(_), got) => Err(ConvError::TypeMismatch {
+            expected: "Stream".into(),
+            got: json_kind(&got).into(),
+        }),
         (Type::Option(inner_ty), J::Object(map)) => match map.get("tag").and_then(|v| v.as_str()) {
             Some("some") => {
                 let raw = map.get("value").cloned().ok_or_else(|| ConvError::TypeMismatch {
@@ -207,6 +211,7 @@ fn type_label(t: &Type) -> String {
         Type::Nothing => "Nothing".into(),
         Type::Struct(_) => "struct".into(),
         Type::List(elem) => format!("List<{}>", type_label(elem)),
+        Type::Stream(inner) => format!("Stream<{}>", type_label(inner)),
         Type::Result(ok, err) => format!("Result<{}, {}>", type_label(ok), type_label(err)),
         Type::Option(inner) => format!("Option<{}>", type_label(inner)),
         Type::Weak(inner, effects) => {
