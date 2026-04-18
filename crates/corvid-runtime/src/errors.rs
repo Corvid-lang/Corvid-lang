@@ -56,6 +56,13 @@ pub enum RuntimeError {
         prompt: String,
     },
 
+    /// An adversarial pipeline's adjudicator returned a value that
+    /// does not satisfy the runtime contradiction contract.
+    InvalidAdversarialVerdict {
+        prompt: String,
+        message: String,
+    },
+
     /// Catch-all. Prefer adding a dedicated variant.
     Other(String),
 }
@@ -102,6 +109,12 @@ impl fmt::Display for RuntimeError {
             ),
             Self::NoMatchingRoute { prompt } => {
                 write!(f, "no matching route arm for prompt `{prompt}`")
+            }
+            Self::InvalidAdversarialVerdict { prompt, message } => {
+                write!(
+                    f,
+                    "invalid adversarial verdict for prompt `{prompt}`: {message}"
+                )
             }
             Self::Other(msg) => f.write_str(msg),
         }

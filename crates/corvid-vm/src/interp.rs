@@ -18,7 +18,9 @@ use corvid_ir::{
     IrRoutePattern, IrStmt, IrTool, IrType,
 };
 use corvid_resolve::{DefId, LocalId};
-use corvid_runtime::{majority_vote, LlmRequest, Runtime, TokenUsage, TraceEvent};
+use corvid_runtime::{
+    contradiction_flag, majority_vote, trace_text, LlmRequest, Runtime, TokenUsage, TraceEvent,
+};
 use corvid_types::Type;
 use crate::step::{self, StepAction, StepController, StepEvent, StepMode, StmtKind};
 use std::collections::HashMap;
@@ -211,6 +213,7 @@ struct PromptCallResult {
     cost: f64,
     confidence: f64,
     tokens: u64,
+    cost_charged: bool,
 }
 
 struct Interpreter<'ir> {
@@ -530,6 +533,7 @@ impl<'ir> Interpreter<'ir> {
             cost,
             confidence,
             tokens,
+            cost_charged: false,
         })
     }
 
@@ -585,6 +589,7 @@ impl<'ir> Interpreter<'ir> {
                     cost,
                     confidence,
                     tokens,
+                    cost_charged: false,
                 });
             }
         }
@@ -647,6 +652,7 @@ impl<'ir> Interpreter<'ir> {
                     cost,
                     confidence,
                     tokens,
+                    cost_charged: false,
                 });
             }
         }
@@ -715,6 +721,434 @@ impl<'ir> Interpreter<'ir> {
             ))
         } else {
             Ok(ExprFlow::Value(result.value))
+        }
+    }
+
+    fn prompt_by_id(
+        &self,
+        def_id: DefId,
+        prompt_name: &str,
+        span: Span,
+    ) -> Result<&'ir IrPrompt, InterpError> {
+        self.prompts_by_id.get(&def_id).copied().ok_or_else(|| {
+            InterpError::new(
+                InterpErrorKind::DispatchFailed(format!(
+                    "prompt `{prompt_name}` is missing from the IR"
+                )),
+                span,
+            )
+        })
+    }
+
+    #[async_recursion]
+    async fn dispatch_prompt(
+        &mut self,
+        prompt: &'ir IrPrompt,
+        callee_name: &str,
+        arg_values: &[Value],
+        span: Span,
+    ) -> Result<PromptCallResult, InterpError> {
+        let rendered = render_prompt(prompt, arg_values);
+        if let Some(spec) = &prompt.ensemble {
+            if self.should_yield_boundary() {
+                let action = self
+                    .maybe_yield(StepEvent::BeforePromptCall {
+                        prompt_name: callee_name.to_string(),
+                        rendered: rendered.clone(),
+                        model: None,
+                        span,
+                        env: self.env_snapshot(),
+                    })
+                    .await?;
+                if let StepAction::Override(val) = action {
+                    let value = json_to_value(val, &prompt.return_ty, &self.types_by_id).map_err(|e| {
+                        InterpError::new(
+                            InterpErrorKind::Marshal(format!("prompt `{callee_name}` override: {e}")),
+                            span,
+                        )
+                    })?;
+                    return Ok(PromptCallResult {
+                        confidence: prompt_effective_confidence(prompt, &value),
+                        tokens: estimate_tokens(&value_to_json(&value).to_string()),
+                        cost: prompt.effect_cost,
+                        value,
+                        cost_charged: false,
+                    });
+                }
+            }
+
+            let prompt_tokens = estimate_tokens(&rendered);
+            let completion_tokens = prompt
+                .max_tokens
+                .unwrap_or(DEFAULT_COMPLETION_TOKEN_ESTIMATE);
+            let result_ty = match &prompt.return_ty {
+                Type::Stream(inner) => inner.as_ref(),
+                other => other,
+            };
+            let output_schema = Some(crate::schema::schema_for(result_ty, &self.types_by_id));
+            let json_args: Vec<serde_json::Value> = arg_values.iter().map(value_to_json).collect();
+
+            let mut requests = Vec::with_capacity(spec.models.len());
+            for member in &spec.models {
+                let selected_model = self.select_named_prompt_model(
+                    callee_name,
+                    &member.name,
+                    prompt_tokens,
+                    completion_tokens,
+                    None,
+                    span,
+                )?;
+                requests.push((
+                    selected_model.clone(),
+                    LlmRequest {
+                        prompt: callee_name.to_string(),
+                        model: selected_model,
+                        rendered: rendered.clone(),
+                        args: json_args.clone(),
+                        output_schema: output_schema.clone(),
+                    },
+                ));
+            }
+
+            let ensemble_start = std::time::Instant::now();
+            let mut join_set = JoinSet::new();
+            for (index, (model_name, req)) in requests.into_iter().enumerate() {
+                let runtime = self.runtime.clone();
+                join_set.spawn(async move {
+                    let response = runtime.call_llm(req).await;
+                    (index, model_name, response)
+                });
+            }
+
+            let mut member_results: Vec<Option<(String, PromptCallResult)>> =
+                (0..spec.models.len()).map(|_| None).collect();
+            while let Some(joined) = join_set.join_next().await {
+                let (index, model_name, response) = joined.map_err(|err| {
+                    InterpError::new(
+                        InterpErrorKind::Other(format!(
+                            "ensemble task for prompt `{callee_name}` failed: {err}"
+                        )),
+                        span,
+                    )
+                })?;
+                let response =
+                    response.map_err(|e| InterpError::new(InterpErrorKind::Runtime(e), span))?;
+                let result = self.decode_prompt_response(
+                    prompt,
+                    callee_name,
+                    arg_values,
+                    &rendered,
+                    &model_name,
+                    response.value,
+                    response.usage,
+                    span,
+                )?;
+                member_results[index] = Some((model_name, result));
+            }
+
+            let member_results: Vec<(String, PromptCallResult)> = member_results
+                .into_iter()
+                .map(|entry| entry.expect("ensemble member result missing"))
+                .collect();
+            let members: Vec<String> =
+                member_results.iter().map(|(model, _)| model.clone()).collect();
+            let results: Vec<String> = member_results
+                .iter()
+                .map(|(_, result)| vote_text(&result.value))
+                .collect();
+            let vote = majority_vote(&results);
+            let winner_index = results
+                .iter()
+                .position(|result| result == &vote.winner)
+                .expect("winner must be one of the results");
+            let total_cost: f64 = member_results.iter().map(|(_, result)| result.cost).sum();
+            let total_tokens: u64 =
+                member_results.iter().map(|(_, result)| result.tokens).sum();
+            let min_confidence = member_results
+                .iter()
+                .map(|(_, result)| result.confidence)
+                .fold(1.0_f64, f64::min);
+            let combined_confidence = min_confidence * vote.agreement_rate;
+            let winner_value = with_value_confidence(
+                member_results[winner_index].1.value.clone(),
+                combined_confidence,
+            );
+
+            self.runtime.tracer().emit(TraceEvent::EnsembleVote {
+                ts_ms: corvid_runtime::now_ms(),
+                run_id: self.runtime.tracer().run_id().to_string(),
+                prompt: callee_name.to_string(),
+                members,
+                results: results.clone(),
+                winner: vote.winner.clone(),
+                agreement_rate: vote.agreement_rate,
+                strategy: "majority".to_string(),
+            });
+
+            if self.should_yield_boundary() {
+                let action = self
+                    .maybe_yield(StepEvent::AfterPromptCall {
+                        prompt_name: callee_name.to_string(),
+                        result: value_to_json(&winner_value),
+                        elapsed_ms: ensemble_start.elapsed().as_millis() as u64,
+                        span,
+                    })
+                    .await?;
+                if let StepAction::Override(val) = action {
+                    let value = json_to_value(val, &prompt.return_ty, &self.types_by_id).map_err(|e| {
+                        InterpError::new(
+                            InterpErrorKind::Marshal(format!("prompt `{callee_name}` override: {e}")),
+                            span,
+                        )
+                    })?;
+                    return Ok(PromptCallResult {
+                        confidence: prompt_effective_confidence(prompt, &value),
+                        tokens: estimate_tokens(&value_to_json(&value).to_string()),
+                        cost: total_cost,
+                        value,
+                        cost_charged: false,
+                    });
+                }
+            }
+
+            Ok(PromptCallResult {
+                value: winner_value,
+                cost: total_cost,
+                confidence: combined_confidence,
+                tokens: total_tokens,
+                cost_charged: false,
+            })
+        } else if let Some(spec) = &prompt.adversarial {
+            if self.should_yield_boundary() {
+                let action = self
+                    .maybe_yield(StepEvent::BeforePromptCall {
+                        prompt_name: callee_name.to_string(),
+                        rendered: rendered.clone(),
+                        model: None,
+                        span,
+                        env: self.env_snapshot(),
+                    })
+                    .await?;
+                if let StepAction::Override(val) = action {
+                    let value = json_to_value(val, &prompt.return_ty, &self.types_by_id).map_err(|e| {
+                        InterpError::new(
+                            InterpErrorKind::Marshal(format!("prompt `{callee_name}` override: {e}")),
+                            span,
+                        )
+                    })?;
+                    return Ok(PromptCallResult {
+                        confidence: prompt_effective_confidence(prompt, &value),
+                        tokens: estimate_tokens(&value_to_json(&value).to_string()),
+                        cost: prompt.effect_cost,
+                        value,
+                        cost_charged: false,
+                    });
+                }
+            }
+
+            let pipeline_start = std::time::Instant::now();
+            let proposer = self.prompt_by_id(spec.proposer_def_id, &spec.proposer_name, span)?;
+            let proposed = self
+                .dispatch_prompt(proposer, &spec.proposer_name, arg_values, span)
+                .await?;
+            if !proposed.cost_charged && !matches!(&proposer.return_ty, Type::Stream(_)) {
+                self.charge_cost(proposed.cost, span)?;
+            }
+
+            let challenge_args = vec![proposed.value.clone()];
+            let challenger =
+                self.prompt_by_id(spec.challenger_def_id, &spec.challenger_name, span)?;
+            let challenge = self
+                .dispatch_prompt(challenger, &spec.challenger_name, &challenge_args, span)
+                .await?;
+            if !challenge.cost_charged && !matches!(&challenger.return_ty, Type::Stream(_)) {
+                self.charge_cost(challenge.cost, span)?;
+            }
+
+            let adjudicator =
+                self.prompt_by_id(spec.adjudicator_def_id, &spec.adjudicator_name, span)?;
+            let verdict_args = vec![proposed.value.clone(), challenge.value.clone()];
+            let verdict = self
+                .dispatch_prompt(adjudicator, &spec.adjudicator_name, &verdict_args, span)
+                .await?;
+            if !verdict.cost_charged && !matches!(&adjudicator.return_ty, Type::Stream(_)) {
+                self.charge_cost(verdict.cost, span)?;
+            }
+
+            let proposed_json = value_to_json(&proposed.value);
+            let challenge_json = value_to_json(&challenge.value);
+            let verdict_json = value_to_json(&verdict.value);
+            let contradiction = contradiction_flag(callee_name, &verdict_json)
+                .map_err(|e| InterpError::new(InterpErrorKind::Runtime(e), span))?;
+            if contradiction {
+                self.runtime.tracer().emit(TraceEvent::AdversarialContradiction {
+                    ts_ms: corvid_runtime::now_ms(),
+                    run_id: self.runtime.tracer().run_id().to_string(),
+                    prompt: callee_name.to_string(),
+                    proposed: trace_text(&proposed_json),
+                    challenge: trace_text(&challenge_json),
+                    verdict: verdict_json.clone(),
+                });
+            }
+            self.runtime
+                .tracer()
+                .emit(TraceEvent::AdversarialPipelineCompleted {
+                    ts_ms: corvid_runtime::now_ms(),
+                    run_id: self.runtime.tracer().run_id().to_string(),
+                    prompt: callee_name.to_string(),
+                    contradiction,
+                });
+
+            if self.should_yield_boundary() {
+                let action = self
+                    .maybe_yield(StepEvent::AfterPromptCall {
+                        prompt_name: callee_name.to_string(),
+                        result: verdict_json.clone(),
+                        elapsed_ms: pipeline_start.elapsed().as_millis() as u64,
+                        span,
+                    })
+                    .await?;
+                if let StepAction::Override(val) = action {
+                    let value = json_to_value(val, &prompt.return_ty, &self.types_by_id).map_err(|e| {
+                        InterpError::new(
+                            InterpErrorKind::Marshal(format!("prompt `{callee_name}` override: {e}")),
+                            span,
+                        )
+                    })?;
+                    return Ok(PromptCallResult {
+                        confidence: prompt_effective_confidence(prompt, &value),
+                        tokens: estimate_tokens(&value_to_json(&value).to_string()),
+                        cost: proposed.cost + challenge.cost + verdict.cost,
+                        value,
+                        cost_charged: true,
+                    });
+                }
+            }
+
+            Ok(PromptCallResult {
+                value: verdict.value,
+                cost: proposed.cost + challenge.cost + verdict.cost,
+                confidence: proposed
+                    .confidence
+                    .min(challenge.confidence)
+                    .min(verdict.confidence),
+                tokens: proposed.tokens + challenge.tokens + verdict.tokens,
+                cost_charged: true,
+            })
+        } else if let Some(spec) = &prompt.rollout {
+            let prompt_tokens = estimate_tokens(&rendered);
+            let completion_tokens = prompt
+                .max_tokens
+                .unwrap_or(DEFAULT_COMPLETION_TOKEN_ESTIMATE);
+            let chosen_model = if self.runtime.choose_rollout_variant(spec.variant_percent) {
+                spec.variant_name.clone()
+            } else {
+                spec.baseline_name.clone()
+            };
+            self.runtime.tracer().emit(TraceEvent::AbVariantChosen {
+                ts_ms: corvid_runtime::now_ms(),
+                run_id: self.runtime.tracer().run_id().to_string(),
+                prompt: callee_name.to_string(),
+                variant: spec.variant_name.clone(),
+                baseline: spec.baseline_name.clone(),
+                rollout_pct: spec.variant_percent,
+                chosen: chosen_model.clone(),
+            });
+            let selected_model = self.select_named_prompt_model(
+                callee_name,
+                &chosen_model,
+                prompt_tokens,
+                completion_tokens,
+                None,
+                span,
+            )?;
+            self.execute_prompt_call(
+                prompt,
+                callee_name,
+                arg_values,
+                &rendered,
+                Some(selected_model),
+                span,
+            )
+            .await
+        } else if !prompt.progressive.is_empty() {
+            let prompt_tokens = estimate_tokens(&rendered);
+            let completion_tokens = prompt
+                .max_tokens
+                .unwrap_or(DEFAULT_COMPLETION_TOKEN_ESTIMATE);
+            let stage_sequence: Vec<String> = prompt
+                .progressive
+                .iter()
+                .map(|stage| stage.model_name.clone())
+                .collect();
+            for (stage_index, stage) in prompt.progressive.iter().enumerate() {
+                let selected_model = self.select_named_prompt_model(
+                    callee_name,
+                    &stage.model_name,
+                    prompt_tokens,
+                    completion_tokens,
+                    None,
+                    span,
+                )?;
+                let result = self
+                    .execute_prompt_call(
+                        prompt,
+                        callee_name,
+                        arg_values,
+                        &rendered,
+                        Some(selected_model),
+                        span,
+                    )
+                    .await?;
+                if !matches!(&prompt.return_ty, Type::Stream(_)) {
+                    self.charge_cost(result.cost, span)?;
+                }
+                let result = PromptCallResult {
+                    cost_charged: !matches!(&prompt.return_ty, Type::Stream(_)),
+                    ..result
+                };
+                match stage.threshold {
+                    None => {
+                        if stage_index > 0 {
+                            self.runtime.tracer().emit(TraceEvent::ProgressiveExhausted {
+                                ts_ms: corvid_runtime::now_ms(),
+                                run_id: self.runtime.tracer().run_id().to_string(),
+                                prompt: callee_name.to_string(),
+                                stages: stage_sequence.clone(),
+                            });
+                        }
+                        return Ok(result);
+                    }
+                    Some(threshold) if result.confidence >= threshold => {
+                        return Ok(result);
+                    }
+                    Some(threshold) => {
+                        self.runtime.tracer().emit(TraceEvent::ProgressiveEscalation {
+                            ts_ms: corvid_runtime::now_ms(),
+                            run_id: self.runtime.tracer().run_id().to_string(),
+                            prompt: callee_name.to_string(),
+                            from_stage: stage_index,
+                            to_stage: stage_index + 1,
+                            confidence_observed: result.confidence,
+                            threshold,
+                        });
+                    }
+                }
+            }
+            unreachable!("progressive prompt has at least one stage")
+        } else {
+            let selected_model = self
+                .select_prompt_model(prompt, callee_name, &rendered, arg_values, span)
+                .await?;
+            self.execute_prompt_call(
+                prompt,
+                callee_name,
+                arg_values,
+                &rendered,
+                selected_model,
+                span,
+            )
+            .await
         }
     }
 
@@ -1551,295 +1985,12 @@ impl<'ir> Interpreter<'ir> {
                 }
             }
             IrCallKind::Prompt { def_id } => {
-                let prompt = self.prompts_by_id.get(def_id).copied().ok_or_else(|| {
-                    InterpError::new(
-                        InterpErrorKind::DispatchFailed(format!(
-                            "prompt `{callee_name}` is missing from the IR"
-                        )),
-                        span,
-                    )
-                })?;
-                let rendered = render_prompt(prompt, &arg_values);
-                if let Some(spec) = &prompt.ensemble {
-                    if self.should_yield_boundary() {
-                        let action = self.maybe_yield(StepEvent::BeforePromptCall {
-                            prompt_name: callee_name.to_string(),
-                            rendered: rendered.clone(),
-                            model: None,
-                            span,
-                            env: self.env_snapshot(),
-                        }).await?;
-                        if let StepAction::Override(val) = action {
-                            return json_to_value(val, &prompt.return_ty, &self.types_by_id)
-                                .map(ExprFlow::Value)
-                                .map_err(|e| InterpError::new(
-                                    InterpErrorKind::Marshal(format!("prompt `{callee_name}` override: {e}")),
-                                    span,
-                                ));
-                        }
-                    }
-
-                    let prompt_tokens = estimate_tokens(&rendered);
-                    let completion_tokens = prompt
-                        .max_tokens
-                        .unwrap_or(DEFAULT_COMPLETION_TOKEN_ESTIMATE);
-                    let result_ty = match &prompt.return_ty {
-                        Type::Stream(inner) => inner.as_ref(),
-                        other => other,
-                    };
-                    let output_schema = Some(crate::schema::schema_for(result_ty, &self.types_by_id));
-                    let json_args: Vec<serde_json::Value> =
-                        arg_values.iter().map(value_to_json).collect();
-
-                    let mut requests = Vec::with_capacity(spec.models.len());
-                    for member in &spec.models {
-                        let selected_model = self.select_named_prompt_model(
-                            callee_name,
-                            &member.name,
-                            prompt_tokens,
-                            completion_tokens,
-                            None,
-                            span,
-                        )?;
-                        requests.push((
-                            selected_model.clone(),
-                            LlmRequest {
-                                prompt: callee_name.to_string(),
-                                model: selected_model,
-                                rendered: rendered.clone(),
-                                args: json_args.clone(),
-                                output_schema: output_schema.clone(),
-                            },
-                        ));
-                    }
-
-                    let ensemble_start = std::time::Instant::now();
-                    let mut join_set = JoinSet::new();
-                    for (index, (model_name, req)) in requests.into_iter().enumerate() {
-                        let runtime = self.runtime.clone();
-                        join_set.spawn(async move {
-                            let response = runtime.call_llm(req).await;
-                            (index, model_name, response)
-                        });
-                    }
-
-                    let mut member_results: Vec<Option<(String, PromptCallResult)>> =
-                        (0..spec.models.len()).map(|_| None).collect();
-                    while let Some(joined) = join_set.join_next().await {
-                        let (index, model_name, response) = joined.map_err(|err| {
-                            InterpError::new(
-                                InterpErrorKind::Other(format!(
-                                    "ensemble task for prompt `{callee_name}` failed: {err}"
-                                )),
-                                span,
-                            )
-                        })?;
-                        let response = response
-                            .map_err(|e| InterpError::new(InterpErrorKind::Runtime(e), span))?;
-                        let result = self.decode_prompt_response(
-                            prompt,
-                            callee_name,
-                            &arg_values,
-                            &rendered,
-                            &model_name,
-                            response.value,
-                            response.usage,
-                            span,
-                        )?;
-                        member_results[index] = Some((model_name, result));
-                    }
-
-                    let member_results: Vec<(String, PromptCallResult)> = member_results
-                        .into_iter()
-                        .map(|entry| entry.expect("ensemble member result missing"))
-                        .collect();
-                    let members: Vec<String> =
-                        member_results.iter().map(|(model, _)| model.clone()).collect();
-                    let results: Vec<String> = member_results
-                        .iter()
-                        .map(|(_, result)| vote_text(&result.value))
-                        .collect();
-                    let vote = majority_vote(&results);
-                    let winner_index = results
-                        .iter()
-                        .position(|result| result == &vote.winner)
-                        .expect("winner must be one of the results");
-                    let total_cost: f64 = member_results.iter().map(|(_, result)| result.cost).sum();
-                    let total_tokens: u64 =
-                        member_results.iter().map(|(_, result)| result.tokens).sum();
-                    let min_confidence = member_results
-                        .iter()
-                        .map(|(_, result)| result.confidence)
-                        .fold(1.0_f64, f64::min);
-                    let combined_confidence = min_confidence * vote.agreement_rate;
-                    let winner_value = with_value_confidence(
-                        member_results[winner_index].1.value.clone(),
-                        combined_confidence,
-                    );
-
-                    self.runtime.tracer().emit(TraceEvent::EnsembleVote {
-                        ts_ms: corvid_runtime::now_ms(),
-                        run_id: self.runtime.tracer().run_id().to_string(),
-                        prompt: callee_name.to_string(),
-                        members,
-                        results: results.clone(),
-                        winner: vote.winner.clone(),
-                        agreement_rate: vote.agreement_rate,
-                        strategy: "majority".to_string(),
-                    });
-
-                    if self.should_yield_boundary() {
-                        let action = self.maybe_yield(StepEvent::AfterPromptCall {
-                            prompt_name: callee_name.to_string(),
-                            result: value_to_json(&winner_value),
-                            elapsed_ms: ensemble_start.elapsed().as_millis() as u64,
-                            span,
-                        }).await?;
-                        if let StepAction::Override(val) = action {
-                            return json_to_value(val, &prompt.return_ty, &self.types_by_id)
-                                .map(ExprFlow::Value)
-                                .map_err(|e| InterpError::new(
-                                    InterpErrorKind::Marshal(format!("prompt `{callee_name}` override: {e}")),
-                                    span,
-                                ));
-                        }
-                    }
-
-                    let result = PromptCallResult {
-                        value: winner_value,
-                        cost: total_cost,
-                        confidence: combined_confidence,
-                        tokens: total_tokens,
-                    };
-                    if !matches!(&prompt.return_ty, Type::Stream(_)) {
-                        self.charge_cost(result.cost, span)?;
-                    }
-                    self.finalize_prompt_result(prompt, result, span).await
-                } else if let Some(spec) = &prompt.rollout {
-                    let prompt_tokens = estimate_tokens(&rendered);
-                    let completion_tokens = prompt
-                        .max_tokens
-                        .unwrap_or(DEFAULT_COMPLETION_TOKEN_ESTIMATE);
-                    let chosen_model = if self.runtime.choose_rollout_variant(spec.variant_percent) {
-                        spec.variant_name.clone()
-                    } else {
-                        spec.baseline_name.clone()
-                    };
-                    self.runtime.tracer().emit(TraceEvent::AbVariantChosen {
-                        ts_ms: corvid_runtime::now_ms(),
-                        run_id: self.runtime.tracer().run_id().to_string(),
-                        prompt: callee_name.to_string(),
-                        variant: spec.variant_name.clone(),
-                        baseline: spec.baseline_name.clone(),
-                        rollout_pct: spec.variant_percent,
-                        chosen: chosen_model.clone(),
-                    });
-                    let selected_model = self.select_named_prompt_model(
-                        callee_name,
-                        &chosen_model,
-                        prompt_tokens,
-                        completion_tokens,
-                        None,
-                        span,
-                    )?;
-                    let result = self
-                        .execute_prompt_call(
-                            prompt,
-                            callee_name,
-                            &arg_values,
-                            &rendered,
-                            Some(selected_model),
-                            span,
-                        )
-                        .await?;
-                    if !matches!(&prompt.return_ty, Type::Stream(_)) {
-                        self.charge_cost(result.cost, span)?;
-                    }
-                    self.finalize_prompt_result(prompt, result, span).await
-                } else if !prompt.progressive.is_empty() {
-                    let prompt_tokens = estimate_tokens(&rendered);
-                    let completion_tokens = prompt
-                        .max_tokens
-                        .unwrap_or(DEFAULT_COMPLETION_TOKEN_ESTIMATE);
-                    let stage_sequence: Vec<String> = prompt
-                        .progressive
-                        .iter()
-                        .map(|stage| stage.model_name.clone())
-                        .collect();
-                    for (stage_index, stage) in prompt.progressive.iter().enumerate() {
-                        let selected_model = self.select_named_prompt_model(
-                            callee_name,
-                            &stage.model_name,
-                            prompt_tokens,
-                            completion_tokens,
-                            None,
-                            span,
-                        )?;
-                        let result = self
-                            .execute_prompt_call(
-                                prompt,
-                                callee_name,
-                                &arg_values,
-                                &rendered,
-                                Some(selected_model),
-                                span,
-                            )
-                            .await?;
-                        if !matches!(&prompt.return_ty, Type::Stream(_)) {
-                            self.charge_cost(result.cost, span)?;
-                        }
-                        match stage.threshold {
-                            None => {
-                                if stage_index > 0 {
-                                    self.runtime.tracer().emit(
-                                        TraceEvent::ProgressiveExhausted {
-                                            ts_ms: corvid_runtime::now_ms(),
-                                            run_id: self.runtime.tracer().run_id().to_string(),
-                                            prompt: callee_name.to_string(),
-                                            stages: stage_sequence.clone(),
-                                        },
-                                    );
-                                }
-                                return self.finalize_prompt_result(prompt, result, span).await;
-                            }
-                            Some(threshold) if result.confidence >= threshold => {
-                                return self.finalize_prompt_result(prompt, result, span).await;
-                            }
-                            Some(threshold) => {
-                                self.runtime.tracer().emit(
-                                    TraceEvent::ProgressiveEscalation {
-                                        ts_ms: corvid_runtime::now_ms(),
-                                        run_id: self.runtime.tracer().run_id().to_string(),
-                                        prompt: callee_name.to_string(),
-                                        from_stage: stage_index,
-                                        to_stage: stage_index + 1,
-                                        confidence_observed: result.confidence,
-                                        threshold,
-                                    },
-                                );
-                            }
-                        }
-                    }
-                    unreachable!("progressive prompt has at least one stage")
-                } else {
-                    let selected_model = self
-                        .select_prompt_model(prompt, callee_name, &rendered, &arg_values, span)
-                        .await?;
-                    let result = self
-                        .execute_prompt_call(
-                            prompt,
-                            callee_name,
-                            &arg_values,
-                            &rendered,
-                            selected_model,
-                            span,
-                        )
-                        .await?;
-                    if !matches!(&prompt.return_ty, Type::Stream(_)) {
-                        self.charge_cost(result.cost, span)?;
-                    }
-                    self.finalize_prompt_result(prompt, result, span).await
+                let prompt = self.prompt_by_id(*def_id, callee_name, span)?;
+                let result = self.dispatch_prompt(prompt, callee_name, &arg_values, span).await?;
+                if !result.cost_charged && !matches!(&prompt.return_ty, Type::Stream(_)) {
+                    self.charge_cost(result.cost, span)?;
                 }
+                self.finalize_prompt_result(prompt, result, span).await
             }
             IrCallKind::Agent { def_id } => {
                 let agent = self.agents_by_id.get(def_id).copied().ok_or_else(|| {

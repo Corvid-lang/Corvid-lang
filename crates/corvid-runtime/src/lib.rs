@@ -30,6 +30,7 @@
 #![allow(dead_code)]
 
 pub mod abi;
+pub mod adversarial;
 pub mod approvals;
 pub mod ensemble;
 pub mod env;
@@ -61,6 +62,7 @@ pub mod c_runtime {
 pub use approvals::{
     ApprovalDecision, ApprovalRequest, Approver, ProgrammaticApprover, StdinApprover,
 };
+pub use adversarial::{contradiction_flag, trace_text};
 pub use ensemble::{majority_vote, EnsembleVoteOutcome};
 pub use env::{find_dotenv_walking, load_dotenv, load_dotenv_walking};
 pub use errors::RuntimeError;

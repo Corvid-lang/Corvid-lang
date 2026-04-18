@@ -106,4 +106,18 @@ pub enum TraceEvent {
         agreement_rate: f64,
         strategy: String,
     },
+    AdversarialPipelineCompleted {
+        ts_ms: u64,
+        run_id: String,
+        prompt: String,
+        contradiction: bool,
+    },
+    AdversarialContradiction {
+        ts_ms: u64,
+        run_id: String,
+        prompt: String,
+        proposed: String,
+        challenge: String,
+        verdict: serde_json::Value,
+    },
 }

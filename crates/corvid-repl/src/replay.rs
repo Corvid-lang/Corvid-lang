@@ -280,6 +280,14 @@ impl ReplaySession {
                 | TraceEvent::EnsembleVote {
                     run_id: event_run_id,
                     ..
+                }
+                | TraceEvent::AdversarialPipelineCompleted {
+                    run_id: event_run_id,
+                    ..
+                }
+                | TraceEvent::AdversarialContradiction {
+                    run_id: event_run_id,
+                    ..
                 } => {
                     ensure_run_id(&path, &run_id, event_run_id)?;
                     i += 1;
@@ -461,7 +469,9 @@ fn first_run_id(events: &[TraceEvent]) -> Result<&str, ReplayLoadError> {
         | Some(TraceEvent::ProgressiveEscalation { run_id, .. })
         | Some(TraceEvent::ProgressiveExhausted { run_id, .. })
         | Some(TraceEvent::AbVariantChosen { run_id, .. })
-        | Some(TraceEvent::EnsembleVote { run_id, .. }) => Ok(run_id),
+        | Some(TraceEvent::EnsembleVote { run_id, .. })
+        | Some(TraceEvent::AdversarialPipelineCompleted { run_id, .. })
+        | Some(TraceEvent::AdversarialContradiction { run_id, .. }) => Ok(run_id),
         None => unreachable!("empty event list handled earlier"),
     }
 }
@@ -491,7 +501,9 @@ fn first_ts(events: &[TraceEvent]) -> u64 {
         | Some(TraceEvent::ProgressiveEscalation { ts_ms, .. })
         | Some(TraceEvent::ProgressiveExhausted { ts_ms, .. })
         | Some(TraceEvent::AbVariantChosen { ts_ms, .. })
-        | Some(TraceEvent::EnsembleVote { ts_ms, .. }) => *ts_ms,
+        | Some(TraceEvent::EnsembleVote { ts_ms, .. })
+        | Some(TraceEvent::AdversarialPipelineCompleted { ts_ms, .. })
+        | Some(TraceEvent::AdversarialContradiction { ts_ms, .. }) => *ts_ms,
         None => 0,
     }
 }
@@ -510,7 +522,9 @@ fn last_ts(events: &[TraceEvent]) -> u64 {
         | Some(TraceEvent::ProgressiveEscalation { ts_ms, .. })
         | Some(TraceEvent::ProgressiveExhausted { ts_ms, .. })
         | Some(TraceEvent::AbVariantChosen { ts_ms, .. })
-        | Some(TraceEvent::EnsembleVote { ts_ms, .. }) => *ts_ms,
+        | Some(TraceEvent::EnsembleVote { ts_ms, .. })
+        | Some(TraceEvent::AdversarialPipelineCompleted { ts_ms, .. })
+        | Some(TraceEvent::AdversarialContradiction { ts_ms, .. }) => *ts_ms,
         None => 0,
     }
 }

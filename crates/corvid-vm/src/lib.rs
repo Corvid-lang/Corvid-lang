@@ -1834,6 +1834,292 @@ agent run(q: String) -> String:
     }
 
     #[tokio::test]
+    async fn adversarial_pipeline_returns_adjudicator_result_and_emits_completion() {
+        let src = r#"
+type Verdict:
+    contradiction: Bool
+    rationale: String
+
+prompt propose_answer(q: String) -> String:
+    "Answer: {q}"
+
+prompt critique(proposed: String) -> String:
+    "Flaws in: {proposed}"
+
+prompt adjudicate_fn(proposed: String, flaws: String) -> Verdict:
+    "Verdict"
+
+prompt verify(q: String) -> Verdict:
+    adversarial:
+        propose: propose_answer
+        challenge: critique
+        adjudicate: adjudicate_fn
+    "Verify"
+
+agent run(q: String) -> Verdict:
+    return verify(q)
+"#;
+        let ir = ir_of(src);
+        let trace_dir = std::env::temp_dir().join(format!(
+            "corvid-vm-adversarial-ok-{}",
+            corvid_runtime::now_ms()
+        ));
+        std::fs::create_dir_all(&trace_dir).unwrap();
+        let rt = Runtime::builder()
+            .tracer(corvid_runtime::Tracer::open(&trace_dir, "run-adversarial-ok"))
+            .llm(Arc::new(
+                MockAdapter::new("mock-1")
+                    .reply("propose_answer", json!("draft"))
+                    .reply("critique", json!("needs citations"))
+                    .reply(
+                        "adjudicate_fn",
+                        json!({"contradiction": false, "rationale": "accepted"}),
+                    ),
+            ))
+            .default_model("mock-1")
+            .build();
+
+        let value = run_agent(&ir, "run", vec![Value::String(Arc::from("q"))], &rt)
+            .await
+            .expect("run");
+        match value {
+            Value::Struct(s) => {
+                assert_eq!(s.type_name(), "Verdict");
+                assert_eq!(s.get_field("contradiction").unwrap(), Value::Bool(false));
+                assert_eq!(
+                    s.get_field("rationale").unwrap(),
+                    Value::String(Arc::from("accepted"))
+                );
+            }
+            other => panic!("expected Verdict struct, got {other:?}"),
+        }
+        drop(rt);
+
+        let body = std::fs::read_to_string(trace_dir.join("run-adversarial-ok.jsonl"))
+            .expect("trace file");
+        let events: Vec<TraceEvent> = body
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .map(|line| serde_json::from_str(line).expect("valid trace event"))
+            .collect();
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| matches!(event, TraceEvent::LlmCall { .. }))
+                .count(),
+            3
+        );
+        assert!(events.iter().any(|event| matches!(
+            event,
+            TraceEvent::AdversarialPipelineCompleted {
+                prompt,
+                contradiction,
+                ..
+            } if prompt == "verify" && !contradiction
+        )));
+        assert!(!events.iter().any(|event| matches!(
+            event,
+            TraceEvent::AdversarialContradiction { .. }
+        )));
+    }
+
+    #[tokio::test]
+    async fn adversarial_pipeline_emits_contradiction_event_when_flagged() {
+        let src = r#"
+type Verdict:
+    contradiction: Bool
+    rationale: String
+
+prompt propose_answer(q: String) -> String:
+    "Answer: {q}"
+
+prompt critique(proposed: String) -> String:
+    "Flaws in: {proposed}"
+
+prompt adjudicate_fn(proposed: String, flaws: String) -> Verdict:
+    "Verdict"
+
+prompt verify(q: String) -> Verdict:
+    adversarial:
+        propose: propose_answer
+        challenge: critique
+        adjudicate: adjudicate_fn
+    "Verify"
+
+agent run(q: String) -> Verdict:
+    return verify(q)
+"#;
+        let ir = ir_of(src);
+        let trace_dir = std::env::temp_dir().join(format!(
+            "corvid-vm-adversarial-contradiction-{}",
+            corvid_runtime::now_ms()
+        ));
+        std::fs::create_dir_all(&trace_dir).unwrap();
+        let rt = Runtime::builder()
+            .tracer(corvid_runtime::Tracer::open(
+                &trace_dir,
+                "run-adversarial-contradiction",
+            ))
+            .llm(Arc::new(
+                MockAdapter::new("mock-1")
+                    .reply("propose_answer", json!("draft"))
+                    .reply("critique", json!("fatal flaw"))
+                    .reply(
+                        "adjudicate_fn",
+                        json!({"contradiction": true, "rationale": "reject"}),
+                    ),
+            ))
+            .default_model("mock-1")
+            .build();
+
+        run_agent(&ir, "run", vec![Value::String(Arc::from("q"))], &rt)
+            .await
+            .expect("run");
+        drop(rt);
+
+        let body = std::fs::read_to_string(
+            trace_dir.join("run-adversarial-contradiction.jsonl"),
+        )
+        .expect("trace file");
+        let events: Vec<TraceEvent> = body
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .map(|line| serde_json::from_str(line).expect("valid trace event"))
+            .collect();
+        assert!(events.iter().any(|event| matches!(
+            event,
+            TraceEvent::AdversarialContradiction {
+                prompt,
+                proposed,
+                challenge,
+                verdict,
+                ..
+            } if prompt == "verify"
+                && proposed == "draft"
+                && challenge == "fatal flaw"
+                && verdict == &json!({"contradiction": true, "rationale": "reject"})
+        )));
+        assert!(events.iter().any(|event| matches!(
+            event,
+            TraceEvent::AdversarialPipelineCompleted {
+                prompt,
+                contradiction,
+                ..
+            } if prompt == "verify" && *contradiction
+        )));
+    }
+
+    #[tokio::test]
+    async fn adversarial_pipeline_halts_on_budget_before_adjudicator() {
+        let src = r#"
+type Verdict:
+    contradiction: Bool
+    rationale: String
+
+prompt propose_answer(q: String) -> String:
+    "Answer: {q}"
+
+prompt critique(proposed: String) -> String:
+    "Flaws in: {proposed}"
+
+prompt adjudicate_fn(proposed: String, flaws: String) -> Verdict:
+    "Verdict"
+
+prompt verify(q: String) -> Verdict:
+    adversarial:
+        propose: propose_answer
+        challenge: critique
+        adjudicate: adjudicate_fn
+    "Verify"
+
+@budget($0.50)
+agent run(q: String) -> Verdict:
+    return verify(q)
+"#;
+        let ir = ir_of(src);
+        let trace_dir = std::env::temp_dir().join(format!(
+            "corvid-vm-adversarial-budget-{}",
+            corvid_runtime::now_ms()
+        ));
+        std::fs::create_dir_all(&trace_dir).unwrap();
+        let rt = Runtime::builder()
+            .tracer(corvid_runtime::Tracer::open(
+                &trace_dir,
+                "run-adversarial-budget",
+            ))
+            .llm(Arc::new(
+                MockAdapter::new("mock-1")
+                    .reply_with_usage(
+                        "propose_answer",
+                        json!("draft"),
+                        TokenUsage {
+                            prompt_tokens: 1,
+                            completion_tokens: 1,
+                            total_tokens: 2,
+                        },
+                    )
+                    .reply_with_usage(
+                        "critique",
+                        json!("fatal flaw"),
+                        TokenUsage {
+                            prompt_tokens: 1,
+                            completion_tokens: 1,
+                            total_tokens: 2,
+                        },
+                    )
+                    .reply_with_usage(
+                        "adjudicate_fn",
+                        json!({"contradiction": true, "rationale": "reject"}),
+                        TokenUsage {
+                            prompt_tokens: 1,
+                            completion_tokens: 1,
+                            total_tokens: 2,
+                        },
+                    ),
+            ))
+            .model(
+                RegisteredModel::new("mock-1")
+                    .capability("basic")
+                    .cost_per_token_in(0.15)
+                    .cost_per_token_out(0.15),
+            )
+            .default_model("mock-1")
+            .build();
+
+        let err = run_agent(&ir, "run", vec![Value::String(Arc::from("q"))], &rt)
+            .await
+            .unwrap_err();
+        match err.kind {
+            InterpErrorKind::BudgetExceeded { budget, used } => {
+                assert!((budget - 0.50).abs() < 1e-9);
+                assert!((used - 0.60).abs() < 1e-9);
+            }
+            other => panic!("expected BudgetExceeded, got {other:?}"),
+        }
+        drop(rt);
+
+        let body = std::fs::read_to_string(trace_dir.join("run-adversarial-budget.jsonl"))
+            .expect("trace file");
+        let events: Vec<TraceEvent> = body
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .map(|line| serde_json::from_str(line).expect("valid trace event"))
+            .collect();
+        let llm_calls: Vec<_> = events
+            .iter()
+            .filter_map(|event| match event {
+                TraceEvent::LlmCall { prompt, .. } => Some(prompt.clone()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(llm_calls, vec!["propose_answer".to_string(), "critique".to_string()]);
+        assert!(!events.iter().any(|event| matches!(
+            event,
+            TraceEvent::AdversarialPipelineCompleted { .. }
+        )));
+    }
+
+    #[tokio::test]
     async fn agent_to_agent_call_recurses() {
         let src = "\
 agent inner(n: Int) -> Int:
