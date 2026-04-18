@@ -14,6 +14,7 @@ use crate::tracing::{fresh_run_id, now_ms, Tracer};
 use corvid_trace_schema::TraceEvent;
 use std::path::Path;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 #[derive(Clone)]
@@ -27,6 +28,7 @@ pub struct Runtime {
     default_model: String,
     model_catalog: ModelCatalog,
     model_catalog_error: Option<RuntimeError>,
+    rollout_state: Arc<AtomicU64>,
 }
 
 impl Runtime {
@@ -82,6 +84,34 @@ impl Runtime {
             prompt_tokens,
             completion_tokens,
         ))
+    }
+
+    pub fn choose_rollout_variant(&self, variant_percent: f64) -> bool {
+        if variant_percent <= 0.0 {
+            return false;
+        }
+        if variant_percent >= 100.0 {
+            return true;
+        }
+        self.next_rollout_sample() < (variant_percent / 100.0)
+    }
+
+    fn next_rollout_sample(&self) -> f64 {
+        let next = loop {
+            let current = self.rollout_state.load(Ordering::Relaxed);
+            let next = current
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            if self
+                .rollout_state
+                .compare_exchange(current, next, Ordering::SeqCst, Ordering::SeqCst)
+                .is_ok()
+            {
+                break next;
+            }
+        };
+        let mantissa = next >> 11;
+        mantissa as f64 / ((1_u64 << 53) as f64)
     }
 
     // ---- dispatch helpers ----
@@ -205,6 +235,7 @@ pub struct RuntimeBuilder {
     default_model: String,
     model_catalog: ModelCatalog,
     model_catalog_root: Option<PathBuf>,
+    rollout_seed: Option<u64>,
 }
 
 impl RuntimeBuilder {
@@ -260,8 +291,14 @@ impl RuntimeBuilder {
         self
     }
 
+    pub fn rollout_seed(mut self, seed: u64) -> Self {
+        self.rollout_seed = Some(seed);
+        self
+    }
+
     pub fn build(self) -> Runtime {
         let mut model_catalog = self.model_catalog;
+        let rollout_seed = self.rollout_seed.unwrap_or_else(crate::tracing::now_ms);
         let model_catalog_error = if model_catalog.is_empty() {
             let start = self
                 .model_catalog_root
@@ -290,6 +327,7 @@ impl RuntimeBuilder {
             default_model: self.default_model,
             model_catalog,
             model_catalog_error,
+            rollout_state: Arc::new(AtomicU64::new(rollout_seed)),
         }
     }
 }
@@ -422,5 +460,27 @@ cost_per_token_in = 0.000015
         assert_eq!(selected.model, "fast");
         assert_eq!(selected.capability_picked.as_deref(), Some("basic"));
         assert!((selected.cost_estimate - 2.0).abs() < 1e-12);
+    }
+
+    #[test]
+    fn rollout_extremes_choose_expected_variant() {
+        let runtime = Runtime::builder().rollout_seed(7).build();
+        assert!(!runtime.choose_rollout_variant(0.0));
+        assert!(runtime.choose_rollout_variant(100.0));
+    }
+
+    #[test]
+    fn rollout_seed_produces_stable_sequence_across_restarts() {
+        let runtime_a = Runtime::builder().rollout_seed(12345).build();
+        let runtime_b = Runtime::builder().rollout_seed(12345).build();
+
+        let sequence_a: Vec<bool> = (0..8)
+            .map(|_| runtime_a.choose_rollout_variant(37.5))
+            .collect();
+        let sequence_b: Vec<bool> = (0..8)
+            .map(|_| runtime_b.choose_rollout_variant(37.5))
+            .collect();
+
+        assert_eq!(sequence_a, sequence_b);
     }
 }

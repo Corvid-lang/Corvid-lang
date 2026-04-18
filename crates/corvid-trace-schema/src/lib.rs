@@ -87,4 +87,13 @@ pub enum TraceEvent {
         prompt: String,
         stages: Vec<String>,
     },
+    AbVariantChosen {
+        ts_ms: u64,
+        run_id: String,
+        prompt: String,
+        variant: String,
+        baseline: String,
+        rollout_pct: f64,
+        chosen: String,
+    },
 }

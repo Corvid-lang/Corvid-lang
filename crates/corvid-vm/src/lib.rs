@@ -1463,6 +1463,182 @@ agent run(q: String) -> String:
     }
 
     #[tokio::test]
+    async fn rollout_dispatch_zero_percent_always_uses_baseline() {
+        let src = r#"
+model baseline:
+    capability: basic
+
+model variant:
+    capability: expert
+
+prompt answer(q: String) -> String:
+    rollout 0% variant, else baseline
+    "Answer {q}."
+
+agent run(q: String) -> String:
+    return answer(q)
+"#;
+        let ir = ir_of(src);
+        let trace_dir = std::env::temp_dir().join(format!(
+            "corvid-vm-rollout-zero-{}",
+            corvid_runtime::now_ms()
+        ));
+        std::fs::create_dir_all(&trace_dir).unwrap();
+        let rt = Runtime::builder()
+            .tracer(corvid_runtime::Tracer::open(&trace_dir, "run-rollout-zero"))
+            .llm(Arc::new(MockAdapter::new("baseline").reply("answer", json!("baseline"))))
+            .llm(Arc::new(MockAdapter::new("variant").reply("answer", json!("variant"))))
+            .model(RegisteredModel::new("baseline").capability("basic"))
+            .model(RegisteredModel::new("variant").capability("expert"))
+            .rollout_seed(42)
+            .default_model("baseline")
+            .build();
+
+        let v = run_agent(&ir, "run", vec![Value::String(Arc::from("x"))], &rt)
+            .await
+            .expect("run");
+        assert_eq!(v, Value::String(Arc::from("baseline")));
+        drop(rt);
+
+        let body = std::fs::read_to_string(trace_dir.join("run-rollout-zero.jsonl"))
+            .expect("trace file");
+        let events: Vec<TraceEvent> = body
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .map(|line| serde_json::from_str(line).expect("valid trace event"))
+            .collect();
+        assert!(events.iter().any(|event| matches!(
+            event,
+            TraceEvent::AbVariantChosen {
+                prompt,
+                variant,
+                baseline,
+                rollout_pct,
+                chosen,
+                ..
+            } if prompt == "answer"
+                && variant == "variant"
+                && baseline == "baseline"
+                && (*rollout_pct - 0.0).abs() < 1e-9
+                && chosen == "baseline"
+        )));
+        assert!(events.iter().any(|event| matches!(
+            event,
+            TraceEvent::LlmCall { prompt, model, .. }
+                if prompt == "answer" && model.as_deref() == Some("baseline")
+        )));
+    }
+
+    #[tokio::test]
+    async fn rollout_dispatch_hundred_percent_always_uses_variant() {
+        let src = r#"
+model baseline:
+    capability: basic
+
+model variant:
+    capability: expert
+
+prompt answer(q: String) -> String:
+    rollout 100% variant, else baseline
+    "Answer {q}."
+
+agent run(q: String) -> String:
+    return answer(q)
+"#;
+        let ir = ir_of(src);
+        let trace_dir = std::env::temp_dir().join(format!(
+            "corvid-vm-rollout-hundred-{}",
+            corvid_runtime::now_ms()
+        ));
+        std::fs::create_dir_all(&trace_dir).unwrap();
+        let rt = Runtime::builder()
+            .tracer(corvid_runtime::Tracer::open(&trace_dir, "run-rollout-hundred"))
+            .llm(Arc::new(MockAdapter::new("baseline").reply("answer", json!("baseline"))))
+            .llm(Arc::new(MockAdapter::new("variant").reply("answer", json!("variant"))))
+            .model(RegisteredModel::new("baseline").capability("basic"))
+            .model(RegisteredModel::new("variant").capability("expert"))
+            .rollout_seed(42)
+            .default_model("baseline")
+            .build();
+
+        let v = run_agent(&ir, "run", vec![Value::String(Arc::from("x"))], &rt)
+            .await
+            .expect("run");
+        assert_eq!(v, Value::String(Arc::from("variant")));
+        drop(rt);
+
+        let body = std::fs::read_to_string(trace_dir.join("run-rollout-hundred.jsonl"))
+            .expect("trace file");
+        let events: Vec<TraceEvent> = body
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .map(|line| serde_json::from_str(line).expect("valid trace event"))
+            .collect();
+        assert!(events.iter().any(|event| matches!(
+            event,
+            TraceEvent::AbVariantChosen {
+                rollout_pct,
+                chosen,
+                ..
+            } if (*rollout_pct - 100.0).abs() < 1e-9 && chosen == "variant"
+        )));
+        assert!(events.iter().any(|event| matches!(
+            event,
+            TraceEvent::LlmCall { prompt, model, .. }
+                if prompt == "answer" && model.as_deref() == Some("variant")
+        )));
+    }
+
+    #[tokio::test]
+    async fn rollout_dispatch_is_stable_for_same_seed_across_restarts() {
+        let src = r#"
+model baseline:
+    capability: basic
+
+model variant:
+    capability: expert
+
+prompt answer(q: String) -> String:
+    rollout 35% variant, else baseline
+    "Answer {q}."
+
+agent run(q: String) -> String:
+    return answer(q)
+"#;
+        let ir = ir_of(src);
+
+        async fn run_sequence(
+            ir: &corvid_ir::IrFile,
+            seed: u64,
+        ) -> Vec<String> {
+            let rt = Runtime::builder()
+                .llm(Arc::new(MockAdapter::new("baseline").reply("answer", json!("baseline"))))
+                .llm(Arc::new(MockAdapter::new("variant").reply("answer", json!("variant"))))
+                .model(RegisteredModel::new("baseline").capability("basic"))
+                .model(RegisteredModel::new("variant").capability("expert"))
+                .rollout_seed(seed)
+                .default_model("baseline")
+                .build();
+
+            let mut out = Vec::new();
+            for _ in 0..8 {
+                let value = run_agent(ir, "run", vec![Value::String(Arc::from("x"))], &rt)
+                    .await
+                    .expect("run");
+                match value {
+                    Value::String(s) => out.push(s.to_string()),
+                    other => panic!("expected string result, got {other:?}"),
+                }
+            }
+            out
+        }
+
+        let first = run_sequence(&ir, 1337).await;
+        let second = run_sequence(&ir, 1337).await;
+        assert_eq!(first, second);
+    }
+
+    #[tokio::test]
     async fn agent_to_agent_call_recurses() {
         let src = "\
 agent inner(n: Int) -> Int:

@@ -1532,7 +1532,48 @@ impl<'ir> Interpreter<'ir> {
                     )
                 })?;
                 let rendered = render_prompt(prompt, &arg_values);
-                if !prompt.progressive.is_empty() {
+                if let Some(spec) = &prompt.rollout {
+                    let prompt_tokens = estimate_tokens(&rendered);
+                    let completion_tokens = prompt
+                        .max_tokens
+                        .unwrap_or(DEFAULT_COMPLETION_TOKEN_ESTIMATE);
+                    let chosen_model = if self.runtime.choose_rollout_variant(spec.variant_percent) {
+                        spec.variant_name.clone()
+                    } else {
+                        spec.baseline_name.clone()
+                    };
+                    self.runtime.tracer().emit(TraceEvent::AbVariantChosen {
+                        ts_ms: corvid_runtime::now_ms(),
+                        run_id: self.runtime.tracer().run_id().to_string(),
+                        prompt: callee_name.to_string(),
+                        variant: spec.variant_name.clone(),
+                        baseline: spec.baseline_name.clone(),
+                        rollout_pct: spec.variant_percent,
+                        chosen: chosen_model.clone(),
+                    });
+                    let selected_model = self.select_named_prompt_model(
+                        callee_name,
+                        &chosen_model,
+                        prompt_tokens,
+                        completion_tokens,
+                        None,
+                        span,
+                    )?;
+                    let result = self
+                        .execute_prompt_call(
+                            prompt,
+                            callee_name,
+                            &arg_values,
+                            &rendered,
+                            Some(selected_model),
+                            span,
+                        )
+                        .await?;
+                    if !matches!(&prompt.return_ty, Type::Stream(_)) {
+                        self.charge_cost(result.cost, span)?;
+                    }
+                    self.finalize_prompt_result(prompt, result, span).await
+                } else if !prompt.progressive.is_empty() {
                     let prompt_tokens = estimate_tokens(&rendered);
                     let completion_tokens = prompt
                         .max_tokens
