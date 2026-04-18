@@ -31,6 +31,7 @@
 
 pub mod abi;
 pub mod approvals;
+pub mod ensemble;
 pub mod env;
 pub mod errors;
 pub mod ffi_bridge;
@@ -60,6 +61,7 @@ pub mod c_runtime {
 pub use approvals::{
     ApprovalDecision, ApprovalRequest, Approver, ProgrammaticApprover, StdinApprover,
 };
+pub use ensemble::{majority_vote, EnsembleVoteOutcome};
 pub use env::{find_dotenv_walking, load_dotenv, load_dotenv_walking};
 pub use errors::RuntimeError;
 pub use redact::RedactionSet;

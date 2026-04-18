@@ -96,4 +96,14 @@ pub enum TraceEvent {
         rollout_pct: f64,
         chosen: String,
     },
+    EnsembleVote {
+        ts_ms: u64,
+        run_id: String,
+        prompt: String,
+        members: Vec<String>,
+        results: Vec<String>,
+        winner: String,
+        agreement_rate: f64,
+        strategy: String,
+    },
 }

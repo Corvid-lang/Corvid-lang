@@ -1641,6 +1641,199 @@ agent run(q: String) -> String:
     }
 
     #[tokio::test]
+    async fn ensemble_dispatch_uses_majority_winner_and_emits_vote() {
+        let src = r#"
+model a:
+    capability: basic
+
+model b:
+    capability: standard
+
+model c:
+    capability: expert
+
+prompt answer(q: String) -> String:
+    ensemble [a, b, c] vote majority
+    "Answer {q}."
+
+agent run(q: String) -> String:
+    return answer(q)
+"#;
+        let ir = ir_of(src);
+        let trace_dir = std::env::temp_dir().join(format!(
+            "corvid-vm-ensemble-majority-{}",
+            corvid_runtime::now_ms()
+        ));
+        std::fs::create_dir_all(&trace_dir).unwrap();
+        let rt = Runtime::builder()
+            .tracer(corvid_runtime::Tracer::open(&trace_dir, "run-ensemble-majority"))
+            .llm(Arc::new(MockAdapter::new("a").reply("answer", json!("alpha"))))
+            .llm(Arc::new(MockAdapter::new("b").reply("answer", json!("alpha"))))
+            .llm(Arc::new(MockAdapter::new("c").reply("answer", json!("beta"))))
+            .model(RegisteredModel::new("a").capability("basic"))
+            .model(RegisteredModel::new("b").capability("standard"))
+            .model(RegisteredModel::new("c").capability("expert"))
+            .default_model("a")
+            .build();
+
+        let value = run_agent(&ir, "run", vec![Value::String(Arc::from("x"))], &rt)
+            .await
+            .expect("run");
+        match value {
+            Value::Grounded(g) => {
+                assert_eq!(g.inner.get(), Value::String(Arc::from("alpha")));
+                assert!((g.confidence - (2.0 / 3.0)).abs() < 1e-9);
+            }
+            other => panic!("expected grounded majority winner, got {other:?}"),
+        }
+        drop(rt);
+
+        let body = std::fs::read_to_string(trace_dir.join("run-ensemble-majority.jsonl"))
+            .expect("trace file");
+        let events: Vec<TraceEvent> = body
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .map(|line| serde_json::from_str(line).expect("valid trace event"))
+            .collect();
+        assert!(events.iter().any(|event| matches!(
+            event,
+            TraceEvent::EnsembleVote {
+                prompt,
+                members,
+                results,
+                winner,
+                agreement_rate,
+                strategy,
+                ..
+            } if prompt == "answer"
+                && members == &vec!["a".to_string(), "b".to_string(), "c".to_string()]
+                && results == &vec!["alpha".to_string(), "alpha".to_string(), "beta".to_string()]
+                && winner == "alpha"
+                && (*agreement_rate - (2.0 / 3.0)).abs() < 1e-9
+                && strategy == "majority"
+        )));
+    }
+
+    #[tokio::test]
+    async fn ensemble_dispatch_breaks_ties_alphabetically() {
+        let src = r#"
+model a:
+    capability: basic
+
+model b:
+    capability: standard
+
+prompt answer(q: String) -> String:
+    ensemble [a, b] vote majority
+    "Answer {q}."
+
+agent run(q: String) -> String:
+    return answer(q)
+"#;
+        let ir = ir_of(src);
+        let rt = Runtime::builder()
+            .llm(Arc::new(MockAdapter::new("a").reply("answer", json!("zulu"))))
+            .llm(Arc::new(MockAdapter::new("b").reply("answer", json!("alpha"))))
+            .model(RegisteredModel::new("a").capability("basic"))
+            .model(RegisteredModel::new("b").capability("standard"))
+            .default_model("a")
+            .build();
+
+        let value = run_agent(&ir, "run", vec![Value::String(Arc::from("x"))], &rt)
+            .await
+            .expect("run");
+        match value {
+            Value::Grounded(g) => {
+                assert_eq!(g.inner.get(), Value::String(Arc::from("alpha")));
+                assert!((g.confidence - 0.5).abs() < 1e-9);
+            }
+            other => panic!("expected grounded alphabetical tie-break winner, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn ensemble_dispatch_charges_sum_of_member_costs() {
+        let src = r#"
+model a:
+    capability: basic
+
+model b:
+    capability: standard
+
+model c:
+    capability: expert
+
+prompt answer(q: String) -> String:
+    ensemble [a, b, c] vote majority
+    "Answer {q}."
+
+@budget($0.50)
+agent run(q: String) -> String:
+    return answer(q)
+"#;
+        let ir = ir_of(src);
+        let rt = Runtime::builder()
+            .llm(Arc::new(MockAdapter::new("a").reply_with_usage(
+                "answer",
+                json!("alpha"),
+                TokenUsage {
+                    prompt_tokens: 1,
+                    completion_tokens: 1,
+                    total_tokens: 2,
+                },
+            )))
+            .llm(Arc::new(MockAdapter::new("b").reply_with_usage(
+                "answer",
+                json!("alpha"),
+                TokenUsage {
+                    prompt_tokens: 1,
+                    completion_tokens: 1,
+                    total_tokens: 2,
+                },
+            )))
+            .llm(Arc::new(MockAdapter::new("c").reply_with_usage(
+                "answer",
+                json!("beta"),
+                TokenUsage {
+                    prompt_tokens: 1,
+                    completion_tokens: 1,
+                    total_tokens: 2,
+                },
+            )))
+            .model(
+                RegisteredModel::new("a")
+                    .capability("basic")
+                    .cost_per_token_in(0.1)
+                    .cost_per_token_out(0.1),
+            )
+            .model(
+                RegisteredModel::new("b")
+                    .capability("standard")
+                    .cost_per_token_in(0.1)
+                    .cost_per_token_out(0.1),
+            )
+            .model(
+                RegisteredModel::new("c")
+                    .capability("expert")
+                    .cost_per_token_in(0.1)
+                    .cost_per_token_out(0.1),
+            )
+            .default_model("a")
+            .build();
+
+        let err = run_agent(&ir, "run", vec![Value::String(Arc::from("x"))], &rt)
+            .await
+            .unwrap_err();
+        match err.kind {
+            InterpErrorKind::BudgetExceeded { budget, used } => {
+                assert!((budget - 0.50).abs() < 1e-9);
+                assert!((used - 0.60).abs() < 1e-9);
+            }
+            other => panic!("expected BudgetExceeded, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
     async fn agent_to_agent_call_recurses() {
         let src = "\
 agent inner(n: Int) -> Int:

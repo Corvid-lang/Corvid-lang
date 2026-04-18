@@ -18,11 +18,12 @@ use corvid_ir::{
     IrRoutePattern, IrStmt, IrTool, IrType,
 };
 use corvid_resolve::{DefId, LocalId};
-use corvid_runtime::{LlmRequest, Runtime, TokenUsage, TraceEvent};
+use corvid_runtime::{majority_vote, LlmRequest, Runtime, TokenUsage, TraceEvent};
 use corvid_types::Type;
 use crate::step::{self, StepAction, StepController, StepEvent, StepMode, StmtKind};
 use std::collections::HashMap;
 use std::sync::Arc;
+use tokio::task::JoinSet;
 
 const DEFAULT_COMPLETION_TOKEN_ESTIMATE: u64 = 256;
 
@@ -456,6 +457,82 @@ impl<'ir> Interpreter<'ir> {
         }
     }
 
+    fn decode_prompt_response(
+        &self,
+        prompt: &'ir IrPrompt,
+        callee_name: &str,
+        arg_values: &[Value],
+        rendered: &str,
+        actual_model: &str,
+        response_value: serde_json::Value,
+        usage: TokenUsage,
+        span: Span,
+    ) -> Result<PromptCallResult, InterpError> {
+        let result_ty = match &prompt.return_ty {
+            Type::Stream(inner) => inner.as_ref(),
+            other => other,
+        };
+
+        let value = json_to_value(response_value, result_ty, &self.types_by_id).map_err(|e| {
+            InterpError::new(
+                InterpErrorKind::Marshal(format!("prompt `{callee_name}`: {e}")),
+                span,
+            )
+        })?;
+
+        if let Some(param_idx) = prompt.cites_strictly_param {
+            if let Some(ctx_value) = arg_values.get(param_idx) {
+                let ctx_text = value_to_json(ctx_value).to_string();
+                let response_text = value_to_json(&value).to_string();
+                if !citation_verified(&ctx_text, &response_text) {
+                    return Err(InterpError::new(
+                        InterpErrorKind::Other(format!(
+                            "citation verification failed for prompt `{callee_name}`: \
+                             response does not reference content from the cited context parameter"
+                        )),
+                        span,
+                    ));
+                }
+            }
+        }
+
+        let mut merged_chain = crate::value::ProvenanceChain::new();
+        let mut has_grounded_input = false;
+        for arg in arg_values {
+            if let Value::Grounded(g) = arg {
+                merged_chain.merge(&g.provenance);
+                has_grounded_input = true;
+            }
+        }
+        let value = if has_grounded_input {
+            merged_chain.add_prompt_transform(callee_name, corvid_runtime::now_ms());
+            Value::Grounded(crate::value::GroundedValue::with_confidence(
+                value,
+                merged_chain,
+                composed_confidence(arg_values),
+            ))
+        } else {
+            value
+        };
+
+        let confidence = prompt_effective_confidence(prompt, &value);
+        let tokens = if usage.completion_tokens > 0 {
+            usage.completion_tokens as u64
+        } else if usage.total_tokens > 0 {
+            usage.total_tokens as u64
+        } else {
+            estimate_tokens(&value_to_json(&value).to_string())
+        };
+        let cost = self.prompt_call_cost(prompt, actual_model, rendered, usage);
+
+        Ok(PromptCallResult {
+            value,
+            cost,
+            confidence,
+            tokens,
+        })
+    }
+
     async fn execute_prompt_call(
         &mut self,
         prompt: &'ir IrPrompt,
@@ -574,65 +651,16 @@ impl<'ir> Interpreter<'ir> {
             }
         }
 
-        let value = json_to_value(resp.value, result_ty, &self.types_by_id)
-            .map_err(|e| {
-                InterpError::new(
-                    InterpErrorKind::Marshal(format!("prompt `{callee_name}`: {e}")),
-                    span,
-                )
-            })?;
-
-        if let Some(param_idx) = prompt.cites_strictly_param {
-            if let Some(ctx_value) = arg_values.get(param_idx) {
-                let ctx_text = value_to_json(ctx_value).to_string();
-                let response_text = value_to_json(&value).to_string();
-                if !citation_verified(&ctx_text, &response_text) {
-                    return Err(InterpError::new(
-                        InterpErrorKind::Other(format!(
-                            "citation verification failed for prompt `{callee_name}`: \
-                             response does not reference content from the cited context parameter"
-                        )),
-                        span,
-                    ));
-                }
-            }
-        }
-
-        let mut merged_chain = crate::value::ProvenanceChain::new();
-        let mut has_grounded_input = false;
-        for arg in arg_values {
-            if let Value::Grounded(g) = arg {
-                merged_chain.merge(&g.provenance);
-                has_grounded_input = true;
-            }
-        }
-        let value = if has_grounded_input {
-            merged_chain.add_prompt_transform(callee_name, corvid_runtime::now_ms());
-            Value::Grounded(crate::value::GroundedValue::with_confidence(
-                value,
-                merged_chain,
-                composed_confidence(arg_values),
-            ))
-        } else {
-            value
-        };
-
-        let confidence = prompt_effective_confidence(prompt, &value);
-        let tokens = if resp.usage.completion_tokens > 0 {
-            resp.usage.completion_tokens as u64
-        } else if resp.usage.total_tokens > 0 {
-            resp.usage.total_tokens as u64
-        } else {
-            estimate_tokens(&value_to_json(&value).to_string())
-        };
-        let cost = self.prompt_call_cost(prompt, &actual_model, rendered, resp.usage);
-
-        Ok(PromptCallResult {
-            value,
-            cost,
-            confidence,
-            tokens,
-        })
+        self.decode_prompt_response(
+            prompt,
+            callee_name,
+            arg_values,
+            rendered,
+            &actual_model,
+            resp.value,
+            resp.usage,
+            span,
+        )
     }
 
     async fn finalize_prompt_result(
@@ -1532,7 +1560,162 @@ impl<'ir> Interpreter<'ir> {
                     )
                 })?;
                 let rendered = render_prompt(prompt, &arg_values);
-                if let Some(spec) = &prompt.rollout {
+                if let Some(spec) = &prompt.ensemble {
+                    if self.should_yield_boundary() {
+                        let action = self.maybe_yield(StepEvent::BeforePromptCall {
+                            prompt_name: callee_name.to_string(),
+                            rendered: rendered.clone(),
+                            model: None,
+                            span,
+                            env: self.env_snapshot(),
+                        }).await?;
+                        if let StepAction::Override(val) = action {
+                            return json_to_value(val, &prompt.return_ty, &self.types_by_id)
+                                .map(ExprFlow::Value)
+                                .map_err(|e| InterpError::new(
+                                    InterpErrorKind::Marshal(format!("prompt `{callee_name}` override: {e}")),
+                                    span,
+                                ));
+                        }
+                    }
+
+                    let prompt_tokens = estimate_tokens(&rendered);
+                    let completion_tokens = prompt
+                        .max_tokens
+                        .unwrap_or(DEFAULT_COMPLETION_TOKEN_ESTIMATE);
+                    let result_ty = match &prompt.return_ty {
+                        Type::Stream(inner) => inner.as_ref(),
+                        other => other,
+                    };
+                    let output_schema = Some(crate::schema::schema_for(result_ty, &self.types_by_id));
+                    let json_args: Vec<serde_json::Value> =
+                        arg_values.iter().map(value_to_json).collect();
+
+                    let mut requests = Vec::with_capacity(spec.models.len());
+                    for member in &spec.models {
+                        let selected_model = self.select_named_prompt_model(
+                            callee_name,
+                            &member.name,
+                            prompt_tokens,
+                            completion_tokens,
+                            None,
+                            span,
+                        )?;
+                        requests.push((
+                            selected_model.clone(),
+                            LlmRequest {
+                                prompt: callee_name.to_string(),
+                                model: selected_model,
+                                rendered: rendered.clone(),
+                                args: json_args.clone(),
+                                output_schema: output_schema.clone(),
+                            },
+                        ));
+                    }
+
+                    let ensemble_start = std::time::Instant::now();
+                    let mut join_set = JoinSet::new();
+                    for (index, (model_name, req)) in requests.into_iter().enumerate() {
+                        let runtime = self.runtime.clone();
+                        join_set.spawn(async move {
+                            let response = runtime.call_llm(req).await;
+                            (index, model_name, response)
+                        });
+                    }
+
+                    let mut member_results: Vec<Option<(String, PromptCallResult)>> =
+                        (0..spec.models.len()).map(|_| None).collect();
+                    while let Some(joined) = join_set.join_next().await {
+                        let (index, model_name, response) = joined.map_err(|err| {
+                            InterpError::new(
+                                InterpErrorKind::Other(format!(
+                                    "ensemble task for prompt `{callee_name}` failed: {err}"
+                                )),
+                                span,
+                            )
+                        })?;
+                        let response = response
+                            .map_err(|e| InterpError::new(InterpErrorKind::Runtime(e), span))?;
+                        let result = self.decode_prompt_response(
+                            prompt,
+                            callee_name,
+                            &arg_values,
+                            &rendered,
+                            &model_name,
+                            response.value,
+                            response.usage,
+                            span,
+                        )?;
+                        member_results[index] = Some((model_name, result));
+                    }
+
+                    let member_results: Vec<(String, PromptCallResult)> = member_results
+                        .into_iter()
+                        .map(|entry| entry.expect("ensemble member result missing"))
+                        .collect();
+                    let members: Vec<String> =
+                        member_results.iter().map(|(model, _)| model.clone()).collect();
+                    let results: Vec<String> = member_results
+                        .iter()
+                        .map(|(_, result)| vote_text(&result.value))
+                        .collect();
+                    let vote = majority_vote(&results);
+                    let winner_index = results
+                        .iter()
+                        .position(|result| result == &vote.winner)
+                        .expect("winner must be one of the results");
+                    let total_cost: f64 = member_results.iter().map(|(_, result)| result.cost).sum();
+                    let total_tokens: u64 =
+                        member_results.iter().map(|(_, result)| result.tokens).sum();
+                    let min_confidence = member_results
+                        .iter()
+                        .map(|(_, result)| result.confidence)
+                        .fold(1.0_f64, f64::min);
+                    let combined_confidence = min_confidence * vote.agreement_rate;
+                    let winner_value = with_value_confidence(
+                        member_results[winner_index].1.value.clone(),
+                        combined_confidence,
+                    );
+
+                    self.runtime.tracer().emit(TraceEvent::EnsembleVote {
+                        ts_ms: corvid_runtime::now_ms(),
+                        run_id: self.runtime.tracer().run_id().to_string(),
+                        prompt: callee_name.to_string(),
+                        members,
+                        results: results.clone(),
+                        winner: vote.winner.clone(),
+                        agreement_rate: vote.agreement_rate,
+                        strategy: "majority".to_string(),
+                    });
+
+                    if self.should_yield_boundary() {
+                        let action = self.maybe_yield(StepEvent::AfterPromptCall {
+                            prompt_name: callee_name.to_string(),
+                            result: value_to_json(&winner_value),
+                            elapsed_ms: ensemble_start.elapsed().as_millis() as u64,
+                            span,
+                        }).await?;
+                        if let StepAction::Override(val) = action {
+                            return json_to_value(val, &prompt.return_ty, &self.types_by_id)
+                                .map(ExprFlow::Value)
+                                .map_err(|e| InterpError::new(
+                                    InterpErrorKind::Marshal(format!("prompt `{callee_name}` override: {e}")),
+                                    span,
+                                ));
+                        }
+                    }
+
+                    let result = PromptCallResult {
+                        value: winner_value,
+                        cost: total_cost,
+                        confidence: combined_confidence,
+                        tokens: total_tokens,
+                    };
+                    if !matches!(&prompt.return_ty, Type::Stream(_)) {
+                        self.charge_cost(result.cost, span)?;
+                    }
+                    self.finalize_prompt_result(prompt, result, span).await
+                } else if let Some(spec) = &prompt.rollout {
                     let prompt_tokens = estimate_tokens(&rendered);
                     let completion_tokens = prompt
                         .max_tokens
@@ -2027,4 +2210,30 @@ fn prompt_effective_confidence(prompt: &IrPrompt, value: &Value) -> f64 {
 
 fn stream_start_is_retryable(value: &Value) -> bool {
     matches!(value, Value::ResultErr(_) | Value::OptionNone)
+}
+
+fn vote_text(value: &Value) -> String {
+    match value {
+        Value::String(s) => s.to_string(),
+        Value::Grounded(g) => vote_text(&g.inner.get()),
+        other => value_to_json(other).to_string(),
+    }
+}
+
+fn with_value_confidence(value: Value, confidence: f64) -> Value {
+    match value {
+        Value::Grounded(g) => Value::Grounded(crate::value::GroundedValue::with_confidence(
+            g.inner.get(),
+            g.provenance.clone(),
+            confidence,
+        )),
+        other if confidence < 1.0 => {
+            Value::Grounded(crate::value::GroundedValue::with_confidence(
+                other,
+                crate::value::ProvenanceChain::new(),
+                confidence,
+            ))
+        }
+        other => other,
+    }
 }
