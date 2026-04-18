@@ -10,12 +10,17 @@
 #![allow(dead_code)]
 
 pub mod checker;
+pub mod config;
 pub mod effects;
 pub mod errors;
 pub mod repl;
 pub mod types;
 
-pub use checker::{typecheck, Checked};
+pub use checker::{typecheck, typecheck_with_config, Checked};
+pub use config::{
+    CorvidConfig, CustomDimensionConfig, CustomDimensionMeta, DimensionConfigError,
+    DimensionValueType, EffectSystemConfig, BUILTIN_DIMENSION_NAMES,
+};
 pub use errors::{TypeError, TypeErrorKind, TypeWarning, TypeWarningKind};
 pub use repl::{CheckedTurn, ReplLocal, ReplSession, ReplTurnBuild, REPL_RESULT_NAME};
 pub use effects::{
@@ -1609,5 +1614,184 @@ prompt generate(ctx: String) -> String:
             TypeErrorKind::TypeMismatch { ref context, .. }
                 if context.contains("stream modifiers on prompt `generate`")
         )), "got: {:?}", c.errors);
+    }
+
+    // --- Custom dimensions via corvid.toml (Phase 20g invention #6) ---
+
+    fn check_with_config(src: &str, config: &crate::config::CorvidConfig) -> Checked {
+        let tokens = lex(src).expect("lex failed");
+        let (file, perr) = parse_file(&tokens);
+        assert!(perr.is_empty(), "parse errors: {perr:?}");
+        let resolved = resolve(&file);
+        assert!(
+            resolved.errors.is_empty(),
+            "resolve errors: {:?}",
+            resolved.errors
+        );
+        typecheck_with_config(&file, &resolved, Some(config))
+    }
+
+    fn parse_config(toml_src: &str) -> crate::config::CorvidConfig {
+        toml::from_str(toml_src).expect("corvid.toml parse failed")
+    }
+
+    #[test]
+    fn custom_dimension_registers_in_effect_registry() {
+        let config = parse_config(
+            r#"
+            [effect-system.dimensions.freshness]
+            composition = "Max"
+            type = "timestamp"
+            default = "0"
+            semantics = "maximum age of data in seconds"
+            "#,
+        );
+
+        let src = "\
+effect retrieve_doc:
+    freshness: 3600
+
+tool fetch(id: String) -> String uses retrieve_doc
+
+agent lookup(id: String) -> String:
+    result = fetch(id)
+    return result
+";
+        let c = check_with_config(src, &config);
+        assert!(
+            c.errors.is_empty(),
+            "custom dimension freshness should compose cleanly: {:?}",
+            c.errors
+        );
+    }
+
+    #[test]
+    fn custom_dimension_composes_via_declared_rule() {
+        // Two tools each carrying freshness — the Max-composing rule
+        // means the composed agent's freshness should be the larger
+        // of the two inputs (300s and 3600s), surfacing as 3600.
+        let config = parse_config(
+            r#"
+            [effect-system.dimensions.freshness]
+            composition = "Max"
+            type = "number"
+            default = "0"
+            "#,
+        );
+
+        let src = "\
+effect fetch_recent:
+    freshness: 300
+
+effect fetch_stale:
+    freshness: 3600
+
+tool recent(id: String) -> String uses fetch_recent
+tool stale(id: String) -> String uses fetch_stale
+
+agent chain(id: String) -> String:
+    r = recent(id)
+    s = stale(id)
+    return s
+";
+        let (file, resolved, _checked) = checked_with_file(src);
+        let cfg = config;
+        let decls: Vec<corvid_ast::EffectDecl> = file
+            .decls
+            .iter()
+            .filter_map(|d| match d {
+                corvid_ast::Decl::Effect(e) => Some(e.clone()),
+                _ => None,
+            })
+            .collect();
+        let registry = crate::effects::EffectRegistry::from_decls_with_config(&decls, Some(&cfg));
+        assert!(
+            registry.dimensions.contains_key("freshness"),
+            "registry should include the user-declared freshness dimension"
+        );
+        let summaries = crate::effects::analyze_effects(&file, &resolved, &registry);
+        let chain = summaries
+            .iter()
+            .find(|s| s.agent_name == "chain")
+            .expect("chain agent summary");
+        let freshness = chain
+            .composed
+            .dimensions
+            .get("freshness")
+            .expect("chain composed freshness");
+        match freshness {
+            corvid_ast::DimensionValue::Number(n) => assert!((n - 3600.0).abs() < 1e-9),
+            other => panic!("unexpected freshness composition: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn invalid_custom_dimension_surfaces_as_type_error() {
+        let config = parse_config(
+            r#"
+            [effect-system.dimensions.freshness]
+            composition = "Product"
+            type = "number"
+            "#,
+        );
+
+        let src = "\
+agent noop() -> String:
+    return \"x\"
+";
+        let c = check_with_config(src, &config);
+        assert!(
+            c.errors.iter().any(|e| matches!(
+                &e.kind,
+                TypeErrorKind::InvalidCustomDimension { dimension, .. }
+                    if dimension == "freshness"
+            )),
+            "expected InvalidCustomDimension for `freshness`, got: {:?}",
+            c.errors
+        );
+    }
+
+    #[test]
+    fn builtin_collision_surfaces_as_type_error() {
+        let config = parse_config(
+            r#"
+            [effect-system.dimensions.cost]
+            composition = "Sum"
+            type = "cost"
+            "#,
+        );
+
+        let src = "\
+agent noop() -> String:
+    return \"x\"
+";
+        let c = check_with_config(src, &config);
+        assert!(
+            c.errors.iter().any(|e| matches!(
+                &e.kind,
+                TypeErrorKind::InvalidCustomDimension { dimension, .. }
+                    if dimension == "cost"
+            )),
+            "expected InvalidCustomDimension for built-in collision, got: {:?}",
+            c.errors
+        );
+    }
+
+    #[test]
+    fn typecheck_without_config_still_works() {
+        // Regression guard: the new config-aware path must not alter
+        // behavior when no corvid.toml is supplied.
+        let src = "\
+tool ping(id: String) -> String
+
+agent run(id: String) -> String:
+    return ping(id)
+";
+        let c = typecheck_with_config(
+            &parse_file(&lex(src).unwrap()).0,
+            &resolve(&parse_file(&lex(src).unwrap()).0),
+            None,
+        );
+        assert!(c.errors.is_empty(), "got: {:?}", c.errors);
     }
 }

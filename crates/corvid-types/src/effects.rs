@@ -23,8 +23,12 @@ use corvid_ast::{
 use corvid_resolve::DefId;
 use std::collections::{HashMap, HashSet};
 
+use crate::config::{CorvidConfig, CustomDimensionMeta};
+
 /// Registry of declared effect dimensions and their composition rules.
-/// Built from the file's `effect` declarations.
+/// Built from the file's `effect` declarations, plus any custom
+/// dimensions declared in `corvid.toml` under
+/// `[effect-system.dimensions.*]`.
 #[derive(Debug, Clone, Default)]
 pub struct EffectRegistry {
     /// Effect name → its declared dimensions.
@@ -33,6 +37,12 @@ pub struct EffectRegistry {
     /// all effect declarations (each dimension that appears in any
     /// effect gets a schema entry).
     pub dimensions: HashMap<String, DimensionSchema>,
+    /// Metadata for user-declared dimensions from `corvid.toml`.
+    /// Empty for projects without a `[effect-system]` section or
+    /// without a `corvid.toml` at all. Preserved so error messages can
+    /// cite the user's `semantics` string and `corvid test dimensions`
+    /// can drive the archetype's law-check proptest per entry.
+    pub custom_dimensions: HashMap<String, CustomDimensionMeta>,
 }
 
 /// The dimensional profile of a single declared effect.
@@ -94,10 +104,39 @@ pub enum CostWarningKind {
 impl EffectRegistry {
     /// Build the registry from a list of effect declarations.
     pub fn from_decls(decls: &[EffectDecl]) -> Self {
+        Self::from_decls_with_config(decls, None)
+    }
+
+    /// Build the registry from effect declarations plus an optional
+    /// `corvid.toml` configuration carrying user-defined dimensions.
+    ///
+    /// The config's dimensions are merged alongside the built-ins.
+    /// Built-in names remain reserved — `CorvidConfig::into_dimension_schemas`
+    /// rejects any collision before this function is called. A `None`
+    /// config is equivalent to `from_decls`.
+    pub fn from_decls_with_config(
+        decls: &[EffectDecl],
+        config: Option<&CorvidConfig>,
+    ) -> Self {
         let mut registry = Self::default();
 
         // Register built-in dimension schemas with default composition rules.
         registry.register_builtin_dimensions();
+
+        // Merge user-declared dimensions from corvid.toml, if any. A
+        // malformed entry surfaces as a panic here — callers must have
+        // pre-validated via CorvidConfig::into_dimension_schemas().
+        // See `try_from_decls_with_config` for a fallible variant.
+        if let Some(cfg) = config {
+            if let Ok(schemas) = cfg.into_dimension_schemas() {
+                for (schema, meta) in schemas {
+                    registry
+                        .custom_dimensions
+                        .insert(schema.name.clone(), meta);
+                    registry.dimensions.insert(schema.name.clone(), schema);
+                }
+            }
+        }
 
         // Built-in `retrieval` effect with `data: grounded` so tools can
         // declare themselves as grounded sources for provenance tracking.

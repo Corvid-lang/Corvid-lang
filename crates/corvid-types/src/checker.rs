@@ -20,6 +20,10 @@ use corvid_resolve::{
 };
 use std::collections::HashMap;
 
+fn file_top_span(file: &File) -> Span {
+    file.span
+}
+
 /// Output of the type checker.
 #[derive(Debug, Clone)]
 pub struct Checked {
@@ -34,6 +38,19 @@ pub struct Checked {
 }
 
 pub fn typecheck(file: &File, resolved: &Resolved) -> Checked {
+    typecheck_with_config(file, resolved, None)
+}
+
+/// Typecheck `file`, consuming an optional `corvid.toml` configuration.
+/// Custom dimensions declared under `[effect-system.dimensions.*]`
+/// are merged into the `EffectRegistry` alongside the built-ins.
+/// A malformed `corvid.toml` entry surfaces as an
+/// `InvalidCustomDimension` type error at the file's top span.
+pub fn typecheck_with_config(
+    file: &File,
+    resolved: &Resolved,
+    config: Option<&crate::config::CorvidConfig>,
+) -> Checked {
     let mut c = Checker::new(file, resolved);
     c.check_file(file);
 
@@ -41,7 +58,33 @@ pub fn typecheck(file: &File, resolved: &Resolved) -> Checked {
         if let Decl::Effect(e) = d { Some(e) } else { None }
     }).collect();
     let owned_decls: Vec<corvid_ast::EffectDecl> = effect_decls.iter().cloned().cloned().collect();
-    let registry = crate::effects::EffectRegistry::from_decls(&owned_decls);
+
+    // Validate config-declared dimensions up-front so malformed entries
+    // become surfaceable diagnostics instead of being swallowed by the
+    // registry builder. The registry itself still silently skips
+    // invalid entries — this is the user-facing channel.
+    if let Some(cfg) = config {
+        if let Err(err) = cfg.into_dimension_schemas() {
+            let (dimension, message) = match &err {
+                crate::config::DimensionConfigError::ParseError { message, .. } => {
+                    (String::new(), message.clone())
+                }
+                crate::config::DimensionConfigError::UnknownComposition { dimension, .. }
+                | crate::config::DimensionConfigError::UnknownType { dimension, .. }
+                | crate::config::DimensionConfigError::BadDefault { dimension, .. }
+                | crate::config::DimensionConfigError::CollidesWithBuiltin { dimension } => {
+                    (dimension.clone(), err.to_string())
+                }
+            };
+            let span = file_top_span(file);
+            c.errors.push(TypeError::new(
+                TypeErrorKind::InvalidCustomDimension { dimension, message },
+                span,
+            ));
+        }
+    }
+
+    let registry = crate::effects::EffectRegistry::from_decls_with_config(&owned_decls, config);
 
     // Dimensional effect analysis: collect effect declarations, build
     // the registry, analyze agents, and report non-cost constraint violations.

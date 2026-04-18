@@ -8,6 +8,8 @@ description = "Type system and effect checker for the Corvid language."
 [dependencies]
 corvid-ast = { workspace = true }
 corvid-resolve = { workspace = true }
+serde = { workspace = true }
+toml = { workspace = true }
 
 [dev-dependencies]
 corvid-syntax = { workspace = true }

@@ -31,7 +31,7 @@ use corvid_codegen_py::emit;
 use corvid_ir::{lower, IrFile};
 use corvid_resolve::{resolve, ResolveError};
 use corvid_syntax::{lex, parse_file, LexError, ParseError};
-use corvid_types::{typecheck, TypeError};
+use corvid_types::{typecheck_with_config, CorvidConfig, TypeError};
 
 /// A unified diagnostic from any compiler stage, with a span that can be
 /// rendered against the original source.
@@ -138,6 +138,23 @@ impl CompileResult {
 /// Run the full frontend on `source`. Stops collecting output when errors
 /// before codegen would make it misleading.
 pub fn compile(source: &str) -> CompileResult {
+    compile_with_config(source, None)
+}
+
+/// Walk upward from `source_path.parent()` looking for `corvid.toml`.
+/// Returns `None` when no file is found or when parsing fails — a
+/// malformed file doesn't crash the compile; instead it surfaces
+/// through `typecheck_with_config` as an `InvalidCustomDimension`
+/// diagnostic at the source file's top span.
+pub fn load_corvid_config_for(source_path: &Path) -> Option<CorvidConfig> {
+    let start = source_path.parent()?;
+    CorvidConfig::load_walking(start).ok().flatten()
+}
+
+/// Compile with an explicit `corvid.toml` configuration (for user-defined
+/// effect dimensions). Callers with a source-file path usually prefer
+/// `compile_at_path` which walks for `corvid.toml` automatically.
+pub fn compile_with_config(source: &str, config: Option<&CorvidConfig>) -> CompileResult {
     let mut diagnostics: Vec<Diagnostic> = Vec::new();
 
     // 1. Lex
@@ -167,7 +184,7 @@ pub fn compile(source: &str) -> CompileResult {
     );
 
     // 4. Typecheck (collects errors — this is where the killer feature lives)
-    let checked = typecheck(&file, &resolved);
+    let checked = typecheck_with_config(&file, &resolved, config);
     diagnostics.extend(
         checked
             .errors
@@ -204,7 +221,8 @@ pub fn build_to_disk(source_path: &Path) -> anyhow::Result<BuildOutput> {
         anyhow::anyhow!("cannot read `{}`: {}", source_path.display(), e)
     })?;
 
-    let result = compile(&source);
+    let config = load_corvid_config_for(source_path);
+    let result = compile_with_config(&source, config.as_ref());
 
     if !result.ok() {
         return Ok(BuildOutput {
@@ -244,7 +262,8 @@ pub fn build_native_to_disk(source_path: &Path) -> anyhow::Result<NativeBuildOut
         anyhow::anyhow!("cannot read `{}`: {}", source_path.display(), e)
     })?;
 
-    match compile_to_ir(&source) {
+    let config = load_corvid_config_for(source_path);
+    match compile_to_ir_with_config(&source, config.as_ref()) {
         Err(diagnostics) => Ok(NativeBuildOutput {
             source,
             output_path: None,
@@ -421,6 +440,15 @@ impl std::error::Error for RunError {}
 
 /// Compile a source string to IR. Returns the IR or the full diagnostic list.
 pub fn compile_to_ir(source: &str) -> Result<IrFile, Vec<Diagnostic>> {
+    compile_to_ir_with_config(source, None)
+}
+
+/// IR-lowering variant that consumes an explicit `corvid.toml` config
+/// so user-defined effect dimensions are visible to the type checker.
+pub fn compile_to_ir_with_config(
+    source: &str,
+    config: Option<&CorvidConfig>,
+) -> Result<IrFile, Vec<Diagnostic>> {
     let mut diagnostics: Vec<Diagnostic> = Vec::new();
     let tokens = match lex(source) {
         Ok(t) => t,
@@ -433,7 +461,7 @@ pub fn compile_to_ir(source: &str) -> Result<IrFile, Vec<Diagnostic>> {
     diagnostics.extend(parse_errs.into_iter().map(Diagnostic::from));
     let resolved = resolve(&file);
     diagnostics.extend(resolved.errors.iter().cloned().map(Diagnostic::from));
-    let checked = typecheck(&file, &resolved);
+    let checked = typecheck_with_config(&file, &resolved, config);
     diagnostics.extend(checked.errors.iter().cloned().map(Diagnostic::from));
     if !diagnostics.is_empty() {
         return Err(diagnostics);
@@ -456,7 +484,8 @@ pub async fn run_with_runtime(
         path: path.to_path_buf(),
         error: e,
     })?;
-    let ir = compile_to_ir(&source).map_err(RunError::Compile)?;
+    let config = load_corvid_config_for(path);
+    let ir = compile_to_ir_with_config(&source, config.as_ref()).map_err(RunError::Compile)?;
     run_ir_with_runtime(&ir, agent, args, runtime).await
 }
 
@@ -565,7 +594,8 @@ pub fn run_with_target(
             return Ok(1);
         }
     };
-    let ir = match compile_to_ir(&source) {
+    let config = load_corvid_config_for(path);
+    let ir = match compile_to_ir_with_config(&source, config.as_ref()) {
         Ok(ir) => ir,
         Err(diags) => {
             eprint!("{}", render_all_pretty(&diags, path, &source));

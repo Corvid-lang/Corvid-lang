@@ -176,6 +176,15 @@ pub enum TypeErrorKind {
         agent: String,
         message: String,
     },
+
+    /// A custom dimension declared in `corvid.toml` under
+    /// `[effect-system.dimensions.*]` failed validation. Rejects
+    /// unknown composition rules, unknown value-types, malformed
+    /// defaults, and collisions with built-in dimension names.
+    InvalidCustomDimension {
+        dimension: String,
+        message: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -285,6 +294,9 @@ impl TypeErrorKind {
             Self::UngroundedReturn { agent, message } => {
                 format!("ungrounded return in agent `{agent}`: {message}")
             }
+            Self::InvalidCustomDimension { dimension, message } => {
+                format!("invalid custom dimension `{dimension}` in corvid.toml: {message}")
+            }
         }
     }
 
@@ -381,6 +393,11 @@ impl TypeErrorKind {
             Self::UngroundedReturn { .. } => Some(
                 "call a tool declared `uses retrieval` (or any effect with `data: grounded`) \
                  and pass its result to the return value, directly or through a prompt"
+                    .into(),
+            ),
+            Self::InvalidCustomDimension { .. } => Some(
+                "see docs/effects-spec/01-dimensional-syntax.md §4 for the supported \
+                 composition rules, value types, and default-value shapes"
                     .into(),
             ),
         }
