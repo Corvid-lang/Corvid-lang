@@ -1444,4 +1444,75 @@ agent outer(query: String) -> String:
         let c = check(src);
         assert!(c.errors.is_empty(), "got: {:?}", c.errors);
     }
+
+    // ============================================================
+    // Phase 20e: confidence dimension + @min_confidence constraint
+    // ============================================================
+
+    #[test]
+    fn min_confidence_passes_when_composed_confidence_meets_floor() {
+        let src = "\
+effect llm_decision:
+    confidence: 0.95
+
+tool search(query: String) -> String uses llm_decision
+
+@min_confidence(0.90)
+agent bot(query: String) -> String:
+    return search(query)
+";
+        let c = check(src);
+        assert!(
+            c.errors.is_empty(),
+            "expected no confidence violation, got: {:?}",
+            c.errors
+        );
+    }
+
+    #[test]
+    fn min_confidence_fires_when_composed_confidence_below_floor() {
+        let src = "\
+effect low_confidence_llm:
+    confidence: 0.70
+
+tool shaky_search(query: String) -> String uses low_confidence_llm
+
+@min_confidence(0.90)
+agent bot(query: String) -> String:
+    return shaky_search(query)
+";
+        let c = check(src);
+        assert!(
+            has_effect_violation(&c, "confidence"),
+            "expected confidence violation, got: {:?}",
+            c.errors
+        );
+    }
+
+    #[test]
+    fn min_confidence_composes_via_min_across_multiple_calls() {
+        let src = "\
+effect high_conf:
+    confidence: 0.98
+
+effect low_conf:
+    confidence: 0.75
+
+tool source_a(q: String) -> String uses high_conf
+tool source_b(q: String) -> String uses low_conf
+
+@min_confidence(0.90)
+agent bot(q: String) -> String:
+    a = source_a(q)
+    b = source_b(q)
+    return b
+";
+        let c = check(src);
+        // Composed confidence is min(0.98, 0.75) = 0.75, below the 0.90 floor.
+        assert!(
+            has_effect_violation(&c, "confidence"),
+            "expected violation from min-composition, got: {:?}",
+            c.errors
+        );
+    }
 }
