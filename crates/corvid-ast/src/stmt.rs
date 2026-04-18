@@ -30,6 +30,12 @@ pub enum Stmt {
         span: Span,
     },
 
+    /// Yield one element from a streaming agent body.
+    Yield {
+        value: Expr,
+        span: Span,
+    },
+
     /// Conditional: `if cond: ... else: ...`.
     If {
         cond: Expr,
@@ -61,6 +67,7 @@ impl Stmt {
         match self {
             Stmt::Let { span, .. }
             | Stmt::Return { span, .. }
+            | Stmt::Yield { span, .. }
             | Stmt::If { span, .. }
             | Stmt::For { span, .. }
             | Stmt::Approve { span, .. }

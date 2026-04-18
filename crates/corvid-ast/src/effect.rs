@@ -14,6 +14,13 @@
 use crate::span::{Ident, Span};
 use serde::{Deserialize, Serialize};
 
+/// Buffering policy for streaming prompts and latency dimensions.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum BackpressurePolicy {
+    Bounded(u64),
+    Unbounded,
+}
+
 /// Legacy binary effect classification. Retained for backward
 /// compatibility — `dangerous` keyword on tool declarations still
 /// produces `Effect::Dangerous`. The typechecker maps this to the

@@ -8,11 +8,11 @@
 use crate::errors::{ParseError, ParseErrorKind};
 use crate::token::{TokKind, Token};
 use corvid_ast::{
-    AgentDecl, Backoff, BinaryOp, Block, Decl, DimensionDecl, DimensionValue, Effect,
-    EffectConstraint, EffectDecl, EffectRef, EffectRow, EvalAssert, EvalDecl, Expr, ExtendDecl,
-    ExtendMethod, ExtendMethodKind, Field, File, Ident, ImportDecl, ImportSource, Literal, Param,
-    PromptDecl, Span, Stmt, ToolDecl, TypeDecl, TypeRef, UnaryOp, Visibility, WeakEffect,
-    WeakEffectRow,
+    AgentDecl, Backoff, BackpressurePolicy, BinaryOp, Block, Decl, DimensionDecl,
+    DimensionValue, Effect, EffectConstraint, EffectDecl, EffectRef, EffectRow, EvalAssert,
+    EvalDecl, Expr, ExtendDecl, ExtendMethod, ExtendMethodKind, Field, File, Ident, ImportDecl,
+    ImportSource, Literal, Param, PromptDecl, PromptStreamSettings, Span, Stmt, ToolDecl,
+    TypeDecl, TypeRef, UnaryOp, Visibility, WeakEffect, WeakEffectRow,
 };
 
 #[derive(Debug, Clone, PartialEq)]
@@ -659,6 +659,7 @@ impl<'a> Parser<'a> {
 
         match self.peek() {
             TokKind::KwReturn => self.parse_return_stmt(),
+            TokKind::KwYield => self.parse_yield_stmt(),
             TokKind::KwIf => self.parse_if_stmt(),
             TokKind::KwFor => self.parse_for_stmt(),
             TokKind::KwApprove => self.parse_approve_stmt(),
@@ -692,6 +693,18 @@ impl<'a> Parser<'a> {
         let end = self.peek_span();
         self.expect_newline()?;
         Ok(Stmt::Return {
+            value,
+            span: start.merge(end),
+        })
+    }
+
+    fn parse_yield_stmt(&mut self) -> Result<Stmt, ParseError> {
+        let start = self.peek_span();
+        self.bump(); // yield
+        let value = self.parse_expr()?;
+        let end = value.span();
+        self.expect_newline()?;
+        Ok(Stmt::Yield {
             value,
             span: start.merge(end),
         })
@@ -895,6 +908,7 @@ impl<'a> Parser<'a> {
     fn starts_stmt(&self) -> bool {
         match self.peek() {
             TokKind::KwReturn
+            | TokKind::KwYield
             | TokKind::KwIf
             | TokKind::KwFor
             | TokKind::KwApprove
@@ -1273,6 +1287,8 @@ impl<'a> Parser<'a> {
         }
         self.bump(); // Indent
 
+        let stream = self.parse_prompt_stream_settings()?;
+
         // Expect a single string literal as the template.
         let template = match self.peek().clone() {
             TokKind::StringLit(s) => {
@@ -1303,6 +1319,7 @@ impl<'a> Parser<'a> {
             template,
             effect_row,
             cites_strictly: None,
+            stream,
             span: start.merge(end),
         })
     }
@@ -1592,6 +1609,63 @@ impl<'a> Parser<'a> {
             effects,
             span: start.merge(end),
         })
+    }
+
+    fn parse_prompt_stream_settings(&mut self) -> Result<PromptStreamSettings, ParseError> {
+        let mut settings = PromptStreamSettings::default();
+        while self.peek_ident_is("with") {
+            self.bump(); // with
+            let (name, span) = self.expect_ident()?;
+            match name.as_str() {
+                "min_confidence" => {
+                    settings.min_confidence = Some(self.parse_confidence_literal()?);
+                }
+                "max_tokens" => {
+                    let (max_tokens, _) =
+                        self.expect_positive_int_literal("a positive max token count")?;
+                    settings.max_tokens = Some(max_tokens);
+                }
+                "backpressure" => {
+                    settings.backpressure = Some(self.parse_backpressure_policy()?);
+                }
+                _ => {
+                    return Err(ParseError {
+                        kind: ParseErrorKind::UnexpectedToken {
+                            got: format!("identifier `{name}`"),
+                            expected: "`min_confidence`, `max_tokens`, or `backpressure`".into(),
+                        },
+                        span,
+                    });
+                }
+            }
+            self.expect_newline()?;
+        }
+        Ok(settings)
+    }
+
+    fn parse_backpressure_policy(&mut self) -> Result<BackpressurePolicy, ParseError> {
+        let span = self.peek_span();
+        match self.peek().clone() {
+            TokKind::Ident(name) if name == "unbounded" => {
+                self.bump();
+                Ok(BackpressurePolicy::Unbounded)
+            }
+            TokKind::Ident(name) if name == "bounded" => {
+                self.bump();
+                self.expect(TokKind::LParen, "`(` after `bounded`")?;
+                let (capacity, _) =
+                    self.expect_positive_int_literal("a positive bounded backpressure size")?;
+                self.expect(TokKind::RParen, "`)` after bounded backpressure size")?;
+                Ok(BackpressurePolicy::Bounded(capacity))
+            }
+            other => Err(ParseError {
+                kind: ParseErrorKind::UnexpectedToken {
+                    got: describe_token(&other),
+                    expected: "`bounded(N)` or `unbounded`".into(),
+                },
+                span,
+            }),
+        }
     }
 
     fn parse_constraints(&mut self) -> Result<Vec<EffectConstraint>, ParseError> {
@@ -2475,6 +2549,36 @@ mod tests {
         // Just ensure parsing succeeds. (break/continue/pass currently encoded
         // as Expr::Ident statements — will get dedicated AST variants later.)
         assert_eq!(b.stmts.len(), 1);
+    }
+
+    #[test]
+    fn parses_yield_statement() {
+        let src = "\n    yield chunk\n";
+        let b = parse_blk(src);
+        assert!(matches!(b.stmts[0], Stmt::Yield { .. }));
+    }
+
+    #[test]
+    fn parses_stream_prompt_modifiers() {
+        let src = "\
+prompt generate(ctx: String) -> Stream<String>:
+    with min_confidence 0.80
+    with max_tokens 5000
+    with backpressure bounded(100)
+    \"Generate {ctx} in chunks.\"
+";
+        let file = parse_file_src(src);
+        let prompt = match &file.decls[0] {
+            Decl::Prompt(prompt) => prompt,
+            other => panic!("expected Prompt, got {other:?}"),
+        };
+        assert_eq!(prompt.return_ty.to_string(), "Stream<String>");
+        assert_eq!(prompt.stream.min_confidence, Some(0.80));
+        assert_eq!(prompt.stream.max_tokens, Some(5000));
+        assert_eq!(
+            prompt.stream.backpressure,
+            Some(BackpressurePolicy::Bounded(100))
+        );
     }
 
     // -------------------- canonical refund_bot body --------------------

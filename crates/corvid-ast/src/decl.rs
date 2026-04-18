@@ -1,6 +1,6 @@
 //! Top-level declarations — what appears at the root of a `.cor` file.
 
-use crate::effect::{Effect, EffectConstraint, EffectDecl, EffectRow};
+use crate::effect::{BackpressurePolicy, Effect, EffectConstraint, EffectDecl, EffectRow};
 use crate::expr::{BinaryOp, Expr};
 use crate::span::{Ident, Span};
 use crate::stmt::Block;
@@ -187,6 +187,16 @@ pub struct ToolDecl {
     pub span: Span,
 }
 
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+pub struct PromptStreamSettings {
+    #[serde(default)]
+    pub min_confidence: Option<f64>,
+    #[serde(default)]
+    pub max_tokens: Option<u64>,
+    #[serde(default)]
+    pub backpressure: Option<BackpressurePolicy>,
+}
+
 /// A prompt declaration:
 ///
 /// ```text
@@ -208,6 +218,9 @@ pub struct PromptDecl {
     /// response references content from the named parameter.
     #[serde(default)]
     pub cites_strictly: Option<String>,
+    /// Stream-only prompt modifiers such as `with min_confidence 0.80`.
+    #[serde(default)]
+    pub stream: PromptStreamSettings,
     pub span: Span,
 }
 

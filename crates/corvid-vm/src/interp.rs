@@ -791,6 +791,29 @@ impl<'ir> Interpreter<'ir> {
                         span,
                     )
                 })?;
+
+                // Runtime confidence gate: if the tool has
+                // `trust: autonomous_if_confident(T)` in its declared
+                // effects, check that composed input confidence >= T.
+                // If below, raise an approval-required error — the
+                // autonomous path is not safe for this specific call.
+                if let Some(threshold) = tool.confidence_gate {
+                    let actual = composed_confidence(&arg_values);
+                    if actual < threshold {
+                        return Err(InterpError::new(
+                            InterpErrorKind::Runtime(
+                                corvid_runtime::RuntimeError::ApprovalDenied {
+                                    action: format!(
+                                        "{callee_name}: confidence gate failed — composed input confidence {:.3} < required {:.3}. This tool declared `autonomous_if_confident({:.3})` but the runtime-observed confidence falls below threshold; human approval required.",
+                                        actual, threshold, threshold,
+                                    ),
+                                },
+                            ),
+                            span,
+                        ));
+                    }
+                }
+
                 let json_args: Vec<serde_json::Value> =
                     arg_values.iter().map(value_to_json).collect();
 
@@ -1259,6 +1282,21 @@ fn overflow(span: Span) -> InterpError {
         InterpErrorKind::Arithmetic("integer overflow".into()),
         span,
     )
+}
+
+/// Compute the composed confidence of a set of input values using
+/// the Min composition rule. Non-Grounded values contribute 1.0
+/// (deterministic). Grounded values contribute their tracked confidence.
+fn composed_confidence(args: &[Value]) -> f64 {
+    let mut min_conf = 1.0_f64;
+    for arg in args {
+        if let Value::Grounded(g) = arg {
+            if g.confidence < min_conf {
+                min_conf = g.confidence;
+            }
+        }
+    }
+    min_conf
 }
 
 /// Citation verification for `cites ctx strictly`. Checks that the

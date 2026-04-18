@@ -41,6 +41,11 @@ pub enum Value {
 pub struct GroundedValue {
     pub inner: BoxedValue,
     pub provenance: ProvenanceChain,
+    /// LLM-reported or deterministic confidence, composed via Min
+    /// through the call graph. Defaults to 1.0 for deterministic tool
+    /// results; prompts can set lower values from self-reported
+    /// confidence or logprobs.
+    pub confidence: f64,
 }
 
 /// The provenance chain: every retrieval source, prompt transformation,
@@ -134,6 +139,15 @@ impl GroundedValue {
         Self {
             inner: BoxedValue::new(inner),
             provenance,
+            confidence: 1.0,
+        }
+    }
+
+    pub fn with_confidence(inner: Value, provenance: ProvenanceChain, confidence: f64) -> Self {
+        Self {
+            inner: BoxedValue::new(inner),
+            provenance,
+            confidence: confidence.clamp(0.0, 1.0),
         }
     }
 

@@ -29,6 +29,10 @@ struct Lowerer<'a> {
     /// up each method's allocated DefId here so the IR emits methods
     /// alongside free decls in the per-kind vectors.
     methods: &'a HashMap<DefId, HashMap<String, MethodEntry>>,
+    /// Effect name → confidence gate threshold, populated from
+    /// `EffectDecl`s with `trust: autonomous_if_confident(T)` dimension.
+    /// Used during tool lowering to set `IrTool.confidence_gate`.
+    confidence_gates: HashMap<String, f64>,
 }
 
 impl<'a> Lowerer<'a> {
@@ -38,10 +42,27 @@ impl<'a> Lowerer<'a> {
             bindings: &resolved.bindings,
             types: &checked.types,
             methods: &resolved.methods,
+            confidence_gates: HashMap::new(),
+        }
+    }
+
+    /// Scan the file's effect declarations for `trust: autonomous_if_confident(T)`
+    /// dimension values and populate the confidence_gates table.
+    fn populate_confidence_gates(&mut self, file: &File) {
+        for decl in &file.decls {
+            let Decl::Effect(effect) = decl else { continue };
+            for dim in &effect.dimensions {
+                if dim.name.name == "trust" {
+                    if let corvid_ast::DimensionValue::ConfidenceGated { threshold, .. } = &dim.value {
+                        self.confidence_gates.insert(effect.name.name.clone(), *threshold);
+                    }
+                }
+            }
         }
     }
 
     fn lower_file(&mut self, file: &File) -> IrFile {
+        self.populate_confidence_gates(file);
         let mut imports = Vec::new();
         let mut types = Vec::new();
         let mut tools = Vec::new();
@@ -231,6 +252,18 @@ impl<'a> Lowerer<'a> {
     /// block, looked up via the methods side-table rather than by
     /// name).
     fn lower_tool_with_id(&self, t: &ToolDecl, id: DefId) -> IrTool {
+        // If any of the tool's declared effects has `autonomous_if_confident(T)`,
+        // carry the strictest threshold as the confidence gate.
+        let mut confidence_gate: Option<f64> = None;
+        for effect_ref in &t.effect_row.effects {
+            if let Some(&threshold) = self.confidence_gates.get(&effect_ref.name.name) {
+                confidence_gate = match confidence_gate {
+                    Some(current) => Some(current.max(threshold)),
+                    None => Some(threshold),
+                };
+            }
+        }
+
         IrTool {
             id,
             name: t.name.name.clone(),
@@ -238,7 +271,7 @@ impl<'a> Lowerer<'a> {
             return_ty: self.type_ref_to_type(&t.return_ty),
             effect: t.effect,
             effect_names: t.effect_row.effects.iter().map(|e| e.name.name.clone()).collect(),
-            confidence_gate: None, // Populated by the effect system at a later pass
+            confidence_gate,
             span: t.span,
         }
     }
