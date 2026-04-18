@@ -125,6 +125,20 @@ pub enum TypeErrorKind {
         got: String,
     },
 
+    /// `yield` is only valid inside agent bodies.
+    YieldOutsideAgent,
+
+    /// An agent body used `yield` without declaring `Stream<T>`.
+    YieldRequiresStreamReturn {
+        declared: String,
+    },
+
+    /// A yielded value did not match the agent's declared `Stream<T>`.
+    YieldReturnTypeMismatch {
+        expected: String,
+        got: String,
+    },
+
     /// The headline error: a `dangerous` tool was called without a matching
     /// prior `approve` in the same block.
     UnapprovedDangerousCall {
@@ -170,6 +184,10 @@ pub enum TypeWarningKind {
     UnboundedCostAnalysis {
         agent: String,
         message: String,
+    },
+    /// An agent declared `Stream<T>` but never actually yielded.
+    StreamReturnWithoutYield {
+        agent: String,
     },
 }
 
@@ -238,6 +256,13 @@ impl TypeErrorKind {
                 format!(
                     "return type mismatch: declared `{expected}`, but the body returns `{got}`"
                 )
+            }
+            Self::YieldOutsideAgent => "`yield` is only allowed inside agent bodies".into(),
+            Self::YieldRequiresStreamReturn { declared } => {
+                format!("`yield` requires the enclosing agent to declare `Stream<T>`, got `{declared}`")
+            }
+            Self::YieldReturnTypeMismatch { expected, got } => {
+                format!("yield type mismatch: expected `{expected}`, got `{got}`")
             }
             Self::UnapprovedDangerousCall { tool, .. } => {
                 format!("dangerous tool `{tool}` called without a prior `approve`")
@@ -316,6 +341,15 @@ impl TypeErrorKind {
             Self::ReturnTypeMismatch { expected, .. } => Some(format!(
                 "change the final `return` to produce a `{expected}`, or update the declared return type"
             )),
+            Self::YieldOutsideAgent => Some(
+                "move `yield` into an `agent ... -> Stream<T>` body, or replace it with `return`".into(),
+            ),
+            Self::YieldRequiresStreamReturn { .. } => Some(
+                "change the agent return type to `Stream<T>` matching the yielded value type".into(),
+            ),
+            Self::YieldReturnTypeMismatch { .. } => Some(
+                "yield values whose type matches the declared `Stream<T>` element type".into(),
+            ),
             Self::UnapprovedDangerousCall {
                 expected_approve_label,
                 arity,
@@ -359,6 +393,9 @@ impl TypeWarningKind {
             Self::UnboundedCostAnalysis { agent, message } => {
                 format!("cost analysis warning in agent `{agent}`: {message}")
             }
+            Self::StreamReturnWithoutYield { agent } => {
+                format!("W0270: agent `{agent}` declares `Stream<T>` return but never yields")
+            }
         }
     }
 
@@ -366,6 +403,9 @@ impl TypeWarningKind {
         match self {
             Self::UnboundedCostAnalysis { .. } => Some(
                 "use a statically bounded loop or inspect `:cost <agent>` for the partial tree".into(),
+            ),
+            Self::StreamReturnWithoutYield { .. } => Some(
+                "either add at least one `yield` or change the return type to a non-stream value".into(),
             ),
         }
     }

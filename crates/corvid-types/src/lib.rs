@@ -1515,4 +1515,85 @@ agent bot(q: String) -> String:
             c.errors
         );
     }
+
+    #[test]
+    fn yield_requires_stream_return() {
+        let src = "\
+agent writer() -> String:
+    yield \"hi\"
+";
+        let c = check(src);
+        assert!(c.errors.iter().any(|e| matches!(
+            e.kind,
+            TypeErrorKind::YieldRequiresStreamReturn { .. }
+        )), "got: {:?}", c.errors);
+    }
+
+    #[test]
+    fn yield_value_must_match_stream_inner_type() {
+        let src = "\
+agent writer() -> Stream<String>:
+    yield 1
+";
+        let c = check(src);
+        assert!(c.errors.iter().any(|e| matches!(
+            e.kind,
+            TypeErrorKind::YieldReturnTypeMismatch { .. }
+        )), "got: {:?}", c.errors);
+    }
+
+    #[test]
+    fn yield_outside_agent_is_rejected() {
+        let src = "\
+eval bad:
+    yield \"hi\"
+    assert true
+";
+        let c = check(src);
+        assert!(c.errors.iter().any(|e| matches!(
+            e.kind,
+            TypeErrorKind::YieldOutsideAgent
+        )), "got: {:?}", c.errors);
+    }
+
+    #[test]
+    fn stream_for_loop_binds_element_type() {
+        let src = "\
+agent first(xs: Stream<String>) -> String:
+    for x in xs:
+        return x
+    return \"\"
+";
+        let c = check(src);
+        assert!(c.errors.is_empty(), "got: {:?}", c.errors);
+    }
+
+    #[test]
+    fn stream_return_without_yield_warns() {
+        let src = "\
+agent idle() -> Stream<String>:
+    pass
+";
+        let c = check(src);
+        assert!(c.errors.is_empty(), "unexpected errors: {:?}", c.errors);
+        assert!(c.warnings.iter().any(|w| matches!(
+            w.kind,
+            TypeWarningKind::StreamReturnWithoutYield { .. }
+        )), "got: {:?}", c.warnings);
+    }
+
+    #[test]
+    fn prompt_stream_modifiers_require_stream_return() {
+        let src = "\
+prompt generate(ctx: String) -> String:
+    with max_tokens 10
+    \"Generate {ctx}\"
+";
+        let c = check(src);
+        assert!(c.errors.iter().any(|e| matches!(
+            e.kind,
+            TypeErrorKind::TypeMismatch { ref context, .. }
+                if context.contains("stream modifiers on prompt `generate`")
+        )), "got: {:?}", c.errors);
+    }
 }

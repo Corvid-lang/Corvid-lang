@@ -180,6 +180,8 @@ struct Checker<'a> {
 
     /// Declared return type of the currently-checked function-like.
     current_return: Option<Type>,
+    in_agent_body: bool,
+    saw_yield: bool,
 
     /// Approvals visible at the current point. Represented as a flat
     /// stack that is truncated back to its parent's length when a block
@@ -334,6 +336,8 @@ impl<'a> Checker<'a> {
             methods: &resolved.methods,
             local_types: HashMap::new(),
             current_return: None,
+            in_agent_body: false,
+            saw_yield: false,
             approvals: Vec::new(),
             effect_frontier: EffectFrontier::default(),
             weak_refresh: HashMap::new(),
@@ -349,10 +353,8 @@ impl<'a> Checker<'a> {
             match decl {
                 Decl::Agent(a) => self.check_agent(a),
                 Decl::Eval(e) => self.check_eval(e),
-                Decl::Prompt(_) | Decl::Tool(_) | Decl::Type(_) | Decl::Import(_) | Decl::Effect(_) => {
-                    // No body to check. Signatures are already well-formed
-                    // by the parser, and the resolver has vetted their names.
-                }
+                Decl::Prompt(p) => self.check_prompt(p),
+                Decl::Tool(_) | Decl::Type(_) | Decl::Import(_) | Decl::Effect(_) => {}
                 Decl::Extend(ext) => {
                     // Typecheck agent method bodies the same way free
                     // agents are checked.
@@ -362,11 +364,8 @@ impl<'a> Checker<'a> {
                     for method in &ext.methods {
                         match &method.kind {
                             ExtendMethodKind::Agent(a) => self.check_agent(a),
-                            ExtendMethodKind::Tool(_) | ExtendMethodKind::Prompt(_) => {
-                                // No body / template-only; signature
-                                // already validated by the parser
-                                // and the resolver vetted the names.
-                            }
+                            ExtendMethodKind::Prompt(p) => self.check_prompt(p),
+                            ExtendMethodKind::Tool(_) => {}
                         }
                     }
                 }
@@ -380,21 +379,65 @@ impl<'a> Checker<'a> {
 
         let declared_ret = self.type_ref_to_type(&a.return_ty);
         let prev_ret = std::mem::replace(&mut self.current_return, Some(declared_ret.clone()));
+        let prev_in_agent = std::mem::replace(&mut self.in_agent_body, true);
+        let prev_saw_yield = std::mem::replace(&mut self.saw_yield, false);
 
         self.check_block(&a.body);
 
+        if matches!(declared_ret, Type::Stream(_)) && !self.saw_yield {
+            self.warnings.push(TypeWarning::new(
+                TypeWarningKind::StreamReturnWithoutYield {
+                    agent: a.name.name.clone(),
+                },
+                a.span,
+            ));
+        }
+
         self.current_return = prev_ret;
+        self.in_agent_body = prev_in_agent;
+        self.saw_yield = prev_saw_yield;
         // (Locals leak between agents in our single-scope model; harmless
         //  since each agent binds its params fresh at the start.)
     }
 
+    fn check_prompt(&mut self, p: &PromptDecl) {
+        let return_ty = self.type_ref_to_type(&p.return_ty);
+        let has_stream_modifiers = p.stream.min_confidence.is_some()
+            || p.stream.max_tokens.is_some()
+            || p.stream.backpressure.is_some();
+
+        if has_stream_modifiers && !matches!(return_ty, Type::Stream(_) | Type::Unknown) {
+            self.errors.push(TypeError::new(
+                TypeErrorKind::TypeMismatch {
+                    expected: "Stream<T>".into(),
+                    got: return_ty.display_name(),
+                    context: format!("stream modifiers on prompt `{}`", p.name.name),
+                },
+                p.span,
+            ));
+        }
+
+        if let Some(confidence) = p.stream.min_confidence {
+            if !(0.0..=1.0).contains(&confidence) {
+                self.errors.push(TypeError::new(
+                    TypeErrorKind::InvalidConfidence { value: confidence },
+                    p.span,
+                ));
+            }
+        }
+    }
+
     fn check_eval(&mut self, e: &EvalDecl) {
         let prev_ret = self.current_return.take();
+        let prev_in_agent = std::mem::replace(&mut self.in_agent_body, false);
+        let prev_saw_yield = self.saw_yield;
         self.check_block(&e.body);
         for assertion in &e.assertions {
             self.check_eval_assert(assertion);
         }
         self.current_return = prev_ret;
+        self.in_agent_body = prev_in_agent;
+        self.saw_yield = prev_saw_yield;
     }
 
     fn check_eval_assert(&mut self, assertion: &EvalAssert) {
@@ -592,8 +635,39 @@ impl<'a> Checker<'a> {
                     &else_refresh,
                 );
             }
-            Stmt::Yield { value, .. } => {
-                let _ = self.check_expr(value);
+            Stmt::Yield { value, span } => {
+                let yielded = self.check_expr(value);
+                if !self.in_agent_body {
+                    self.errors
+                        .push(TypeError::new(TypeErrorKind::YieldOutsideAgent, *span));
+                    return;
+                }
+                match self.current_return.as_ref() {
+                    Some(Type::Stream(inner)) => {
+                        self.saw_yield = true;
+                        if !yielded.is_assignable_to(inner) {
+                            self.errors.push(TypeError::new(
+                                TypeErrorKind::YieldReturnTypeMismatch {
+                                    expected: inner.display_name(),
+                                    got: yielded.display_name(),
+                                },
+                                value.span(),
+                            ));
+                        }
+                    }
+                    Some(other) => {
+                        self.errors.push(TypeError::new(
+                            TypeErrorKind::YieldRequiresStreamReturn {
+                                declared: other.display_name(),
+                            },
+                            *span,
+                        ));
+                    }
+                    None => {
+                        self.errors
+                            .push(TypeError::new(TypeErrorKind::YieldOutsideAgent, *span));
+                    }
+                }
             }
             Stmt::For { var, iter, body, .. } => {
                 let iter_ty = self.check_expr(iter);
@@ -602,6 +676,7 @@ impl<'a> Checker<'a> {
                 // chars (which Corvid currently models as String).
                 let var_ty = match &iter_ty {
                     Type::List(elem) => (**elem).clone(),
+                    Type::Stream(elem) => (**elem).clone(),
                     Type::String => Type::String,
                     Type::Unknown => Type::Unknown,
                     _other => Type::Unknown,
@@ -764,6 +839,7 @@ impl<'a> Checker<'a> {
                 | BuiltIn::Bool
                 | BuiltIn::Nothing
                 | BuiltIn::List
+                | BuiltIn::Stream
                 | BuiltIn::Result
                 | BuiltIn::Option
                 | BuiltIn::Weak
