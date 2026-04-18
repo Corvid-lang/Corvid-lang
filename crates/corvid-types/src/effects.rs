@@ -254,6 +254,52 @@ impl EffectRegistry {
                 default: DimensionValue::Name("basic".into()),
             },
         );
+        // Phase 20h slice D: regulatory / compliance / privacy
+        // dimensions for the typed model substrate. Each is a
+        // declared-value dimension with its own archetype:
+        //
+        // * `jurisdiction` — Max-composed Name. Users pick their own
+        //   jurisdiction tier names (e.g. `us_hosted`, `eu_hosted`,
+        //   `us_hipaa_bva`). Max composition means a chain's
+        //   jurisdiction is the strictest any step requires; unknown
+        //   pairs fall back to lexicographic so composition is
+        //   always deterministic.
+        // * `compliance` — Union-composed Name set. A chain's
+        //   compliance tags are the union of every step's tags.
+        //   Fits the accumulative semantic — running through HIPAA
+        //   AND SOC2-tagged models yields `hipaa, soc2`.
+        // * `privacy_tier` — Max-composed Name. `standard < strict
+        //   < air_gapped`. Identity `standard`.
+        //
+        // These dimensions are additive alongside the other built-ins;
+        // a prompt's `requires: <capability>` clause only sets
+        // capability, but a model's fields freely carry any declared
+        // dimension. Slice B-rt's runtime dispatch reads model fields
+        // and filters by all dimensions simultaneously.
+        self.dimensions.insert(
+            "jurisdiction".into(),
+            DimensionSchema {
+                name: "jurisdiction".into(),
+                composition: CompositionRule::Max,
+                default: DimensionValue::Name("none".into()),
+            },
+        );
+        self.dimensions.insert(
+            "compliance".into(),
+            DimensionSchema {
+                name: "compliance".into(),
+                composition: CompositionRule::Union,
+                default: DimensionValue::Name("none".into()),
+            },
+        );
+        self.dimensions.insert(
+            "privacy_tier".into(),
+            DimensionSchema {
+                name: "privacy_tier".into(),
+                composition: CompositionRule::Max,
+                default: DimensionValue::Name("standard".into()),
+            },
+        );
     }
 
     fn register_retrieval_effect(&mut self) {
@@ -473,6 +519,9 @@ fn compose_max_dimension(
     if dim_name == "capability" {
         return compose_capability_dimension(current, incoming);
     }
+    if dim_name == "privacy_tier" {
+        return compose_privacy_tier_dimension(current, incoming);
+    }
     match (current, incoming) {
         (DimensionValue::Number(a), DimensionValue::Number(b)) => DimensionValue::Number(a.max(*b)),
         (DimensionValue::Cost(a), DimensionValue::Cost(b)) => DimensionValue::Cost(a.max(*b)),
@@ -584,8 +633,60 @@ fn capability_max<'a>(a: &'a str, b: &'a str) -> &'a str {
     }
 }
 
+/// Privacy-tier Max: standard < strict < air_gapped. Unknown names
+/// fall through to lexicographic max for determinism.
+fn compose_privacy_tier_dimension(
+    current: &DimensionValue,
+    incoming: &DimensionValue,
+) -> DimensionValue {
+    match (current, incoming) {
+        (DimensionValue::Name(a), DimensionValue::Name(b)) => {
+            DimensionValue::Name(privacy_tier_max(a, b).to_string())
+        }
+        _ => incoming.clone(),
+    }
+}
+
+fn privacy_tier_rank(s: &str) -> u8 {
+    match s {
+        "standard" => 0,
+        "strict" => 1,
+        "air_gapped" => 2,
+        _ => u8::MAX,
+    }
+}
+
+fn privacy_tier_max<'a>(a: &'a str, b: &'a str) -> &'a str {
+    let ra = privacy_tier_rank(a);
+    let rb = privacy_tier_rank(b);
+    if ra == u8::MAX || rb == u8::MAX {
+        if a >= b {
+            a
+        } else {
+            b
+        }
+    } else if ra > rb {
+        a
+    } else if rb > ra {
+        b
+    } else {
+        a
+    }
+}
+
 /// Trust level ordering: autonomous < supervisor_required < human_required.
 fn trust_max<'a>(a: &'a str, b: &'a str) -> &'a str {
+    // `none` is the universal identity for any Max-over-Name
+    // dimension. Absorbing it first keeps the identity law true for
+    // dimensions whose sampler includes "none" alongside other tags
+    // (e.g. jurisdiction: `none` vs `eu_hosted` lex-ties wrong
+    // without this short-circuit).
+    if a == "none" {
+        return b;
+    }
+    if b == "none" {
+        return a;
+    }
     let rank = |s: &str| -> u8 {
         match s {
             "autonomous" => 0,
@@ -594,7 +695,26 @@ fn trust_max<'a>(a: &'a str, b: &'a str) -> &'a str {
             _ => 3,
         }
     };
-    if rank(a) >= rank(b) { a } else { b }
+    let ra = rank(a);
+    let rb = rank(b);
+    if ra == rb {
+        // Lex tie-break keeps composition commutative when two values
+        // share a rank. The law-check harness caught this: without
+        // the tie-break, `trust_max("us_hosted", "us_hipaa_bva")`
+        // returned `a` unconditionally, violating commutativity.
+        // Used by the generic Max-over-Name path that serves
+        // `jurisdiction` and any other user-declared Name lattice
+        // without a dedicated composer.
+        if a >= b {
+            a
+        } else {
+            b
+        }
+    } else if ra > rb {
+        a
+    } else {
+        b
+    }
 }
 
 fn trust_min<'a>(a: &'a str, b: &'a str) -> &'a str {

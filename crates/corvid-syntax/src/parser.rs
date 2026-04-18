@@ -3575,4 +3575,37 @@ prompt answer(q: String) -> String:
         let (_file, errs) = parse_file_errs(src);
         assert!(!errs.is_empty());
     }
+
+    // -------------------- Phase 20h slice D: model fields for
+    // jurisdiction / compliance / privacy_tier parse cleanly
+
+    #[test]
+    fn parses_model_with_regulatory_fields() {
+        let file = parse_file_src(
+            "model claude_hipaa:\n    jurisdiction: us_hipaa_bva\n    compliance: hipaa\n    privacy_tier: strict\n    capability: expert\n",
+        );
+        let m = match &file.decls[0] {
+            Decl::Model(m) => m,
+            other => panic!("expected Model, got {other:?}"),
+        };
+        let field_by = |name: &str| -> &corvid_ast::DimensionValue {
+            &m.fields
+                .iter()
+                .find(|f| f.name.name == name)
+                .unwrap()
+                .value
+        };
+        assert!(matches!(
+            field_by("jurisdiction"),
+            corvid_ast::DimensionValue::Name(n) if n == "us_hipaa_bva"
+        ));
+        assert!(matches!(
+            field_by("compliance"),
+            corvid_ast::DimensionValue::Name(n) if n == "hipaa"
+        ));
+        assert!(matches!(
+            field_by("privacy_tier"),
+            corvid_ast::DimensionValue::Name(n) if n == "strict"
+        ));
+    }
 }

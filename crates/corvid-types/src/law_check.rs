@@ -365,11 +365,14 @@ fn random_value(dim: &DimensionUnderTest, rng: &mut SeededRng) -> DimensionValue
         }
         (DimensionValueType::Name, CompositionRule::Max) => {
             // Dispatch by dimension name so the generator stays in
-            // the declared lattice. `capability` and `trust` are
-            // distinct ordered lattices; other Max+Name dimensions
-            // fall back to a generic placeholder set.
+            // the declared lattice. `capability`, `privacy_tier`,
+            // `jurisdiction`, and `trust` are distinct ordered
+            // lattices; other Max+Name dimensions fall back to a
+            // generic placeholder set.
             let sample = match dim.schema.name.as_str() {
                 "capability" => sample_capability_level(rng),
+                "privacy_tier" => sample_privacy_tier(rng),
+                "jurisdiction" => sample_jurisdiction(rng),
                 _ => sample_trust_level(rng),
             };
             DimensionValue::Name(sample)
@@ -412,6 +415,20 @@ fn sample_trust_level(rng: &mut SeededRng) -> String {
 fn sample_capability_level(rng: &mut SeededRng) -> String {
     const LEVELS: &[&str] = &["basic", "standard", "expert"];
     LEVELS[rng.bounded(LEVELS.len())].into()
+}
+
+fn sample_privacy_tier(rng: &mut SeededRng) -> String {
+    const TIERS: &[&str] = &["standard", "strict", "air_gapped"];
+    TIERS[rng.bounded(TIERS.len())].into()
+}
+
+fn sample_jurisdiction(rng: &mut SeededRng) -> String {
+    // Jurisdiction has no canonical ordering — users pick tier names
+    // for their regulatory landscape. The generator samples from a
+    // small placeholder set so law checks actually exercise the
+    // lexicographic fallback deterministically.
+    const TAGS: &[&str] = &["none", "us_hosted", "eu_hosted", "us_hipaa_bva"];
+    TAGS[rng.bounded(TAGS.len())].into()
 }
 
 fn sample_data_category(rng: &mut SeededRng) -> String {

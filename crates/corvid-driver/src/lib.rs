@@ -274,6 +274,22 @@ fn builtin_dimensions_under_test() -> Vec<DimensionUnderTest> {
             composition: AstCompositionRule::Max,
             default: AstDimensionValue::Name("basic".into()),
         }),
+        // Phase 20h slice D: regulatory/compliance/privacy dimensions.
+        DimensionUnderTest::from_schema(AstDimensionSchema {
+            name: "jurisdiction".into(),
+            composition: AstCompositionRule::Max,
+            default: AstDimensionValue::Name("none".into()),
+        }),
+        DimensionUnderTest::from_schema(AstDimensionSchema {
+            name: "compliance".into(),
+            composition: AstCompositionRule::Union,
+            default: AstDimensionValue::Name("none".into()),
+        }),
+        DimensionUnderTest::from_schema(AstDimensionSchema {
+            name: "privacy_tier".into(),
+            composition: AstCompositionRule::Max,
+            default: AstDimensionValue::Name("standard".into()),
+        }),
     ]
 }
 
