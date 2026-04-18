@@ -258,6 +258,13 @@ impl ReplaySession {
                     saw_completion = true;
                     i += 1;
                 }
+                TraceEvent::ModelSelected {
+                    run_id: event_run_id,
+                    ..
+                } => {
+                    ensure_run_id(&path, &run_id, event_run_id)?;
+                    i += 1;
+                }
                 TraceEvent::ToolResult { .. }
                 | TraceEvent::LlmResult { .. }
                 | TraceEvent::ApprovalResponse { .. } => {
@@ -430,7 +437,8 @@ fn first_run_id(events: &[TraceEvent]) -> Result<&str, ReplayLoadError> {
         | Some(TraceEvent::LlmCall { run_id, .. })
         | Some(TraceEvent::LlmResult { run_id, .. })
         | Some(TraceEvent::ApprovalRequest { run_id, .. })
-        | Some(TraceEvent::ApprovalResponse { run_id, .. }) => Ok(run_id),
+        | Some(TraceEvent::ApprovalResponse { run_id, .. })
+        | Some(TraceEvent::ModelSelected { run_id, .. }) => Ok(run_id),
         None => unreachable!("empty event list handled earlier"),
     }
 }
@@ -455,7 +463,8 @@ fn first_ts(events: &[TraceEvent]) -> u64 {
         | Some(TraceEvent::LlmCall { ts_ms, .. })
         | Some(TraceEvent::LlmResult { ts_ms, .. })
         | Some(TraceEvent::ApprovalRequest { ts_ms, .. })
-        | Some(TraceEvent::ApprovalResponse { ts_ms, .. }) => *ts_ms,
+        | Some(TraceEvent::ApprovalResponse { ts_ms, .. })
+        | Some(TraceEvent::ModelSelected { ts_ms, .. }) => *ts_ms,
         None => 0,
     }
 }
@@ -469,7 +478,8 @@ fn last_ts(events: &[TraceEvent]) -> u64 {
         | Some(TraceEvent::LlmCall { ts_ms, .. })
         | Some(TraceEvent::LlmResult { ts_ms, .. })
         | Some(TraceEvent::ApprovalRequest { ts_ms, .. })
-        | Some(TraceEvent::ApprovalResponse { ts_ms, .. }) => *ts_ms,
+        | Some(TraceEvent::ApprovalResponse { ts_ms, .. })
+        | Some(TraceEvent::ModelSelected { ts_ms, .. }) => *ts_ms,
         None => 0,
     }
 }

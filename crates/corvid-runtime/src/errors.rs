@@ -9,6 +9,7 @@
 //! either form.
 
 use std::fmt;
+use std::path::PathBuf;
 
 #[derive(Debug, Clone)]
 pub enum RuntimeError {
@@ -40,6 +41,16 @@ pub enum RuntimeError {
     /// or pass `model=` per call.
     NoModelConfigured,
 
+    /// The model catalog in `corvid.toml` was present but malformed.
+    ModelCatalogParse { path: PathBuf, message: String },
+
+    /// Capability-based routing could not find any registered model
+    /// strong enough for the prompt's requirement.
+    NoEligibleModel {
+        required_capability: String,
+        available_models: Vec<String>,
+    },
+
     /// Catch-all. Prefer adding a dedicated variant.
     Other(String),
 }
@@ -66,6 +77,23 @@ impl fmt::Display for RuntimeError {
             Self::NoModelConfigured => write!(
                 f,
                 "no LLM model configured. Set CORVID_MODEL, add `default_model = \"...\"` to corvid.toml, or pass `model=` per call."
+            ),
+            Self::ModelCatalogParse { path, message } => write!(
+                f,
+                "failed to parse model catalog in `{}`: {message}",
+                path.display()
+            ),
+            Self::NoEligibleModel {
+                required_capability,
+                available_models,
+            } => write!(
+                f,
+                "no eligible model for capability `{required_capability}`; available models: {}",
+                if available_models.is_empty() {
+                    "none".to_string()
+                } else {
+                    available_models.join(", ")
+                }
             ),
             Self::Other(msg) => f.write_str(msg),
         }

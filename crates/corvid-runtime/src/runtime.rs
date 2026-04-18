@@ -8,10 +8,12 @@
 use crate::approvals::{Approver, ApprovalDecision, ApprovalRequest, StdinApprover};
 use crate::errors::RuntimeError;
 use crate::llm::{LlmAdapter, LlmRegistry, LlmRequest, LlmRequestRef, LlmResponse};
+use crate::models::{ModelCatalog, ModelSelection, RegisteredModel};
 use crate::tools::ToolRegistry;
 use crate::tracing::{fresh_run_id, now_ms, Tracer};
 use corvid_trace_schema::TraceEvent;
 use std::path::Path;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 #[derive(Clone)]
@@ -23,6 +25,8 @@ pub struct Runtime {
     /// Default model name applied when a prompt call doesn't specify one.
     /// Empty string means "no default; require per-call override".
     default_model: String,
+    model_catalog: ModelCatalog,
+    model_catalog_error: Option<RuntimeError>,
 }
 
 impl Runtime {
@@ -42,6 +46,26 @@ impl Runtime {
 
     pub fn default_model(&self) -> &str {
         &self.default_model
+    }
+
+    pub fn model_catalog(&self) -> &ModelCatalog {
+        &self.model_catalog
+    }
+
+    pub fn select_cheapest_model_for_capability(
+        &self,
+        required_capability: &str,
+        prompt_tokens: u64,
+        completion_tokens: u64,
+    ) -> Result<ModelSelection, RuntimeError> {
+        if let Some(err) = &self.model_catalog_error {
+            return Err(err.clone());
+        }
+        self.model_catalog.select_cheapest_by_capability(
+            required_capability,
+            prompt_tokens,
+            completion_tokens,
+        )
     }
 
     // ---- dispatch helpers ----
@@ -163,6 +187,8 @@ pub struct RuntimeBuilder {
     approver: Option<Arc<dyn Approver>>,
     tracer: Option<Tracer>,
     default_model: String,
+    model_catalog: ModelCatalog,
+    model_catalog_root: Option<PathBuf>,
 }
 
 impl RuntimeBuilder {
@@ -203,7 +229,41 @@ impl RuntimeBuilder {
         self
     }
 
+    pub fn model(mut self, model: RegisteredModel) -> Self {
+        self.model_catalog.register(model);
+        self
+    }
+
+    pub fn model_catalog(mut self, catalog: ModelCatalog) -> Self {
+        self.model_catalog = catalog;
+        self
+    }
+
+    pub fn model_catalog_root(mut self, root: impl Into<PathBuf>) -> Self {
+        self.model_catalog_root = Some(root.into());
+        self
+    }
+
     pub fn build(self) -> Runtime {
+        let mut model_catalog = self.model_catalog;
+        let model_catalog_error = if model_catalog.is_empty() {
+            let start = self
+                .model_catalog_root
+                .or_else(|| std::env::current_dir().ok());
+            match start {
+                Some(start) => match ModelCatalog::load_walking(&start) {
+                    Ok(Some(loaded)) => {
+                        model_catalog.extend(loaded);
+                        None
+                    }
+                    Ok(None) => None,
+                    Err(err) => Some(err),
+                },
+                None => None,
+            }
+        } else {
+            None
+        };
         Runtime {
             tools: self.tools,
             llms: self.llms,
@@ -212,6 +272,8 @@ impl RuntimeBuilder {
                 .unwrap_or_else(|| Arc::new(StdinApprover::new())),
             tracer: self.tracer.unwrap_or_else(Tracer::null),
             default_model: self.default_model,
+            model_catalog,
+            model_catalog_error,
         }
     }
 }
@@ -276,5 +338,56 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(resp.value, json!("hi"));
+    }
+
+    #[test]
+    fn explicit_runtime_catalog_enables_capability_selection() {
+        let runtime = Runtime::builder()
+            .model(
+                RegisteredModel::new("cheap-basic")
+                    .capability("basic")
+                    .cost_per_token_in(0.000001)
+                    .cost_per_token_out(0.000001),
+            )
+            .model(
+                RegisteredModel::new("cheap-expert")
+                    .capability("expert")
+                    .cost_per_token_in(0.000002)
+                    .cost_per_token_out(0.000001),
+            )
+            .build();
+
+        let selected = runtime
+            .select_cheapest_model_for_capability("expert", 100, 50)
+            .unwrap();
+        assert_eq!(selected.model, "cheap-expert");
+        assert_eq!(selected.capability_picked.as_deref(), Some("expert"));
+    }
+
+    #[test]
+    fn builder_can_load_model_catalog_from_project_root() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("corvid.toml"),
+            r#"
+[llm.models.haiku]
+capability = "basic"
+cost_per_token_in = 0.00000025
+cost_per_token_out = 0.00000125
+
+[llm.models.opus]
+capability = "expert"
+cost_per_token_in = 0.000015
+"#,
+        )
+        .unwrap();
+
+        let runtime = Runtime::builder()
+            .model_catalog_root(dir.path())
+            .build();
+        let selected = runtime
+            .select_cheapest_model_for_capability("expert", 10, 10)
+            .unwrap();
+        assert_eq!(selected.model, "opus");
     }
 }

@@ -24,6 +24,8 @@ use crate::step::{self, StepAction, StepController, StepEvent, StepMode, StmtKin
 use std::collections::HashMap;
 use std::sync::Arc;
 
+const DEFAULT_COMPLETION_TOKEN_ESTIMATE: u64 = 256;
+
 /// Public entry point: run `agent_name` with `args` against `runtime`.
 ///
 /// The runtime owns tool/LLM/approval dispatch and tracing. Pass a
@@ -272,6 +274,34 @@ impl<'ir> Interpreter<'ir> {
 
     fn env_snapshot(&self) -> step::EnvSnapshot {
         step::snapshot_env(&self.env, &self.local_names)
+    }
+
+    fn select_prompt_model(
+        &self,
+        prompt: &'ir IrPrompt,
+        callee_name: &str,
+        rendered: &str,
+        _span: Span,
+    ) -> Result<Option<String>, corvid_runtime::RuntimeError> {
+        let Some(required) = prompt.capability_required.as_deref() else {
+            return Ok(None);
+        };
+        let selection = self.runtime.select_cheapest_model_for_capability(
+            required,
+            estimate_tokens(rendered),
+            prompt.max_tokens.unwrap_or(DEFAULT_COMPLETION_TOKEN_ESTIMATE),
+        )?;
+        self.runtime.tracer().emit(TraceEvent::ModelSelected {
+            ts_ms: corvid_runtime::now_ms(),
+            run_id: self.runtime.tracer().run_id().to_string(),
+            prompt: callee_name.to_string(),
+            model: selection.model.clone(),
+            capability_required: selection.capability_required,
+            capability_picked: selection.capability_picked,
+            cost_estimate: selection.cost_estimate,
+            arm_index: None,
+        });
+        Ok(Some(selection.model))
     }
 
     async fn maybe_yield(&mut self, event: StepEvent) -> Result<StepAction, InterpError> {
@@ -1095,12 +1125,15 @@ impl<'ir> Interpreter<'ir> {
                 let json_args: Vec<serde_json::Value> =
                     arg_values.iter().map(value_to_json).collect();
                 let rendered = render_prompt(prompt, &arg_values);
+                let selected_model = self
+                    .select_prompt_model(prompt, callee_name, &rendered, span)
+                    .map_err(|err| InterpError::new(InterpErrorKind::Runtime(err), span))?;
 
                 if self.should_yield_boundary() {
                     let action = self.maybe_yield(StepEvent::BeforePromptCall {
                         prompt_name: callee_name.to_string(),
                         rendered: rendered.clone(),
-                        model: None,
+                        model: selected_model.clone(),
                         span,
                         env: self.env_snapshot(),
                     }).await?;
@@ -1121,7 +1154,7 @@ impl<'ir> Interpreter<'ir> {
                 let output_schema = Some(crate::schema::schema_for(result_ty, &self.types_by_id));
                 let req = LlmRequest {
                     prompt: callee_name.to_string(),
-                    model: String::new(),
+                    model: selected_model.unwrap_or_default(),
                     rendered,
                     args: json_args,
                     output_schema,
@@ -1596,6 +1629,15 @@ fn _force_use(i: &Interpreter<'_>) {
 
 fn default_stream_backpressure() -> BackpressurePolicy {
     BackpressurePolicy::Bounded(16)
+}
+
+fn estimate_tokens(text: &str) -> u64 {
+    let chars = text.chars().count() as u64;
+    if chars == 0 {
+        0
+    } else {
+        (chars / 4).max(1)
+    }
 }
 
 fn prompt_backpressure(prompt: &IrPrompt) -> BackpressurePolicy {

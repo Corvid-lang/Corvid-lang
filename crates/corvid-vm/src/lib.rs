@@ -50,7 +50,10 @@ mod tests {
     use corvid_ast::{BackpressurePolicy, Span};
     use corvid_ir::lower;
     use corvid_resolve::resolve;
-    use corvid_runtime::{llm::{mock::MockAdapter, TokenUsage}, ProgrammaticApprover, Runtime, RuntimeError};
+    use corvid_runtime::{
+        llm::{mock::MockAdapter, TokenUsage},
+        ProgrammaticApprover, RegisteredModel, Runtime, RuntimeError, TraceEvent,
+    };
     use corvid_syntax::{lex, parse_file};
     use corvid_types::typecheck;
     use serde_json::json;
@@ -866,6 +869,118 @@ agent run(reason: String) -> Decision:
                 assert_eq!(s.get_field("should_refund").unwrap(), Value::Bool(true));
             }
             other => panic!("expected Decision struct, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn capability_dispatch_chooses_cheapest_eligible_model_and_traces_it() {
+        let src = r#"
+model haiku:
+    capability: basic
+
+model opus:
+    capability: expert
+
+prompt answer(q: String) -> String:
+    requires: expert
+    "Answer {q}."
+
+agent run(q: String) -> String:
+    return answer(q)
+"#;
+        let ir = ir_of(src);
+        let trace_dir = std::env::temp_dir().join(format!(
+            "corvid-vm-capability-{}",
+            corvid_runtime::now_ms()
+        ));
+        std::fs::create_dir_all(&trace_dir).unwrap();
+        let rt = Runtime::builder()
+            .tracer(corvid_runtime::Tracer::open(&trace_dir, "run-capability"))
+            .llm(Arc::new(MockAdapter::new("haiku").reply("answer", json!("cheap"))))
+            .llm(Arc::new(MockAdapter::new("opus").reply("answer", json!("expert"))))
+            .model(
+                RegisteredModel::new("haiku")
+                    .capability("basic")
+                    .cost_per_token_in(0.00000025)
+                    .cost_per_token_out(0.00000125),
+            )
+            .model(
+                RegisteredModel::new("opus")
+                    .capability("expert")
+                    .cost_per_token_in(0.000015)
+                    .cost_per_token_out(0.00002),
+            )
+            .default_model("haiku")
+            .build();
+
+        let v = run_agent(&ir, "run", vec![Value::String(Arc::from("hard"))], &rt)
+            .await
+            .expect("run");
+        assert_eq!(v, Value::String(Arc::from("expert")));
+        drop(rt);
+
+        let trace_path = trace_dir.join("run-capability.jsonl");
+        let body = std::fs::read_to_string(trace_path).expect("trace file");
+        let events: Vec<TraceEvent> = body
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .map(|line| serde_json::from_str(line).expect("valid trace event"))
+            .collect();
+        assert!(events.iter().any(|event| matches!(
+            event,
+            TraceEvent::ModelSelected {
+                prompt,
+                model,
+                capability_required,
+                capability_picked,
+                ..
+            } if prompt == "answer"
+                && model == "opus"
+                && capability_required.as_deref() == Some("expert")
+                && capability_picked.as_deref() == Some("expert")
+        )));
+        assert!(events.iter().any(|event| matches!(
+            event,
+            TraceEvent::LlmCall { prompt, model, .. }
+                if prompt == "answer" && model.as_deref() == Some("opus")
+        )));
+    }
+
+    #[tokio::test]
+    async fn capability_dispatch_errors_when_no_model_qualifies() {
+        let src = r#"
+model haiku:
+    capability: basic
+
+prompt answer(q: String) -> String:
+    requires: expert
+    "Answer {q}."
+
+agent run(q: String) -> String:
+    return answer(q)
+"#;
+        let ir = ir_of(src);
+        let rt = Runtime::builder()
+            .llm(Arc::new(MockAdapter::new("haiku").reply("answer", json!("cheap"))))
+            .model(
+                RegisteredModel::new("haiku")
+                    .capability("basic")
+                    .cost_per_token_in(0.00000025),
+            )
+            .build();
+
+        let err = run_agent(&ir, "run", vec![Value::String(Arc::from("hard"))], &rt)
+            .await
+            .unwrap_err();
+        match err.kind {
+            InterpErrorKind::Runtime(RuntimeError::NoEligibleModel {
+                required_capability,
+                available_models,
+            }) => {
+                assert_eq!(required_capability, "expert");
+                assert_eq!(available_models, vec!["haiku".to_string()]);
+            }
+            other => panic!("expected Runtime(NoEligibleModel), got {other:?}"),
         }
     }
 

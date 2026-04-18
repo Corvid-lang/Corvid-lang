@@ -59,4 +59,17 @@ pub enum TraceEvent {
         label: String,
         approved: bool,
     },
+    ModelSelected {
+        ts_ms: u64,
+        run_id: String,
+        prompt: String,
+        model: String,
+        #[serde(default)]
+        capability_required: Option<String>,
+        #[serde(default)]
+        capability_picked: Option<String>,
+        cost_estimate: f64,
+        #[serde(default)]
+        arm_index: Option<usize>,
+    },
 }

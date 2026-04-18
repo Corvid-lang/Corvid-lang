@@ -35,6 +35,7 @@ pub mod env;
 pub mod errors;
 pub mod ffi_bridge;
 pub mod llm;
+pub mod models;
 pub mod redact;
 pub mod runtime;
 pub mod tools;
@@ -71,6 +72,7 @@ pub use llm::{
     openai_compat::OpenAiCompatibleAdapter,
     LlmAdapter, LlmRegistry, LlmRequest, LlmResponse, TokenUsage,
 };
+pub use models::{ModelCatalog, ModelSelection, RegisteredModel};
 pub use runtime::{Runtime, RuntimeBuilder};
 pub use tools::{ToolHandler, ToolRegistry};
 pub use corvid_trace_schema::TraceEvent;
