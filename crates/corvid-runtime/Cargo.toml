@@ -32,6 +32,7 @@ dotenvy = "0.15"
 # macro invocation across linked user tool crates. Read once by
 # `corvid_runtime_init` to build the effect-policy table.
 inventory = { workspace = true }
+corvid-trace-schema = { workspace = true }
 
 [features]
 default = []

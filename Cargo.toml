@@ -5,6 +5,7 @@ members = [
     "crates/corvid-ast",
     "crates/corvid-resolve",
     "crates/corvid-types",
+    "crates/corvid-trace-schema",
     "crates/corvid-ir",
     "crates/corvid-vm",
     "crates/corvid-repl",
@@ -59,6 +60,7 @@ corvid-ast      = { path = "crates/corvid-ast" }
 corvid-syntax   = { path = "crates/corvid-syntax" }
 corvid-resolve  = { path = "crates/corvid-resolve" }
 corvid-types    = { path = "crates/corvid-types" }
+corvid-trace-schema = { path = "crates/corvid-trace-schema" }
 
 corvid-ir       = { path = "crates/corvid-ir" }
 corvid-vm       = { path = "crates/corvid-vm" }

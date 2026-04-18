@@ -73,4 +73,5 @@ pub use llm::{
 };
 pub use runtime::{Runtime, RuntimeBuilder};
 pub use tools::{ToolHandler, ToolRegistry};
-pub use tracing::{fresh_run_id, now_ms, TraceEvent, Tracer};
+pub use corvid_trace_schema::TraceEvent;
+pub use tracing::{fresh_run_id, now_ms, Tracer};

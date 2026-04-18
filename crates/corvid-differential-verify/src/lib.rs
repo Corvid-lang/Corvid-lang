@@ -11,8 +11,8 @@ use corvid_driver::{
     compile_to_ir, run_ir_with_runtime, MockAdapter, ProgrammaticApprover, Runtime, Tracer,
 };
 use corvid_resolve::resolve;
-use corvid_runtime::TraceEvent;
 use corvid_syntax::{lex, parse_file};
+use corvid_trace_schema::TraceEvent;
 use corvid_types::{analyze_effects, typecheck, EffectRegistry};
 use serde::{Deserialize, Serialize};
 

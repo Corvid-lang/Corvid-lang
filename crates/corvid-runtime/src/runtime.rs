@@ -9,7 +9,8 @@ use crate::approvals::{Approver, ApprovalDecision, ApprovalRequest, StdinApprove
 use crate::errors::RuntimeError;
 use crate::llm::{LlmAdapter, LlmRegistry, LlmRequest, LlmRequestRef, LlmResponse};
 use crate::tools::ToolRegistry;
-use crate::tracing::{fresh_run_id, now_ms, TraceEvent, Tracer};
+use crate::tracing::{fresh_run_id, now_ms, Tracer};
+use corvid_trace_schema::TraceEvent;
 use std::path::Path;
 use std::sync::Arc;
 

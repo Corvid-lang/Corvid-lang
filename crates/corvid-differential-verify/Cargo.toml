@@ -17,6 +17,7 @@ corvid-ir = { workspace = true }
 corvid-resolve = { workspace = true }
 corvid-runtime = { workspace = true }
 corvid-syntax = { workspace = true }
+corvid-trace-schema = { workspace = true }
 corvid-types = { workspace = true }
 tempfile = "3"
 
