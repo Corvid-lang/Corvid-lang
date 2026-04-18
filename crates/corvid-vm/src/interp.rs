@@ -339,6 +339,10 @@ impl<'ir> Interpreter<'ir> {
                 };
                 Ok(Flow::Return(v))
             }
+            IrStmt::Yield { span, .. } => Err(InterpError::new(
+                InterpErrorKind::NotImplemented("stream yield statements".into()),
+                *span,
+            )),
             IrStmt::If {
                 cond,
                 then_block,

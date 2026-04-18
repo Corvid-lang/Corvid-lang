@@ -3,7 +3,7 @@
 //! A flatter, normalized form of the typed AST. References are already
 //! resolved to `DefId`/`LocalId`; every expression carries its `Type`.
 
-use corvid_ast::{Backoff, BinaryOp, Effect, Span, UnaryOp};
+use corvid_ast::{Backoff, BackpressurePolicy, BinaryOp, Effect, Span, UnaryOp};
 use corvid_resolve::{DefId, LocalId};
 use corvid_types::Type;
 
@@ -77,6 +77,10 @@ pub struct IrPrompt {
     /// Index of the parameter whose content must appear in the LLM response.
     /// Set when the prompt declares `cites <param> strictly`.
     pub cites_strictly_param: Option<usize>,
+    /// Stream-only prompt modifiers preserved for the interpreter tier.
+    pub min_confidence: Option<f64>,
+    pub max_tokens: Option<u64>,
+    pub backpressure: Option<BackpressurePolicy>,
     pub span: Span,
 }
 
@@ -190,6 +194,12 @@ pub enum IrStmt {
     /// `return expr?`
     Return {
         value: Option<IrExpr>,
+        span: Span,
+    },
+
+    /// `yield expr`
+    Yield {
+        value: IrExpr,
         span: Span,
     },
 

@@ -127,6 +127,7 @@ fn scan_block(block: &IrBlock, current_return_ty: &Type) -> Result<(), NotNative
 fn scan_stmt(stmt: &IrStmt, current_return_ty: &Type) -> Result<(), NotNativeReason> {
     match stmt {
         IrStmt::Let { value, .. } => scan_expr(value, current_return_ty),
+        IrStmt::Yield { .. } => Err(NotNativeReason::StreamLoweringNotImplemented),
         IrStmt::Return { value: Some(v), .. } => scan_expr(v, current_return_ty),
         IrStmt::Return { value: None, .. } => Ok(()),
         IrStmt::If {

@@ -16,7 +16,7 @@ pub use types::*;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use corvid_ast::{Backoff, Effect};
+    use corvid_ast::{Backoff, BackpressurePolicy, Effect};
     use corvid_resolve::resolve;
     use corvid_syntax::{lex, parse_file};
     use corvid_types::typecheck;
@@ -323,5 +323,40 @@ eval refund_process:
             }
             other => panic!("expected value assertion, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn lowers_yield_to_dedicated_ir_stmt() {
+        let src = "\
+agent chunks(text: String) -> Stream<String>:
+    yield text
+";
+        let ir = lower_src(src);
+        let agent = &ir.agents[0];
+        match &agent.body.stmts[0] {
+            IrStmt::Yield { value, .. } => {
+                assert_eq!(value.ty.display_name(), "String");
+            }
+            other => panic!("expected Yield, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn lowers_prompt_stream_metadata() {
+        let src = "\
+prompt generate(ctx: String) -> Stream<String>:
+    with min_confidence 0.80
+    with max_tokens 5000
+    with backpressure bounded(100)
+    \"Generate {ctx}\"
+";
+        let ir = lower_src(src);
+        let prompt = &ir.prompts[0];
+        assert_eq!(prompt.min_confidence, Some(0.80));
+        assert_eq!(prompt.max_tokens, Some(5000));
+        assert_eq!(
+            prompt.backpressure,
+            Some(BackpressurePolicy::Bounded(100))
+        );
     }
 }

@@ -106,6 +106,7 @@ fn collect_prompt_pins_in_stmt(
                 collect_prompt_pins_in_expr(value, borrowed_reads, out);
             }
         }
+        IrStmt::Yield { value, .. } => collect_prompt_pins_in_expr(value, borrowed_reads, out),
         IrStmt::Expr { expr, .. } => collect_prompt_pins_in_expr(expr, borrowed_reads, out),
         IrStmt::If { cond, .. } => collect_prompt_pins_in_expr(cond, borrowed_reads, out),
         IrStmt::For { iter, .. } => collect_prompt_pins_in_expr(iter, borrowed_reads, out),

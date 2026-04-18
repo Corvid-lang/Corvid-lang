@@ -178,6 +178,7 @@ fn stmt_mentions_local(stmt: &IrStmt, local_id: LocalId) -> bool {
             .as_ref()
             .map(|value| expr_mentions_local(value, local_id))
             .unwrap_or(false),
+        IrStmt::Yield { value, .. } => expr_mentions_local(value, local_id),
         IrStmt::If { cond, .. } => expr_mentions_local(cond, local_id),
         IrStmt::For { iter, .. } => expr_mentions_local(iter, local_id),
         IrStmt::Approve { args, .. } => args.iter().any(|arg| expr_mentions_local(arg, local_id)),
@@ -223,6 +224,7 @@ fn stmt_is_effect_barrier(stmt: &IrStmt) -> bool {
     match stmt {
         IrStmt::Let { value, .. } => !expr_is_effect_free(value),
         IrStmt::Expr { expr, .. } => !expr_is_effect_free(expr),
+        IrStmt::Yield { value, .. } => !expr_is_effect_free(value),
         IrStmt::Return { .. }
         | IrStmt::If { .. }
         | IrStmt::For { .. }

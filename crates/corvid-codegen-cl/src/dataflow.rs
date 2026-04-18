@@ -437,6 +437,10 @@ impl CfgBuilder {
                     let reads = collect_reads(expr, true);
                     self.push_stmt(cur, CfgStmt::Expr { reads }, my_path);
                 }
+                IrStmt::Yield { value, .. } => {
+                    let reads = collect_reads(value, true);
+                    self.push_stmt(cur, CfgStmt::Expr { reads }, my_path);
+                }
                 IrStmt::Return { value, .. } => {
                     let reads = match value {
                         Some(e) => collect_reads(e, true),

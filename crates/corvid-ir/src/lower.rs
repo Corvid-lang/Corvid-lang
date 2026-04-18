@@ -295,6 +295,9 @@ impl<'a> Lowerer<'a> {
             return_ty: self.type_ref_to_type(&p.return_ty),
             template: p.template.clone(),
             cites_strictly_param,
+            min_confidence: p.stream.min_confidence,
+            max_tokens: p.stream.max_tokens,
+            backpressure: p.stream.backpressure.clone(),
             span: p.span,
         }
     }
@@ -366,8 +369,8 @@ impl<'a> Lowerer<'a> {
                 value: value.as_ref().map(|e| self.lower_expr(e)),
                 span: *span,
             },
-            Stmt::Yield { value, span } => IrStmt::Expr {
-                expr: self.lower_expr(value),
+            Stmt::Yield { value, span } => IrStmt::Yield {
+                value: self.lower_expr(value),
                 span: *span,
             },
             Stmt::If { cond, then_block, else_block, span } => IrStmt::If {

@@ -186,6 +186,11 @@ impl Codegen {
                 }
                 None => self.out.writeln("return"),
             },
+            IrStmt::Yield { value, .. } => {
+                self.out.write("yield ");
+                self.emit_expr(value);
+                self.out.newline();
+            }
             IrStmt::If { cond, then_block, else_block, .. } => {
                 self.out.write("if ");
                 self.emit_expr(cond);

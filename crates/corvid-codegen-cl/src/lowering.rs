@@ -1687,6 +1687,7 @@ fn visit_block_types(
                 visit_expr_types(value, seen, order, visit);
             }
             IrStmt::Expr { expr, .. } => visit_expr_types(expr, seen, order, visit),
+            IrStmt::Yield { value, .. } => visit_expr_types(value, seen, order, visit),
             IrStmt::Return { value: Some(e), .. } => visit_expr_types(e, seen, order, visit),
             IrStmt::Return { value: None, .. } => {}
             IrStmt::If { cond, then_block, else_block, .. } => {
@@ -2465,6 +2466,7 @@ fn block_uses_runtime(block: &IrBlock) -> bool {
 fn stmt_uses_runtime(stmt: &IrStmt) -> bool {
     match stmt {
         IrStmt::Let { value, .. } => expr_uses_runtime(value),
+        IrStmt::Yield { value, .. } => expr_uses_runtime(value),
         IrStmt::Return { value: Some(e), .. } => expr_uses_runtime(e),
         IrStmt::Return { value: None, .. } => false,
         IrStmt::If {
@@ -3707,6 +3709,12 @@ fn lower_stmt(
     runtime: &RuntimeFuncs,
 ) -> Result<BlockOutcome, CodegenError> {
     match stmt {
+        IrStmt::Yield { span, .. } => {
+            Err(CodegenError::not_supported(
+                "Stream lowering not yet implemented",
+                *span,
+            ))
+        }
         IrStmt::Return { value, span } => {
             let v = match value {
                 Some(e) => lower_expr(

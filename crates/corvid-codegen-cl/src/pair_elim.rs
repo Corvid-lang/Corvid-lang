@@ -133,6 +133,7 @@ fn stmt_blocks_pair_search(stmt: &IrStmt, local_id: LocalId) -> bool {
         IrStmt::If { .. }
         | IrStmt::For { .. }
         | IrStmt::Return { .. }
+        | IrStmt::Yield { .. }
         | IrStmt::Break { .. }
         | IrStmt::Continue { .. } => true,
         IrStmt::Approve { args, .. } => args.iter().any(|expr| expr_mentions_local(expr, local_id)),
@@ -159,6 +160,7 @@ fn stmt_local_mentions(stmt: &IrStmt, local_id: LocalId) -> usize {
             .as_ref()
             .map(|expr| count_local_mentions_expr(expr, local_id))
             .unwrap_or(0),
+        IrStmt::Yield { value, .. } => count_local_mentions_expr(value, local_id),
         IrStmt::If { cond, .. } => count_local_mentions_expr(cond, local_id),
         IrStmt::For { iter, .. } => count_local_mentions_expr(iter, local_id),
         IrStmt::Approve { args, .. } => args
@@ -176,7 +178,9 @@ fn stmt_local_mentions(stmt: &IrStmt, local_id: LocalId) -> usize {
 
 fn stmt_observes_refcount(stmt: &IrStmt, local_id: LocalId) -> bool {
     match stmt {
-        IrStmt::Let { value, .. } | IrStmt::Expr { expr: value, .. } => {
+        IrStmt::Let { value, .. }
+        | IrStmt::Expr { expr: value, .. }
+        | IrStmt::Yield { value, .. } => {
             expr_observes_refcount(value, local_id)
         }
         IrStmt::Approve { args, .. } => args.iter().any(|expr| expr_mentions_local(expr, local_id)),

@@ -298,6 +298,7 @@ fn scan_stmt(stmt: &IrStmt, max_id: &mut u32) {
         }
         IrStmt::Return { value: Some(e), .. } => scan_expr(e, max_id),
         IrStmt::Return { value: None, .. } => {}
+        IrStmt::Yield { value, .. } => scan_expr(value, max_id),
         IrStmt::If { cond, then_block, else_block, .. } => {
             scan_expr(cond, max_id);
             scan_block(then_block, max_id);
