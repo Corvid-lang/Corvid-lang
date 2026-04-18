@@ -2143,22 +2143,37 @@ prompt answer(q: String) -> String:
         );
     }
 
-    // --- Phase 20h slice G: adversarial validation ---
+    // --- Phase 20h slice G: adversarial validation (Option B) ---
+    //
+    // Stages are `prompt` decls, not `model` decls. The runtime
+    // chains stage outputs as positional arguments:
+    //   propose(outer_params) -> T1
+    //   challenge(T1)          -> T2
+    //   adjudicate(T1, T2)     -> Outer       (must be a struct
+    //                                          with a `contradiction:
+    //                                          Bool` field)
 
     #[test]
-    fn adversarial_with_valid_models_passes() {
+    fn adversarial_with_valid_prompt_stages_passes() {
         let src = "\
-model haiku:
-    capability: basic
+type Verdict:
+    contradiction: Bool
+    rationale: String
 
-model opus:
-    capability: expert
+prompt propose_answer(q: String) -> String:
+    \"Answer: {q}\"
 
-prompt verify(q: String) -> String:
+prompt critique(proposed: String) -> String:
+    \"Flaws in: {proposed}\"
+
+prompt adjudicate_fn(proposed: String, flaws: String) -> Verdict:
+    \"Verdict on {proposed} vs {challenge}\"
+
+prompt verify(q: String) -> Verdict:
     adversarial:
-        propose: opus
-        challenge: haiku
-        adjudicate: opus
+        propose: propose_answer
+        challenge: critique
+        adjudicate: adjudicate_fn
     \"Verify\"
 ";
         let c = check(src);
@@ -2166,30 +2181,256 @@ prompt verify(q: String) -> String:
     }
 
     #[test]
-    fn adversarial_stage_pointing_at_non_model_is_rejected() {
+    fn adversarial_stage_pointing_at_non_prompt_is_rejected() {
+        // A `model` is not a prompt — stages must be prompts because
+        // the runtime chains outputs through positional call syntax.
         let src = "\
-tool not_a_model(q: String) -> String
+type Verdict:
+    contradiction: Bool
 
-model real_a:
+model bare_model:
     capability: expert
 
-model real_b:
-    capability: expert
+prompt critique(proposed: String) -> String:
+    \"Flaws: {proposed}\"
 
-prompt verify(q: String) -> String:
+prompt adjudicate_fn(proposed: String, flaws: String) -> Verdict:
+    \"Verdict\"
+
+prompt verify(q: String) -> Verdict:
     adversarial:
-        propose: not_a_model
-        challenge: real_a
-        adjudicate: real_b
+        propose: bare_model
+        challenge: critique
+        adjudicate: adjudicate_fn
     \"Verify\"
 ";
         let c = check(src);
         assert!(
             c.errors.iter().any(|e| matches!(
                 &e.kind,
-                TypeErrorKind::RouteTargetNotModel { target, .. } if target.contains("not_a_model")
+                TypeErrorKind::AdversarialStageNotPrompt { target, stage, .. }
+                    if target == "bare_model" && stage == "propose"
             )),
-            "expected RouteTargetNotModel for non-model stage, got {:?}",
+            "expected AdversarialStageNotPrompt for bare_model, got {:?}",
+            c.errors
+        );
+    }
+
+    #[test]
+    fn adversarial_challenger_wrong_arity_is_rejected() {
+        // Challenger must accept exactly 1 parameter (the proposer's
+        // return value). A two-param challenger is rejected.
+        let src = "\
+type Verdict:
+    contradiction: Bool
+
+prompt propose_answer(q: String) -> String:
+    \"Answer: {q}\"
+
+prompt critique_bad(a: String, b: String) -> String:
+    \"Flaws\"
+
+prompt adjudicate_fn(proposed: String, flaws: String) -> Verdict:
+    \"Verdict\"
+
+prompt verify(q: String) -> Verdict:
+    adversarial:
+        propose: propose_answer
+        challenge: critique_bad
+        adjudicate: adjudicate_fn
+    \"Verify\"
+";
+        let c = check(src);
+        assert!(
+            c.errors.iter().any(|e| matches!(
+                &e.kind,
+                TypeErrorKind::AdversarialStageArity {
+                    stage, expected, got, ..
+                } if stage == "challenge" && *expected == 1 && *got == 2
+            )),
+            "expected AdversarialStageArity(challenge, 1, 2), got {:?}",
+            c.errors
+        );
+    }
+
+    #[test]
+    fn adversarial_adjudicator_param_type_mismatch_is_rejected() {
+        // Adjudicator's second param must accept the challenger's
+        // return type. Int vs String mismatch is rejected.
+        let src = "\
+type Verdict:
+    contradiction: Bool
+
+prompt propose_answer(q: String) -> String:
+    \"Answer: {q}\"
+
+prompt critique(proposed: String) -> String:
+    \"Flaws\"
+
+prompt adjudicate_bad(proposed: String, flaws: Int) -> Verdict:
+    \"Verdict\"
+
+prompt verify(q: String) -> Verdict:
+    adversarial:
+        propose: propose_answer
+        challenge: critique
+        adjudicate: adjudicate_bad
+    \"Verify\"
+";
+        let c = check(src);
+        assert!(
+            c.errors.iter().any(|e| matches!(
+                &e.kind,
+                TypeErrorKind::AdversarialStageParamType {
+                    stage, index, ..
+                } if stage == "adjudicate" && *index == 1
+            )),
+            "expected AdversarialStageParamType(adjudicate, #1), got {:?}",
+            c.errors
+        );
+    }
+
+    #[test]
+    fn adversarial_adjudicator_return_mismatch_is_rejected() {
+        // Outer prompt declares `-> Verdict`, adjudicator returns
+        // `String` — these must match for the pipeline's output to
+        // be the prompt's output.
+        let src = "\
+type Verdict:
+    contradiction: Bool
+
+prompt propose_answer(q: String) -> String:
+    \"Answer: {q}\"
+
+prompt critique(proposed: String) -> String:
+    \"Flaws\"
+
+prompt adjudicate_bad(proposed: String, flaws: String) -> String:
+    \"Not a Verdict\"
+
+prompt verify(q: String) -> Verdict:
+    adversarial:
+        propose: propose_answer
+        challenge: critique
+        adjudicate: adjudicate_bad
+    \"Verify\"
+";
+        let c = check(src);
+        assert!(
+            c.errors.iter().any(|e| matches!(
+                &e.kind,
+                TypeErrorKind::AdversarialStageReturnType { stage, .. }
+                    if stage == "adjudicate"
+            )),
+            "expected AdversarialStageReturnType(adjudicate), got {:?}",
+            c.errors
+        );
+    }
+
+    #[test]
+    fn adversarial_adjudicator_missing_contradiction_field_is_rejected() {
+        // Adjudicator's return struct must have `contradiction: Bool`
+        // because the runtime reads it to decide whether to emit a
+        // `TraceEvent::AdversarialContradiction`.
+        let src = "\
+type NoContradiction:
+    rationale: String
+
+prompt propose_answer(q: String) -> String:
+    \"Answer: {q}\"
+
+prompt critique(proposed: String) -> String:
+    \"Flaws\"
+
+prompt adjudicate_fn(proposed: String, flaws: String) -> NoContradiction:
+    \"Verdict\"
+
+prompt verify(q: String) -> NoContradiction:
+    adversarial:
+        propose: propose_answer
+        challenge: critique
+        adjudicate: adjudicate_fn
+    \"Verify\"
+";
+        let c = check(src);
+        assert!(
+            c.errors.iter().any(|e| matches!(
+                &e.kind,
+                TypeErrorKind::AdversarialAdjudicatorMissingContradictionField { .. }
+            )),
+            "expected AdversarialAdjudicatorMissingContradictionField, got {:?}",
+            c.errors
+        );
+    }
+
+    #[test]
+    fn adversarial_contradiction_field_wrong_type_is_rejected() {
+        // A `contradiction: String` field does not satisfy the
+        // contract — the runtime reads the field as `Bool`.
+        let src = "\
+type WrongType:
+    contradiction: String
+
+prompt propose_answer(q: String) -> String:
+    \"Answer: {q}\"
+
+prompt critique(proposed: String) -> String:
+    \"Flaws\"
+
+prompt adjudicate_fn(proposed: String, flaws: String) -> WrongType:
+    \"Verdict\"
+
+prompt verify(q: String) -> WrongType:
+    adversarial:
+        propose: propose_answer
+        challenge: critique
+        adjudicate: adjudicate_fn
+    \"Verify\"
+";
+        let c = check(src);
+        assert!(
+            c.errors.iter().any(|e| matches!(
+                &e.kind,
+                TypeErrorKind::AdversarialAdjudicatorMissingContradictionField { .. }
+            )),
+            "expected AdversarialAdjudicatorMissingContradictionField for wrong field type, got {:?}",
+            c.errors
+        );
+    }
+
+    #[test]
+    fn adversarial_proposer_arity_must_match_outer_prompt() {
+        // Outer prompt takes 1 param, proposer takes 2 — pipeline
+        // can't wire the outer call's args to the proposer.
+        let src = "\
+type Verdict:
+    contradiction: Bool
+
+prompt propose_bad(a: String, b: String) -> String:
+    \"Answer\"
+
+prompt critique(proposed: String) -> String:
+    \"Flaws\"
+
+prompt adjudicate_fn(proposed: String, flaws: String) -> Verdict:
+    \"Verdict\"
+
+prompt verify(q: String) -> Verdict:
+    adversarial:
+        propose: propose_bad
+        challenge: critique
+        adjudicate: adjudicate_fn
+    \"Verify\"
+";
+        let c = check(src);
+        assert!(
+            c.errors.iter().any(|e| matches!(
+                &e.kind,
+                TypeErrorKind::AdversarialStageArity {
+                    stage, expected, got, ..
+                } if stage == "propose" && *expected == 1 && *got == 2
+            )),
+            "expected AdversarialStageArity(propose, 1, 2), got {:?}",
             c.errors
         );
     }

@@ -2,7 +2,7 @@
 
 This section is the **implementation reference** for the typed model substrate. [Section 09](./09-model-substrate.md) was a design preview written before the compiler understood any of it; this section documents what actually lives in the toolchain today, with examples that compile against the current parser, resolver, type checker, and IR.
 
-Six compiler-side slices shipped: A (model declarations) → B (`requires:` capability routing) → C (`route:` content-aware) → D (jurisdiction / compliance / privacy dimensions) → E (`progressive:` refinement) → I (`rollout` A/B variants). Runtime dispatch is Dev B's parallel track — B-rt landed; C-rt / E-rt / I-rt / ensemble / adversarial / `routing-report` are queued.
+Eight compiler-side slices shipped: A (model declarations) → B (`requires:` capability routing) → C (`route:` content-aware) → D (jurisdiction / compliance / privacy dimensions) → E (`progressive:` refinement) → I (`rollout` A/B variants) → F (`ensemble` voting syntax) → G (`adversarial:` pipeline + stage-chaining contract). Runtime dispatch is Dev B's parallel track — B-rt, C-rt, E-rt, I-rt landed; F-rt (ensemble voting), G-rt (adversarial execution), and H (`routing-report` CLI) are queued.
 
 Implementation references throughout this section cite the specific module and function that executes each feature. The spec's `corvid test spec --meta` harness keeps these examples honest on every build.
 
@@ -227,24 +227,101 @@ Runtime cohort-assignment strategy (uniform random, session-sticky, deterministi
 
 Implementation: `RolloutSpec` in [crates/corvid-ast/src/decl.rs](../../crates/corvid-ast/src/decl.rs); `parse_prompt_rollout_clause` in the parser; `IrRolloutSpec` in [crates/corvid-ir/src/types.rs](../../crates/corvid-ir/src/types.rs).
 
-## 13.7 Dispatch strategies: one per prompt
+## 13.7 Ensemble voting (slice F — syntax)
 
-A prompt declares **at most one** dispatch clause: `route:`, `progressive:`, or `rollout`. Without any, the prompt uses the default capability-based dispatch (slice B).
+Dispatch a prompt to several models concurrently and fold the results with a vote. The compiler-side shape is a model list and a vote strategy; runtime semantics (concurrent dispatch, vote execution, cost/confidence composition) ship in F-rt on Dev B's track.
 
-The parser enforces mutual exclusion with targeted errors. Combining `route:` + `progressive:`, `route:` + `rollout`, or `progressive:` + `rollout` on the same prompt fires a "a prompt uses exactly one of `route:`, `progressive:`, or `rollout`" message pointing at the second clause.
+```corvid
+# expect: compile
+model opus:
+    capability: expert
 
-## 13.8 What's NOT shipped yet
+model sonnet:
+    capability: expert
 
-Two strategies from [§09](./09-model-substrate.md) remain compiler-side unimplemented:
+model haiku:
+    capability: standard
 
-- **Ensemble voting.** `ensemble [m1, m2, m3] vote majority` — concurrent dispatch + majority vote. Design exists; syntax + runtime co-scheduled with Dev B.
-- **Adversarial validation.** `propose: ... challenge: ... adjudicate:` — sequential validation pipeline. Same status.
+prompt classify(q: String) -> String:
+    ensemble [opus, sonnet, haiku] vote majority
+    "Classify {q}"
+```
 
-Both require syntax I haven't written and runtime Dev B hasn't scheduled. They'll ship together (syntax + runtime) as paired slices when we schedule them.
+Grammar: `ensemble [<model>, <model>, ...] vote <strategy>`. Slice F ships `majority`; weighted and unanimous votes are reserved for a follow-up.
 
-The `corvid routing-report` CLI is pending Dev B's H slice. Once shipped, it'll aggregate the trace events that every dispatch slice emits and surface routing distributions, cohort ratios, escalation rates, and under-/over-routed models.
+Validation:
+- Every ensemble member must resolve to a `Decl::Model` (`RouteTargetNotModel`).
+- Duplicate models fire `EnsembleDuplicateModel` — voting with two slots on the same provider-model pair degenerates silently to voting over fewer opinions, which is almost always unintended.
 
-## 13.9 Verification status
+Implementation: `EnsembleSpec`, `VoteStrategy` in [crates/corvid-ast/src/decl.rs](../../crates/corvid-ast/src/decl.rs); `parse_prompt_ensemble_clause` in the parser; `IrEnsembleSpec`, `IrEnsembleMember`, `IrVoteStrategy` in [crates/corvid-ir/src/types.rs](../../crates/corvid-ir/src/types.rs).
+
+## 13.8 Adversarial validation (slice G — syntax + contract)
+
+Three-stage pipeline: a **proposer** produces a candidate, a **challenger** critiques it, and an **adjudicator** reads both and returns the final verdict. Each stage is a `prompt` decl — not a bare model — because stages chain outputs as positional arguments into the next stage.
+
+```corvid
+# expect: compile
+type Verdict:
+    contradiction: Bool
+    rationale: String
+
+prompt propose_answer(q: String) -> String:
+    "Answer: {q}"
+
+prompt critique(proposed: String) -> String:
+    "Find flaws in: {proposed}"
+
+prompt adjudicate_fn(proposed: String, flaws: String) -> Verdict:
+    "Given {proposed} and the critique, verdict?"
+
+prompt verify(q: String) -> Verdict:
+    adversarial:
+        propose: propose_answer
+        challenge: critique
+        adjudicate: adjudicate_fn
+    "Verify"
+```
+
+Grammar: `adversarial:` followed by exactly three stages in canonical order — `propose: <prompt>`, `challenge: <prompt>`, `adjudicate: <prompt>`. Stages out of order, missing stages, or stages pointing at non-prompt decls all fail parse or check.
+
+**Stage chaining contract** (enforced in the checker):
+
+| Stage | Arity | Param types | Return type |
+|---|---|---|---|
+| `propose` | = outer prompt's arity | must accept the outer prompt's param types | `T1` (free) |
+| `challenge` | exactly 1 | must accept `T1` | `T2` (free) |
+| `adjudicate` | exactly 2 | must accept `(T1, T2)` | must match the outer prompt's return type **and** be a struct with a `contradiction: Bool` field |
+
+**Why stages are prompts, not models.** Models are passive capability descriptors — the runtime dispatches _to_ a model. An adversarial pipeline needs callable units with typed signatures so the compiler can enforce the chaining contract: each stage's return type flows as the next stage's input. A bare model reference has no signature the compiler can type-check against. Prompts do.
+
+**Why `contradiction: Bool` is required.** The runtime emits `TraceEvent::AdversarialContradiction` when a pipeline detects a flaw the adjudicator flags. The only way to make that event reachable by construction — rather than a soft convention that sometimes fires — is to require the adjudicator's return struct to carry the field the runtime reads. This is the same design as `approve`-before-`dangerous` and `cites strictly` elsewhere: make the compiler enforce the contract the runtime depends on.
+
+**Mutual exclusion.** Like every dispatch clause, `adversarial:` is mutually exclusive with `route:`, `progressive:`, `rollout`, and `ensemble` — the parser rejects any two on the same prompt pointing at the second clause.
+
+Validation errors specific to adversarial:
+- `AdversarialStageNotPrompt` — a stage resolved to a non-prompt decl (model, tool, agent, type, etc.).
+- `AdversarialStageArity` — wrong parameter count for the stage's role.
+- `AdversarialStageParamType` — a stage's parameter type can't accept the previous stage's output (or the outer prompt's param for the proposer).
+- `AdversarialStageReturnType` — adjudicator's return type doesn't match the outer prompt's return type.
+- `AdversarialAdjudicatorMissingContradictionField` — adjudicator's return is not a struct, or its struct has no `contradiction: Bool` field.
+
+Runtime execution (sequential pipeline, trace emission, contradiction detection) ships in G-rt on Dev B's track.
+
+Implementation: `AdversarialSpec` in [crates/corvid-ast/src/decl.rs](../../crates/corvid-ast/src/decl.rs); `parse_prompt_adversarial_clause` + `parse_adversarial_stage` in the parser; `IrAdversarialSpec` in [crates/corvid-ir/src/types.rs](../../crates/corvid-ir/src/types.rs); contract enforcement in `check_prompt` in [crates/corvid-types/src/checker.rs](../../crates/corvid-types/src/checker.rs).
+
+## 13.9 Dispatch strategies: one per prompt
+
+A prompt declares **at most one** dispatch clause: `route:`, `progressive:`, `rollout`, `ensemble`, or `adversarial:`. Without any, the prompt uses the default capability-based dispatch (slice B).
+
+The parser enforces mutual exclusion with targeted errors. Combining any two on the same prompt fires a "a prompt uses exactly one of `route:`, `progressive:`, `rollout`, `ensemble`, or `adversarial:`" message pointing at the second clause.
+
+## 13.10 What's NOT shipped yet
+
+Compiler-side, all six dispatch strategies (capability-based, `route:`, `progressive:`, `rollout`, `ensemble`, `adversarial:`) are shipped and typechecked. Runtime execution of `ensemble` (F-rt) and `adversarial:` (G-rt) is queued on Dev B's track.
+
+The `corvid routing-report` CLI is pending Dev B's H slice. Once shipped, it'll aggregate the trace events that every dispatch slice emits and surface routing distributions, cohort ratios, escalation rates, ensemble agreement rates, adversarial contradiction rates, and under-/over-routed models.
+
+## 13.11 Verification status
 
 Every slice passes three CI gates on every push:
 
@@ -254,7 +331,7 @@ Every slice passes three CI gates on every push:
 
 Plus `cargo test --workspace` across the full suite. The verifier corpus at [tests/corpus/](../../tests/corpus/) cross-verifies every fixture across four execution tiers; deliberate-fail fixtures (`should_fail/tier_disagree.cor`, `should_fail/native_drops_effect.cor`) prove the harness catches divergences rather than waving them through.
 
-## 13.10 Shipping trail
+## 13.12 Shipping trail
 
 | Slice | Commit | What shipped |
 |---|---|---|
@@ -264,9 +341,16 @@ Plus `cargo test --workspace` across the full suite. The verifier corpus at [tes
 | D | `b88307a` | jurisdiction / compliance / privacy_tier dimensions + two trust_max bug fixes |
 | E | `6accbc2` | `progressive:` chain + stage-terminal-fallback grammar + threshold range check |
 | I | `e1476c3` | `rollout N%` one-liner + mutual-exclusion rejection with route/progressive |
+| F (syntax) | `171b68f` | `ensemble [...]  vote majority` + duplicate-model rejection |
+| G (syntax) | `6047e00` | `adversarial:` propose / challenge / adjudicate block + order / arity parse checks |
 | B-rt | `a2b9160` | Runtime: capability-based model dispatch (Dev B) |
+| C-rt | `cf301d7` | Runtime: content-aware route dispatch (Dev B) |
+| E-rt | `1722a7a` | Runtime: progressive escalation (Dev B) |
+| I-rt | `04f5c77` | Runtime: rollout dispatch with seeded PRNG + `AbVariantChosen` trace (Dev B) |
+| F-rt | `7651420` | Runtime: ensemble concurrent dispatch + voting + `EnsembleVote` trace (Dev B) |
+| G (contract) | _this commit_ | Stage resolution switched to prompts; chaining contract + `contradiction: Bool` field check |
 
-Remaining runtime slices (C-rt, E-rt, I-rt, F, G, H) live on Dev B's track per the 20h runtime brief.
+Remaining runtime slices (G-rt, H) live on Dev B's track per the 20h closeout brief.
 
 ## Next
 

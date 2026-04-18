@@ -214,6 +214,59 @@ pub enum TypeErrorKind {
         prompt: String,
         model: String,
     },
+
+    /// An `adversarial:` stage (propose / challenge / adjudicate)
+    /// points at a name that is not a `prompt` declaration. Stages
+    /// dispatch to prompts because the runtime chains stage outputs
+    /// as positional arguments to the next stage.
+    AdversarialStageNotPrompt {
+        prompt: String,
+        stage: String,
+        target: String,
+        got_kind: String,
+    },
+
+    /// An `adversarial:` stage's target prompt has the wrong number
+    /// of parameters for its position in the pipeline.
+    AdversarialStageArity {
+        prompt: String,
+        stage: String,
+        target: String,
+        expected: usize,
+        got: usize,
+    },
+
+    /// An `adversarial:` stage's target prompt has a parameter whose
+    /// type does not match the previous stage's return type (or, for
+    /// the proposer, the outer prompt's parameter type).
+    AdversarialStageParamType {
+        prompt: String,
+        stage: String,
+        target: String,
+        index: usize,
+        expected: String,
+        got: String,
+    },
+
+    /// The `adjudicate` stage's return type does not match the outer
+    /// prompt's declared return type.
+    AdversarialStageReturnType {
+        prompt: String,
+        stage: String,
+        target: String,
+        expected: String,
+        got: String,
+    },
+
+    /// The `adjudicate` stage's return type is not a struct, or the
+    /// struct it returns has no `contradiction: Bool` field. The
+    /// runtime reads this field to decide whether to emit
+    /// `TraceEvent::AdversarialContradiction`.
+    AdversarialAdjudicatorMissingContradictionField {
+        prompt: String,
+        target: String,
+        got: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -340,6 +393,32 @@ impl TypeErrorKind {
             Self::EnsembleDuplicateModel { prompt, model } => {
                 format!("ensemble on prompt `{prompt}` lists model `{model}` more than once")
             }
+            Self::AdversarialStageNotPrompt { prompt, stage, target, got_kind } => {
+                format!(
+                    "adversarial `{stage}` stage in prompt `{prompt}` points at `{target}`, which is a {got_kind}, not a `prompt`"
+                )
+            }
+            Self::AdversarialStageArity { prompt, stage, target, expected, got } => {
+                format!(
+                    "adversarial `{stage}` stage `{target}` in prompt `{prompt}` takes {got} parameter{}; expected {expected}",
+                    if *got == 1 { "" } else { "s" }
+                )
+            }
+            Self::AdversarialStageParamType { prompt, stage, target, index, expected, got } => {
+                format!(
+                    "adversarial `{stage}` stage `{target}` in prompt `{prompt}` parameter #{index} has type `{got}`, expected `{expected}`"
+                )
+            }
+            Self::AdversarialStageReturnType { prompt, stage, target, expected, got } => {
+                format!(
+                    "adversarial `{stage}` stage `{target}` in prompt `{prompt}` returns `{got}`, expected `{expected}` to match the outer prompt's return type"
+                )
+            }
+            Self::AdversarialAdjudicatorMissingContradictionField { prompt, target, got } => {
+                format!(
+                    "adversarial `adjudicate` stage `{target}` in prompt `{prompt}` returns `{got}`, which is not a struct with a `contradiction: Bool` field"
+                )
+            }
         }
     }
 
@@ -456,6 +535,39 @@ impl TypeErrorKind {
             ),
             Self::EnsembleDuplicateModel { .. } => Some(
                 "list each ensemble model at most once; dispatch to distinct providers to get independent votes"
+                    .into(),
+            ),
+            Self::AdversarialStageNotPrompt { target, .. } => Some(format!(
+                "declare `{target}` as a `prompt ...` with the right signature, or point the stage at an existing prompt"
+            )),
+            Self::AdversarialStageArity { stage, expected, .. } => Some(match stage.as_str() {
+                "propose" => format!(
+                    "the `propose` stage runs first; it must accept the same {expected} parameter(s) as the outer prompt"
+                ),
+                "challenge" => "the `challenge` stage must accept exactly 1 parameter: the proposer's return value".into(),
+                "adjudicate" => "the `adjudicate` stage must accept exactly 2 parameters: the proposer's return value followed by the challenger's return value".into(),
+                _ => format!("change the stage's arity to {expected}"),
+            }),
+            Self::AdversarialStageParamType { stage, index, expected, .. } => Some(match stage.as_str() {
+                "propose" => format!(
+                    "parameter #{index} must match the outer prompt's parameter at the same position; expected `{expected}`"
+                ),
+                "challenge" => format!(
+                    "the `challenge` stage's parameter must accept the proposer's return type `{expected}`"
+                ),
+                "adjudicate" if *index == 0 => format!(
+                    "the `adjudicate` stage's first parameter must accept the proposer's return type `{expected}`"
+                ),
+                "adjudicate" => format!(
+                    "the `adjudicate` stage's second parameter must accept the challenger's return type `{expected}`"
+                ),
+                _ => format!("change the parameter type to `{expected}`"),
+            }),
+            Self::AdversarialStageReturnType { expected, .. } => Some(format!(
+                "change the `adjudicate` stage's return type to `{expected}`, or update the outer prompt's return type to match"
+            )),
+            Self::AdversarialAdjudicatorMissingContradictionField { .. } => Some(
+                "declare a `type` with at least `contradiction: Bool` and return it from the adjudicator — the runtime reads this field to decide whether to emit an adversarial contradiction trace event"
                     .into(),
             ),
         }
