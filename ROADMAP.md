@@ -534,6 +534,331 @@ Streaming is a latency class. `latency: streaming` is a dimension value, not a s
 - [ ] Property-based bypass tests proving the dimensional effect checker cannot be circumvented via FFI, generics, or indirect calls. `proptest`-driven.
 - [ ] Written effect-system specification (20–40 pages): dimensional syntax, composition algebra, typing rules, worked examples, comparison to Koka/Eff/Frank/Haskell/Rust. Lives in `docs/effects-spec.md`.
 
+#### Slice 20h — Typed model substrate (~6 weeks)
+
+The conceptual leap: Corvid doesn't just call LLMs — it provides a **typed compute substrate for AI models** with compile-time guarantees. Models stop being black boxes you call and become typed resources with declared capabilities, composable pipelines, and statistical guarantees the compiler reasons about.
+
+**No other language or framework has any of this.** LangChain has manual fallback chains. OpenRouter has cloud routing. Portkey has a gateway. None of them treat the LLM ecosystem as a typed substrate with regulatory, cost, capability, and quality guarantees proven at the type level.
+
+**Prerequisites:** dimensional effects (20a ✅), grounding (20b ✅), evals (20c ✅), cost analysis (20d ✅), confidence dimension (20e), streaming (20f), bypass tests (20g).
+
+##### Model catalog declarations
+
+Projects declare the models available to them. Each model carries its dimensional profile — cost, capability, latency, jurisdiction, specialty, privacy tier, version.
+
+```
+model haiku:
+    cost_per_token_in: $0.00000025
+    cost_per_token_out: $0.00000125
+    capability: basic
+    latency: fast
+    max_context: 200000
+    jurisdiction: us_hosted
+    privacy_tier: standard
+    version: "2024-10-22"
+
+model sonnet:
+    cost_per_token_in: $0.000003
+    capability: standard
+
+model opus:
+    cost_per_token_in: $0.000015
+    capability: expert
+
+model deepseek_math:
+    specialty: math
+    capability: standard
+
+model gpt_oss_dutch:
+    specialty: language(dutch)
+    cost_per_token_in: $0.0000003
+
+model claude_hipaa:
+    jurisdiction: us_hipaa_bva
+    compliance: [hipaa]
+    privacy_tier: strict
+
+model claude_eu:
+    jurisdiction: eu_hosted
+    compliance: [gdpr]
+```
+
+##### Capability-based routing
+
+Prompts declare requirements, not models. The runtime picks the cheapest model that qualifies.
+
+```
+prompt classify(t: Ticket) -> Category:
+    requires: basic
+    latency: fast
+    """Classify this ticket."""
+    # runtime picks haiku
+
+prompt legal_analysis(case: Case) -> Analysis:
+    requires: expert
+    """Analyze {case} for precedent."""
+    # runtime picks opus
+```
+
+Capability composes via `Max` through the call graph — an agent calling three prompts with basic/standard/expert has composed requirement `expert`. The compiler proves it. `@budget` uses real per-model costs from the catalog.
+
+##### Content-aware routing (pattern matching on input)
+
+```
+prompt answer(question: String) -> Answer:
+    route:
+        domain(question) == math        -> deepseek_math
+        language(question) == dutch     -> gpt_oss_dutch
+        language(question) == japanese  -> sakana_jp
+        length(question) > 50000        -> claude_long
+        question is Image               -> gpt4_vision
+        _                               -> gpt4
+    """Answer {question}."""
+```
+
+`domain(x)`, `language(x)`, `length(x)` are built-in content predicates. Custom ones are declared as `classifier` prompts (below). The compiler type-checks every arm and requires exhaustive coverage (`_` default unless proven exhaustive).
+
+##### Classifier prompts as first-class
+
+```
+classifier detect_domain(text: String) -> Domain:
+    requires: basic
+    latency: instant
+    cacheable: true
+    """Classify: math | code | legal | medical | creative | general"""
+```
+
+The `classifier` keyword marks a prompt as a routing prerequisite. Cost analysis includes classifier overhead automatically. Results are cached by input fingerprint.
+
+##### Progressive refinement chains
+
+Cheap model first. Each fallback tier **refines** the previous tier's output rather than regenerating from scratch.
+
+```
+prompt classify(t: Ticket) -> Category:
+    try haiku: confidence >= 0.90
+    else sonnet: confidence >= 0.85 refines previous
+    else opus: confidence >= 0.80 refines previous
+    else human: fallback approval
+    """Classify this ticket."""
+```
+
+The compiler proves the chain terminates. `@budget` uses the worst-case (all tiers ran) and best-case (first tier succeeded) bounds.
+
+##### Ensemble voting
+
+```
+prompt approve_large_refund(amount: Float) -> Bool:
+    ensemble 3 of [haiku, sonnet, opus]
+    agree_at 0.66
+    escalate_to human
+    """Should we approve a ${amount} refund?"""
+```
+
+Three models run in parallel. Prompt succeeds only if ≥2 of 3 agree. If consensus fails, escalate to human. The compiler enforces the voting threshold. Disagreements are traced for debugging.
+
+##### Confidence-weighted ensemble
+
+```
+    ensemble [haiku, sonnet, opus]
+    weighted_by accuracy_history
+```
+
+Votes weighted by each model's historical accuracy on this kind of prompt (from eval data). Dynamic weights update as eval data accumulates.
+
+##### Failure-correlated escalation
+
+```
+prompt decide(x: Input) -> Decision:
+    ensemble [haiku, sonnet]
+    on disagreement escalate_to opus
+    on opus_disagrees escalate_to human
+```
+
+Disagreement between models is itself a confidence signal — escalate, don't pick a winner arbitrarily.
+
+##### Adversarial validation
+
+Generator + critic pattern as a language construct:
+
+```
+prompt legal_summary(case: Case) -> Summary:
+    generator: opus
+    validator: sonnet acts_as critic
+    retries: 3
+    """Summarize {case}."""
+```
+
+Opus drafts. Sonnet critiques. If Sonnet finds flaws, Opus retries with Sonnet's feedback. Compiler bounds total cost at `3 × (generator + critic)`.
+
+##### Jurisdiction and compliance as compile-time constraints
+
+```
+@jurisdiction(EU)
+@compliance(gdpr, hipaa)
+agent patient_triage(case: Case) -> Triage:
+    decision = medical_llm(case)
+    return decision
+```
+
+The compiler proves every model on every route for every call satisfies the declared jurisdiction and compliance set. A US-hosted model in the call graph → compile error. **Regulatory compliance at the type level.**
+
+##### Privacy-level routing
+
+```
+prompt summarize(doc: String) -> String:
+    privacy: high              # contains PII
+    route:
+        privacy_tier(model) == strict -> claude_hipaa
+        _                             -> gpt4
+```
+
+Models declare their data-retention policies. Prompts declare their data sensitivity. Compiler proves PII never flows to models without appropriate guarantees.
+
+##### Fingerprint-based caching
+
+```
+prompt classify(t: Ticket) -> Category:
+    cacheable: true
+    """Classify this ticket."""
+```
+
+Runtime caches by `(model, prompt_template, rendered_args)` fingerprint. Cache hits are recorded in the execution trace as normal responses, so replay-determinism is preserved. The compiler knows which prompts are cacheable (pure function of inputs) vs. non-cacheable (use time, randomness, external state).
+
+##### Automatic prompt compression
+
+Routing-time operation that handles context overflow:
+
+```
+prompt answer(doc: String, question: String) -> Answer:
+    route:
+        length(doc) > 180000 -> claude_1m
+        length(doc) > 8000   -> gpt4_with_compression(doc)
+        _                    -> haiku
+```
+
+`gpt4_with_compression(doc)` runs a cheap compression classifier to summarize `doc`, then calls GPT-4 with the summary. The compiler knows compression adds cost + latency + a confidence hit. `:cost` shows the compression overhead in the tree.
+
+##### Model versioning with replay safety
+
+```
+model gpt4:
+    version: "2024-04-09"
+    deprecates_after: "2026-12-31"
+```
+
+Replays pin to the exact model version recorded. Deprecated version in a replay → compiler warning. Removed version → compile error. **Production migrations become measurable, explicit events, not silent drifts.**
+
+##### Output-format routing
+
+```
+prompt extract(doc: String) -> JsonOutput:
+    route:
+        strict_json(model) -> gpt4_json_mode
+        _                  -> gpt4_with_validator
+```
+
+`gpt4_with_validator` runs the model, then validates format. If invalid, retries with stronger format constraints. The compiler knows which models natively enforce output format.
+
+##### A/B testing as syntax
+
+```
+prompt summarize(doc: String) -> String:
+    route:
+        rollout(90%) -> sonnet_current
+        rollout(10%) -> sonnet_experimental
+```
+
+Weighted routing for staged rollouts. Per-arm eval metrics track whether the experimental arm meets quality bars. Cutover is a percentage change.
+
+##### Replay-deterministic classification
+
+Classifier calls are traced. Replays use the recorded classification, not a fresh one. Adaptive routing + deterministic replay co-exist — otherwise debugging would be impossible.
+
+##### Retrospective model migration
+
+```
+>>> corvid eval --swap-model=sonnet production-run-2026-04-17.jsonl
+
+  prompt classify:       was haiku  (98% correct on 1,247 runs)
+                         sonnet run: 99% correct  (+1%, +$4.80 total)
+                         recommendation: keep haiku
+
+  prompt legal_analysis: was sonnet  (72% correct on 143 runs)
+                         opus run:    91% correct  (+19%, +$42 total)
+                         recommendation: upgrade to opus
+```
+
+Model migration becomes a statistically grounded decision, not a gut call.
+
+##### Routing quality reports
+
+```
+>>> corvid routing-report answer
+
+prompt `answer`:
+  domain(q) == math        → deepseek_math   (99.2% correct, 1,240 runs)  ✓ keep
+  language(q) == dutch     → gpt_oss_dutch   (87.1% correct, 89 runs)     ⚠ consider gpt4
+  length(q) > 50000        → claude_long     (94.0% correct, 412 runs)   ✓ keep
+  _                        → gpt4            (96.8% correct, 8,430 runs) ✓ keep
+
+  recommendation: gpt4 scores 95.4% on dutch (n=214) in parallel A/B.
+                  consider: language(q) == dutch → gpt4 (+accuracy, +$0.002/call)
+```
+
+The language tracks its own routing quality and suggests improvements.
+
+##### Cost-quality frontier visualization
+
+```
+>>> corvid cost-frontier answer
+
+               quality (% eval passing)
+                 100 |          ◆ all_opus ($0.47/call)
+                     |       ◆ progressive_refinement ($0.12/call)
+                  90 |   ◆ ensemble_3 ($0.09/call)
+                     | ◆ current_config ($0.031/call)
+                  80 |
+                     | ◆ all_haiku ($0.002/call)
+                  70 |________________________________________________
+                     0.001      0.01       0.1         1.0     cost ($)
+
+  Pareto-optimal: current_config, progressive_refinement, all_opus
+  Dominated:      ensemble_3 (worse quality AND higher cost)
+```
+
+Pareto frontier computed from eval data. Shows which configurations dominate and which are wasting money. **Model selection becomes design-space exploration.**
+
+##### Bring-your-own model with sandboxing
+
+Users register local models (Ollama, vLLM, llama.cpp) with declared capabilities. The language provides the same dimensional guarantees — if the local model lies about its capability, eval data catches it.
+
+##### Slice 20h deliverables
+
+- [ ] `model Name:` catalog declaration syntax (AST + parser + resolver + typechecker + IR)
+- [ ] `DeclKind::Model` in the scope table; model references in effect rows and routing tables
+- [ ] `requires:` / `latency:` / `specialty:` / `privacy:` annotations on prompts
+- [ ] `route:` pattern-match routing with content predicates (`domain`, `language`, `length`, type checks)
+- [ ] `classifier` prompt variant (routing prerequisite)
+- [ ] `try ... else ... else` progressive refinement chains
+- [ ] `ensemble N of [...] agree_at P` syntax
+- [ ] `weighted_by accuracy_history` + `on disagreement escalate_to X`
+- [ ] `generator: X validator: Y acts_as critic` adversarial validation
+- [ ] `@jurisdiction`, `@compliance`, `privacy_tier` as dimensions
+- [ ] `cacheable: true` + fingerprint cache in interpreter + replay integration
+- [ ] `rollout(P%)` weighted routing for A/B tests
+- [ ] `version: "..."` model versioning + replay-pinned safety
+- [ ] Output-format-aware routing (`strict_json`, `markdown_strict`, etc.)
+- [ ] Runtime adaptive selection + confidence-driven auto-escalation (builds on 20e gate)
+- [ ] `corvid eval --swap-model` retrospective migration tooling
+- [ ] `corvid routing-report` quality reports from eval data
+- [ ] `corvid cost-frontier` Pareto visualization
+- [ ] Bring-your-own-model sandboxing (Ollama/vLLM/llama.cpp adapter pattern)
+
+**Non-scope for this slice:** training/fine-tuning infrastructure (separate phase). Multi-modal generation (image/audio output — future). Agent-to-agent protocols (future). Model marketplace / sharing (ecosystem concern, not language).
+
+**Why 20h closes the moat phase:** dimensional effects + grounding + evals + costs + confidence + streaming + bypass tests + typed model substrate. The full story of what Corvid does that no other language can.
+
 **Non-scope:** Runtime eval tooling CLI (Phase 27). RAG runtime infrastructure (Phase 32's `std.rag`). Custom effect annotations on Python FFI imports richer than `effects: <name>` (Phase 30 ships basic; richer stays here).
 
 ### Phase 21 — Replay (~4–5 weeks) — **THE FLAGSHIP WOW**
