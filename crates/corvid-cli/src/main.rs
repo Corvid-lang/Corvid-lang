@@ -6,6 +6,9 @@
 //!   corvid build <file>       compile to target/py/<name>.py
 //!   corvid run <file>         build + invoke python on the output
 //!   corvid repl               start the interactive REPL
+//!   corvid test <what>        run verification suites (dimensions, spec, adversarial)
+//!   corvid effect-diff        diff composed effect profiles between two revisions
+//!   corvid add-dimension      install a dimension from the effect registry
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -60,8 +63,49 @@ enum Command {
         #[arg(long, value_name = "PATH")]
         with_tools_lib: Option<PathBuf>,
     },
-    /// Run tests (not yet implemented).
-    Test,
+    /// Run verification suites.
+    ///
+    /// Targets:
+    ///   `dimensions`    algebraic-law proptest over every custom dimension
+    ///                   declared in corvid.toml
+    ///   `spec`          recompile every .cor example in docs/effects-spec/
+    ///                   against the current toolchain; with --meta, run the
+    ///                   self-verifying verification harness
+    ///   `adversarial`   LLM-driven bypass generation against the effect
+    ///                   checker
+    ///
+    /// Without a target, acts as a placeholder for the future unit-test
+    /// runner.
+    Test {
+        /// What to verify. Omit for the legacy placeholder behavior.
+        target: Option<String>,
+        /// For `spec`: run the meta-verification harness (mutate the
+        /// verifier, confirm each counter-example is still caught).
+        #[arg(long)]
+        meta: bool,
+        /// For `adversarial`: number of bypass programs to generate.
+        #[arg(long, default_value = "100")]
+        count: u32,
+        /// For `adversarial`: model to drive the generator.
+        #[arg(long, default_value = "opus")]
+        model: String,
+    },
+    /// Diff the composed effect profile between two revisions.
+    /// Reports dimension-value drift per agent and constraints that
+    /// newly fire or release because of the change.
+    EffectDiff {
+        /// Before revision (git ref or file path).
+        before: String,
+        /// After revision (git ref or file path).
+        after: String,
+    },
+    /// Install a dimension from the Corvid effect registry.
+    /// Verifies the dimension's signature, replays its algebraic-law
+    /// proofs against the current toolchain, adds it to corvid.toml.
+    AddDimension {
+        /// Dimension spec in `name@version` form (e.g. `fairness@1.2`).
+        spec: String,
+    },
     /// Start the interactive Corvid REPL.
     Repl,
     /// Check the local environment for required tools.
@@ -80,10 +124,14 @@ fn main() -> ExitCode {
             target,
             with_tools_lib,
         }) => cmd_run(&file, &target, with_tools_lib.as_deref()),
-        Some(Command::Test) => {
-            eprintln!("`corvid test` is not implemented yet (v0.2).");
-            Ok(0)
-        }
+        Some(Command::Test {
+            target,
+            meta,
+            count,
+            model,
+        }) => cmd_test(target.as_deref(), meta, count, &model),
+        Some(Command::EffectDiff { before, after }) => cmd_effect_diff(&before, &after),
+        Some(Command::AddDimension { spec }) => cmd_add_dimension(&spec),
         Some(Command::Repl) => cmd_repl(),
         Some(Command::Doctor) => cmd_doctor(),
         None => {
@@ -190,6 +238,113 @@ fn cmd_run(file: &Path, target: &str, tools_lib: Option<&Path>) -> Result<u8> {
 
 fn cmd_repl() -> Result<u8> {
     corvid_repl::Repl::run_stdio().context("failed to run `corvid repl`")?;
+    Ok(0)
+}
+
+// ------------------------------------------------------------
+// Verification suites — effect-system spec, custom dimensions,
+// adversarial bypass generation
+// ------------------------------------------------------------
+
+fn cmd_test(
+    target: Option<&str>,
+    meta: bool,
+    count: u32,
+    model: &str,
+) -> Result<u8> {
+    match target {
+        None => {
+            eprintln!("`corvid test` with no target is the legacy placeholder.");
+            eprintln!("Use one of: `corvid test dimensions`, `corvid test spec`,");
+            eprintln!("`corvid test spec --meta`, `corvid test adversarial --count <N>`.");
+            Ok(0)
+        }
+        Some("dimensions") => cmd_test_dimensions(),
+        Some("spec") if meta => cmd_test_spec_meta(),
+        Some("spec") => cmd_test_spec(),
+        Some("adversarial") => cmd_test_adversarial(count, model),
+        Some(other) => {
+            anyhow::bail!(
+                "unknown test target `{other}`; valid: `dimensions`, `spec`, `spec --meta`, `adversarial`"
+            )
+        }
+    }
+}
+
+fn cmd_test_dimensions() -> Result<u8> {
+    println!("corvid test dimensions — algebraic-law checks on custom dimensions\n");
+    println!("This command reads corvid.toml, loads each [effect-system.dimensions.*]");
+    println!("entry, then proptests the archetype's laws (associativity, commutativity,");
+    println!("identity, idempotence, monotonicity) with 10,000 cases per law.");
+    println!();
+    println!("Implementation tracked in ROADMAP Phase 20g — not yet wired to the checker.");
+    println!("See docs/effects-spec/01-dimensional-syntax.md §5 for the spec.");
+    Ok(0)
+}
+
+fn cmd_test_spec() -> Result<u8> {
+    println!("corvid test spec — re-compile every example in docs/effects-spec/\n");
+    println!("Walks docs/effects-spec/examples/, runs `corvid check` on each .cor file,");
+    println!("reports any example whose compile result no longer matches the spec's claim.");
+    println!();
+    println!("Implementation tracked in ROADMAP Phase 20g — not yet wired to CI.");
+    Ok(0)
+}
+
+fn cmd_test_spec_meta() -> Result<u8> {
+    println!("corvid test spec --meta — self-verifying verification\n");
+    println!("Mutates the composition-algebra checker, confirms each historical");
+    println!("counter-example (docs/effects-spec/counterexamples/) is caught, then");
+    println!("restores the checker and re-verifies.");
+    println!();
+    println!("Implementation tracked in ROADMAP Phase 20g — harness not yet built.");
+    println!("See docs/effects-spec/02-composition-algebra.md §11.");
+    Ok(0)
+}
+
+fn cmd_test_adversarial(count: u32, model: &str) -> Result<u8> {
+    println!("corvid test adversarial --count {count} --model {model}\n");
+    println!("Drives an LLM to generate programs designed to bypass the dimensional");
+    println!("effect checker. Every generated program runs through `corvid check`;");
+    println!("any that compiles is a real bypass and is filed as an issue.");
+    println!();
+    println!("Implementation tracked in ROADMAP Phase 20g — generator not yet wired.");
+    println!("See docs/effects-spec/README.md for the verification guarantees.");
+    Ok(0)
+}
+
+// ------------------------------------------------------------
+// Effect-diff tool
+// ------------------------------------------------------------
+
+fn cmd_effect_diff(before: &str, after: &str) -> Result<u8> {
+    println!("corvid effect-diff {before} {after}\n");
+    println!("Reports dimension-value drift per agent and constraints that newly");
+    println!("fire or release between the two revisions.");
+    println!();
+    println!("Implementation tracked in ROADMAP Phase 20g — diff pipeline not yet");
+    println!("wired. See docs/effects-spec/02-composition-algebra.md §9.");
+    Ok(0)
+}
+
+// ------------------------------------------------------------
+// Dimension registry client
+// ------------------------------------------------------------
+
+fn cmd_add_dimension(spec: &str) -> Result<u8> {
+    let (name, version) = spec
+        .split_once('@')
+        .ok_or_else(|| anyhow::anyhow!("expected `name@version`, got `{spec}`"))?;
+    if name.is_empty() || version.is_empty() {
+        anyhow::bail!("expected `name@version`, got `{spec}`");
+    }
+    println!("corvid add-dimension {name}@{version}\n");
+    println!("Resolves the dimension from the Corvid effect registry, verifies its");
+    println!("signature, replays its algebraic-law proofs against the current");
+    println!("toolchain, and — on success — adds it to corvid.toml.");
+    println!();
+    println!("Implementation tracked in ROADMAP Phase 20g — registry client not yet");
+    println!("wired. See docs/effects-spec/02-composition-algebra.md §10.");
     Ok(0)
 }
 

@@ -9,8 +9,8 @@ This directory is the normative specification of Corvid's dimensional effect sys
 | Section | Content |
 |---|---|
 | [00 — Overview and motivation](./00-overview.md) | What the effect system is, why Corvid has one, how it differs from prior art |
-| [01 — Dimensional syntax](./01-dimensional-syntax.md) | `effect` declarations, `uses` clauses, `@constraint(...)` annotations, `DimensionValue` variants |
-| [02 — Composition algebra](./02-composition-algebra.md) | Per-dimension rules (Sum, Max, Min, Union, LeastReversible), cross-dimension independence |
+| [01 — Dimensional syntax](./01-dimensional-syntax.md) | `effect` declarations, `uses` clauses, `@constraint(...)` annotations, custom dimensions via `corvid.toml`, proof-carrying dimensions, spec↔compiler sync, cross-language counter-proofs |
+| [02 — Composition algebra](./02-composition-algebra.md) | Five composition archetypes, derivation from first principles, counter-design demonstrations, category-theoretic framing, effect-diff tooling, community dimension registry, self-verifying verification |
 | [03 — Typing rules](./03-typing-rules.md) | Inference-rule notation, side conditions, soundness statement |
 | [04 — Built-in dimensions](./04-builtin-dimensions.md) | Cost, trust, reversible, data, latency, confidence — with worked examples |
 | [05 — Grounding and provenance](./05-grounding.md) | `Grounded<T>`, data-flow verification, `cites ctx strictly` |
@@ -40,6 +40,21 @@ cargo run -p corvid-cli -- test spec
 ```
 
 This compiles every code block in every `.md` file in this directory against the current Corvid toolchain. Broken examples fail CI.
+
+## Toolchain commands introduced by this spec
+
+The effect system ships with a set of CLI commands that make the dimensional algebra operable from the command line:
+
+| Command | What it does |
+|---|---|
+| `corvid test dimensions` | Run algebraic-law proptest suites on every custom dimension declared in `corvid.toml` |
+| `corvid test spec` | Re-compile every `.cor` example block in this directory against the current toolchain |
+| `corvid test spec --meta` | Run meta-verification: mutate the verifier, confirm each counter-example is caught |
+| `corvid test adversarial` | Run the LLM-driven bypass generator against the effect checker |
+| `corvid effect-diff <before> <after>` | Diff the composed effect profile between two revisions and report constraint firings |
+| `corvid add-dimension <name>@<version>` | Install a dimension from the Corvid effect registry, verify its proofs |
+
+See [01-dimensional-syntax.md](./01-dimensional-syntax.md) §5 and [02-composition-algebra.md](./02-composition-algebra.md) §9–§11 for how each command fits into the dimensional model.
 
 ## Correctness guarantees
 

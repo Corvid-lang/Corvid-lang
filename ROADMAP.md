@@ -546,7 +546,9 @@ Streaming in Corvid isn't just async iteration — streams are **first-class par
 
 The moat-closer. Most languages ship a spec. Some add a proptest suite. None do all five of what 20g ships. When 20g lands, the effect system's correctness is provably stronger than any existing language's type system has ever been.
 
-**The five inventions:**
+**The five verification inventions** (described below) ship alongside **five spec-layer inventions** — custom dimension authoring, proof-carrying dimensions, spec↔compiler sync, community dimension registry, self-verifying verification — documented in [docs/effects-spec/](../docs/effects-spec/) sections 01 and 02 and surfaced in the toolchain as `corvid test dimensions`, `corvid effect-diff`, and `corvid add-dimension`.
+
+**The five verification inventions:**
 
 ##### 1. Cross-tier differential verification
 
@@ -641,19 +643,80 @@ Every accepted bypass becomes a permanent entry in the counterexample museum. Fu
 - [ ] CI rejects any change that causes a historical counterexample to compile again
 - [ ] Public bounty page with submission guidelines and disclosed fixes
 
+##### 6. Custom dimension authoring
+
+Users extend the effect system without touching compiler source. A `corvid.toml` entry like:
+
+```
+[effect-system.dimensions.freshness]
+composition = "Max"
+type = "timestamp"
+default = "0"
+semantics = "maximum age of data in a call chain"
+```
+
+is loaded by the compiler at build time and generates a new row in the dimension table. The composition rule must be one of the five archetypes (`Sum`, `Max`, `Min`, `Union`, `LeastReversible`). No other language has a table-driven extensible effect algebra.
+
+- [ ] Parser for `[effect-system.dimensions.*]` sections in corvid.toml
+- [ ] Dimension table loaded at compile-time; applied to the checker as a first-class row
+- [ ] Error messages reference the user-declared `semantics` string
+- [ ] Dimension registry file format (name, version, archetype, type, default, proof pointer)
+
+##### 7. Proof-carrying dimensions
+
+Every custom dimension must declare the archetype's algebraic laws — associativity, commutativity, identity, idempotence (semilattices), monotonicity. `corvid test dimensions` runs these as proptest invariants; optionally replays a machine-checkable proof (Lean/Coq). A dimension that fails a law cannot ship. The registry refuses to publish it; the compiler refuses to load it.
+
+- [ ] `corvid test dimensions` CLI command (stub wired — implementation in 20g)
+- [ ] Law-check proptest suites per archetype, driven by the archetype tag
+- [ ] Optional Lean/Coq proof replay hook for dimensions that ship one
+- [ ] CI gate: any custom dimension whose laws fail blocks publication
+
+##### 8. Spec↔compiler bidirectional sync
+
+Every `effect` declaration, `uses` clause, and constraint example in [docs/effects-spec/](../docs/effects-spec/) is parsed by the actual Corvid parser. Every composition rule table in the spec is evaluated by the actual type checker. The spec and the compiler cannot drift — every commit either ships matching spec+compiler or fails CI.
+
+- [ ] Spec examples extracted into `docs/effects-spec/examples/` as real `.cor` files
+- [ ] `corvid test spec` walks examples, runs `corvid check` on each, compares outcome to the spec's declared expectation
+- [ ] Cross-links from spec rules → proptest files → differential-verify tests
+- [ ] CI gate: any example whose behavior diverges from the spec fails the build
+
+##### 9. Community dimension registry + `corvid effect-diff`
+
+Other languages have package registries for code. Corvid has one for effect *dimensions*. `corvid add-dimension fairness@1.2` resolves a registered dimension, verifies its signature, replays its proofs against the current toolchain, and adds it to `corvid.toml`. Companion tool `corvid effect-diff <before> <after>` reports exactly which agents' composed profiles changed and which constraints newly fire or release — effect refactoring becomes safe because the diff tool surfaces every consequence.
+
+- [ ] `corvid add-dimension` CLI command (stub wired — implementation in 20g)
+- [ ] Signed dimension artifacts (declaration + proof + regression corpus)
+- [ ] Registry host at `effect.corvid-lang.org` (placeholder — can ship as a GitHub-hosted registry initially)
+- [ ] `corvid effect-diff` CLI command (stub wired — implementation in 20g)
+- [ ] Diff engine compares per-agent composed profiles, reports firing/released constraints
+
+##### 10. Self-verifying verification
+
+The spec documents its own verification mechanism, which in turn verifies the spec. `corvid test spec --meta` mutates the composition-algebra checker in known-broken ways and confirms each historical counter-example (in `docs/effects-spec/counterexamples/`) is still caught by at least one mutation. This proves the verifier is both necessary (every mutation breaks at least one property) and sufficient (all counterexamples caught on restoration) — the deepest soundness claim any effect-system specification has ever made.
+
+- [ ] Meta-verification harness: mutate the checker, run the counter-example corpus
+- [ ] Counter-example corpus: `sum_with_max.cor`, `max_with_min.cor`, `and_with_or.cor`, `union_with_intersection.cor`, `min_with_mean.cor`
+- [ ] CI gate: meta-test fails if any counter-example escapes any mutation
+
 ##### Spec document scope
 
-Alongside the five inventions, the core written specification (20–40 pages, embedded in the literate project):
+Alongside the ten inventions, the core written specification (20–40 pages, embedded in the literate project):
 
-- [ ] Dimensional syntax: `effect Name:`, `uses` clauses, `@constraint(...)` annotations, `DimensionValue` variants (`Bool`, `Name`, `Cost`, `Number`, `ConfidenceGated`, `BackpressurePolicy`)
-- [ ] Composition algebra: per-dimension rules (Sum, Max, Min, Union, LeastReversible), cross-dimension independence proofs
-- [ ] Typing rules in inference-rule notation with side conditions
-- [ ] Worked examples across all six built-in dimensions (cost, trust, reversible, data, latency, confidence) and user-defined custom effects
-- [ ] Interaction with FFI boundaries, generics, streaming, progressive types, multi-modal dispatch
-- [ ] Soundness statement: "If a program compiles with `@constraint(C)`, then every execution at every tier satisfies C"
-- [ ] Related work section: Koka row polymorphism, Eff handlers, Frank abilities, Haskell monad transformers + polysemy + fused-effects, Rust `unsafe` blocks + `Send`/`Sync`, capability-based security, linear types, session types. Each compared dimension by dimension.
+- [x] Section 01: Dimensional syntax — `effect Name:`, `uses` clauses, `@constraint(...)` annotations, `DimensionValue` variants, custom dimensions via corvid.toml, proof obligations, spec↔compiler sync, cross-language counter-proofs
+- [x] Section 02: Composition algebra — five archetypes, derivation from first principles, counter-design demonstrations, category-theoretic framing, self-verifying verification
+- [ ] Section 03: Typing rules in inference-rule notation with side conditions
+- [ ] Section 04: Worked examples across all six built-in dimensions (cost, trust, reversible, data, latency, confidence) and user-defined custom effects
+- [ ] Section 05: Grounding and provenance (`Grounded<T>`, `cites ctx strictly`)
+- [ ] Section 06: Confidence-gated trust and `@min_confidence`
+- [ ] Section 07: Cost analysis and multi-dimensional `@budget`
+- [ ] Section 08: Streaming effects, `Stream<T>`, backpressure
+- [ ] Section 09: Typed model substrate (capability routing, content-aware dispatch)
+- [ ] Section 10: Interactions with FFI, generics, async
+- [ ] Section 11: Related work — Koka row polymorphism, Eff handlers, Frank abilities, Haskell monad transformers + polysemy + fused-effects, Rust `unsafe` blocks + `Send`/`Sync`, capability-based security, linear types, session types. Each compared dimension by dimension.
+- [ ] Section 12: Verification methodology (cross-tier differential, adversarial LLM generation, preserved-semantics fuzzing, bounty-fed regression corpus, self-verifying verification)
+- [ ] `docs/effects-spec/counterexamples/` — one `.cor` per historical bypass
 
-**Why 4 weeks, not 2:** five inventions, one of which (differential verification) requires non-trivial infrastructure across four execution tiers; another (adversarial generation) requires prompt engineering + a regression-corpus growth system; another (literate executable spec) requires a static-site pipeline. The spec prose alone could be 2 weeks. The infrastructure is the other 2.
+**Why 4 weeks, not 2:** ten inventions. Differential verification requires infrastructure across four execution tiers. Adversarial generation requires prompt engineering + regression-corpus growth. Literate executable spec requires a static-site pipeline. Custom dimensions require a table-driven checker refactor. Proof-carrying dimensions require a proptest harness + optional Lean/Coq replay. Registry requires a signed artifact format + host. Meta-verification requires a checker mutator + counter-example harness. The prose alone is 2 weeks. The infrastructure is the other 2.
 
 #### Slice 20h — Typed model substrate (~6 weeks)
 
