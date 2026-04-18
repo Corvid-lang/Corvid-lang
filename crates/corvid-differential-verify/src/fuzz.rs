@@ -1,72 +1,20 @@
-use anyhow::{bail, Result};
+use anyhow::{anyhow, bail, Result};
+use corvid_ast::{BackpressurePolicy, Decl, DimensionValue};
 use corvid_resolve::resolve;
 use corvid_syntax::{lex, parse_file};
 use corvid_types::{analyze_effects, EffectRegistry};
+use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RewriteRule {
-    ExtractReturnValue,
-    InlineReturnValue,
-    RenameLocalXToTmp,
-    RenamePromptParam,
-    ReorderEffectDecls,
-    ReorderPromptDecls,
-    ReorderTypeDecls,
-    DuplicateBlankLine,
-    RemoveBlankLine,
-    SplitConstBinding,
-    InlineConstBinding,
-    ExtractCondition,
-    InlineCondition,
-    RenameHelperAgent,
-    SwapIndependentAgents,
-}
-
-pub fn rewrite_rules() -> &'static [RewriteRule] {
-    &[
-        RewriteRule::ExtractReturnValue,
-        RewriteRule::InlineReturnValue,
-        RewriteRule::RenameLocalXToTmp,
-        RewriteRule::RenamePromptParam,
-        RewriteRule::ReorderEffectDecls,
-        RewriteRule::ReorderPromptDecls,
-        RewriteRule::ReorderTypeDecls,
-        RewriteRule::DuplicateBlankLine,
-        RewriteRule::RemoveBlankLine,
-        RewriteRule::SplitConstBinding,
-        RewriteRule::InlineConstBinding,
-        RewriteRule::ExtractCondition,
-        RewriteRule::InlineCondition,
-        RewriteRule::RenameHelperAgent,
-        RewriteRule::SwapIndependentAgents,
-    ]
-}
-
-pub fn apply_rewrite(source: &str, rule: RewriteRule) -> Result<String> {
-    let rewritten = match rule {
-        RewriteRule::ExtractReturnValue => source.replace(
-            "return answer()",
-            "value = answer()\n    return value",
-        ),
-        RewriteRule::InlineReturnValue => source.replace(
-            "value = answer()\n    return value",
-            "return answer()",
-        ),
-        RewriteRule::RenameLocalXToTmp => source.replace("x =", "tmp =").replace("return x", "return tmp"),
-        RewriteRule::RenamePromptParam => source.replace("ctx: String", "input: String").replace("{ctx}", "{input}"),
-        RewriteRule::ReorderEffectDecls => reorder_named_blocks(source, "effect ")?,
-        RewriteRule::ReorderPromptDecls => reorder_named_blocks(source, "prompt ")?,
-        RewriteRule::ReorderTypeDecls => reorder_named_blocks(source, "type ")?,
-        RewriteRule::DuplicateBlankLine => source.replace("\n\n", "\n\n\n"),
-        RewriteRule::RemoveBlankLine => source.replacen("\n\n", "\n", 1),
-        RewriteRule::SplitConstBinding => source.replace("return 7", "x = 7\n    return x"),
-        RewriteRule::InlineConstBinding => source.replace("x = 7\n    return x", "return 7"),
-        RewriteRule::ExtractCondition => source.replace("if true:", "cond = true\n    if cond:"),
-        RewriteRule::InlineCondition => source.replace("cond = true\n    if cond:", "if true:"),
-        RewriteRule::RenameHelperAgent => source.replace("helper()", "assist()").replace("agent helper", "agent assist"),
-        RewriteRule::SwapIndependentAgents => reorder_named_blocks(source, "agent ")?,
-    };
-    Ok(rewritten)
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CanonicalSummary {
+    agent_name: String,
+    declared_effects: Vec<String>,
+    inferred_effects: Vec<String>,
+    composed_effects: Vec<String>,
+    dimensions: BTreeMap<String, String>,
+    violations: Vec<String>,
 }
 
 pub fn assert_effect_equivalence(original: &str, rewritten: &str) -> Result<()> {
@@ -75,12 +23,19 @@ pub fn assert_effect_equivalence(original: &str, rewritten: &str) -> Result<()> 
     if original == rewritten {
         Ok(())
     } else {
-        bail!("effect summaries diverged between original and rewritten source")
+        bail!(
+            "effect summaries diverged between original and rewritten source:\noriginal={original:#?}\nrewritten={rewritten:#?}"
+        )
     }
 }
 
-fn analyze_source(source: &str) -> Result<Vec<(String, Vec<String>)>> {
-    let tokens = lex(source).map_err(|errs| anyhow::anyhow!("lex failed: {errs:?}"))?;
+pub fn clean_corpus_programs() -> &'static [(String, String)] {
+    static PROGRAMS: OnceLock<Vec<(String, String)>> = OnceLock::new();
+    PROGRAMS.get_or_init(|| load_clean_corpus_programs().expect("load clean corpus fixtures"))
+}
+
+fn analyze_source(source: &str) -> Result<Vec<CanonicalSummary>> {
+    let tokens = lex(source).map_err(|errs| anyhow!("lex failed: {errs:?}"))?;
     let (file, parse_errors) = parse_file(&tokens);
     if !parse_errors.is_empty() {
         bail!("parse failed: {parse_errors:?}");
@@ -93,67 +48,218 @@ fn analyze_source(source: &str) -> Result<Vec<(String, Vec<String>)>> {
         .decls
         .iter()
         .filter_map(|decl| match decl {
-            corvid_ast::Decl::Effect(effect) => Some(effect.clone()),
+            Decl::Effect(effect) => Some(effect.clone()),
             _ => None,
         })
         .collect();
     let registry = EffectRegistry::from_decls(&effect_decls);
     let mut summaries: Vec<_> = analyze_effects(&file, &resolved, &registry)
         .into_iter()
-        .map(|summary| (summary.agent_name, summary.composed.effect_names))
+        .map(|summary| CanonicalSummary {
+            agent_name: summary.agent_name,
+            declared_effects: summary.declared_effects,
+            inferred_effects: summary.inferred_effects,
+            composed_effects: summary.composed.effect_names,
+            dimensions: summary
+                .composed
+                .dimensions
+                .into_iter()
+                .map(|(name, value)| (name, render_dimension_value(&value)))
+                .collect(),
+            violations: summary
+                .violations
+                .into_iter()
+                .map(|violation| violation.to_string())
+                .collect(),
+        })
         .collect();
-    summaries.sort_by(|left, right| left.0.cmp(&right.0));
+    summaries.sort_by(|left, right| left.agent_name.cmp(&right.agent_name));
     Ok(summaries)
 }
 
-fn reorder_named_blocks(source: &str, prefix: &str) -> Result<String> {
-    let mut blocks = Vec::new();
-    let mut current = Vec::new();
-    for line in source.lines() {
-        if line.starts_with(prefix) && !current.is_empty() {
-            blocks.push(current.join("\n"));
-            current.clear();
+fn load_clean_corpus_programs() -> Result<Vec<(String, String)>> {
+    let mut files = Vec::new();
+    collect_corpus_files(&workspace_root().join("tests/corpus"), &mut files)?;
+    files.retain(|path| !path.components().any(|component| component.as_os_str() == "should_fail"));
+    files.sort();
+    files
+        .into_iter()
+        .map(|path| {
+            let source = std::fs::read_to_string(&path)
+                .map_err(|err| anyhow!("failed to read `{}`: {err}", path.display()))?;
+            Ok((
+                path.file_name()
+                    .and_then(|name| name.to_str())
+                    .unwrap_or("<unknown>")
+                    .to_string(),
+                source,
+            ))
+        })
+        .collect()
+}
+
+fn collect_corpus_files(root: &Path, files: &mut Vec<PathBuf>) -> Result<()> {
+    for entry in std::fs::read_dir(root)
+        .map_err(|err| anyhow!("failed to read corpus directory `{}`: {err}", root.display()))?
+    {
+        let entry = entry.map_err(|err| anyhow!("failed to read corpus entry: {err}"))?;
+        let path = entry.path();
+        if path.is_dir() {
+            collect_corpus_files(&path, files)?;
+        } else if path.extension().and_then(|ext| ext.to_str()) == Some("cor") {
+            files.push(path);
         }
-        current.push(line.to_string());
     }
-    if !current.is_empty() {
-        blocks.push(current.join("\n"));
+    Ok(())
+}
+
+fn workspace_root() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .ancestors()
+        .nth(2)
+        .unwrap()
+        .to_path_buf()
+}
+
+fn render_dimension_value(value: &DimensionValue) -> String {
+    match value {
+        DimensionValue::Bool(value) => value.to_string(),
+        DimensionValue::Name(name) => name.clone(),
+        DimensionValue::Cost(value) => format!("${value:.6}"),
+        DimensionValue::Number(value) => format!("{value:.6}"),
+        DimensionValue::Streaming { backpressure } => match backpressure {
+            BackpressurePolicy::Bounded(size) => format!("streaming(bounded({size}))"),
+            BackpressurePolicy::Unbounded => "streaming(unbounded)".into(),
+        },
+        DimensionValue::ConfidenceGated {
+            threshold,
+            above,
+            below,
+        } => format!("{above}_if_confident({threshold:.6},{below})"),
     }
-    if blocks.len() < 2 {
-        return Ok(source.to_string());
-    }
-    blocks.reverse();
-    Ok(blocks.join("\n\n"))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use proptest::prelude::*;
+    use crate::rewrite::{apply_rewrite, rewrite_rules, RewriteRule};
 
-    fn fixture_source() -> &'static str {
-        r#"
-effect lookup_effect:
-    cost: $0.02
-    trust: autonomous
-
-prompt answer(ctx: String) -> String uses lookup_effect:
-    "Answer {ctx}"
-
-agent helper() -> String uses lookup_effect:
-    return answer("hi")
-
+    fn alpha_fixtures() -> &'static [&'static str] {
+        &[
+            r#"
+agent main() -> Int:
+    value = 1
+    total = value + 2
+    return total
+"#,
+            r#"
 agent main() -> String:
-    return helper()
-"#
+    text = "hi"
+    if true:
+        result = text
+        return result
+    return text
+"#,
+        ]
+    }
+
+    fn extract_fixtures() -> &'static [&'static str] {
+        &[
+            r#"
+agent main() -> Int:
+    return 1 + 2
+"#,
+            r#"
+agent main() -> Int:
+    total = (1 + 2)
+    return total
+"#,
+            r#"
+agent main() -> Bool:
+    if (true and false):
+        return true
+    return false
+"#,
+        ]
+    }
+
+    fn inline_fixtures() -> &'static [&'static str] {
+        &[
+            r#"
+agent main() -> Int:
+    extracted = 1 + 2
+    return extracted
+"#,
+            r#"
+agent main() -> Bool:
+    cond = true and false
+    if cond:
+        return true
+    return false
+"#,
+            r#"
+agent main() -> Int:
+    seed = 7
+    value = seed
+    return value
+"#,
+        ]
+    }
+
+    fn corpus_index() -> impl Strategy<Value = usize> {
+        0usize..clean_corpus_programs().len()
     }
 
     proptest! {
+        #![proptest_config(ProptestConfig {
+            cases: 10_000,
+            .. ProptestConfig::default()
+        })]
+
         #[test]
-        fn rewrites_preserve_effect_summaries(rule_index in 0usize..rewrite_rules().len()) {
-            let rule = rewrite_rules()[rule_index];
-            let rewritten = apply_rewrite(fixture_source(), rule).expect("rewrite should apply");
-            let _ = assert_effect_equivalence(fixture_source(), &rewritten);
+        fn alpha_conversion_preserves_effect_summaries(
+            fixture_index in 0usize..alpha_fixtures().len(),
+            _corpus_index in corpus_index(),
+        ) {
+            let original = alpha_fixtures()[fixture_index];
+            let rewritten = apply_rewrite(original, RewriteRule::AlphaConversion).expect("alpha-conversion");
+            prop_assert!(rewritten.changed, "alpha-conversion should change the fixture");
+            prop_assert!(assert_effect_equivalence(original, &rewritten.source).is_ok());
         }
+
+        #[test]
+        fn let_extract_preserves_effect_summaries(
+            fixture_index in 0usize..extract_fixtures().len(),
+            _corpus_index in corpus_index(),
+        ) {
+            let original = extract_fixtures()[fixture_index];
+            let rewritten = apply_rewrite(original, RewriteRule::LetExtract).expect("let-extract");
+            prop_assert!(rewritten.changed, "let-extract should change the fixture");
+            prop_assert!(assert_effect_equivalence(original, &rewritten.source).is_ok());
+        }
+
+        #[test]
+        fn let_inline_preserves_effect_summaries(
+            fixture_index in 0usize..inline_fixtures().len(),
+            _corpus_index in corpus_index(),
+        ) {
+            let original = inline_fixtures()[fixture_index];
+            let rewritten = apply_rewrite(original, RewriteRule::LetInline).expect("let-inline");
+            prop_assert!(rewritten.changed, "let-inline should change the fixture");
+            prop_assert!(assert_effect_equivalence(original, &rewritten.source).is_ok());
+        }
+    }
+
+    #[test]
+    fn slice_a_rule_set_is_limited_to_first_three_rewrites() {
+        assert_eq!(
+            rewrite_rules(),
+            &[
+                RewriteRule::AlphaConversion,
+                RewriteRule::LetExtract,
+                RewriteRule::LetInline,
+            ]
+        );
     }
 }

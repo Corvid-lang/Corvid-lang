@@ -17,6 +17,7 @@ use corvid_types::{analyze_effects, typecheck, EffectRegistry};
 use serde::{Deserialize, Serialize};
 
 pub mod fuzz;
+pub mod rewrite;
 
 const VERIFY_MODEL: &str = "verify-mock";
 

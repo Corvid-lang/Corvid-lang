@@ -5,6 +5,9 @@ edition.workspace = true
 license.workspace = true
 description = "Cross-tier differential verification harness for Corvid effect profiles."
 
+[lib]
+doctest = false
+
 [dependencies]
 anyhow = { workspace = true }
 serde = { workspace = true }
