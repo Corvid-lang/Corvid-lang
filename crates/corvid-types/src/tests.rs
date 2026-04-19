@@ -2444,3 +2444,110 @@ prompt classify(q: String) -> String:
             c.errors
         );
     }
+
+    // -------------------- Phase 21 slice inv-A: @replayable --------------------
+
+    #[test]
+    fn replayable_agent_with_pure_body_compiles_clean() {
+        // An agent marked @replayable whose body touches no
+        // nondeterministic sources compiles without errors. The
+        // determinism catalog is empty as of Phase 21 v1 so this
+        // is the common case.
+        let src = "\
+@replayable
+agent echo(q: String) -> String:
+    return q
+";
+        let c = check(src);
+        assert!(
+            c.errors.is_empty(),
+            "expected no errors for pure @replayable agent, got {:?}",
+            c.errors
+        );
+    }
+
+    #[test]
+    fn replayable_agent_calling_tool_compiles_clean() {
+        // Tool calls are always captured via ToolCall/ToolResult
+        // events, so they are replayable by construction.
+        let src = "\
+tool get_order(id: String) -> String
+
+@replayable
+agent lookup(id: String) -> String:
+    return get_order(id)
+";
+        let c = check(src);
+        assert!(
+            c.errors.is_empty(),
+            "expected no errors for @replayable agent calling tool, got {:?}",
+            c.errors
+        );
+    }
+
+    #[test]
+    fn replayable_agent_calling_prompt_compiles_clean() {
+        // Prompt calls are captured via LlmCall/LlmResult events,
+        // so they are replayable by construction.
+        let src = "\
+prompt classify(q: String) -> String:
+    \"Classify: {q}\"
+
+@replayable
+agent route_query(q: String) -> String:
+    return classify(q)
+";
+        let c = check(src);
+        assert!(
+            c.errors.is_empty(),
+            "expected no errors for @replayable agent calling prompt, got {:?}",
+            c.errors
+        );
+    }
+
+    #[test]
+    fn replayable_attribute_is_recorded_on_agent_decl() {
+        // Verifies the AST wiring: the attribute makes it from the
+        // parser into AgentDecl.attributes, separately from
+        // dimensional effect constraints.
+        let src = "\
+@replayable
+agent refund_flow(q: String) -> String:
+    return q
+";
+        let tokens = lex(src).unwrap();
+        let (file, errs) = parse_file(&tokens);
+        assert!(errs.is_empty(), "parse errors: {errs:?}");
+        let agent = file
+            .decls
+            .iter()
+            .find_map(|d| match d {
+                corvid_ast::Decl::Agent(a) => Some(a),
+                _ => None,
+            })
+            .expect("expected an agent decl");
+        assert_eq!(agent.attributes.len(), 1);
+        assert!(matches!(
+            agent.attributes[0],
+            corvid_ast::AgentAttribute::Replayable { .. }
+        ));
+        assert!(agent.constraints.is_empty());
+    }
+
+    #[test]
+    fn replayable_with_effect_constraint_coexist() {
+        // @replayable lives in attributes; @budget lives in
+        // constraints. Both apply; neither pollutes the other.
+        let src = "\
+@replayable
+@budget($1.00)
+agent bounded(q: String) -> String:
+    return q
+";
+        let c = check(src);
+        assert!(
+            c.errors.is_empty(),
+            "expected no errors, got {:?}",
+            c.errors
+        );
+    }

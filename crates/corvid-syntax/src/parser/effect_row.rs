@@ -12,7 +12,8 @@ use super::{describe_token, Parser};
 use crate::errors::{ParseError, ParseErrorKind};
 use crate::token::TokKind;
 use corvid_ast::{
-    BackpressurePolicy, EffectConstraint, EffectRef, EffectRow, Ident, PromptStreamSettings, Span,
+    AgentAttribute, BackpressurePolicy, EffectConstraint, EffectRef, EffectRow, Ident,
+    PromptStreamSettings, Span,
 };
 
 impl<'a> Parser<'a> {
@@ -133,6 +134,98 @@ impl<'a> Parser<'a> {
             });
         }
         Ok(constraints)
+    }
+
+    /// Parse the pre-agent annotation stream as a mix of compile-
+    /// time agent attributes (e.g. `@replayable`) and dimensional
+    /// effect constraints (e.g. `@cost(<=$1)`, `@budget($0.10)`).
+    ///
+    /// Attributes are invariants the type checker enforces but
+    /// that do not compose through the call graph; constraints
+    /// are dimensional bounds that participate in cost analysis.
+    /// Splitting them at parse time keeps the AST honest — the
+    /// checker doesn't need to scan `constraints` for pretend-
+    /// dimensions named "replayable".
+    ///
+    /// Attribute names are a fixed catalog: `replayable` today;
+    /// `deterministic` arrives in Phase 21 slice F. Anything not
+    /// in the catalog is treated as an effect constraint.
+    pub(super) fn parse_agent_annotations(
+        &mut self,
+    ) -> Result<(Vec<AgentAttribute>, Vec<EffectConstraint>), ParseError> {
+        let mut attributes = Vec::new();
+        let mut constraints = Vec::new();
+        while matches!(self.peek(), TokKind::At) {
+            let start = self.peek_span();
+            self.bump(); // @
+            let (name, name_span) = self.expect_ident()?;
+
+            // Agent attributes: marker-style annotations with no
+            // arguments. Optional empty parens are tolerated so
+            // `@replayable` and `@replayable()` parse the same.
+            if let Some(attribute) =
+                self.try_parse_attribute(&name, start, name_span)?
+            {
+                attributes.push(attribute);
+                continue;
+            }
+
+            // Dimensional effect constraint — `@cost(<=$1)`,
+            // `@budget(...)`, `@trust(autonomous)`, etc.
+            if name == "budget" && matches!(self.peek(), TokKind::LParen) {
+                constraints.extend(self.parse_budget_constraints(start, name_span)?);
+                self.expect_newline()?;
+                continue;
+            }
+            let value = if matches!(self.peek(), TokKind::LParen) {
+                self.bump();
+                if matches!(self.peek(), TokKind::RParen) {
+                    self.bump();
+                    None
+                } else {
+                    let value = self.parse_dimension_value()?;
+                    self.expect(TokKind::RParen, "`)` after constraint value")?;
+                    Some(value)
+                }
+            } else {
+                None
+            };
+            let end = self.prev_span();
+            self.expect_newline()?;
+            constraints.push(EffectConstraint {
+                dimension: Ident::new(name, name_span),
+                value,
+                span: start.merge(end),
+            });
+        }
+        Ok((attributes, constraints))
+    }
+
+    /// Try to parse the current `@name` as a known agent
+    /// attribute. Returns `Some(attribute)` on match; `None`
+    /// leaves the parser positioned after the name so the
+    /// caller can fall through to effect-constraint parsing.
+    fn try_parse_attribute(
+        &mut self,
+        name: &str,
+        start: Span,
+        _name_span: Span,
+    ) -> Result<Option<AgentAttribute>, ParseError> {
+        let attribute_kind = match name {
+            "replayable" => |span| AgentAttribute::Replayable { span },
+            _ => return Ok(None),
+        };
+
+        // Tolerate `@replayable` and `@replayable()` as synonyms;
+        // anything else after the name at the statement level
+        // belongs to a following constraint or keyword.
+        if matches!(self.peek(), TokKind::LParen) {
+            self.bump();
+            self.expect(TokKind::RParen, "`)` after attribute name")?;
+        }
+        let end = self.prev_span();
+        self.expect_newline()?;
+        Ok(Some(attribute_kind(start.merge(end))))
     }
 
     fn parse_budget_constraints(

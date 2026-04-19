@@ -30,7 +30,7 @@ impl<'a> Parser<'a> {
             TokKind::KwEffect => self.parse_effect_decl().map(Decl::Effect),
             TokKind::KwModel => self.parse_model_decl().map(Decl::Model),
             TokKind::At => {
-                let constraints = self.parse_constraints()?;
+                let (attributes, constraints) = self.parse_agent_annotations()?;
                 if !matches!(self.peek(), TokKind::KwAgent) {
                     return Err(ParseError {
                         kind: ParseErrorKind::UnexpectedToken {
@@ -42,6 +42,7 @@ impl<'a> Parser<'a> {
                 }
                 let mut agent = self.parse_agent_decl()?;
                 agent.constraints = constraints;
+                agent.attributes = attributes;
                 Ok(Decl::Agent(agent))
             }
             other => Err(ParseError {
@@ -426,6 +427,7 @@ impl<'a> Parser<'a> {
             body,
             effect_row,
             constraints: Vec::new(),
+            attributes: Vec::new(),
             span: start.merge(end),
         })
     }

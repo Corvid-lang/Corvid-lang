@@ -177,6 +177,17 @@ pub enum TypeErrorKind {
         message: String,
     },
 
+    /// An agent marked `@replayable` calls a function that
+    /// introduces nondeterminism the trace schema cannot capture.
+    /// See `crate::determinism` for the catalog of nondeterministic
+    /// builtins and `docs/phase-21-determinism-sources.md` for
+    /// which trace events must capture each source.
+    NonReplayableCall {
+        agent: String,
+        call: String,
+        source_label: String,
+    },
+
     /// A custom dimension declared in `corvid.toml` under
     /// `[effect-system.dimensions.*]` failed validation. Rejects
     /// unknown composition rules, unknown value-types, malformed
@@ -376,6 +387,15 @@ impl TypeErrorKind {
             Self::UngroundedReturn { agent, message } => {
                 format!("ungrounded return in agent `{agent}`: {message}")
             }
+            Self::NonReplayableCall {
+                agent,
+                call,
+                source_label,
+            } => {
+                format!(
+                    "agent `{agent}` is marked `@replayable` but calls `{call}`, which introduces a {source_label} that the trace schema cannot capture"
+                )
+            }
             Self::InvalidCustomDimension { dimension, message } => {
                 format!("invalid custom dimension `{dimension}` in corvid.toml: {message}")
             }
@@ -517,6 +537,10 @@ impl TypeErrorKind {
                  and pass its result to the return value, directly or through a prompt"
                     .into(),
             ),
+            Self::NonReplayableCall { call, .. } => Some(format!(
+                "route `{call}` through a recorded interface (a tool, prompt, or captured builtin) \
+                 so replay can substitute the recorded value, or drop the `@replayable` attribute"
+            )),
             Self::InvalidCustomDimension { .. } => Some(
                 "see docs/effects-spec/01-dimensional-syntax.md §4 for the supported \
                  composition rules, value types, and default-value shapes"

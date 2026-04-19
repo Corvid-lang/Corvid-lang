@@ -171,6 +171,7 @@ mod tests {
             },
             effect_row: EffectRow::default(),
             constraints: Vec::new(),
+            attributes: Vec::new(),
             span: sp(),
         };
 

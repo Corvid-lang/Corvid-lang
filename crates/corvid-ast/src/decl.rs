@@ -385,9 +385,53 @@ pub struct AgentDecl {
     #[serde(default)]
     pub effect_row: EffectRow,
     /// Constraints: `@budget($1.00)`, `@trust(autonomous)`, etc.
+    ///
+    /// Dimensional effect constraints that participate in cost
+    /// analysis and compose through the call graph. Distinct from
+    /// `attributes`, which carry compile-time guarantees that are
+    /// not dimensional (e.g., `@replayable`).
     #[serde(default)]
     pub constraints: Vec<EffectConstraint>,
+    /// Non-dimensional compile-time attributes on this agent.
+    /// `@replayable` is the first; `@deterministic` ships in
+    /// Phase 21 slice F. Attributes are invariants the compiler
+    /// checks but that do not compose through the call graph
+    /// the way effect constraints do.
+    #[serde(default)]
+    pub attributes: Vec<AgentAttribute>,
     pub span: Span,
+}
+
+/// Compile-time attribute on an agent declaration. Distinct from
+/// `EffectConstraint` because attributes do not name dimensions
+/// or carry numeric bounds — they are pure declarative markers
+/// that the type checker consumes to enforce guarantees like
+/// replayability or pure determinism.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum AgentAttribute {
+    /// `@replayable` — compile-time guarantee that every
+    /// nondeterministic input in the agent's body is captured
+    /// in the recorded trace, so a `corvid replay` reproduces
+    /// the agent byte-identically. See Phase 21 slice
+    /// `21-inv-A` and `docs/phase-21-determinism-sources.md`.
+    Replayable { span: Span },
+}
+
+impl AgentAttribute {
+    /// Span of the `@name` annotation, used for diagnostics.
+    pub fn span(&self) -> Span {
+        match self {
+            Self::Replayable { span } => *span,
+        }
+    }
+
+    /// Stable name used in diagnostics and parser lookup.
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::Replayable { .. } => "replayable",
+        }
+    }
 }
 
 /// An eval declaration. The body executes setup code and the trailing

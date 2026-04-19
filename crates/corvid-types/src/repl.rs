@@ -116,6 +116,7 @@ fn synthetic_agent(
         body: corvid_ast::Block { stmts, span },
         effect_row: Default::default(),
         constraints: Vec::new(),
+        attributes: Vec::new(),
         span,
     }
 }

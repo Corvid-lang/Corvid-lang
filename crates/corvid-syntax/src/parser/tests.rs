@@ -869,9 +869,87 @@ agent hello(name: String) -> String:
                 assert_eq!(a.name.name, "hello");
                 assert_eq!(a.params.len(), 1);
                 assert_eq!(a.body.stmts.len(), 2);
+                assert!(a.attributes.is_empty());
+                assert!(a.constraints.is_empty());
             }
             other => panic!("expected Agent, got {other:?}"),
         }
+    }
+
+    // -------------------- Phase 21 slice inv-A: @replayable --------------------
+
+    #[test]
+    fn parses_agent_with_replayable_attribute() {
+        let src = "\
+@replayable
+agent refund_flow(q: String) -> String:
+    return q
+";
+        let file = parse_file_src(src);
+        let agent = match &file.decls[0] {
+            Decl::Agent(a) => a,
+            other => panic!("expected Agent, got {other:?}"),
+        };
+        assert_eq!(agent.attributes.len(), 1);
+        assert!(matches!(
+            agent.attributes[0],
+            corvid_ast::AgentAttribute::Replayable { .. }
+        ));
+        // @replayable is an attribute, not an effect constraint.
+        assert!(agent.constraints.is_empty());
+    }
+
+    #[test]
+    fn parses_agent_with_replayable_empty_parens() {
+        let src = "\
+@replayable()
+agent refund_flow(q: String) -> String:
+    return q
+";
+        let file = parse_file_src(src);
+        let agent = match &file.decls[0] {
+            Decl::Agent(a) => a,
+            other => panic!("expected Agent, got {other:?}"),
+        };
+        assert_eq!(agent.attributes.len(), 1);
+    }
+
+    #[test]
+    fn parses_agent_with_replayable_and_effect_constraints() {
+        // @replayable interleaves cleanly with @budget;
+        // attributes go to .attributes, constraints to .constraints.
+        let src = "\
+@replayable
+@budget($1.00)
+agent refund_flow(q: String) -> String:
+    return q
+";
+        let file = parse_file_src(src);
+        let agent = match &file.decls[0] {
+            Decl::Agent(a) => a,
+            other => panic!("expected Agent, got {other:?}"),
+        };
+        assert_eq!(agent.attributes.len(), 1);
+        // @budget($1.00) expands into one or more constraints
+        // depending on the grammar; at minimum there's a cost
+        // constraint.
+        assert!(!agent.constraints.is_empty());
+    }
+
+    #[test]
+    fn agent_without_replayable_has_no_attributes() {
+        let src = "\
+@budget($1.00)
+agent refund_flow(q: String) -> String:
+    return q
+";
+        let file = parse_file_src(src);
+        let agent = match &file.decls[0] {
+            Decl::Agent(a) => a,
+            other => panic!("expected Agent, got {other:?}"),
+        };
+        assert!(agent.attributes.is_empty());
+        assert!(!agent.constraints.is_empty());
     }
 
     #[test]
