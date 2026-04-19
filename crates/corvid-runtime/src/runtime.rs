@@ -10,6 +10,7 @@ use crate::errors::RuntimeError;
 use crate::llm::{LlmAdapter, LlmRegistry, LlmRequest, LlmRequestRef, LlmResponse};
 use crate::models::{ModelCatalog, ModelSelection, RegisteredModel};
 use crate::record::Recorder;
+use crate::replay::ReplaySource;
 use crate::tools::ToolRegistry;
 use crate::tracing::{fresh_run_id, now_ms, Tracer};
 use corvid_trace_schema::TraceEvent;
@@ -25,12 +26,20 @@ pub struct Runtime {
     approver: Arc<dyn Approver>,
     tracer: Tracer,
     recorder: Option<Arc<Recorder>>,
+    mode: RuntimeMode,
+    replay_error: Option<RuntimeError>,
     /// Default model name applied when a prompt call doesn't specify one.
     /// Empty string means "no default; require per-call override".
     default_model: String,
     model_catalog: ModelCatalog,
     model_catalog_error: Option<RuntimeError>,
     rollout_state: Arc<AtomicU64>,
+}
+
+#[derive(Clone)]
+enum RuntimeMode {
+    Live,
+    Replay(ReplaySource),
 }
 
 impl Runtime {
@@ -92,35 +101,75 @@ impl Runtime {
         ))
     }
 
-    pub fn choose_rollout_variant(&self, variant_percent: f64) -> bool {
+    pub fn choose_rollout_variant(&self, variant_percent: f64) -> Result<bool, RuntimeError> {
         if variant_percent <= 0.0 {
-            return false;
+            return Ok(false);
         }
         if variant_percent >= 100.0 {
-            return true;
+            return Ok(true);
         }
-        self.next_rollout_sample() < (variant_percent / 100.0)
+        self.next_rollout_sample()
+            .map(|sample| sample < (variant_percent / 100.0))
     }
 
-    fn next_rollout_sample(&self) -> f64 {
-        let next = loop {
-            let current = self.rollout_state.load(Ordering::Relaxed);
-            let next = current
-                .wrapping_mul(6364136223846793005)
-                .wrapping_add(1442695040888963407);
-            if self
-                .rollout_state
-                .compare_exchange(current, next, Ordering::SeqCst, Ordering::SeqCst)
-                .is_ok()
-            {
-                break next;
+    fn next_rollout_sample(&self) -> Result<f64, RuntimeError> {
+        let next = if let Some(replay) = self.replay_source()? {
+            let next = replay.replay_rollout_sample()?;
+            self.rollout_state.store(next, Ordering::SeqCst);
+            next
+        } else {
+            loop {
+                let current = self.rollout_state.load(Ordering::Relaxed);
+                let next = current
+                    .wrapping_mul(6364136223846793005)
+                    .wrapping_add(1442695040888963407);
+                if self
+                    .rollout_state
+                    .compare_exchange(current, next, Ordering::SeqCst, Ordering::SeqCst)
+                    .is_ok()
+                {
+                    break next;
+                }
             }
         };
         if let Some(recorder) = &self.recorder {
             recorder.emit_seed_read("rollout_cohort", next);
         }
         let mantissa = next >> 11;
-        mantissa as f64 / ((1_u64 << 53) as f64)
+        Ok(mantissa as f64 / ((1_u64 << 53) as f64))
+    }
+
+    pub fn prepare_run(
+        &self,
+        agent: &str,
+        args: &[serde_json::Value],
+    ) -> Result<(), RuntimeError> {
+        if let Some(replay) = self.replay_source()? {
+            replay.prepare_run(agent, args)?;
+        }
+        Ok(())
+    }
+
+    pub fn complete_run(
+        &self,
+        ok: bool,
+        result: Option<&serde_json::Value>,
+        error: Option<&str>,
+    ) -> Result<(), RuntimeError> {
+        if let Some(replay) = self.replay_source()? {
+            replay.complete_run(ok, result, error)?;
+        }
+        Ok(())
+    }
+
+    fn replay_source(&self) -> Result<Option<&ReplaySource>, RuntimeError> {
+        if let Some(err) = &self.replay_error {
+            return Err(err.clone());
+        }
+        Ok(match &self.mode {
+            RuntimeMode::Live => None,
+            RuntimeMode::Replay(source) => Some(source),
+        })
     }
 
     // ---- dispatch helpers ----
@@ -139,7 +188,11 @@ impl Runtime {
                 args: args.clone(),
             });
         }
-        let result = self.tools.call(name, args).await?;
+        let result = if let Some(replay) = self.replay_source()? {
+            replay.replay_tool_call(name, &args)?
+        } else {
+            self.tools.call(name, args.clone()).await?
+        };
         if self.tracer.is_enabled() {
             self.tracer.emit(TraceEvent::ToolResult {
                 ts_ms: now_ms(),
@@ -182,7 +235,20 @@ impl Runtime {
                 args: req.args.to_vec(),
             });
         }
-        let resp = self.llms.call(&req).await?;
+        let resp = if let Some(replay) = self.replay_source()? {
+            replay.replay_llm_call(
+                req.prompt,
+                if req.model.is_empty() {
+                    None
+                } else {
+                    Some(req.model)
+                },
+                req.rendered,
+                req.args,
+            )?
+        } else {
+            self.llms.call(&req).await?
+        };
         if self.tracer.is_enabled() {
             self.tracer.emit(TraceEvent::LlmResult {
                 ts_ms: now_ms(),
@@ -220,8 +286,11 @@ impl Runtime {
             label: label_owned.clone(),
             args,
         };
-        let decision = self.approver.approve(&req).await?;
-        let approved = decision == ApprovalDecision::Approve;
+        let approved = if let Some(replay) = self.replay_source()? {
+            replay.replay_approval(&label_owned, &req.args)?
+        } else {
+            self.approver.approve(&req).await? == ApprovalDecision::Approve
+        };
         if trace_enabled {
             self.tracer.emit(TraceEvent::ApprovalResponse {
                 ts_ms: now_ms(),
@@ -250,6 +319,7 @@ pub struct RuntimeBuilder {
     model_catalog: ModelCatalog,
     model_catalog_root: Option<PathBuf>,
     rollout_seed: Option<u64>,
+    replay_trace: Option<PathBuf>,
 }
 
 impl RuntimeBuilder {
@@ -310,9 +380,13 @@ impl RuntimeBuilder {
         self
     }
 
+    pub fn replay_from(mut self, path: impl Into<PathBuf>) -> Self {
+        self.replay_trace = Some(path.into());
+        self
+    }
+
     pub fn build(self) -> Runtime {
         let mut model_catalog = self.model_catalog;
-        let rollout_seed = self.rollout_seed.unwrap_or_else(crate::tracing::now_ms);
         let model_catalog_error = if model_catalog.is_empty() {
             let start = self
                 .model_catalog_root
@@ -333,6 +407,26 @@ impl RuntimeBuilder {
         };
         let tracer = self.tracer.unwrap_or_else(Tracer::null);
         let recorder = Recorder::for_tracer(&tracer).map(Arc::new);
+        let (mode, replay_error, rollout_seed) = if let Some(path) = self.replay_trace {
+            match ReplaySource::from_path(path) {
+                Ok(source) => (
+                    RuntimeMode::Replay(source.clone()),
+                    None,
+                    source.initial_rollout_seed(),
+                ),
+                Err(err) => (
+                    RuntimeMode::Live,
+                    Some(err),
+                    self.rollout_seed.unwrap_or_else(crate::tracing::now_ms),
+                ),
+            }
+        } else {
+            (
+                RuntimeMode::Live,
+                None,
+                self.rollout_seed.unwrap_or_else(crate::tracing::now_ms),
+            )
+        };
         if let Some(recorder) = &recorder {
             recorder.emit_schema_header();
             recorder.emit_seed_read("rollout_default_seed", rollout_seed);
@@ -345,6 +439,8 @@ impl RuntimeBuilder {
                 .unwrap_or_else(|| Arc::new(StdinApprover::new())),
             tracer,
             recorder,
+            mode,
+            replay_error,
             default_model: self.default_model,
             model_catalog,
             model_catalog_error,
@@ -486,8 +582,8 @@ cost_per_token_in = 0.000015
     #[test]
     fn rollout_extremes_choose_expected_variant() {
         let runtime = Runtime::builder().rollout_seed(7).build();
-        assert!(!runtime.choose_rollout_variant(0.0));
-        assert!(runtime.choose_rollout_variant(100.0));
+        assert!(!runtime.choose_rollout_variant(0.0).unwrap());
+        assert!(runtime.choose_rollout_variant(100.0).unwrap());
     }
 
     #[test]
@@ -496,10 +592,10 @@ cost_per_token_in = 0.000015
         let runtime_b = Runtime::builder().rollout_seed(12345).build();
 
         let sequence_a: Vec<bool> = (0..8)
-            .map(|_| runtime_a.choose_rollout_variant(37.5))
+            .map(|_| runtime_a.choose_rollout_variant(37.5).unwrap())
             .collect();
         let sequence_b: Vec<bool> = (0..8)
-            .map(|_| runtime_b.choose_rollout_variant(37.5))
+            .map(|_| runtime_b.choose_rollout_variant(37.5).unwrap())
             .collect();
 
         assert_eq!(sequence_a, sequence_b);

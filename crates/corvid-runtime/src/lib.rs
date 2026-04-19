@@ -39,6 +39,7 @@ pub mod ffi_bridge;
 pub mod llm;
 pub mod models;
 pub mod record;
+pub mod replay;
 pub mod redact;
 pub mod runtime;
 pub mod tools;
@@ -79,6 +80,7 @@ pub use llm::{
 };
 pub use models::{ModelCatalog, ModelSelection, RegisteredModel};
 pub use record::Recorder;
+pub use replay::{ReplayDivergence, ReplaySource};
 pub use runtime::{Runtime, RuntimeBuilder};
 pub use tools::{ToolHandler, ToolRegistry};
 pub use corvid_trace_schema::TraceEvent;

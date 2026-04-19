@@ -31,7 +31,7 @@ use corvid_ir::{
     IrAgent, IrCallKind, IrExpr, IrExprKind, IrFile, IrPrompt, IrTool, IrType,
 };
 use corvid_resolve::{DefId, LocalId};
-use corvid_runtime::{Runtime, TraceEvent};
+use corvid_runtime::{Runtime, RuntimeError, TraceEvent};
 use corvid_types::Type;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -71,11 +71,16 @@ pub async fn run_agent_with_env(
             )
         })?;
 
+    let json_args: Vec<serde_json::Value> = args.iter().map(value_to_json).collect();
+    runtime
+        .prepare_run(agent_name, &json_args)
+        .map_err(|e| InterpError::new(InterpErrorKind::Runtime(e), Span::new(0, 0)))?;
+
     runtime.tracer().emit(TraceEvent::RunStarted {
         ts_ms: corvid_runtime::now_ms(),
         run_id: runtime.tracer().run_id().to_string(),
         agent: agent_name.to_string(),
-        args: args.iter().map(value_to_json).collect(),
+        args: json_args,
     });
 
     let mut interp = Interpreter::new(ir, runtime);
@@ -85,15 +90,26 @@ pub async fn run_agent_with_env(
         Err(e) => Err(e),
     };
 
+    let result_json = outcome
+        .as_ref()
+        .ok()
+        .map(|(value, _env)| value_to_json(value));
+    let error_text = outcome.as_ref().err().map(|error| error.to_string());
+    if should_validate_run_completion(&outcome) {
+        runtime
+            .complete_run(
+                outcome.is_ok(),
+                result_json.as_ref(),
+                error_text.as_deref(),
+            )
+            .map_err(|e| InterpError::new(InterpErrorKind::Runtime(e), Span::new(0, 0)))?;
+    }
     runtime.tracer().emit(TraceEvent::RunCompleted {
         ts_ms: corvid_runtime::now_ms(),
         run_id: runtime.tracer().run_id().to_string(),
         ok: outcome.is_ok(),
-        result: outcome
-            .as_ref()
-            .ok()
-            .map(|(value, _env)| value_to_json(value)),
-        error: outcome.as_ref().err().map(|error| error.to_string()),
+        result: result_json,
+        error: error_text,
     });
     outcome
 }
@@ -120,11 +136,16 @@ pub async fn run_agent_stepping(
             )
         })?;
 
+    let json_args: Vec<serde_json::Value> = args.iter().map(value_to_json).collect();
+    runtime
+        .prepare_run(agent_name, &json_args)
+        .map_err(|e| InterpError::new(InterpErrorKind::Runtime(e), Span::new(0, 0)))?;
+
     runtime.tracer().emit(TraceEvent::RunStarted {
         ts_ms: corvid_runtime::now_ms(),
         run_id: runtime.tracer().run_id().to_string(),
         agent: agent_name.to_string(),
-        args: args.iter().map(value_to_json).collect(),
+        args: json_args,
     });
 
     let mut interp = Interpreter::new(ir, runtime);
@@ -142,12 +163,23 @@ pub async fn run_agent_stepping(
         error: outcome.as_ref().err().map(|e| e.to_string()),
     }).await;
 
+    let result_json = outcome.as_ref().ok().map(|(value, _)| value_to_json(value));
+    let error_text = outcome.as_ref().err().map(|error| error.to_string());
+    if should_validate_run_completion(&outcome) {
+        runtime
+            .complete_run(
+                outcome.is_ok(),
+                result_json.as_ref(),
+                error_text.as_deref(),
+            )
+            .map_err(|e| InterpError::new(InterpErrorKind::Runtime(e), Span::new(0, 0)))?;
+    }
     runtime.tracer().emit(TraceEvent::RunCompleted {
         ts_ms: corvid_runtime::now_ms(),
         run_id: runtime.tracer().run_id().to_string(),
         ok: outcome.is_ok(),
-        result: outcome.as_ref().ok().map(|(value, _)| value_to_json(value)),
-        error: outcome.as_ref().err().map(|error| error.to_string()),
+        result: result_json,
+        error: error_text,
     });
     outcome
 }
@@ -213,6 +245,20 @@ impl ExprFlow {
             ExprFlow::Propagate(v) => Err(v),
         }
     }
+}
+
+fn should_validate_run_completion(outcome: &Result<(Value, Env), InterpError>) -> bool {
+    !matches!(
+        outcome,
+        Err(InterpError {
+            kind: InterpErrorKind::Runtime(
+                RuntimeError::ReplayDivergence(_)
+                    | RuntimeError::ReplayTraceLoad { .. }
+                    | RuntimeError::CrossTierReplayUnsupported { .. }
+            ),
+            ..
+        })
+    )
 }
 
 struct Interpreter<'ir> {

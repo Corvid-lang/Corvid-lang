@@ -809,7 +809,11 @@ impl<'ir> Interpreter<'ir> {
             let completion_tokens = prompt
                 .max_tokens
                 .unwrap_or(DEFAULT_COMPLETION_TOKEN_ESTIMATE);
-            let chosen_model = if self.runtime.choose_rollout_variant(spec.variant_percent) {
+            let chosen_model = if self
+                .runtime
+                .choose_rollout_variant(spec.variant_percent)
+                .map_err(|e| InterpError::new(InterpErrorKind::Runtime(e), span))?
+            {
                 spec.variant_name.clone()
             } else {
                 spec.baseline_name.clone()

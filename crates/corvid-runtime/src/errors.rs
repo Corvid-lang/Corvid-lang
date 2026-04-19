@@ -8,6 +8,7 @@
 //! when it bubbles up to user code; downstream renderers can pattern-match
 //! either form.
 
+use crate::replay::ReplayDivergence;
 use std::fmt;
 use std::path::PathBuf;
 
@@ -63,6 +64,18 @@ pub enum RuntimeError {
         message: String,
     },
 
+    ReplayTraceLoad {
+        path: PathBuf,
+        message: String,
+    },
+
+    ReplayDivergence(ReplayDivergence),
+
+    CrossTierReplayUnsupported {
+        recorded_writer: String,
+        replay_writer: String,
+    },
+
     /// Catch-all. Prefer adding a dedicated variant.
     Other(String),
 }
@@ -116,6 +129,17 @@ impl fmt::Display for RuntimeError {
                     "invalid adversarial verdict for prompt `{prompt}`: {message}"
                 )
             }
+            Self::ReplayTraceLoad { path, message } => {
+                write!(f, "failed to load replay trace `{}`: {message}", path.display())
+            }
+            Self::ReplayDivergence(err) => err.fmt(f),
+            Self::CrossTierReplayUnsupported {
+                recorded_writer,
+                replay_writer,
+            } => write!(
+                f,
+                "cross-tier replay is not supported in v1: trace writer `{recorded_writer}` cannot replay on `{replay_writer}`"
+            ),
             Self::Other(msg) => f.write_str(msg),
         }
     }
