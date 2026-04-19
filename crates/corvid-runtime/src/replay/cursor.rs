@@ -16,6 +16,22 @@ impl TraceCursor {
         self.next
     }
 
+    pub(crate) fn next_event(&mut self, events: &[TraceEvent]) -> TraceEvent {
+        self.skip_dispatch_metadata(events);
+        let event = events
+            .get(self.next)
+            .cloned()
+            .unwrap_or_else(|| TraceEvent::RunCompleted {
+                ts_ms: 0,
+                run_id: "<eof>".into(),
+                ok: false,
+                result: None,
+                error: Some("unexpected end of trace".into()),
+            });
+        self.next += 1;
+        event
+    }
+
     pub(crate) fn expect_next<F>(
         &mut self,
         events: &[TraceEvent],

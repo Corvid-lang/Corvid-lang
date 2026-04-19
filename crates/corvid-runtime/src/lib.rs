@@ -81,7 +81,10 @@ pub use llm::{
 };
 pub use models::{ModelCatalog, ModelSelection, RegisteredModel};
 pub use record::Recorder;
-pub use replay::{ReplayDivergence, ReplaySource};
+pub use replay::{
+    LlmDivergence, ReplayDifferentialReport, ReplayDivergence, ReplaySource,
+    RunCompletionDivergence, SubstitutionDivergence,
+};
 pub use runtime::{Runtime, RuntimeBuilder};
 pub use tools::{ToolHandler, ToolRegistry};
 pub use corvid_trace_schema::TraceEvent;

@@ -10,7 +10,7 @@ use crate::errors::RuntimeError;
 use crate::llm::{LlmAdapter, LlmRegistry, LlmRequest, LlmRequestRef, LlmResponse};
 use crate::models::{ModelCatalog, ModelSelection, RegisteredModel};
 use crate::record::Recorder;
-use crate::replay::ReplaySource;
+use crate::replay::{ReplayDifferentialReport, ReplaySource};
 use crate::tools::ToolRegistry;
 use crate::tracing::{fresh_run_id, now_ms, Tracer};
 use corvid_trace_schema::{TraceEvent, WRITER_INTERPRETER};
@@ -65,8 +65,38 @@ impl Runtime {
         matches!(self.mode, RuntimeMode::Replay(_))
     }
 
+    pub fn replay_uses_live_llm(&self) -> bool {
+        matches!(&self.mode, RuntimeMode::Replay(source) if source.uses_live_llm())
+    }
+
     pub fn default_model(&self) -> &str {
         &self.default_model
+    }
+
+    pub fn replay_differential_report(&self) -> Option<ReplayDifferentialReport> {
+        match &self.mode {
+            RuntimeMode::Live => None,
+            RuntimeMode::Replay(source) => source.differential_report(),
+        }
+    }
+
+    pub fn write_replay_differential_report(
+        &self,
+        path: impl AsRef<Path>,
+    ) -> Result<(), RuntimeError> {
+        let path = path.as_ref();
+        let Some(report) = self.replay_differential_report() else {
+            return Ok(());
+        };
+        let bytes = serde_json::to_vec_pretty(&report).map_err(|err| {
+            RuntimeError::Other(format!("failed to serialize replay differential report: {err}"))
+        })?;
+        std::fs::write(path, bytes).map_err(|err| {
+            RuntimeError::Other(format!(
+                "failed to write replay differential report to `{}`: {err}",
+                path.display()
+            ))
+        })
     }
 
     pub fn model_catalog(&self) -> &ModelCatalog {
@@ -216,30 +246,57 @@ impl Runtime {
         self.call_llm_ref(req.as_ref()).await
     }
 
+    pub async fn call_llm_ref_with_trace_rendered(
+        &self,
+        req: LlmRequestRef<'_>,
+        trace_rendered: Option<&str>,
+    ) -> Result<LlmResponse, RuntimeError> {
+        self.call_llm_ref_impl(req, trace_rendered).await
+    }
+
     /// Borrowed LLM-call path for native bridges that already hold prompt and
     /// rendered text as borrowed strings and only need owned clones when
     /// tracing or provider JSON construction requires them.
     pub async fn call_llm_ref(&self, req: LlmRequestRef<'_>) -> Result<LlmResponse, RuntimeError> {
+        self.call_llm_ref_impl(req, None).await
+    }
+
+    async fn call_llm_ref_impl(
+        &self,
+        req: LlmRequestRef<'_>,
+        trace_rendered_override: Option<&str>,
+    ) -> Result<LlmResponse, RuntimeError> {
         let req = if req.model.is_empty() {
             req.with_model(&self.default_model)
         } else {
             req
         };
+        let trace_rendered = trace_rendered_override.unwrap_or(req.rendered);
+        let replay = self.replay_source()?;
+        let live_model_override = replay
+            .and_then(|source| source.live_model_override())
+            .map(str::to_owned);
+        let trace_model = live_model_override.as_deref().unwrap_or(req.model);
         if self.tracer.is_enabled() {
             self.tracer.emit(TraceEvent::LlmCall {
                 ts_ms: now_ms(),
                 run_id: self.tracer.run_id().to_string(),
                 prompt: req.prompt.to_string(),
-                model: if req.model.is_empty() {
+                model: if trace_model.is_empty() {
                     None
                 } else {
-                    Some(req.model.to_string())
+                    Some(trace_model.to_string())
                 },
-                rendered: Some(req.rendered.to_string()),
+                rendered: Some(trace_rendered.to_string()),
                 args: req.args.to_vec(),
             });
         }
-        let resp = if let Some(replay) = self.replay_source()? {
+        let resp = if let Some(replay) = replay {
+            let live_req = if let Some(model) = live_model_override.as_deref() {
+                req.with_model(model)
+            } else {
+                req
+            };
             replay.replay_llm_call(
                 req.prompt,
                 if req.model.is_empty() {
@@ -247,9 +304,12 @@ impl Runtime {
                 } else {
                     Some(req.model)
                 },
-                req.rendered,
+                trace_rendered,
                 req.args,
-            )?
+                live_req,
+                &self.llms,
+            )
+            .await?
         } else {
             self.llms.call(&req).await?
         };
@@ -258,10 +318,10 @@ impl Runtime {
                 ts_ms: now_ms(),
                 run_id: self.tracer.run_id().to_string(),
                 prompt: req.prompt.to_string(),
-                model: if req.model.is_empty() {
+                model: if trace_model.is_empty() {
                     None
                 } else {
-                    Some(req.model.to_string())
+                    Some(trace_model.to_string())
                 },
                 result: resp.value.clone(),
             });
@@ -324,6 +384,7 @@ pub struct RuntimeBuilder {
     model_catalog_root: Option<PathBuf>,
     rollout_seed: Option<u64>,
     replay_trace: Option<PathBuf>,
+    replay_model_swap: Option<String>,
 }
 
 impl Default for RuntimeBuilder {
@@ -339,6 +400,7 @@ impl Default for RuntimeBuilder {
             model_catalog_root: None,
             rollout_seed: None,
             replay_trace: None,
+            replay_model_swap: None,
         }
     }
 }
@@ -411,6 +473,21 @@ impl RuntimeBuilder {
         self
     }
 
+    pub fn replay_model_swap(mut self, model: impl Into<String>) -> Self {
+        self.replay_model_swap = Some(model.into());
+        self
+    }
+
+    pub fn differential_replay_from(
+        mut self,
+        path: impl Into<PathBuf>,
+        model: impl Into<String>,
+    ) -> Self {
+        self.replay_trace = Some(path.into());
+        self.replay_model_swap = Some(model.into());
+        self
+    }
+
     pub fn build(self) -> Runtime {
         let mut model_catalog = self.model_catalog;
         let model_catalog_error = if model_catalog.is_empty() {
@@ -434,7 +511,12 @@ impl RuntimeBuilder {
         let tracer = self.tracer.unwrap_or_else(Tracer::null);
         let recorder = Recorder::for_tracer(&tracer, self.trace_schema_writer).map(Arc::new);
         let (mode, replay_error, rollout_seed) = if let Some(path) = self.replay_trace {
-            match ReplaySource::from_path_for_writer(path, self.trace_schema_writer) {
+            let replay_load = if let Some(model) = self.replay_model_swap {
+                ReplaySource::from_path_for_writer_with_model(path, self.trace_schema_writer, model)
+            } else {
+                ReplaySource::from_path_for_writer(path, self.trace_schema_writer)
+            };
+            match replay_load {
                 Ok(source) => (
                     RuntimeMode::Replay(source.clone()),
                     None,
@@ -634,5 +716,14 @@ cost_per_token_in = 0.000015
         assert!(runtime.recorder().is_none());
         let builder = RuntimeBuilder::default();
         assert_eq!(builder.trace_schema_writer, WRITER_INTERPRETER);
+    }
+
+    #[test]
+    fn differential_replay_builder_exposes_swap_model() {
+        let builder = Runtime::builder()
+            .differential_replay_from("trace.jsonl", "mock-2")
+            .replay_model_swap("mock-3");
+        assert_eq!(builder.replay_trace, Some(PathBuf::from("trace.jsonl")));
+        assert_eq!(builder.replay_model_swap.as_deref(), Some("mock-3"));
     }
 }

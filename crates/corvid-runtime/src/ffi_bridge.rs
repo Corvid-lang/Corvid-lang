@@ -232,12 +232,19 @@ pub extern "C" fn corvid_runtime_shutdown() {
     }
     // SAFETY: Pointer came from `Box::into_raw` in `corvid_runtime_init`
     // and is owned by us (we just atomically swapped it out so no
-    // concurrent reader sees it any more). Reconstructing the Box drops
-    // the bridge state, which drops the tokio Runtime (joins worker
-    // threads) and the Corvid Runtime Arc.
-    unsafe {
-        drop(Box::from_raw(ptr));
+    // concurrent reader sees it any more).
+    let bridge = unsafe { Box::from_raw(ptr) };
+    if let Some(path) = std::env::var_os("CORVID_REPLAY_DIFFERENTIAL_REPORT_PATH") {
+        if let Err(err) = bridge
+            .corvid
+            .write_replay_differential_report(PathBuf::from(path))
+        {
+            eprintln!("corvid replay differential report write failed: {err}");
+        }
     }
+    // Dropping the bridge state drops the tokio runtime (joining worker
+    // threads) and the Corvid runtime Arc.
+    drop(bridge);
 }
 
 /// Tool-call bridge for the narrow case `fn(no args) -> Int`.
@@ -731,7 +738,7 @@ fn call_llm_once(
     system_prompt: &str,
 ) -> Result<String, String> {
     let runtime = state.corvid_runtime();
-    let combined = if using_env_mock_llm() || runtime.is_replay_mode() {
+    let combined = if using_env_mock_llm() || (runtime.is_replay_mode() && !runtime.replay_uses_live_llm()) {
         rendered.to_owned()
     } else {
         // Combine system prompt + user-side rendered prompt with two
@@ -751,7 +758,9 @@ fn call_llm_once(
         output_schema: None,
     };
     let resp = state.tokio_handle().block_on(async move {
-        runtime.call_llm_ref(req).await
+        runtime
+            .call_llm_ref_with_trace_rendered(req, Some(rendered))
+            .await
     });
     match resp {
         Ok(r) => match r.value {
@@ -1276,7 +1285,11 @@ fn build_corvid_runtime() -> Runtime {
         }
     }
     if let Some(path) = std::env::var_os("CORVID_REPLAY_TRACE_PATH") {
-        b = b.replay_from(PathBuf::from(path));
+        if let Some(model) = std::env::var_os("CORVID_REPLAY_MODEL") {
+            b = b.differential_replay_from(PathBuf::from(path), model.to_string_lossy().into_owned());
+        } else {
+            b = b.replay_from(PathBuf::from(path));
+        }
     }
 
     // Register every supported LLM adapter unconditionally
