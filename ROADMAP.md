@@ -1195,7 +1195,7 @@ Users register local models (Ollama, vLLM, llama.cpp) with declared capabilities
 
 - [x] 21-B-rec-interp        Recording hooks in interpreter (LLM / tool / approve / seed / time), emit to JSONL
 - [x] 21-C-replay-interp     Replay adapter: response substitution; byte-identical post-replay state
-- [ ] 21-B-rec-native        Native-tier recording parity
+- [x] 21-B-rec-native        Native-tier recording parity
 - [ ] 21-C-replay-native     Native-tier replay parity
 - [ ] 21-inv-B-adapter       Model-swap seam for `corvid replay --model <id>`
 - [ ] 21-inv-D-runtime       Counterfactual one-step mutation at runtime
