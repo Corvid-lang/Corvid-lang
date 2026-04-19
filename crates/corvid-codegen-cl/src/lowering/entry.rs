@@ -293,6 +293,36 @@ pub(super) fn emit_entry_main(
 
         builder.switch_to_block(normal_call_b);
         builder.seal_block(normal_call_b);
+        if uses_runtime {
+            let entry_name_val =
+                emit_string_const(&mut builder, module, runtime, &entry_agent.name, entry_agent.span)?;
+            let entry_arg_tys = entry_agent
+                .params
+                .iter()
+                .map(|param| param.ty.clone())
+                .collect::<Vec<_>>();
+            let trace_payload = emit_trace_payload(
+                &mut builder,
+                module,
+                runtime,
+                &decoded_args,
+                &entry_arg_tys,
+                entry_agent.span,
+            )?;
+            let trace_run_started_ref =
+                module.declare_func_in_func(runtime.trace_run_started, builder.func);
+            builder.ins().call(
+                trace_run_started_ref,
+                &[
+                    entry_name_val,
+                    trace_payload.type_tags,
+                    trace_payload.count,
+                    trace_payload.values_ptr,
+                ],
+            );
+            emit_release(&mut builder, module, runtime, trace_payload.type_tags);
+            emit_release(&mut builder, module, runtime, entry_name_val);
+        }
         let entry_call = builder.ins().call(entry_ref, &decoded_args);
         let result = builder.inst_results(entry_call).first().copied();
 
@@ -304,6 +334,27 @@ pub(super) fn emit_entry_main(
             }
         }
         if let Some(result_val) = result {
+            if uses_runtime {
+                let trace_result_ref = match &entry_agent.return_ty {
+                    Type::Int => Some(runtime.trace_run_completed_int),
+                    Type::Bool => Some(runtime.trace_run_completed_bool),
+                    Type::Float => Some(runtime.trace_run_completed_float),
+                    Type::String => Some(runtime.trace_run_completed_string),
+                    Type::Grounded(inner) => match &**inner {
+                        Type::Int => Some(runtime.trace_run_completed_int),
+                        Type::Bool => Some(runtime.trace_run_completed_bool),
+                        Type::Float => Some(runtime.trace_run_completed_float),
+                        Type::String => Some(runtime.trace_run_completed_string),
+                        _ => None,
+                    },
+                    _ => None,
+                };
+                if let Some(trace_result) = trace_result_ref {
+                    let trace_run_completed_ref =
+                        module.declare_func_in_func(trace_result, builder.func);
+                    builder.ins().call(trace_run_completed_ref, &[result_val]);
+                }
+            }
             emit_entry_result_print(
                 &mut builder,
                 module,

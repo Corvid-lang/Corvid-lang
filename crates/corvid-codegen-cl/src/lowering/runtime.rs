@@ -330,6 +330,9 @@ pub(super) fn declare_runtime_funcs(
 
     let mut approve_sig = module.make_signature();
     approve_sig.params.push(AbiParam::new(I64));
+    approve_sig.params.push(AbiParam::new(I64));
+    approve_sig.params.push(AbiParam::new(I64));
+    approve_sig.params.push(AbiParam::new(I64));
     approve_sig.returns.push(AbiParam::new(I8));
     let approve_sync_id = module
         .declare_function(APPROVE_SYNC_SYMBOL, Linkage::Import, &approve_sig)
@@ -337,12 +340,15 @@ pub(super) fn declare_runtime_funcs(
             CodegenError::cranelift(format!("declare approve_sync: {e}"), Span::new(0, 0))
         })?;
 
-    // Typed prompt bridges. Each takes 4 CorvidString descriptor
-    // pointers (i64) — prompt name, signature, rendered template,
-    // model — and returns the typed value.
+    // Typed prompt bridges. Each takes 7 args:
+    //   prompt name, signature, rendered template, model,
+    //   arg type-tag string, argc, arg value slots pointer.
     let make_prompt_sig =
         |module: &mut ObjectModule, ret_ty: cranelift_codegen::ir::Type| {
             let mut s = module.make_signature();
+            s.params.push(AbiParam::new(I64));
+            s.params.push(AbiParam::new(I64));
+            s.params.push(AbiParam::new(I64));
             s.params.push(AbiParam::new(I64));
             s.params.push(AbiParam::new(I64));
             s.params.push(AbiParam::new(I64));
@@ -373,6 +379,167 @@ pub(super) fn declare_runtime_funcs(
         .declare_function(PROMPT_CALL_STRING_SYMBOL, Linkage::Import, &prompt_string_sig)
         .map_err(|e| {
             CodegenError::cranelift(format!("declare prompt_call_string: {e}"), Span::new(0, 0))
+        })?;
+
+    let mut trace_run_started_sig = module.make_signature();
+    trace_run_started_sig.params.push(AbiParam::new(I64));
+    trace_run_started_sig.params.push(AbiParam::new(I64));
+    trace_run_started_sig.params.push(AbiParam::new(I64));
+    trace_run_started_sig.params.push(AbiParam::new(I64));
+    let trace_run_started_id = module
+        .declare_function(TRACE_RUN_STARTED_SYMBOL, Linkage::Import, &trace_run_started_sig)
+        .map_err(|e| {
+            CodegenError::cranelift(format!("declare trace_run_started: {e}"), Span::new(0, 0))
+        })?;
+
+    let mut trace_run_completed_int_sig = module.make_signature();
+    trace_run_completed_int_sig.params.push(AbiParam::new(I64));
+    let trace_run_completed_int_id = module
+        .declare_function(
+            TRACE_RUN_COMPLETED_INT_SYMBOL,
+            Linkage::Import,
+            &trace_run_completed_int_sig,
+        )
+        .map_err(|e| {
+            CodegenError::cranelift(
+                format!("declare trace_run_completed_int: {e}"),
+                Span::new(0, 0),
+            )
+        })?;
+
+    let mut trace_run_completed_bool_sig = module.make_signature();
+    trace_run_completed_bool_sig.params.push(AbiParam::new(I8));
+    let trace_run_completed_bool_id = module
+        .declare_function(
+            TRACE_RUN_COMPLETED_BOOL_SYMBOL,
+            Linkage::Import,
+            &trace_run_completed_bool_sig,
+        )
+        .map_err(|e| {
+            CodegenError::cranelift(
+                format!("declare trace_run_completed_bool: {e}"),
+                Span::new(0, 0),
+            )
+        })?;
+
+    let mut trace_run_completed_float_sig = module.make_signature();
+    trace_run_completed_float_sig.params.push(AbiParam::new(F64));
+    let trace_run_completed_float_id = module
+        .declare_function(
+            TRACE_RUN_COMPLETED_FLOAT_SYMBOL,
+            Linkage::Import,
+            &trace_run_completed_float_sig,
+        )
+        .map_err(|e| {
+            CodegenError::cranelift(
+                format!("declare trace_run_completed_float: {e}"),
+                Span::new(0, 0),
+            )
+        })?;
+
+    let mut trace_run_completed_string_sig = module.make_signature();
+    trace_run_completed_string_sig.params.push(AbiParam::new(I64));
+    let trace_run_completed_string_id = module
+        .declare_function(
+            TRACE_RUN_COMPLETED_STRING_SYMBOL,
+            Linkage::Import,
+            &trace_run_completed_string_sig,
+        )
+        .map_err(|e| {
+            CodegenError::cranelift(
+                format!("declare trace_run_completed_string: {e}"),
+                Span::new(0, 0),
+            )
+        })?;
+
+    let mut trace_tool_call_sig = module.make_signature();
+    trace_tool_call_sig.params.push(AbiParam::new(I64));
+    trace_tool_call_sig.params.push(AbiParam::new(I64));
+    trace_tool_call_sig.params.push(AbiParam::new(I64));
+    trace_tool_call_sig.params.push(AbiParam::new(I64));
+    let trace_tool_call_id = module
+        .declare_function(TRACE_TOOL_CALL_SYMBOL, Linkage::Import, &trace_tool_call_sig)
+        .map_err(|e| {
+            CodegenError::cranelift(format!("declare trace_tool_call: {e}"), Span::new(0, 0))
+        })?;
+
+    let mut trace_tool_result_null_sig = module.make_signature();
+    trace_tool_result_null_sig.params.push(AbiParam::new(I64));
+    let trace_tool_result_null_id = module
+        .declare_function(
+            TRACE_TOOL_RESULT_NULL_SYMBOL,
+            Linkage::Import,
+            &trace_tool_result_null_sig,
+        )
+        .map_err(|e| {
+            CodegenError::cranelift(
+                format!("declare trace_tool_result_null: {e}"),
+                Span::new(0, 0),
+            )
+        })?;
+
+    let mut trace_tool_result_int_sig = module.make_signature();
+    trace_tool_result_int_sig.params.push(AbiParam::new(I64));
+    trace_tool_result_int_sig.params.push(AbiParam::new(I64));
+    let trace_tool_result_int_id = module
+        .declare_function(
+            TRACE_TOOL_RESULT_INT_SYMBOL,
+            Linkage::Import,
+            &trace_tool_result_int_sig,
+        )
+        .map_err(|e| {
+            CodegenError::cranelift(
+                format!("declare trace_tool_result_int: {e}"),
+                Span::new(0, 0),
+            )
+        })?;
+
+    let mut trace_tool_result_bool_sig = module.make_signature();
+    trace_tool_result_bool_sig.params.push(AbiParam::new(I64));
+    trace_tool_result_bool_sig.params.push(AbiParam::new(I8));
+    let trace_tool_result_bool_id = module
+        .declare_function(
+            TRACE_TOOL_RESULT_BOOL_SYMBOL,
+            Linkage::Import,
+            &trace_tool_result_bool_sig,
+        )
+        .map_err(|e| {
+            CodegenError::cranelift(
+                format!("declare trace_tool_result_bool: {e}"),
+                Span::new(0, 0),
+            )
+        })?;
+
+    let mut trace_tool_result_float_sig = module.make_signature();
+    trace_tool_result_float_sig.params.push(AbiParam::new(I64));
+    trace_tool_result_float_sig.params.push(AbiParam::new(F64));
+    let trace_tool_result_float_id = module
+        .declare_function(
+            TRACE_TOOL_RESULT_FLOAT_SYMBOL,
+            Linkage::Import,
+            &trace_tool_result_float_sig,
+        )
+        .map_err(|e| {
+            CodegenError::cranelift(
+                format!("declare trace_tool_result_float: {e}"),
+                Span::new(0, 0),
+            )
+        })?;
+
+    let mut trace_tool_result_string_sig = module.make_signature();
+    trace_tool_result_string_sig.params.push(AbiParam::new(I64));
+    trace_tool_result_string_sig.params.push(AbiParam::new(I64));
+    let trace_tool_result_string_id = module
+        .declare_function(
+            TRACE_TOOL_RESULT_STRING_SYMBOL,
+            Linkage::Import,
+            &trace_tool_result_string_sig,
+        )
+        .map_err(|e| {
+            CodegenError::cranelift(
+                format!("declare trace_tool_result_string: {e}"),
+                Span::new(0, 0),
+            )
         })?;
 
     Ok(RuntimeFuncs {
@@ -415,6 +582,17 @@ pub(super) fn declare_runtime_funcs(
         prompt_call_bool: prompt_call_bool_id,
         prompt_call_float: prompt_call_float_id,
         prompt_call_string: prompt_call_string_id,
+        trace_run_started: trace_run_started_id,
+        trace_run_completed_int: trace_run_completed_int_id,
+        trace_run_completed_bool: trace_run_completed_bool_id,
+        trace_run_completed_float: trace_run_completed_float_id,
+        trace_run_completed_string: trace_run_completed_string_id,
+        trace_tool_call: trace_tool_call_id,
+        trace_tool_result_null: trace_tool_result_null_id,
+        trace_tool_result_int: trace_tool_result_int_id,
+        trace_tool_result_bool: trace_tool_result_bool_id,
+        trace_tool_result_float: trace_tool_result_float_id,
+        trace_tool_result_string: trace_tool_result_string_id,
         literal_counter: std::cell::Cell::new(0),
         // The unified ownership pass is the default. It produces
         // refcount-correct code
@@ -1893,6 +2071,17 @@ pub(super) const PROMPT_CALL_BOOL_SYMBOL: &str = "corvid_prompt_call_bool";
 pub(super) const PROMPT_CALL_FLOAT_SYMBOL: &str = "corvid_prompt_call_float";
 pub(super) const PROMPT_CALL_STRING_SYMBOL: &str = "corvid_prompt_call_string";
 pub(super) const APPROVE_SYNC_SYMBOL: &str = "corvid_approve_sync";
+pub(super) const TRACE_RUN_STARTED_SYMBOL: &str = "corvid_trace_run_started";
+pub(super) const TRACE_RUN_COMPLETED_INT_SYMBOL: &str = "corvid_trace_run_completed_int";
+pub(super) const TRACE_RUN_COMPLETED_BOOL_SYMBOL: &str = "corvid_trace_run_completed_bool";
+pub(super) const TRACE_RUN_COMPLETED_FLOAT_SYMBOL: &str = "corvid_trace_run_completed_float";
+pub(super) const TRACE_RUN_COMPLETED_STRING_SYMBOL: &str = "corvid_trace_run_completed_string";
+pub(super) const TRACE_TOOL_CALL_SYMBOL: &str = "corvid_trace_tool_call";
+pub(super) const TRACE_TOOL_RESULT_NULL_SYMBOL: &str = "corvid_trace_tool_result_null";
+pub(super) const TRACE_TOOL_RESULT_INT_SYMBOL: &str = "corvid_trace_tool_result_int";
+pub(super) const TRACE_TOOL_RESULT_BOOL_SYMBOL: &str = "corvid_trace_tool_result_bool";
+pub(super) const TRACE_TOOL_RESULT_FLOAT_SYMBOL: &str = "corvid_trace_tool_result_float";
+pub(super) const TRACE_TOOL_RESULT_STRING_SYMBOL: &str = "corvid_trace_tool_result_string";
 
 // Runtime bridge init/shutdown called from `corvid_init`
 // at the start of codegen-emitted `main` when the program uses any
@@ -1973,6 +2162,17 @@ pub(super) struct RuntimeFuncs {
     pub prompt_call_bool: FuncId,
     pub prompt_call_float: FuncId,
     pub prompt_call_string: FuncId,
+    pub trace_run_started: FuncId,
+    pub trace_run_completed_int: FuncId,
+    pub trace_run_completed_bool: FuncId,
+    pub trace_run_completed_float: FuncId,
+    pub trace_run_completed_string: FuncId,
+    pub trace_tool_call: FuncId,
+    pub trace_tool_result_null: FuncId,
+    pub trace_tool_result_int: FuncId,
+    pub trace_tool_result_bool: FuncId,
+    pub trace_tool_result_float: FuncId,
+    pub trace_tool_result_string: FuncId,
     pub literal_counter: std::cell::Cell<u64>,
     /// When true, codegen-level scattered
     /// `emit_retain` / `emit_release` sites are skipped because the
@@ -2068,6 +2268,84 @@ impl RuntimeFuncs {
         let n = self.literal_counter.get();
         self.literal_counter.set(n + 1);
         n
+    }
+}
+
+pub(super) struct TracePayload {
+    pub type_tags: ClValue,
+    pub count: ClValue,
+    pub values_ptr: ClValue,
+}
+
+pub(super) fn emit_trace_payload(
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    runtime: &RuntimeFuncs,
+    values: &[ClValue],
+    tys: &[Type],
+    span: Span,
+) -> Result<TracePayload, CodegenError> {
+    debug_assert_eq!(values.len(), tys.len());
+    let tags = tys
+        .iter()
+        .map(trace_tag_for_type)
+        .collect::<Result<String, _>>()?;
+    let type_tags = lower_string_literal(builder, module, runtime, &tags, span)?;
+    let count = builder.ins().iconst(I64, values.len() as i64);
+    let values_ptr = if values.is_empty() {
+        builder.ins().iconst(I64, 0)
+    } else {
+        let stack_slot = builder.create_sized_stack_slot(clir::StackSlotData::new(
+            clir::StackSlotKind::ExplicitSlot,
+            (values.len() as u32) * 8,
+            3,
+        ));
+        for (idx, (value, ty)) in values.iter().zip(tys.iter()).enumerate() {
+            let offset = (idx as i32) * 8;
+            match ty {
+                Type::Int | Type::String => {
+                    builder.ins().stack_store(*value, stack_slot, offset);
+                }
+                Type::Bool => {
+                    let widened = builder.ins().uextend(I64, *value);
+                    builder.ins().stack_store(widened, stack_slot, offset);
+                }
+                Type::Float => {
+                    builder.ins().stack_store(*value, stack_slot, offset);
+                }
+                other => {
+                    return Err(CodegenError::not_supported(
+                        format!(
+                            "native trace payload does not yet support values of type `{}`",
+                            other.display_name()
+                        ),
+                        span,
+                    ));
+                }
+            }
+        }
+        builder.ins().stack_addr(I64, stack_slot, 0)
+    };
+    Ok(TracePayload {
+        type_tags,
+        count,
+        values_ptr,
+    })
+}
+
+fn trace_tag_for_type(ty: &Type) -> Result<char, CodegenError> {
+    match ty {
+        Type::Int => Ok('i'),
+        Type::Bool => Ok('b'),
+        Type::Float => Ok('f'),
+        Type::String => Ok('s'),
+        other => Err(CodegenError::not_supported(
+            format!(
+                "native trace payload does not yet support values of type `{}`",
+                other.display_name()
+            ),
+            Span::new(0, 0),
+        )),
     }
 }
 

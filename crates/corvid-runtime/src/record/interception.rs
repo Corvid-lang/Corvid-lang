@@ -1,10 +1,14 @@
 use crate::tracing::now_ms;
-use corvid_trace_schema::{TraceEvent, SCHEMA_VERSION, WRITER_INTERPRETER};
+use corvid_trace_schema::{TraceEvent, SCHEMA_VERSION};
 
-pub(crate) fn schema_header(run_id: &str, commit_sha: Option<String>) -> TraceEvent {
+pub(crate) fn schema_header(
+    run_id: &str,
+    writer: &str,
+    commit_sha: Option<String>,
+) -> TraceEvent {
     TraceEvent::SchemaHeader {
         version: SCHEMA_VERSION,
-        writer: WRITER_INTERPRETER.to_string(),
+        writer: writer.to_string(),
         commit_sha,
         source_path: None,
         ts_ms: now_ms(),

@@ -256,30 +256,49 @@ fn lower_stmt(
             runtime,
         ),
         IrStmt::Approve { label, args, span } => {
-            // Keep approve-arg side effects intact, then route the
-            // approval label through the runtime so native runs emit
-            // real approval trace events too.
-            for a in args {
-                let v = lower_expr(
-                    builder,
-                    a,
-                    current_return_ty,
-                    env,
-                    scope_stack,
-                    func_ids_by_def,
-                    module,
-                    runtime,
-                )?;
-                if !runtime.dup_drop_enabled && is_refcounted_type(&a.ty) {
-                    emit_release(builder, module, runtime, v);
-                }
-            }
+            // Lower approve args once, keep their side effects, and
+            // forward the typed values into the native runtime so the
+            // trace matches interpreter ApprovalRequest args.
+            let approve_arg_vals = args
+                .iter()
+                .map(|a| {
+                    lower_expr(
+                        builder,
+                        a,
+                        current_return_ty,
+                        env,
+                        scope_stack,
+                        func_ids_by_def,
+                        module,
+                        runtime,
+                    )
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            let approve_arg_tys = args.iter().map(|a| a.ty.clone()).collect::<Vec<_>>();
+            let trace_payload =
+                emit_trace_payload(builder, module, runtime, &approve_arg_vals, &approve_arg_tys, *span)?;
 
             let label_val = emit_string_const(builder, module, runtime, label, *span)?;
             let approve_fref = module.declare_func_in_func(runtime.approve_sync, builder.func);
-            let call = builder.ins().call(approve_fref, &[label_val]);
+            let call = builder.ins().call(
+                approve_fref,
+                &[
+                    label_val,
+                    trace_payload.type_tags,
+                    trace_payload.count,
+                    trace_payload.values_ptr,
+                ],
+            );
             let results: Vec<ClValue> = builder.inst_results(call).iter().copied().collect();
             emit_release(builder, module, runtime, label_val);
+            emit_release(builder, module, runtime, trace_payload.type_tags);
+            if !runtime.dup_drop_enabled {
+                for (v, arg) in approve_arg_vals.iter().zip(args.iter()) {
+                    if is_refcounted_type(&arg.ty) {
+                        emit_release(builder, module, runtime, *v);
+                    }
+                }
+            }
 
             let denied = builder.ins().icmp_imm(IntCC::Equal, results[0], 0);
             let deny_block = builder.create_block();

@@ -264,6 +264,8 @@ pub(super) fn lower_prompt_call(
         span,
     )?;
     let model_val = emit_string_const(builder, module, runtime, "", span)?;
+    let arg_tys = args.iter().map(|arg| arg.ty.clone()).collect::<Vec<_>>();
+    let trace_payload = emit_trace_payload(builder, module, runtime, &arg_vals, &arg_tys, span)?;
 
     let bridge_id = match return_ty {
         Type::Int => runtime.prompt_call_int,
@@ -283,7 +285,18 @@ pub(super) fn lower_prompt_call(
     let fref = module.declare_func_in_func(bridge_id, builder.func);
     let call = builder
         .ins()
-        .call(fref, &[prompt_name_val, signature_val, rendered, model_val]);
+        .call(
+            fref,
+            &[
+                prompt_name_val,
+                signature_val,
+                rendered,
+                model_val,
+                trace_payload.type_tags,
+                trace_payload.count,
+                trace_payload.values_ptr,
+            ],
+        );
     let result_vals: Vec<ClValue> =
         builder.inst_results(call).iter().copied().collect();
 
@@ -293,6 +306,7 @@ pub(super) fn lower_prompt_call(
         emit_release(builder, module, runtime, rendered);
     }
     emit_release(builder, module, runtime, model_val);
+    emit_release(builder, module, runtime, trace_payload.type_tags);
 
     for (v, a) in arg_vals.iter().zip(args.iter()) {
         if is_refcounted_type(&a.ty) {

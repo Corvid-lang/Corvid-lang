@@ -38,6 +38,7 @@ pub mod errors;
 pub mod ffi_bridge;
 pub mod llm;
 pub mod models;
+mod native_trace;
 pub mod record;
 pub mod replay;
 pub mod redact;

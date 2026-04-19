@@ -4,29 +4,44 @@ pub(crate) mod writer;
 use std::path::Path;
 
 use crate::tracing::Tracer;
+use corvid_trace_schema::WRITER_INTERPRETER;
 use writer::JsonlTraceWriter;
 
 #[derive(Clone)]
 pub struct Recorder {
     run_id: String,
+    schema_writer: &'static str,
     writer: JsonlTraceWriter,
 }
 
 impl Recorder {
-    pub fn for_tracer(tracer: &Tracer) -> Option<Self> {
+    pub fn for_tracer(tracer: &Tracer, schema_writer: &'static str) -> Option<Self> {
         if !tracer.is_enabled() {
             return None;
         }
-        Some(Self::from_writer(tracer.writer(), tracer.run_id()))
+        Some(Self::from_writer(tracer.writer(), tracer.run_id(), schema_writer))
     }
 
     pub fn open(path: &Path, run_id: impl Into<String>) -> Self {
-        Self::from_writer(writer::JsonlTraceWriter::open(path), run_id)
+        Self::open_with_writer(path, run_id, WRITER_INTERPRETER)
     }
 
-    fn from_writer(writer: JsonlTraceWriter, run_id: impl Into<String>) -> Self {
+    pub fn open_with_writer(
+        path: &Path,
+        run_id: impl Into<String>,
+        schema_writer: &'static str,
+    ) -> Self {
+        Self::from_writer(writer::JsonlTraceWriter::open(path), run_id, schema_writer)
+    }
+
+    fn from_writer(
+        writer: JsonlTraceWriter,
+        run_id: impl Into<String>,
+        schema_writer: &'static str,
+    ) -> Self {
         Self {
             run_id: run_id.into(),
+            schema_writer,
             writer,
         }
     }
@@ -40,7 +55,11 @@ impl Recorder {
     }
 
     pub fn emit_schema_header(&self) {
-        let event = interception::schema_header(&self.run_id, build_commit_sha());
+        let event = interception::schema_header(
+            &self.run_id,
+            self.schema_writer,
+            build_commit_sha(),
+        );
         self.writer.append(&event);
     }
 
@@ -64,7 +83,10 @@ fn build_commit_sha() -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::Recorder;
-    use corvid_trace_schema::{read_events_from_path, validate_supported_schema, TraceEvent, SCHEMA_VERSION, WRITER_INTERPRETER};
+    use corvid_trace_schema::{
+        read_events_from_path, validate_supported_schema, TraceEvent, SCHEMA_VERSION,
+        WRITER_INTERPRETER, WRITER_NATIVE,
+    };
 
     #[test]
     fn recorder_writes_header_and_seed_events() {
@@ -104,6 +126,25 @@ mod tests {
                 assert_eq!(*value, 123);
             }
             other => panic!("expected clock read, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn recorder_can_write_native_schema_header() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("native.jsonl");
+        let recorder = Recorder::open_with_writer(&path, "run-native", WRITER_NATIVE);
+        recorder.emit_schema_header();
+        drop(recorder);
+
+        let events = read_events_from_path(&path).unwrap();
+        validate_supported_schema(&events).unwrap();
+        match &events[0] {
+            TraceEvent::SchemaHeader { writer, run_id, .. } => {
+                assert_eq!(writer, WRITER_NATIVE);
+                assert_eq!(run_id, "run-native");
+            }
+            other => panic!("expected schema header, got {other:?}"),
         }
     }
 }

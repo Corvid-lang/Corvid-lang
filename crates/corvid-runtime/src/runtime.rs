@@ -13,7 +13,7 @@ use crate::record::Recorder;
 use crate::replay::ReplaySource;
 use crate::tools::ToolRegistry;
 use crate::tracing::{fresh_run_id, now_ms, Tracer};
-use corvid_trace_schema::TraceEvent;
+use corvid_trace_schema::{TraceEvent, WRITER_INTERPRETER};
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -309,17 +309,34 @@ impl Runtime {
     }
 }
 
-#[derive(Default)]
 pub struct RuntimeBuilder {
     tools: ToolRegistry,
     llms: LlmRegistry,
     approver: Option<Arc<dyn Approver>>,
     tracer: Option<Tracer>,
+    trace_schema_writer: &'static str,
     default_model: String,
     model_catalog: ModelCatalog,
     model_catalog_root: Option<PathBuf>,
     rollout_seed: Option<u64>,
     replay_trace: Option<PathBuf>,
+}
+
+impl Default for RuntimeBuilder {
+    fn default() -> Self {
+        Self {
+            tools: ToolRegistry::default(),
+            llms: LlmRegistry::default(),
+            approver: None,
+            tracer: None,
+            trace_schema_writer: WRITER_INTERPRETER,
+            default_model: String::new(),
+            model_catalog: ModelCatalog::default(),
+            model_catalog_root: None,
+            rollout_seed: None,
+            replay_trace: None,
+        }
+    }
 }
 
 impl RuntimeBuilder {
@@ -346,6 +363,11 @@ impl RuntimeBuilder {
 
     pub fn tracer(mut self, tracer: Tracer) -> Self {
         self.tracer = Some(tracer);
+        self
+    }
+
+    pub fn trace_schema_writer(mut self, writer: &'static str) -> Self {
+        self.trace_schema_writer = writer;
         self
     }
 
@@ -406,7 +428,7 @@ impl RuntimeBuilder {
             None
         };
         let tracer = self.tracer.unwrap_or_else(Tracer::null);
-        let recorder = Recorder::for_tracer(&tracer).map(Arc::new);
+        let recorder = Recorder::for_tracer(&tracer, self.trace_schema_writer).map(Arc::new);
         let (mode, replay_error, rollout_seed) = if let Some(path) = self.replay_trace {
             match ReplaySource::from_path(path) {
                 Ok(source) => (
@@ -599,5 +621,14 @@ cost_per_token_in = 0.000015
             .collect();
 
         assert_eq!(sequence_a, sequence_b);
+    }
+
+    #[test]
+    fn builder_defaults_to_interpreter_trace_writer() {
+        let runtime = Runtime::builder().build();
+        assert_eq!(runtime.tracer().run_id(), "null");
+        assert!(runtime.recorder().is_none());
+        let builder = RuntimeBuilder::default();
+        assert_eq!(builder.trace_schema_writer, WRITER_INTERPRETER);
     }
 }

@@ -36,6 +36,7 @@ criterion     = "0.5"
 # (`serde_json::json!`). corvid-runtime already pulls it in transitively
 # but we depend on it explicitly so the `json!` macro is reachable.
 serde_json    = { workspace = true }
+corvid-trace-schema = { workspace = true }
 
 [[bench]]
 name = "native_foundation_benchmarks"

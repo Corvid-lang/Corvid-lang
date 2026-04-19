@@ -1073,11 +1073,52 @@ pub(super) fn lower_expr(
                     )?);
                     arg_refcounted.push(is_refcounted_type(&a.ty));
                 }
+                let trace_arg_tys = args.iter().map(|arg| arg.ty.clone()).collect::<Vec<_>>();
+                let trace_payload =
+                    emit_trace_payload(builder, module, runtime, &arg_vals, &trace_arg_tys, expr.span)?;
+                let tool_name_val =
+                    emit_string_const(builder, module, runtime, &tool.name, expr.span)?;
+                let trace_tool_call_ref =
+                    module.declare_func_in_func(runtime.trace_tool_call, builder.func);
+                builder.ins().call(
+                    trace_tool_call_ref,
+                    &[
+                        tool_name_val,
+                        trace_payload.type_tags,
+                        trace_payload.count,
+                        trace_payload.values_ptr,
+                    ],
+                );
 
                 let fref = module.declare_func_in_func(wrapper_id, builder.func);
                 let call = builder.ins().call(fref, &arg_vals);
                 let result_vals: Vec<ClValue> =
                     builder.inst_results(call).iter().copied().collect();
+                let trace_result_ref = match &expr.ty {
+                    Type::Nothing => Some(runtime.trace_tool_result_null),
+                    Type::Int => Some(runtime.trace_tool_result_int),
+                    Type::Bool => Some(runtime.trace_tool_result_bool),
+                    Type::Float => Some(runtime.trace_tool_result_float),
+                    Type::String => Some(runtime.trace_tool_result_string),
+                    Type::Grounded(inner) => match &**inner {
+                        Type::Int => Some(runtime.trace_tool_result_int),
+                        Type::Bool => Some(runtime.trace_tool_result_bool),
+                        Type::Float => Some(runtime.trace_tool_result_float),
+                        Type::String => Some(runtime.trace_tool_result_string),
+                        _ => None,
+                    },
+                    _ => None,
+                };
+                if let Some(trace_func) = trace_result_ref {
+                    let trace_result_call = module.declare_func_in_func(trace_func, builder.func);
+                    let trace_args = if matches!(expr.ty, Type::Nothing) {
+                        vec![tool_name_val]
+                    } else {
+                        vec![tool_name_val, result_vals[0]]
+                    };
+                    builder.ins().call(trace_result_call, &trace_args);
+                }
+                emit_release(builder, module, runtime, trace_payload.type_tags);
 
                 // Release the +1 we put on each refcounted arg. For
                 // literals (refcount = i64::MIN sentinel) this is a
@@ -1090,6 +1131,7 @@ pub(super) fn lower_expr(
                         }
                     }
                 }
+                emit_release(builder, module, runtime, tool_name_val);
 
                 // Return-value unpacking. For Nothing-returning tools
                 // there's no result to hand back; synthesize a
