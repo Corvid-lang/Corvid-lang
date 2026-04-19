@@ -559,7 +559,8 @@ fn resolve_since_ms(since: Option<&str>, since_commit: Option<&str>) -> Result<O
 
 fn event_ts_ms(event: &TraceEvent) -> u64 {
     match event {
-        TraceEvent::RunStarted { ts_ms, .. }
+        TraceEvent::SchemaHeader { ts_ms, .. }
+        | TraceEvent::RunStarted { ts_ms, .. }
         | TraceEvent::RunCompleted { ts_ms, .. }
         | TraceEvent::ToolCall { ts_ms, .. }
         | TraceEvent::ToolResult { ts_ms, .. }
@@ -567,6 +568,8 @@ fn event_ts_ms(event: &TraceEvent) -> u64 {
         | TraceEvent::LlmResult { ts_ms, .. }
         | TraceEvent::ApprovalRequest { ts_ms, .. }
         | TraceEvent::ApprovalResponse { ts_ms, .. }
+        | TraceEvent::SeedRead { ts_ms, .. }
+        | TraceEvent::ClockRead { ts_ms, .. }
         | TraceEvent::ModelSelected { ts_ms, .. }
         | TraceEvent::ProgressiveEscalation { ts_ms, .. }
         | TraceEvent::ProgressiveExhausted { ts_ms, .. }

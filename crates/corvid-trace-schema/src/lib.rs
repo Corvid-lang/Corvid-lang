@@ -1,127 +1,40 @@
-use serde::{Deserialize, Serialize};
+//! Shared trace schema for Corvid interpreter + native tiers.
+//!
+//! Every tier writes the same JSONL format; every reader
+//! (`corvid replay`, `corvid routing-report`, REPL replay, the
+//! differential-verify harness) consumes the same `TraceEvent`
+//! enum. The schema lives in its own crate so no implementation
+//! tier can drift from it.
+//!
+//! # Shape
+//!
+//! A trace is a sequence of line-delimited JSON objects. The
+//! first object is a [`TraceEvent::SchemaHeader`] carrying the
+//! schema version; the rest are the events emitted during the
+//! program's run, ending with a [`TraceEvent::RunCompleted`].
+//!
+//! See [`SCHEMA_VERSION`] for the current version of the wire
+//! format.
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case", tag = "kind")]
-pub enum TraceEvent {
-    RunStarted {
-        ts_ms: u64,
-        run_id: String,
-        agent: String,
-        #[serde(default)]
-        args: Vec<serde_json::Value>,
-    },
-    RunCompleted {
-        ts_ms: u64,
-        run_id: String,
-        ok: bool,
-        #[serde(default)]
-        result: Option<serde_json::Value>,
-        #[serde(default)]
-        error: Option<String>,
-    },
-    ToolCall {
-        ts_ms: u64,
-        run_id: String,
-        tool: String,
-        args: Vec<serde_json::Value>,
-    },
-    ToolResult {
-        ts_ms: u64,
-        run_id: String,
-        tool: String,
-        result: serde_json::Value,
-    },
-    LlmCall {
-        ts_ms: u64,
-        run_id: String,
-        prompt: String,
-        model: Option<String>,
-        #[serde(default)]
-        rendered: Option<String>,
-        #[serde(default)]
-        args: Vec<serde_json::Value>,
-    },
-    LlmResult {
-        ts_ms: u64,
-        run_id: String,
-        prompt: String,
-        #[serde(default)]
-        model: Option<String>,
-        result: serde_json::Value,
-    },
-    ApprovalRequest {
-        ts_ms: u64,
-        run_id: String,
-        label: String,
-        args: Vec<serde_json::Value>,
-    },
-    ApprovalResponse {
-        ts_ms: u64,
-        run_id: String,
-        label: String,
-        approved: bool,
-    },
-    ModelSelected {
-        ts_ms: u64,
-        run_id: String,
-        prompt: String,
-        model: String,
-        #[serde(default)]
-        capability_required: Option<String>,
-        #[serde(default)]
-        capability_picked: Option<String>,
-        cost_estimate: f64,
-        #[serde(default)]
-        arm_index: Option<usize>,
-        #[serde(default)]
-        stage_index: Option<usize>,
-    },
-    ProgressiveEscalation {
-        ts_ms: u64,
-        run_id: String,
-        prompt: String,
-        from_stage: usize,
-        to_stage: usize,
-        confidence_observed: f64,
-        threshold: f64,
-    },
-    ProgressiveExhausted {
-        ts_ms: u64,
-        run_id: String,
-        prompt: String,
-        stages: Vec<String>,
-    },
-    AbVariantChosen {
-        ts_ms: u64,
-        run_id: String,
-        prompt: String,
-        variant: String,
-        baseline: String,
-        rollout_pct: f64,
-        chosen: String,
-    },
-    EnsembleVote {
-        ts_ms: u64,
-        run_id: String,
-        prompt: String,
-        members: Vec<String>,
-        results: Vec<String>,
-        winner: String,
-        agreement_rate: f64,
-        strategy: String,
-    },
-    AdversarialPipelineCompleted {
-        ts_ms: u64,
-        run_id: String,
-        prompt: String,
-        contradiction: bool,
-    },
-    AdversarialContradiction {
-        ts_ms: u64,
-        run_id: String,
-        prompt: String,
-        proposed: String,
-        challenge: String,
-        verdict: serde_json::Value,
-    },
-}
+pub mod event;
+pub mod io;
+
+pub use event::TraceEvent;
+pub use io::{
+    append_event, parse_event_line, read_events, read_events_from_path, schema_version_of,
+    serialize_event_line, validate_supported_schema, ReadError, UnsupportedSchema,
+    write_events_to_path,
+};
+
+/// Current trace schema version. Bump whenever an existing
+/// variant's shape changes. Adding a new variant is additive —
+/// readers skip unknown kinds — and does not require a bump.
+pub const SCHEMA_VERSION: u32 = 1;
+
+/// Writer identifier the interpreter tier emits in its
+/// `SchemaHeader`. Kept here so every tier references the same
+/// constant.
+pub const WRITER_INTERPRETER: &str = "corvid-vm";
+
+/// Writer identifier the native tier emits in its `SchemaHeader`.
+pub const WRITER_NATIVE: &str = "corvid-codegen-cl";

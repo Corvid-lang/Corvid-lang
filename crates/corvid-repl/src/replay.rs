@@ -293,6 +293,21 @@ impl ReplaySession {
                     ensure_run_id(&path, &run_id, event_run_id)?;
                     i += 1;
                 }
+                TraceEvent::SchemaHeader {
+                    run_id: event_run_id,
+                    ..
+                }
+                | TraceEvent::SeedRead {
+                    run_id: event_run_id,
+                    ..
+                }
+                | TraceEvent::ClockRead {
+                    run_id: event_run_id,
+                    ..
+                } => {
+                    ensure_run_id(&path, &run_id, event_run_id)?;
+                    i += 1;
+                }
                 TraceEvent::ToolResult { .. }
                 | TraceEvent::LlmResult { .. }
                 | TraceEvent::ApprovalResponse { .. } => {
@@ -458,7 +473,8 @@ impl fmt::Display for ReplayLoadError {
 
 fn first_run_id(events: &[TraceEvent]) -> Result<&str, ReplayLoadError> {
     match events.first() {
-        Some(TraceEvent::RunStarted { run_id, .. })
+        Some(TraceEvent::SchemaHeader { run_id, .. })
+        | Some(TraceEvent::RunStarted { run_id, .. })
         | Some(TraceEvent::RunCompleted { run_id, .. })
         | Some(TraceEvent::ToolCall { run_id, .. })
         | Some(TraceEvent::ToolResult { run_id, .. })
@@ -466,6 +482,8 @@ fn first_run_id(events: &[TraceEvent]) -> Result<&str, ReplayLoadError> {
         | Some(TraceEvent::LlmResult { run_id, .. })
         | Some(TraceEvent::ApprovalRequest { run_id, .. })
         | Some(TraceEvent::ApprovalResponse { run_id, .. })
+        | Some(TraceEvent::SeedRead { run_id, .. })
+        | Some(TraceEvent::ClockRead { run_id, .. })
         | Some(TraceEvent::ModelSelected { run_id, .. })
         | Some(TraceEvent::ProgressiveEscalation { run_id, .. })
         | Some(TraceEvent::ProgressiveExhausted { run_id, .. })
@@ -490,7 +508,8 @@ fn ensure_run_id(path: &Path, expected: &str, got: &str) -> Result<(), ReplayLoa
 
 fn first_ts(events: &[TraceEvent]) -> u64 {
     match events.first() {
-        Some(TraceEvent::RunStarted { ts_ms, .. })
+        Some(TraceEvent::SchemaHeader { ts_ms, .. })
+        | Some(TraceEvent::RunStarted { ts_ms, .. })
         | Some(TraceEvent::RunCompleted { ts_ms, .. })
         | Some(TraceEvent::ToolCall { ts_ms, .. })
         | Some(TraceEvent::ToolResult { ts_ms, .. })
@@ -498,6 +517,8 @@ fn first_ts(events: &[TraceEvent]) -> u64 {
         | Some(TraceEvent::LlmResult { ts_ms, .. })
         | Some(TraceEvent::ApprovalRequest { ts_ms, .. })
         | Some(TraceEvent::ApprovalResponse { ts_ms, .. })
+        | Some(TraceEvent::SeedRead { ts_ms, .. })
+        | Some(TraceEvent::ClockRead { ts_ms, .. })
         | Some(TraceEvent::ModelSelected { ts_ms, .. })
         | Some(TraceEvent::ProgressiveEscalation { ts_ms, .. })
         | Some(TraceEvent::ProgressiveExhausted { ts_ms, .. })
@@ -511,7 +532,8 @@ fn first_ts(events: &[TraceEvent]) -> u64 {
 
 fn last_ts(events: &[TraceEvent]) -> u64 {
     match events.last() {
-        Some(TraceEvent::RunStarted { ts_ms, .. })
+        Some(TraceEvent::SchemaHeader { ts_ms, .. })
+        | Some(TraceEvent::RunStarted { ts_ms, .. })
         | Some(TraceEvent::RunCompleted { ts_ms, .. })
         | Some(TraceEvent::ToolCall { ts_ms, .. })
         | Some(TraceEvent::ToolResult { ts_ms, .. })
@@ -519,6 +541,8 @@ fn last_ts(events: &[TraceEvent]) -> u64 {
         | Some(TraceEvent::LlmResult { ts_ms, .. })
         | Some(TraceEvent::ApprovalRequest { ts_ms, .. })
         | Some(TraceEvent::ApprovalResponse { ts_ms, .. })
+        | Some(TraceEvent::SeedRead { ts_ms, .. })
+        | Some(TraceEvent::ClockRead { ts_ms, .. })
         | Some(TraceEvent::ModelSelected { ts_ms, .. })
         | Some(TraceEvent::ProgressiveEscalation { ts_ms, .. })
         | Some(TraceEvent::ProgressiveExhausted { ts_ms, .. })

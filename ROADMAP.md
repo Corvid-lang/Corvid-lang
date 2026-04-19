@@ -1140,23 +1140,70 @@ Users register local models (Ollama, vLLM, llama.cpp) with declared capabilities
 
 ---
 
-### Phase 21 — Replay (~4–5 weeks) — **THE FLAGSHIP WOW**
+### Phase 21 — Replay (~5–6 months, maximal-flagship scope) — **THE FLAGSHIP WOW**
 
-**Goal.** Every run replayable by construction. The feature that ships in the v1.0 demo video.
+**Goal.** Every run replayable by construction — and beyond. Baseline record + replay in both tiers, plus nine inventive features that push past every existing observability tool. Replay becomes a language-level, compile-time-guaranteed, regression-oracle-producing primitive.
 
-**Hard dep:** Phases 14–15 (tool + prompt calls must exist to be worth recording). Runtime tracing infrastructure (✅ baseline from Phase 11).
-**Soft dep:** Phase 20. Replay doesn't structurally depend on custom effects — it records tool / prompt / approve / seed / time calls regardless of effect category. Paired with Phase 20 at v0.6 for release-narrative reasons: "the moat you can reason about PLUS the moat you can replay" ships as one cut.
+**Hard dep:** Phases 14–15 (tool + prompt calls must exist to be worth recording). Runtime tracing infrastructure (baseline from Phase 11). Phase 20h seeded PRNG from slice I-rt.
+**Soft dep:** Phase 20. Replay doesn't structurally depend on custom effects — it records tool / prompt / approve / seed / time calls regardless of effect category.
 
-**Scope:**
-- Runtime records every LLM call, tool call, approve decision, random seed, time-source read into a structured trace.
-- `corvid replay <trace-id>` re-executes the program substituting recorded responses for live calls. Deterministic — given the same trace, replay produces byte-identical state transitions.
-- Replay works in both interpreter and native tiers (shared recording format). WASM replay lands alongside WASM in Phase 23.
-- Cost-zero re-runs: replaying 10,000 times costs $0 in LLM spend.
-- Command-line UX ships in this phase: `corvid replay <trace>` deterministic re-run. Scrub-backward / step-forward interactive UX is a followup in the post-v1.0 bucket (uses the same infrastructure).
+**Locked design anchors:**
+- Trace format: **JSONL** (diff-friendly, CI-inspectable, one `TraceEvent` per line).
+- Cross-tier replay (interpreter-trace ↔ native-replay): **post-v1**. v1 records-then-replays within-tier only.
+- Recording overhead: **≤ 5%** vs unrecorded (soft budget).
+- Trace storage: **local disk only** under `target/trace/<run-id>.jsonl`. Upload is a later phase.
+- Interactive step/scrub UX: **post-v1**. CLI-first.
 
-**Non-scope:** Scrub-backward interactive debugger (post-v1.0). Trace visualization UI (post-v1.0). WASM replay (deferred to Phase 23's WASM scope — same recording format, needs host-function bindings).
+**Inventive-layer features (what makes this extraordinary):**
+- **A** — `@replayable` **compile-time guarantee**. Agent fails to compile if body uses any nondeterministic source not captured in the trace schema. Replay is a type-system property, not a runtime hope.
+- **B** — **Differential replay across model versions**. `corvid replay --model <id> <trace>` replays a recorded trace against a different provider and reports divergences. Regression-test the next model upgrade for $0.
+- **C** — **Provenance-aware replay**. Renders the `Grounded<T>` DAG for every output. "How did the model know X?" becomes answerable.
+- **D** — **Counterfactual replay**. Mutate one recorded response, replay, show the divergence. "What would have happened if the adjudicator said contradiction:false?"
+- **E** — **Replay as a language primitive**. `replay <trace>: when <pattern> -> <expr>` — agents can analyze their own past runs. No other framework has this.
+- **F** — `@deterministic` — stricter sibling of `@replayable`. Forbids every nondeterministic source, trace or no trace.
+- **G** — **Prod-as-test-suite**. `corvid test --from-traces <dir>` turns every production trace into a deterministic regression test. The suite writes itself.
+- **H** — **Behavior-diff in PR review**. `corvid trace-diff <commit-a> <commit-b>` renders the semantic diff of agent behavior across the trace corpus for every PR.
+- **I** — **Live shadow replay**. Runtime daemon runs prod + replay simultaneously; divergence alerts fire in real time.
+
+**Non-scope (post-v1):** Scrub-backward interactive debugger, trace visualization UI, WASM replay (Phase 23), trace upload/federation, semantic similarity for differential replay, cross-tier replay parity.
 
 **v0.6 cuts here.** Moat phase + flagship wow feature land together. Corvid becomes unignorably different.
+
+**Track divided by file scope** (same boundary used through Phase 20h/20i):
+
+#### My lane (compiler + CLI + docs — ~15 slices)
+
+- [ ] 21-A-schema            `corvid-trace-schema`: `SCHEMA_VERSION` + new variants (`SchemaHeader`, `SeedRead`, `ClockRead`) + `io.rs` JSONL helpers + round-trip tests
+- [ ] 21-A-determinism-hooks IR clock abstraction + PRNG wiring confirmation from Phase 20h I-rt
+- [ ] 21-F-cli               `corvid replay <trace>`, `corvid trace list`, `corvid trace show`
+- [ ] 21-inv-A               `@replayable` attribute: parser / AST / resolver / checker; `NonReplayableCall` diagnostic
+- [ ] 21-inv-F               `@deterministic` stricter sibling; shared `replayable ⊂ deterministic` lattice
+- [ ] 21-inv-B-cli           `corvid replay --model <id>` + divergence renderer
+- [ ] 21-inv-C               Provenance-aware replay: trace schema extension for `Grounded<T>` edges + DAG renderer
+- [ ] 21-inv-D-cli           `corvid replay --mutate <step> <response>` + divergence output
+- [ ] 21-inv-E-1             Parser: `replay <expr>: when <pat> -> <expr>` syntax
+- [ ] 21-inv-E-2             AST + resolver: `ReplayExpr`, `TraceEventPattern`, trace-id locals
+- [ ] 21-inv-E-3             Checker: `TraceId` / `TraceEvent` types + pattern exhaustiveness
+- [ ] 21-inv-E-4             IR lowering for replay blocks
+- [ ] 21-inv-G-cli           `corvid test --from-traces <dir>` + trace-to-test harness
+- [ ] 21-inv-H               `corvid trace-diff <commit-a> <commit-b>` + git-integrated behavior diff
+- [ ] 21-docs                Spec section 21 + ROADMAP closeout + v1.0 demo script
+
+#### Dev B's lane (runtime + codegen + daemon — ~9 slices)
+
+- [ ] 21-B-rec-interp        Recording hooks in interpreter (LLM / tool / approve / seed / time), emit to JSONL
+- [ ] 21-C-replay-interp     Replay adapter: response substitution; byte-identical post-replay state
+- [ ] 21-B-rec-native        Native-tier recording parity
+- [ ] 21-C-replay-native     Native-tier replay parity
+- [ ] 21-inv-B-adapter       Model-swap seam for `corvid replay --model <id>`
+- [ ] 21-inv-D-runtime       Counterfactual one-step mutation at runtime
+- [ ] 21-inv-E-runtime       Runtime support for `replay` language primitive (trace ingestion + pattern dispatch)
+- [ ] 21-inv-G-harness       Trace-to-test-fixture adapter; divergence-as-test-failure reporting
+- [ ] 21-inv-I               Live shadow replay daemon; real-time divergence alerts
+
+**Rules (standing):** CLAUDE.md rubric on every file (1–2 responsibilities). One commit per file extraction or feature step. Validation gate between every commit: `cargo check --workspace` + `cargo test -p <crate> --lib` + `cargo test -p <crate> --test <name> -- --list` (for test-file touches) + `cargo run -q -p corvid-cli -- verify --corpus tests/corpus` (must still exit 1 only on the two deliberate fixtures). Push before next slice. Wait for acknowledgement at slice boundaries. Zero semantic changes mid-refactor. No shortcuts — a thin feature is a shortcut.
+
+**Success criteria.** Every agent marked `@replayable` compiles iff it can be deterministically replayed. Every run under recording produces a JSONL trace that replays to byte-identical state. `corvid replay --model claude-opus-5.0 trace.jsonl` runs cost-free and reports divergences. `replay` is a first-class Corvid expression. Prod traces become regression tests with `corvid test --from-traces`. PRs show a behavior diff before merge. Live shadow mode detects regressions in production.
 
 ---
 
