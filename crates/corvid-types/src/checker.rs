@@ -461,6 +461,7 @@ impl<'a> Checker<'a> {
 }
 
 mod call;
+mod case;
 mod decl;
 mod expr;
 mod ops;
@@ -468,56 +469,8 @@ mod prompt;
 mod stmt;
 mod types;
 
+use case::{pascal_case, snake_case};
+
 fn is_weakable_type(ty: &Type) -> bool {
     matches!(ty, Type::String | Type::Struct(_) | Type::List(_))
-}
-
-// ------------------------------------------------------------
-// String-case helpers for approve-label matching.
-// ------------------------------------------------------------
-
-fn pascal_case(snake: &str) -> String {
-    let mut out = String::new();
-    let mut cap_next = true;
-    for c in snake.chars() {
-        if c == '_' {
-            cap_next = true;
-            continue;
-        }
-        if cap_next {
-            out.extend(c.to_uppercase());
-            cap_next = false;
-        } else {
-            out.push(c);
-        }
-    }
-    out
-}
-
-fn snake_case(pascal: &str) -> String {
-    let mut out = String::new();
-    for (i, c) in pascal.chars().enumerate() {
-        if c.is_uppercase() {
-            if i > 0 {
-                out.push('_');
-            }
-            out.extend(c.to_lowercase());
-        } else {
-            out.push(c);
-        }
-    }
-    out
-}
-
-#[cfg(test)]
-mod case_tests {
-    use super::*;
-
-    #[test]
-    fn snake_and_pascal_are_inverses() {
-        assert_eq!(pascal_case("issue_refund"), "IssueRefund");
-        assert_eq!(snake_case("IssueRefund"), "issue_refund");
-        assert_eq!(pascal_case("send_email"), "SendEmail");
-        assert_eq!(snake_case("SendEmail"), "send_email");
-    }
 }
