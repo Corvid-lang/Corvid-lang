@@ -13,8 +13,8 @@ use crate::errors::{ParseError, ParseErrorKind};
 use crate::token::TokKind;
 use corvid_ast::{
     AgentDecl, BinaryOp, Block, Decl, DimensionDecl, DimensionValue, Effect, EffectDecl,
-    EvalAssert, EvalDecl, Field, Ident, ImportDecl, ImportSource, ModelDecl, ModelField,
-    ToolDecl, TypeDecl,
+    EvalAssert, EvalDecl, ExtendDecl, ExtendMethod, ExtendMethodKind, Field, Ident, ImportDecl,
+    ImportSource, ModelDecl, ModelField, Param, ToolDecl, TypeDecl, Visibility,
 };
 
 impl<'a> Parser<'a> {
@@ -576,5 +576,145 @@ impl<'a> Parser<'a> {
 
         self.expect_newline()?;
         Ok(assert_node)
+    }
+    /// Parse an `extend TypeName:` block. The body is an indented
+    /// list of tool / prompt / agent declarations, each optionally
+    /// prefixed with `public` or `public(package)`.
+    ///
+    /// ```text
+    /// extend Order:
+    ///     public agent total(o: Order) -> Int:
+    ///         return o.amount + o.tax
+    ///     public prompt summarize(o: Order) -> String:
+    ///         "..."
+    ///     public tool fetch_status(o: Order) -> Status dangerous
+    ///     agent compute_tax(o: Order) -> Int:   # private
+    ///         return o.amount / 10
+    /// ```
+    fn parse_extend_decl(&mut self) -> Result<ExtendDecl, ParseError> {
+        let start = self.peek_span();
+        self.bump(); // extend
+
+        let (name, name_span) = self.expect_ident()?;
+        self.expect(TokKind::Colon, "`:` after extend target")?;
+        self.expect_newline()?;
+        self.expect(TokKind::Indent, "indented block of methods")?;
+
+        let mut methods: Vec<ExtendMethod> = Vec::new();
+        while !matches!(self.peek(), TokKind::Dedent | TokKind::Eof) {
+            let visibility = self.parse_optional_visibility()?;
+            let method_kind = match self.peek() {
+                TokKind::KwAgent => {
+                    let d = self.parse_agent_decl()?;
+                    ExtendMethodKind::Agent(d)
+                }
+                TokKind::KwPrompt => {
+                    let d = self.parse_prompt_decl()?;
+                    ExtendMethodKind::Prompt(d)
+                }
+                TokKind::KwTool => {
+                    let d = self.parse_tool_decl()?;
+                    ExtendMethodKind::Tool(d)
+                }
+                other => {
+                    return Err(ParseError {
+                        kind: ParseErrorKind::UnexpectedToken {
+                            got: describe_token(other),
+                            expected: "agent / prompt / tool declaration inside `extend` block".into(),
+                        },
+                        span: self.peek_span(),
+                    });
+                }
+            };
+            methods.push(ExtendMethod {
+                visibility,
+                kind: method_kind,
+            });
+        }
+
+        let end_span = self.peek_span();
+        self.expect(
+            TokKind::Dedent,
+            "end of indented `extend` block (dedent)",
+        )?;
+
+        Ok(ExtendDecl {
+            type_name: Ident::new(name, name_span),
+            methods,
+            span: start.merge(end_span),
+        })
+    }
+
+    /// Parse an optional visibility prefix: `public`, `public(package)`,
+    /// or nothing (returning `Visibility::Private`). Consumes the
+    /// tokens on success; leaves them alone if no `public` keyword.
+    fn parse_optional_visibility(&mut self) -> Result<Visibility, ParseError> {
+        if !matches!(self.peek(), TokKind::KwPublic) {
+            return Ok(Visibility::Private);
+        }
+        self.bump(); // public
+        if matches!(self.peek(), TokKind::LParen) {
+            self.bump(); // (
+            // Only `package` is accepted inside public(...) today.
+            // Future work may add effect-scoped variants.
+            match self.peek() {
+                TokKind::KwPackage => {
+                    self.bump();
+                }
+                other => {
+                    return Err(ParseError {
+                        kind: ParseErrorKind::UnexpectedToken {
+                            got: describe_token(other),
+                            expected: "`package` inside `public(...)` (the only supported variant today)".into(),
+                        },
+                        span: self.peek_span(),
+                    });
+                }
+            }
+            self.expect(TokKind::RParen, "`)` after `public(package)`")?;
+            Ok(Visibility::PublicPackage)
+        } else {
+            Ok(Visibility::Public)
+        }
+    }
+
+    // -- shared helpers -----------------------------------------
+
+    /// Parse `( )` or `( param (, param)* )`.
+    pub(super) fn parse_params(&mut self) -> Result<Vec<Param>, ParseError> {
+        self.expect(TokKind::LParen, "`(` to open parameter list")?;
+        let mut params = Vec::new();
+        if !matches!(self.peek(), TokKind::RParen) {
+            params.push(self.parse_param()?);
+            while matches!(self.peek(), TokKind::Comma) {
+                self.bump();
+                if matches!(self.peek(), TokKind::RParen) {
+                    break; // allow trailing comma
+                }
+                params.push(self.parse_param()?);
+            }
+        }
+        let close_span = self.peek_span();
+        if !matches!(self.peek(), TokKind::RParen) {
+            return Err(ParseError {
+                kind: ParseErrorKind::UnclosedParen,
+                span: close_span,
+            });
+        }
+        self.bump();
+        Ok(params)
+    }
+
+    fn parse_param(&mut self) -> Result<Param, ParseError> {
+        let start = self.peek_span();
+        let (name, name_span) = self.expect_ident()?;
+        self.expect(TokKind::Colon, "`:` between parameter name and type")?;
+        let ty = self.parse_type_ref()?;
+        let end = ty.span();
+        Ok(Param {
+            name: Ident::new(name, name_span),
+            ty,
+            span: start.merge(end),
+        })
     }
 }
