@@ -1173,13 +1173,15 @@ Users register local models (Ollama, vLLM, llama.cpp) with declared capabilities
 
 #### My lane (compiler + CLI + docs — ~15 slices)
 
-- [ ] 21-A-schema            `corvid-trace-schema`: `SCHEMA_VERSION` + new variants (`SchemaHeader`, `SeedRead`, `ClockRead`) + `io.rs` JSONL helpers + round-trip tests
-- [ ] 21-A-determinism-hooks IR clock abstraction + PRNG wiring confirmation from Phase 20h I-rt
-- [ ] 21-F-cli               `corvid replay <trace>`, `corvid trace list`, `corvid trace show`
-- [ ] 21-inv-A               `@replayable` attribute: parser / AST / resolver / checker; `NonReplayableCall` diagnostic
-- [ ] 21-inv-F               `@deterministic` stricter sibling; shared `replayable ⊂ deterministic` lattice
-- [ ] 21-inv-B-cli           `corvid replay --model <id>` + divergence renderer
-- [ ] 21-inv-C               Provenance-aware replay: trace schema extension for `Grounded<T>` edges + DAG renderer
+- [x] 21-A-schema            `corvid-trace-schema`: `SCHEMA_VERSION` + new variants (`SchemaHeader`, `SeedRead`, `ClockRead`) + `io.rs` JSONL helpers + round-trip tests
+- [x] 21-A-determinism-hooks IR clock abstraction + PRNG wiring confirmation from Phase 20h I-rt
+- [x] 21-F-cli               `corvid replay <trace>`, `corvid trace list`, `corvid trace show`
+- [x] 21-inv-A               `@replayable` attribute: parser / AST / resolver / checker; `NonReplayableCall` diagnostic
+- [x] 21-inv-F               `@deterministic` stricter sibling; shared `replayable ⊂ deterministic` lattice
+- [x] 21-inv-B-cli           `corvid replay --model <id>` + divergence renderer
+- [x] 21-A-schema-ext-source Interleaved: `SchemaHeader.source_path` + `SCHEMA_VERSION` 1→2 + `MIN_SUPPORTED_SCHEMA` range (self-describing traces)
+- [x] 21-inv-C-1             Provenance schema: `ProvenanceEdge` trace event variant (additive, skipped as dispatch-metadata during replay)
+- [x] 21-inv-C-2             Provenance CLI: `corvid trace dag <id>` renders ProvenanceEdge substream as Graphviz DOT
 - [ ] 21-inv-D-cli           `corvid replay --mutate <step> <response>` + divergence output
 - [ ] 21-inv-E-1             Parser: `replay <expr>: when <pat> -> <expr>` syntax
 - [ ] 21-inv-E-2             AST + resolver: `ReplayExpr`, `TraceEventPattern`, trace-id locals
@@ -1191,8 +1193,8 @@ Users register local models (Ollama, vLLM, llama.cpp) with declared capabilities
 
 #### Dev B's lane (runtime + codegen + daemon — ~9 slices)
 
-- [ ] 21-B-rec-interp        Recording hooks in interpreter (LLM / tool / approve / seed / time), emit to JSONL
-- [ ] 21-C-replay-interp     Replay adapter: response substitution; byte-identical post-replay state
+- [x] 21-B-rec-interp        Recording hooks in interpreter (LLM / tool / approve / seed / time), emit to JSONL
+- [x] 21-C-replay-interp     Replay adapter: response substitution; byte-identical post-replay state
 - [ ] 21-B-rec-native        Native-tier recording parity
 - [ ] 21-C-replay-native     Native-tier replay parity
 - [ ] 21-inv-B-adapter       Model-swap seam for `corvid replay --model <id>`
