@@ -44,6 +44,8 @@ mod entry;
 mod tool;
 #[path = "parity/prompt.rs"]
 mod prompt;
+#[path = "parity/method.rs"]
+mod method;
 
 /// Path to the `corvid-test-tools` staticlib. The parity harness links
 /// this into every compiled Corvid binary so `#[tool]`-declared mocks
@@ -483,77 +485,6 @@ fn assert_parity_bool_with_mock_llm_queue(
     assert_no_leaks(&stderr, src);
 }
 
-// ============================================================
-// Methods on user types via `extend T:` block fixtures.
-//
-// Methods compile to ordinary agent calls with the receiver
-// prepended as the first argument (typechecker + IR rewrites
-// `x.foo(args)` to `foo(x, args...)`). No codegen changes were
-// needed for methods — these fixtures verify the rewrite is
-// transparent to the existing native-tier pipeline.
-// ============================================================
-
-#[test]
-fn method_returns_field() {
-    // Simplest method: receiver-only, returns a field. Verifies the
-    // dot-syntax → typed-call rewrite + struct-field access chain.
-    assert_parity(
-        "type Amount:\n    cents: Int\n\nextend Amount:\n    public agent value(a: Amount) -> Int:\n        return a.cents\n\nagent main() -> Int:\n    a = Amount(42)\n    return a.value()\n",
-        42,
-    );
-}
-
-#[test]
-fn method_with_arithmetic_on_field() {
-    // Method body does arithmetic on the receiver's field.
-    assert_parity(
-        "type Order:\n    amount: Int\n    tax: Int\n\nextend Order:\n    public agent total(o: Order) -> Int:\n        return o.amount + o.tax\n\nagent main() -> Int:\n    o = Order(100, 7)\n    return o.total()\n",
-        107,
-    );
-}
-
-#[test]
-fn method_with_extra_arg_after_receiver() {
-    // Method takes the receiver + an explicit second argument.
-    // Call site: `o.scale(3)` lowers to `scale(o, 3)`.
-    assert_parity(
-        "type Amount:\n    cents: Int\n\nextend Amount:\n    public agent scale(a: Amount, factor: Int) -> Int:\n        return a.cents * factor\n\nagent main() -> Int:\n    a = Amount(7)\n    return a.scale(6)\n",
-        42,
-    );
-}
-
-#[test]
-fn method_calls_another_method() {
-    // One method (`total`) calls another method (`with_tip`) on the
-    // same receiver. Verifies the rewrite works inside method bodies,
-    // not just at top-level call sites.
-    assert_parity(
-        "type Bill:\n    base: Int\n\nextend Bill:\n    public agent with_tip(b: Bill, pct: Int) -> Int:\n        return b.base + (b.base * pct) / 100\n    public agent total(b: Bill) -> Int:\n        return b.with_tip(20)\n\nagent main() -> Int:\n    b = Bill(100)\n    return b.total()\n",
-        120,
-    );
-}
-
-#[test]
-fn methods_with_same_name_on_different_types() {
-    // Two different types each have a `total` method. Verifies the
-    // receiver-type-keyed dispatch picks the right one for each
-    // call. Also exercises the resolver's per-type method namespace.
-    assert_parity(
-        "type Order:\n    amount: Int\n\ntype Line:\n    units: Int\n\nextend Order:\n    public agent total(o: Order) -> Int:\n        return o.amount\n\nextend Line:\n    public agent total(l: Line) -> Int:\n        return l.units * 10\n\nagent main() -> Int:\n    o = Order(5)\n    l = Line(3)\n    return o.total() + l.total()\n",
-        35,
-    );
-}
-
-#[test]
-fn method_with_string_field_releases_correctly() {
-    // Method on a struct with a refcounted (String) field. Leak
-    // detector verifies the receiver's refcount lifecycle stays
-    // balanced through the method-call rewrite.
-    assert_parity_bool(
-        "type Named:\n    label: String\n\nextend Named:\n    public agent matches(n: Named, query: String) -> Bool:\n        return n.label == query\n\nagent main() -> Bool:\n    n = Named(\"hello\")\n    return n.matches(\"hello\")\n",
-        true,
-    );
-}
 
 #[test]
 fn weak_upgrade_is_live_while_strong_value_is_still_in_scope() {
@@ -833,5 +764,6 @@ fn native_result_retry_then_try_propagates_into_different_ok_type() {
         "mock-1",
     );
 }
+
 
 
