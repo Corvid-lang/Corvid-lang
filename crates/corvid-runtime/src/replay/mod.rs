@@ -24,6 +24,13 @@ pub struct ReplaySource {
 
 impl ReplaySource {
     pub fn from_path(path: impl Into<PathBuf>) -> Result<Self, RuntimeError> {
+        Self::from_path_for_writer(path, WRITER_INTERPRETER)
+    }
+
+    pub fn from_path_for_writer(
+        path: impl Into<PathBuf>,
+        replay_writer: &'static str,
+    ) -> Result<Self, RuntimeError> {
         let path = path.into();
         let events = read_events_from_path(&path).map_err(|err| RuntimeError::ReplayTraceLoad {
             path: path.clone(),
@@ -40,11 +47,11 @@ impl ReplaySource {
             message: err.to_string(),
         })?;
         match events.first() {
-            Some(TraceEvent::SchemaHeader { writer, .. }) if writer == WRITER_INTERPRETER => {}
+            Some(TraceEvent::SchemaHeader { writer, .. }) if writer == replay_writer => {}
             Some(TraceEvent::SchemaHeader { writer, .. }) => {
                 return Err(RuntimeError::CrossTierReplayUnsupported {
                     recorded_writer: writer.clone(),
-                    replay_writer: WRITER_INTERPRETER.to_string(),
+                    replay_writer: replay_writer.to_string(),
                 });
             }
             _ => {

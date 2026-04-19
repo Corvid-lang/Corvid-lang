@@ -269,6 +269,99 @@ pub(super) fn declare_runtime_funcs(
             )
         })?;
 
+    let mut runtime_is_replay_sig = module.make_signature();
+    runtime_is_replay_sig.returns.push(AbiParam::new(I8));
+    let runtime_is_replay_id = module
+        .declare_function(
+            RUNTIME_IS_REPLAY_SYMBOL,
+            Linkage::Import,
+            &runtime_is_replay_sig,
+        )
+        .map_err(|e| {
+            CodegenError::cranelift(
+                format!("declare runtime_is_replay: {e}"),
+                Span::new(0, 0),
+            )
+        })?;
+
+    let make_replay_tool_sig =
+        |module: &mut ObjectModule, ret_ty: Option<cranelift_codegen::ir::Type>| {
+            let mut sig = module.make_signature();
+            sig.params.push(AbiParam::new(I64));
+            sig.params.push(AbiParam::new(I64));
+            sig.params.push(AbiParam::new(I64));
+            sig.params.push(AbiParam::new(I64));
+            if let Some(ret_ty) = ret_ty {
+                sig.returns.push(AbiParam::new(ret_ty));
+            }
+            sig
+        };
+    let replay_tool_nothing_sig = make_replay_tool_sig(module, None);
+    let replay_tool_call_nothing_id = module
+        .declare_function(
+            REPLAY_TOOL_CALL_NOTHING_SYMBOL,
+            Linkage::Import,
+            &replay_tool_nothing_sig,
+        )
+        .map_err(|e| {
+            CodegenError::cranelift(
+                format!("declare replay_tool_call_nothing: {e}"),
+                Span::new(0, 0),
+            )
+        })?;
+    let replay_tool_int_sig = make_replay_tool_sig(module, Some(I64));
+    let replay_tool_call_int_id = module
+        .declare_function(
+            REPLAY_TOOL_CALL_INT_SYMBOL,
+            Linkage::Import,
+            &replay_tool_int_sig,
+        )
+        .map_err(|e| {
+            CodegenError::cranelift(
+                format!("declare replay_tool_call_int: {e}"),
+                Span::new(0, 0),
+            )
+        })?;
+    let replay_tool_bool_sig = make_replay_tool_sig(module, Some(I8));
+    let replay_tool_call_bool_id = module
+        .declare_function(
+            REPLAY_TOOL_CALL_BOOL_SYMBOL,
+            Linkage::Import,
+            &replay_tool_bool_sig,
+        )
+        .map_err(|e| {
+            CodegenError::cranelift(
+                format!("declare replay_tool_call_bool: {e}"),
+                Span::new(0, 0),
+            )
+        })?;
+    let replay_tool_float_sig = make_replay_tool_sig(module, Some(F64));
+    let replay_tool_call_float_id = module
+        .declare_function(
+            REPLAY_TOOL_CALL_FLOAT_SYMBOL,
+            Linkage::Import,
+            &replay_tool_float_sig,
+        )
+        .map_err(|e| {
+            CodegenError::cranelift(
+                format!("declare replay_tool_call_float: {e}"),
+                Span::new(0, 0),
+            )
+        })?;
+    let replay_tool_string_sig = make_replay_tool_sig(module, Some(I64));
+    let replay_tool_call_string_id = module
+        .declare_function(
+            REPLAY_TOOL_CALL_STRING_SYMBOL,
+            Linkage::Import,
+            &replay_tool_string_sig,
+        )
+        .map_err(|e| {
+            CodegenError::cranelift(
+                format!("declare replay_tool_call_string: {e}"),
+                Span::new(0, 0),
+            )
+        })?;
+
     let mut runtime_init_sig = module.make_signature();
     runtime_init_sig.returns.push(AbiParam::new(I32));
     let runtime_init_id = module
@@ -571,6 +664,12 @@ pub(super) fn declare_runtime_funcs(
         bench_next_trial: bench_next_trial_id,
         bench_finish_trial: bench_finish_trial_id,
         tool_call_sync_int: tool_call_sync_int_id,
+        runtime_is_replay: runtime_is_replay_id,
+        replay_tool_call_nothing: replay_tool_call_nothing_id,
+        replay_tool_call_int: replay_tool_call_int_id,
+        replay_tool_call_bool: replay_tool_call_bool_id,
+        replay_tool_call_float: replay_tool_call_float_id,
+        replay_tool_call_string: replay_tool_call_string_id,
         runtime_init: runtime_init_id,
         runtime_shutdown: runtime_shutdown_id,
         sleep_ms: sleep_ms_id,
@@ -2052,6 +2151,12 @@ pub(super) const BENCH_FINISH_TRIAL_SYMBOL: &str = "corvid_bench_finish_trial";
 // signature; the typed bridge handles the general JSON arg + return
 // marshalling.
 pub(super) const TOOL_CALL_SYNC_INT_SYMBOL: &str = "corvid_tool_call_sync_int";
+pub(super) const RUNTIME_IS_REPLAY_SYMBOL: &str = "corvid_runtime_is_replay";
+pub(super) const REPLAY_TOOL_CALL_NOTHING_SYMBOL: &str = "corvid_replay_tool_call_nothing";
+pub(super) const REPLAY_TOOL_CALL_INT_SYMBOL: &str = "corvid_replay_tool_call_int";
+pub(super) const REPLAY_TOOL_CALL_BOOL_SYMBOL: &str = "corvid_replay_tool_call_bool";
+pub(super) const REPLAY_TOOL_CALL_FLOAT_SYMBOL: &str = "corvid_replay_tool_call_float";
+pub(super) const REPLAY_TOOL_CALL_STRING_SYMBOL: &str = "corvid_replay_tool_call_string";
 
 // Scalar-to-String stringification helpers. Used by the
 // Cranelift codegen for `IrCallKind::Prompt` lowering when a
@@ -2149,6 +2254,12 @@ pub(super) struct RuntimeFuncs {
     pub bench_finish_trial: FuncId,
     // Async tool bridge + runtime init/shutdown.
     pub tool_call_sync_int: FuncId,
+    pub runtime_is_replay: FuncId,
+    pub replay_tool_call_nothing: FuncId,
+    pub replay_tool_call_int: FuncId,
+    pub replay_tool_call_bool: FuncId,
+    pub replay_tool_call_float: FuncId,
+    pub replay_tool_call_string: FuncId,
     pub runtime_init: FuncId,
     pub runtime_shutdown: FuncId,
     pub sleep_ms: FuncId,

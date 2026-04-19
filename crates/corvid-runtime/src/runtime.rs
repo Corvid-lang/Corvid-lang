@@ -61,6 +61,10 @@ impl Runtime {
         self.recorder.as_deref()
     }
 
+    pub fn is_replay_mode(&self) -> bool {
+        matches!(self.mode, RuntimeMode::Replay(_))
+    }
+
     pub fn default_model(&self) -> &str {
         &self.default_model
     }
@@ -430,7 +434,7 @@ impl RuntimeBuilder {
         let tracer = self.tracer.unwrap_or_else(Tracer::null);
         let recorder = Recorder::for_tracer(&tracer, self.trace_schema_writer).map(Arc::new);
         let (mode, replay_error, rollout_seed) = if let Some(path) = self.replay_trace {
-            match ReplaySource::from_path(path) {
+            match ReplaySource::from_path_for_writer(path, self.trace_schema_writer) {
                 Ok(source) => (
                     RuntimeMode::Replay(source.clone()),
                     None,

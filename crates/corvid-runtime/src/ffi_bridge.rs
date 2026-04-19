@@ -51,6 +51,7 @@ use crate::llm::ollama::OllamaAdapter;
 use crate::llm::openai::OpenAiAdapter;
 use crate::llm::openai_compat::OpenAiCompatibleAdapter;
 use crate::redact::RedactionSet;
+use crate::errors::RuntimeError;
 use crate::runtime::{Runtime, RuntimeBuilder};
 use crate::tracing::{bench_trace_overhead_ns, fresh_run_id, Tracer};
 use corvid_trace_schema::{TraceEvent, WRITER_NATIVE};
@@ -319,6 +320,10 @@ pub unsafe extern "C" fn corvid_tool_call_sync_int(
             }
         },
         Err(e) => {
+            panic_if_replay_runtime_error(
+                &format!("corvid_tool_call_sync_int: tool `{name}` failed"),
+                &e,
+            );
             eprintln!("corvid_tool_call_sync_int: tool `{name}` error: {e}");
             i64::MIN
         }
@@ -342,6 +347,139 @@ pub fn tokio_handle() -> tokio::runtime::Handle {
 /// context (e.g. in-process tests).
 pub fn runtime() -> std::sync::Arc<crate::runtime::Runtime> {
     bridge().corvid_runtime()
+}
+
+#[no_mangle]
+pub extern "C" fn corvid_runtime_is_replay() -> bool {
+    bridge().corvid_runtime().is_replay_mode()
+}
+
+fn panic_if_replay_runtime_error(context: &str, err: &RuntimeError) {
+    if matches!(
+        err,
+        RuntimeError::ReplayTraceLoad { .. }
+            | RuntimeError::ReplayDivergence(_)
+            | RuntimeError::CrossTierReplayUnsupported { .. }
+    ) {
+        panic!("{context}: {err}");
+    }
+}
+
+fn replay_tool_value(name: &str, args: Vec<serde_json::Value>) -> serde_json::Value {
+    let state = bridge();
+    let runtime = state.corvid_runtime();
+    let name_owned = name.to_string();
+    match state
+        .tokio_handle()
+        .block_on(async move { runtime.call_tool(&name_owned, args).await })
+    {
+        Ok(value) => value,
+        Err(err) => {
+            panic_if_replay_runtime_error(
+                &format!("corvid native replay tool `{name}` failed"),
+                &err,
+            );
+            panic!("corvid native replay tool `{name}` failed: {err}");
+        }
+    }
+}
+
+fn expect_tool_result_int(name: &str, value: serde_json::Value) -> i64 {
+    value
+        .as_i64()
+        .unwrap_or_else(|| panic!("corvid native replay tool `{name}` returned non-int JSON: {value}"))
+}
+
+fn expect_tool_result_bool(name: &str, value: serde_json::Value) -> bool {
+    value
+        .as_bool()
+        .unwrap_or_else(|| panic!("corvid native replay tool `{name}` returned non-bool JSON: {value}"))
+}
+
+fn expect_tool_result_float(name: &str, value: serde_json::Value) -> f64 {
+    value
+        .as_f64()
+        .unwrap_or_else(|| panic!("corvid native replay tool `{name}` returned non-float JSON: {value}"))
+}
+
+fn expect_tool_result_string(name: &str, value: serde_json::Value) -> String {
+    value
+        .as_str()
+        .unwrap_or_else(|| panic!("corvid native replay tool `{name}` returned non-string JSON: {value}"))
+        .to_owned()
+}
+
+fn expect_tool_result_null(name: &str, value: serde_json::Value) {
+    if !value.is_null() {
+        panic!("corvid native replay tool `{name}` returned non-null JSON: {value}");
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn corvid_replay_tool_call_int(
+    tool: CorvidString,
+    arg_types: CorvidString,
+    argc: i64,
+    args_ptr: i64,
+) -> i64 {
+    let tool_name = unsafe { read_corvid_string(tool) };
+    let arg_tags = unsafe { borrow_corvid_string(&arg_types) };
+    let args = unsafe { crate::native_trace::decode_trace_values(arg_tags, argc, args_ptr) };
+    expect_tool_result_int(&tool_name, replay_tool_value(&tool_name, args))
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn corvid_replay_tool_call_bool(
+    tool: CorvidString,
+    arg_types: CorvidString,
+    argc: i64,
+    args_ptr: i64,
+) -> bool {
+    let tool_name = unsafe { read_corvid_string(tool) };
+    let arg_tags = unsafe { borrow_corvid_string(&arg_types) };
+    let args = unsafe { crate::native_trace::decode_trace_values(arg_tags, argc, args_ptr) };
+    expect_tool_result_bool(&tool_name, replay_tool_value(&tool_name, args))
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn corvid_replay_tool_call_float(
+    tool: CorvidString,
+    arg_types: CorvidString,
+    argc: i64,
+    args_ptr: i64,
+) -> f64 {
+    let tool_name = unsafe { read_corvid_string(tool) };
+    let arg_tags = unsafe { borrow_corvid_string(&arg_types) };
+    let args = unsafe { crate::native_trace::decode_trace_values(arg_tags, argc, args_ptr) };
+    expect_tool_result_float(&tool_name, replay_tool_value(&tool_name, args))
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn corvid_replay_tool_call_string(
+    tool: CorvidString,
+    arg_types: CorvidString,
+    argc: i64,
+    args_ptr: i64,
+) -> CorvidString {
+    use crate::abi::IntoCorvidAbi;
+
+    let tool_name = unsafe { read_corvid_string(tool) };
+    let arg_tags = unsafe { borrow_corvid_string(&arg_types) };
+    let args = unsafe { crate::native_trace::decode_trace_values(arg_tags, argc, args_ptr) };
+    expect_tool_result_string(&tool_name, replay_tool_value(&tool_name, args)).into_corvid_abi()
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn corvid_replay_tool_call_nothing(
+    tool: CorvidString,
+    arg_types: CorvidString,
+    argc: i64,
+    args_ptr: i64,
+) {
+    let tool_name = unsafe { read_corvid_string(tool) };
+    let arg_tags = unsafe { borrow_corvid_string(&arg_types) };
+    let args = unsafe { crate::native_trace::decode_trace_values(arg_tags, argc, args_ptr) };
+    expect_tool_result_null(&tool_name, replay_tool_value(&tool_name, args));
 }
 
 fn trace_mock_llm_attempt(
@@ -549,7 +687,9 @@ fn format_instruction_float() -> &'static str {
 
 fn using_env_mock_llm() -> bool {
     static ENABLED: OnceLock<bool> = OnceLock::new();
-    *ENABLED.get_or_init(|| std::env::var("CORVID_TEST_MOCK_LLM").ok().as_deref() == Some("1"))
+    let enabled =
+        *ENABLED.get_or_init(|| std::env::var("CORVID_TEST_MOCK_LLM").ok().as_deref() == Some("1"));
+    enabled && !BRIDGE.load(Ordering::Acquire).is_null() && !bridge().corvid_runtime().is_replay_mode()
 }
 
 /// Build the system prompt sent to the LLM. Encodes the function
@@ -591,7 +731,7 @@ fn call_llm_once(
     system_prompt: &str,
 ) -> Result<String, String> {
     let runtime = state.corvid_runtime();
-    let combined = if using_env_mock_llm() {
+    let combined = if using_env_mock_llm() || runtime.is_replay_mode() {
         rendered.to_owned()
     } else {
         // Combine system prompt + user-side rendered prompt with two
@@ -618,7 +758,13 @@ fn call_llm_once(
             serde_json::Value::String(s) => Ok(s),
             other => Ok(other.to_string()),
         },
-        Err(e) => Err(format!("{e}")),
+        Err(e) => {
+            panic_if_replay_runtime_error(
+                &format!("corvid prompt `{prompt_name}` (model `{model}`) replay failed"),
+                &e,
+            );
+            Err(format!("{e}"))
+        }
     }
 }
 
@@ -1031,6 +1177,10 @@ pub unsafe extern "C" fn corvid_approve_sync(
     match result {
         Ok(()) => true,
         Err(e) => {
+            panic_if_replay_runtime_error(
+                &format!("corvid_approve_sync: approval `{label}` failed"),
+                &e,
+            );
             eprintln!("corvid_approve_sync: approval `{label}` failed: {e}");
             false
         }
@@ -1124,6 +1274,9 @@ fn build_corvid_runtime() -> Runtime {
         if let Ok(parsed) = seed.parse::<u64>() {
             b = b.rollout_seed(parsed);
         }
+    }
+    if let Some(path) = std::env::var_os("CORVID_REPLAY_TRACE_PATH") {
+        b = b.replay_from(PathBuf::from(path));
     }
 
     // Register every supported LLM adapter unconditionally

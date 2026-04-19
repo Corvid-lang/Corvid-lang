@@ -98,7 +98,9 @@ pub unsafe extern "C" fn corvid_trace_run_started(
     let arg_tags = unsafe { borrow_corvid_string(&arg_types) };
     let args = unsafe { decode_trace_values(arg_tags, argc, args_ptr) };
     let runtime = runtime();
-    let _ = runtime.prepare_run(&agent_name, &args);
+    runtime
+        .prepare_run(&agent_name, &args)
+        .unwrap_or_else(|err| panic!("corvid_trace_run_started failed: {err}"));
     emit(TraceEvent::RunStarted {
         ts_ms: now_ms(),
         run_id: runtime.tracer().run_id().to_string(),
@@ -129,7 +131,9 @@ pub unsafe extern "C" fn corvid_trace_run_completed_string(value: CorvidString) 
 
 fn emit_run_completed(result: Value) {
     let runtime = runtime();
-    let _ = runtime.complete_run(true, Some(&result), None);
+    runtime
+        .complete_run(true, Some(&result), None)
+        .unwrap_or_else(|err| panic!("corvid_trace_run_completed failed: {err}"));
     emit(TraceEvent::RunCompleted {
         ts_ms: now_ms(),
         run_id: runtime.tracer().run_id().to_string(),

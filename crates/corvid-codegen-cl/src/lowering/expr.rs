@@ -1078,6 +1078,80 @@ pub(super) fn lower_expr(
                     emit_trace_payload(builder, module, runtime, &arg_vals, &trace_arg_tys, expr.span)?;
                 let tool_name_val =
                     emit_string_const(builder, module, runtime, &tool.name, expr.span)?;
+                let runtime_is_replay_ref =
+                    module.declare_func_in_func(runtime.runtime_is_replay, builder.func);
+                let runtime_is_replay_call = builder.ins().call(runtime_is_replay_ref, &[]);
+                let runtime_is_replay = builder.inst_results(runtime_is_replay_call)[0];
+                let replay_b = builder.create_block();
+                let live_b = builder.create_block();
+                let join_b = builder.create_block();
+                let result_ty = if matches!(expr.ty, Type::Nothing) {
+                    None
+                } else {
+                    Some(cl_type_for(&expr.ty, expr.span)?)
+                };
+                if let Some(result_ty) = result_ty {
+                    builder.append_block_param(join_b, result_ty);
+                }
+                let replay_cond = builder.ins().icmp_imm(IntCC::NotEqual, runtime_is_replay, 0);
+                builder
+                    .ins()
+                    .brif(replay_cond, replay_b, &[], live_b, &[]);
+
+                builder.switch_to_block(replay_b);
+                builder.seal_block(replay_b);
+                let replay_func = match &expr.ty {
+                    Type::Nothing => runtime.replay_tool_call_nothing,
+                    Type::Int => runtime.replay_tool_call_int,
+                    Type::Bool => runtime.replay_tool_call_bool,
+                    Type::Float => runtime.replay_tool_call_float,
+                    Type::String => runtime.replay_tool_call_string,
+                    Type::Grounded(inner) => match &**inner {
+                        Type::Int => runtime.replay_tool_call_int,
+                        Type::Bool => runtime.replay_tool_call_bool,
+                        Type::Float => runtime.replay_tool_call_float,
+                        Type::String => runtime.replay_tool_call_string,
+                        _ => {
+                            return Err(CodegenError::not_supported(
+                                format!(
+                                    "native replay for tool `{}` with return type `{}` is not implemented yet",
+                                    tool.name,
+                                    expr.ty.display_name()
+                                ),
+                                expr.span,
+                            ))
+                        }
+                    },
+                    _ => {
+                        return Err(CodegenError::not_supported(
+                            format!(
+                                "native replay for tool `{}` with return type `{}` is not implemented yet",
+                                tool.name,
+                                expr.ty.display_name()
+                            ),
+                            expr.span,
+                        ))
+                    }
+                };
+                let replay_ref = module.declare_func_in_func(replay_func, builder.func);
+                let replay_call = builder.ins().call(
+                    replay_ref,
+                    &[
+                        tool_name_val,
+                        trace_payload.type_tags,
+                        trace_payload.count,
+                        trace_payload.values_ptr,
+                    ],
+                );
+                if matches!(expr.ty, Type::Nothing) {
+                    builder.ins().jump(join_b, &[]);
+                } else {
+                    let replay_value = builder.inst_results(replay_call)[0];
+                    builder.ins().jump(join_b, &[replay_value]);
+                }
+
+                builder.switch_to_block(live_b);
+                builder.seal_block(live_b);
                 let trace_tool_call_ref =
                     module.declare_func_in_func(runtime.trace_tool_call, builder.func);
                 builder.ins().call(
@@ -1118,6 +1192,23 @@ pub(super) fn lower_expr(
                     };
                     builder.ins().call(trace_result_call, &trace_args);
                 }
+                if matches!(expr.ty, Type::Nothing) {
+                    builder.ins().jump(join_b, &[]);
+                } else if result_vals.len() == 1 {
+                    builder.ins().jump(join_b, &[result_vals[0]]);
+                } else {
+                    return Err(CodegenError::cranelift(
+                        format!(
+                            "tool `{callee_name}` wrapper returned {} values; expected 1 for type `{}`",
+                            result_vals.len(),
+                            expr.ty.display_name()
+                        ),
+                        expr.span,
+                    ));
+                }
+
+                builder.switch_to_block(join_b);
+                builder.seal_block(join_b);
                 emit_release(builder, module, runtime, trace_payload.type_tags);
 
                 // Release the +1 we put on each refcounted arg. For
@@ -1138,17 +1229,8 @@ pub(super) fn lower_expr(
                 // zero-Int so the expr-result contract stays uniform.
                 if matches!(expr.ty, Type::Nothing) {
                     Ok(builder.ins().iconst(I64, 0))
-                } else if result_vals.len() == 1 {
-                    Ok(result_vals[0])
                 } else {
-                    Err(CodegenError::cranelift(
-                        format!(
-                            "tool `{callee_name}` wrapper returned {} values; expected 1 for type `{}`",
-                            result_vals.len(),
-                            expr.ty.display_name()
-                        ),
-                        expr.span,
-                    ))
+                    Ok(builder.block_params(join_b)[0])
                 }
             }
             IrCallKind::Prompt { def_id, .. } => {
