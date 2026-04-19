@@ -1,4 +1,4 @@
-//! IR â†’ Cranelift IR lowering.
+//! IR ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ Cranelift IR lowering.
 //!
 //! Native lowering starts with the scalar command-line boundary:
 //! `Int` parameters and returns, integer literals, integer arithmetic
@@ -30,11 +30,6 @@ const _: () = {
     // elsewhere should already have enforced this for well-typed programs.
 };
 
-#[inline(always)]
-fn lowered_outcome_placeholder() -> BlockOutcome {
-    BlockOutcome::Normal
-}
-
 /// Mangle a user agent's name into a link-safe symbol. Prevents
 /// collisions with C runtime symbols (`main`, `printf`, `malloc`, ...).
 ///
@@ -42,7 +37,7 @@ fn lowered_outcome_placeholder() -> BlockOutcome {
 /// declared inside `extend T:` blocks share their unmangled names
 /// across types (`Order.total`, `Line.total` both get the AST name
 /// `total`). Including the DefId disambiguates without changing the
-/// emitted .obj's user-visible behavior â€” symbols are internal-only
+/// emitted .obj's user-visible behavior ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â symbols are internal-only
 /// (`Linkage::Local`) so the suffix never leaks into a public API.
 fn mangle_agent_symbol(user_name: &str, def_id: DefId) -> String {
     format!("corvid_agent_{user_name}_{}", def_id.0)
@@ -53,6 +48,8 @@ fn mangle_agent_symbol(user_name: &str, def_id: DefId) -> String {
 /// handler into a `RuntimeFuncs`.
 mod runtime;
 use runtime::*;
+mod stmt;
+use stmt::*;
 mod prompt;
 use prompt::*;
 
@@ -112,9 +109,9 @@ pub fn lower_file(
     // Emit per-type metadata in dependency order:
     //
     //   1. Struct destructors (existing): release refcounted fields
-    //      when rcâ†’0. Only for structs with refcounted fields.
+    //      when rcÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢0. Only for structs with refcounted fields.
     //   2. Struct trace fns (new in 17a): walk refcounted fields for
-    //      the collector's mark walk. Emitted for every refcounted struct â€”
+    //      the collector's mark walk. Emitted for every refcounted struct ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â
     //      even ones with no refcounted fields get an empty-body
     //      trace so dispatch is uniform (linker folds duplicates).
     //   3. Struct typeinfo blocks (new): .rodata record referenced
@@ -133,10 +130,10 @@ pub fn lower_file(
     // typeinfos to reference at allocation sites.
 
     // Structs: destructors (only for refcounted fields), traces
-    // (every struct, empty body if no refcounted fields â€” linker
+    // (every struct, empty body if no refcounted fields ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â linker
     // folds duplicates), typeinfos (every struct, uniform allocation
     // path). The pre-17a "primitive-only structs skip typeinfo"
-    // short-circuit is gone â€” uniformity means 17d doesn't need a
+    // short-circuit is gone ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â uniformity means 17d doesn't need a
     // special case for them in the mark walk.
     for ty in &ir.types {
         let has_refcounted_field = ty.fields.iter().any(|f| is_refcounted_type(&f.ty));
@@ -283,7 +280,7 @@ pub fn lower_file(
         // and registers `corvid_runtime_shutdown` via atexit ONLY if the
         // program actually uses the async runtime. Pure-computation
         // programs skip these calls to preserve startup
-        // benchmark numbers â€” multi-thread tokio startup is ~5-10ms on
+        // benchmark numbers ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â multi-thread tokio startup is ~5-10ms on
         // Windows, which would otherwise regress every tool-free
         // `corvid run` invocation.
         let uses_runtime = ir_uses_runtime(ir);
@@ -341,7 +338,7 @@ fn stmt_uses_runtime(stmt: &IrStmt) -> bool {
         IrStmt::Expr { expr, .. } => expr_uses_runtime(expr),
         IrStmt::Break { .. } | IrStmt::Continue { .. } | IrStmt::Pass { .. } => false,
         // Dup/Drop emit direct runtime calls (corvid_retain/release)
-        // but those don't need the async bridge â€” runtime is a C ABI
+        // but those don't need the async bridge ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â runtime is a C ABI
         // library linked in regardless.
         IrStmt::Dup { .. } | IrStmt::Drop { .. } => false,
     }
@@ -408,7 +405,7 @@ fn emit_entry_main(
 
     // Validate that every entry parameter and the return type are
     // representable at the command-line / stdout boundary. Struct and
-    // List are deliberately excluded â€” they need a serialization implementation.
+    // List are deliberately excluded ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â they need a serialization implementation.
     for p in &entry_agent.params {
         check_entry_boundary_type(&p.ty, p.span, "parameter")?;
     }
@@ -442,7 +439,7 @@ fn emit_entry_main(
         let argc_i32 = builder.block_params(entry_block)[0];
         let argv = builder.block_params(entry_block)[1];
 
-        // 1. corvid_init() â€” registers atexit handler for leak counters.
+        // 1. corvid_init() ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â registers atexit handler for leak counters.
         let init_ref = module.declare_func_in_func(runtime.entry_init, builder.func);
         builder.ins().call(init_ref, &[]);
 
@@ -451,7 +448,7 @@ fn emit_entry_main(
         // registered via `atexit` so worker threads join cleanly at
         // exit. Shutdown runs BEFORE the leak-counter atexit (atexit
         // is LIFO), so any refcount activity from the runtime settles
-        // before the counter prints â€” that's the intended ordering.
+        // before the counter prints ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â that's the intended ordering.
         if uses_runtime {
             let rt_init_ref =
                 module.declare_func_in_func(runtime.runtime_init, builder.func);
@@ -657,7 +654,7 @@ fn check_entry_boundary_type(
         | Type::Result(_, _) | Type::Option(_) | Type::Weak(_, _) | Type::Stream(_) => {
             Err(CodegenError::not_supported(
                 format!(
-                    "entry agent {role} of type `{}` â€” the native command-line boundary currently supports only `Int` / `Bool` / `Float` / `String`; structured types (including Result, Option, and Weak) need a dedicated serialization layer (use a wrapper agent that converts internally)",
+                    "entry agent {role} of type `{}` ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â the native command-line boundary currently supports only `Int` / `Bool` / `Float` / `String`; structured types (including Result, Option, and Weak) need a dedicated serialization layer (use a wrapper agent that converts internally)",
                     ty.display_name()
                 ),
                 span,
@@ -710,7 +707,7 @@ fn reject_unsupported_types(agent: &IrAgent) -> Result<(), CodegenError> {
         cl_type_for(&p.ty, p.span).map_err(|_| {
             CodegenError::not_supported(
                 format!(
-                    "parameter `{}: {}` â€” this native lowering path supports `Int`, `Bool`, and `Float` here; `String`, `Struct`, and `List` use later lowering paths",
+                    "parameter `{}: {}` ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â this native lowering path supports `Int`, `Bool`, and `Float` here; `String`, `Struct`, and `List` use later lowering paths",
                     p.name,
                     p.ty.display_name()
                 ),
@@ -721,7 +718,7 @@ fn reject_unsupported_types(agent: &IrAgent) -> Result<(), CodegenError> {
     cl_type_for(&agent.return_ty, agent.span).map_err(|_| {
         CodegenError::not_supported(
             format!(
-                "agent `{}` returns `{}` â€” this native lowering path supports `Int`, `Bool`, and `Float` returns here",
+                "agent `{}` returns `{}` ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â this native lowering path supports `Int`, `Bool`, and `Float` returns here",
                 agent.name,
                 agent.return_ty.display_name()
             ),
@@ -732,7 +729,7 @@ fn reject_unsupported_types(agent: &IrAgent) -> Result<(), CodegenError> {
 }
 
 /// Map a Corvid `Type` to the Cranelift IR type width we compile it to.
-/// `Int` â†’ `I64`, `Bool` â†’ `I8`. Everything else raises
+/// `Int` ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ `I64`, `Bool` ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ `I8`. Everything else raises
 /// `CodegenError::NotSupported` with a descriptive feature boundary.
 fn cl_type_for(ty: &Type, span: Span) -> Result<clir::Type, CodegenError> {
     match ty {
@@ -743,11 +740,11 @@ fn cl_type_for(ty: &Type, span: Span) -> Result<clir::Type, CodegenError> {
         // a 16-byte refcount header. Single I64 in registers/env keeps
         // the calling convention uniform with future Struct/List types.
         Type::String => Ok(I64),
-        // Struct values are descriptor pointers (like String) â€” single
+        // Struct values are descriptor pointers (like String) ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â single
         // I64 in registers/env. The actual layout lives behind the
         // refcount header: `[header (16) | field0 (8) | ... | fieldN (8)]`.
         Type::Struct(_) => Ok(I64),
-        // List values are descriptor pointers (like String, Struct) â€”
+        // List values are descriptor pointers (like String, Struct) ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â
         // single I64 pointing at `[length (8) | elements...]` after the
         // 16-byte refcount header.
         Type::List(_) => Ok(I64),
@@ -762,11 +759,11 @@ fn cl_type_for(ty: &Type, span: Span) -> Result<clir::Type, CodegenError> {
             span,
         )),
         Type::Nothing => Err(CodegenError::not_supported(
-            "`Nothing` â€” use a bare `return` instead",
+            "`Nothing` ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â use a bare `return` instead",
             span,
         )),
         Type::Function { .. } => Err(CodegenError::not_supported(
-            "function types as values â€” first-class callables are not implemented in native codegen yet",
+            "function types as values ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â first-class callables are not implemented in native codegen yet",
             span,
         )),
         // Result<T,E> and Option<T> are accepted by the typechecker and
@@ -774,15 +771,15 @@ fn cl_type_for(ty: &Type, span: Span) -> Result<clir::Type, CodegenError> {
         // and retry lowering are not implemented yet, so native
         // compilation reports a clean boundary here.
         Type::Result(_, _) => Err(CodegenError::not_supported(
-            "`Result<T, E>` â€” native tagged-union lowering is not implemented yet; use the interpreter tier (`corvid run --tier interp`) until then",
+            "`Result<T, E>` ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â native tagged-union lowering is not implemented yet; use the interpreter tier (`corvid run --tier interp`) until then",
             span,
         )),
         Type::Option(_) => Err(CodegenError::not_supported(
-            "`Option<T>` â€” native codegen currently supports nullable-pointer `Option<T>` when `T` is refcounted plus wide scalar `Option<Int|Bool|Float>`; other payload shapes still need the interpreter tier",
+            "`Option<T>` ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â native codegen currently supports nullable-pointer `Option<T>` when `T` is refcounted plus wide scalar `Option<Int|Bool|Float>`; other payload shapes still need the interpreter tier",
             span,
         )),
         Type::Unknown => Err(CodegenError::cranelift(
-            "encountered `Unknown` type at codegen â€” typecheck should have caught this",
+            "encountered `Unknown` type at codegen ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â typecheck should have caught this",
             span,
         )),
     }
@@ -815,7 +812,7 @@ fn define_agent(
         // does NOT push its own scope (it would double-push); this is
         // it. Branch blocks inside `if`/`else` push/pop their own.
         let mut scope_stack: Vec<Vec<(LocalId, Variable)>> = vec![Vec::new()];
-        // Loop context stack â€” empty at function entry. `for` pushes
+        // Loop context stack ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â empty at function entry. `for` pushes
         // on entry, `break`/`continue` consult the top entry, `for`
         // pops on exit.
         let mut loop_stack: Vec<LoopCtx> = Vec::new();
@@ -847,12 +844,12 @@ fn define_agent(
             //      tracks in function-root scope for symmetric
             //      scope-exit release.
             //   * `ParamBorrow::Borrowed`: caller keeps its +1 and
-            //      the callee does NOT retain nor release â€” ownership
+            //      the callee does NOT retain nor release ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â ownership
             //      doesn't cross the ABI. Saves one retain + one
             //      release per call site for read-only parameters.
             //
             // `borrow_sig = None` means the ownership pass didn't
-            // run on this agent â€” fall back to Owned (pre-17b
+            // run on this agent ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â fall back to Owned (pre-17b
             // semantics). Keeps parity for code paths that bypass
             // `ownership::analyze`.
             if is_refcounted_type(&p.ty) {
@@ -890,26 +887,23 @@ fn define_agent(
             func_ids_by_def,
             module,
             runtime,
-        );
-        if let Err(e) = lowered {
-            return Err(e);
-        }
+        )?;
 
         // Defensive fallthrough terminator. `lower_block` returns
         // `BlockOutcome::Terminated` after emitting a `return`, so we
         // only reach here for agents whose type checker somehow allowed
         // a missing return (shouldn't happen for `Int` agents). Terminate
         // with a trap so the verifier doesn't reject the function.
-        match lowered_outcome_placeholder() {
-            _ => {
+        match lowered {
+            BlockOutcome::Normal => {
                 if builder.current_block().is_some() {
                     let cur = builder.current_block().unwrap();
                     if !builder.func.layout.is_block_inserted(cur) {
-                        // Should not happen â€” a block was switched to but
+                        // Should not happen ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â a block was switched to but
                         // not inserted. Terminator still needed.
                     }
                     // If Cranelift considers the block unterminated,
-                    // trap â€” an untyped fallthrough on an `Int` return
+                    // trap ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â an untyped fallthrough on an `Int` return
                     // is already a frontend bug.
                     let last_inst = builder.func.layout.last_inst(cur);
                     let terminated = last_inst
@@ -922,6 +916,7 @@ fn define_agent(
                     }
                 }
             }
+            BlockOutcome::Terminated => {}
         }
 
         builder.finalize();
@@ -936,30 +931,6 @@ fn define_agent(
         &format!("agent `{}`", agent.name),
     )?;
     Ok(())
-}
-
-#[derive(Clone, Copy)]
-enum BlockOutcome {
-    Normal,
-    Terminated,
-}
-
-fn emit_function_return(
-    builder: &mut FunctionBuilder,
-    value: ClValue,
-    scope_stack: &[Vec<(LocalId, Variable)>],
-    module: &mut ObjectModule,
-    runtime: &RuntimeFuncs,
-) {
-    if !runtime.dup_drop_enabled {
-        for scope in scope_stack.iter().rev() {
-            for (_, var) in scope.iter().rev() {
-                let v_local = builder.use_var(*var);
-                emit_release(builder, module, runtime, v_local);
-            }
-        }
-    }
-    builder.ins().return_(&[value]);
 }
 
 fn lower_try_propagate_option(
@@ -978,20 +949,20 @@ fn lower_try_propagate_option(
         Type::Option(payload) if is_refcounted_type(payload) => (&**payload, false),
         Type::Option(_) => {
             return Err(CodegenError::not_supported(
-                "postfix `?` on `Option<T>` â€” native lowering currently supports nullable-pointer `Option<T>` with refcounted payloads plus wide scalar `Option<Int|Bool|Float>`",
+                "postfix `?` on `Option<T>` ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â native lowering currently supports nullable-pointer `Option<T>` with refcounted payloads plus wide scalar `Option<Int|Bool|Float>`",
                 expr.span,
             ))
         }
         Type::Result(_, _) => {
             return Err(CodegenError::not_supported(
-                "postfix `?` on `Result<T, E>` â€” native tagged-union lowering is not implemented yet; use the interpreter tier until then",
+                "postfix `?` on `Result<T, E>` ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â native tagged-union lowering is not implemented yet; use the interpreter tier until then",
                 expr.span,
             ))
         }
         _ => {
             return Err(CodegenError::cranelift(
                 format!(
-                    "postfix `?` saw non-Option inner type `{}` â€” typecheck should have caught this",
+                    "postfix `?` saw non-Option inner type `{}` ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â typecheck should have caught this",
                     inner.ty.display_name()
                 ),
                 expr.span,
@@ -1004,7 +975,7 @@ fn lower_try_propagate_option(
         Type::Option(_) if is_native_wide_option_type(current_return_ty) => {}
         _ => {
             return Err(CodegenError::not_supported(
-                "postfix `?` on `Option<T>` â€” native lowering currently supports only functions returning native `Option<T>` shapes",
+                "postfix `?` on `Option<T>` ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â native lowering currently supports only functions returning native `Option<T>` shapes",
                 expr.span,
             ))
         }
@@ -1073,14 +1044,14 @@ fn lower_try_propagate_result(
         Type::Result(ok, err) if is_native_result_type(&inner.ty) => (&**ok, &**err),
         Type::Result(_, _) => {
             return Err(CodegenError::not_supported(
-                "postfix `?` on `Result<T, E>` Ã¢â‚¬â€ this concrete shape is outside the current native subset",
+                "postfix `?` on `Result<T, E>` ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â this concrete shape is outside the current native subset",
                 expr.span,
             ))
         }
         _ => {
             return Err(CodegenError::cranelift(
                 format!(
-                    "postfix `?` saw non-Result inner type `{}` Ã¢â‚¬â€ typecheck should have caught this",
+                    "postfix `?` saw non-Result inner type `{}` ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â typecheck should have caught this",
                     inner.ty.display_name()
                 ),
                 expr.span,
@@ -1160,7 +1131,7 @@ fn lower_try_propagate_result(
             }
         }
         return Err(CodegenError::not_supported(
-            "postfix `?` on `Result<T, E>` Ã¢â‚¬â€ the current native subset supports propagation only when the enclosing function returns the same concrete `Result<T, E>` shape",
+            "postfix `?` on `Result<T, E>` ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â the current native subset supports propagation only when the enclosing function returns the same concrete `Result<T, E>` shape",
             expr.span,
         ));
     }
@@ -1272,7 +1243,7 @@ fn lower_try_retry_result(
     if expr.ty != body.ty {
         return Err(CodegenError::cranelift(
             format!(
-                "retry expression type `{}` did not match body type `{}` â€” typecheck should have caught this",
+                "retry expression type `{}` did not match body type `{}` ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â typecheck should have caught this",
                 expr.ty.display_name(),
                 body.ty.display_name()
             ),
@@ -1518,360 +1489,6 @@ fn lower_try_retry_option(
     Ok(done_result)
 }
 
-fn lower_block(
-    builder: &mut FunctionBuilder,
-    block: &IrBlock,
-    current_return_ty: &Type,
-    env: &mut HashMap<LocalId, (Variable, clir::Type)>,
-    var_idx: &mut usize,
-    scope_stack: &mut Vec<Vec<(LocalId, Variable)>>,
-    loop_stack: &mut Vec<LoopCtx>,
-    func_ids_by_def: &HashMap<DefId, FuncId>,
-    module: &mut ObjectModule,
-    runtime: &RuntimeFuncs,
-) -> Result<BlockOutcome, CodegenError> {
-    for stmt in &block.stmts {
-        match lower_stmt(
-            builder,
-            stmt,
-            current_return_ty,
-            env,
-            var_idx,
-            scope_stack,
-            loop_stack,
-            func_ids_by_def,
-            module,
-            runtime,
-        )? {
-            BlockOutcome::Terminated => return Ok(BlockOutcome::Terminated),
-            BlockOutcome::Normal => {}
-        }
-    }
-    Ok(BlockOutcome::Normal)
-}
-
-fn lower_stmt(
-    builder: &mut FunctionBuilder,
-    stmt: &IrStmt,
-    current_return_ty: &Type,
-    env: &mut HashMap<LocalId, (Variable, clir::Type)>,
-    var_idx: &mut usize,
-    scope_stack: &mut Vec<Vec<(LocalId, Variable)>>,
-    loop_stack: &mut Vec<LoopCtx>,
-    func_ids_by_def: &HashMap<DefId, FuncId>,
-    module: &mut ObjectModule,
-    runtime: &RuntimeFuncs,
-) -> Result<BlockOutcome, CodegenError> {
-    match stmt {
-        IrStmt::Yield { span, .. } => {
-            Err(CodegenError::not_supported(
-                "Stream lowering not yet implemented",
-                *span,
-            ))
-        }
-        IrStmt::Return { value, span } => {
-            let v = match value {
-                Some(e) => lower_expr(
-                    builder,
-                    e,
-                    current_return_ty,
-                    env,
-                    scope_stack,
-                    func_ids_by_def,
-                    module,
-                    runtime,
-                )?,
-                None => {
-                    return Err(CodegenError::not_supported(
-                        "bare `return` (Nothing type not supported yet)",
-                        *span,
-                    ));
-                }
-            };
-            // The return value is an Owned temp (per the three-state
-            // ownership model â€” every `lower_expr` returns Owned for
-            // refcounted types). The caller will receive the +1 we
-            // hold; nothing more to do for the value itself.
-            //
-            // Release every refcounted local across all live scopes
-            // before transferring control. Walk innermost-first to
-            // mirror lexical scope exit order (matters only if the
-            // `release` call has side effects we care about, which it
-            // doesn't, but the ordering is conventional).
-            emit_function_return(builder, v, scope_stack, module, runtime);
-            Ok(BlockOutcome::Terminated)
-        }
-        IrStmt::Expr { expr, .. } => {
-            let v = lower_expr(
-                builder,
-                expr,
-                current_return_ty,
-                env,
-                scope_stack,
-                func_ids_by_def,
-                module,
-                runtime,
-            )?;
-            // Discarded statement-expression:
-            //   - If the expression is a BARE Local read, the value
-            //     belongs to the Local binding; the .6d pass handles
-            //     its lifetime via block-exit drops or last-use kills.
-            //     Under flag-off the pre-.6d path retained at read
-            //     time, so we release to match.
-            //   - If the expression is anything else (call, composite,
-            //     literal), it produced a fresh Owned temp with no
-            //     owner â€” always release, regardless of flag, since
-            //     the pass has no Local to drop.
-            if is_refcounted_type(&expr.ty) {
-                let is_bare_local = matches!(&expr.kind, IrExprKind::Local { .. });
-                if !is_bare_local || !runtime.dup_drop_enabled {
-                    emit_release(builder, module, runtime, v);
-                }
-            }
-            Ok(BlockOutcome::Normal)
-        }
-        IrStmt::Let {
-            local_id,
-            ty,
-            value,
-            span,
-            ..
-        } => {
-            let cl_ty = cl_type_for(ty, *span)?;
-            let refcounted = is_refcounted_type(ty);
-            // Declare-or-reuse: a fresh `LocalId` gets a new Cranelift
-            // `Variable`; reassignment to a name already bound in this
-            // function reuses the existing Variable. A type change on
-            // reassignment is a typechecker bug â€” we surface it as a
-            // clean `CodegenError` instead of letting Cranelift panic.
-            let (var, is_reassignment) = match env.get(local_id) {
-                Some(&(existing_var, existing_ty)) => {
-                    if existing_ty != cl_ty {
-                        return Err(CodegenError::cranelift(
-                            format!(
-                                "variable redeclared with different type: was {existing_ty}, now {cl_ty} â€” typechecker should have caught this"
-                            ),
-                            *span,
-                        ));
-                    }
-                    (existing_var, true)
-                }
-                None => {
-                    let new_var = Variable::from_u32(*var_idx as u32);
-                    *var_idx += 1;
-                    builder.declare_var(new_var, cl_ty);
-                    env.insert(*local_id, (new_var, cl_ty));
-                    (new_var, false)
-                }
-            };
-            // For reassignment of a refcounted local: read the old
-            // value first, release it, THEN bind the new value (which
-            // came pre-Owned from `lower_expr`).
-            // Reassignment: the old value of the Local is being
-            // replaced; its +1 must drop. The .6d pass doesn't yet
-            // model reassignment-kill (the analysis treats a rebind
-            // as a def but doesn't schedule a Drop for the previous
-            // value â€” this is a forward-compatibility gap tracked for
-            // a future analysis extension). Always release the old
-            // value at codegen time so the unified pass stays
-            // refcount-correct on reassigned refcounted locals.
-            if refcounted && is_reassignment {
-                let old = builder.use_var(var);
-                emit_release(builder, module, runtime, old);
-            }
-            let v = lower_expr(
-                builder,
-                value,
-                current_return_ty,
-                env,
-                scope_stack,
-                func_ids_by_def,
-                module,
-                runtime,
-            )?;
-            // The Value flowing into a refcounted
-            // binding must be stack-map-declared so Cranelift spills
-            // it across safepoints. Cranelift's safepoint pass
-            // tracks liveness through SSA phis for Values that
-            // travel between blocks via the Variable facade, but
-            // only for Values originally declared here.
-            if refcounted {
-                builder.declare_value_needs_stack_map(v);
-            }
-            builder.def_var(var, v);
-            // Track this binding in the current scope so it gets
-            // released at scope exit. Only on first binding â€” a
-            // reassignment is already tracked by the original Let.
-            if refcounted && !is_reassignment {
-                if let Some(top) = scope_stack.last_mut() {
-                    top.push((*local_id, var));
-                }
-            }
-            Ok(BlockOutcome::Normal)
-        }
-        IrStmt::If {
-            cond,
-            then_block,
-            else_block,
-            ..
-        } => lower_if(
-            builder,
-            cond,
-            then_block,
-            else_block.as_ref(),
-            current_return_ty,
-            env,
-            var_idx,
-            scope_stack,
-            loop_stack,
-            func_ids_by_def,
-            module,
-            runtime,
-        ),
-        IrStmt::For {
-            var_local,
-            iter,
-            body,
-            span,
-            ..
-        } => lower_for(
-            builder,
-            *var_local,
-            iter,
-            body,
-            *span,
-            current_return_ty,
-            env,
-            var_idx,
-            scope_stack,
-            loop_stack,
-            func_ids_by_def,
-            module,
-            runtime,
-        ),
-        IrStmt::Approve { label, args, span } => {
-            // Keep approve-arg side effects intact, then route the
-            // approval label through the runtime so native runs emit
-            // real approval trace events too.
-            for a in args {
-                let v = lower_expr(
-                    builder,
-                    a,
-                    current_return_ty,
-                    env,
-                    scope_stack,
-                    func_ids_by_def,
-                    module,
-                    runtime,
-                )?;
-                if !runtime.dup_drop_enabled && is_refcounted_type(&a.ty) {
-                    emit_release(builder, module, runtime, v);
-                }
-            }
-
-            let label_val = emit_string_const(builder, module, runtime, label, *span)?;
-            let approve_fref = module.declare_func_in_func(runtime.approve_sync, builder.func);
-            let call = builder.ins().call(approve_fref, &[label_val]);
-            let results: Vec<ClValue> = builder.inst_results(call).iter().copied().collect();
-            emit_release(builder, module, runtime, label_val);
-
-            let denied = builder.ins().icmp_imm(IntCC::Equal, results[0], 0);
-            let deny_block = builder.create_block();
-            let continue_block = builder.create_block();
-            builder
-                .ins()
-                .brif(denied, deny_block, &[], continue_block, &[]);
-
-            builder.switch_to_block(deny_block);
-            builder.seal_block(deny_block);
-            builder
-                .ins()
-                .trap(cranelift_codegen::ir::TrapCode::unwrap_user(1));
-
-            builder.switch_to_block(continue_block);
-            builder.seal_block(continue_block);
-            Ok(BlockOutcome::Normal)
-        }
-        IrStmt::Pass { .. } => Ok(BlockOutcome::Normal),
-        IrStmt::Break { span } => lower_break_or_continue(
-            builder,
-            true,
-            *span,
-            scope_stack,
-            loop_stack,
-            module,
-            runtime,
-        ),
-        IrStmt::Continue { span } => lower_break_or_continue(
-            builder,
-            false,
-            *span,
-            scope_stack,
-            loop_stack,
-            module,
-            runtime,
-        ),
-        // Dup/Drop as first-class IR operations. In the fallback
-        // path the ownership analysis pass hasn't been
-        // written yet, so these variants never appear in the IR
-        // codegen receives (only `None` borrow_sigs and no
-        // Dup/Drop statements â€” all ownership is still handled by
-        // the scattered `emit_retain`/`emit_release` calls in the
-        // expression lowerings). 17b-1b replaces that with the
-        // analysis pass that actually emits these. For forward
-        // compatibility the handlers are present and correct today:
-        // each lowers to a single runtime call on the variable's
-        // current value, with a type-based no-op for non-refcounted
-        // locals.
-        IrStmt::Dup { local_id, span } => {
-            let (var, cl_ty) = *env.get(local_id).ok_or_else(|| {
-                CodegenError::cranelift(
-                    format!("Dup references unknown local {:?}", local_id),
-                    *span,
-                )
-            })?;
-            // Non-refcounted locals use I64/F64/I8 for primitives;
-            // only I64 values that point at refcounted payloads need
-            // retain. The analysis pass is responsible for only
-            // emitting Dup on refcounted locals â€” if a non-I64
-            // slipped through, that's a bug in the analysis, not
-            // a silent no-op here.
-            if cl_ty != I64 {
-                return Err(CodegenError::cranelift(
-                    format!(
-                        "Dup on non-I64 local (cl_ty={cl_ty:?}) â€” analysis \
-                         should have filtered this out"
-                    ),
-                    *span,
-                ));
-            }
-            let v = builder.use_var(var);
-            emit_retain(builder, module, runtime, v);
-            Ok(BlockOutcome::Normal)
-        }
-        IrStmt::Drop { local_id, span } => {
-            let (var, cl_ty) = *env.get(local_id).ok_or_else(|| {
-                CodegenError::cranelift(
-                    format!("Drop references unknown local {:?}", local_id),
-                    *span,
-                )
-            })?;
-            if cl_ty != I64 {
-                return Err(CodegenError::cranelift(
-                    format!(
-                        "Drop on non-I64 local (cl_ty={cl_ty:?}) â€” analysis \
-                         should have filtered this out"
-                    ),
-                    *span,
-                ));
-            }
-            let v = builder.use_var(var);
-            emit_release(builder, module, runtime, v);
-            Ok(BlockOutcome::Normal)
-        }
-    }
-}
-
 fn lower_expr(
     builder: &mut FunctionBuilder,
     expr: &IrExpr,
@@ -1898,7 +1515,7 @@ fn lower_expr(
         IrExprKind::Local { local_id, name } => {
             let (var, _ty) = env.get(local_id).ok_or_else(|| {
                 CodegenError::cranelift(
-                    format!("no variable for local `{name}` â€” compiler bug"),
+                    format!("no variable for local `{name}` ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â compiler bug"),
                     expr.span,
                 )
             })?;
@@ -1910,7 +1527,7 @@ fn lower_expr(
             //
             // Under the .6d unified pass, we rely on the pass's Dup
             // insertion at non-last consuming uses instead of
-            // retaining on every read â€” the last use of a local
+            // retaining on every read ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â the last use of a local
             // consumes the existing +1 directly.
             if !runtime.dup_drop_enabled && is_refcounted_type(&expr.ty) {
                 emit_retain(builder, module, runtime, v);
@@ -1956,7 +1573,7 @@ fn lower_expr(
             //
             // Non-bare-Local operands (literals, nested expressions,
             // call results) still produce an Owned +1 and are
-            // released by the helper as before â€” the original
+            // released by the helper as before ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â the original
             // ownership contract.
             if matches!(&left.ty, Type::String) && matches!(&right.ty, Type::String) {
                 let (l, l_borrowed) =
@@ -2025,7 +1642,7 @@ fn lower_expr(
                         if let IrExprKind::Local { local_id, name } = &a.kind {
                             let (var, _ty) = env.get(local_id).ok_or_else(|| {
                                 CodegenError::cranelift(
-                                    format!("no variable for local `{name}` â€” compiler bug"),
+                                    format!("no variable for local `{name}` ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â compiler bug"),
                                     a.span,
                                 )
                             })?;
@@ -2073,7 +1690,7 @@ fn lower_expr(
             IrCallKind::Tool { def_id, .. } => {
                 // Emit a direct typed call to the tool's
                 // `#[tool]`-generated wrapper symbol. No JSON, no
-                // dynamic dispatch â€” just a `call` instruction against
+                // dynamic dispatch ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â just a `call` instruction against
                 // a named import. Link-time symbol resolution catches
                 // missing tool implementations; Cranelift-level
                 // type-matching catches wrong-type mismatches at
@@ -2081,13 +1698,13 @@ fn lower_expr(
                 let tool = runtime.ir_tools.get(def_id).cloned().ok_or_else(|| {
                     CodegenError::cranelift(
                         format!(
-                            "tool `{callee_name}` metadata missing from ir_tools â€” declare-pass invariant violated"
+                            "tool `{callee_name}` metadata missing from ir_tools ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â declare-pass invariant violated"
                         ),
                         expr.span,
                     )
                 })?;
 
-                // Arity cross-check â€” belt-and-braces vs. the
+                // Arity cross-check ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â belt-and-braces vs. the
                 // typechecker's check that already ran.
                 if tool.params.len() != args.len() {
                     return Err(CodegenError::cranelift(
@@ -2131,10 +1748,10 @@ fn lower_expr(
                 };
 
                 // Tool-call ABI: refcount lifecycle matches
-                // the agent-call convention â€” caller
+                // the agent-call convention ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â caller
                 // produces an Owned (+1) refcounted arg via the
                 // existing `lower_expr` path (use_var retains to
-                // convert Borrowedâ†’Owned), the `#[tool]` wrapper
+                // convert BorrowedÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢Owned), the `#[tool]` wrapper
                 // reads bytes without touching refcount
                 // (`abi::FromCorvidAbi for String` is borrow-only so
                 // the wrapper neither retains nor releases), and
@@ -2231,7 +1848,7 @@ fn lower_expr(
                 )
             }
             IrCallKind::Unknown => Err(CodegenError::cranelift(
-                format!("call to `{callee_name}` did not resolve â€” typecheck should have caught this"),
+                format!("call to `{callee_name}` did not resolve ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â typecheck should have caught this"),
                 expr.span,
             )),
         },
@@ -2241,7 +1858,7 @@ fn lower_expr(
                 other => {
                     return Err(CodegenError::cranelift(
                         format!(
-                            "field access target has non-struct type `{other:?}` â€” typecheck should have caught this"
+                            "field access target has non-struct type `{other:?}` ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â typecheck should have caught this"
                         ),
                         expr.span,
                     ));
@@ -2273,7 +1890,7 @@ fn lower_expr(
             // post-extract release of the struct pointer. The load
             // of the field only reads the struct's memory; we never
             // mutate the struct's refcount. The Local's binding
-            // stays Live â€” its scope-exit release handles cleanup.
+            // stays Live ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â its scope-exit release handles cleanup.
             let (struct_ptr, struct_borrowed) = lower_container_maybe_borrowed(
                 builder, target, current_return_ty, env, scope_stack, func_ids_by_def, module, runtime,
             )?;
@@ -2284,7 +1901,7 @@ fn lower_expr(
                 offset,
             );
             // Retain refcounted field so caller gets an Owned ref.
-            // This retain is NOT redundant pass traffic â€” it's the
+            // This retain is NOT redundant pass traffic ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â it's the
             // ownership conversion from "field slot inside a parent"
             // to "standalone result value the caller owns." The .6d
             // pass cannot replace this because the extracted value
@@ -2297,7 +1914,7 @@ fn lower_expr(
             // Release the temp +1 on the struct pointer only if we
             // created one. `struct_borrowed = false` means the target
             // was a fresh temp (call result, constructor, nested field
-            // access) not a bare Local â€” the .6d pass doesn't see
+            // access) not a bare Local ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â the .6d pass doesn't see
             // those, so codegen must drop unconditionally. Borrowed
             // reads have no +1 to release.
             if !struct_borrowed {
@@ -2313,7 +1930,7 @@ fn lower_expr(
             let elem_refcounted = is_refcounted_type(&elem_ty);
 
             // Same borrow-at-use-site trick
-            // as FieldAccess â€” if the list target is a bare Local,
+            // as FieldAccess ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â if the list target is a bare Local,
             // borrow it (no retain) and skip the post-extract release.
             // The bounds-check + load only read the list's memory;
             // never mutate its refcount or escape the pointer.
@@ -2371,7 +1988,7 @@ fn lower_expr(
                 0,
             );
             // Retain extracted element as ownership conversion from
-            // list slot â†’ standalone caller-owned value. The .6d
+            // list slot ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ standalone caller-owned value. The .6d
             // pass can't replace this because the extracted value
             // never gets an IR Local. Pairs with list_ptr release.
             if elem_refcounted {
@@ -2379,7 +1996,7 @@ fn lower_expr(
             }
             // Release the temp +1 on the list pointer only if we
             // actually took one. `list_borrowed = false` means the
-            // target was a fresh temp, not a bare Local â€” the .6d
+            // target was a fresh temp, not a bare Local ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â the .6d
             // pass doesn't see internal temps, so codegen drops
             // unconditionally. Borrowed reads have no +1 to drop.
             if !list_borrowed {
@@ -2394,7 +2011,7 @@ fn lower_expr(
                 other => {
                     return Err(CodegenError::cranelift(
                         format!(
-                            "list literal has non-list type `{other:?}` â€” typecheck should have caught this"
+                            "list literal has non-list type `{other:?}` ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â typecheck should have caught this"
                         ),
                         expr.span,
                     ));
@@ -2415,7 +2032,7 @@ fn lower_expr(
                 .ok_or_else(|| {
                     CodegenError::cranelift(
                         format!(
-                            "no typeinfo pre-emitted for List<{}> â€” collect_list_element_types missed this site",
+                            "no typeinfo pre-emitted for List<{}> ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â collect_list_element_types missed this site",
                             mangle_type_name(&elem_ty)
                         ),
                         expr.span,
@@ -2535,7 +2152,7 @@ fn lower_expr(
         // other positions the typecheck doesn't intercept.
         IrExprKind::ResultOk { .. } | IrExprKind::ResultErr { .. } => {
             Err(CodegenError::not_supported(
-                "`Result<T, E>` construction (`Ok(...)` / `Err(...)`) â€” native tagged-union lowering is not implemented yet; use the interpreter tier (`corvid run --tier interp`) until then",
+                "`Result<T, E>` construction (`Ok(...)` / `Err(...)`) ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â native tagged-union lowering is not implemented yet; use the interpreter tier (`corvid run --tier interp`) until then",
                 expr.span,
             ))
         }
@@ -2569,7 +2186,7 @@ fn lower_expr(
                 )
             } else {
                 Err(CodegenError::not_supported(
-                    "`Some(...)` â€” native codegen currently supports nullable-pointer `Option<T>` when `T` is refcounted plus wide scalar `Option<Int|Bool|Float>`",
+                    "`Some(...)` ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â native codegen currently supports nullable-pointer `Option<T>` when `T` is refcounted plus wide scalar `Option<Int|Bool|Float>`",
                     expr.span,
                 ))
             }
@@ -2654,7 +2271,7 @@ fn lower_binop_strict(
     module: &mut ObjectModule,
     runtime: &RuntimeFuncs,
 ) -> Result<ClValue, CodegenError> {
-    // Promote mixed Int + Float operands to F64 â€” same widening the
+    // Promote mixed Int + Float operands to F64 ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â same widening the
     // interpreter applies in `eval_arithmetic`.
     let (l, r, dom) = promote_arith(builder, l, r, span)?;
 
@@ -2753,13 +2370,13 @@ enum ArithDomain {
 /// Returns `(value, borrowed)` following the same convention as
 /// `lower_string_operand_maybe_borrowed`:
 ///
-///   * bare `IrExprKind::Local` â†’ `(value, true)`, no retain â€” caller
+///   * bare `IrExprKind::Local` ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ `(value, true)`, no retain ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â caller
 ///     must NOT release the value afterward.
-///   * any other shape â†’ normal `lower_expr` (+1 Owned), `false` â€”
+///   * any other shape ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ normal `lower_expr` (+1 Owned), `false` ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â
 ///     caller releases as before.
 ///
 /// Safe because the FieldAccess / Index code paths only READ the
-/// container (load + optionally bounds-check) â€” they never mutate
+/// container (load + optionally bounds-check) ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â they never mutate
 /// the container's refcount or escape the pointer elsewhere. The
 /// caller's Local binding keeps the container alive through its
 /// scope-exit release.
@@ -2776,7 +2393,7 @@ fn lower_container_maybe_borrowed(
     if let IrExprKind::Local { local_id, name } = &expr.kind {
         let (var, _ty) = env.get(local_id).ok_or_else(|| {
             CodegenError::cranelift(
-                format!("no variable for local `{name}` â€” compiler bug"),
+                format!("no variable for local `{name}` ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â compiler bug"),
                 expr.span,
             )
         })?;
@@ -2801,17 +2418,17 @@ fn lower_container_maybe_borrowed(
 /// ordering compare). Returns `(value, borrowed)`:
 ///
 ///   * `borrowed = true` iff the operand was a bare `IrExprKind::Local`
-///     â€” in that case we skip the ownership-conversion retain that
+///     ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â in that case we skip the ownership-conversion retain that
 ///     `lower_expr` would normally emit, and the caller must NOT
 ///     release the value afterward. The returned `ClValue` is a
 ///     borrow of the binding's current refcount (caller's scope
 ///     still governs the Drop).
-///   * `borrowed = false` for every other expression shape â€” the
+///   * `borrowed = false` for every other expression shape ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â the
 ///     value is a fresh Owned +1 produced by `lower_expr`, and the
 ///     caller is responsible for the corresponding release.
 ///
 /// Safe because the String runtime helpers (`corvid_string_concat`,
-/// `corvid_string_eq`, `corvid_string_cmp`) only read their inputs â€”
+/// `corvid_string_eq`, `corvid_string_cmp`) only read their inputs ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â
 /// they never mutate the operand refcount nor store the pointer. So
 /// passing a borrow vs. an Owned +1 is indistinguishable from the
 /// helper's perspective; the only observable difference is the net
@@ -2828,7 +2445,7 @@ fn lower_string_operand_maybe_borrowed(
 ) -> Result<(ClValue, bool), CodegenError> {
     // Under the .6d unified pass: take the non-peephole path for bare
     // Local operands. If we returned `borrowed=true`, BinOp would skip
-    // the release and the caller's +1 would leak â€” the pass's
+    // the release and the caller's +1 would leak ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â the pass's
     // analysis treats BinOp operands as Owned-consumed and does NOT
     // schedule a Drop for an operand that's consumed (there's no
     // later use), so codegen MUST release to retire the +1.
@@ -2836,7 +2453,7 @@ fn lower_string_operand_maybe_borrowed(
         if let IrExprKind::Local { local_id, name } = &expr.kind {
             let (var, _ty) = env.get(local_id).ok_or_else(|| {
                 CodegenError::cranelift(
-                    format!("no variable for local `{name}` â€” compiler bug"),
+                    format!("no variable for local `{name}` ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â compiler bug"),
                     expr.span,
                 )
             })?;
@@ -2950,265 +2567,6 @@ fn lower_string_binop_with_ownership(
     }
 }
 
-/// Lower a `for x in iter: body` loop. Expects `iter` to be a List.
-///
-/// Block layout:
-/// ```text
-///   entry:   init i=0, loop-var=0; jump header
-///   header:  brif (i < length) â†’ body : exit
-///   body:    load element[i]; release-on-rebind loop-var; retain if
-///            refcounted; def_var(loop-var, element); lower body;
-///            on fallthrough â†’ jump step
-///   step:    increment i; jump header
-///   exit:    after the loop
-/// ```
-/// `continue` jumps to `step`, `break` jumps to `exit`. Both release
-/// any refcounted locals deeper than the scope depth recorded at loop
-/// entry.
-#[allow(clippy::too_many_arguments)]
-fn lower_for(
-    builder: &mut FunctionBuilder,
-    var_local: LocalId,
-    iter: &IrExpr,
-    body: &IrBlock,
-    span: Span,
-    current_return_ty: &Type,
-    env: &mut HashMap<LocalId, (Variable, clir::Type)>,
-    var_idx: &mut usize,
-    scope_stack: &mut Vec<Vec<(LocalId, Variable)>>,
-    loop_stack: &mut Vec<LoopCtx>,
-    func_ids_by_def: &HashMap<DefId, FuncId>,
-    module: &mut ObjectModule,
-    runtime: &RuntimeFuncs,
-) -> Result<BlockOutcome, CodegenError> {
-    // Element type comes from the iterator's list type.
-    let elem_ty = match &iter.ty {
-        Type::List(elem) => (**elem).clone(),
-        Type::String => {
-            return Err(CodegenError::not_supported(
-                "`for c in string` iteration in native code â€” not implemented yet (needs iterator \
-                 protocol or string-specific lowering)",
-                span,
-            ));
-        }
-        other => {
-            return Err(CodegenError::cranelift(
-                format!(
-                    "`for` iterator has non-list type `{other:?}` â€” typecheck should have caught this"
-                ),
-                span,
-            ));
-        }
-    };
-    let elem_cl_ty = cl_type_for(&elem_ty, span)?;
-    let elem_refcounted = is_refcounted_type(&elem_ty);
-
-    // Iter-as-bare-Local borrow peephole. Same
-    // correctness argument as 17b-1b.3's FieldAccess/Index â€” the
-    // loop's use of `list_ptr` (length load + per-element load +
-    // bounds arithmetic) only READS the list's memory; never
-    // mutates the list's refcount or escapes the pointer. If iter
-    // is a bare Local of the enclosing scope, we can borrow it:
-    // skip the ownership-conversion retain at lower_expr time AND
-    // skip the paired release at loop exit. The Local's binding
-    // stays Live in its enclosing scope, governed by the usual
-    // scope-exit release.
-    let (list_ptr, list_borrowed) = lower_container_maybe_borrowed(
-        builder, iter, current_return_ty, env, scope_stack, func_ids_by_def, module, runtime,
-    )?;
-
-    // Load length from offset 0 of the list payload.
-    let length = builder.ins().load(
-        I64,
-        cranelift_codegen::ir::MemFlags::trusted(),
-        list_ptr,
-        0,
-    );
-
-    // Declare + init loop variable. Starts at 0 (null if refcounted)
-    // so the release-on-rebind on the first iteration is a no-op.
-    let loop_var = Variable::from_u32(*var_idx as u32);
-    *var_idx += 1;
-    builder.declare_var(loop_var, elem_cl_ty);
-    let zero_elem = builder.ins().iconst(elem_cl_ty, 0);
-    builder.def_var(loop_var, zero_elem);
-    env.insert(var_local, (loop_var, elem_cl_ty));
-    // Track the loop variable in the enclosing (not yet pushed) body
-    // scope's sibling â€” the CURRENT scope, so it releases when the
-    // enclosing block exits. That ensures the final iteration's value
-    // gets released.
-    if elem_refcounted {
-        if let Some(top) = scope_stack.last_mut() {
-            top.push((var_local, loop_var));
-        }
-    }
-
-    // Declare + init index counter.
-    let i_var = Variable::from_u32(*var_idx as u32);
-    *var_idx += 1;
-    builder.declare_var(i_var, I64);
-    let zero_i = builder.ins().iconst(I64, 0);
-    builder.def_var(i_var, zero_i);
-
-    // Create the four blocks.
-    let header_b = builder.create_block();
-    let body_b = builder.create_block();
-    let step_b = builder.create_block();
-    let exit_b = builder.create_block();
-
-    // Record the loop context so break/continue can find their targets.
-    let scope_depth_at_entry = scope_stack.len();
-    loop_stack.push(LoopCtx {
-        step_block: step_b,
-        exit_block: exit_b,
-        scope_depth_at_entry,
-    });
-
-    builder.ins().jump(header_b, &[]);
-
-    // --- header ---
-    builder.switch_to_block(header_b);
-    let i_now = builder.use_var(i_var);
-    let keep_going = builder.ins().icmp(IntCC::SignedLessThan, i_now, length);
-    builder.ins().brif(keep_going, body_b, &[], exit_b, &[]);
-
-    // --- body ---
-    builder.switch_to_block(body_b);
-    builder.seal_block(body_b);
-    // Compute element address: list_ptr + 8 + i * 8.
-    let offset = builder.ins().imul_imm(i_now, 8);
-    let base = builder.ins().iadd_imm(list_ptr, 8);
-    let elem_addr = builder.ins().iadd(base, offset);
-    let elem_val = builder.ins().load(
-        elem_cl_ty,
-        cranelift_codegen::ir::MemFlags::trusted(),
-        elem_addr,
-        0,
-    );
-    // The loaded element is a refcounted pointer that
-    // flows into the loop variable. Declare it so Cranelift spills
-    // before any safepoint in the loop body.
-    if elem_refcounted {
-        builder.declare_value_needs_stack_map(elem_val);
-    }
-    // Rebind loop-var: release old value (null-safe), retain new if
-    // refcounted, def_var. Under the .6d pass, the pass inserts a
-    // Drop on the loop variable at each iteration's natural last-use
-    // point and does not emit a fresh Dup for the new iteration
-    // element (the load above produces it with no +1 attached; the
-    // consumer patterns inside the body supply Dups as needed).
-    if !runtime.dup_drop_enabled && elem_refcounted {
-        let old = builder.use_var(loop_var);
-        emit_release(builder, module, runtime, old);
-        emit_retain(builder, module, runtime, elem_val);
-    }
-    builder.def_var(loop_var, elem_val);
-
-    // Push body scope so body-local Lets get released at end of each
-    // iteration (or on break/continue/return from inside body).
-    scope_stack.push(Vec::new());
-    let body_outcome = lower_block(
-        builder,
-        body,
-        current_return_ty,
-        env,
-        var_idx,
-        scope_stack,
-        loop_stack,
-        func_ids_by_def,
-        module,
-        runtime,
-    )?;
-    match body_outcome {
-        BlockOutcome::Normal => {
-            // Release body-scope locals before jumping to step.
-            let body_scope = scope_stack.pop().unwrap_or_default();
-            if !runtime.dup_drop_enabled {
-                for (_, v) in body_scope.iter().rev() {
-                    let x = builder.use_var(*v);
-                    emit_release(builder, module, runtime, x);
-                }
-            }
-            builder.ins().jump(step_b, &[]);
-        }
-        BlockOutcome::Terminated => {
-            // Body returned â€” the return already emitted releases for
-            // all live scopes. Just pop the body scope.
-            scope_stack.pop();
-        }
-    }
-
-    // --- step ---
-    builder.switch_to_block(step_b);
-    builder.seal_block(step_b);
-    let i_next = builder.ins().iadd_imm(i_now, 1);
-    builder.def_var(i_var, i_next);
-    builder.ins().jump(header_b, &[]);
-
-    // Now both predecessors of header_b (entry + step) have been
-    // emitted, so we can seal it.
-    builder.seal_block(header_b);
-
-    // --- exit ---
-    builder.switch_to_block(exit_b);
-    builder.seal_block(exit_b);
-    loop_stack.pop();
-
-    // Release the list pointer we retained at the top â€” only if we
-    // actually produced a +1 (non-borrowed path). When iter was a
-    // bare Local we borrowed it and there's nothing to release.
-    // `list_borrowed = false` means the iter was a fresh-owned temp
-    // (list literal or call result), not a bare Local. The .6d pass
-    // only schedules Drops for Locals in the IR; internal expression
-    // temps are invisible to it, so the codegen must still drop the
-    // list's +1 at loop end. `list_borrowed = true` means it was a
-    // bare Local and the pass handles its lifetime.
-    if is_refcounted_type(&iter.ty) && !list_borrowed {
-        emit_release(builder, module, runtime, list_ptr);
-    }
-    Ok(BlockOutcome::Normal)
-}
-
-/// Release refcounted locals deeper than `floor_depth`, then jump to
-/// the given block. Shared by `break` and `continue`.
-fn lower_break_or_continue(
-    builder: &mut FunctionBuilder,
-    is_break: bool,
-    span: Span,
-    scope_stack: &mut Vec<Vec<(LocalId, Variable)>>,
-    loop_stack: &mut Vec<LoopCtx>,
-    module: &mut ObjectModule,
-    runtime: &RuntimeFuncs,
-) -> Result<BlockOutcome, CodegenError> {
-    let ctx = loop_stack.last().ok_or_else(|| {
-        CodegenError::cranelift(
-            format!(
-                "`{}` outside of a loop â€” typecheck or parser should have caught this",
-                if is_break { "break" } else { "continue" }
-            ),
-            span,
-        )
-    })?;
-    // Walk scopes deeper than `scope_depth_at_entry`, releasing
-    // refcounted locals. Don't pop â€” the lower_block that created
-    // those scopes is still on the stack above us.
-    if !runtime.dup_drop_enabled {
-        for depth in (ctx.scope_depth_at_entry..scope_stack.len()).rev() {
-            let scope = &scope_stack[depth];
-            for (_, v) in scope.iter().rev() {
-                let x = builder.use_var(*v);
-                emit_release(builder, module, runtime, x);
-            }
-        }
-    }
-    let target = if is_break {
-        ctx.exit_block
-    } else {
-        ctx.step_block
-    };
-    builder.ins().jump(target, &[]);
-    Ok(BlockOutcome::Terminated)
-}
 
 /// Lower a struct constructor: allocate, store each field at its
 /// offset, return the struct pointer (refcount = 1, Owned).
@@ -3247,11 +2605,11 @@ fn lower_struct_constructor(
     // Structs with refcounted fields use the typeinfo-
     // driven allocator. Structs with no refcounted fields currently
     // skip typeinfo entirely (lower_file bypasses emission for them)
-    // â€” they allocate with NULL destroy_fn via a runtime-owned
+    // ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â they allocate with NULL destroy_fn via a runtime-owned
     // empty typeinfo? For 17a we keep the pre-typed behavior for
     // these: only emit typed allocation when the struct actually
     // has refcounted fields requiring dispatch. Non-refcounted
-    // structs remain on the old path *only temporarily* â€” future
+    // structs remain on the old path *only temporarily* ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â future
     // 17a's follow-up will uniformize this once 17d needs every
     // heap object traceable. Tracked as a TODO in ROADMAP.
     let struct_ptr = if let Some(&ti_id) = runtime.struct_typeinfos.get(&ty.id) {
@@ -3263,7 +2621,7 @@ fn lower_struct_constructor(
     } else {
         return Err(CodegenError::cranelift(
             format!(
-                "struct `{}` has no typeinfo emitted â€” 17a should cover every refcounted struct; is this a non-refcounted struct that still hits this path?",
+                "struct `{}` has no typeinfo emitted ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â 17a should cover every refcounted struct; is this a non-refcounted struct that still hits this path?",
                 ty.name
             ),
             span,
@@ -3272,7 +2630,7 @@ fn lower_struct_constructor(
 
     // Store each field at offset i * STRUCT_FIELD_SLOT_BYTES. Each
     // field arg is lowered as an Owned temp; the store transfers that
-    // +1 ownership into the struct â€” no extra retain, no release.
+    // +1 ownership into the struct ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â no extra retain, no release.
     for (i, arg) in args.iter().enumerate() {
         let value = lower_expr(
             builder,
@@ -3309,7 +2667,7 @@ fn lower_result_constructor(
 ) -> Result<ClValue, CodegenError> {
     if !is_native_result_type(&expr.ty) {
         return Err(CodegenError::not_supported(
-            "`Result<T, E>` construction outside the supported native subset Ã¢â‚¬â€ native lowering currently supports one-word payload shapes only",
+            "`Result<T, E>` construction outside the supported native subset ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â native lowering currently supports one-word payload shapes only",
             expr.span,
         ));
     }
@@ -3326,7 +2684,7 @@ fn lower_result_constructor(
         _ => {
             return Err(CodegenError::cranelift(
                 format!(
-                    "Result constructor expression has non-Result type `{}` Ã¢â‚¬â€ typecheck should have caught this",
+                    "Result constructor expression has non-Result type `{}` ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â typecheck should have caught this",
                     expr.ty.display_name()
                 ),
                 expr.span,
@@ -3457,7 +2815,7 @@ fn emit_option_wrapper_value(
 //      arg + literal text + ...
 //   3. Build literal CorvidStrings for the prompt name, the human-
 //      readable signature ("foo(x: Int) -> String"), and the model
-//      (empty â€” runtime falls back to default_model from CORVID_MODEL).
+//      (empty ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â runtime falls back to default_model from CORVID_MODEL).
 //   4. Call the typed bridge by return type, passing the four
 //      CorvidString args.
 //   5. Receive the typed return.
@@ -3496,11 +2854,11 @@ fn lower_string_literal(
     let mut data = vec![0u8; total];
     // refcount = i64::MIN (immortal)
     data[0..8].copy_from_slice(&i64::MIN.to_le_bytes());
-    // typeinfo_ptr (offset 8) â€” relocation below points it at
+    // typeinfo_ptr (offset 8) ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â relocation below points it at
     // `corvid_typeinfo_String` so runtime tracers can dispatch
     // uniformly through the same typeinfo path as heap-allocated
     // strings.
-    // bytes_ptr placeholder at offset 16 â€” written by the relocation
+    // bytes_ptr placeholder at offset 16 ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â written by the relocation
     // length at offset 24
     data[24..32].copy_from_slice(&len.to_le_bytes());
     // bytes at offset 32
@@ -3516,7 +2874,7 @@ fn lower_string_literal(
     let mut desc = DataDescription::new();
     desc.set_align(8);
     desc.define(data.into_boxed_slice());
-    // typeinfo_ptr at offset 8 â†’ &corvid_typeinfo_String
+    // typeinfo_ptr at offset 8 ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ &corvid_typeinfo_String
     let ti_gv = module.declare_data_in_data(runtime.string_typeinfo, &mut desc);
     desc.write_data_addr(8, ti_gv, 0);
     // Self-relative relocation: at offset 16, write the address of
@@ -3551,7 +2909,7 @@ fn promote_arith(
     if lt == I64 && rt == I64 {
         return Ok((l, r, ArithDomain::Int));
     }
-    // Bool == Bool is Int domain â€” both sides are I8.
+    // Bool == Bool is Int domain ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â both sides are I8.
     if lt == I8 && rt == I8 {
         return Ok((l, r, ArithDomain::Int));
     }
@@ -3565,7 +2923,7 @@ fn promote_arith(
     }
     Err(CodegenError::cranelift(
         format!(
-            "unsupported operand width combination for binop: {lt:?} and {rt:?} â€” typecheck should have caught this"
+            "unsupported operand width combination for binop: {lt:?} and {rt:?} ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â typecheck should have caught this"
         ),
         span,
     ))
@@ -3573,7 +2931,7 @@ fn promote_arith(
 
 /// Lower unary operators.
 ///
-/// - `Not` flips a Bool via `icmp_eq(v, 0)` â€” 0â†’1, 1â†’0 â€” and produces `I8`.
+/// - `Not` flips a Bool via `icmp_eq(v, 0)` ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â 0ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢1, 1ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢0 ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â and produces `I8`.
 /// - `Neg` on `Int` is `0 - x` with overflow trap, matching the
 ///   interpreter's `checked_neg` semantics for `i64::MIN`.
 fn lower_unop(
@@ -3591,19 +2949,19 @@ fn lower_unop(
             Ok(builder.ins().icmp(IntCC::Equal, v, zero))
         }
         UnaryOp::Neg if vt == F64 => {
-            // Float negation is IEEE â€” flips the sign bit, no trap. NaN
+            // Float negation is IEEE ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â flips the sign bit, no trap. NaN
             // negation produces NaN with the sign flipped, also fine.
             Ok(builder.ins().fneg(v))
         }
         UnaryOp::Neg if vt == I64 => {
-            // Int `-x` â‰¡ `0 - x`, trap on overflow (only at i64::MIN).
+            // Int `-x` ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â°ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡ `0 - x`, trap on overflow (only at i64::MIN).
             let zero = builder.ins().iconst(I64, 0);
             with_overflow_trap(builder, zero, v, module, runtime, |b| {
                 b.ins().ssub_overflow(zero, v)
             })
         }
         UnaryOp::Neg => Err(CodegenError::cranelift(
-            format!("unary `-` applied to value of width {vt:?} â€” typecheck should have caught this"),
+            format!("unary `-` applied to value of width {vt:?} ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â typecheck should have caught this"),
             span,
         )),
     }
@@ -3645,14 +3003,14 @@ fn lower_short_circuit(
 
     match op {
         BinaryOp::And => {
-            // l != 0 â†’ eval right; l == 0 â†’ short-circuit to false.
+            // l != 0 ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ eval right; l == 0 ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ short-circuit to false.
             let short_val = builder.ins().iconst(I8, 0);
             builder
                 .ins()
                 .brif(l, right_block, &[], merge_block, &[short_val.into()]);
         }
         BinaryOp::Or => {
-            // l != 0 â†’ short-circuit to true; l == 0 â†’ eval right.
+            // l != 0 ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ short-circuit to true; l == 0 ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ eval right.
             let short_val = builder.ins().iconst(I8, 1);
             builder
                 .ins()
@@ -3680,135 +3038,6 @@ fn lower_short_circuit(
     Ok(result)
 }
 
-/// Lower an `if` / `else` statement into CL blocks.
-///
-/// Pattern: cond_block emits `brif`; then/else blocks lower their
-/// bodies; both, if they fall through, `jump` to a merge block. If
-/// neither falls through, merge is terminated with a trap (dead code)
-/// and the enclosing `lower_block` is told the statement terminated.
-fn lower_if(
-    builder: &mut FunctionBuilder,
-    cond: &IrExpr,
-    then_block_ir: &IrBlock,
-    else_block_ir: Option<&IrBlock>,
-    current_return_ty: &Type,
-    env: &mut HashMap<LocalId, (Variable, clir::Type)>,
-    var_idx: &mut usize,
-    scope_stack: &mut Vec<Vec<(LocalId, Variable)>>,
-    loop_stack: &mut Vec<LoopCtx>,
-    func_ids_by_def: &HashMap<DefId, FuncId>,
-    module: &mut ObjectModule,
-    runtime: &RuntimeFuncs,
-) -> Result<BlockOutcome, CodegenError> {
-    let cond_val = lower_expr(
-        builder,
-        cond,
-        current_return_ty,
-        env,
-        scope_stack,
-        func_ids_by_def,
-        module,
-        runtime,
-    )?;
-
-    let then_b = builder.create_block();
-    let else_b = if else_block_ir.is_some() {
-        Some(builder.create_block())
-    } else {
-        None
-    };
-    let merge_b = builder.create_block();
-    let false_target = else_b.unwrap_or(merge_b);
-    builder.ins().brif(cond_val, then_b, &[], false_target, &[]);
-
-    // `any_fell_through` starts true when there's no else because the
-    // cond-false path flows straight to merge via the brif above.
-    let mut any_fell_through = else_b.is_none();
-
-    // Then branch â€” push a new scope for branch-local refcounted Lets;
-    // pop after lowering, releasing each local's refcount if the
-    // branch fell through normally.
-    builder.switch_to_block(then_b);
-    builder.seal_block(then_b);
-    scope_stack.push(Vec::new());
-    let then_outcome = lower_block(
-        builder,
-        then_block_ir,
-        current_return_ty,
-        env,
-        var_idx,
-        scope_stack,
-        loop_stack,
-        func_ids_by_def,
-        module,
-        runtime,
-    )?;
-    if matches!(then_outcome, BlockOutcome::Normal) {
-        // Release branch-scope refcounted locals before jumping to merge.
-        // Under the .6d pass, the analysis handles branch-scope drops
-        // via block-exit drops on locals with different last-use
-        // points across branches â€” skip the scattered emission.
-        let scope = scope_stack.pop().unwrap_or_default();
-        if !runtime.dup_drop_enabled {
-            for (_, var) in scope.iter().rev() {
-                let v = builder.use_var(*var);
-                emit_release(builder, module, runtime, v);
-            }
-        }
-        builder.ins().jump(merge_b, &[]);
-        any_fell_through = true;
-    } else {
-        // Branch terminated (return) â€” its return path already emitted
-        // releases for all live locals across all scopes. Just pop.
-        scope_stack.pop();
-    }
-
-    // Else branch (if present).
-    if let (Some(else_b), Some(else_body)) = (else_b, else_block_ir) {
-        builder.switch_to_block(else_b);
-        builder.seal_block(else_b);
-        scope_stack.push(Vec::new());
-        let else_outcome = lower_block(
-            builder,
-            else_body,
-            current_return_ty,
-            env,
-            var_idx,
-            scope_stack,
-            loop_stack,
-            func_ids_by_def,
-            module,
-            runtime,
-        )?;
-        if matches!(else_outcome, BlockOutcome::Normal) {
-            let scope = scope_stack.pop().unwrap_or_default();
-            if !runtime.dup_drop_enabled {
-                for (_, var) in scope.iter().rev() {
-                    let v = builder.use_var(*var);
-                    emit_release(builder, module, runtime, v);
-                }
-            }
-            builder.ins().jump(merge_b, &[]);
-            any_fell_through = true;
-        } else {
-            scope_stack.pop();
-        }
-    }
-
-    builder.switch_to_block(merge_b);
-    builder.seal_block(merge_b);
-    if !any_fell_through {
-        // Nothing flows here â€” both branches returned. Terminate the
-        // unreachable merge with a trap so Cranelift's verifier is
-        // satisfied, and tell the enclosing block the statement
-        // terminated.
-        builder
-            .ins()
-            .trap(cranelift_codegen::ir::TrapCode::INTEGER_OVERFLOW);
-        return Ok(BlockOutcome::Terminated);
-    }
-    Ok(BlockOutcome::Normal)
-}
 
 /// Run an overflow-producing Cranelift op, branch to an overflow handler
 /// block on the flag, and return the sum/diff/product value.
