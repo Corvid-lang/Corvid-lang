@@ -46,6 +46,8 @@ mod tool;
 mod prompt;
 #[path = "parity/method.rs"]
 mod method;
+#[path = "parity/weak.rs"]
+mod weak;
 
 /// Path to the `corvid-test-tools` staticlib. The parity harness links
 /// this into every compiled Corvid binary so `#[tool]`-declared mocks
@@ -486,13 +488,6 @@ fn assert_parity_bool_with_mock_llm_queue(
 }
 
 
-#[test]
-fn weak_upgrade_is_live_while_strong_value_is_still_in_scope() {
-    assert_parity_bool(
-        "agent main() -> Bool:\n    s = \"hello\"\n    w = Weak::new(s)\n    return Weak::upgrade(w) != None\n",
-        true,
-    );
-}
 
 #[test]
 fn nullable_option_string_round_trips_through_native_agents() {
@@ -764,6 +759,7 @@ fn native_result_retry_then_try_propagates_into_different_ok_type() {
         "mock-1",
     );
 }
+
 
 
 
