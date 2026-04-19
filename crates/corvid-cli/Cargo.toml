@@ -14,6 +14,7 @@ corvid-driver = { workspace = true }
 corvid-differential-verify = { workspace = true }
 corvid-repl = { workspace = true }
 corvid-runtime = { workspace = true }
+corvid-trace-schema = { workspace = true }
 clap = { workspace = true }
 anyhow = { workspace = true }
 serde = { workspace = true, features = ["derive"] }

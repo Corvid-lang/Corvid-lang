@@ -11,8 +11,13 @@
 //!   corvid effect-diff        diff composed effect profiles between two revisions
 //!   corvid add-dimension      install a dimension from the effect registry
 //!   corvid routing-report     aggregate dispatch traces into routing guidance
+//!   corvid replay <trace>     re-execute a recorded trace deterministically
+//!   corvid trace list         list traces under target/trace/
+//!   corvid trace show <id>    print a recorded trace as formatted JSON
 
+mod replay;
 mod routing_report;
+mod trace_cmd;
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -145,10 +150,50 @@ enum Command {
         #[arg(long, value_name = "PATH")]
         trace_dir: Option<PathBuf>,
     },
+    /// Re-execute a recorded trace deterministically.
+    ///
+    /// Loads the JSONL trace at `<trace>`, validates its schema
+    /// header, and dispatches to the replay runtime. Until
+    /// Dev B's 21-C-replay-interp / 21-C-replay-native slices
+    /// land, this command validates the trace and returns a
+    /// clean "not yet available" message with exit code 1.
+    Replay {
+        /// Path to a JSONL trace file.
+        trace: PathBuf,
+    },
+    /// Inspect recorded traces under `target/trace/` (or a
+    /// user-supplied directory).
+    Trace {
+        #[command(subcommand)]
+        command: TraceCommand,
+    },
     /// Start the interactive Corvid REPL.
     Repl,
     /// Check the local environment for required tools.
     Doctor,
+}
+
+#[derive(Subcommand)]
+enum TraceCommand {
+    /// List every JSONL trace under `--trace-dir` (default:
+    /// `target/trace/`). One row per trace with run id, schema
+    /// version, event count, and timestamp range.
+    List {
+        /// Trace directory. Defaults to `target/trace`.
+        #[arg(long, value_name = "PATH")]
+        trace_dir: Option<PathBuf>,
+    },
+    /// Print every event in a trace as formatted JSON, one
+    /// event per line.
+    Show {
+        /// Trace identifier: either a direct file path, or a
+        /// run id to resolve under `--trace-dir`.
+        id_or_path: String,
+        /// Trace directory used when `id_or_path` is a bare
+        /// run id. Defaults to `target/trace`.
+        #[arg(long, value_name = "PATH")]
+        trace_dir: Option<PathBuf>,
+    },
 }
 
 fn main() -> ExitCode {
@@ -185,6 +230,14 @@ fn main() -> ExitCode {
             since_commit.as_deref(),
             json,
         ),
+        Some(Command::Replay { trace }) => replay::run_replay(&trace),
+        Some(Command::Trace { command }) => match command {
+            TraceCommand::List { trace_dir } => trace_cmd::run_list(trace_dir.as_deref()),
+            TraceCommand::Show {
+                id_or_path,
+                trace_dir,
+            } => trace_cmd::run_show(&id_or_path, trace_dir.as_deref()),
+        },
         Some(Command::Repl) => cmd_repl(),
         Some(Command::Doctor) => cmd_doctor(),
         None => {
