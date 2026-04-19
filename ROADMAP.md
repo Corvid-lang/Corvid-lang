@@ -1184,7 +1184,8 @@ Users register local models (Ollama, vLLM, llama.cpp) with declared capabilities
 - [x] 21-inv-C-2             Provenance CLI: `corvid trace dag <id>` renders ProvenanceEdge substream as Graphviz DOT
 - [x] 21-inv-D-cli           `corvid replay --mutate <step> <response>` + divergence output
 - [x] 21-inv-E-1             Parser: `replay <expr>: when <pat> -> <expr>` syntax
-- [ ] 21-inv-E-2             AST + resolver: `ReplayExpr`, `TraceEventPattern`, trace-id locals
+- [x] 21-inv-E-2a            Parser + AST: arm captures (`as <ident>` tail + tool-arg capture)
+- [ ] 21-inv-E-2b            Resolver: pattern-name resolution + arm-capture scope opening
 - [ ] 21-inv-E-3             Checker: `TraceId` / `TraceEvent` types + pattern exhaustiveness
 - [ ] 21-inv-E-4             IR lowering for replay blocks
 - [ ] 21-inv-G-cli           `corvid test --from-traces <dir>` + trace-to-test harness
@@ -1197,7 +1198,7 @@ Users register local models (Ollama, vLLM, llama.cpp) with declared capabilities
 - [x] 21-C-replay-interp     Replay adapter: response substitution; byte-identical post-replay state
 - [x] 21-B-rec-native        Native-tier recording parity
 - [x] 21-C-replay-native     Native-tier replay parity
-- [ ] 21-inv-B-adapter       Model-swap seam for `corvid replay --model <id>`
+- [x] 21-inv-B-adapter       Model-swap seam for `corvid replay --model <id>`
 - [ ] 21-inv-D-runtime       Counterfactual one-step mutation at runtime
 - [ ] 21-inv-E-runtime       Runtime support for `replay` language primitive (trace ingestion + pattern dispatch)
 - [ ] 21-inv-G-harness       Trace-to-test-fixture adapter; divergence-as-test-failure reporting
