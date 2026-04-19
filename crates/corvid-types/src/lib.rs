@@ -11,6 +11,7 @@
 
 pub mod checker;
 pub mod config;
+pub mod determinism;
 pub mod effects;
 pub mod errors;
 pub mod law_check;
@@ -33,6 +34,10 @@ pub use effects::{
     compute_worst_case_cost, render_cost_tree, AgentEffectSummary, ComposedProfile,
     ConstraintViolation, CostEstimate, CostNodeKind, CostTreeNode, CostWarning,
     CostWarningKind, EffectProfile, EffectRegistry, ProvenanceViolation,
+};
+pub use determinism::{
+    classify_call_target, NondeterminismSource, NondeterministicBuiltin,
+    KNOWN_NONDETERMINISTIC_BUILTINS,
 };
 pub use types::Type;
 
