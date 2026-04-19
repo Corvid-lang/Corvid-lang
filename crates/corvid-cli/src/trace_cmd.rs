@@ -178,7 +178,10 @@ fn collect_trace_files(dir: &Path) -> Result<Vec<PathBuf>> {
 /// Resolve a user-supplied identifier to a trace file path. If
 /// the input is already a path on disk, return it. Otherwise,
 /// treat it as a run id and look for `<trace_dir>/<id>.jsonl`.
-fn resolve_trace_path(id_or_path: &str, trace_dir: Option<&Path>) -> Result<PathBuf> {
+pub(crate) fn resolve_trace_path(
+    id_or_path: &str,
+    trace_dir: Option<&Path>,
+) -> Result<PathBuf> {
     let as_path = PathBuf::from(id_or_path);
     if as_path.is_file() {
         return Ok(as_path);

@@ -15,10 +15,12 @@
 //!   corvid replay --model <id> <trace>  differential replay against a different model
 //!   corvid trace list         list traces under target/trace/
 //!   corvid trace show <id>    print a recorded trace as formatted JSON
+//!   corvid trace dag <id>     render provenance DAG as Graphviz DOT
 
 mod replay;
 mod routing_report;
 mod trace_cmd;
+mod trace_dag;
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -210,6 +212,19 @@ enum TraceCommand {
         #[arg(long, value_name = "PATH")]
         trace_dir: Option<PathBuf>,
     },
+    /// Render the Grounded<T> provenance DAG of a trace as a
+    /// Graphviz DOT graph. Pipe into `dot -Tsvg > prov.svg` to
+    /// render. Traces without provenance events produce an empty
+    /// digraph plus a warning on stderr.
+    Dag {
+        /// Trace identifier: either a direct file path, or a
+        /// run id to resolve under `--trace-dir`.
+        id_or_path: String,
+        /// Trace directory used when `id_or_path` is a bare
+        /// run id. Defaults to `target/trace`.
+        #[arg(long, value_name = "PATH")]
+        trace_dir: Option<PathBuf>,
+    },
 }
 
 fn main() -> ExitCode {
@@ -255,6 +270,10 @@ fn main() -> ExitCode {
                 id_or_path,
                 trace_dir,
             } => trace_cmd::run_show(&id_or_path, trace_dir.as_deref()),
+            TraceCommand::Dag {
+                id_or_path,
+                trace_dir,
+            } => trace_dag::run_dag(&id_or_path, trace_dir.as_deref()),
         },
         Some(Command::Repl) => cmd_repl(),
         Some(Command::Doctor) => cmd_doctor(),
