@@ -211,8 +211,9 @@ impl<'a> Parser<'a> {
         start: Span,
         _name_span: Span,
     ) -> Result<Option<AgentAttribute>, ParseError> {
-        let attribute_kind = match name {
+        let attribute_kind: fn(Span) -> AgentAttribute = match name {
             "replayable" => |span| AgentAttribute::Replayable { span },
+            "deterministic" => |span| AgentAttribute::Deterministic { span },
             _ => return Ok(None),
         };
 

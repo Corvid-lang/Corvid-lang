@@ -416,6 +416,14 @@ pub enum AgentAttribute {
     /// the agent byte-identically. See Phase 21 slice
     /// `21-inv-A` and `docs/phase-21-determinism-sources.md`.
     Replayable { span: Span },
+    /// `@deterministic` — strictly stronger than `@replayable`.
+    /// Given the same inputs, always produces the same outputs,
+    /// trace or no trace. Forbids every LLM / tool / approve
+    /// call and every catalog-registered nondeterministic
+    /// builtin, plus calls to agents not themselves marked
+    /// `@deterministic`. The agent is a pure function over
+    /// its parameters. See Phase 21 slice `21-inv-F`.
+    Deterministic { span: Span },
 }
 
 impl AgentAttribute {
@@ -423,6 +431,7 @@ impl AgentAttribute {
     pub fn span(&self) -> Span {
         match self {
             Self::Replayable { span } => *span,
+            Self::Deterministic { span } => *span,
         }
     }
 
@@ -430,7 +439,22 @@ impl AgentAttribute {
     pub fn name(&self) -> &'static str {
         match self {
             Self::Replayable { .. } => "replayable",
+            Self::Deterministic { .. } => "deterministic",
         }
+    }
+
+    /// `@deterministic` implies `@replayable`. An agent marked
+    /// only `@deterministic` still satisfies every replayability
+    /// invariant. Callers checking one attribute or the other
+    /// use these helpers rather than pattern-matching directly.
+    pub fn is_replayable(attrs: &[AgentAttribute]) -> bool {
+        attrs
+            .iter()
+            .any(|a| matches!(a, Self::Replayable { .. } | Self::Deterministic { .. }))
+    }
+
+    pub fn is_deterministic(attrs: &[AgentAttribute]) -> bool {
+        attrs.iter().any(|a| matches!(a, Self::Deterministic { .. }))
     }
 }
 

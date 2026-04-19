@@ -2551,3 +2551,144 @@ agent bounded(q: String) -> String:
             c.errors
         );
     }
+
+    // -------------------- Phase 21 slice inv-F: @deterministic --------------------
+
+    #[test]
+    fn deterministic_agent_with_pure_body_compiles_clean() {
+        let src = "\
+@deterministic
+agent identity(q: String) -> String:
+    return q
+";
+        let c = check(src);
+        assert!(
+            c.errors.is_empty(),
+            "expected no errors for pure @deterministic agent, got {:?}",
+            c.errors
+        );
+    }
+
+    #[test]
+    fn deterministic_agent_calling_tool_is_rejected() {
+        let src = "\
+tool get_order(id: String) -> String
+
+@deterministic
+agent lookup(id: String) -> String:
+    return get_order(id)
+";
+        let c = check(src);
+        assert!(
+            c.errors.iter().any(|e| matches!(
+                &e.kind,
+                TypeErrorKind::NonDeterministicCall { call, call_kind, .. }
+                    if call == "get_order" && call_kind == "tool"
+            )),
+            "expected NonDeterministicCall for tool invocation, got {:?}",
+            c.errors
+        );
+    }
+
+    #[test]
+    fn deterministic_agent_calling_prompt_is_rejected() {
+        let src = "\
+prompt classify(q: String) -> String:
+    \"Classify: {q}\"
+
+@deterministic
+agent choose(q: String) -> String:
+    return classify(q)
+";
+        let c = check(src);
+        assert!(
+            c.errors.iter().any(|e| matches!(
+                &e.kind,
+                TypeErrorKind::NonDeterministicCall { call, call_kind, .. }
+                    if call == "classify" && call_kind == "prompt"
+            )),
+            "expected NonDeterministicCall for prompt invocation, got {:?}",
+            c.errors
+        );
+    }
+
+    #[test]
+    fn deterministic_agent_calling_non_deterministic_agent_is_rejected() {
+        let src = "\
+agent helper(q: String) -> String:
+    return q
+
+@deterministic
+agent wrapper(q: String) -> String:
+    return helper(q)
+";
+        let c = check(src);
+        assert!(
+            c.errors.iter().any(|e| matches!(
+                &e.kind,
+                TypeErrorKind::NonDeterministicCall { call, call_kind, .. }
+                    if call == "helper" && call_kind.contains("agent")
+            )),
+            "expected NonDeterministicCall for non-deterministic agent call, got {:?}",
+            c.errors
+        );
+    }
+
+    #[test]
+    fn deterministic_agent_calling_deterministic_agent_compiles_clean() {
+        // @deterministic propagates: a deterministic agent can
+        // call another @deterministic agent, because the callee's
+        // body is also provably pure.
+        let src = "\
+@deterministic
+agent helper(q: String) -> String:
+    return q
+
+@deterministic
+agent wrapper(q: String) -> String:
+    return helper(q)
+";
+        let c = check(src);
+        assert!(
+            c.errors.is_empty(),
+            "expected no errors for @deterministic -> @deterministic call, got {:?}",
+            c.errors
+        );
+    }
+
+    #[test]
+    fn deterministic_implies_replayable() {
+        // An agent marked only @deterministic should satisfy
+        // replayability invariants without needing @replayable too.
+        // Since the body is pure, both checks pass trivially today.
+        let src = "\
+@deterministic
+agent pure(q: String) -> String:
+    return q
+";
+        let c = check(src);
+        assert!(
+            c.errors.is_empty(),
+            "@deterministic should imply @replayable, got {:?}",
+            c.errors
+        );
+    }
+
+    #[test]
+    fn deterministic_and_replayable_coexist() {
+        // Redundant but valid — both attributes on the same
+        // agent; checker treats them independently and both
+        // pass on a pure body.
+        let src = "\
+@deterministic
+@replayable
+agent pure(q: String) -> String:
+    return q
+";
+        let c = check(src);
+        assert!(
+            c.errors.is_empty(),
+            "expected no errors for @deterministic + @replayable, got {:?}",
+            c.errors
+        );
+    }

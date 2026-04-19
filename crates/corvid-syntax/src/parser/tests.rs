@@ -952,6 +952,46 @@ agent refund_flow(q: String) -> String:
         assert!(!agent.constraints.is_empty());
     }
 
+    // -------------------- Phase 21 slice inv-F: @deterministic --------------------
+
+    #[test]
+    fn parses_agent_with_deterministic_attribute() {
+        let src = "\
+@deterministic
+agent pure(q: String) -> String:
+    return q
+";
+        let file = parse_file_src(src);
+        let agent = match &file.decls[0] {
+            Decl::Agent(a) => a,
+            other => panic!("expected Agent, got {other:?}"),
+        };
+        assert_eq!(agent.attributes.len(), 1);
+        assert!(matches!(
+            agent.attributes[0],
+            corvid_ast::AgentAttribute::Deterministic { .. }
+        ));
+        assert!(agent.constraints.is_empty());
+    }
+
+    #[test]
+    fn parses_agent_with_both_attributes() {
+        let src = "\
+@replayable
+@deterministic
+agent pure(q: String) -> String:
+    return q
+";
+        let file = parse_file_src(src);
+        let agent = match &file.decls[0] {
+            Decl::Agent(a) => a,
+            other => panic!("expected Agent, got {other:?}"),
+        };
+        assert_eq!(agent.attributes.len(), 2);
+        assert!(corvid_ast::AgentAttribute::is_replayable(&agent.attributes));
+        assert!(corvid_ast::AgentAttribute::is_deterministic(&agent.attributes));
+    }
+
     #[test]
     fn parses_eval_with_trace_assertions_and_statistical_modifier() {
         let src = "\

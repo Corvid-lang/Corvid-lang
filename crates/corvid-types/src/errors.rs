@@ -188,6 +188,22 @@ pub enum TypeErrorKind {
         source_label: String,
     },
 
+    /// An agent marked `@deterministic` calls something the
+    /// compiler cannot prove is pure: an LLM prompt, a tool, an
+    /// approve block, a catalog-registered nondeterministic
+    /// builtin, or another agent not itself marked
+    /// `@deterministic`. `@deterministic` is strictly stronger
+    /// than `@replayable` — it requires the agent body to be a
+    /// pure function of its parameters, trace or no trace.
+    NonDeterministicCall {
+        agent: String,
+        call: String,
+        /// What the callee is: `"prompt"`, `"tool"`,
+        /// `"approve"`, `"agent"` (for a non-`@deterministic`
+        /// agent), or one of the catalog-source labels.
+        call_kind: String,
+    },
+
     /// A custom dimension declared in `corvid.toml` under
     /// `[effect-system.dimensions.*]` failed validation. Rejects
     /// unknown composition rules, unknown value-types, malformed
@@ -396,6 +412,15 @@ impl TypeErrorKind {
                     "agent `{agent}` is marked `@replayable` but calls `{call}`, which introduces a {source_label} that the trace schema cannot capture"
                 )
             }
+            Self::NonDeterministicCall {
+                agent,
+                call,
+                call_kind,
+            } => {
+                format!(
+                    "agent `{agent}` is marked `@deterministic` but calls `{call}` ({call_kind}), which the compiler cannot prove is a pure function of the agent's inputs"
+                )
+            }
             Self::InvalidCustomDimension { dimension, message } => {
                 format!("invalid custom dimension `{dimension}` in corvid.toml: {message}")
             }
@@ -540,6 +565,12 @@ impl TypeErrorKind {
             Self::NonReplayableCall { call, .. } => Some(format!(
                 "route `{call}` through a recorded interface (a tool, prompt, or captured builtin) \
                  so replay can substitute the recorded value, or drop the `@replayable` attribute"
+            )),
+            Self::NonDeterministicCall { call, call_kind, .. } => Some(format!(
+                "`@deterministic` requires a pure function of the agent's inputs. Either remove \
+                 the call to `{call}` ({call_kind}), mark the callee `@deterministic` if it is \
+                 an agent you control, or drop the `@deterministic` attribute and use \
+                 `@replayable` if replay reproducibility is enough"
             )),
             Self::InvalidCustomDimension { .. } => Some(
                 "see docs/effects-spec/01-dimensional-syntax.md §4 for the supported \
