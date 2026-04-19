@@ -12,6 +12,7 @@
 //!   corvid add-dimension      install a dimension from the effect registry
 //!   corvid routing-report     aggregate dispatch traces into routing guidance
 //!   corvid replay <trace>     re-execute a recorded trace deterministically
+//!   corvid replay --model <id> <trace>  differential replay against a different model
 //!   corvid trace list         list traces under target/trace/
 //!   corvid trace show <id>    print a recorded trace as formatted JSON
 
@@ -152,14 +153,29 @@ enum Command {
     },
     /// Re-execute a recorded trace deterministically.
     ///
-    /// Loads the JSONL trace at `<trace>`, validates its schema
-    /// header, and dispatches to the replay runtime. Until
-    /// Dev B's 21-C-replay-interp / 21-C-replay-native slices
-    /// land, this command validates the trace and returns a
-    /// clean "not yet available" message with exit code 1.
+    /// Default mode: substitute recorded responses for every
+    /// live call and reproduce the original run byte-for-byte.
+    ///
+    /// With `--model <id>`: differential replay — instead of
+    /// using recorded LLM results verbatim, issue each prompt
+    /// against `<id>` and render a divergence report listing
+    /// the steps whose output differs. Useful for testing a
+    /// new model version against a corpus of prod traces
+    /// without paying the full re-run cost.
+    ///
+    /// Until the runtime-side slices land (21-C-replay-* for
+    /// plain replay, 21-inv-B-adapter for the model-swap seam),
+    /// this command loads + validates the trace and returns
+    /// exit code 1 with a "not yet available" message.
     Replay {
         /// Path to a JSONL trace file.
         trace: PathBuf,
+        /// Target model for differential replay. When present,
+        /// replays against this model and reports divergences
+        /// against the recorded results. When absent, runs a
+        /// plain reproduction.
+        #[arg(long, value_name = "ID")]
+        model: Option<String>,
     },
     /// Inspect recorded traces under `target/trace/` (or a
     /// user-supplied directory).
@@ -230,7 +246,9 @@ fn main() -> ExitCode {
             since_commit.as_deref(),
             json,
         ),
-        Some(Command::Replay { trace }) => replay::run_replay(&trace),
+        Some(Command::Replay { trace, model }) => {
+            replay::run_replay(&trace, model.as_deref())
+        }
         Some(Command::Trace { command }) => match command {
             TraceCommand::List { trace_dir } => trace_cmd::run_list(trace_dir.as_deref()),
             TraceCommand::Show {
