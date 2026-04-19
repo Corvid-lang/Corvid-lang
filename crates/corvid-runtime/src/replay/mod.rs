@@ -344,6 +344,7 @@ mod tests {
                 version: SCHEMA_VERSION,
                 writer: WRITER_NATIVE.into(),
                 commit_sha: None,
+                source_path: None,
                 ts_ms: 0,
                 run_id: "native".into(),
             }],

@@ -152,10 +152,15 @@ pub fn schema_version_of(events: &[TraceEvent]) -> Option<u32> {
 /// version encountered, or `Ok(())` if every header is compatible.
 /// Traces with no header pass silently — they're legacy but not
 /// structurally malformed.
+///
+/// Accepts any version in `MIN_SUPPORTED_SCHEMA..=SCHEMA_VERSION`,
+/// so a v2 binary still reads v1 traces (fields added in v2 fall
+/// back to their `#[serde(default)]`). Future versions beyond the
+/// current are rejected.
 pub fn validate_supported_schema(events: &[TraceEvent]) -> Result<(), UnsupportedSchema> {
     for event in events {
         if let TraceEvent::SchemaHeader { version, .. } = event {
-            if *version != crate::SCHEMA_VERSION {
+            if *version < crate::MIN_SUPPORTED_SCHEMA || *version > crate::SCHEMA_VERSION {
                 return Err(UnsupportedSchema {
                     found: *version,
                     supported: crate::SCHEMA_VERSION,
@@ -164,6 +169,17 @@ pub fn validate_supported_schema(events: &[TraceEvent]) -> Result<(), Unsupporte
         }
     }
     Ok(())
+}
+
+/// Pull the `SchemaHeader.source_path` out of a trace, if present.
+/// Returns `None` when the trace has no header, when the header is
+/// pre-v2 (no `source_path` field), or when the recorder chose not
+/// to populate it (REPL sessions, ad-hoc bytecode).
+pub fn source_path_of(events: &[TraceEvent]) -> Option<&str> {
+    match events.first() {
+        Some(TraceEvent::SchemaHeader { source_path, .. }) => source_path.as_deref(),
+        _ => None,
+    }
 }
 
 /// Error returned by [`validate_supported_schema`] when a trace's

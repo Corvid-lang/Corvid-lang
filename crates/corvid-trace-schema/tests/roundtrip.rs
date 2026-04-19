@@ -1,8 +1,9 @@
 //! JSONL round-trip + schema-version validation for TraceEvent.
 
 use corvid_trace_schema::{
-    read_events, read_events_from_path, schema_version_of, validate_supported_schema,
-    write_events_to_path, ReadError, TraceEvent, SCHEMA_VERSION, WRITER_INTERPRETER,
+    read_events, read_events_from_path, schema_version_of, source_path_of,
+    validate_supported_schema, write_events_to_path, ReadError, TraceEvent, SCHEMA_VERSION,
+    WRITER_INTERPRETER,
 };
 use serde_json::json;
 
@@ -11,6 +12,7 @@ fn sample_header(run_id: &str) -> TraceEvent {
         version: SCHEMA_VERSION,
         writer: WRITER_INTERPRETER.into(),
         commit_sha: Some("cafe1234".into()),
+        source_path: Some("examples/refund_bot.cor".into()),
         ts_ms: 0,
         run_id: run_id.into(),
     }
@@ -170,12 +172,56 @@ fn validate_supported_schema_rejects_future_version() {
         version: SCHEMA_VERSION + 1,
         writer: "corvid-vm".into(),
         commit_sha: None,
+        source_path: None,
         ts_ms: 0,
         run_id: "r".into(),
     }];
     let err = validate_supported_schema(&events).unwrap_err();
     assert_eq!(err.found, SCHEMA_VERSION + 1);
     assert_eq!(err.supported, SCHEMA_VERSION);
+}
+
+#[test]
+fn validate_supported_schema_accepts_legacy_v1_trace_line() {
+    // A raw v1 JSONL line (pre-source_path) must still deserialize
+    // and validate under the current binary. Deserialization fills
+    // `source_path` with its serde default (`None`), and the range
+    // check accepts v1 as a legacy-but-supported version.
+    let v1_line = r#"{"kind":"schema_header","version":1,"writer":"corvid-vm","commit_sha":null,"ts_ms":0,"run_id":"r-legacy"}"#;
+    let events = read_events(v1_line.as_bytes()).unwrap();
+    validate_supported_schema(&events).unwrap();
+    assert_eq!(schema_version_of(&events), Some(1));
+    assert_eq!(source_path_of(&events), None);
+}
+
+#[test]
+fn source_path_round_trips_through_jsonl() {
+    let events = sample_trace();
+    let jsonl: String = events
+        .iter()
+        .map(|e| serde_json::to_string(e).unwrap() + "\n")
+        .collect();
+    let read_back = read_events(jsonl.as_bytes()).unwrap();
+    assert_eq!(
+        source_path_of(&read_back),
+        Some("examples/refund_bot.cor")
+    );
+}
+
+#[test]
+fn absent_source_path_serializes_as_null_and_reads_as_none() {
+    let header = TraceEvent::SchemaHeader {
+        version: SCHEMA_VERSION,
+        writer: WRITER_INTERPRETER.into(),
+        commit_sha: None,
+        source_path: None,
+        ts_ms: 0,
+        run_id: "r-no-source".into(),
+    };
+    let line = serde_json::to_string(&header).unwrap();
+    assert!(line.contains("\"source_path\":null"), "got: {line}");
+    let round: TraceEvent = serde_json::from_str(&line).unwrap();
+    assert_eq!(source_path_of(std::slice::from_ref(&round)), None);
 }
 
 #[test]

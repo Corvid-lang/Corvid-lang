@@ -40,6 +40,15 @@ pub enum TraceEvent {
         /// version injection.
         #[serde(default)]
         commit_sha: Option<String>,
+        /// Path to the Corvid source file the recording ran against,
+        /// relative to whatever anchor the recorder chose (typically
+        /// the repo root or the CWD at record time). `None` for
+        /// pre-schema-v2 traces and for run modes where no source
+        /// file exists (REPL, ad-hoc bytecode). Present in v2+ traces
+        /// so `corvid replay <trace>` can locate the source without a
+        /// sidecar — the trace is self-describing.
+        #[serde(default)]
+        source_path: Option<String>,
         ts_ms: u64,
         run_id: String,
     },

@@ -6,6 +6,7 @@ pub(crate) fn schema_header(run_id: &str, commit_sha: Option<String>) -> TraceEv
         version: SCHEMA_VERSION,
         writer: WRITER_INTERPRETER.to_string(),
         commit_sha,
+        source_path: None,
         ts_ms: now_ms(),
         run_id: run_id.to_string(),
     }

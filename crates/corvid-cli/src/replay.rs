@@ -181,6 +181,7 @@ mod tests {
                 version: SCHEMA_VERSION,
                 writer: WRITER_INTERPRETER.into(),
                 commit_sha: None,
+                source_path: None,
                 ts_ms: 1,
                 run_id: run_id.into(),
             },
