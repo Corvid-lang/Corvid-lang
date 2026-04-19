@@ -27,7 +27,7 @@
 use super::{describe_token, Parser};
 use crate::errors::{ParseError, ParseErrorKind};
 use crate::token::TokKind;
-use corvid_ast::{Expr, ReplayArm, ReplayPattern, ToolArgPattern};
+use corvid_ast::{Expr, Ident, ReplayArm, ReplayPattern, ToolArgPattern};
 
 /// Internal classifier for the three event-kind words. `tool` and
 /// `approve` are lexed as keywords; `llm` is lexed as an
@@ -137,12 +137,24 @@ impl<'a> Parser<'a> {
         self.bump(); // `when`
 
         let pattern = self.parse_replay_pattern()?;
+
+        // Optional `as <ident>` tail — binds the matched event's
+        // recorded payload as a local visible in the arm body.
+        let capture = if matches!(self.peek(), TokKind::KwAs) {
+            self.bump(); // `as`
+            let (name, span) = self.expect_ident()?;
+            Some(Ident::new(name, span))
+        } else {
+            None
+        };
+
         self.expect(TokKind::Arrow, "`->` after replay pattern")?;
         let body = self.parse_expr()?;
 
         let span = start.merge(body.span());
         Ok(ReplayArm {
             pattern,
+            capture,
             body,
             span,
         })
@@ -212,6 +224,9 @@ impl<'a> Parser<'a> {
     fn parse_tool_arg_pattern(&mut self) -> Result<ToolArgPattern, ParseError> {
         let span = self.peek_span();
         match self.peek().clone() {
+            // `_` lexes as an identifier but its semantics are
+            // "match anything, bind nothing." Distinguished from
+            // a real capture before the generic ident branch.
             TokKind::Ident(name) if name == "_" => {
                 self.bump();
                 Ok(ToolArgPattern::Wildcard { span })
@@ -220,10 +235,20 @@ impl<'a> Parser<'a> {
                 self.bump();
                 Ok(ToolArgPattern::StringLit { value, span })
             }
+            // A bare identifier binds the recorded tool-arg value
+            // as a local visible in the arm body. Resolver wires
+            // the scope in E-2b.
+            TokKind::Ident(name) => {
+                self.bump();
+                Ok(ToolArgPattern::Capture {
+                    name: Ident::new(name, span),
+                    span,
+                })
+            }
             other => Err(ParseError {
                 kind: ParseErrorKind::UnexpectedToken {
                     got: describe_token(&other),
-                    expected: "`_` wildcard or a string literal".into(),
+                    expected: "`_` wildcard, an identifier capture, or a string literal".into(),
                 },
                 span,
             }),

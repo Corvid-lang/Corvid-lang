@@ -2232,7 +2232,155 @@ replay \"t.jsonl\":
         let err = parse_expr(&tokens).expect_err("expected parse error");
         let msg = err.to_string();
         assert!(
-            msg.contains("wildcard") || msg.contains("string literal"),
+            msg.contains("wildcard") || msg.contains("string literal") || msg.contains("identifier"),
             "got: {msg}"
         );
+    }
+
+    // -------------------- replay arm captures (21-inv-E-2a) --------------------
+
+    #[test]
+    fn replay_llm_arm_with_as_capture_parses() {
+        let src = "\
+replay \"t.jsonl\":
+    when llm(\"classify\") as result -> \"fixture\"
+    else nothing
+";
+        let tokens = lex(src).expect("lex failed");
+        let expr = parse_expr(&tokens).expect("parse failed");
+        let Expr::Replay { arms, .. } = expr else {
+            panic!("expected Expr::Replay");
+        };
+        assert_eq!(arms.len(), 1);
+        let capture = arms[0]
+            .capture
+            .as_ref()
+            .expect("expected `as result` capture");
+        assert_eq!(capture.name, "result");
+    }
+
+    #[test]
+    fn replay_approve_arm_with_as_capture_parses() {
+        let src = "\
+replay \"t.jsonl\":
+    when approve(\"IssueRefund\") as verdict -> false
+    else true
+";
+        let tokens = lex(src).expect("lex failed");
+        let expr = parse_expr(&tokens).expect("parse failed");
+        let Expr::Replay { arms, .. } = expr else {
+            panic!("expected Expr::Replay");
+        };
+        let capture = arms[0]
+            .capture
+            .as_ref()
+            .expect("expected `as verdict` capture");
+        assert_eq!(capture.name, "verdict");
+    }
+
+    #[test]
+    fn replay_tool_arg_identifier_is_a_capture_not_a_wildcard() {
+        let src = "\
+replay \"t.jsonl\":
+    when tool(\"get_order\", ticket_id) -> \"fixture\"
+    else nothing
+";
+        let tokens = lex(src).expect("lex failed");
+        let expr = parse_expr(&tokens).expect("parse failed");
+        let Expr::Replay { arms, .. } = expr else {
+            panic!("expected Expr::Replay");
+        };
+        match &arms[0].pattern {
+            corvid_ast::ReplayPattern::Tool { arg, .. } => match arg {
+                corvid_ast::ToolArgPattern::Capture { name, .. } => {
+                    assert_eq!(name.name, "ticket_id");
+                }
+                other => panic!("expected Capture, got {other:?}"),
+            },
+            other => panic!("expected Tool pattern, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn replay_tool_arg_underscore_still_parses_as_wildcard_not_capture() {
+        // Regression: `_` is an Ident token but must remain
+        // Wildcard, never Capture("_").
+        let src = "\
+replay \"t.jsonl\":
+    when tool(\"get_order\", _) -> \"fixture\"
+    else nothing
+";
+        let tokens = lex(src).expect("lex failed");
+        let expr = parse_expr(&tokens).expect("parse failed");
+        let Expr::Replay { arms, .. } = expr else {
+            panic!("expected Expr::Replay");
+        };
+        match &arms[0].pattern {
+            corvid_ast::ReplayPattern::Tool { arg, .. } => {
+                assert!(
+                    matches!(arg, corvid_ast::ToolArgPattern::Wildcard { .. }),
+                    "expected Wildcard, got {arg:?}"
+                );
+            }
+            other => panic!("expected Tool pattern, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn replay_arm_without_as_keeps_capture_none() {
+        // Regression on the E-1 shape: no `as` tail → no capture.
+        let src = "\
+replay \"t.jsonl\":
+    when llm(\"classify\") -> \"refund\"
+    else nothing
+";
+        let tokens = lex(src).expect("lex failed");
+        let expr = parse_expr(&tokens).expect("parse failed");
+        let Expr::Replay { arms, .. } = expr else {
+            panic!("expected Expr::Replay");
+        };
+        assert!(arms[0].capture.is_none());
+    }
+
+    #[test]
+    fn replay_as_without_identifier_is_rejected() {
+        let src = "\
+replay \"t.jsonl\":
+    when llm(\"classify\") as -> \"refund\"
+    else nothing
+";
+        let tokens = lex(src).expect("lex failed");
+        let err = parse_expr(&tokens).expect_err("expected parse error");
+        let msg = err.to_string();
+        assert!(msg.contains("identifier"), "got: {msg}");
+    }
+
+    #[test]
+    fn replay_tool_capture_combines_with_as_capture_on_same_arm() {
+        // Both per-arg capture (tool(name, ticket)) and whole-event
+        // capture (as result) can appear on the same arm.
+        let src = "\
+replay \"t.jsonl\":
+    when tool(\"get_order\", ticket) as order -> \"fixture\"
+    else nothing
+";
+        let tokens = lex(src).expect("lex failed");
+        let expr = parse_expr(&tokens).expect("parse failed");
+        let Expr::Replay { arms, .. } = expr else {
+            panic!("expected Expr::Replay");
+        };
+        match &arms[0].pattern {
+            corvid_ast::ReplayPattern::Tool { arg, .. } => match arg {
+                corvid_ast::ToolArgPattern::Capture { name, .. } => {
+                    assert_eq!(name.name, "ticket");
+                }
+                other => panic!("expected per-arg Capture, got {other:?}"),
+            },
+            other => panic!("expected Tool pattern, got {other:?}"),
+        }
+        let capture = arms[0]
+            .capture
+            .as_ref()
+            .expect("expected whole-event `as order` capture");
+        assert_eq!(capture.name, "order");
     }

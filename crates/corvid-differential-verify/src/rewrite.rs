@@ -1430,9 +1430,14 @@ fn render_expr(expr: &Expr) -> String {
             // shape to be parseable and faithful, not beautiful.
             let mut text = format!("replay {}:", render_expr(trace));
             for arm in arms {
+                let capture_tail = match &arm.capture {
+                    Some(ident) => format!(" as {}", ident.name),
+                    None => String::new(),
+                };
                 text.push_str(&format!(
-                    " when {} -> {};",
+                    " when {}{} -> {};",
                     render_replay_pattern(&arm.pattern),
+                    capture_tail,
                     render_expr(&arm.body)
                 ));
             }
@@ -1460,6 +1465,7 @@ fn render_replay_tool_arg(arg: &corvid_ast::ToolArgPattern) -> String {
     match arg {
         corvid_ast::ToolArgPattern::Wildcard { .. } => "_".into(),
         corvid_ast::ToolArgPattern::StringLit { value, .. } => format!("\"{value}\""),
+        corvid_ast::ToolArgPattern::Capture { name, .. } => name.name.clone(),
     }
 }
 

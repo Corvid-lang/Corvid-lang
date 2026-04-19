@@ -19,16 +19,26 @@
 //! 21-inv-E-2. This module only defines the shape.
 
 use crate::expr::Expr;
-use crate::span::Span;
+use crate::span::{Ident, Span};
 use serde::{Deserialize, Serialize};
 
-/// One arm of a replay block: `when <pattern> -> <body>`. The
-/// `else` fallback is represented separately on [`crate::expr::Expr::Replay`]
-/// so the parser + checker can treat it as required rather than
-/// one-of-many.
+/// One arm of a replay block: `when <pattern> [as <ident>] -> <body>`.
+/// The `else` fallback is represented separately on
+/// [`crate::expr::Expr::Replay`] so the parser + checker can treat
+/// it as required rather than one-of-many.
+///
+/// `capture`, when `Some`, binds the matched recorded event's
+/// payload as a local visible in `body`. For `llm(...)` arms the
+/// payload is the recorded `LlmResult` value; for `tool(...)` arms
+/// the payload is the recorded `ToolResult`; for `approve(...)`
+/// arms the payload is the recorded approval verdict (Bool).
+/// Scope-opening + resolution land in the resolver slice
+/// (21-inv-E-2b).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ReplayArm {
     pub pattern: ReplayPattern,
+    #[serde(default)]
+    pub capture: Option<Ident>,
     pub body: Expr,
     pub span: Span,
 }
@@ -66,23 +76,34 @@ impl ReplayPattern {
     }
 }
 
-/// A tool-arg pattern. Only `_` (match-anything) and a string
-/// literal (match-this-exact-value) are supported in v0. Broader
-/// structural patterns can land later without breaking this
-/// surface form.
+/// A tool-arg pattern. Three shapes:
+/// - `_` matches any argument without binding it.
+/// - `"..."` matches a specific string literal.
+/// - a bare identifier `ticket_id` matches any value **and** binds
+///   it as a local visible in the arm body (same treatment the
+///   `as <ident>` tail gives for whole-event captures, applied
+///   per-arg for tools).
+///
+/// Broader structural patterns can land later without breaking
+/// this surface form.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ToolArgPattern {
-    /// `_` — wildcard; matches any argument value.
+    /// `_` — wildcard; matches any argument value without binding.
     Wildcard { span: Span },
     /// `"..."` — string-equality match.
     StringLit { value: String, span: Span },
+    /// `<ident>` — capture; matches any argument value and binds
+    /// it as a local in the arm body. Scope wiring lands in E-2b.
+    Capture { name: Ident, span: Span },
 }
 
 impl ToolArgPattern {
     pub fn span(&self) -> Span {
         match self {
-            Self::Wildcard { span } | Self::StringLit { span, .. } => *span,
+            Self::Wildcard { span }
+            | Self::StringLit { span, .. }
+            | Self::Capture { span, .. } => *span,
         }
     }
 }
