@@ -1182,7 +1182,7 @@ Users register local models (Ollama, vLLM, llama.cpp) with declared capabilities
 - [x] 21-A-schema-ext-source Interleaved: `SchemaHeader.source_path` + `SCHEMA_VERSION` 1→2 + `MIN_SUPPORTED_SCHEMA` range (self-describing traces)
 - [x] 21-inv-C-1             Provenance schema: `ProvenanceEdge` trace event variant (additive, skipped as dispatch-metadata during replay)
 - [x] 21-inv-C-2             Provenance CLI: `corvid trace dag <id>` renders ProvenanceEdge substream as Graphviz DOT
-- [ ] 21-inv-D-cli           `corvid replay --mutate <step> <response>` + divergence output
+- [x] 21-inv-D-cli           `corvid replay --mutate <step> <response>` + divergence output
 - [ ] 21-inv-E-1             Parser: `replay <expr>: when <pat> -> <expr>` syntax
 - [ ] 21-inv-E-2             AST + resolver: `ReplayExpr`, `TraceEventPattern`, trace-id locals
 - [ ] 21-inv-E-3             Checker: `TraceId` / `TraceEvent` types + pattern exhaustiveness

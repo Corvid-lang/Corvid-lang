@@ -165,19 +165,39 @@ enum Command {
     /// new model version against a corpus of prod traces
     /// without paying the full re-run cost.
     ///
+    /// With `--mutate <STEP> <JSON>`: counterfactual replay —
+    /// replay the trace with exactly one recorded response
+    /// overridden and render the downstream behavior diff.
+    /// `<STEP>` is the 1-based index among substitutable events
+    /// (ToolCall / LlmCall / ApprovalRequest) as numbered in
+    /// `corvid trace show`.
+    ///
     /// Until the runtime-side slices land (21-C-replay-* for
-    /// plain replay, 21-inv-B-adapter for the model-swap seam),
-    /// this command loads + validates the trace and returns
-    /// exit code 1 with a "not yet available" message.
+    /// plain replay, 21-inv-B-adapter for the model-swap seam,
+    /// 21-inv-D-runtime for the mutation seam), this command
+    /// loads + validates the trace and returns exit code 1 with
+    /// a "not yet available" message.
     Replay {
         /// Path to a JSONL trace file.
         trace: PathBuf,
         /// Target model for differential replay. When present,
         /// replays against this model and reports divergences
         /// against the recorded results. When absent, runs a
-        /// plain reproduction.
-        #[arg(long, value_name = "ID")]
+        /// plain reproduction. Mutually exclusive with
+        /// `--mutate`.
+        #[arg(long, value_name = "ID", conflicts_with = "mutate")]
         model: Option<String>,
+        /// Counterfactual replay: replace the response of the
+        /// substitutable event at 1-based `STEP` with `JSON`,
+        /// then replay and diff. Mutually exclusive with
+        /// `--model`.
+        #[arg(
+            long,
+            num_args = 2,
+            value_names = ["STEP", "JSON"],
+            conflicts_with = "model",
+        )]
+        mutate: Option<Vec<String>>,
     },
     /// Inspect recorded traces under `target/trace/` (or a
     /// user-supplied directory).
@@ -261,9 +281,11 @@ fn main() -> ExitCode {
             since_commit.as_deref(),
             json,
         ),
-        Some(Command::Replay { trace, model }) => {
-            replay::run_replay(&trace, model.as_deref())
-        }
+        Some(Command::Replay {
+            trace,
+            model,
+            mutate,
+        }) => replay::run_replay(&trace, model.as_deref(), mutate.as_deref()),
         Some(Command::Trace { command }) => match command {
             TraceCommand::List { trace_dir } => trace_cmd::run_list(trace_dir.as_deref()),
             TraceCommand::Show {
