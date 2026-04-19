@@ -340,6 +340,18 @@ fn rename_local_in_expr(expr: &mut Expr, resolved: &Resolved, target: LocalId, f
         }
         Expr::TryPropagate { inner, .. } => rename_local_in_expr(inner, resolved, target, fresh),
         Expr::TryRetry { body, .. } => rename_local_in_expr(body, resolved, target, fresh),
+        Expr::Replay {
+            trace,
+            arms,
+            else_body,
+            ..
+        } => {
+            rename_local_in_expr(trace, resolved, target, fresh);
+            for arm in arms {
+                rename_local_in_expr(&mut arm.body, resolved, target, fresh);
+            }
+            rename_local_in_expr(else_body, resolved, target, fresh);
+        }
     }
 }
 
@@ -694,6 +706,18 @@ fn expr_mentions_local(expr: &Expr, resolved: &Resolved, local: LocalId) -> bool
         Expr::List { items, .. } => items.iter().any(|item| expr_mentions_local(item, resolved, local)),
         Expr::TryPropagate { inner, .. } => expr_mentions_local(inner, resolved, local),
         Expr::TryRetry { body, .. } => expr_mentions_local(body, resolved, local),
+        Expr::Replay {
+            trace,
+            arms,
+            else_body,
+            ..
+        } => {
+            expr_mentions_local(trace, resolved, local)
+                || arms
+                    .iter()
+                    .any(|arm| expr_mentions_local(&arm.body, resolved, local))
+                || expr_mentions_local(else_body, resolved, local)
+        }
     }
 }
 
@@ -889,6 +913,22 @@ fn fold_constants_in_expr(expr: &mut Expr) -> bool {
         }
         Expr::TryPropagate { inner, .. } => fold_constants_in_expr(inner),
         Expr::TryRetry { body, .. } => fold_constants_in_expr(body),
+        Expr::Replay {
+            trace,
+            arms,
+            else_body,
+            ..
+        } => {
+            if fold_constants_in_expr(trace) {
+                return true;
+            }
+            for arm in arms {
+                if fold_constants_in_expr(&mut arm.body) {
+                    return true;
+                }
+            }
+            fold_constants_in_expr(else_body)
+        }
     }
 }
 
@@ -961,7 +1001,10 @@ fn is_pure_expr(expr: &Expr) -> bool {
         Expr::List { items, .. } => items.iter().all(is_pure_expr),
         Expr::FieldAccess { target, .. } => is_pure_expr(target),
         Expr::Index { target, index, .. } => is_pure_expr(target) && is_pure_expr(index),
-        Expr::Call { .. } | Expr::TryPropagate { .. } | Expr::TryRetry { .. } => false,
+        Expr::Call { .. }
+        | Expr::TryPropagate { .. }
+        | Expr::TryRetry { .. }
+        | Expr::Replay { .. } => false,
     }
 }
 
@@ -1375,6 +1418,48 @@ fn render_expr(expr: &Expr) -> String {
             attempts,
             render_backoff(*backoff)
         ),
+        Expr::Replay {
+            trace,
+            arms,
+            else_body,
+            ..
+        } => {
+            // One-line rendering for shrink output. Indented
+            // multi-line form can land with a dedicated pretty
+            // printer later — the shrink harness only needs the
+            // shape to be parseable and faithful, not beautiful.
+            let mut text = format!("replay {}:", render_expr(trace));
+            for arm in arms {
+                text.push_str(&format!(
+                    " when {} -> {};",
+                    render_replay_pattern(&arm.pattern),
+                    render_expr(&arm.body)
+                ));
+            }
+            text.push_str(&format!(" else {}", render_expr(else_body)));
+            text
+        }
+    }
+}
+
+fn render_replay_pattern(pattern: &corvid_ast::ReplayPattern) -> String {
+    match pattern {
+        corvid_ast::ReplayPattern::Llm { prompt, .. } => {
+            format!("llm(\"{prompt}\")")
+        }
+        corvid_ast::ReplayPattern::Tool { tool, arg, .. } => {
+            format!("tool(\"{tool}\", {})", render_replay_tool_arg(arg))
+        }
+        corvid_ast::ReplayPattern::Approve { label, .. } => {
+            format!("approve(\"{label}\")")
+        }
+    }
+}
+
+fn render_replay_tool_arg(arg: &corvid_ast::ToolArgPattern) -> String {
+    match arg {
+        corvid_ast::ToolArgPattern::Wildcard { .. } => "_".into(),
+        corvid_ast::ToolArgPattern::StringLit { value, .. } => format!("\"{value}\""),
     }
 }
 

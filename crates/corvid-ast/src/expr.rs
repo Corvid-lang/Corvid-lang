@@ -1,5 +1,6 @@
 //! Expressions — things that produce a value.
 
+use crate::replay_expr::ReplayArm;
 use crate::span::{Ident, Span};
 use serde::{Deserialize, Serialize};
 
@@ -64,6 +65,19 @@ pub enum Expr {
         backoff: Backoff,
         span: Span,
     },
+
+    /// Replay block: `replay <trace>: when <pat> -> <expr> else <expr>`.
+    /// Ingests a recorded JSONL trace and dispatches to the first
+    /// matching arm, falling back to `else_body` when no `when`
+    /// pattern matches. See [`crate::replay_expr`] for the arm + pattern
+    /// shapes. Resolver + checker slices (21-inv-E-2, -3) refine
+    /// the surface AST into a typed, exhaustiveness-checked form.
+    Replay {
+        trace: Box<Expr>,
+        arms: Vec<ReplayArm>,
+        else_body: Box<Expr>,
+        span: Span,
+    },
 }
 
 impl Expr {
@@ -78,7 +92,8 @@ impl Expr {
             | Expr::UnOp { span, .. }
             | Expr::List { span, .. }
             | Expr::TryPropagate { span, .. }
-            | Expr::TryRetry { span, .. } => *span,
+            | Expr::TryRetry { span, .. }
+            | Expr::Replay { span, .. } => *span,
         }
     }
 }

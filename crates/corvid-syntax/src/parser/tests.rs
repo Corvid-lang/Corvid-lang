@@ -2013,3 +2013,226 @@ prompt classify(q: String) -> String:
             corvid_ast::DimensionValue::Name(n) if n == "strict"
         ));
     }
+
+    // -------------------- replay expression (21-inv-E-1) --------------------
+
+    #[test]
+    fn replay_minimal_form_parses_with_only_else_arm() {
+        let src = "replay \"refund-run.jsonl\":\n    else nothing\n";
+        let tokens = lex(src).expect("lex failed");
+        let expr = parse_expr(&tokens).expect("parse failed");
+        match expr {
+            Expr::Replay {
+                arms, else_body, ..
+            } => {
+                assert!(arms.is_empty(), "expected no `when` arms, got {arms:?}");
+                assert!(matches!(
+                    *else_body,
+                    Expr::Literal { value: Literal::Nothing, .. }
+                ));
+            }
+            other => panic!("expected Expr::Replay, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn replay_when_llm_arm_parses() {
+        let src = "\
+replay \"t.jsonl\":
+    when llm(\"classify\") -> \"refund\"
+    else \"unknown\"
+";
+        let tokens = lex(src).expect("lex failed");
+        let expr = parse_expr(&tokens).expect("parse failed");
+        let Expr::Replay { arms, .. } = expr else {
+            panic!("expected Expr::Replay");
+        };
+        assert_eq!(arms.len(), 1);
+        match &arms[0].pattern {
+            corvid_ast::ReplayPattern::Llm { prompt, .. } => {
+                assert_eq!(prompt, "classify");
+            }
+            other => panic!("expected Llm pattern, got {other:?}"),
+        }
+        assert!(matches!(
+            &arms[0].body,
+            Expr::Literal { value: Literal::String(s), .. } if s == "refund"
+        ));
+    }
+
+    #[test]
+    fn replay_tool_arm_with_wildcard_parses() {
+        let src = "\
+replay \"t.jsonl\":
+    when tool(\"get_order\", _) -> \"fixture\"
+    else \"unknown\"
+";
+        let tokens = lex(src).expect("lex failed");
+        let expr = parse_expr(&tokens).expect("parse failed");
+        let Expr::Replay { arms, .. } = expr else {
+            panic!("expected Expr::Replay");
+        };
+        assert_eq!(arms.len(), 1);
+        match &arms[0].pattern {
+            corvid_ast::ReplayPattern::Tool { tool, arg, .. } => {
+                assert_eq!(tool, "get_order");
+                assert!(matches!(arg, corvid_ast::ToolArgPattern::Wildcard { .. }));
+            }
+            other => panic!("expected Tool pattern, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn replay_tool_arm_with_string_arg_parses() {
+        let src = "\
+replay \"t.jsonl\":
+    when tool(\"get_order\", \"ticket-42\") -> \"fixture\"
+    else \"unknown\"
+";
+        let tokens = lex(src).expect("lex failed");
+        let expr = parse_expr(&tokens).expect("parse failed");
+        let Expr::Replay { arms, .. } = expr else {
+            panic!("expected Expr::Replay");
+        };
+        match &arms[0].pattern {
+            corvid_ast::ReplayPattern::Tool { arg, .. } => match arg {
+                corvid_ast::ToolArgPattern::StringLit { value, .. } => {
+                    assert_eq!(value, "ticket-42");
+                }
+                other => panic!("expected StringLit arg, got {other:?}"),
+            },
+            other => panic!("expected Tool pattern, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn replay_approve_arm_parses() {
+        let src = "\
+replay \"t.jsonl\":
+    when approve(\"IssueRefund\") -> true
+    else false
+";
+        let tokens = lex(src).expect("lex failed");
+        let expr = parse_expr(&tokens).expect("parse failed");
+        let Expr::Replay { arms, .. } = expr else {
+            panic!("expected Expr::Replay");
+        };
+        match &arms[0].pattern {
+            corvid_ast::ReplayPattern::Approve { label, .. } => {
+                assert_eq!(label, "IssueRefund");
+            }
+            other => panic!("expected Approve pattern, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn replay_with_multiple_when_arms_and_else_parses_in_order() {
+        let src = "\
+replay \"t.jsonl\":
+    when llm(\"classify\") -> \"refund\"
+    when tool(\"get_order\", _) -> \"fixture\"
+    when approve(\"IssueRefund\") -> true
+    else nothing
+";
+        let tokens = lex(src).expect("lex failed");
+        let expr = parse_expr(&tokens).expect("parse failed");
+        let Expr::Replay { arms, .. } = expr else {
+            panic!("expected Expr::Replay");
+        };
+        assert_eq!(arms.len(), 3);
+        assert!(matches!(
+            &arms[0].pattern,
+            corvid_ast::ReplayPattern::Llm { .. }
+        ));
+        assert!(matches!(
+            &arms[1].pattern,
+            corvid_ast::ReplayPattern::Tool { .. }
+        ));
+        assert!(matches!(
+            &arms[2].pattern,
+            corvid_ast::ReplayPattern::Approve { .. }
+        ));
+    }
+
+    #[test]
+    fn replay_missing_else_arm_is_rejected() {
+        let src = "\
+replay \"t.jsonl\":
+    when llm(\"classify\") -> \"refund\"
+";
+        let tokens = lex(src).expect("lex failed");
+        let err = parse_expr(&tokens).expect_err("expected parse error");
+        let msg = err.to_string();
+        assert!(msg.contains("else"), "got: {msg}");
+    }
+
+    #[test]
+    fn replay_with_two_else_arms_is_rejected() {
+        let src = "\
+replay \"t.jsonl\":
+    else \"first\"
+    else \"second\"
+";
+        let tokens = lex(src).expect("lex failed");
+        let err = parse_expr(&tokens).expect_err("expected parse error");
+        let msg = err.to_string();
+        assert!(msg.contains("`else`") || msg.contains("else"), "got: {msg}");
+    }
+
+    #[test]
+    fn replay_when_after_else_is_rejected() {
+        let src = "\
+replay \"t.jsonl\":
+    else \"fallback\"
+    when llm(\"classify\") -> \"refund\"
+";
+        let tokens = lex(src).expect("lex failed");
+        let err = parse_expr(&tokens).expect_err("expected parse error");
+        let msg = err.to_string();
+        assert!(msg.contains("final") || msg.contains("else"), "got: {msg}");
+    }
+
+    #[test]
+    fn replay_unknown_event_kind_is_rejected() {
+        let src = "\
+replay \"t.jsonl\":
+    when log(\"classify\") -> \"refund\"
+    else nothing
+";
+        let tokens = lex(src).expect("lex failed");
+        let err = parse_expr(&tokens).expect_err("expected parse error");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("llm") && msg.contains("tool") && msg.contains("approve"),
+            "expected listing of valid event kinds, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn replay_missing_arrow_after_pattern_is_rejected() {
+        let src = "\
+replay \"t.jsonl\":
+    when llm(\"classify\") \"refund\"
+    else nothing
+";
+        let tokens = lex(src).expect("lex failed");
+        let err = parse_expr(&tokens).expect_err("expected parse error");
+        let msg = err.to_string();
+        assert!(msg.contains("->") || msg.contains("Arrow"), "got: {msg}");
+    }
+
+    #[test]
+    fn replay_tool_arg_must_be_wildcard_or_string() {
+        let src = "\
+replay \"t.jsonl\":
+    when tool(\"get_order\", 42) -> \"fixture\"
+    else nothing
+";
+        let tokens = lex(src).expect("lex failed");
+        let err = parse_expr(&tokens).expect_err("expected parse error");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("wildcard") || msg.contains("string literal"),
+            "got: {msg}"
+        );
+    }

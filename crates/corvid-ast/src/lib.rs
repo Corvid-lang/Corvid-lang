@@ -11,6 +11,7 @@
 pub mod decl;
 pub mod effect;
 pub mod expr;
+pub mod replay_expr;
 pub mod span;
 pub mod stmt;
 pub mod ty;
@@ -18,6 +19,7 @@ pub mod ty;
 pub use decl::*;
 pub use effect::*;
 pub use expr::*;
+pub use replay_expr::*;
 pub use span::*;
 pub use stmt::*;
 pub use ty::*;

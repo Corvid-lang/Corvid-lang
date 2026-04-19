@@ -100,6 +100,14 @@ pub enum TokKind {
     KwContinue,
     KwPass,
 
+    // --- keywords: replay language primitive (Phase 21) ---
+    /// `replay <trace>:` — opens a replay block that pattern-matches
+    /// recorded trace events and dispatches to arm bodies.
+    KwReplay,
+    /// `when <event_pattern> -> <expr>` — one arm of a replay block.
+    /// Paired with `else` for the fallback arm.
+    KwWhen,
+
     // --- keywords: values ---
     KwTrue,
     KwFalse,
@@ -202,6 +210,8 @@ impl TokKind {
             "break" => TokKind::KwBreak,
             "continue" => TokKind::KwContinue,
             "pass" => TokKind::KwPass,
+            "replay" => TokKind::KwReplay,
+            "when" => TokKind::KwWhen,
             "true" => TokKind::KwTrue,
             "false" => TokKind::KwFalse,
             "nothing" => TokKind::KwNothing,

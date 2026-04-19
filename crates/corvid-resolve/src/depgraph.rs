@@ -245,6 +245,18 @@ fn collect_expr_deps(expr: &Expr, resolved: &Resolved, deps: &mut HashSet<DefId>
         Expr::TryRetry { body, .. } => {
             collect_expr_deps(body, resolved, deps);
         }
+        Expr::Replay {
+            trace,
+            arms,
+            else_body,
+            ..
+        } => {
+            collect_expr_deps(trace, resolved, deps);
+            for arm in arms {
+                collect_expr_deps(&arm.body, resolved, deps);
+            }
+            collect_expr_deps(else_body, resolved, deps);
+        }
         Expr::Literal { .. } => {}
     }
 }

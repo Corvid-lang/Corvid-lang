@@ -103,6 +103,26 @@ impl<'a> Checker<'a> {
             }
             Expr::TryPropagate { inner, span } => self.check_try_propagate(inner, *span),
             Expr::TryRetry { body, span, .. } => self.check_try_retry(body, *span),
+            Expr::Replay {
+                trace,
+                arms,
+                else_body,
+                ..
+            } => {
+                // Surface-level check: typecheck subexpressions so
+                // their errors surface, but treat the replay block
+                // itself as Unknown-typed. The pattern-exhaustiveness
+                // + TraceId / TraceEvent types land with
+                // 21-inv-E-3; until then a replay block is a valid
+                // expression whose result type the checker doesn't
+                // yet pin down.
+                self.check_expr(trace);
+                for arm in arms {
+                    self.check_expr(&arm.body);
+                }
+                self.check_expr(else_body);
+                Type::Unknown
+            }
         };
         self.types.insert(e.span(), ty.clone());
         ty

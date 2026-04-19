@@ -620,6 +620,22 @@ impl<'a> Lowerer<'a> {
                 attempts: *attempts,
                 backoff: *backoff,
             },
+            Expr::Replay { else_body, .. } => {
+                // Phase 21 slice 21-inv-E-1: parser ships today,
+                // IR lowering lands in 21-inv-E-4. Until then we
+                // degrade a `replay` block to its `else_body` so
+                // surrounding passes see a valid IR. Live dispatch
+                // on `when` arms requires runtime support (Dev B's
+                // 21-inv-E-runtime) and IR representation (E-4),
+                // neither of which exists yet. This stub is safe
+                // because no emitter currently knows how to
+                // produce a replay block — a user hitting this
+                // path would be running a feature that isn't wired
+                // end-to-end, and evaluating only the `else`
+                // fallback matches the parser's guarantee that
+                // `else` is always present.
+                return self.lower_expr(else_body);
+            }
         };
         IrExpr {
             kind,

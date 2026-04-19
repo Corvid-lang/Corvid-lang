@@ -347,6 +347,56 @@ impl<'a> CostAnalyzer<'a> {
                     bounded: estimate.bounded,
                 }
             }
+            corvid_ast::Expr::Replay {
+                trace,
+                arms,
+                else_body,
+                span,
+            } => {
+                // Cost accounting for `replay` blocks: replay reads a
+                // recorded trace and substitutes its values — the
+                // block itself issues no live LLM / tool calls. Cost
+                // for replay is therefore the cost of whichever arm
+                // body ends up executing, approximated as the max
+                // across arms. Subexpression costs are still
+                // analyzed so e.g. an arm body calling a priced
+                // tool shows up in the estimate.
+                //
+                // Exact arm-selection + pattern cost-typing lands
+                // with 21-inv-E-3; until then we take the union
+                // (sequence) of every arm's estimate as a
+                // conservative upper bound.
+                let mut children = Vec::new();
+                let mut warnings = Vec::new();
+                let mut bounded = true;
+                let trace_est = self.analyze_expr(trace, agent_name);
+                if !tree_is_zero(&trace_est.tree) {
+                    children.push(trace_est.tree);
+                }
+                warnings.extend(trace_est.warnings);
+                bounded &= trace_est.bounded;
+                for arm in arms {
+                    let arm_est = self.analyze_expr(&arm.body, agent_name);
+                    if !tree_is_zero(&arm_est.tree) {
+                        children.push(arm_est.tree);
+                    }
+                    warnings.extend(arm_est.warnings);
+                    bounded &= arm_est.bounded;
+                }
+                let else_est = self.analyze_expr(else_body, agent_name);
+                if !tree_is_zero(&else_est.tree) {
+                    children.push(else_est.tree);
+                }
+                warnings.extend(else_est.warnings);
+                bounded &= else_est.bounded;
+                let tree = sequence_tree("replay", CostNodeKind::Sequence, children, *span);
+                CostEstimate {
+                    dimensions: tree.costs.clone(),
+                    tree,
+                    warnings,
+                    bounded,
+                }
+            }
             corvid_ast::Expr::Literal { .. } | corvid_ast::Expr::Ident { .. } => {
                 zero_estimate("expr", CostNodeKind::Sequence, expr.span())
             }

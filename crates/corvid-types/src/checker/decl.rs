@@ -173,6 +173,23 @@ impl<'a> Checker<'a> {
                 }
             }
             Expr::TryRetry { body, .. } => self.walk_deterministic_expr(agent, body),
+            Expr::Replay {
+                trace,
+                arms,
+                else_body,
+                ..
+            } => {
+                // Walk subexpressions so determinism violations
+                // nested inside a replay arm still surface. The
+                // `replay` expression itself is treated as pure
+                // substrate today — full classification lands with
+                // the checker slice (21-inv-E-3).
+                self.walk_deterministic_expr(agent, trace);
+                for arm in arms {
+                    self.walk_deterministic_expr(agent, &arm.body);
+                }
+                self.walk_deterministic_expr(agent, else_body);
+            }
             Expr::Literal { .. } | Expr::Ident { .. } => {}
         }
     }
@@ -455,6 +472,22 @@ fn collect_replayability_violations_in_expr(
         }
         Expr::TryRetry { body, .. } => {
             collect_replayability_violations_in_expr(body, out);
+        }
+        Expr::Replay {
+            trace,
+            arms,
+            else_body,
+            ..
+        } => {
+            // Walk subexpressions so a replayability violation
+            // nested in a replay arm still surfaces. The replay
+            // expression itself is replayable-by-construction; its
+            // full contract lands with 21-inv-E-3.
+            collect_replayability_violations_in_expr(trace, out);
+            for arm in arms {
+                collect_replayability_violations_in_expr(&arm.body, out);
+            }
+            collect_replayability_violations_in_expr(else_body, out);
         }
         Expr::Literal { .. } | Expr::Ident { .. } => {}
     }

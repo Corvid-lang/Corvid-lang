@@ -600,6 +600,22 @@ impl Resolver {
             }
             Expr::TryPropagate { inner, .. } => self.resolve_expr(inner),
             Expr::TryRetry { body, .. } => self.resolve_expr(body),
+            Expr::Replay {
+                trace,
+                arms,
+                else_body,
+                ..
+            } => {
+                // Surface-level name resolution only in this slice.
+                // Trace-id locals + TraceEventPattern resolution
+                // land in 21-inv-E-2; today patterns are string
+                // literals and contribute no new bindings.
+                self.resolve_expr(trace);
+                for arm in arms {
+                    self.resolve_expr(&arm.body);
+                }
+                self.resolve_expr(else_body);
+            }
         }
     }
 

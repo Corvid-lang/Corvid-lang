@@ -366,6 +366,7 @@ mod effect_row;
 mod expr;
 mod literals;
 mod prompt;
+mod replay_expr;
 mod stmt;
 mod types;
 
