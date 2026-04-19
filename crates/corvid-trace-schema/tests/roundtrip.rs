@@ -240,6 +240,61 @@ fn validate_supported_schema_accepts_headerless_trace() {
 }
 
 #[test]
+fn provenance_edge_round_trips_through_jsonl() {
+    let edge = TraceEvent::ProvenanceEdge {
+        ts_ms: 42,
+        run_id: "r-prov".into(),
+        node_id: "tool:3".into(),
+        parents: vec!["literal:0".into(), "tool:1".into()],
+        op: "tool_call:get_order".into(),
+        label: Some("order lookup".into()),
+    };
+    let line = serde_json::to_string(&edge).unwrap();
+    assert!(line.contains("\"kind\":\"provenance_edge\""), "got: {line}");
+    assert!(line.contains("\"node_id\":\"tool:3\""));
+    assert!(line.contains("\"parents\":[\"literal:0\",\"tool:1\"]"));
+    let round: TraceEvent = serde_json::from_str(&line).unwrap();
+    match round {
+        TraceEvent::ProvenanceEdge {
+            node_id,
+            parents,
+            op,
+            label,
+            ..
+        } => {
+            assert_eq!(node_id, "tool:3");
+            assert_eq!(parents, vec!["literal:0", "tool:1"]);
+            assert_eq!(op, "tool_call:get_order");
+            assert_eq!(label.as_deref(), Some("order lookup"));
+        }
+        other => panic!("expected ProvenanceEdge, got {other:?}"),
+    }
+}
+
+#[test]
+fn provenance_edge_with_empty_parents_and_no_label_round_trips() {
+    let edge = TraceEvent::ProvenanceEdge {
+        ts_ms: 1,
+        run_id: "r".into(),
+        node_id: "literal:0".into(),
+        parents: vec![],
+        op: "literal:42".into(),
+        label: None,
+    };
+    let line = serde_json::to_string(&edge).unwrap();
+    let round: TraceEvent = serde_json::from_str(&line).unwrap();
+    match round {
+        TraceEvent::ProvenanceEdge {
+            parents, label, ..
+        } => {
+            assert!(parents.is_empty());
+            assert!(label.is_none());
+        }
+        other => panic!("expected ProvenanceEdge, got {other:?}"),
+    }
+}
+
+#[test]
 fn seed_and_clock_events_roundtrip() {
     let events = vec![
         TraceEvent::SeedRead {

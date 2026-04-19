@@ -289,6 +289,10 @@ impl ReplaySession {
                 | TraceEvent::AdversarialContradiction {
                     run_id: event_run_id,
                     ..
+                }
+                | TraceEvent::ProvenanceEdge {
+                    run_id: event_run_id,
+                    ..
                 } => {
                     ensure_run_id(&path, &run_id, event_run_id)?;
                     i += 1;
@@ -490,7 +494,8 @@ fn first_run_id(events: &[TraceEvent]) -> Result<&str, ReplayLoadError> {
         | Some(TraceEvent::AbVariantChosen { run_id, .. })
         | Some(TraceEvent::EnsembleVote { run_id, .. })
         | Some(TraceEvent::AdversarialPipelineCompleted { run_id, .. })
-        | Some(TraceEvent::AdversarialContradiction { run_id, .. }) => Ok(run_id),
+        | Some(TraceEvent::AdversarialContradiction { run_id, .. })
+        | Some(TraceEvent::ProvenanceEdge { run_id, .. }) => Ok(run_id),
         None => unreachable!("empty event list handled earlier"),
     }
 }
@@ -525,7 +530,8 @@ fn first_ts(events: &[TraceEvent]) -> u64 {
         | Some(TraceEvent::AbVariantChosen { ts_ms, .. })
         | Some(TraceEvent::EnsembleVote { ts_ms, .. })
         | Some(TraceEvent::AdversarialPipelineCompleted { ts_ms, .. })
-        | Some(TraceEvent::AdversarialContradiction { ts_ms, .. }) => *ts_ms,
+        | Some(TraceEvent::AdversarialContradiction { ts_ms, .. })
+        | Some(TraceEvent::ProvenanceEdge { ts_ms, .. }) => *ts_ms,
         None => 0,
     }
 }
@@ -549,7 +555,8 @@ fn last_ts(events: &[TraceEvent]) -> u64 {
         | Some(TraceEvent::AbVariantChosen { ts_ms, .. })
         | Some(TraceEvent::EnsembleVote { ts_ms, .. })
         | Some(TraceEvent::AdversarialPipelineCompleted { ts_ms, .. })
-        | Some(TraceEvent::AdversarialContradiction { ts_ms, .. }) => *ts_ms,
+        | Some(TraceEvent::AdversarialContradiction { ts_ms, .. })
+        | Some(TraceEvent::ProvenanceEdge { ts_ms, .. }) => *ts_ms,
         None => 0,
     }
 }

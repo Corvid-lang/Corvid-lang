@@ -219,7 +219,8 @@ fn event_run_id(event: &TraceEvent) -> Option<&str> {
         | TraceEvent::AbVariantChosen { run_id, .. }
         | TraceEvent::EnsembleVote { run_id, .. }
         | TraceEvent::AdversarialPipelineCompleted { run_id, .. }
-        | TraceEvent::AdversarialContradiction { run_id, .. } => Some(run_id.as_str()),
+        | TraceEvent::AdversarialContradiction { run_id, .. }
+        | TraceEvent::ProvenanceEdge { run_id, .. } => Some(run_id.as_str()),
     }
 }
 
@@ -242,7 +243,8 @@ fn event_ts_ms(event: &TraceEvent) -> u64 {
         | TraceEvent::AbVariantChosen { ts_ms, .. }
         | TraceEvent::EnsembleVote { ts_ms, .. }
         | TraceEvent::AdversarialPipelineCompleted { ts_ms, .. }
-        | TraceEvent::AdversarialContradiction { ts_ms, .. } => *ts_ms,
+        | TraceEvent::AdversarialContradiction { ts_ms, .. }
+        | TraceEvent::ProvenanceEdge { ts_ms, .. } => *ts_ms,
     }
 }
 

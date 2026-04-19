@@ -18,5 +18,6 @@ pub(crate) fn is_dispatch_metadata(event: &TraceEvent) -> bool {
             | TraceEvent::EnsembleVote { .. }
             | TraceEvent::AdversarialPipelineCompleted { .. }
             | TraceEvent::AdversarialContradiction { .. }
+            | TraceEvent::ProvenanceEdge { .. }
     )
 }

@@ -576,7 +576,8 @@ fn event_ts_ms(event: &TraceEvent) -> u64 {
         | TraceEvent::AbVariantChosen { ts_ms, .. }
         | TraceEvent::EnsembleVote { ts_ms, .. }
         | TraceEvent::AdversarialPipelineCompleted { ts_ms, .. }
-        | TraceEvent::AdversarialContradiction { ts_ms, .. } => *ts_ms,
+        | TraceEvent::AdversarialContradiction { ts_ms, .. }
+        | TraceEvent::ProvenanceEdge { ts_ms, .. } => *ts_ms,
     }
 }
 

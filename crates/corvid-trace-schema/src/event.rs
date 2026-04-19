@@ -203,4 +203,37 @@ pub enum TraceEvent {
         challenge: String,
         verdict: serde_json::Value,
     },
+    /// A provenance edge in the run's Grounded<T> dataflow graph.
+    /// Emitted whenever the runtime constructs a Grounded<T> value
+    /// from one or more upstream Grounded<T> inputs — lets
+    /// `corvid trace dag` render the exact dataflow a posteriori
+    /// without the renderer needing to understand runtime internals.
+    ///
+    /// Additive in schema v2 — old readers (v1 + v2-pre-provenance)
+    /// skip unknown `kind` values, so no version bump required.
+    ProvenanceEdge {
+        ts_ms: u64,
+        run_id: String,
+        /// Stable identifier for the value this edge produces.
+        /// Must be unique within a run. Recorder convention: a
+        /// monotonic counter prefixed by the op kind
+        /// (`"tool:17"`, `"llm:4"`, `"approve:2"`) so the same
+        /// value has the same id across record + replay.
+        node_id: String,
+        /// Upstream `node_id`s whose values flowed into this one.
+        /// Empty for root inputs (tool results with no
+        /// Grounded<T> arguments, LLM calls with no grounded
+        /// prompt parts).
+        #[serde(default)]
+        parents: Vec<String>,
+        /// Operation that produced this value, in
+        /// `<kind>:<name>` form. Examples: `"tool_call:get_order"`,
+        /// `"llm:classify"`, `"approve:IssueRefund"`,
+        /// `"literal:42"`.
+        op: String,
+        /// Optional human-readable label for the DAG renderer.
+        /// `None` when the node_id is already self-describing.
+        #[serde(default)]
+        label: Option<String>,
+    },
 }
