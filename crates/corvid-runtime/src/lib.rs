@@ -38,6 +38,7 @@ pub mod errors;
 pub mod ffi_bridge;
 pub mod llm;
 pub mod models;
+pub mod record;
 pub mod redact;
 pub mod runtime;
 pub mod tools;
@@ -77,6 +78,7 @@ pub use llm::{
     LlmAdapter, LlmRegistry, LlmRequest, LlmResponse, TokenUsage,
 };
 pub use models::{ModelCatalog, ModelSelection, RegisteredModel};
+pub use record::Recorder;
 pub use runtime::{Runtime, RuntimeBuilder};
 pub use tools::{ToolHandler, ToolRegistry};
 pub use corvid_trace_schema::TraceEvent;

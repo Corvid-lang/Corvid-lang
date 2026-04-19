@@ -8,11 +8,11 @@
 //! same downstream tooling reads both.
 
 use crate::redact::RedactionSet;
+use crate::record::writer::JsonlTraceWriter;
 use corvid_trace_schema::TraceEvent;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::io::BufWriter;
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, OnceLock};
+use std::sync::OnceLock;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 static BENCH_TRACE_OVERHEAD_NS: AtomicU64 = AtomicU64::new(0);
@@ -34,8 +34,7 @@ pub struct Tracer {
 
 struct TracerInner {
     run_id: String,
-    path: PathBuf,
-    file: Mutex<Option<BufWriter<std::fs::File>>>,
+    writer: JsonlTraceWriter,
     redaction: RedactionSet,
 }
 
@@ -54,22 +53,10 @@ impl Tracer {
     pub fn open_path(path: impl Into<PathBuf>, run_id: impl Into<String>) -> Self {
         let run_id = run_id.into();
         let path = path.into();
-        let file = (|| -> std::io::Result<std::fs::File> {
-            if let Some(parent) = path.parent() {
-                std::fs::create_dir_all(parent)?;
-            }
-            std::fs::OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(&path)
-        })()
-        .ok()
-        .map(BufWriter::new);
         Self {
             inner: std::sync::Arc::new(TracerInner {
                 run_id,
-                path,
-                file: Mutex::new(file),
+                writer: JsonlTraceWriter::open(path),
                 redaction: RedactionSet::empty(),
             }),
         }
@@ -81,8 +68,7 @@ impl Tracer {
         Self {
             inner: std::sync::Arc::new(TracerInner {
                 run_id: "null".into(),
-                path: PathBuf::new(),
-                file: Mutex::new(None),
+                writer: JsonlTraceWriter::open(PathBuf::new()),
                 redaction: RedactionSet::empty(),
             }),
         }
@@ -95,8 +81,7 @@ impl Tracer {
         let inner = match std::sync::Arc::try_unwrap(self.inner) {
             Ok(inner) => TracerInner {
                 run_id: inner.run_id,
-                path: inner.path,
-                file: inner.file,
+                writer: inner.writer,
                 redaction,
             },
             Err(arc) => {
@@ -106,8 +91,7 @@ impl Tracer {
                 // cloning. (No file handle, so emits become no-ops.)
                 TracerInner {
                     run_id: arc.run_id.clone(),
-                    path: arc.path.clone(),
-                    file: Mutex::new(None),
+                    writer: JsonlTraceWriter::open(PathBuf::new()),
                     redaction,
                 }
             }
@@ -122,15 +106,15 @@ impl Tracer {
     }
 
     pub fn path(&self) -> &Path {
-        &self.inner.path
+        self.inner.writer.path()
     }
 
     pub fn is_enabled(&self) -> bool {
-        if let Ok(guard) = self.inner.file.lock() {
-            guard.is_some()
-        } else {
-            false
-        }
+        self.inner.writer.is_enabled()
+    }
+
+    pub(crate) fn writer(&self) -> JsonlTraceWriter {
+        self.inner.writer.clone()
     }
 
     /// Append an event. IO errors are swallowed. Args inside the event
@@ -145,16 +129,7 @@ impl Tracer {
             return;
         }
         let event = self.apply_redaction(event);
-        let line = match serde_json::to_string(&event) {
-            Ok(s) => s,
-            Err(_) => return,
-        };
-        if let Ok(mut guard) = self.inner.file.lock() {
-            if let Some(f) = guard.as_mut() {
-                use std::io::Write;
-                let _ = writeln!(f, "{line}");
-            }
-        }
+        self.inner.writer.append(&event);
         if let Some(start) = profile_start {
             BENCH_TRACE_OVERHEAD_NS.fetch_add(
                 start.elapsed().as_nanos() as u64,

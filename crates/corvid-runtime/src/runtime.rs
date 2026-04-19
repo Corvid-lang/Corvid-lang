@@ -9,6 +9,7 @@ use crate::approvals::{Approver, ApprovalDecision, ApprovalRequest, StdinApprove
 use crate::errors::RuntimeError;
 use crate::llm::{LlmAdapter, LlmRegistry, LlmRequest, LlmRequestRef, LlmResponse};
 use crate::models::{ModelCatalog, ModelSelection, RegisteredModel};
+use crate::record::Recorder;
 use crate::tools::ToolRegistry;
 use crate::tracing::{fresh_run_id, now_ms, Tracer};
 use corvid_trace_schema::TraceEvent;
@@ -23,6 +24,7 @@ pub struct Runtime {
     llms: LlmRegistry,
     approver: Arc<dyn Approver>,
     tracer: Tracer,
+    recorder: Option<Arc<Recorder>>,
     /// Default model name applied when a prompt call doesn't specify one.
     /// Empty string means "no default; require per-call override".
     default_model: String,
@@ -44,6 +46,10 @@ impl Runtime {
 
     pub fn tracer(&self) -> &Tracer {
         &self.tracer
+    }
+
+    pub fn recorder(&self) -> Option<&Recorder> {
+        self.recorder.as_deref()
     }
 
     pub fn default_model(&self) -> &str {
@@ -110,6 +116,9 @@ impl Runtime {
                 break next;
             }
         };
+        if let Some(recorder) = &self.recorder {
+            recorder.emit_seed_read("rollout_cohort", next);
+        }
         let mantissa = next >> 11;
         mantissa as f64 / ((1_u64 << 53) as f64)
     }
@@ -322,13 +331,20 @@ impl RuntimeBuilder {
         } else {
             None
         };
+        let tracer = self.tracer.unwrap_or_else(Tracer::null);
+        let recorder = Recorder::for_tracer(&tracer).map(Arc::new);
+        if let Some(recorder) = &recorder {
+            recorder.emit_schema_header();
+            recorder.emit_seed_read("rollout_default_seed", rollout_seed);
+        }
         Runtime {
             tools: self.tools,
             llms: self.llms,
             approver: self
                 .approver
                 .unwrap_or_else(|| Arc::new(StdinApprover::new())),
-            tracer: self.tracer.unwrap_or_else(Tracer::null),
+            tracer,
+            recorder,
             default_model: self.default_model,
             model_catalog,
             model_catalog_error,
