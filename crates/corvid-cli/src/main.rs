@@ -35,10 +35,10 @@ use routing_report::{build_report, render_report as render_routing_report, Routi
 
 #[allow(unused_imports)]
 use corvid_driver::{
-    build_native_to_disk, build_to_disk, compile, compile_with_config, diff_snapshots,
+    build_native_to_disk, build_target_to_disk, build_to_disk, compile, compile_with_config, diff_snapshots,
     load_corvid_config_for, load_dotenv_walking, render_all_pretty, render_effect_diff,
     render_law_check_report, render_spec_report, run_law_checks, run_native, run_with_target,
-    scaffold_new, snapshot_revision, verify_spec_examples, RunTarget, VerdictKind,
+    scaffold_new, snapshot_revision, verify_spec_examples, BuildTarget, RunTarget, VerdictKind,
     DEFAULT_SAMPLES,
 };
 
@@ -59,9 +59,12 @@ enum Command {
     /// `--target=native` emits a machine-code binary under target/bin/.
     Build {
         file: PathBuf,
-        /// Output target. `python` (default) or `native`.
+        /// Output target. `python` (default), `native`, `cdylib`, or `staticlib`.
         #[arg(long, default_value = "python")]
         target: String,
+        /// Emit a companion C header alongside library targets.
+        #[arg(long)]
+        header: bool,
     },
     /// Build and run a Corvid source file. Picks the native AOT tier
     /// when the program stays within the current native command-line
@@ -320,7 +323,7 @@ fn main() -> ExitCode {
     let result = match cli.command {
         Some(Command::New { name }) => cmd_new(&name),
         Some(Command::Check { file }) => cmd_check(&file),
-        Some(Command::Build { file, target }) => cmd_build(&file, &target),
+        Some(Command::Build { file, target, header }) => cmd_build(&file, &target, header),
         Some(Command::Run {
             file,
             target,
@@ -441,9 +444,12 @@ fn cmd_check(file: &Path) -> Result<u8> {
     }
 }
 
-fn cmd_build(file: &Path, target: &str) -> Result<u8> {
+fn cmd_build(file: &Path, target: &str, header: bool) -> Result<u8> {
     match target {
         "python" | "py" => {
+            if header {
+                anyhow::bail!("`--header` is only valid for `cdylib` and `staticlib` targets");
+            }
             let out = build_to_disk(file)
                 .with_context(|| format!("failed to build `{}`", file.display()))?;
             if let Some(path) = out.output_path {
@@ -455,6 +461,9 @@ fn cmd_build(file: &Path, target: &str) -> Result<u8> {
             }
         }
         "native" => {
+            if header {
+                anyhow::bail!("`--header` is only valid for `cdylib` and `staticlib` targets");
+            }
             let out = build_native_to_disk(file)
                 .with_context(|| format!("failed to build `{}` (native)", file.display()))?;
             if let Some(path) = out.output_path {
@@ -465,11 +474,37 @@ fn cmd_build(file: &Path, target: &str) -> Result<u8> {
                 Ok(1)
             }
         }
+        "cdylib" => cmd_build_library(file, BuildTarget::Cdylib, header),
+        "staticlib" => cmd_build_library(file, BuildTarget::Staticlib, header),
         other => {
             anyhow::bail!(
-                "unknown target `{other}`; valid: `python` (default), `native`"
+                "unknown target `{other}`; valid: `python` (default), `native`, `cdylib`, `staticlib`"
             )
         }
+    }
+}
+
+fn cmd_build_library(file: &Path, target: BuildTarget, header: bool) -> Result<u8> {
+    let out = build_target_to_disk(file, target, header).with_context(|| {
+        format!(
+            "failed to build `{}` ({})",
+            file.display(),
+            match target {
+                BuildTarget::Native => "native",
+                BuildTarget::Cdylib => "cdylib",
+                BuildTarget::Staticlib => "staticlib",
+            }
+        )
+    })?;
+    if let Some(path) = out.output_path {
+        println!("built: {} -> {}", file.display(), path.display());
+        if let Some(header_path) = out.header_path {
+            println!("header: {}", header_path.display());
+        }
+        Ok(0)
+    } else {
+        eprint!("{}", render_all_pretty(&out.diagnostics, file, &out.source));
+        Ok(1)
     }
 }
 

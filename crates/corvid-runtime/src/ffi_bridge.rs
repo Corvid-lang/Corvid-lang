@@ -55,6 +55,7 @@ use crate::errors::RuntimeError;
 use crate::runtime::{Runtime, RuntimeBuilder};
 use crate::tracing::{bench_trace_overhead_ns, fresh_run_id, Tracer};
 use corvid_trace_schema::{TraceEvent, WRITER_NATIVE};
+use std::ffi::{c_char, CString};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicPtr, AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock};
@@ -195,11 +196,10 @@ pub extern "C" fn corvid_runtime_init() -> i32 {
         panic!("corvid_runtime_init called twice");
     }
 
-    let tokio = build_tokio_runtime();
-    let corvid = Arc::new(build_corvid_runtime());
-
-    let boxed = Box::new(BridgeState { tokio, corvid });
-    let ptr = Box::into_raw(boxed);
+    let ptr = Box::into_raw(Box::new(BridgeState {
+        tokio: build_tokio_runtime(),
+        corvid: Arc::new(build_corvid_runtime()),
+    }));
 
     BRIDGE.store(ptr, Ordering::Release);
 
@@ -218,6 +218,38 @@ pub extern "C" fn corvid_runtime_init() -> i32 {
     record_registered_tool_count(count);
 
     0
+}
+
+/// Idempotent runtime init for embedded cdylib/staticlib calls.
+///
+/// Unlike `corvid_runtime_init`, this helper is safe to invoke on
+/// every exported library call. The first call installs a minimal
+/// process-global runtime with deny-all approvals and no live
+/// adapters/tools; later calls are a no-op.
+#[no_mangle]
+pub extern "C" fn corvid_runtime_embed_init_default() -> i32 {
+    if !BRIDGE.load(Ordering::Acquire).is_null() {
+        return 0;
+    }
+    let ptr = Box::into_raw(Box::new(BridgeState {
+        tokio: build_tokio_runtime(),
+        corvid: Arc::new(build_embedded_corvid_runtime()),
+    }));
+    match BRIDGE.compare_exchange(
+        std::ptr::null_mut(),
+        ptr,
+        Ordering::AcqRel,
+        Ordering::Acquire,
+    ) {
+        Ok(_) => 0,
+        Err(_) => {
+            // SAFETY: compare_exchange failure means we still own `ptr`.
+            unsafe {
+                drop(Box::from_raw(ptr));
+            }
+            0
+        }
+    }
 }
 
 /// Drop the bridge state cleanly. The codegen-emitted main registers
@@ -367,6 +399,32 @@ pub fn runtime() -> std::sync::Arc<crate::runtime::Runtime> {
 #[no_mangle]
 pub extern "C" fn corvid_runtime_is_replay() -> bool {
     bridge().corvid_runtime().is_replay_mode()
+}
+
+/// Convert a Corvid-owned `String` descriptor into a NUL-terminated C string.
+///
+/// Ownership transfer:
+/// - input `value` is consumed and released
+/// - returned pointer is heap-owned by Corvid and must be freed with
+///   `corvid_free_string`
+#[no_mangle]
+pub unsafe extern "C" fn corvid_string_into_cstr(value: CorvidString) -> *mut c_char {
+    let text = unsafe { read_corvid_string(value) };
+    unsafe { release_string(value) };
+    CString::new(text)
+        .expect("Corvid string contained interior NUL; `extern \"c\"` string returns must be NUL-free")
+        .into_raw()
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn corvid_free_string(value: *const c_char) {
+    if value.is_null() {
+        return;
+    }
+    // SAFETY: `value` must have come from `corvid_string_into_cstr`.
+    unsafe {
+        let _ = CString::from_raw(value as *mut c_char);
+    }
 }
 
 fn panic_if_replay_runtime_error(context: &str, err: &RuntimeError) {
@@ -1373,6 +1431,14 @@ fn build_corvid_runtime() -> Runtime {
     }
 
     b.build()
+}
+
+fn build_embedded_corvid_runtime() -> Runtime {
+    Runtime::builder()
+        .tracer(Tracer::null())
+        .trace_schema_writer(WRITER_NATIVE)
+        .approver(Arc::new(ProgrammaticApprover::always_no()))
+        .build()
 }
 
 /// `target/trace/` under the current process's working directory. Same

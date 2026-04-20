@@ -18,6 +18,7 @@
 #![forbid(unsafe_code)]
 
 pub mod dataflow;
+pub mod cdylib;
 pub mod dup_drop;
 pub mod errors;
 pub mod latency_rc;
@@ -27,8 +28,10 @@ pub mod module;
 pub mod ownership;
 pub mod pair_elim;
 pub mod scope_reduce;
+pub mod target;
 
 pub use errors::{CodegenError, CodegenErrorKind};
+pub use target::BuildTarget;
 
 use corvid_ir::IrFile;
 use std::path::{Path, PathBuf};
@@ -132,6 +135,16 @@ pub fn build_native_to_disk(
     compile_to_object(ir, module_name, &object_path, Some(&entry.name))?;
     link::link_binary(&object_path, &entry.name, &out_bin, extra_tool_libs)?;
     Ok(out_bin)
+}
+
+pub fn build_library_to_disk(
+    ir: &IrFile,
+    module_name: &str,
+    output_path: &Path,
+    target: BuildTarget,
+    extra_tool_libs: &[&Path],
+) -> Result<PathBuf, CodegenError> {
+    cdylib::build_library_to_disk(ir, module_name, output_path, target, extra_tool_libs)
 }
 
 fn pick_entry_agent(ir: &IrFile) -> Result<&corvid_ir::IrAgent, CodegenError> {

@@ -444,6 +444,7 @@ fn transform_agent(
     let transformed = IrAgent {
         id: agent.id,
         name: agent.name.clone(),
+        extern_abi: agent.extern_abi,
         params: agent.params.clone(),
         return_ty: agent.return_ty.clone(),
         cost_budget: agent.cost_budget,

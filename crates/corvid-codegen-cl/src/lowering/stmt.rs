@@ -17,11 +17,31 @@ pub(super) fn emit_function_return(
         for scope in scope_stack.iter().rev() {
             for (_, var) in scope.iter().rev() {
                 let v_local = builder.use_var(*var);
+                if v_local == value {
+                    continue;
+                }
                 emit_release(builder, module, runtime, v_local);
             }
         }
     }
     builder.ins().return_(&[value]);
+}
+
+pub(super) fn emit_function_return_void(
+    builder: &mut FunctionBuilder,
+    scope_stack: &[Vec<(LocalId, Variable)>],
+    module: &mut ObjectModule,
+    runtime: &RuntimeFuncs,
+) {
+    if !runtime.dup_drop_enabled {
+        for scope in scope_stack.iter().rev() {
+            for (_, var) in scope.iter().rev() {
+                let v_local = builder.use_var(*var);
+                emit_release(builder, module, runtime, v_local);
+            }
+        }
+    }
+    builder.ins().return_(&[]);
 }
 
 pub(super) fn lower_block(
@@ -88,8 +108,12 @@ fn lower_stmt(
                     runtime,
                 )?,
                 None => {
+                    if matches!(current_return_ty, Type::Nothing) {
+                        emit_function_return_void(builder, scope_stack, module, runtime);
+                        return Ok(BlockOutcome::Terminated);
+                    }
                     return Err(CodegenError::not_supported(
-                        "bare `return` (Nothing type not supported yet)",
+                        "bare `return` in non-`Nothing` function",
                         *span,
                     ));
                 }

@@ -2445,6 +2445,67 @@ prompt classify(q: String) -> String:
         );
     }
 
+    #[test]
+    fn extern_c_agent_with_scalar_signature_typechecks() {
+        let checked = check(
+            r#"
+pub extern "c"
+agent refund_bot(ticket_id: String, amount: Float) -> Bool:
+    return true
+"#,
+        );
+        assert!(
+            checked.errors.is_empty(),
+            "expected scalar extern agent to typecheck, got {:?}",
+            checked.errors
+        );
+    }
+
+    #[test]
+    fn extern_c_agent_with_struct_param_errors_with_hint_at_22b() {
+        let checked = check(
+            r#"
+type Ticket:
+    id: String
+
+pub extern "c"
+agent refund_bot(ticket: Ticket) -> Bool:
+    return true
+"#,
+        );
+        let err = checked
+            .errors
+            .iter()
+            .find(|e| matches!(e.kind, TypeErrorKind::NonScalarInExternC { .. }))
+            .expect("expected NonScalarInExternC error");
+        assert!(
+            err.hint().unwrap_or_default().contains("Phase 22-B"),
+            "expected Phase 22-B hint, got {:?}",
+            err.hint()
+        );
+    }
+
+    #[test]
+    fn extern_c_agent_with_list_return_errors_with_hint_at_22b() {
+        let checked = check(
+            r#"
+pub extern "c"
+agent ids() -> List<String>:
+    return ["a"]
+"#,
+        );
+        let err = checked
+            .errors
+            .iter()
+            .find(|e| matches!(e.kind, TypeErrorKind::NonScalarInExternC { .. }))
+            .expect("expected NonScalarInExternC error");
+        assert!(
+            err.hint().unwrap_or_default().contains("Phase 22-B"),
+            "expected Phase 22-B hint, got {:?}",
+            err.hint()
+        );
+    }
+
     // -------------------- Phase 21 slice inv-A: @replayable --------------------
 
     #[test]

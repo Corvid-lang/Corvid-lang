@@ -38,7 +38,12 @@
 
 #![allow(unsafe_code)]
 
-use crate::ffi_bridge::tokio_handle as _tokio_handle_marker; // keep the bridge module referenced
+use crate::ffi_bridge::{
+    corvid_free_string as _corvid_free_string_marker,
+    corvid_runtime_embed_init_default as _corvid_runtime_embed_init_default_marker,
+    corvid_string_into_cstr as _corvid_string_into_cstr_marker,
+    tokio_handle as _tokio_handle_marker,
+}; // keep the bridge module referenced
 use std::marker::PhantomData;
 use std::sync::atomic::{AtomicI64, Ordering};
 
@@ -48,6 +53,10 @@ use std::sync::atomic::{AtomicI64, Ordering};
 #[allow(dead_code)]
 fn _depends_on_ffi_bridge() {
     let _ = _tokio_handle_marker;
+    let _ = _corvid_runtime_embed_init_default_marker as extern "C" fn() -> i32;
+    let _ =
+        _corvid_string_into_cstr_marker as unsafe extern "C" fn(CorvidString) -> *mut std::ffi::c_char;
+    let _ = _corvid_free_string_marker as unsafe extern "C" fn(*const std::ffi::c_char);
 }
 
 // ------------------------------------------------------------

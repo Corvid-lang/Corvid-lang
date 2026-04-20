@@ -21,6 +21,10 @@ impl<'a> Checker<'a> {
         // Bind parameter types.
         self.bind_params(&a.params);
 
+        if a.extern_abi.is_some() {
+            self.check_extern_c_signature(a);
+        }
+
         let declared_ret = self.type_ref_to_type(&a.return_ty);
         let prev_ret = std::mem::replace(&mut self.current_return, Some(declared_ret.clone()));
         let prev_in_agent = std::mem::replace(&mut self.in_agent_body, true);
@@ -66,6 +70,33 @@ impl<'a> Checker<'a> {
         self.saw_yield = prev_saw_yield;
         // (Locals leak between agents in our single-scope model; harmless
         //  since each agent binds its params fresh at the start.)
+    }
+
+    fn check_extern_c_signature(&mut self, a: &AgentDecl) {
+        for param in &a.params {
+            let ty = self.type_ref_to_type(&param.ty);
+            if !extern_c_param_type_supported(&ty) {
+                self.errors.push(TypeError::new(
+                    TypeErrorKind::NonScalarInExternC {
+                        agent: a.name.name.clone(),
+                        offender_type: ty.display_name(),
+                        position: format!("parameter `{}`", param.name.name),
+                    },
+                    param.span,
+                ));
+            }
+        }
+        let ret = self.type_ref_to_type(&a.return_ty);
+        if !extern_c_return_type_supported(&ret) {
+            self.errors.push(TypeError::new(
+                TypeErrorKind::NonScalarInExternC {
+                    agent: a.name.name.clone(),
+                    offender_type: ret.display_name(),
+                    position: "return type".into(),
+                },
+                a.return_ty.span(),
+            ));
+        }
     }
 
     /// Walk `body` looking for calls to functions the determinism
@@ -361,6 +392,14 @@ impl<'a> Checker<'a> {
             }
         }
     }
+}
+
+fn extern_c_param_type_supported(ty: &Type) -> bool {
+    matches!(ty, Type::Int | Type::Float | Type::Bool | Type::String)
+}
+
+fn extern_c_return_type_supported(ty: &Type) -> bool {
+    matches!(ty, Type::Int | Type::Float | Type::Bool | Type::String | Type::Nothing)
 }
 
 // ----------------------------------------------------------------

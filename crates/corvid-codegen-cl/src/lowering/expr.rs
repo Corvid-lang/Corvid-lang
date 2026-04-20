@@ -966,7 +966,17 @@ pub(super) fn lower_expr(
                 }
                 let call = builder.ins().call(callee_ref, &arg_vals);
                 let results = builder.inst_results(call);
-                if results.len() != 1 {
+                if matches!(expr.ty, Type::Nothing) {
+                    if !results.is_empty() {
+                        return Err(CodegenError::cranelift(
+                            format!(
+                                "agent `{callee_name}` returned {} values; native lowering expects 0 for `Nothing`",
+                                results.len()
+                            ),
+                            expr.span,
+                        ));
+                    }
+                } else if results.len() != 1 {
                     return Err(CodegenError::cranelift(
                         format!(
                             "agent `{callee_name}` returned {} values; native lowering expects exactly 1",
@@ -975,7 +985,11 @@ pub(super) fn lower_expr(
                         expr.span,
                     ));
                 }
-                let result = results[0];
+                let result = if matches!(expr.ty, Type::Nothing) {
+                    builder.ins().iconst(I64, 0)
+                } else {
+                    results[0]
+                };
                 if !runtime.dup_drop_enabled {
                     for (v, needs) in arg_vals.iter().zip(needs_post_release.iter()) {
                         if *needs {

@@ -308,6 +308,13 @@ pub enum TypeErrorKind {
         got: String,
         context: String,
     },
+
+    /// `pub extern "c"` currently supports only scalar ABI types.
+    NonScalarInExternC {
+        agent: String,
+        offender_type: String,
+        position: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -494,6 +501,15 @@ impl TypeErrorKind {
                     "replay arm type mismatch in {context}: expected `{expected}` (matching the first arm), got `{got}`"
                 )
             }
+            Self::NonScalarInExternC {
+                agent,
+                offender_type,
+                position,
+            } => {
+                format!(
+                    "extern \"c\" agent `{agent}` uses unsupported ABI type `{offender_type}` in {position}"
+                )
+            }
         }
     }
 
@@ -662,6 +678,9 @@ impl TypeErrorKind {
             Self::ReplayArmTypeMismatch { expected, .. } => Some(format!(
                 "every arm (including `else`) of a replay block must produce the same type; adjust the arm body to return `{expected}`"
             )),
+            Self::NonScalarInExternC { .. } => Some(
+                "Phase 22-A exports only Int/Float/Bool/String parameters plus scalar or `Nothing` returns; use a scalar wrapper now, or wait for Phase 22-B ABI descriptors for rich types".into(),
+            ),
         }
     }
 }

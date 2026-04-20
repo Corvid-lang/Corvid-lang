@@ -55,7 +55,7 @@ mod tests {
     #[test]
     fn lexes_all_keywords() {
         // Smoke test — verify every v0.1 keyword parses as its own TokKind.
-        let src = "agent tool prompt type import as \
+        let src = "agent tool prompt type import as pub extern \
                    extend public package \
                    try on error retry times backoff linear exponential \
                    approve dangerous effect uses \
@@ -70,6 +70,8 @@ mod tests {
             TokKind::KwType,
             TokKind::KwImport,
             TokKind::KwAs,
+            TokKind::KwPub,
+            TokKind::KwExtern,
             TokKind::KwExtend,
             TokKind::KwPublic,
             TokKind::KwPackage,

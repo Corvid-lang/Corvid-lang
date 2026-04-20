@@ -20,7 +20,7 @@ use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext, Variable};
 use cranelift_module::{DataDescription, FuncId, Linkage, Module};
 use cranelift_object::ObjectModule;
 use corvid_ast::{Backoff, BinaryOp, Span, UnaryOp};
-use corvid_ir::{IrAgent, IrBlock, IrCallKind, IrExpr, IrExprKind, IrFile, IrLiteral, IrStmt};
+use corvid_ir::{IrAgent, IrBlock, IrCallKind, IrExpr, IrExprKind, IrExternAbi, IrFile, IrLiteral, IrStmt};
 use corvid_resolve::{DefId, LocalId};
 use corvid_types::Type;
 use std::collections::{BTreeSet, HashMap};
@@ -209,8 +209,10 @@ pub fn lower_file(
         for p in &agent.params {
             sig.params.push(AbiParam::new(cl_type_for(&p.ty, p.span)?));
         }
-        sig.returns
-            .push(AbiParam::new(cl_type_for(&agent.return_ty, agent.span)?));
+        if !matches!(agent.return_ty, Type::Nothing) {
+            sig.returns
+                .push(AbiParam::new(cl_type_for(&agent.return_ty, agent.span)?));
+        }
         let mangled = mangle_agent_symbol(&agent.name, agent.id);
         let id = module
             .declare_function(&mangled, Linkage::Local, &sig)
@@ -249,6 +251,13 @@ pub fn lower_file(
         } else {
             runtime.prompt_pins.clear();
             define_agent(module, agent, func_id, &func_ids_by_def, &runtime)?;
+        }
+    }
+
+    for agent in &ir.agents {
+        if matches!(agent.extern_abi, Some(IrExternAbi::C)) {
+            let &func_id = func_ids_by_def.get(&agent.id).expect("declared in pass 1");
+            define_extern_c_wrapper(module, agent, func_id, &runtime)?;
         }
     }
 

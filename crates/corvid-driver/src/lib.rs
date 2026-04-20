@@ -64,7 +64,10 @@ pub use replay::{
     configure_replay_mode, run_replay_from_source, run_replay_from_source_with_builder,
     ReplayMode, ReplayOutcome,
 };
-pub use build::{build_native_to_disk, build_to_disk, BuildOutput, NativeBuildOutput};
+pub use build::{
+    build_native_to_disk, build_target_to_disk, build_to_disk, BuildOutput, BuildTarget,
+    NativeBuildOutput, TargetBuildOutput,
+};
 pub use diagnostic::{summarize_diagnostics, Diagnostic};
 pub use law::{render_law_check_report, run_law_checks};
 pub use run::{

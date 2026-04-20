@@ -640,6 +640,7 @@ mod tests {
         IrAgent {
             id: DefId(0),
             name: "test".into(),
+            extern_abi: None,
             params: params
                 .into_iter()
                 .map(|(id, ty)| IrParam {

@@ -32,6 +32,8 @@ corvid-syntax = { workspace = true }
 corvid-vm     = { workspace = true }
 tokio         = { workspace = true }
 criterion     = "0.5"
+corvid-c-header = { workspace = true }
+libloading = "0.8"
 # Used by the native tool-call parity fixtures to construct mock-tool return values
 # (`serde_json::json!`). corvid-runtime already pulls it in transitively
 # but we depend on it explicitly so the `json!` macro is reachable.

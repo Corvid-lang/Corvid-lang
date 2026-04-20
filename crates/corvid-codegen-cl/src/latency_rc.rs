@@ -247,6 +247,7 @@ mod tests {
         IrAgent {
             id: DefId(0),
             name: "f".into(),
+            extern_abi: None,
             params: vec![IrParam {
                 name: "s".into(),
                 local_id: LocalId(0),

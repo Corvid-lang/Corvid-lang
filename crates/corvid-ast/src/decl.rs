@@ -377,6 +377,8 @@ pub enum RoutePattern {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AgentDecl {
     pub name: Ident,
+    #[serde(default)]
+    pub extern_abi: Option<ExternAbi>,
     pub params: Vec<Param>,
     pub return_ty: TypeRef,
     pub body: Block,
@@ -400,6 +402,20 @@ pub struct AgentDecl {
     #[serde(default)]
     pub attributes: Vec<AgentAttribute>,
     pub span: Span,
+}
+
+/// ABI marker on an exported agent declaration.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ExternAbi {
+    C,
+}
+
+impl ExternAbi {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::C => "c",
+        }
+    }
 }
 
 /// Compile-time attribute on an agent declaration. Distinct from

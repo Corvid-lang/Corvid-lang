@@ -108,6 +108,7 @@ fn synthetic_agent(
         .collect();
     AgentDecl {
         name: Ident::new(REPL_AGENT_NAME, span),
+        extern_abi: None,
         params,
         return_ty: TypeRef::Named {
             name: Ident::new("Nothing", span),

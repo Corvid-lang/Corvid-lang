@@ -204,6 +204,7 @@ pub struct IrAdversarialSpec {
 pub struct IrAgent {
     pub id: DefId,
     pub name: String,
+    pub extern_abi: Option<IrExternAbi>,
     pub params: Vec<IrParam>,
     pub return_ty: Type,
     pub cost_budget: Option<f64>,
@@ -220,6 +221,11 @@ pub struct IrAgent {
     /// (`corvid-vm`) ignores this field — refcount there is via `Arc`
     /// and has no ABI distinction.
     pub borrow_sig: Option<Vec<ParamBorrow>>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IrExternAbi {
+    C,
 }
 
 /// An eval declaration lowered into IR.

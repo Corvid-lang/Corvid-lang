@@ -13,6 +13,7 @@ use crate::errors::{ParseError, ParseErrorKind};
 use crate::token::TokKind;
 use corvid_ast::{
     AgentDecl, BinaryOp, Block, Decl, DimensionDecl, DimensionValue, Effect, EffectDecl,
+    ExternAbi,
     EvalAssert, EvalDecl, ExtendDecl, ExtendMethod, ExtendMethodKind, Field, Ident, ImportDecl,
     ImportSource, ModelDecl, ModelField, Param, ToolDecl, TypeDecl, Visibility,
 };
@@ -26,11 +27,19 @@ impl<'a> Parser<'a> {
             TokKind::KwPrompt => self.parse_prompt_decl().map(Decl::Prompt),
             TokKind::KwEval => self.parse_eval_decl().map(Decl::Eval),
             TokKind::KwAgent => self.parse_agent_decl().map(Decl::Agent),
+            TokKind::KwPub => self.parse_extern_agent_decl().map(Decl::Agent),
             TokKind::KwExtend => self.parse_extend_decl().map(Decl::Extend),
             TokKind::KwEffect => self.parse_effect_decl().map(Decl::Effect),
             TokKind::KwModel => self.parse_model_decl().map(Decl::Model),
             TokKind::At => {
                 let (attributes, constraints) = self.parse_agent_annotations()?;
+                let extern_abi = if matches!(self.peek(), TokKind::KwPub) {
+                    let abi = self.parse_extern_abi_prefix()?;
+                    self.skip_newlines();
+                    Some(abi)
+                } else {
+                    None
+                };
                 if !matches!(self.peek(), TokKind::KwAgent) {
                     return Err(ParseError {
                         kind: ParseErrorKind::UnexpectedToken {
@@ -41,6 +50,7 @@ impl<'a> Parser<'a> {
                     });
                 }
                 let mut agent = self.parse_agent_decl()?;
+                agent.extern_abi = extern_abi;
                 agent.constraints = constraints;
                 agent.attributes = attributes;
                 Ok(Decl::Agent(agent))
@@ -405,6 +415,54 @@ impl<'a> Parser<'a> {
 
     // -- agent ---------------------------------------------------
 
+    fn parse_extern_agent_decl(&mut self) -> Result<AgentDecl, ParseError> {
+        let extern_abi = self.parse_extern_abi_prefix()?;
+        self.skip_newlines();
+        if !matches!(self.peek(), TokKind::KwAgent) {
+            return Err(ParseError {
+                kind: ParseErrorKind::UnexpectedToken {
+                    got: describe_token(self.peek()),
+                    expected: "`agent` after `pub extern \"c\"`".into(),
+                },
+                span: self.peek_span(),
+            });
+        }
+        let mut agent = self.parse_agent_decl()?;
+        agent.extern_abi = Some(extern_abi);
+        Ok(agent)
+    }
+
+    fn parse_extern_abi_prefix(&mut self) -> Result<ExternAbi, ParseError> {
+        self.expect(TokKind::KwPub, "`pub` before `extern`")?;
+        self.expect(TokKind::KwExtern, "`extern` after `pub`")?;
+        let span = self.peek_span();
+        let abi = match self.peek().clone() {
+            TokKind::StringLit(name) => {
+                self.bump();
+                name
+            }
+            other => {
+                return Err(ParseError {
+                    kind: ParseErrorKind::UnexpectedToken {
+                        got: describe_token(&other),
+                        expected: "an ABI string literal like `\"c\"`".into(),
+                    },
+                    span,
+                })
+            }
+        };
+        match abi.to_ascii_lowercase().as_str() {
+            "c" => Ok(ExternAbi::C),
+            _ => Err(ParseError {
+                kind: ParseErrorKind::UnexpectedToken {
+                    got: format!("ABI string `{abi}`"),
+                    expected: "`\"c\"`".into(),
+                },
+                span,
+            }),
+        }
+    }
+
     pub(super) fn parse_agent_decl(&mut self) -> Result<AgentDecl, ParseError> {
         let start = self.peek_span();
         self.bump(); // agent
@@ -422,6 +480,7 @@ impl<'a> Parser<'a> {
 
         Ok(AgentDecl {
             name: Ident::new(name, name_span),
+            extern_abi: None,
             params,
             return_ty,
             body,

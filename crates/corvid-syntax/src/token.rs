@@ -27,6 +27,8 @@ pub enum TokKind {
     KwType,
     KwImport,
     KwAs,
+    KwPub,
+    KwExtern,
     /// `extend T:` — method-attachment block.
     KwExtend,
     /// `public` — visibility modifier on methods inside
@@ -173,6 +175,8 @@ impl TokKind {
             "type" => TokKind::KwType,
             "import" => TokKind::KwImport,
             "as" => TokKind::KwAs,
+            "pub" => TokKind::KwPub,
+            "extern" => TokKind::KwExtern,
             "extend" => TokKind::KwExtend,
             "public" => TokKind::KwPublic,
             "package" => TokKind::KwPackage,

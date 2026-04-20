@@ -876,6 +876,53 @@ agent hello(name: String) -> String:
         }
     }
 
+    #[test]
+    fn parser_accepts_pub_extern_c_agent() {
+        let src = "\
+pub extern \"c\"
+agent refund_bot(ticket_id: String, amount: Float) -> Bool:
+    return true
+";
+        let file = parse_file_src(src);
+        let agent = match &file.decls[0] {
+            Decl::Agent(a) => a,
+            other => panic!("expected Agent, got {other:?}"),
+        };
+        assert_eq!(agent.extern_abi, Some(corvid_ast::ExternAbi::C));
+    }
+
+    #[test]
+    fn parser_rejects_unknown_abi_string() {
+        let src = "\
+pub extern \"system\"
+agent refund_bot() -> Bool:
+    return true
+";
+        let tokens = lex(src).expect("lex");
+        let (_file, errs) = parse_file(&tokens);
+        assert!(
+            !errs.is_empty(),
+            "expected parse error for unsupported extern ABI"
+        );
+    }
+
+    #[test]
+    fn parser_preserves_extern_abi_on_ast() {
+        let src = "\
+@replayable
+pub extern \"C\"
+agent refund_bot(ticket_id: String) -> String:
+    return ticket_id
+";
+        let file = parse_file_src(src);
+        let agent = match &file.decls[0] {
+            Decl::Agent(a) => a,
+            other => panic!("expected Agent, got {other:?}"),
+        };
+        assert_eq!(agent.extern_abi, Some(corvid_ast::ExternAbi::C));
+        assert_eq!(agent.attributes.len(), 1);
+    }
+
     // -------------------- Phase 21 slice inv-A: @replayable --------------------
 
     #[test]

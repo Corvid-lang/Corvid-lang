@@ -5,7 +5,8 @@
 
 use crate::types::*;
 use corvid_ast::{
-    AgentDecl, Block, Decl, Effect, EvalAssert, EvalDecl, Expr, ExtendMethodKind, File, Ident,
+    AgentDecl, Block, Decl, Effect, EvalAssert, EvalDecl, Expr, ExtendMethodKind, ExternAbi,
+    File, Ident,
     ImportDecl, ImportSource, Literal, Param, PromptDecl, ReplayArm, ReplayPattern, Span, Stmt,
     ToolArgPattern, ToolDecl, TypeDecl, TypeRef,
 };
@@ -445,6 +446,9 @@ impl<'a> Lowerer<'a> {
         IrAgent {
             id,
             name: a.name.name.clone(),
+            extern_abi: a.extern_abi.map(|abi| match abi {
+                ExternAbi::C => IrExternAbi::C,
+            }),
             params: self.lower_params(&a.params),
             return_ty: self.type_ref_to_type(&a.return_ty),
             cost_budget: agent_cost_budget(a),

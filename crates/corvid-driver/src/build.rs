@@ -9,10 +9,7 @@
 
 use super::{compile_to_ir_with_config, compile_with_config, load_corvid_config_for, Diagnostic};
 use corvid_codegen_py::emit;
-use corvid_ir::lower;
-use corvid_resolve::resolve;
-use corvid_syntax::{lex, parse_file};
-use corvid_types::typecheck_with_config;
+pub use corvid_codegen_cl::BuildTarget;
 use std::path::{Path, PathBuf};
 
 /// Compile `source_path` and write the generated Python to disk.
@@ -106,6 +103,75 @@ pub struct NativeBuildOutput {
     pub diagnostics: Vec<Diagnostic>,
 }
 
+pub struct TargetBuildOutput {
+    pub source: String,
+    pub output_path: Option<PathBuf>,
+    pub header_path: Option<PathBuf>,
+    pub diagnostics: Vec<Diagnostic>,
+}
+
+pub fn build_target_to_disk(
+    source_path: &Path,
+    target: BuildTarget,
+    emit_header: bool,
+) -> anyhow::Result<TargetBuildOutput> {
+    let source = std::fs::read_to_string(source_path).map_err(|e| {
+        anyhow::anyhow!("cannot read `{}`: {}", source_path.display(), e)
+    })?;
+
+    let config = load_corvid_config_for(source_path);
+    match compile_to_ir_with_config(&source, config.as_ref()) {
+        Err(diagnostics) => Ok(TargetBuildOutput {
+            source,
+            output_path: None,
+            header_path: None,
+            diagnostics,
+        }),
+        Ok(ir) => {
+            let out_dir = target_output_dir_for(source_path, target);
+            let stem = source_path
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("program")
+                .to_string();
+            let requested = out_dir.join(&stem);
+            let produced = match target {
+                BuildTarget::Native => {
+                    corvid_codegen_cl::build_native_to_disk(&ir, &stem, &requested, &[])
+                }
+                BuildTarget::Cdylib | BuildTarget::Staticlib => {
+                    corvid_codegen_cl::build_library_to_disk(&ir, &stem, &requested, target, &[])
+                }
+            }
+            .map_err(|e| anyhow::anyhow!("native codegen failed: {e}"))?;
+
+            let header_path = if emit_header {
+                let header = corvid_c_header::emit_header(
+                    &ir,
+                    &corvid_c_header::HeaderOptions {
+                        library_name: stem.clone(),
+                    },
+                );
+                let path = out_dir.join(format!("lib_{stem}.h"));
+                if let Some(parent) = path.parent() {
+                    std::fs::create_dir_all(parent)?;
+                }
+                std::fs::write(&path, header)?;
+                Some(path)
+            } else {
+                None
+            };
+
+            Ok(TargetBuildOutput {
+                source,
+                output_path: Some(produced),
+                header_path,
+                diagnostics: Vec::new(),
+            })
+        }
+    }
+}
+
 pub(super) fn native_output_dir_for(source_path: &Path) -> PathBuf {
     let mut ancestor: Option<&Path> = source_path.parent();
     while let Some(dir) = ancestor {
@@ -118,6 +184,25 @@ pub(super) fn native_output_dir_for(source_path: &Path) -> PathBuf {
     }
     let parent = source_path.parent().unwrap_or_else(|| Path::new("."));
     parent.join("target").join("bin")
+}
+
+pub(super) fn target_output_dir_for(source_path: &Path, target: BuildTarget) -> PathBuf {
+    match target {
+        BuildTarget::Native => native_output_dir_for(source_path),
+        BuildTarget::Cdylib | BuildTarget::Staticlib => {
+            let mut ancestor: Option<&Path> = source_path.parent();
+            while let Some(dir) = ancestor {
+                if dir.file_name().map(|n| n == "src").unwrap_or(false) {
+                    if let Some(project_root) = dir.parent() {
+                        return project_root.join("target").join("release");
+                    }
+                }
+                ancestor = dir.parent();
+            }
+            let parent = source_path.parent().unwrap_or_else(|| Path::new("."));
+            parent.join("target").join("release")
+        }
+    }
 }
 
 pub(super) fn output_path_for(source_path: &Path) -> PathBuf {

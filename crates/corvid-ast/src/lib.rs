@@ -143,6 +143,7 @@ mod tests {
 
         let refund_bot = AgentDecl {
             name: id("refund_bot"),
+            extern_abi: None,
             params: vec![Param {
                 name: id("ticket"),
                 ty: ty_named("Ticket"),

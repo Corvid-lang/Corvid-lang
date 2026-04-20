@@ -384,6 +384,36 @@ pub(super) fn declare_runtime_funcs(
             )
         })?;
 
+    let embed_init_sig = module.make_signature();
+    let embed_init_id = module
+        .declare_function(
+            RUNTIME_EMBED_INIT_SYMBOL,
+            Linkage::Import,
+            &embed_init_sig,
+        )
+        .map_err(|e| {
+            CodegenError::cranelift(
+                format!("declare runtime_embed_init: {e}"),
+                Span::new(0, 0),
+            )
+        })?;
+
+    let mut string_into_cstr_sig = module.make_signature();
+    string_into_cstr_sig.params.push(AbiParam::new(I64));
+    string_into_cstr_sig.returns.push(AbiParam::new(I64));
+    let string_into_cstr_id = module
+        .declare_function(
+            STRING_INTO_CSTR_SYMBOL,
+            Linkage::Import,
+            &string_into_cstr_sig,
+        )
+        .map_err(|e| {
+            CodegenError::cranelift(
+                format!("declare string_into_cstr: {e}"),
+                Span::new(0, 0),
+            )
+        })?;
+
     let mut sleep_ms_sig = module.make_signature();
     sleep_ms_sig.params.push(AbiParam::new(I64));
     let sleep_ms_id = module
@@ -672,7 +702,9 @@ pub(super) fn declare_runtime_funcs(
         replay_tool_call_string: replay_tool_call_string_id,
         runtime_init: runtime_init_id,
         runtime_shutdown: runtime_shutdown_id,
+        runtime_embed_init: embed_init_id,
         sleep_ms: sleep_ms_id,
+        string_into_cstr: string_into_cstr_id,
         string_from_int: string_from_int_id,
         string_from_bool: string_from_bool_id,
         string_from_float: string_from_float_id,
@@ -2205,7 +2237,9 @@ pub(super) const TRACE_TOOL_RESULT_STRING_SYMBOL: &str = "corvid_trace_tool_resu
 // calls to preserve startup benchmark numbers.
 pub(super) const RUNTIME_INIT_SYMBOL: &str = "corvid_runtime_init";
 pub(super) const RUNTIME_SHUTDOWN_SYMBOL: &str = "corvid_runtime_shutdown";
+pub(super) const RUNTIME_EMBED_INIT_SYMBOL: &str = "corvid_runtime_embed_init_default";
 pub(super) const SLEEP_MS_SYMBOL: &str = "corvid_sleep_ms";
+pub(super) const STRING_INTO_CSTR_SYMBOL: &str = "corvid_string_into_cstr";
 
 /// Per-struct payload uses fixed 8-byte field slots for simple offset
 /// math. Tighter packing is a later optimization.
@@ -2273,7 +2307,9 @@ pub(super) struct RuntimeFuncs {
     pub replay_tool_call_string: FuncId,
     pub runtime_init: FuncId,
     pub runtime_shutdown: FuncId,
+    pub runtime_embed_init: FuncId,
     pub sleep_ms: FuncId,
+    pub string_into_cstr: FuncId,
     // Scalar->String helpers for prompt-template interpolation.
     pub string_from_int: FuncId,
     pub string_from_bool: FuncId,
