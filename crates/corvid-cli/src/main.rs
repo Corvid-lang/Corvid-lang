@@ -19,6 +19,7 @@
 
 mod replay;
 mod routing_report;
+mod test_from_traces;
 mod trace_cmd;
 mod trace_dag;
 
@@ -97,6 +98,8 @@ enum Command {
     /// runner.
     Test {
         /// What to verify. Omit for the legacy placeholder behavior.
+        /// Mutually exclusive with `--from-traces`.
+        #[arg(conflicts_with = "from_traces")]
         target: Option<String>,
         /// For `spec`: run the meta-verification harness (mutate the
         /// verifier, confirm each counter-example is still caught).
@@ -108,6 +111,62 @@ enum Command {
         /// For `adversarial`: model to drive the generator.
         #[arg(long, default_value = "opus")]
         model: String,
+        /// Prod-as-test-suite mode (Phase 21 slice 21-inv-G-cli).
+        /// Replay every `.jsonl` in `<DIR>` against the current code
+        /// and report any behavior drift. Today's stub loads,
+        /// validates, filters, and reports coverage; the live
+        /// regression harness ships in Dev B's `21-inv-G-harness`.
+        #[arg(long, value_name = "DIR")]
+        from_traces: Option<PathBuf>,
+        /// For `--from-traces`: differential replay against a
+        /// different model. Composes with `21-inv-B-adapter`. When
+        /// present, every trace's recorded LLM results are compared
+        /// against this model's live output; divergences surface in
+        /// the regression report.
+        #[arg(long, value_name = "ID", requires = "from_traces")]
+        replay_model: Option<String>,
+        /// For `--from-traces`: only include traces that hit a
+        /// `@dangerous` tool. The Corvid approve-before-dangerous
+        /// guarantee means traces with an `ApprovalRequest` event
+        /// are exactly the dangerous-tool traces; no separate
+        /// annotation needed.
+        #[arg(long, requires = "from_traces")]
+        only_dangerous: bool,
+        /// For `--from-traces`: only include traces that exercise
+        /// the named prompt.
+        #[arg(long, value_name = "NAME", requires = "from_traces")]
+        only_prompt: Option<String>,
+        /// For `--from-traces`: only include traces that exercise
+        /// the named tool.
+        #[arg(long, value_name = "NAME", requires = "from_traces")]
+        only_tool: Option<String>,
+        /// For `--from-traces`: only include traces with at least
+        /// one event at or after this RFC3339 timestamp (matches
+        /// `corvid routing-report --since`).
+        #[arg(long, value_name = "RFC3339", requires = "from_traces")]
+        since: Option<String>,
+        /// For `--from-traces`: promote mode. Divergences become
+        /// interactively-accepted "golden" traces, overwriting the
+        /// originals (Jest-snapshot-style). Mutually exclusive with
+        /// `--replay-model` (promoting cross-model divergences would
+        /// quietly steal your golden's model; re-record instead)
+        /// and with `--flake-detect` (promoting a flaky result is
+        /// a bug).
+        #[arg(
+            long,
+            requires = "from_traces",
+            conflicts_with = "replay_model",
+            conflicts_with = "flake_detect",
+        )]
+        promote: bool,
+        /// For `--from-traces`: flake-detection mode. Replay each
+        /// trace N times; any trace producing different output
+        /// across runs surfaces program-level nondeterminism the
+        /// `@deterministic` attribute didn't catch. Since replay
+        /// substitutes recorded responses, deterministic programs
+        /// must produce identical output every time.
+        #[arg(long, value_name = "N", requires = "from_traces")]
+        flake_detect: Option<u32>,
     },
     /// Cross-verify effect profiles across checker, interpreter,
     /// native, and replay tiers.
@@ -264,7 +323,32 @@ fn main() -> ExitCode {
             meta,
             count,
             model,
-        }) => cmd_test(target.as_deref(), meta, count, &model),
+            from_traces,
+            replay_model,
+            only_dangerous,
+            only_prompt,
+            only_tool,
+            since,
+            promote,
+            flake_detect,
+        }) => {
+            if let Some(dir) = from_traces {
+                test_from_traces::run_test_from_traces(
+                    test_from_traces::TestFromTracesArgs {
+                        trace_dir: &dir,
+                        replay_model: replay_model.as_deref(),
+                        only_dangerous,
+                        only_prompt: only_prompt.as_deref(),
+                        only_tool: only_tool.as_deref(),
+                        since: since.as_deref(),
+                        promote,
+                        flake_detect,
+                    },
+                )
+            } else {
+                cmd_test(target.as_deref(), meta, count, &model)
+            }
+        }
         Some(Command::Verify { corpus, shrink, json }) => {
             cmd_verify(corpus.as_deref(), shrink.as_deref(), json)
         }

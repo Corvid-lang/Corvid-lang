@@ -1188,7 +1188,7 @@ Users register local models (Ollama, vLLM, llama.cpp) with declared capabilities
 - [x] 21-inv-E-2b            Resolver: pattern-name resolution + arm-capture scope opening
 - [x] 21-inv-E-3             Checker: `TraceId` / `TraceEvent` types + pattern exhaustiveness
 - [x] 21-inv-E-4             IR lowering for replay blocks
-- [ ] 21-inv-G-cli           `corvid test --from-traces <dir>` + trace-to-test harness
+- [x] 21-inv-G-cli           `corvid test --from-traces <dir>` + trace-to-test harness (5 inventive flags: `--replay-model` / `--only-dangerous` / `--only-prompt` / `--only-tool` / `--since` / `--promote` / `--flake-detect`; coverage-map preview)
 - [ ] 21-inv-H               `corvid trace-diff <commit-a> <commit-b>` + git-integrated behavior diff
 - [ ] 21-docs                Spec section 21 + ROADMAP closeout + v1.0 demo script
 
