@@ -65,6 +65,12 @@ enum Command {
         /// Emit a companion C header alongside library targets.
         #[arg(long)]
         header: bool,
+        /// Emit a companion ABI descriptor alongside cdylib targets.
+        #[arg(long)]
+        abi_descriptor: bool,
+        /// Emit every supported companion artifact for the selected target.
+        #[arg(long)]
+        all_artifacts: bool,
     },
     /// Build and run a Corvid source file. Picks the native AOT tier
     /// when the program stays within the current native command-line
@@ -328,7 +334,13 @@ fn main() -> ExitCode {
     let result = match cli.command {
         Some(Command::New { name }) => cmd_new(&name),
         Some(Command::Check { file }) => cmd_check(&file),
-        Some(Command::Build { file, target, header }) => cmd_build(&file, &target, header),
+        Some(Command::Build {
+            file,
+            target,
+            header,
+            abi_descriptor,
+            all_artifacts,
+        }) => cmd_build(&file, &target, header, abi_descriptor, all_artifacts),
         Some(Command::Run {
             file,
             target,
@@ -451,11 +463,21 @@ fn cmd_check(file: &Path) -> Result<u8> {
     }
 }
 
-fn cmd_build(file: &Path, target: &str, header: bool) -> Result<u8> {
+fn cmd_build(
+    file: &Path,
+    target: &str,
+    header: bool,
+    abi_descriptor: bool,
+    all_artifacts: bool,
+) -> Result<u8> {
+    let header = header || all_artifacts;
+    let abi_descriptor = abi_descriptor || all_artifacts;
     match target {
         "python" | "py" => {
-            if header {
-                anyhow::bail!("`--header` is only valid for `cdylib` and `staticlib` targets");
+            if header || abi_descriptor {
+                anyhow::bail!(
+                    "`--header`, `--abi-descriptor`, and `--all-artifacts` are only valid for library targets"
+                );
             }
             let out = build_to_disk(file)
                 .with_context(|| format!("failed to build `{}`", file.display()))?;
@@ -468,8 +490,10 @@ fn cmd_build(file: &Path, target: &str, header: bool) -> Result<u8> {
             }
         }
         "native" => {
-            if header {
-                anyhow::bail!("`--header` is only valid for `cdylib` and `staticlib` targets");
+            if header || abi_descriptor {
+                anyhow::bail!(
+                    "`--header`, `--abi-descriptor`, and `--all-artifacts` are only valid for library targets"
+                );
             }
             let out = build_native_to_disk(file)
                 .with_context(|| format!("failed to build `{}` (native)", file.display()))?;
@@ -481,8 +505,13 @@ fn cmd_build(file: &Path, target: &str, header: bool) -> Result<u8> {
                 Ok(1)
             }
         }
-        "cdylib" => cmd_build_library(file, BuildTarget::Cdylib, header),
-        "staticlib" => cmd_build_library(file, BuildTarget::Staticlib, header),
+        "cdylib" => cmd_build_library(file, BuildTarget::Cdylib, header, abi_descriptor),
+        "staticlib" => {
+            if abi_descriptor {
+                anyhow::bail!("`--abi-descriptor` and `--all-artifacts` are only valid for `cdylib`");
+            }
+            cmd_build_library(file, BuildTarget::Staticlib, header, false)
+        }
         other => {
             anyhow::bail!(
                 "unknown target `{other}`; valid: `python` (default), `native`, `cdylib`, `staticlib`"
@@ -491,8 +520,13 @@ fn cmd_build(file: &Path, target: &str, header: bool) -> Result<u8> {
     }
 }
 
-fn cmd_build_library(file: &Path, target: BuildTarget, header: bool) -> Result<u8> {
-    let out = build_target_to_disk(file, target, header).with_context(|| {
+fn cmd_build_library(
+    file: &Path,
+    target: BuildTarget,
+    header: bool,
+    abi_descriptor: bool,
+) -> Result<u8> {
+    let out = build_target_to_disk(file, target, header, abi_descriptor).with_context(|| {
         format!(
             "failed to build `{}` ({})",
             file.display(),
@@ -507,6 +541,9 @@ fn cmd_build_library(file: &Path, target: BuildTarget, header: bool) -> Result<u
         println!("built: {} -> {}", file.display(), path.display());
         if let Some(header_path) = out.header_path {
             println!("header: {}", header_path.display());
+        }
+        if let Some(abi_descriptor_path) = out.abi_descriptor_path {
+            println!("abi descriptor: {}", abi_descriptor_path.display());
         }
         Ok(0)
     } else {

@@ -1,0 +1,20 @@
+[package]
+name = "corvid-abi"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Phase 22 Corvid ABI descriptor emission."
+
+[dependencies]
+corvid-ast = { workspace = true }
+corvid-resolve = { workspace = true }
+corvid-types = { workspace = true }
+corvid-ir = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+corvid-syntax = { workspace = true }
+tempfile = { workspace = true }
+time = { workspace = true }
+toml = { workspace = true }

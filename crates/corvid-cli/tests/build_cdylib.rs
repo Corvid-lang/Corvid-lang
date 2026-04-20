@@ -52,6 +52,18 @@ agent refund_bot(ticket: Ticket) -> Bool:
     return true
 "#;
 
+const DESCRIPTOR_SRC: &str = r#"
+agent classify(ticket_id: String) -> Option<String>:
+    if ticket_id == "vip":
+        return Some(ticket_id)
+    return None
+
+pub extern "c"
+agent refund_bot(ticket_id: String, amount: Float) -> Bool:
+    decision = classify(ticket_id)
+    return decision != None and amount > 10.0
+"#;
+
 #[test]
 fn cli_build_cdylib_target_succeeds_on_scalar_agent() {
     let (_dir, source_path) = write_project(SCALAR_SRC, "refund_bot");
@@ -164,4 +176,162 @@ fn cli_build_cdylib_fails_cleanly_on_non_scalar_signature() {
         stderr.contains("unsupported ABI type") || stderr.contains("struct") || stderr.contains("Ticket"),
         "stderr missing offender detail: {stderr}"
     );
+}
+
+#[test]
+fn cli_build_cdylib_with_abi_descriptor_flag_writes_json_alongside_library() {
+    let (_dir, source_path) = write_project(SCALAR_SRC, "refund_bot");
+    let output = run_corvid(
+        &[
+            "build",
+            source_path.to_str().expect("utf8 source path"),
+            "--target=cdylib",
+            "--abi-descriptor",
+        ],
+        source_path.parent().unwrap(),
+    );
+
+    assert!(
+        output.status.success(),
+        "build failed: stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let release_dir = source_path
+        .parent()
+        .and_then(Path::parent)
+        .expect("project root")
+        .join("target")
+        .join("release");
+    let lib_path = release_dir.join(shared_library_name("refund_bot"));
+    let descriptor_path = release_dir.join("refund_bot.corvid-abi.json");
+    assert!(lib_path.exists(), "missing shared library: {}", lib_path.display());
+    assert!(
+        descriptor_path.exists(),
+        "missing abi descriptor: {}",
+        descriptor_path.display()
+    );
+
+    let descriptor: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&descriptor_path).expect("read descriptor"))
+            .expect("parse descriptor");
+    assert_eq!(descriptor["corvid_abi_version"], serde_json::json!(1));
+    assert_eq!(descriptor["agents"][0]["name"], serde_json::json!("refund_bot"));
+}
+
+#[test]
+fn cli_build_cdylib_without_abi_descriptor_flag_does_not_write_json() {
+    let (_dir, source_path) = write_project(SCALAR_SRC, "refund_bot");
+    let output = run_corvid(
+        &[
+            "build",
+            source_path.to_str().expect("utf8 source path"),
+            "--target=cdylib",
+        ],
+        source_path.parent().unwrap(),
+    );
+
+    assert!(
+        output.status.success(),
+        "build failed: stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let descriptor_path = source_path
+        .parent()
+        .and_then(Path::parent)
+        .expect("project root")
+        .join("target")
+        .join("release")
+        .join("refund_bot.corvid-abi.json");
+    assert!(
+        !descriptor_path.exists(),
+        "unexpected abi descriptor: {}",
+        descriptor_path.display()
+    );
+}
+
+#[test]
+fn cli_build_cdylib_with_abi_descriptor_on_non_scalar_return_still_succeeds() {
+    let (_dir, source_path) = write_project(DESCRIPTOR_SRC, "refund_bot");
+    let output = run_corvid(
+        &[
+            "build",
+            source_path.to_str().expect("utf8 source path"),
+            "--target=cdylib",
+            "--abi-descriptor",
+        ],
+        source_path.parent().unwrap(),
+    );
+
+    assert!(
+        output.status.success(),
+        "build failed: stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let descriptor_path = source_path
+        .parent()
+        .and_then(Path::parent)
+        .expect("project root")
+        .join("target")
+        .join("release")
+        .join("refund_bot.corvid-abi.json");
+    let descriptor: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&descriptor_path).expect("read descriptor"))
+            .expect("parse descriptor");
+    assert!(
+        descriptor["agents"]
+            .as_array()
+            .expect("agent array")
+            .iter()
+            .any(|agent| {
+                agent["name"] == serde_json::json!("refund_bot")
+                    && agent["return_type"]["scalar"] == serde_json::json!("Bool")
+            })
+    );
+    assert!(
+        descriptor["agents"]
+            .as_array()
+            .expect("agent array")
+            .iter()
+            .any(|agent| {
+                agent["name"] == serde_json::json!("classify")
+                    && agent["return_type"]["option"]["inner"]["scalar"] == serde_json::json!("String")
+            })
+    );
+}
+
+#[test]
+fn all_artifacts_flag_writes_lib_header_and_descriptor() {
+    let (_dir, source_path) = write_project(SCALAR_SRC, "refund_bot");
+    let output = run_corvid(
+        &[
+            "build",
+            source_path.to_str().expect("utf8 source path"),
+            "--target=cdylib",
+            "--all-artifacts",
+        ],
+        source_path.parent().unwrap(),
+    );
+
+    assert!(
+        output.status.success(),
+        "build failed: stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let release_dir = source_path
+        .parent()
+        .and_then(Path::parent)
+        .expect("project root")
+        .join("target")
+        .join("release");
+    assert!(release_dir.join(shared_library_name("refund_bot")).exists());
+    assert!(release_dir.join("lib_refund_bot.h").exists());
+    assert!(release_dir.join("refund_bot.corvid-abi.json").exists());
 }

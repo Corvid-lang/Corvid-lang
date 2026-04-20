@@ -7,6 +7,7 @@ members = [
     "crates/corvid-types",
     "crates/corvid-trace-schema",
     "crates/corvid-c-header",
+    "crates/corvid-abi",
     "crates/corvid-ir",
     "crates/corvid-vm",
     "crates/corvid-repl",
@@ -43,6 +44,7 @@ ariadne = "0.4"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 toml = "0.8"
+time = { version = "0.3", features = ["formatting", "parsing", "serde"] }
 
 # async
 tokio = { version = "1", features = ["full"] }
@@ -65,6 +67,7 @@ corvid-resolve  = { path = "crates/corvid-resolve" }
 corvid-types    = { path = "crates/corvid-types" }
 corvid-trace-schema = { path = "crates/corvid-trace-schema" }
 corvid-c-header = { path = "crates/corvid-c-header" }
+corvid-abi      = { path = "crates/corvid-abi" }
 
 corvid-ir       = { path = "crates/corvid-ir" }
 corvid-vm       = { path = "crates/corvid-vm" }
