@@ -71,6 +71,11 @@ pub enum RuntimeError {
 
     ReplayDivergence(ReplayDivergence),
 
+    InvalidReplayMutation {
+        step: usize,
+        message: String,
+    },
+
     CrossTierReplayUnsupported {
         recorded_writer: String,
         replay_writer: String,
@@ -133,6 +138,10 @@ impl fmt::Display for RuntimeError {
                 write!(f, "failed to load replay trace `{}`: {message}", path.display())
             }
             Self::ReplayDivergence(err) => err.fmt(f),
+            Self::InvalidReplayMutation { step, message } => write!(
+                f,
+                "invalid replay mutation at substitutable step {step}: {message}"
+            ),
             Self::CrossTierReplayUnsupported {
                 recorded_writer,
                 replay_writer,

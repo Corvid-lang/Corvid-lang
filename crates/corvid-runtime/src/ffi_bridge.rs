@@ -242,6 +242,14 @@ pub extern "C" fn corvid_runtime_shutdown() {
             eprintln!("corvid replay differential report write failed: {err}");
         }
     }
+    if let Some(path) = std::env::var_os("CORVID_REPLAY_MUTATION_REPORT_PATH") {
+        if let Err(err) = bridge
+            .corvid
+            .write_replay_mutation_report(PathBuf::from(path))
+        {
+            eprintln!("corvid replay mutation report write failed: {err}");
+        }
+    }
     // Dropping the bridge state drops the tokio runtime (joining worker
     // threads) and the Corvid runtime Arc.
     drop(bridge);
@@ -366,6 +374,7 @@ fn panic_if_replay_runtime_error(context: &str, err: &RuntimeError) {
         err,
         RuntimeError::ReplayTraceLoad { .. }
             | RuntimeError::ReplayDivergence(_)
+            | RuntimeError::InvalidReplayMutation { .. }
             | RuntimeError::CrossTierReplayUnsupported { .. }
     ) {
         panic!("{context}: {err}");
@@ -1285,7 +1294,18 @@ fn build_corvid_runtime() -> Runtime {
         }
     }
     if let Some(path) = std::env::var_os("CORVID_REPLAY_TRACE_PATH") {
-        if let Some(model) = std::env::var_os("CORVID_REPLAY_MODEL") {
+        if let (Some(step), Some(replacement)) = (
+            std::env::var_os("CORVID_REPLAY_MUTATE_STEP"),
+            std::env::var_os("CORVID_REPLAY_MUTATE_JSON"),
+        ) {
+            let step = step
+                .to_string_lossy()
+                .parse::<usize>()
+                .expect("CORVID_REPLAY_MUTATE_STEP must be a positive integer");
+            let replacement: serde_json::Value = serde_json::from_str(&replacement.to_string_lossy())
+                .expect("CORVID_REPLAY_MUTATE_JSON must contain valid JSON");
+            b = b.mutation_replay_from(PathBuf::from(path), step, replacement);
+        } else if let Some(model) = std::env::var_os("CORVID_REPLAY_MODEL") {
             b = b.differential_replay_from(PathBuf::from(path), model.to_string_lossy().into_owned());
         } else {
             b = b.replay_from(PathBuf::from(path));

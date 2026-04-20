@@ -10,7 +10,7 @@ use crate::errors::RuntimeError;
 use crate::llm::{LlmAdapter, LlmRegistry, LlmRequest, LlmRequestRef, LlmResponse};
 use crate::models::{ModelCatalog, ModelSelection, RegisteredModel};
 use crate::record::Recorder;
-use crate::replay::{ReplayDifferentialReport, ReplaySource};
+use crate::replay::{ReplayDifferentialReport, ReplayMutationReport, ReplaySource};
 use crate::tools::ToolRegistry;
 use crate::tracing::{fresh_run_id, now_ms, Tracer};
 use corvid_trace_schema::{TraceEvent, WRITER_INTERPRETER};
@@ -80,6 +80,13 @@ impl Runtime {
         }
     }
 
+    pub fn replay_mutation_report(&self) -> Option<ReplayMutationReport> {
+        match &self.mode {
+            RuntimeMode::Live => None,
+            RuntimeMode::Replay(source) => source.mutation_report(),
+        }
+    }
+
     pub fn write_replay_differential_report(
         &self,
         path: impl AsRef<Path>,
@@ -94,6 +101,25 @@ impl Runtime {
         std::fs::write(path, bytes).map_err(|err| {
             RuntimeError::Other(format!(
                 "failed to write replay differential report to `{}`: {err}",
+                path.display()
+            ))
+        })
+    }
+
+    pub fn write_replay_mutation_report(
+        &self,
+        path: impl AsRef<Path>,
+    ) -> Result<(), RuntimeError> {
+        let path = path.as_ref();
+        let Some(report) = self.replay_mutation_report() else {
+            return Ok(());
+        };
+        let bytes = serde_json::to_vec_pretty(&report).map_err(|err| {
+            RuntimeError::Other(format!("failed to serialize replay mutation report: {err}"))
+        })?;
+        std::fs::write(path, bytes).map_err(|err| {
+            RuntimeError::Other(format!(
+                "failed to write replay mutation report to `{}`: {err}",
                 path.display()
             ))
         })
@@ -385,6 +411,7 @@ pub struct RuntimeBuilder {
     rollout_seed: Option<u64>,
     replay_trace: Option<PathBuf>,
     replay_model_swap: Option<String>,
+    replay_mutation: Option<(usize, serde_json::Value)>,
 }
 
 impl Default for RuntimeBuilder {
@@ -401,6 +428,7 @@ impl Default for RuntimeBuilder {
             rollout_seed: None,
             replay_trace: None,
             replay_model_swap: None,
+            replay_mutation: None,
         }
     }
 }
@@ -488,6 +516,17 @@ impl RuntimeBuilder {
         self
     }
 
+    pub fn mutation_replay_from(
+        mut self,
+        path: impl Into<PathBuf>,
+        step_1based: usize,
+        replacement: serde_json::Value,
+    ) -> Self {
+        self.replay_trace = Some(path.into());
+        self.replay_mutation = Some((step_1based, replacement));
+        self
+    }
+
     pub fn build(self) -> Runtime {
         let mut model_catalog = self.model_catalog;
         let model_catalog_error = if model_catalog.is_empty() {
@@ -511,7 +550,14 @@ impl RuntimeBuilder {
         let tracer = self.tracer.unwrap_or_else(Tracer::null);
         let recorder = Recorder::for_tracer(&tracer, self.trace_schema_writer).map(Arc::new);
         let (mode, replay_error, rollout_seed) = if let Some(path) = self.replay_trace {
-            let replay_load = if let Some(model) = self.replay_model_swap {
+            let replay_load = if let Some((step_1based, replacement)) = self.replay_mutation {
+                ReplaySource::from_path_for_writer_with_mutation(
+                    path,
+                    self.trace_schema_writer,
+                    step_1based,
+                    replacement,
+                )
+            } else if let Some(model) = self.replay_model_swap {
                 ReplaySource::from_path_for_writer_with_model(path, self.trace_schema_writer, model)
             } else {
                 ReplaySource::from_path_for_writer(path, self.trace_schema_writer)

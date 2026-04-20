@@ -82,8 +82,8 @@ pub use llm::{
 pub use models::{ModelCatalog, ModelSelection, RegisteredModel};
 pub use record::Recorder;
 pub use replay::{
-    LlmDivergence, ReplayDifferentialReport, ReplayDivergence, ReplaySource,
-    RunCompletionDivergence, SubstitutionDivergence,
+    LlmDivergence, MutationDivergence, ReplayDifferentialReport, ReplayDivergence,
+    ReplayMutationReport, ReplaySource, RunCompletionDivergence, SubstitutionDivergence,
 };
 pub use runtime::{Runtime, RuntimeBuilder};
 pub use tools::{ToolHandler, ToolRegistry};
