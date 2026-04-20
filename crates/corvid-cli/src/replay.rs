@@ -5,59 +5,66 @@
 //!
 //! 1. **Plain replay** (`corvid replay <trace>`) — substitutes
 //!    recorded responses for every live call and reproduces the
-//!    original run byte-for-byte. Runtime lands in Phase 21
-//!    slices `21-C-replay-interp` (Dev B, interpreter tier) and
-//!    `21-C-replay-native` (Dev B, native tier).
+//!    original run byte-for-byte. Runtime ships in
+//!    `21-C-replay-interp`; CLI wire-up follows the differential
+//!    wire pattern below.
 //!
 //! 2. **Differential model replay** (`corvid replay --model <id>
-//!    <trace>`) — swaps the replay adapter's response source
-//!    from "recorded value" to "live call against a different
-//!    model." Produces a divergence report listing the steps
-//!    whose output differs from the recorded one. Runtime seam
-//!    lands in Phase 21 slice `21-inv-B-adapter` (Dev B).
+//!    --source <file> <trace>`, slice `21-inv-B-cli-wire`) —
+//!    swaps the replay adapter's response source from "recorded
+//!    value" to "live call against a different model." Produces
+//!    a divergence report listing the steps whose output differs
+//!    from the recorded one. Runtime seam from
+//!    `21-inv-B-adapter`.
 //!
 //! 3. **Counterfactual mutation replay** (`corvid replay --mutate
-//!    <STEP> <JSON> <trace>`) — replays the trace with exactly
-//!    one recorded response overridden at position `<STEP>` and
-//!    reports the downstream behavior diff. `<STEP>` is the
-//!    1-based index among substitutable events (ToolCall /
-//!    LlmCall / ApprovalRequest). Runtime seam lands in Phase 21
-//!    slice `21-inv-D-runtime` (Dev B).
+//!    <STEP> <JSON> --source <file> <trace>`) — replays the trace
+//!    with exactly one recorded response overridden at position
+//!    `<STEP>` and reports the downstream behavior diff.
+//!    Runtime seam from `21-inv-D-runtime`.
 //!
-//! Until those runtime slices land, all three modes:
-//!   1. Load the trace and validate the schema header.
-//!   2. Print a summary (event count, run id, schema version).
-//!   3. In `--model` mode, print the target model and what the
-//!      differential report will cover.
-//!   4. In `--mutate` mode, validate the step index and JSON
-//!      replacement, then print the mutation plan.
-//!   5. Return exit code 1 with a clean "not yet available"
-//!      message pointing at the pending runtime slice.
+//! Modes 1 and 3 remain in their pre-wire stub state today; their
+//! wires are next in the queue (`21-F-cli-wire` +
+//! `21-inv-D-cli-wire`).
 //!
-//! Loading + validating is useful as a pre-flight check today —
-//! catches corrupted traces and schema-version mismatches before
-//! the replay engine ever sees the file.
+//! `--source <FILE>` points at the Corvid source the trace was
+//! recorded against. It's required for actually-execute modes;
+//! the runtime needs the IR to replay. Once
+//! `SchemaHeader.source_path` is populated at record time
+//! (`21-A-schema-ext-source` landed the field; Dev B's recorder
+//! follow-up will populate it), the flag becomes optional and
+//! auto-resolves from the trace.
 
 use anyhow::{Context, Result};
+use corvid_driver::{run_replay_from_source, ReplayMode, ReplayOutcome};
+use corvid_runtime::{LlmDivergence, RunCompletionDivergence, SubstitutionDivergence};
 use corvid_trace_schema::{
     read_events_from_path, schema_version_of, validate_supported_schema, TraceEvent,
 };
 use std::path::Path;
 
-/// Exit code returned when the runtime replay path isn't available
-/// yet. Callers (CI, tests) can distinguish "tool not implemented"
-/// from "trace malformed" by checking this specific code.
+/// Exit code returned when a replay runs cleanly but surfaces
+/// divergences (differential mode: any `LlmDivergence`; mutation
+/// mode: any `MutationDivergence`). Distinguishes
+/// "ran-and-diverged" from "could not run" (typed anyhow errors).
+pub const EXIT_DIVERGED: u8 = 1;
+
+/// Exit code returned when a replay runtime path isn't yet wired
+/// to the CLI. Kept stable so existing tests (and CI scripts that
+/// distinguish "not wired" from "diverged") continue to work.
 pub const EXIT_NOT_IMPLEMENTED: u8 = 1;
 
-/// Entry for `corvid replay <trace> [--model <id>] [--mutate STEP JSON]`.
+/// Entry for `corvid replay <trace> [--source <file>] [--model <id>] [--mutate STEP JSON]`.
 ///
 /// `model` and `mutate` are mutually exclusive at the CLI layer
 /// (clap enforces this); callers that construct args another way
 /// must respect the same invariant. With neither set, runs a
-/// plain replay. With `model`, runs a differential model replay.
-/// With `mutate`, runs a counterfactual mutation replay.
+/// plain replay (stub until its wire slice). With `model`, runs
+/// a differential model replay (live wire as of 21-inv-B-cli-wire).
+/// With `mutate`, runs a counterfactual mutation replay (stub).
 pub fn run_replay(
     trace: &Path,
+    source: Option<&Path>,
     model: Option<&str>,
     mutate: Option<&[String]>,
 ) -> Result<u8> {
@@ -85,7 +92,7 @@ pub fn run_replay(
                 "`--model` and `--mutate` are mutually exclusive; pick one counterfactual axis"
             );
         }
-        (Some(model_id), None) => differential_replay_stub(model_id, &events),
+        (Some(model_id), None) => differential_replay_live(trace, source, model_id),
         (None, Some(args)) => mutate_replay_stub(args, &events),
         (None, None) => plain_replay_stub(),
     }
@@ -107,37 +114,151 @@ fn plain_replay_stub() -> Result<u8> {
     Ok(EXIT_NOT_IMPLEMENTED)
 }
 
-/// Differential-replay stub. Today counts how many LLM calls are
-/// in the trace (so users see the work the future divergence
-/// report will cover) and returns the "not yet available" exit
-/// code. Once `21-inv-B-adapter` lands, this branch invokes the
-/// replay runtime in model-swap mode and renders the divergence
-/// table.
-fn differential_replay_stub(model_id: &str, events: &[TraceEvent]) -> Result<u8> {
-    let llm_call_count = events
-        .iter()
-        .filter(|e| matches!(e, TraceEvent::LlmCall { .. }))
-        .count();
-    let llm_result_count = events
-        .iter()
-        .filter(|e| matches!(e, TraceEvent::LlmResult { .. }))
-        .count();
+/// Live differential replay path (Phase 21 slice 21-inv-B-cli-wire).
+///
+/// Composes the shipped `21-inv-B-adapter` runtime seam with the
+/// CLI layer: loads the recorded trace, compiles the user-supplied
+/// `--source`, re-executes the recorded agent with its recorded
+/// args through the `differential_replay_from(trace, model)`
+/// adapter, and renders the resulting `ReplayDifferentialReport`
+/// to stderr. Exit code reflects the divergence outcome:
+/// `0` when the live model agreed with the recording on every
+/// LLM call (and substitutions + completion matched), `1` when at
+/// least one divergence surfaced.
+fn differential_replay_live(
+    trace: &Path,
+    source: Option<&Path>,
+    model_id: &str,
+) -> Result<u8> {
+    let source_path = source.ok_or_else(|| {
+        anyhow::anyhow!(
+            "`--model` replay requires `--source <FILE>` pointing at the Corvid source the \
+             trace was recorded against. Once `SchemaHeader.source_path` is populated at \
+             record time, this flag becomes optional."
+        )
+    })?;
 
     eprintln!();
     eprintln!("differential replay mode — target model: `{model_id}`");
+    eprintln!("    source:   {}", source_path.display());
+    eprintln!("    compiling source and dispatching through replay adapter...");
+    eprintln!();
+
+    let outcome = run_replay_from_source(
+        trace,
+        source_path,
+        ReplayMode::Differential(model_id.to_string()),
+    )?;
+
+    render_differential_report(&outcome, model_id)
+}
+
+fn render_differential_report(outcome: &ReplayOutcome, model_id: &str) -> Result<u8> {
+    let report = outcome.differential_report.as_ref().ok_or_else(|| {
+        anyhow::anyhow!(
+            "replay completed but the runtime produced no differential report — this is a \
+             runtime bug; the differential adapter must emit a report for every run"
+        )
+    })?;
+
+    let llm_count = report.llm_divergences.len();
+    let sub_count = report.substitution_divergences.len();
+    let completion_diverged = report.run_completion_divergence.is_some();
+
+    eprintln!("differential replay report — agent: `{}`", outcome.agent_name);
     eprintln!(
-        "    trace contains {llm_call_count} LLM call(s) and {llm_result_count} \
-         recorded LLM result(s); the differential report will compare each \
-         recorded result against `{model_id}`'s output for the same prompt."
+        "  LLM divergences (live `{model_id}` vs. recorded): {llm_count}"
+    );
+    eprintln!("  substitution divergences (shape mismatches): {sub_count}");
+    eprintln!(
+        "  completion divergence (final result / error): {}",
+        if completion_diverged { "yes" } else { "no" }
     );
     eprintln!();
+
+    if llm_count > 0 {
+        eprintln!("LLM divergences:");
+        for div in &report.llm_divergences {
+            render_llm_divergence(div);
+        }
+        eprintln!();
+    }
+    if sub_count > 0 {
+        eprintln!("Substitution divergences:");
+        for div in &report.substitution_divergences {
+            render_substitution_divergence(div);
+        }
+        eprintln!();
+    }
+    if let Some(completion) = &report.run_completion_divergence {
+        eprintln!("Completion divergence:");
+        render_completion_divergence(completion);
+        eprintln!();
+    }
+
+    if let Some(err) = &outcome.result_error {
+        eprintln!("note: the replay run itself errored: {err}");
+        eprintln!(
+            "      divergences above (if any) were observed before the error surfaced."
+        );
+    }
+
+    if llm_count == 0 && sub_count == 0 && !completion_diverged {
+        eprintln!(
+            "no divergences — `{model_id}` reproduced every recorded LLM result, every \
+             substituted call, and the final completion."
+        );
+        Ok(0)
+    } else {
+        Ok(EXIT_DIVERGED)
+    }
+}
+
+fn render_llm_divergence(div: &LlmDivergence) {
     eprintln!(
-        "note: differential replay is not yet available. The model-swap seam \
-         ships in Phase 21 slice 21-inv-B-adapter (Dev B); this CLI will wire \
-         into it once landed. No LLM calls are made today — trace load + \
-         schema validation succeeded above."
+        "  step {} — prompt `{}`: recorded `{}` vs. live `{}`",
+        div.step,
+        div.prompt,
+        truncate_json(&div.recorded, 60),
+        truncate_json(&div.live, 60),
     );
-    Ok(EXIT_NOT_IMPLEMENTED)
+}
+
+fn render_substitution_divergence(div: &SubstitutionDivergence) {
+    eprintln!(
+        "  step {} — got {} (`{}`) where trace expected a different shape",
+        div.step, div.got_kind, div.got_description,
+    );
+}
+
+fn render_completion_divergence(div: &RunCompletionDivergence) {
+    eprintln!(
+        "  step {} — recorded(ok={}, result={}, error={}) vs. live(ok={}, result={}, error={})",
+        div.step,
+        div.recorded_ok,
+        render_optional_json(div.recorded_result.as_ref()),
+        div.recorded_error.as_deref().unwrap_or("<none>"),
+        div.live_ok,
+        render_optional_json(div.live_result.as_ref()),
+        div.live_error.as_deref().unwrap_or("<none>"),
+    );
+}
+
+fn truncate_json(value: &serde_json::Value, max_chars: usize) -> String {
+    let s = serde_json::to_string(value).unwrap_or_else(|_| "<unrenderable>".into());
+    if s.chars().count() <= max_chars {
+        s
+    } else {
+        let mut truncated: String = s.chars().take(max_chars).collect();
+        truncated.push_str("...");
+        truncated
+    }
+}
+
+fn render_optional_json(value: Option<&serde_json::Value>) -> String {
+    value
+        .map(|v| serde_json::to_string(v).unwrap_or_else(|_| "<unrenderable>".into()))
+        .unwrap_or_else(|| "<none>".into())
 }
 
 /// Counterfactual-mutation stub. Validates the `(step, json)`
@@ -342,16 +463,25 @@ mod tests {
     fn plain_replay_stub_returns_not_implemented_exit_code() {
         let dir = test_dir();
         let path = write_sample(&dir, "run-plain", false);
-        let code = run_replay(&path, None, None).unwrap();
+        let code = run_replay(&path, None, None, None).unwrap();
         assert_eq!(code, EXIT_NOT_IMPLEMENTED);
     }
 
     #[test]
-    fn differential_replay_stub_returns_not_implemented_exit_code() {
+    fn differential_replay_without_source_reports_clean_error() {
+        // 21-inv-B-cli-wire: the differential path now actually
+        // dispatches through the runtime, which requires the
+        // Corvid source to compile. Without `--source`, fail
+        // fast with a message naming the flag rather than
+        // attempting replay.
         let dir = test_dir();
         let path = write_sample(&dir, "run-diff", true);
-        let code = run_replay(&path, Some("claude-opus-5-0"), None).unwrap();
-        assert_eq!(code, EXIT_NOT_IMPLEMENTED);
+        let err = run_replay(&path, None, Some("claude-opus-5-0"), None).unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("--source"),
+            "expected error to mention `--source`, got: {msg}"
+        );
     }
 
     #[test]
@@ -359,7 +489,7 @@ mod tests {
         let dir = test_dir();
         let path = dir.join("empty.jsonl");
         std::fs::write(&path, "").unwrap();
-        let err = run_replay(&path, None, None).unwrap_err();
+        let err = run_replay(&path, None, None, None).unwrap_err();
         assert!(err.to_string().contains("empty"));
     }
 
@@ -373,7 +503,7 @@ mod tests {
         if path.exists() {
             std::fs::remove_file(&path).unwrap();
         }
-        let err = run_replay(&path, None, None).unwrap_err();
+        let err = run_replay(&path, None, None, None).unwrap_err();
         let msg = format!("{err:#}");
         assert!(
             msg.contains("failed to load trace"),
@@ -382,14 +512,16 @@ mod tests {
     }
 
     #[test]
-    fn differential_replay_accepts_model_without_llm_events() {
-        // A trace with no LLM calls should still accept a
-        // differential-replay invocation — the stub reports
-        // zero LLM calls in the divergence preview.
+    fn differential_replay_without_source_on_no_llm_trace_still_requires_source() {
+        // Regression: even when there's nothing to differentially
+        // replay (no LlmCall events in the trace), the wire still
+        // requires `--source` because the runtime still needs the
+        // IR to replay the RunStarted / RunCompleted pair.
         let dir = test_dir();
         let path = write_sample(&dir, "run-no-llm", false);
-        let code = run_replay(&path, Some("claude-opus-5-0"), None).unwrap();
-        assert_eq!(code, EXIT_NOT_IMPLEMENTED);
+        let err = run_replay(&path, None, Some("claude-opus-5-0"), None).unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(msg.contains("--source"), "got: {msg}");
     }
 
     fn mutate_args(step: usize, json: &str) -> Vec<String> {
@@ -401,7 +533,7 @@ mod tests {
         let dir = test_dir();
         let path = write_sample(&dir, "run-mutate", true);
         let args = mutate_args(1, "\"cancel\"");
-        let code = run_replay(&path, None, Some(args.as_slice())).unwrap();
+        let code = run_replay(&path, None, None, Some(args.as_slice())).unwrap();
         assert_eq!(code, EXIT_NOT_IMPLEMENTED);
     }
 
@@ -412,7 +544,7 @@ mod tests {
         // is out of range.
         let path = write_sample(&dir, "run-mutate-oor", true);
         let args = mutate_args(5, "\"refund\"");
-        let err = run_replay(&path, None, Some(args.as_slice())).unwrap_err();
+        let err = run_replay(&path, None, None, Some(args.as_slice())).unwrap_err();
         let msg = format!("{err:#}");
         assert!(
             msg.contains("out of range") && msg.contains("substitutable"),
@@ -425,7 +557,7 @@ mod tests {
         let dir = test_dir();
         let path = write_sample(&dir, "run-mutate-badjson", true);
         let args = mutate_args(1, "{not valid");
-        let err = run_replay(&path, None, Some(args.as_slice())).unwrap_err();
+        let err = run_replay(&path, None, None, Some(args.as_slice())).unwrap_err();
         let msg = format!("{err:#}");
         assert!(msg.contains("JSON did not parse"), "got: {msg}");
     }
@@ -435,7 +567,7 @@ mod tests {
         let dir = test_dir();
         let path = write_sample(&dir, "run-mutate-zero", true);
         let args = mutate_args(0, "\"refund\"");
-        let err = run_replay(&path, None, Some(args.as_slice())).unwrap_err();
+        let err = run_replay(&path, None, None, Some(args.as_slice())).unwrap_err();
         let msg = format!("{err:#}");
         assert!(msg.contains("1-based"), "got: {msg}");
     }
@@ -448,7 +580,7 @@ mod tests {
         let dir = test_dir();
         let path = write_sample(&dir, "run-mutate-none", false);
         let args = mutate_args(1, "\"refund\"");
-        let err = run_replay(&path, None, Some(args.as_slice())).unwrap_err();
+        let err = run_replay(&path, None, None, Some(args.as_slice())).unwrap_err();
         let msg = format!("{err:#}");
         assert!(
             msg.contains("out of range") && msg.contains("0 substitutable"),
@@ -467,6 +599,7 @@ mod tests {
         let args = mutate_args(1, "\"refund\"");
         let err = run_replay(
             &path,
+            None,
             Some("claude-opus-5-0"),
             Some(args.as_slice()),
         )

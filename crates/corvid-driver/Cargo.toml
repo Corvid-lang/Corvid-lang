@@ -14,10 +14,12 @@ corvid-ir = { workspace = true }
 corvid-codegen-py = { workspace = true }
 corvid-codegen-cl = { workspace = true }
 corvid-runtime = { workspace = true }
+corvid-trace-schema = { workspace = true }
 corvid-vm = { workspace = true }
 tokio = { workspace = true }
 anyhow = { workspace = true }
 ariadne = { workspace = true }
+serde_json = { workspace = true }
 toml = { workspace = true }
 
 [dev-dependencies]

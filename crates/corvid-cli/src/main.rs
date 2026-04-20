@@ -231,14 +231,22 @@ enum Command {
     /// (ToolCall / LlmCall / ApprovalRequest) as numbered in
     /// `corvid trace show`.
     ///
-    /// Until the runtime-side slices land (21-C-replay-* for
-    /// plain replay, 21-inv-B-adapter for the model-swap seam,
-    /// 21-inv-D-runtime for the mutation seam), this command
-    /// loads + validates the trace and returns exit code 1 with
-    /// a "not yet available" message.
+    /// `--source <FILE>` points at the Corvid source the trace
+    /// was recorded against. Eventually this will be inferred
+    /// from `SchemaHeader.source_path` when populated; today
+    /// it's required for any actually-execute mode (differential
+    /// / plain). Modes that don't actually run (load-validation
+    /// only) ignore it.
     Replay {
         /// Path to a JSONL trace file.
         trace: PathBuf,
+        /// Path to the Corvid source the trace was recorded
+        /// against. Required for modes that execute (default
+        /// plain replay, `--model` differential, `--mutate`
+        /// counterfactual). Once `SchemaHeader.source_path` is
+        /// populated at record time, this flag becomes optional.
+        #[arg(long, value_name = "FILE")]
+        source: Option<PathBuf>,
         /// Target model for differential replay. When present,
         /// replays against this model and reports divergences
         /// against the recorded results. When absent, runs a
@@ -367,9 +375,15 @@ fn main() -> ExitCode {
         ),
         Some(Command::Replay {
             trace,
+            source,
             model,
             mutate,
-        }) => replay::run_replay(&trace, model.as_deref(), mutate.as_deref()),
+        }) => replay::run_replay(
+            &trace,
+            source.as_deref(),
+            model.as_deref(),
+            mutate.as_deref(),
+        ),
         Some(Command::Trace { command }) => match command {
             TraceCommand::List { trace_dir } => trace_cmd::run_list(trace_dir.as_deref()),
             TraceCommand::Show {
