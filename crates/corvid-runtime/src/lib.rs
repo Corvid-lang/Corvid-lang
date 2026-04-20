@@ -44,6 +44,7 @@ pub mod replay;
 pub mod replay_dispatch;
 pub mod redact;
 pub mod runtime;
+pub mod test_from_traces;
 pub mod tools;
 pub mod tracing;
 
@@ -87,6 +88,11 @@ pub use replay::{
     ReplayMutationReport, ReplaySource, RunCompletionDivergence, SubstitutionDivergence,
 };
 pub use runtime::{Runtime, RuntimeBuilder};
+pub use test_from_traces::{
+    run_test_from_traces, Divergence, FlakeRank, ModelSwapOutcome, PromoteDecision,
+    PromotePromptMode, TestFromTracesOptions, TestFromTracesReport, TestFromTracesSummary,
+    TraceHarnessMode, TraceHarnessRequest, TraceHarnessRun, TraceOutcome, Verdict,
+};
 pub use tools::{ToolHandler, ToolRegistry};
 pub use corvid_trace_schema::{TraceEvent, WRITER_INTERPRETER, WRITER_NATIVE};
 pub use tracing::{fresh_run_id, now_ms, Tracer};
