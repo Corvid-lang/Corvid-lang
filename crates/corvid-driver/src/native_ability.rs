@@ -71,6 +71,10 @@ fn is_native_value_type(ty: &Type) -> bool {
         Type::Option(_) => is_native_option_type(ty),
         Type::Result(ok, err) => is_native_value_type(ok) && is_native_value_type(err),
         Type::Grounded(inner) => is_native_value_type(inner),
+        // TraceId requires replay-runtime support on the native
+        // tier (Phase 21 slice 21-inv-E-4 + E-runtime). Until then,
+        // a program using replay routes to the interpreter tier.
+        Type::TraceId => false,
         Type::Nothing | Type::Function { .. } | Type::Stream(_) | Type::Unknown => false,
     }
 }

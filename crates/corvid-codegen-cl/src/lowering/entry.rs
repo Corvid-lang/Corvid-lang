@@ -406,6 +406,12 @@ fn check_entry_boundary_type(
             ))
         }
         Type::Grounded(inner) => check_entry_boundary_type(inner, span, role),
+        Type::TraceId => Err(CodegenError::not_supported(
+            format!(
+                "entry agent {role} of type `TraceId` - `replay` expressions at the native command-line boundary land in Phase 21 slice 21-inv-E-4; use the interpreter tier for now"
+            ),
+            span,
+        )),
         Type::Function { .. } | Type::Unknown => Err(CodegenError::cranelift(
             format!("entry agent {role} has un-printable type `{}`", ty.display_name()),
             span,

@@ -294,6 +294,20 @@ pub enum TypeErrorKind {
         target: String,
         got: String,
     },
+
+    /// The `<expr>` in `replay <expr>:` didn't evaluate to
+    /// `TraceId` (or `String`, which coerces to `TraceId` inside a
+    /// replay context).
+    ReplayTraceNotATraceId { got: String },
+
+    /// A replay arm body's type doesn't match the first arm's type,
+    /// so the replay expression can't have a single result type.
+    /// `context` points at whether this arm is a `when` or `else`.
+    ReplayArmTypeMismatch {
+        expected: String,
+        got: String,
+        context: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -306,6 +320,12 @@ pub enum TypeWarningKind {
     /// An agent declared `Stream<T>` but never actually yielded.
     StreamReturnWithoutYield {
         agent: String,
+    },
+    /// A replay arm duplicates an earlier arm's pattern; the later
+    /// arm can never match. Phase 21 slice 21-inv-E-3.
+    ReplayUnreachableArm {
+        pattern: String,
+        first_arm_span: Span,
     },
 }
 
@@ -462,6 +482,16 @@ impl TypeErrorKind {
             Self::AdversarialAdjudicatorMissingContradictionField { prompt, target, got } => {
                 format!(
                     "adversarial `adjudicate` stage `{target}` in prompt `{prompt}` returns `{got}`, which is not a struct with a `contradiction: Bool` field"
+                )
+            }
+            Self::ReplayTraceNotATraceId { got } => {
+                format!(
+                    "`replay <expr>:` expects `TraceId` (or a `String` path literal), got `{got}`"
+                )
+            }
+            Self::ReplayArmTypeMismatch { expected, got, context } => {
+                format!(
+                    "replay arm type mismatch in {context}: expected `{expected}` (matching the first arm), got `{got}`"
                 )
             }
         }
@@ -625,6 +655,13 @@ impl TypeErrorKind {
                 "declare a `type` with at least `contradiction: Bool` and return it from the adjudicator — the runtime reads this field to decide whether to emit an adversarial contradiction trace event"
                     .into(),
             ),
+            Self::ReplayTraceNotATraceId { .. } => Some(
+                "pass either a `String` path literal like `\"run.jsonl\"` or a value of type `TraceId`"
+                    .into(),
+            ),
+            Self::ReplayArmTypeMismatch { expected, .. } => Some(format!(
+                "every arm (including `else`) of a replay block must produce the same type; adjust the arm body to return `{expected}`"
+            )),
         }
     }
 }
@@ -638,6 +675,12 @@ impl TypeWarningKind {
             Self::StreamReturnWithoutYield { agent } => {
                 format!("W0270: agent `{agent}` declares `Stream<T>` return but never yields")
             }
+            Self::ReplayUnreachableArm { pattern, first_arm_span } => {
+                format!(
+                    "replay arm `{pattern}` is unreachable: an earlier arm at [{}..{}] already matches the same recorded events",
+                    first_arm_span.start, first_arm_span.end
+                )
+            }
         }
     }
 
@@ -648,6 +691,9 @@ impl TypeWarningKind {
             ),
             Self::StreamReturnWithoutYield { .. } => Some(
                 "either add at least one `yield` or change the return type to a non-stream value".into(),
+            ),
+            Self::ReplayUnreachableArm { .. } => Some(
+                "remove the duplicate arm or make its pattern distinct (different prompt / tool / label)".into(),
             ),
         }
     }

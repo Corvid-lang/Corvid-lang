@@ -16,7 +16,7 @@ use corvid_ast::{
 };
 use corvid_resolve::{
     resolver::{MethodEntry, MethodKind},
-    Binding, BuiltIn, DeclKind, DefId, LocalId, Resolved, SymbolTable,
+    Binding, BuiltIn, DeclKind, DefId, LocalId, ReplayPatternBinding, Resolved, SymbolTable,
 };
 use std::collections::HashMap;
 
@@ -218,6 +218,13 @@ struct Checker<'a> {
     /// dispatch reuses the existing tool / prompt / agent call paths.
     methods: &'a HashMap<DefId, HashMap<String, MethodEntry>>,
 
+    /// Replay-pattern side-table from the resolver. Gives the
+    /// `DefId` (for prompt/tool resolutions) or the `Approve`
+    /// marker for approval-label patterns, keyed by the pattern's
+    /// own span. The checker uses it to compute capture types
+    /// without re-resolving string literals.
+    replay_pattern_bindings: &'a HashMap<Span, ReplayPatternBinding>,
+
     /// Type of each local binding, populated as we enter scopes.
     local_types: HashMap<LocalId, Type>,
 
@@ -383,6 +390,7 @@ impl<'a> Checker<'a> {
             agents_by_id: agents,
             types_by_id: types,
             methods: &resolved.methods,
+            replay_pattern_bindings: &resolved.replay_pattern_bindings,
             local_types: HashMap::new(),
             current_return: None,
             in_agent_body: false,

@@ -11,10 +11,10 @@
 //! decomposition.
 
 use super::Checker;
-use crate::errors::{TypeError, TypeErrorKind};
+use crate::errors::{TypeError, TypeErrorKind, TypeWarning, TypeWarningKind};
 use crate::types::Type;
-use corvid_ast::{Expr, Ident, Literal, Span};
-use corvid_resolve::{Binding, BuiltIn, DeclKind, DefId};
+use corvid_ast::{Expr, Ident, Literal, ReplayArm, ReplayPattern, Span, ToolArgPattern};
+use corvid_resolve::{Binding, BuiltIn, DeclKind, DefId, ReplayPatternBinding};
 
 impl<'a> Checker<'a> {
     pub(super) fn check_expr(&mut self, e: &Expr) -> Type {
@@ -108,21 +108,7 @@ impl<'a> Checker<'a> {
                 arms,
                 else_body,
                 ..
-            } => {
-                // Surface-level check: typecheck subexpressions so
-                // their errors surface, but treat the replay block
-                // itself as Unknown-typed. The pattern-exhaustiveness
-                // + TraceId / TraceEvent types land with
-                // 21-inv-E-3; until then a replay block is a valid
-                // expression whose result type the checker doesn't
-                // yet pin down.
-                self.check_expr(trace);
-                for arm in arms {
-                    self.check_expr(&arm.body);
-                }
-                self.check_expr(else_body);
-                Type::Unknown
-            }
+            } => self.check_replay_expr(trace, arms, else_body),
         };
         self.types.insert(e.span(), ty.clone());
         ty
@@ -246,6 +232,282 @@ impl<'a> Checker<'a> {
                     target.span(),
                 ));
                 Type::Unknown
+            }
+        }
+    }
+
+    /// Typecheck a `replay <trace>: when <pat> ... else <body>`
+    /// expression (Phase 21 slice 21-inv-E-3).
+    ///
+    /// - `<trace>` must be `TraceId`, `String` (coerces), or `Unknown`.
+    /// - Each arm's capture (whole-event `as <ident>` and per-arg
+    ///   `tool(name, <ident>)`) gets its type from the resolver's
+    ///   `replay_pattern_bindings` side-table: LLM captures take the
+    ///   prompt's return type; tool-arg captures take the tool's
+    ///   first-arg type; approve captures are `Bool`.
+    /// - The replay expression's result type is the join of every
+    ///   arm body and the `else` body. Arms whose bodies can't be
+    ///   unified with the first arm emit `ReplayArmTypeMismatch`.
+    /// - Duplicate `when` patterns warn `ReplayUnreachableArm`.
+    pub(super) fn check_replay_expr(
+        &mut self,
+        trace: &Expr,
+        arms: &[ReplayArm],
+        else_body: &Expr,
+    ) -> Type {
+        let trace_ty = self.check_expr(trace);
+        match &trace_ty {
+            Type::TraceId | Type::String | Type::Unknown => {}
+            other => {
+                self.errors.push(TypeError::new(
+                    TypeErrorKind::ReplayTraceNotATraceId {
+                        got: other.display_name(),
+                    },
+                    trace.span(),
+                ));
+            }
+        }
+
+        // Track earlier arms by normalized pattern fingerprint for
+        // unreachable-arm diagnostics.
+        let mut seen_patterns: Vec<(String, Span)> = Vec::new();
+
+        let mut joined: Option<Type> = None;
+
+        for arm in arms {
+            let fingerprint = replay_pattern_fingerprint(&arm.pattern);
+            if let Some((_, first_span)) = seen_patterns
+                .iter()
+                .find(|(fp, _)| fp == &fingerprint)
+                .cloned()
+            {
+                self.warnings.push(TypeWarning::new(
+                    TypeWarningKind::ReplayUnreachableArm {
+                        pattern: fingerprint.clone(),
+                        first_arm_span: first_span,
+                    },
+                    arm.span,
+                ));
+            } else {
+                seen_patterns.push((fingerprint, arm.span));
+            }
+
+            self.register_replay_arm_capture_types(arm);
+
+            let arm_ty = self.check_expr(&arm.body);
+            unify_replay_arm_type(&mut joined, arm_ty, &mut self.errors, arm, "a `when` arm");
+        }
+
+        let else_ty = self.check_expr(else_body);
+        unify_replay_arm_type_for_else(&mut joined, else_ty, &mut self.errors, else_body);
+
+        joined.unwrap_or(Type::Unknown)
+    }
+
+    /// Register types for the locals a replay arm's captures
+    /// introduce. `whole-event as <ident>` binds a local whose type
+    /// mirrors the recorded event's payload; `tool(..., <ident>)`
+    /// binds a local of the tool's first-arg type.
+    fn register_replay_arm_capture_types(&mut self, arm: &ReplayArm) {
+        // Whole-event capture type: varies by pattern kind.
+        if let Some(capture) = &arm.capture {
+            let ty = self.replay_whole_event_capture_type(&arm.pattern);
+            if let Some(Binding::Local(local_id)) = self.bindings.get(&capture.span).cloned() {
+                self.local_types.insert(local_id, ty);
+            }
+        }
+
+        // Tool-arg capture type: first-arg type of the resolved tool.
+        if let ReplayPattern::Tool {
+            arg: ToolArgPattern::Capture { span, .. },
+            span: pattern_span,
+            ..
+        } = &arm.pattern
+        {
+            let ty = self.replay_tool_arg_capture_type(*pattern_span);
+            if let Some(Binding::Local(local_id)) = self.bindings.get(span).cloned() {
+                self.local_types.insert(local_id, ty);
+            }
+        }
+    }
+
+    /// Compute the whole-event `as <ident>` capture's type for one
+    /// of the three pattern kinds. Falls back to `Unknown` when the
+    /// resolver couldn't bind the pattern (e.g. on an unknown prompt
+    /// name — the error is already in `self.errors`, so downstream
+    /// code degrades to Unknown gracefully).
+    fn replay_whole_event_capture_type(&self, pattern: &ReplayPattern) -> Type {
+        match pattern {
+            ReplayPattern::Llm { span, .. } => {
+                match self.replay_pattern_bindings.get(span) {
+                    Some(ReplayPatternBinding::Llm(def_id)) => {
+                        self.prompt_return_type(*def_id)
+                    }
+                    _ => Type::Unknown,
+                }
+            }
+            ReplayPattern::Tool { span, .. } => {
+                match self.replay_pattern_bindings.get(span) {
+                    Some(ReplayPatternBinding::Tool(def_id)) => {
+                        self.tool_return_type(*def_id)
+                    }
+                    _ => Type::Unknown,
+                }
+            }
+            ReplayPattern::Approve { .. } => Type::Bool,
+        }
+    }
+
+    /// Compute the per-arg capture type for a `tool("name", <ident>)`
+    /// pattern: the tool's first parameter type. `pattern_span` is
+    /// used to look up the resolved tool DefId.
+    fn replay_tool_arg_capture_type(&self, pattern_span: Span) -> Type {
+        let Some(ReplayPatternBinding::Tool(def_id)) =
+            self.replay_pattern_bindings.get(&pattern_span).copied()
+        else {
+            return Type::Unknown;
+        };
+        self.tool_first_param_type(def_id)
+    }
+
+    /// Look up the return type of a prompt by its DefId. The prompt
+    /// decl stores a `TypeRef` (surface form); resolve it with
+    /// `type_ref_to_type`. Requires `&mut self` for that helper, so
+    /// this path is factored as a take-&mut method.
+    fn prompt_return_type(&self, def_id: DefId) -> Type {
+        let Some(prompt) = self.prompts_by_id.get(&def_id) else {
+            return Type::Unknown;
+        };
+        type_ref_to_type_readonly(&prompt.return_ty, self)
+    }
+
+    fn tool_return_type(&self, def_id: DefId) -> Type {
+        let Some(tool) = self.tools_by_id.get(&def_id) else {
+            return Type::Unknown;
+        };
+        type_ref_to_type_readonly(&tool.return_ty, self)
+    }
+
+    fn tool_first_param_type(&self, def_id: DefId) -> Type {
+        let Some(tool) = self.tools_by_id.get(&def_id) else {
+            return Type::Unknown;
+        };
+        let Some(first) = tool.params.first() else {
+            return Type::Unknown;
+        };
+        type_ref_to_type_readonly(&first.ty, self)
+    }
+}
+
+// Free helpers outside the impl block.
+//
+// `type_ref_to_type` (the method-side version) mutates `self.errors`
+// on malformed generic arity, which would cascade noise if we called
+// it from deep inside replay checking — errors about the replay
+// arm should point at the arm, not at a prompt's internal TypeRef.
+// This read-only mirror accepts the same input shape but doesn't
+// record diagnostics; malformed types degrade to `Type::Unknown`
+// (the prompt/tool decl's own typecheck has already emitted any
+// diagnostics).
+fn type_ref_to_type_readonly(tr: &corvid_ast::TypeRef, checker: &Checker<'_>) -> Type {
+    use corvid_ast::TypeRef;
+    match tr {
+        TypeRef::Named { name, .. } => match name.name.as_str() {
+            "Int" => Type::Int,
+            "Float" => Type::Float,
+            "String" => Type::String,
+            "Bool" => Type::Bool,
+            "Nothing" => Type::Nothing,
+            _ => checker
+                .symbols
+                .lookup_def(&name.name)
+                .map(Type::Struct)
+                .unwrap_or(Type::Unknown),
+        },
+        TypeRef::Generic { name, args, .. } if args.len() == 1 => {
+            let inner = type_ref_to_type_readonly(&args[0], checker);
+            match name.name.as_str() {
+                "List" => Type::List(Box::new(inner)),
+                "Stream" => Type::Stream(Box::new(inner)),
+                "Option" => Type::Option(Box::new(inner)),
+                "Grounded" => Type::Grounded(Box::new(inner)),
+                _ => Type::Unknown,
+            }
+        }
+        _ => Type::Unknown,
+    }
+}
+
+/// Fingerprint a replay pattern for duplicate-arm detection. Two
+/// patterns collide when their `(kind, name)` pairs match — the
+/// capture name and tool-arg capture name don't affect matchability
+/// (they're just bindings), but a literal tool-arg string does.
+fn replay_pattern_fingerprint(pattern: &ReplayPattern) -> String {
+    match pattern {
+        ReplayPattern::Llm { prompt, .. } => format!("llm({prompt:?})"),
+        ReplayPattern::Tool { tool, arg, .. } => {
+            let arg_fp = match arg {
+                ToolArgPattern::Wildcard { .. } => "_".into(),
+                ToolArgPattern::Capture { .. } => "_".into(),
+                ToolArgPattern::StringLit { value, .. } => format!("{value:?}"),
+            };
+            format!("tool({tool:?}, {arg_fp})")
+        }
+        ReplayPattern::Approve { label, .. } => format!("approve({label:?})"),
+    }
+}
+
+/// Unify an arm body's type into the running join for the replay
+/// expression. On the first arm, sets `joined` to the arm type. On
+/// subsequent arms, checks assignability both ways; if they don't
+/// unify, records a `ReplayArmTypeMismatch` error and keeps the
+/// earlier type so later arms compare against a stable anchor.
+fn unify_replay_arm_type(
+    joined: &mut Option<Type>,
+    arm_ty: Type,
+    errors: &mut Vec<TypeError>,
+    arm: &ReplayArm,
+    context: &str,
+) {
+    match joined {
+        None => {
+            *joined = Some(arm_ty);
+        }
+        Some(existing) => {
+            if !arm_ty.is_assignable_to(existing) && !existing.is_assignable_to(&arm_ty) {
+                errors.push(TypeError::new(
+                    TypeErrorKind::ReplayArmTypeMismatch {
+                        expected: existing.display_name(),
+                        got: arm_ty.display_name(),
+                        context: context.to_string(),
+                    },
+                    arm.body.span(),
+                ));
+            }
+        }
+    }
+}
+
+fn unify_replay_arm_type_for_else(
+    joined: &mut Option<Type>,
+    else_ty: Type,
+    errors: &mut Vec<TypeError>,
+    else_body: &Expr,
+) {
+    match joined {
+        None => {
+            *joined = Some(else_ty);
+        }
+        Some(existing) => {
+            if !else_ty.is_assignable_to(existing) && !existing.is_assignable_to(&else_ty) {
+                errors.push(TypeError::new(
+                    TypeErrorKind::ReplayArmTypeMismatch {
+                        expected: existing.display_name(),
+                        got: else_ty.display_name(),
+                        context: "the `else` arm".into(),
+                    },
+                    else_body.span(),
+                ));
             }
         }
     }

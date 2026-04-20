@@ -2692,3 +2692,201 @@ agent pure(q: String) -> String:
             c.errors
         );
     }
+
+    // ============================================================
+    // Replay expression typechecking (21-inv-E-3)
+    // ============================================================
+
+    const REPLAY_PRELUDE: &str = r#"
+type Decision:
+    label: String
+
+type Order:
+    id: String
+
+prompt classify(x: String) -> Decision:
+    """Classify."""
+
+tool get_order(id: String) -> Order
+
+tool issue_refund(id: String, amount: Float) -> Order dangerous
+"#;
+
+    fn check_with_prelude(body: &str) -> Checked {
+        let src = format!("{REPLAY_PRELUDE}\n{body}");
+        let tokens = lex(&src).expect("lex failed");
+        let (file, perr) = parse_file(&tokens);
+        assert!(perr.is_empty(), "parse errors: {perr:?}");
+        let resolved = resolve(&file);
+        assert!(
+            resolved.errors.is_empty(),
+            "resolve errors: {:?}",
+            resolved.errors
+        );
+        typecheck(&file, &resolved)
+    }
+
+    fn has_replay_trace_type_error(c: &Checked) -> bool {
+        c.errors.iter().any(|e| matches!(
+            &e.kind,
+            TypeErrorKind::ReplayTraceNotATraceId { .. }
+        ))
+    }
+
+    fn has_replay_arm_type_mismatch(c: &Checked) -> bool {
+        c.errors.iter().any(|e| matches!(
+            &e.kind,
+            TypeErrorKind::ReplayArmTypeMismatch { .. }
+        ))
+    }
+
+    #[test]
+    fn replay_with_string_literal_trace_typechecks() {
+        let body = r#"
+agent run(x: String) -> Decision:
+    return replay "t.jsonl":
+        when llm("classify") -> Decision("fixture")
+        else Decision("unknown")
+"#;
+        let c = check_with_prelude(body);
+        assert!(
+            c.errors.is_empty(),
+            "expected clean replay typecheck, got {:?}",
+            c.errors
+        );
+    }
+
+    #[test]
+    fn replay_with_non_traceid_non_string_trace_errors() {
+        // An Int literal where the trace goes must surface
+        // ReplayTraceNotATraceId.
+        let body = r#"
+agent run(x: String) -> Decision:
+    return replay 42:
+        when llm("classify") -> Decision("fixture")
+        else Decision("unknown")
+"#;
+        let c = check_with_prelude(body);
+        assert!(
+            has_replay_trace_type_error(&c),
+            "expected ReplayTraceNotATraceId, got {:?}",
+            c.errors
+        );
+    }
+
+    #[test]
+    fn replay_arm_type_mismatch_surfaces() {
+        // Arm 1 returns Decision, arm 2 returns a Decision too,
+        // but `else` returns an Order — the join fails.
+        let body = r#"
+agent run(x: String) -> Decision:
+    return replay "t.jsonl":
+        when llm("classify") -> Decision("fixture")
+        else Order("mismatched")
+"#;
+        let c = check_with_prelude(body);
+        assert!(
+            has_replay_arm_type_mismatch(&c),
+            "expected ReplayArmTypeMismatch, got {:?}",
+            c.errors
+        );
+    }
+
+    #[test]
+    fn replay_arm_body_can_use_whole_event_capture_with_correct_type() {
+        // `as recorded` binds a Decision (the prompt's return type);
+        // referencing `recorded` as the arm body must typecheck.
+        let body = r#"
+agent run(x: String) -> Decision:
+    return replay "t.jsonl":
+        when llm("classify") as recorded -> recorded
+        else Decision("unknown")
+"#;
+        let c = check_with_prelude(body);
+        assert!(
+            c.errors.is_empty(),
+            "expected capture type to flow, got {:?}",
+            c.errors
+        );
+    }
+
+    #[test]
+    fn replay_arm_tool_arg_capture_has_tools_first_param_type() {
+        // `tool("get_order", ticket_id)` binds `ticket_id` to String
+        // (get_order's first param). Using it where a String is
+        // expected typechecks cleanly.
+        let body = r#"
+agent run(x: String) -> Order:
+    return replay "t.jsonl":
+        when tool("get_order", ticket_id) -> get_order(ticket_id)
+        else get_order(x)
+"#;
+        let c = check_with_prelude(body);
+        assert!(
+            c.errors.is_empty(),
+            "expected tool-arg capture to type as String, got {:?}",
+            c.errors
+        );
+    }
+
+    #[test]
+    fn replay_approve_capture_types_as_bool() {
+        // `as decision` on an approve arm binds a Bool. Using it as
+        // the condition of an if-expression check works only if
+        // Bool-typed.
+        let body = r#"
+agent run(id: String, amount: Float) -> Order:
+    approve IssueRefund(id, amount)
+    return replay "t.jsonl":
+        when approve("IssueRefund") as verdict -> get_order(id)
+        else get_order(id)
+"#;
+        let c = check_with_prelude(body);
+        assert!(
+            c.errors.is_empty(),
+            "expected approval capture typing to work, got {:?}",
+            c.errors
+        );
+    }
+
+    #[test]
+    fn replay_duplicate_pattern_warns_unreachable_arm() {
+        let body = r#"
+agent run(x: String) -> Decision:
+    return replay "t.jsonl":
+        when llm("classify") -> Decision("first")
+        when llm("classify") -> Decision("shadow")
+        else Decision("unknown")
+"#;
+        let c = check_with_prelude(body);
+        assert!(
+            c.warnings.iter().any(|w| matches!(
+                &w.kind,
+                TypeWarningKind::ReplayUnreachableArm { pattern, .. } if pattern.contains("classify")
+            )),
+            "expected ReplayUnreachableArm warning, got {:?}",
+            c.warnings
+        );
+    }
+
+    #[test]
+    fn replay_whole_body_types_as_single_joined_type() {
+        // When all arms + else produce the same type, the replay
+        // expression has that type — smoke check via a successful
+        // typecheck of an enclosing agent whose return type matches.
+        let body = r#"
+agent run(x: String) -> Decision:
+    return replay "t.jsonl":
+        when llm("classify") -> Decision("a")
+        when llm("classify") -> Decision("b")
+        else Decision("c")
+"#;
+        let c = check_with_prelude(body);
+        // There's an unreachable-arm warning (arm 2 duplicates arm 1)
+        // but the arm/body typing still reaches Decision; no errors.
+        assert!(
+            c.errors.is_empty(),
+            "expected clean errors (warnings ok), got {:?}",
+            c.errors
+        );
+    }

@@ -46,6 +46,15 @@ pub enum Type {
     /// tools through prompts to return types.
     Grounded(Box<Type>),
 
+    /// Compiler-known `TraceId` — an opaque handle to a recorded
+    /// JSONL trace, used as the subject of a `replay <expr>:`
+    /// expression. String literals coerce to `TraceId` inside a
+    /// replay context so `replay "run.jsonl": ...` parses
+    /// naturally; richer producers (`Trace::load(...)`) can land
+    /// later without breaking the surface syntax. Phase 21 slice
+    /// 21-inv-E-3.
+    TraceId,
+
     /// Placeholder when the checker can't determine a precise type.
     /// Propagates without cascading errors.
     Unknown,
@@ -86,6 +95,7 @@ impl Type {
                 }
             }
             Type::Grounded(inner) => format!("Grounded<{}>", inner.display_name()),
+            Type::TraceId => "TraceId".into(),
             Type::Unknown => "<unknown>".into(),
         }
     }

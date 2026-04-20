@@ -127,6 +127,9 @@ fn schema_for_inner(
         // adapter doesn't fail catastrophically; the type checker is the
         // real backstop.
         Type::Function { .. } => json!({}),
+        // `TraceId` also shouldn't appear as a prompt return type;
+        // if it does, fall back to string (traces are path-backed).
+        Type::TraceId => json!({ "type": "string" }),
         Type::Unknown => json!({}),
     }
 }

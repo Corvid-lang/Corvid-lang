@@ -1724,6 +1724,7 @@ pub(super) fn mangle_type_name(ty: &Type) -> String {
                 format!("Weak_{}_{}", mangle_type_name(inner), suffix.join("_"))
             }
         }
+        Type::TraceId => "TraceId".into(),
         Type::Unknown => "Unknown".into(),
     }
 }
@@ -2047,6 +2048,9 @@ pub(super) fn is_native_value_type(ty: &Type) -> bool {
         Type::Option(_) => is_native_option_type(ty),
         Type::Result(ok, err) => is_native_value_type(ok) && is_native_value_type(err),
         Type::Grounded(inner) => is_native_value_type(inner),
+        // TraceId is a string-backed opaque handle at runtime;
+        // treat it as a value type for native emission purposes.
+        Type::TraceId => true,
         Type::Nothing | Type::Function { .. } | Type::Stream(_) | Type::Unknown => false,
     }
 }

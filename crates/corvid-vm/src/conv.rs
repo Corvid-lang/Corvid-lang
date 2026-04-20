@@ -238,6 +238,7 @@ fn type_label(t: &Type) -> String {
             }
         }
         Type::Grounded(inner) => format!("Grounded<{}>", type_label(inner)),
+        Type::TraceId => "TraceId".into(),
         Type::Function { .. } => "function".into(),
         Type::Unknown => "<unknown>".into(),
     }

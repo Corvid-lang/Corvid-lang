@@ -422,6 +422,7 @@ fn python_type_hint_of(ty: &corvid_types::Type) -> String {
         // type) in Python 3.10+ or `typing.Union[...]` for older.
         T::Result(_, _) | T::Option(_) | T::Weak(_, _) => "object".into(),
         T::Grounded(inner) => python_type_hint_of(inner),
+        T::TraceId => "str".into(),
     }
 }
 
