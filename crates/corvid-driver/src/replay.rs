@@ -253,6 +253,19 @@ fn find_run_started(events: &[TraceEvent]) -> Option<(String, Vec<serde_json::Va
 /// `Value`s, using the agent's declared parameter types. Arity
 /// mismatch or type coercion failure surfaces as a typed error
 /// so the caller can point at the exact parameter that broke.
+///
+/// Exposed at `pub(crate)` so the promote-mode fresh-record helper
+/// in [`super::trace_fresh`] reuses the same conversion quality as
+/// replay — a promoted trace's fresh run must consume the recorded
+/// args identically to how the original replay would.
+pub(crate) fn convert_json_args_for_promote(
+    agent: &IrAgent,
+    ir: &IrFile,
+    json_args: &[serde_json::Value],
+) -> Result<Vec<Value>> {
+    convert_json_args(agent, ir, json_args)
+}
+
 fn convert_json_args(
     agent: &IrAgent,
     ir: &IrFile,

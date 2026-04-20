@@ -5,10 +5,11 @@
 //! flag any behavior drift. The CLI loads + validates + filters
 //! the trace set, renders a coverage map + per-flag preview, then
 //! dispatches through the regression harness. Exit code is 0 on a
-//! clean run, [`EXIT_DIVERGED`] when at least one trace diverged,
-//! flaked, or errored, and [`EXIT_NOT_IMPLEMENTED`] for the one
-//! surface still deferred (`--promote`, which needs a fresh-run
-//! helper that is not yet wired).
+//! clean run and [`EXIT_DIVERGED`] when at least one trace diverged,
+//! flaked, or errored. `--promote` now goes end-to-end: on a TTY
+//! the CLI prompts per divergence and atomically rewrites the
+//! golden trace when accepted; in non-interactive pipelines the
+//! harness defaults every prompt to reject with a one-time warning.
 //!
 //! Five inventive flags compose on top of the shipped Phase 21
 //! primitives:
@@ -35,9 +36,11 @@
 //!   nondeterminism the `@deterministic` attribute didn't catch.
 
 use anyhow::{anyhow, Context, Result};
-use corvid_driver::{run_replay_from_source_with_builder_async, ReplayMode};
+use corvid_driver::{
+    run_fresh_from_source_async, run_replay_from_source_with_builder_async, ReplayMode,
+};
 use corvid_runtime::{
-    AnthropicAdapter, OpenAiAdapter, PromoteDecision, PromotePromptMode, Runtime, StdinApprover,
+    AnthropicAdapter, OpenAiAdapter, PromotePromptMode, Runtime, StdinApprover,
     TestFromTracesOptions, TestFromTracesReport, TraceHarnessMode, TraceHarnessRequest,
     TraceHarnessRun, TraceOutcome, Verdict,
 };
@@ -52,11 +55,6 @@ use time::OffsetDateTime;
 /// least one trace diverged. Distinguishes "ran-and-found-drift"
 /// from "couldn't run" (typed anyhow errors).
 pub const EXIT_DIVERGED: u8 = 1;
-
-/// Exit code returned for CLI paths that haven't yet been wired
-/// (today: `--promote`). Kept distinct from `EXIT_DIVERGED` so CI
-/// scripts can differentiate "not wired" from "diverged."
-pub const EXIT_NOT_IMPLEMENTED: u8 = 2;
 
 /// Parsed + validated args for one invocation.
 ///
@@ -178,22 +176,6 @@ pub fn run_test_from_traces(args: TestFromTracesArgs<'_>) -> Result<u8> {
         return Ok(0);
     }
 
-    // --promote today needs RecordCurrent-mode runner support
-    // (fresh run with `.trace_to(dir)` to write the new golden
-    // trace). The runner below errors on RecordCurrent requests; a
-    // follow-up slice `21-inv-G-cli-wire-promote` adds the fresh-run
-    // helper + interactive-vs-CI prompt UX.
-    if args.promote {
-        eprintln!();
-        eprintln!(
-            "note: `--promote` is not yet wired. The interactive promotion UX + \
-             fresh-run helper land in Phase 21 slice 21-inv-G-cli-wire-promote. \
-             Trace load + schema validation + filter + coverage preview succeeded \
-             above."
-        );
-        return Ok(EXIT_NOT_IMPLEMENTED);
-    }
-
     // --source is required for the execution path. Once
     // SchemaHeader.source_path is populated at record time this
     // becomes optional.
@@ -210,15 +192,16 @@ pub fn run_test_from_traces(args: TestFromTracesArgs<'_>) -> Result<u8> {
     let filtered_paths: Vec<PathBuf> =
         filtered.iter().map(|trace| trace.path.clone()).collect();
 
-    // Build the harness options struct. PromotePromptMode is set
-    // to Decisions(Reject) so non-TTY callers (CI) default to safe
-    // rejection even in the future when --promote is wired; today
-    // we've already bailed above if promote was set.
+    // Prompt mode: AutoStdin reads [y/N/a/q] on TTY and fails
+    // closed (Reject with a one-time warning) on non-TTY. That
+    // matches the CI-safe convention — no accidental promotion in
+    // non-interactive pipelines. Override by scripting decisions
+    // through the library-level API for tests.
     let harness_options = TestFromTracesOptions {
         replay_model: args.replay_model.map(|s| s.to_string()),
         promote: args.promote,
         flake_detect: args.flake_detect,
-        prompt_mode: PromotePromptMode::Decisions(vec![PromoteDecision::Reject]),
+        prompt_mode: PromotePromptMode::AutoStdin,
     };
 
     eprintln!("dispatching through regression harness ({} traces)...", filtered.len());
@@ -262,9 +245,11 @@ pub fn run_test_from_traces(args: TestFromTracesArgs<'_>) -> Result<u8> {
 /// The harness's runner closure body, extracted so it's readable.
 ///
 /// For each request the harness raises, dispatch into the matching
-/// replay mode. `RecordCurrent` is the promote-mode path; we error
-/// cleanly on it today because the fresh-run-with-trace_to helper
-/// is a follow-up slice.
+/// mode. `Replay` / `Differential` go through the replay orchestrator
+/// and substitute recorded responses; `RecordCurrent` re-runs the
+/// agent against the current source with real LLM / tool / approver
+/// adapters (env-driven) and returns the emitted trace path so the
+/// harness can atomically swap the old golden trace for the new one.
 async fn dispatch_harness_request(
     source_path: &Path,
     request: TraceHarnessRequest,
@@ -281,13 +266,39 @@ async fn dispatch_harness_request(
             )
             .await
         }
-        TraceHarnessMode::RecordCurrent => Err(corvid_runtime::RuntimeError::ReplayTraceLoad {
-            path: request.trace_path.clone(),
-            message: "RecordCurrent (promote-mode) runner is not yet wired in the CLI; \
-                      land `21-inv-G-cli-wire-promote` for this path"
-                .into(),
-        }),
+        TraceHarnessMode::RecordCurrent => {
+            dispatch_record_current(source_path, &request.trace_path, &request.emit_dir).await
+        }
     }
+}
+
+/// Runs the agent + args recorded in `trace_path` against the
+/// current source, writing a fresh trace under `emit_dir`. Uses the
+/// same env-driven runtime builder the Replay path uses — real LLM
+/// adapters, real approver, real tools — so the promoted trace is an
+/// honest recording of the current code, not a mock replay. Returns
+/// a `TraceHarnessRun` whose `emitted_trace_path` is the new `.jsonl`
+/// the harness will atomically move over the original.
+async fn dispatch_record_current(
+    source_path: &Path,
+    trace_path: &Path,
+    emit_dir: &Path,
+) -> Result<TraceHarnessRun, corvid_runtime::RuntimeError> {
+    let base_builder = default_runtime_builder();
+    let emitted = run_fresh_from_source_async(trace_path, source_path, emit_dir, base_builder)
+        .await
+        .map_err(|err| corvid_runtime::RuntimeError::ReplayTraceLoad {
+            path: trace_path.to_path_buf(),
+            message: format!("fresh-run for promote failed: {err:#}"),
+        })?;
+
+    Ok(TraceHarnessRun {
+        final_output: None,
+        ok: true,
+        error: None,
+        emitted_trace_path: emitted,
+        differential_report: None,
+    })
 }
 
 async fn dispatch_replay(
@@ -971,16 +982,20 @@ mod tests {
     // -------------------- --promote --------------------
 
     #[test]
-    fn promote_flag_returns_not_implemented_exit_code() {
-        // --promote needs a fresh-run-with-trace_to helper that is
-        // not yet wired; the CLI returns EXIT_NOT_IMPLEMENTED and
-        // prints a note pointing at the follow-up slice.
+    fn promote_flag_reaches_dispatch_boundary() {
+        // --promote is now wired through `TraceHarnessMode::RecordCurrent`;
+        // without a `--from-traces-source` the CLI bails at the
+        // source-required check just like every other dispatch
+        // path. That confirms the flag is accepted end-to-end and
+        // participates in the same precondition discipline as the
+        // non-promote paths.
         let dir = test_dir();
         write_trace(&dir, TraceShape::new("run-1").prompt("classify"));
         let mut a = args(&dir);
         a.promote = true;
-        let code = run_test_from_traces(a).unwrap();
-        assert_eq!(code, EXIT_NOT_IMPLEMENTED);
+        let err = run_test_from_traces(a).unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(msg.contains("--from-traces-source"), "got: {msg}");
     }
 
     #[test]

@@ -3953,6 +3953,64 @@ Interpretation:
   async orchestrator will want the sync wrapper for the top-level exit-code
   return and the async variant for use inside async closures.
 
+## Day 47 — 2026-04-20 — Slice 21-inv-G-cli-wire-promote: Jest-snapshot promotion closes the loop
+
+`--promote` on `corvid test --from-traces` now runs end-to-end. The CLI was
+previously bailing with `EXIT_NOT_IMPLEMENTED` on promote because the runner
+couldn't fulfill `TraceHarnessMode::RecordCurrent` requests. This slice ships
+the missing half: a sibling driver helper that does a fresh run against the
+current source and writes the new trace, plus the CLI wiring that hands the
+harness an emitted-trace path per divergence. The harness already knew how to
+prompt the operator and atomically rewrite the old golden; it just needed a
+runner that could deliver a freshly-recorded trace on request.
+
+What shipped:
+
+- `corvid_driver::run_fresh_from_source_async(trace_path, source_path, emit_dir, base_builder) -> Result<PathBuf>`.
+  Reads the trace's `RunStarted.agent` + `args`, compiles the current source,
+  converts JSON args to typed `Value`s via the existing
+  `convert_json_args_for_promote` helper (newly `pub(crate)`-exposed from
+  `replay.rs`), builds the runtime with `.trace_to(emit_dir)`, runs, and
+  returns the `.jsonl` the runtime flushed.
+- `TraceHarnessMode::RecordCurrent` now dispatches cleanly from the CLI's
+  `dispatch_harness_request`. The runner uses the same env-driven
+  `default_runtime_builder` as the replay path, so promote records an honest
+  live run against real adapters.
+- `PromotePromptMode::AutoStdin` replaces the hardcoded
+  `Decisions(vec![Reject])` that was the placeholder for the deferred slice.
+  `AutoStdin` already ships the right CI-safe default: on a TTY it prints
+  `promote? [y/N/a/q]:` and reads stdin; on non-TTY it emits a one-time
+  "defaulting to Reject for CI safety" warning and returns `Reject` for every
+  subsequent divergence.
+- `EXIT_NOT_IMPLEMENTED = 2` constant removed — no CLI path returns it any
+  more. The exit-code contract simplifies to `0` (clean) / `1`
+  (diverged/flaked/errored) / anyhow-bail (hard error).
+- Six new `trace_fresh_orchestrator.rs` integration tests cover: emit path
+  under a caller-supplied dir the helper must mkdir, agent+args round-trip,
+  current-behavior capture when it differs from the recording, empty-trace
+  rejection, missing-source rejection, and agent-not-in-current-source
+  rejection. All green.
+- The existing `promote_flag_returns_not_implemented_exit_code` unit test
+  flipped to `promote_flag_reaches_dispatch_boundary` — promote now bails at
+  the source-required check just like every other dispatch path, which
+  confirms the flag is accepted end-to-end.
+
+Interpretation:
+
+- Phase 21's prod-as-test-suite story is now complete end-to-end. An operator
+  running `corvid test --from-traces traces/ --from-traces-source agent.cor
+  --promote` on a TTY gets a Jest-snapshot workflow for LLM agents; the same
+  command in CI rejects every divergence by default, so a misconfigured
+  pipeline cannot silently promote bad behavior.
+- The sibling-helper decomposition (`run_replay_from_source_with_builder_async`
+  for replay, `run_fresh_from_source_async` for promote) is the right shape.
+  Replay substitutes recorded responses; promote ignores them and records
+  fresh. Two files, one responsibility each, no mode flags threading through
+  a shared helper.
+- Phase 21's Lane A (compiler + CLI + docs) is one slice from done: only
+  `21-inv-H` (behavior-diff PR tool) and `21-docs` remain, and `21-inv-H`
+  needs a pre-phase design chat before code.
+
 
 
 

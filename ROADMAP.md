@@ -1192,7 +1192,7 @@ Users register local models (Ollama, vLLM, llama.cpp) with declared capabilities
 - [x] 21-inv-B-cli-wire      Flip `--model` CLI stub to real differential-replay dispatch (driver helper `run_replay_from_source_with_builder` + 6 driver integration tests)
 - [x] 21-inv-D-cli-wire      Flip `--mutate` CLI stub to real counterfactual-mutation dispatch (4 driver integration tests)
 - [x] 21-inv-G-cli-wire      Flip `--from-traces` CLI stub to real regression-harness dispatch through `corvid_runtime::run_test_from_traces` (async driver variant; deferred `--promote` to follow-up)
-- [ ] 21-inv-G-cli-wire-promote  Follow-up: wire `--promote` through `RecordCurrent` (fresh-run-with-`trace_to` helper + interactive/CI prompt UX)
+- [x] 21-inv-G-cli-wire-promote  Wire `--promote` through `RecordCurrent`: fresh-run-with-`trace_to` driver helper (`run_fresh_from_source_async`) + `PromotePromptMode::AutoStdin` (TTY: [y/N/a/q]; non-TTY: fail-closed with one-time warning)
 - [ ] 21-inv-H               `corvid trace-diff <commit-a> <commit-b>` + git-integrated behavior diff
 - [ ] 21-docs                Spec section 21 + ROADMAP closeout + v1.0 demo script
 

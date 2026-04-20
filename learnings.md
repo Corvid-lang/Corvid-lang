@@ -1635,12 +1635,33 @@ loads + schema-validates each trace, applies the coverage filters
 (`--only-dangerous`, `--only-prompt`, `--only-tool`, `--since`, `--replay-model`,
 `--flake-detect`), and dispatches each surviving trace through the regression
 harness. Exit code 0 means every trace still behaves the way production
-behaved; exit code 1 flags drift; exit code 2 is reserved for the one still-
-deferred surface (`--promote`, which needs a fresh-run recorder). The lesson is
-that a CLI that only previews the plan is half a feature. Phase 21's invention
-is that *production traffic is the test suite*, and that only becomes real when
-the CLI actually runs the traces against the current binary and prints a
-per-trace verdict, not when it prints a coverage map and hands off to a human.
+behaved; exit code 1 flags drift. `--promote` now closes the loop: on a TTY it
+prompts per divergence and atomically rewrites the golden trace when accepted;
+in non-interactive pipelines it fails closed with a one-time warning. The
+lesson is that a CLI that only previews the plan is half a feature. Phase 21's
+invention is that *production traffic is the test suite*, and that only becomes
+real when the CLI actually runs the traces against the current binary, prints a
+per-trace verdict, and — when behavior genuinely changed for the better — lets
+the operator promote the current run to the new golden instead of having them
+re-record by hand.
+
+### Jest-snapshot promotion needs a fresh-run driver helper, not a replay-with-different-flags
+
+A `--promote` implementation that only adjusted replay's substitution knobs
+would have been a shortcut. Promotion is semantically the opposite of replay:
+replay *substitutes* recorded responses to verify the current code still
+produces them; promote *ignores* recorded responses so a fresh run under the
+current code + real adapters can overwrite the golden. The right shape is a
+sibling driver helper (`run_fresh_from_source_async`) that extracts the trace's
+agent + args, compiles the current source, builds a runtime with
+`.trace_to(emit_dir)` and *no* replay configuration, runs the agent, and
+returns the emitted trace path. The harness then atomically swaps the old
+golden for the new one when the operator accepts the divergence. The lesson
+generalises: when two behaviours look like knobs on the same pipeline but have
+inverse semantics, shipping them as sibling helpers beats shipping them as
+modes of one helper. The codepaths read cleanly, the tests cover each property
+in isolation, and a future reader doesn't hunt through a single helper to
+work out which branch handles which story.
 
 ### A sync CLI wrapping an async runner needs two driver helpers, not a nested block_on
 

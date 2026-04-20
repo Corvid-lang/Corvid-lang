@@ -60,10 +60,12 @@ mod law;
 mod replay;
 mod run;
 mod scaffold;
+mod trace_fresh;
 pub use replay::{
     configure_replay_mode, run_replay_from_source, run_replay_from_source_with_builder,
     run_replay_from_source_with_builder_async, ReplayMode, ReplayOutcome,
 };
+pub use trace_fresh::run_fresh_from_source_async;
 pub use build::{
     build_native_to_disk, build_target_to_disk, build_to_disk, BuildOutput, BuildTarget,
     NativeBuildOutput, TargetBuildOutput,
