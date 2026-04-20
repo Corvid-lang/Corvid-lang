@@ -41,6 +41,7 @@ pub mod models;
 mod native_trace;
 pub mod record;
 pub mod replay;
+pub mod replay_dispatch;
 pub mod redact;
 pub mod runtime;
 pub mod tools;
@@ -87,5 +88,5 @@ pub use replay::{
 };
 pub use runtime::{Runtime, RuntimeBuilder};
 pub use tools::{ToolHandler, ToolRegistry};
-pub use corvid_trace_schema::TraceEvent;
+pub use corvid_trace_schema::{TraceEvent, WRITER_INTERPRETER, WRITER_NATIVE};
 pub use tracing::{fresh_run_id, now_ms, Tracer};
