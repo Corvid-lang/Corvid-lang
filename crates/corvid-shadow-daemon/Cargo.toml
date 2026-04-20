@@ -1,0 +1,41 @@
+[package]
+name = "corvid-shadow-daemon"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Shadow replay daemon for Corvid: runtime verification of compile-time guarantees."
+
+[lib]
+name = "corvid_shadow_daemon"
+path = "src/lib.rs"
+
+[[bin]]
+name = "corvid-shadow"
+path = "src/bin/corvid-shadow.rs"
+
+[dependencies]
+anyhow = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+toml = { workspace = true }
+tokio = { workspace = true }
+async-trait = "0.1"
+notify = "7"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+time = { version = "0.3", features = ["parsing", "formatting"] }
+serde_ignored = "0.1"
+clap = { workspace = true, features = ["derive"] }
+
+corvid-ast = { workspace = true }
+corvid-driver = { workspace = true }
+corvid-ir = { workspace = true }
+corvid-resolve = { workspace = true }
+corvid-runtime = { workspace = true }
+corvid-syntax = { workspace = true }
+corvid-trace-schema = { workspace = true }
+corvid-types = { workspace = true }
+corvid-vm = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3"
+wiremock = "0.6"
