@@ -228,6 +228,174 @@ fn replay_orchestrator_rejects_empty_trace() {
     assert!(msg.contains("empty"), "got: {msg}");
 }
 
+// ------------------------------------------------------------
+// Mutation-mode coverage (21-inv-D-cli-wire)
+// ------------------------------------------------------------
+
+#[test]
+fn mutation_replay_with_identical_replacement_reports_no_divergence() {
+    // Recording has `decide_refund` returning `true`. Replay
+    // mutates step 1 (the only substitutable event — the
+    // LlmCall) with the SAME value `true`. Report should show
+    // zero divergences because the mutation is a no-op.
+    let tmp = tempfile::tempdir().unwrap();
+    let source_path = write_source_tempfile(tmp.path(), SRC);
+    let trace_dir = tmp.path().join("traces");
+    std::fs::create_dir_all(&trace_dir).unwrap();
+    record_trace(&source_path, &trace_dir, true);
+    let trace_path = trace_file_in(&trace_dir);
+
+    let outcome = run_replay_from_source_with_builder(
+        &trace_path,
+        &source_path,
+        ReplayMode::Mutation {
+            step_1based: 1,
+            replacement: json!(true),
+        },
+        replay_builder(true),
+    )
+    .expect("mutation replay runs");
+
+    assert!(
+        outcome.ran_cleanly(),
+        "replay errored: {:?}",
+        outcome.result_error
+    );
+    let report = outcome
+        .mutation_report
+        .as_ref()
+        .expect("mutation report present");
+    assert!(
+        report.divergences.is_empty(),
+        "expected no divergences for identity mutation, got {:?}",
+        report.divergences
+    );
+}
+
+#[test]
+fn mutation_replay_changes_final_output_when_override_differs_from_recording() {
+    // Recording has `decide_refund(true)` → agent returns true.
+    // Replay mutates step 1 with `false`. The agent's final
+    // output changes, so the report should show a completion
+    // divergence (recorded ok=true/result=true vs. live result=false).
+    let tmp = tempfile::tempdir().unwrap();
+    let source_path = write_source_tempfile(tmp.path(), SRC);
+    let trace_dir = tmp.path().join("traces");
+    std::fs::create_dir_all(&trace_dir).unwrap();
+    record_trace(&source_path, &trace_dir, true);
+    let trace_path = trace_file_in(&trace_dir);
+
+    let outcome = run_replay_from_source_with_builder(
+        &trace_path,
+        &source_path,
+        ReplayMode::Mutation {
+            step_1based: 1,
+            replacement: json!(false),
+        },
+        replay_builder(true),
+    )
+    .expect("mutation replay runs");
+
+    let report = outcome
+        .mutation_report
+        .as_ref()
+        .expect("mutation report present");
+    // The mutation changed the LLM's recorded result, so the
+    // final RunCompleted event diverges too.
+    assert!(
+        report.run_completion_divergence.is_some(),
+        "expected completion divergence when mutation changes final result, \
+         got divergences={:?}",
+        report.divergences
+    );
+}
+
+#[test]
+fn mutation_replay_rejects_out_of_range_step() {
+    // Trace has one substitutable event (LlmCall). Step 5 is
+    // out of range; the runtime should surface a typed error.
+    let tmp = tempfile::tempdir().unwrap();
+    let source_path = write_source_tempfile(tmp.path(), SRC);
+    let trace_dir = tmp.path().join("traces");
+    std::fs::create_dir_all(&trace_dir).unwrap();
+    record_trace(&source_path, &trace_dir, true);
+    let trace_path = trace_file_in(&trace_dir);
+
+    let outcome = run_replay_from_source_with_builder(
+        &trace_path,
+        &source_path,
+        ReplayMode::Mutation {
+            step_1based: 5,
+            replacement: json!(false),
+        },
+        replay_builder(true),
+    );
+
+    // Out-of-range step should either fail at orchestrator level
+    // or surface as a result_error — both are acceptable outcomes
+    // as long as it's not a silent success.
+    match outcome {
+        Err(err) => {
+            let msg = format!("{err:#}");
+            assert!(
+                msg.contains("mutation") || msg.contains("step") || msg.contains("range"),
+                "error should mention mutation/step/range, got: {msg}"
+            );
+        }
+        Ok(outcome) => {
+            assert!(
+                outcome.result_error.is_some(),
+                "out-of-range step must surface as an error, not a silent clean run"
+            );
+        }
+    }
+}
+
+#[test]
+fn mutation_replay_rejects_wrong_shape_replacement() {
+    // The recorded LlmResult for `decide_refund` is `Bool`. The
+    // replacement JSON is an object — wrong shape. The runtime's
+    // `InvalidReplayMutation` guard should reject this up front
+    // (Dev B's wrong-shape handling choice from 21-inv-D-runtime).
+    let tmp = tempfile::tempdir().unwrap();
+    let source_path = write_source_tempfile(tmp.path(), SRC);
+    let trace_dir = tmp.path().join("traces");
+    std::fs::create_dir_all(&trace_dir).unwrap();
+    record_trace(&source_path, &trace_dir, true);
+    let trace_path = trace_file_in(&trace_dir);
+
+    let outcome = run_replay_from_source_with_builder(
+        &trace_path,
+        &source_path,
+        ReplayMode::Mutation {
+            step_1based: 1,
+            replacement: json!({"not": "a bool"}),
+        },
+        replay_builder(true),
+    );
+
+    // Wrong-shape should either fail at orchestrator level or
+    // surface as a result_error. Silent acceptance is a bug.
+    match outcome {
+        Err(err) => {
+            let msg = format!("{err:#}");
+            assert!(
+                !msg.is_empty(),
+                "wrong-shape error should carry a message, got: {msg}"
+            );
+        }
+        Ok(outcome) => {
+            assert!(
+                outcome.result_error.is_some() || !outcome.mutation_report
+                    .as_ref()
+                    .map(|r| r.divergences.is_empty())
+                    .unwrap_or(true),
+                "wrong-shape must surface as an error or a divergence; silent success is wrong"
+            );
+        }
+    }
+}
+
 #[test]
 fn replay_orchestrator_rejects_agent_not_in_source() {
     // The trace was recorded against a source containing agent

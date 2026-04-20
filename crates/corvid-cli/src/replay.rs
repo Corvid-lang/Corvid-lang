@@ -37,7 +37,9 @@
 
 use anyhow::{Context, Result};
 use corvid_driver::{run_replay_from_source, ReplayMode, ReplayOutcome};
-use corvid_runtime::{LlmDivergence, RunCompletionDivergence, SubstitutionDivergence};
+use corvid_runtime::{
+    LlmDivergence, MutationDivergence, RunCompletionDivergence, SubstitutionDivergence,
+};
 use corvid_trace_schema::{
     read_events_from_path, schema_version_of, validate_supported_schema, TraceEvent,
 };
@@ -93,7 +95,7 @@ pub fn run_replay(
             );
         }
         (Some(model_id), None) => differential_replay_live(trace, source, model_id),
-        (None, Some(args)) => mutate_replay_stub(args, &events),
+        (None, Some(args)) => mutate_replay_live(trace, source, args, &events),
         (None, None) => plain_replay_stub(),
     }
 }
@@ -261,13 +263,27 @@ fn render_optional_json(value: Option<&serde_json::Value>) -> String {
         .unwrap_or_else(|| "<none>".into())
 }
 
-/// Counterfactual-mutation stub. Validates the `(step, json)`
-/// pair against the trace, prints the mutation plan, and returns
-/// the "not yet available" exit code. Once `21-inv-D-runtime`
-/// lands, this branch invokes the replay runtime with a single
-/// response override at the requested step and renders the
-/// downstream behavior diff.
-fn mutate_replay_stub(args: &[String], events: &[TraceEvent]) -> Result<u8> {
+/// Live counterfactual mutation replay (Phase 21 slice
+/// 21-inv-D-cli-wire).
+///
+/// Parses + validates the `(STEP, JSON)` pair against the trace,
+/// resolves `--source`, then dispatches through the driver's
+/// replay orchestrator with `ReplayMode::Mutation`. Renders the
+/// resulting [`corvid_runtime::ReplayMutationReport`] to stderr.
+///
+/// Exit code reflects the downstream-drift outcome:
+/// `0` when the trace's post-STEP events all matched what the
+/// mutated run produced (meaning the mutation had no observable
+/// downstream effect — rarely the expected outcome but possible
+/// when the mutated value flows nowhere), or `EXIT_DIVERGED`
+/// (`1`) when at least one downstream step diverged or the
+/// agent's final completion changed.
+fn mutate_replay_live(
+    trace: &Path,
+    source: Option<&Path>,
+    args: &[String],
+    events: &[TraceEvent],
+) -> Result<u8> {
     // clap enforces num_args = 2, but be explicit so library-level
     // callers get a clean error rather than an index panic.
     if args.len() != 2 {
@@ -277,9 +293,12 @@ fn mutate_replay_stub(args: &[String], events: &[TraceEvent]) -> Result<u8> {
         );
     }
 
-    let step_1based: usize = args[0]
-        .parse()
-        .with_context(|| format!("`--mutate` STEP must be a positive integer; got `{}`", args[0]))?;
+    let step_1based: usize = args[0].parse().with_context(|| {
+        format!(
+            "`--mutate` STEP must be a positive integer; got `{}`",
+            args[0]
+        )
+    })?;
     if step_1based == 0 {
         anyhow::bail!("`--mutate` STEP is 1-based; 0 is not a valid step");
     }
@@ -287,6 +306,10 @@ fn mutate_replay_stub(args: &[String], events: &[TraceEvent]) -> Result<u8> {
     let replacement: serde_json::Value = serde_json::from_str(&args[1])
         .with_context(|| format!("`--mutate` JSON did not parse: `{}`", args[1]))?;
 
+    // Pre-flight validation against the local event stream:
+    // reject out-of-range STEP before building a Runtime, and
+    // name the specific recorded event being overridden so the
+    // user sees what their replacement will stand in for.
     let substitutable: Vec<(usize, &TraceEvent)> = events
         .iter()
         .enumerate()
@@ -304,25 +327,106 @@ fn mutate_replay_stub(args: &[String], events: &[TraceEvent]) -> Result<u8> {
     let (_, event) = substitutable[step_1based - 1];
     let (kind, name) = describe_substitutable(event);
 
+    let source_path = source.ok_or_else(|| {
+        anyhow::anyhow!(
+            "`--mutate` replay requires `--source <FILE>` pointing at the Corvid source the \
+             trace was recorded against. Once `SchemaHeader.source_path` is populated at \
+             record time, this flag becomes optional."
+        )
+    })?;
+
     eprintln!();
     eprintln!(
-        "counterfactual replay — step {step_1based} ({kind} `{name}`) will be overridden"
+        "counterfactual replay — step {step_1based} ({kind} `{name}`) overridden"
     );
     eprintln!(
         "    recorded response replaced with: {}",
         serde_json::to_string(&replacement).unwrap_or_else(|_| "<unrenderable>".into())
     );
+    eprintln!("    source:   {}", source_path.display());
+    eprintln!("    compiling source and dispatching through mutation adapter...");
+    eprintln!();
+
+    let outcome = run_replay_from_source(
+        trace,
+        source_path,
+        ReplayMode::Mutation {
+            step_1based,
+            replacement,
+        },
+    )?;
+
+    render_mutation_report(&outcome, step_1based, kind, name)
+}
+
+fn render_mutation_report(
+    outcome: &ReplayOutcome,
+    step: usize,
+    kind: &str,
+    name: &str,
+) -> Result<u8> {
+    let report = outcome.mutation_report.as_ref().ok_or_else(|| {
+        anyhow::anyhow!(
+            "replay completed but the runtime produced no mutation report — this is a \
+             runtime bug; the mutation adapter must emit a report for every run"
+        )
+    })?;
+
+    let divergence_count = report.divergences.len();
+    let completion_diverged = report.run_completion_divergence.is_some();
+
+    eprintln!("mutation replay report — agent: `{}`", outcome.agent_name);
     eprintln!(
-        "    the behavior diff will report every downstream step whose value changed"
+        "  mutated step: {} ({} `{}`)",
+        step, kind, name
+    );
+    eprintln!("  downstream divergences: {}", divergence_count);
+    eprintln!(
+        "  completion divergence (final result / error): {}",
+        if completion_diverged { "yes" } else { "no" }
     );
     eprintln!();
+
+    if divergence_count > 0 {
+        eprintln!("Downstream divergences:");
+        for div in &report.divergences {
+            render_mutation_divergence(div);
+        }
+        eprintln!();
+    }
+    if let Some(completion) = &report.run_completion_divergence {
+        eprintln!("Completion divergence:");
+        render_completion_divergence(completion);
+        eprintln!();
+    }
+
+    if let Some(err) = &outcome.result_error {
+        eprintln!("note: the replay run itself errored: {err}");
+        eprintln!(
+            "      divergences above (if any) were observed before the error surfaced."
+        );
+    }
+
+    if divergence_count == 0 && !completion_diverged {
+        eprintln!(
+            "no divergences — the mutation at step {step} had no observable downstream \
+             effect. The replaced value either flows nowhere that matters, or the code \
+             treats it the same as the original."
+        );
+        Ok(0)
+    } else {
+        Ok(EXIT_DIVERGED)
+    }
+}
+
+fn render_mutation_divergence(div: &MutationDivergence) {
     eprintln!(
-        "note: counterfactual replay is not yet available. The mutation seam \
-         ships in Phase 21 slice 21-inv-D-runtime (Dev B); this CLI will wire \
-         into it once landed. No LLM calls are made today — trace load + \
-         schema validation + mutation validation succeeded above."
+        "  step {} — {} expected `{}`, got `{}`",
+        div.step,
+        div.kind,
+        truncate_json(&div.recorded, 60),
+        truncate_json(&div.got, 60),
     );
-    Ok(EXIT_NOT_IMPLEMENTED)
 }
 
 /// True when `event` is a call that can have its recorded response
@@ -529,12 +633,19 @@ mod tests {
     }
 
     #[test]
-    fn mutate_stub_returns_not_implemented_exit_code() {
+    fn mutate_replay_without_source_reports_clean_error() {
+        // 21-inv-D-cli-wire: the mutate path now actually
+        // dispatches through the runtime, which requires the
+        // Corvid source to compile. Without `--source`, fail
+        // fast with a message naming the flag rather than
+        // attempting replay.
         let dir = test_dir();
         let path = write_sample(&dir, "run-mutate", true);
         let args = mutate_args(1, "\"cancel\"");
-        let code = run_replay(&path, None, None, Some(args.as_slice())).unwrap();
-        assert_eq!(code, EXIT_NOT_IMPLEMENTED);
+        let err =
+            run_replay(&path, None, None, Some(args.as_slice())).unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(msg.contains("--source"), "got: {msg}");
     }
 
     #[test]
