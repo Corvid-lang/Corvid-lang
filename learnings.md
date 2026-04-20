@@ -1627,6 +1627,38 @@ interpreter, and native tier, not just adding one more native representation
 case. If a construct is already a language-level failure carrier, retry policy
 should treat it coherently across both tiers.
 
+### Prod traces are a regression suite the moment the harness can dispatch them
+
+Corvid now treats every recorded `.jsonl` trace under a directory as a
+regression test: `corvid test --from-traces <dir> --from-traces-source <file>`
+loads + schema-validates each trace, applies the coverage filters
+(`--only-dangerous`, `--only-prompt`, `--only-tool`, `--since`, `--replay-model`,
+`--flake-detect`), and dispatches each surviving trace through the regression
+harness. Exit code 0 means every trace still behaves the way production
+behaved; exit code 1 flags drift; exit code 2 is reserved for the one still-
+deferred surface (`--promote`, which needs a fresh-run recorder). The lesson is
+that a CLI that only previews the plan is half a feature. Phase 21's invention
+is that *production traffic is the test suite*, and that only becomes real when
+the CLI actually runs the traces against the current binary and prints a
+per-trace verdict, not when it prints a coverage map and hands off to a human.
+
+### A sync CLI wrapping an async runner needs two driver helpers, not a nested block_on
+
+The regression harness raises async runner requests (one per trace, each async
+because replay dispatches through mock + real LLM adapters). The CLI is
+fundamentally sync — `anyhow::Result<u8>` — so it wants to call
+`tokio::Runtime::block_on` once at the top. But the runner closure inside the
+harness is itself async and dispatches into the replay orchestrator, which was
+originally a sync function that did its own `block_on` internally. Nesting a
+`block_on` inside another `block_on` panics. The fix that stays honest is to
+split the driver helper into a sync wrapper and an async variant
+(`run_replay_from_source_with_builder` + `_async`), push all runtime
+construction up to the CLI boundary, and let every level below the CLI stay
+async. The lesson is that "just call `block_on` again" is a shortcut with a
+runtime-panic price tag; if a crate offers a sync helper that other callers
+rely on, the answer is to expose the async variant alongside it, not to thread
+runtimes through function bodies.
+
 ### Nullable-pointer options are only safe until they stop preserving information
 
 The cheap native encoding for `Option<T>` is a good one when the payload has a

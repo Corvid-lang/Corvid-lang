@@ -62,7 +62,7 @@ mod run;
 mod scaffold;
 pub use replay::{
     configure_replay_mode, run_replay_from_source, run_replay_from_source_with_builder,
-    ReplayMode, ReplayOutcome,
+    run_replay_from_source_with_builder_async, ReplayMode, ReplayOutcome,
 };
 pub use build::{
     build_native_to_disk, build_target_to_disk, build_to_disk, BuildOutput, BuildTarget,

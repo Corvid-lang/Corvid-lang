@@ -114,13 +114,18 @@ enum Command {
         /// For `adversarial`: model to drive the generator.
         #[arg(long, default_value = "opus")]
         model: String,
-        /// Prod-as-test-suite mode (Phase 21 slice 21-inv-G-cli).
-        /// Replay every `.jsonl` in `<DIR>` against the current code
-        /// and report any behavior drift. Today's stub loads,
-        /// validates, filters, and reports coverage; the live
-        /// regression harness ships in Dev B's `21-inv-G-harness`.
+        /// Prod-as-test-suite mode (Phase 21 slice 21-inv-G-cli,
+        /// wired live in 21-inv-G-cli-wire). Replay every `.jsonl`
+        /// in `<DIR>` against the current code and report any
+        /// behavior drift. Requires `--from-traces-source <FILE>`.
         #[arg(long, value_name = "DIR")]
         from_traces: Option<PathBuf>,
+        /// For `--from-traces`: path to the Corvid source the
+        /// traces were recorded against. Required today; becomes
+        /// optional once `SchemaHeader.source_path` is populated
+        /// at record time.
+        #[arg(long, value_name = "FILE", requires = "from_traces")]
+        from_traces_source: Option<PathBuf>,
         /// For `--from-traces`: differential replay against a
         /// different model. Composes with `21-inv-B-adapter`. When
         /// present, every trace's recorded LLM results are compared
@@ -335,6 +340,7 @@ fn main() -> ExitCode {
             count,
             model,
             from_traces,
+            from_traces_source,
             replay_model,
             only_dangerous,
             only_prompt,
@@ -347,6 +353,7 @@ fn main() -> ExitCode {
                 test_from_traces::run_test_from_traces(
                     test_from_traces::TestFromTracesArgs {
                         trace_dir: &dir,
+                        source: from_traces_source.as_deref(),
                         replay_model: replay_model.as_deref(),
                         only_dangerous,
                         only_prompt: only_prompt.as_deref(),

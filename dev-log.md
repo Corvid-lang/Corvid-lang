@@ -3900,6 +3900,59 @@ Interpretation:
   cross-phase choice between Phase 20 effect integration and the next capability
   wave
 
+## Day 46 — 2026-04-19 — Slice 21-inv-G-cli-wire: real prod-as-test-suite dispatch
+
+`corvid test --from-traces` stopped being a preview-only stub. The CLI now
+loads + validates + filters + previews exactly as before, then dispatches the
+surviving trace set through `corvid_runtime::run_test_from_traces` (the
+harness Dev B landed in `21-inv-G-harness`), which raises one async runner
+request per trace and the CLI fulfills each by calling the driver's replay
+orchestrator. Exit code is now 0 for a clean run, 1 when any trace diverged /
+flaked / errored, and 2 only for the one still-deferred surface (`--promote`,
+which needs a fresh-run-with-`trace_to` helper and lands as a follow-up).
+
+What shipped:
+
+- `--from-traces-source <FILE>` flag on the Test subcommand. Required until
+  `SchemaHeader.source_path` is populated at record time, at which point it
+  becomes optional. The new flag is `requires = "from_traces"` in clap so it
+  can't be set without `--from-traces`.
+- `TestFromTracesArgs.source: Option<&Path>`. Defensive library-level wiring
+  that stays strict even for non-clap callers.
+- `run_replay_from_source_with_builder_async` driver helper alongside the
+  existing sync wrapper. The sync variant now delegates to the async one via
+  one top-level `block_on`. This is the only shape that lets a sync CLI call
+  an async harness runner without nesting tokio runtimes.
+- Exit-code contract: `EXIT_DIVERGED = 1` (ran-and-found-drift) and
+  `EXIT_NOT_IMPLEMENTED = 2` (flag parsed but surface still deferred). The
+  distinction matters for CI scripts: "diverged" is a real regression;
+  "not implemented" is a deferred feature.
+- Per-trace + summary rendering of `TestFromTracesReport` with glyphs
+  (`  ok  `, `DIVERG`, `FLAKY `, `PROMOT`, `ERROR `) and divergence /
+  flake-rank / model-swap details where present.
+- All 19 existing `test_from_traces` unit tests updated from
+  "stub returns EXIT_NOT_IMPLEMENTED" assertions to either (a) clean-success
+  assertions on filter-to-empty paths, (b) source-required error assertions
+  on paths that reach the dispatch boundary, or (c) the still-deferred
+  `--promote` not-implemented exit.
+- 10 driver-level integration tests (`replay_orchestrator.rs`) cover the
+  end-to-end differential + mutation dispatch the CLI now invokes.
+
+Interpretation:
+
+- the Phase 21 flagship feature — *prod traffic is the test suite* — is
+  actually a test suite now, not a preview. A user who records traces and
+  runs `corvid test --from-traces traces/ --from-traces-source agent.cor`
+  gets a verdict per trace and an honest exit code.
+- `--promote` is deliberately scoped out as a follow-up slice
+  (`21-inv-G-cli-wire-promote`). It needs the fresh-run-with-`trace_to`
+  helper plus interactive vs. CI prompt UX. Keeping it out of this slice
+  kept the scope tight and the diff reviewable.
+- the sync/async driver split is the pattern future CLI-wrapping work will
+  reach for. Any CLI command that invokes the regression harness or any
+  async orchestrator will want the sync wrapper for the top-level exit-code
+  return and the async variant for use inside async closures.
+
 
 
 

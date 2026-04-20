@@ -1,13 +1,14 @@
-//! `corvid test --from-traces <DIR>` — prod-as-test-suite CLI
-//! (Phase 21 slice 21-inv-G-cli).
+//! `corvid test --from-traces <DIR>` — prod-as-test-suite CLI.
 //!
 //! Turn every recorded trace under `<DIR>` into a regression test:
 //! for each `.jsonl` file, replay it against the current code and
-//! flag any behavior drift. Today's CLI loads + validates + filters
-//! the trace set, renders a coverage map + per-flag preview, and
-//! returns [`EXIT_NOT_IMPLEMENTED`] pointing at Dev B's
-//! `21-inv-G-harness` slice for the actual replay-and-compare
-//! harness.
+//! flag any behavior drift. The CLI loads + validates + filters
+//! the trace set, renders a coverage map + per-flag preview, then
+//! dispatches through the regression harness. Exit code is 0 on a
+//! clean run, [`EXIT_DIVERGED`] when at least one trace diverged,
+//! flaked, or errored, and [`EXIT_NOT_IMPLEMENTED`] for the one
+//! surface still deferred (`--promote`, which needs a fresh-run
+//! helper that is not yet wired).
 //!
 //! Five inventive flags compose on top of the shipped Phase 21
 //! primitives:
@@ -32,25 +33,30 @@
 //! - `--flake-detect <N>`    replay each trace N times; any trace
 //!   producing different output across runs surfaces program-level
 //!   nondeterminism the `@deterministic` attribute didn't catch.
-//!
-//! Until `21-inv-G-harness` lands, this command never actually
-//! runs a replay — it previews the plan. That preview already has
-//! value: coverage gaps surface, filter cardinality is visible
-//! before CI time, and invalid flag combinations fail at parse
-//! time rather than half-way through a regression run.
 
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
+use corvid_driver::{run_replay_from_source_with_builder_async, ReplayMode};
+use corvid_runtime::{
+    AnthropicAdapter, OpenAiAdapter, PromoteDecision, PromotePromptMode, Runtime, StdinApprover,
+    TestFromTracesOptions, TestFromTracesReport, TraceHarnessMode, TraceHarnessRequest,
+    TraceHarnessRun, TraceOutcome, Verdict,
+};
 use corvid_trace_schema::{read_events_from_path, validate_supported_schema, TraceEvent};
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use time::format_description::well_known::Rfc3339;
 use time::OffsetDateTime;
 
-/// Exit code returned until the regression harness
-/// (`21-inv-G-harness`, Dev B) is on `main`. Distinguishes "tool
-/// not implemented" from "tool implemented and tests failed" for
-/// CI tooling.
-pub const EXIT_NOT_IMPLEMENTED: u8 = 1;
+/// Exit code returned when the regression harness has run and at
+/// least one trace diverged. Distinguishes "ran-and-found-drift"
+/// from "couldn't run" (typed anyhow errors).
+pub const EXIT_DIVERGED: u8 = 1;
+
+/// Exit code returned for CLI paths that haven't yet been wired
+/// (today: `--promote`). Kept distinct from `EXIT_DIVERGED` so CI
+/// scripts can differentiate "not wired" from "diverged."
+pub const EXIT_NOT_IMPLEMENTED: u8 = 2;
 
 /// Parsed + validated args for one invocation.
 ///
@@ -58,6 +64,7 @@ pub const EXIT_NOT_IMPLEMENTED: u8 = 1;
 /// from the surface CLI form in [`crate::main`].
 pub struct TestFromTracesArgs<'a> {
     pub trace_dir: &'a Path,
+    pub source: Option<&'a Path>,
     pub replay_model: Option<&'a str>,
     pub only_dangerous: bool,
     pub only_prompt: Option<&'a str>,
@@ -160,8 +167,229 @@ pub fn run_test_from_traces(args: TestFromTracesArgs<'_>) -> Result<u8> {
         return Ok(0);
     }
 
-    print_not_implemented_note();
-    Ok(EXIT_NOT_IMPLEMENTED)
+    if filtered.is_empty() {
+        // Filters reduced the set to zero — also success. The user
+        // may have pointed `--only-prompt classify` at a dir whose
+        // traces don't exercise classify; that's a valid CI state
+        // (nothing to test), not a failure.
+        println!(
+            "no traces selected by the configured filters; nothing to test."
+        );
+        return Ok(0);
+    }
+
+    // --promote today needs RecordCurrent-mode runner support
+    // (fresh run with `.trace_to(dir)` to write the new golden
+    // trace). The runner below errors on RecordCurrent requests; a
+    // follow-up slice `21-inv-G-cli-wire-promote` adds the fresh-run
+    // helper + interactive-vs-CI prompt UX.
+    if args.promote {
+        eprintln!();
+        eprintln!(
+            "note: `--promote` is not yet wired. The interactive promotion UX + \
+             fresh-run helper land in Phase 21 slice 21-inv-G-cli-wire-promote. \
+             Trace load + schema validation + filter + coverage preview succeeded \
+             above."
+        );
+        return Ok(EXIT_NOT_IMPLEMENTED);
+    }
+
+    // --source is required for the execution path. Once
+    // SchemaHeader.source_path is populated at record time this
+    // becomes optional.
+    let source_path = args.source.ok_or_else(|| {
+        anyhow!(
+            "`corvid test --from-traces` requires `--from-traces-source <FILE>` pointing at the \
+             Corvid source the traces were recorded against. Once `SchemaHeader.source_path` is \
+             populated at record time, this flag becomes optional."
+        )
+    })?;
+
+    // Collect the filtered trace paths — the harness consumes a
+    // Vec<PathBuf> of the filtered set.
+    let filtered_paths: Vec<PathBuf> =
+        filtered.iter().map(|trace| trace.path.clone()).collect();
+
+    // Build the harness options struct. PromotePromptMode is set
+    // to Decisions(Reject) so non-TTY callers (CI) default to safe
+    // rejection even in the future when --promote is wired; today
+    // we've already bailed above if promote was set.
+    let harness_options = TestFromTracesOptions {
+        replay_model: args.replay_model.map(|s| s.to_string()),
+        promote: args.promote,
+        flake_detect: args.flake_detect,
+        prompt_mode: PromotePromptMode::Decisions(vec![PromoteDecision::Reject]),
+    };
+
+    eprintln!("dispatching through regression harness ({} traces)...", filtered.len());
+    eprintln!();
+
+    // Run the harness on a single-threaded tokio runtime so the
+    // async runner closure can dispatch into the replay
+    // orchestrator without nested-runtime panics.
+    let tokio_rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .context("failed to build tokio runtime for regression harness")?;
+
+    let source_path_owned: PathBuf = source_path.to_path_buf();
+    let report = tokio_rt.block_on(corvid_runtime::run_test_from_traces(
+        filtered_paths,
+        harness_options,
+        move |request| {
+            let source_path = source_path_owned.clone();
+            async move { dispatch_harness_request(&source_path, request).await }
+        },
+    ));
+
+    render_report(&report);
+
+    if report.aborted {
+        anyhow::bail!("regression harness aborted (user quit during promotion)");
+    }
+
+    let exit_code = if report.summary.diverged == 0
+        && report.summary.flaky == 0
+        && report.summary.errored == 0
+    {
+        0
+    } else {
+        EXIT_DIVERGED
+    };
+    Ok(exit_code)
+}
+
+/// The harness's runner closure body, extracted so it's readable.
+///
+/// For each request the harness raises, dispatch into the matching
+/// replay mode. `RecordCurrent` is the promote-mode path; we error
+/// cleanly on it today because the fresh-run-with-trace_to helper
+/// is a follow-up slice.
+async fn dispatch_harness_request(
+    source_path: &Path,
+    request: TraceHarnessRequest,
+) -> Result<TraceHarnessRun, corvid_runtime::RuntimeError> {
+    match request.mode {
+        TraceHarnessMode::Replay => {
+            dispatch_replay(source_path, &request.trace_path, ReplayMode::Plain).await
+        }
+        TraceHarnessMode::Differential { model } => {
+            dispatch_replay(
+                source_path,
+                &request.trace_path,
+                ReplayMode::Differential(model),
+            )
+            .await
+        }
+        TraceHarnessMode::RecordCurrent => Err(corvid_runtime::RuntimeError::ReplayTraceLoad {
+            path: request.trace_path.clone(),
+            message: "RecordCurrent (promote-mode) runner is not yet wired in the CLI; \
+                      land `21-inv-G-cli-wire-promote` for this path"
+                .into(),
+        }),
+    }
+}
+
+async fn dispatch_replay(
+    source_path: &Path,
+    trace_path: &Path,
+    mode: ReplayMode,
+) -> Result<TraceHarnessRun, corvid_runtime::RuntimeError> {
+    let base_builder = default_runtime_builder();
+    let outcome = run_replay_from_source_with_builder_async(
+        trace_path,
+        source_path,
+        mode,
+        base_builder,
+    )
+    .await
+    .map_err(|err| corvid_runtime::RuntimeError::ReplayTraceLoad {
+        path: trace_path.to_path_buf(),
+        message: format!("{err:#}"),
+    })?;
+
+    let final_output = outcome.result_value.as_ref().map(|v| {
+        // Reuse corvid-vm's value_to_json is not accessible from
+        // here; the runtime crate hands back a Value (from its own
+        // re-export). The harness needs a serde_json::Value for its
+        // final_output field. Best-effort stringify + parse cycle;
+        // for v1 this is adequate since the harness compares
+        // structural output, not byte identity.
+        serde_json::to_value(format!("{v:?}")).unwrap_or(serde_json::Value::Null)
+    });
+
+    Ok(TraceHarnessRun {
+        final_output,
+        ok: outcome.ran_cleanly(),
+        error: outcome.result_error.clone(),
+        emitted_trace_path: trace_path.to_path_buf(),
+        differential_report: outcome.differential_report,
+    })
+}
+
+fn default_runtime_builder() -> corvid_runtime::RuntimeBuilder {
+    let mut builder = Runtime::builder().approver(Arc::new(StdinApprover::new()));
+    if let Ok(model) = std::env::var("CORVID_MODEL") {
+        builder = builder.default_model(&model);
+    }
+    if let Ok(key) = std::env::var("ANTHROPIC_API_KEY") {
+        builder = builder.llm(Arc::new(AnthropicAdapter::new(key)));
+    }
+    if let Ok(key) = std::env::var("OPENAI_API_KEY") {
+        builder = builder.llm(Arc::new(OpenAiAdapter::new(key)));
+    }
+    builder
+}
+
+fn render_report(report: &TestFromTracesReport) {
+    println!();
+    println!("Regression harness report");
+    println!("=========================");
+    for outcome in &report.per_trace {
+        render_outcome(outcome);
+    }
+    println!();
+    let s = &report.summary;
+    println!(
+        "Summary: {} total — {} passed, {} diverged, {} flaky, {} promoted, {} errored",
+        s.total, s.passed, s.diverged, s.flaky, s.promoted, s.errored
+    );
+    if report.aborted {
+        println!(
+            "note: harness aborted — user quit during promotion prompts; some traces may not \
+             have been evaluated."
+        );
+    }
+}
+
+fn render_outcome(outcome: &TraceOutcome) {
+    let glyph = match outcome.verdict {
+        Verdict::Passed => "  ok  ",
+        Verdict::Diverged => "DIVERG",
+        Verdict::Flaky => "FLAKY ",
+        Verdict::Promoted => "PROMOT",
+        Verdict::Error => "ERROR ",
+    };
+    println!("[{glyph}] {}", outcome.path.display());
+    if !outcome.divergences.is_empty() {
+        println!("        divergences: {}", outcome.divergences.len());
+    }
+    if let Some(flake) = &outcome.flake_rank {
+        println!(
+            "        flake-rank: {}/{} runs diverged",
+            flake.divergent_runs, flake.total_runs
+        );
+    }
+    if let Some(model_swap) = &outcome.model_swap {
+        let llm_count = model_swap.report.llm_divergences.len();
+        println!(
+            "        model-swap (vs. `{}`): {} LLM divergence(s)",
+            model_swap.model, llm_count
+        );
+    }
+    if let Some(err) = &outcome.error {
+        println!("        error: {err}");
+    }
 }
 
 /// One trace file's summary after load + validation.
@@ -379,6 +607,7 @@ fn render_set(set: &BTreeSet<String>) -> String {
     }
 }
 
+#[allow(dead_code)]
 fn print_not_implemented_note() {
     eprintln!(
         "note: `corvid test --from-traces` is not yet available. The regression \
@@ -551,6 +780,7 @@ mod tests {
     fn args<'a>(trace_dir: &'a Path) -> TestFromTracesArgs<'a> {
         TestFromTracesArgs {
             trace_dir,
+            source: None,
             replay_model: None,
             only_dangerous: false,
             only_prompt: None,
@@ -564,11 +794,16 @@ mod tests {
     // -------------------- core path --------------------
 
     #[test]
-    fn stub_returns_not_implemented_exit_code_on_nonempty_dir() {
+    fn nonempty_dir_without_source_requires_source_flag() {
+        // With no `--from-traces-source`, the CLI must refuse to
+        // dispatch — the harness can't compile trace-vs-source
+        // without the source path. Error must name the flag so the
+        // user knows the fix.
         let dir = test_dir();
         write_trace(&dir, TraceShape::new("run-1").prompt("classify"));
-        let code = run_test_from_traces(args(&dir)).unwrap();
-        assert_eq!(code, EXIT_NOT_IMPLEMENTED);
+        let err = run_test_from_traces(args(&dir)).unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(msg.contains("--from-traces-source"), "got: {msg}");
     }
 
     #[test]
@@ -625,7 +860,12 @@ mod tests {
     // -------------------- --only-dangerous --------------------
 
     #[test]
-    fn only_dangerous_selects_traces_with_approval_events() {
+    fn only_dangerous_keeps_traces_with_approval_events() {
+        // Dangerous traces survive the filter, so the command
+        // proceeds to the dispatch boundary; we assert we reach it
+        // by catching the source-required error (source is None
+        // in this test). The error path confirms filter + preview
+        // ran successfully before the source check.
         let dir = test_dir();
         write_trace(&dir, TraceShape::new("run-safe").prompt("classify"));
         write_trace(
@@ -634,25 +874,22 @@ mod tests {
         );
         let mut a = args(&dir);
         a.only_dangerous = true;
-        let code = run_test_from_traces(a).unwrap();
-        assert_eq!(code, EXIT_NOT_IMPLEMENTED);
+        let err = run_test_from_traces(a).unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(msg.contains("--from-traces-source"), "got: {msg}");
     }
 
     #[test]
-    fn only_dangerous_rejects_traces_without_approval_events() {
+    fn only_dangerous_filter_to_zero_returns_clean_success() {
+        // A filter that reduces the suite to zero traces is a
+        // valid CI state — nothing to test is not a failure. Same
+        // convention cargo test / pytest use.
         let dir = test_dir();
         write_trace(&dir, TraceShape::new("run-safe").prompt("classify"));
         let mut a = args(&dir);
         a.only_dangerous = true;
-        // No dangerous traces remain after filter; the command
-        // still completes cleanly because empty *after filter* is
-        // different from empty *on disk* — the latter is handled
-        // by the zero-return-code path, the former should still
-        // fall through to the "not implemented" exit since a
-        // filter-to-zero is a valid test-suite configuration that
-        // the harness will report as "zero tests selected."
         let code = run_test_from_traces(a).unwrap();
-        assert_eq!(code, EXIT_NOT_IMPLEMENTED);
+        assert_eq!(code, 0);
     }
 
     // -------------------- --only-prompt / --only-tool --------------------
@@ -699,8 +936,12 @@ mod tests {
         );
         let mut a = args(&dir);
         a.since = Some("2020-09-13T12:26:40Z");
-        let code = run_test_from_traces(a).unwrap();
-        assert_eq!(code, EXIT_NOT_IMPLEMENTED);
+        // Both traces survive this cutoff; with no source set we
+        // should hit the source-required error after the filter
+        // runs, which proves the filter plumbing executed cleanly.
+        let err = run_test_from_traces(a).unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(msg.contains("--from-traces-source"), "got: {msg}");
     }
 
     #[test]
@@ -717,19 +958,23 @@ mod tests {
     // -------------------- --replay-model --------------------
 
     #[test]
-    fn replay_model_flag_accepted() {
+    fn replay_model_flag_reaches_dispatch_boundary() {
         let dir = test_dir();
         write_trace(&dir, TraceShape::new("run-1").prompt("classify"));
         let mut a = args(&dir);
         a.replay_model = Some("claude-opus-5-0");
-        let code = run_test_from_traces(a).unwrap();
-        assert_eq!(code, EXIT_NOT_IMPLEMENTED);
+        let err = run_test_from_traces(a).unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(msg.contains("--from-traces-source"), "got: {msg}");
     }
 
     // -------------------- --promote --------------------
 
     #[test]
-    fn promote_flag_accepted() {
+    fn promote_flag_returns_not_implemented_exit_code() {
+        // --promote needs a fresh-run-with-trace_to helper that is
+        // not yet wired; the CLI returns EXIT_NOT_IMPLEMENTED and
+        // prints a note pointing at the follow-up slice.
         let dir = test_dir();
         write_trace(&dir, TraceShape::new("run-1").prompt("classify"));
         let mut a = args(&dir);
@@ -783,8 +1028,9 @@ mod tests {
         write_trace(&dir, TraceShape::new("run-1").prompt("classify"));
         let mut a = args(&dir);
         a.flake_detect = Some(3);
-        let code = run_test_from_traces(a).unwrap();
-        assert_eq!(code, EXIT_NOT_IMPLEMENTED);
+        let err = run_test_from_traces(a).unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(msg.contains("--from-traces-source"), "got: {msg}");
     }
 
     // -------------------- compound / sanity --------------------

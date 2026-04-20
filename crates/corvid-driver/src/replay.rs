@@ -139,6 +139,31 @@ pub fn run_replay_from_source_with_builder(
     mode: ReplayMode,
     base_builder: RuntimeBuilder,
 ) -> Result<ReplayOutcome> {
+    let tokio_rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .context("failed to build tokio runtime for replay")?;
+    tokio_rt.block_on(run_replay_from_source_with_builder_async(
+        trace_path,
+        source_path,
+        mode,
+        base_builder,
+    ))
+}
+
+/// Async variant of [`run_replay_from_source_with_builder`].
+///
+/// Runs entirely on the caller's tokio runtime — no nested runtime
+/// construction. Required for callers already inside an async
+/// context (e.g. [`crate::run_prod_as_test_suite`]'s harness
+/// runner closure, which runs inside `run_test_from_traces`'s
+/// tokio context).
+pub async fn run_replay_from_source_with_builder_async(
+    trace_path: &Path,
+    source_path: &Path,
+    mode: ReplayMode,
+    base_builder: RuntimeBuilder,
+) -> Result<ReplayOutcome> {
     // Env discovery for API keys. Same walk-upward behavior as
     // `corvid run` — honors `.env` files next to the source and at
     // the cwd.
@@ -196,18 +221,7 @@ pub fn run_replay_from_source_with_builder(
     // Thread the replay mode onto the caller's builder and build.
     let runtime = configure_replay_mode(base_builder, trace_path, &mode).build();
 
-    // Execute on a single-threaded tokio runtime — matches the
-    // interpreter-tier shape used by `run_via_interpreter_tier`.
-    let tokio_rt = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .context("failed to build tokio runtime for replay")?;
-    let run_result = tokio_rt.block_on(run_ir_with_runtime(
-        &ir,
-        Some(&agent_name),
-        args,
-        &runtime,
-    ));
+    let run_result = run_ir_with_runtime(&ir, Some(&agent_name), args, &runtime).await;
 
     let (result_value, result_error) = match run_result {
         Ok(value) => (Some(value), None),
