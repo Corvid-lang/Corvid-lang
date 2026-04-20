@@ -1199,7 +1199,7 @@ Users register local models (Ollama, vLLM, llama.cpp) with declared capabilities
 - [x] 21-B-rec-native        Native-tier recording parity
 - [x] 21-C-replay-native     Native-tier replay parity
 - [x] 21-inv-B-adapter       Model-swap seam for `corvid replay --model <id>`
-- [ ] 21-inv-D-runtime       Counterfactual one-step mutation at runtime
+- [x] 21-inv-D-runtime       Counterfactual one-step mutation at runtime
 - [ ] 21-inv-E-runtime       Runtime support for `replay` language primitive (trace ingestion + pattern dispatch)
 - [ ] 21-inv-G-harness       Trace-to-test-fixture adapter; divergence-as-test-failure reporting
 - [ ] 21-inv-I               Live shadow replay daemon; real-time divergence alerts
