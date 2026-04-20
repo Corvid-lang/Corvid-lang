@@ -217,6 +217,11 @@ fn expr_mentions_local(expr: &IrExpr, local_id: LocalId) -> bool {
             right: index,
             ..
         } => expr_mentions_local(target, local_id) || expr_mentions_local(index, local_id),
+        IrExprKind::Replay { trace, arms, else_body } => {
+            expr_mentions_local(trace, local_id)
+                || arms.iter().any(|arm| expr_mentions_local(&arm.body, local_id))
+                || expr_mentions_local(else_body, local_id)
+        }
     }
 }
 
@@ -255,7 +260,12 @@ fn expr_is_effect_free(expr: &IrExpr) -> bool {
         | IrExprKind::OptionSome { .. }
         | IrExprKind::OptionNone
         | IrExprKind::TryPropagate { .. }
-        | IrExprKind::TryRetry { .. } => false,
+        | IrExprKind::TryRetry { .. }
+        // Replay dispatches over a recorded trace (reads a file)
+        // and executes arbitrary arm bodies; treat the whole node
+        // as effectful so scope-reduce never hoists it past a
+        // barrier.
+        | IrExprKind::Replay { .. } => false,
     }
 }
 

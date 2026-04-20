@@ -6,7 +6,8 @@
 use crate::types::*;
 use corvid_ast::{
     AgentDecl, Block, Decl, Effect, EvalAssert, EvalDecl, Expr, ExtendMethodKind, File, Ident,
-    ImportDecl, ImportSource, Literal, Param, PromptDecl, Span, Stmt, ToolDecl, TypeDecl, TypeRef,
+    ImportDecl, ImportSource, Literal, Param, PromptDecl, ReplayArm, ReplayPattern, Span, Stmt,
+    ToolArgPattern, ToolDecl, TypeDecl, TypeRef,
 };
 use corvid_resolve::{
     resolver::MethodEntry, Binding, BuiltIn, DeclKind, DefId, LocalId, Resolved, SymbolTable,
@@ -620,27 +621,93 @@ impl<'a> Lowerer<'a> {
                 attempts: *attempts,
                 backoff: *backoff,
             },
-            Expr::Replay { else_body, .. } => {
-                // Phase 21 slice 21-inv-E-1: parser ships today,
-                // IR lowering lands in 21-inv-E-4. Until then we
-                // degrade a `replay` block to its `else_body` so
-                // surrounding passes see a valid IR. Live dispatch
-                // on `when` arms requires runtime support (Dev B's
-                // 21-inv-E-runtime) and IR representation (E-4),
-                // neither of which exists yet. This stub is safe
-                // because no emitter currently knows how to
-                // produce a replay block — a user hitting this
-                // path would be running a feature that isn't wired
-                // end-to-end, and evaluating only the `else`
-                // fallback matches the parser's guarantee that
-                // `else` is always present.
-                return self.lower_expr(else_body);
-            }
+            Expr::Replay {
+                trace,
+                arms,
+                else_body,
+                ..
+            } => IrExprKind::Replay {
+                trace: Box::new(self.lower_expr(trace)),
+                arms: arms.iter().map(|arm| self.lower_replay_arm(arm)).collect(),
+                else_body: Box::new(self.lower_expr(else_body)),
+            },
         };
         IrExpr {
             kind,
             ty,
             span: e.span(),
+        }
+    }
+
+    /// Lower one replay arm. The body is lowered in the same
+    /// per-arm scope the resolver opened (21-inv-E-2b), so any
+    /// capture the arm binds is already reachable via
+    /// `self.bindings` keyed by the capture's span.
+    fn lower_replay_arm(&self, arm: &ReplayArm) -> IrReplayArm {
+        let pattern = self.lower_replay_pattern(&arm.pattern);
+        let capture = arm.capture.as_ref().map(|ident| IrReplayCapture {
+            local_id: self.lookup_local(ident.span, "replay `as` capture"),
+            name: ident.name.clone(),
+            span: ident.span,
+        });
+        let body = Box::new(self.lower_expr(&arm.body));
+        IrReplayArm {
+            pattern,
+            capture,
+            body,
+            span: arm.span,
+        }
+    }
+
+    fn lower_replay_pattern(&self, pattern: &ReplayPattern) -> IrReplayPattern {
+        match pattern {
+            ReplayPattern::Llm { prompt, span } => IrReplayPattern::Llm {
+                prompt: prompt.clone(),
+                span: *span,
+            },
+            ReplayPattern::Tool { tool, arg, span } => IrReplayPattern::Tool {
+                tool: tool.clone(),
+                arg: self.lower_replay_tool_arg(arg),
+                span: *span,
+            },
+            ReplayPattern::Approve { label, span } => IrReplayPattern::Approve {
+                label: label.clone(),
+                span: *span,
+            },
+        }
+    }
+
+    fn lower_replay_tool_arg(&self, arg: &ToolArgPattern) -> IrReplayToolArgPattern {
+        match arg {
+            ToolArgPattern::Wildcard { .. } => IrReplayToolArgPattern::Wildcard,
+            ToolArgPattern::StringLit { value, .. } => {
+                IrReplayToolArgPattern::StringLit(value.clone())
+            }
+            ToolArgPattern::Capture { name, span } => {
+                IrReplayToolArgPattern::Capture(IrReplayCapture {
+                    local_id: self.lookup_local(*span, "replay tool-arg capture"),
+                    name: name.name.clone(),
+                    span: *span,
+                })
+            }
+        }
+    }
+
+    /// Resolve a capture ident's span to its `LocalId`. The
+    /// resolver (E-2b) is the source of truth: every capture span
+    /// is registered as `Binding::Local(_)` before the checker and
+    /// lowerer ever see it. A missing binding here signals a
+    /// resolver bug, not a user error, so we fall back to
+    /// `LocalId(u32::MAX)` (the same sentinel `lower_ident` uses
+    /// for unresolved names) so codegen doesn't panic — the
+    /// resolver's diagnostics will already have been surfaced.
+    fn lookup_local(&self, span: Span, context: &str) -> LocalId {
+        match self.bindings.get(&span) {
+            Some(Binding::Local(local_id)) => *local_id,
+            _ => {
+                let _ = context; // reserved for future debug-assert
+                LocalId(u32::MAX)
+            }
         }
     }
 

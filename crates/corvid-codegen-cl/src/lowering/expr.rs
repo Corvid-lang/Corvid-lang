@@ -1676,6 +1676,10 @@ pub(super) fn lower_expr(
                 expr.span,
             )),
         },
+        IrExprKind::Replay { .. } => Err(CodegenError::not_supported(
+            "`replay` expressions require runtime pattern-dispatch over a recorded trace; native tier lowering lands in a follow-up to 21-inv-E-runtime. Use the interpreter tier (`corvid run --tier interp`) until then.",
+            expr.span,
+        )),
     }
 }
 

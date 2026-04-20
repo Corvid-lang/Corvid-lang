@@ -65,6 +65,13 @@ fn expr_uses_runtime(expr: &IrExpr) -> bool {
         | IrExprKind::TryPropagate { inner } => expr_uses_runtime(inner),
         IrExprKind::OptionNone => false,
         IrExprKind::TryRetry { body, .. } => expr_uses_runtime(body),
+        IrExprKind::Replay { trace, arms, else_body } => {
+            // Replay dispatch itself reads a trace via the runtime,
+            // so ANY replay expression needs the async bridge even
+            // if every arm body is pure. Short-circuit to true.
+            let _ = (trace, arms, else_body);
+            true
+        }
     }
 }
 

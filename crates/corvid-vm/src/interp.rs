@@ -657,6 +657,25 @@ impl<'ir> Interpreter<'ir> {
                     Ok(ExprFlow::Value(Value::Nothing))
                 }
             }
+
+            // Replay dispatch needs trace ingestion + first-match-wins
+            // pattern search + capture-binding plumbing — the
+            // interpreter seam for all of that lands in Dev B's
+            // 21-inv-E-runtime slice. Until then, executing a replay
+            // expression at runtime is a clean NotImplemented
+            // rather than silently evaluating the else body (which
+            // would be observably wrong whenever the trace DOES have
+            // a matching event).
+            IrExprKind::Replay { .. } => Err(InterpError::new(
+                InterpErrorKind::NotImplemented(
+                    "`replay <trace>: when ... else ...` dispatch is recognized by \
+                     the frontend (parser / resolver / checker / IR) but runtime \
+                     support ships in Phase 21 slice 21-inv-E-runtime (Dev B's \
+                     lane). Use plain record+replay for now."
+                        .into(),
+                ),
+                expr.span,
+            )),
         }
     }
 

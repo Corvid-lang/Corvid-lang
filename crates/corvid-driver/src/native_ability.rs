@@ -32,6 +32,12 @@ pub enum NotNativeReason {
     /// supported native forms today.
     TaggedUnionRetryNotNative,
     StreamLoweringNotImplemented,
+    /// `replay <trace>: when ... else ...` expressions need the
+    /// trace-dispatch runtime primitive (Phase 21 slice
+    /// 21-inv-E-runtime) plus its native-tier lowering follow-up.
+    /// Until both land, any program containing a replay expression
+    /// routes to the interpreter tier.
+    ReplayPrimitiveNotNative,
 }
 
 impl std::fmt::Display for NotNativeReason {
@@ -51,6 +57,9 @@ impl std::fmt::Display for NotNativeReason {
             ),
             Self::StreamLoweringNotImplemented => {
                 write!(f, "program uses `Stream<T>` - Stream lowering is not yet implemented")
+            }
+            Self::ReplayPrimitiveNotNative => {
+                write!(f, "program uses `replay <trace>: when ... else ...` - native lowering of the replay language primitive lands in a follow-up to Phase 21 slice 21-inv-E-runtime; until then the interpreter tier runs it")
             }
         }
     }
@@ -283,6 +292,7 @@ fn scan_expr(expr: &IrExpr, current_return_ty: &Type) -> Result<(), NotNativeRea
                 Err(NotNativeReason::TaggedUnionRetryNotNative)
             }
         }
+        IrExprKind::Replay { .. } => Err(NotNativeReason::ReplayPrimitiveNotNative),
     }
 }
 

@@ -321,6 +321,19 @@ impl Codegen {
                     "(_ for _ in ()).throw(NotImplementedError(\"`try ... retry` codegen is not implemented for Python yet\"))",
                 );
             }
+            // `replay` expressions require runtime pattern-dispatch
+            // over a recorded trace; the Python transpile tier has
+            // no trace-loader or pattern-dispatch primitive, and the
+            // interpreter tier (Dev B's 21-inv-E-runtime) is where
+            // the feature lands. Emit the same invalid-Python-on-purpose
+            // marker as the other untransled IR nodes so this tier
+            // refuses cleanly if a user tries to transpile a replay
+            // program rather than silently evaluating only the else.
+            IrExprKind::Replay { .. } => {
+                self.out.write(
+                    "(_ for _ in ()).throw(NotImplementedError(\"`replay` codegen is not implemented for Python yet\"))",
+                );
+            }
         }
     }
 

@@ -340,6 +340,15 @@ fn expr_consumes_target(
         | IrExprKind::TryPropagate { inner } => expr_references(inner, target),
         IrExprKind::OptionNone => false,
         IrExprKind::TryRetry { body, .. } => expr_references(body, target),
+        IrExprKind::Replay { trace, arms, else_body } => {
+            // Replay arms are conditional — at most one executes.
+            // Any reference inside any arm body (or the else) is a
+            // potential consume if the branch fires, so we return
+            // true if any branch references `target`.
+            expr_references(trace, target)
+                || arms.iter().any(|arm| expr_references(&arm.body, target))
+                || expr_references(else_body, target)
+        }
     }
 }
 
@@ -367,6 +376,11 @@ fn expr_references(expr: &IrExpr, target: LocalId) -> bool {
         | IrExprKind::OptionSome { inner }
         | IrExprKind::TryPropagate { inner } => expr_references(inner, target),
         IrExprKind::OptionNone => false,
+        IrExprKind::Replay { trace, arms, else_body } => {
+            expr_references(trace, target)
+                || arms.iter().any(|arm| expr_references(&arm.body, target))
+                || expr_references(else_body, target)
+        }
         IrExprKind::TryRetry { body, .. } => expr_references(body, target),
     }
 }

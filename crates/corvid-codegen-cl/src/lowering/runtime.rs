@@ -2000,6 +2000,13 @@ fn visit_expr_types(
         IrExprKind::TryRetry { body, .. } => {
             visit_expr_types(body, seen, order, visit);
         }
+        IrExprKind::Replay { trace, arms, else_body } => {
+            visit_expr_types(trace, seen, order, visit);
+            for arm in arms {
+                visit_expr_types(&arm.body, seen, order, visit);
+            }
+            visit_expr_types(else_body, seen, order, visit);
+        }
     }
 }
 

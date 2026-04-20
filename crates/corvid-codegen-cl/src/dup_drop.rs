@@ -349,6 +349,23 @@ fn scan_expr(expr: &IrExpr, max_id: &mut u32) {
         | IrExprKind::OptionSome { inner }
         | IrExprKind::TryPropagate { inner } => scan_expr(inner, max_id),
         IrExprKind::TryRetry { body, .. } => scan_expr(body, max_id),
+        IrExprKind::Replay { trace, arms, else_body } => {
+            scan_expr(trace, max_id);
+            for arm in arms {
+                if let Some(capture) = &arm.capture {
+                    if capture.local_id.0 > *max_id { *max_id = capture.local_id.0; }
+                }
+                if let corvid_ir::IrReplayPattern::Tool {
+                    arg: corvid_ir::IrReplayToolArgPattern::Capture(capture),
+                    ..
+                } = &arm.pattern
+                {
+                    if capture.local_id.0 > *max_id { *max_id = capture.local_id.0; }
+                }
+                scan_expr(&arm.body, max_id);
+            }
+            scan_expr(else_body, max_id);
+        }
     }
 }
 
@@ -375,6 +392,11 @@ fn expr_reads_local(expr: &IrExpr, target: LocalId) -> bool {
         | IrExprKind::OptionSome { inner }
         | IrExprKind::TryPropagate { inner } => expr_reads_local(inner, target),
         IrExprKind::TryRetry { body, .. } => expr_reads_local(body, target),
+        IrExprKind::Replay { trace, arms, else_body } => {
+            expr_reads_local(trace, target)
+                || arms.iter().any(|arm| expr_reads_local(&arm.body, target))
+                || expr_reads_local(else_body, target)
+        }
     }
 }
 

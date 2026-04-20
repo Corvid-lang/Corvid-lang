@@ -670,6 +670,26 @@ fn walk_expr(expr: &IrExpr, consumed: bool, out: &mut Vec<LocalRead>) {
         | IrExprKind::OptionSome { inner }
         | IrExprKind::TryPropagate { inner } => walk_expr(inner, true, out),
         IrExprKind::TryRetry { body, .. } => walk_expr(body, consumed, out),
+        IrExprKind::Replay {
+            trace,
+            arms,
+            else_body,
+        } => {
+            // Liveness across replay arms: the trace expression is
+            // consumed by the runtime to locate the trace file;
+            // exactly one arm body OR the else body executes (first
+            // match wins per E-runtime semantics), so conservatively
+            // treat every arm body + the else body as potential
+            // continuations that inherit `consumed` from the enclosing
+            // context. `TraceId` is not refcounted, so the trace
+            // expression itself doesn't contribute local reads
+            // through its own type, but nested sub-expressions might.
+            walk_expr(trace, true, out);
+            for arm in arms {
+                walk_expr(&arm.body, consumed, out);
+            }
+            walk_expr(else_body, consumed, out);
+        }
     }
 }
 

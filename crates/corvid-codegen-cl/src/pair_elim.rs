@@ -213,6 +213,13 @@ fn count_local_mentions_expr(expr: &IrExpr, local_id: LocalId) -> usize {
             count_local_mentions_expr(target, local_id)
                 + count_local_mentions_expr(index, local_id)
         }
+        IrExprKind::Replay { trace, arms, else_body } => {
+            let mut total = count_local_mentions_expr(trace, local_id);
+            for arm in arms {
+                total += count_local_mentions_expr(&arm.body, local_id);
+            }
+            total + count_local_mentions_expr(else_body, local_id)
+        }
     }
 }
 
@@ -247,6 +254,11 @@ fn expr_observes_refcount(expr: &IrExpr, local_id: LocalId) -> bool {
             expr_observes_refcount(target, local_id) || expr_observes_refcount(index, local_id)
         }
         IrExprKind::List { items } => items.iter().any(|item| expr_observes_refcount(item, local_id)),
+        IrExprKind::Replay { trace, arms, else_body } => {
+            expr_observes_refcount(trace, local_id)
+                || arms.iter().any(|arm| expr_observes_refcount(&arm.body, local_id))
+                || expr_observes_refcount(else_body, local_id)
+        }
     }
 }
 

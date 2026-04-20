@@ -178,6 +178,19 @@ fn collect_prompt_pins_in_expr(
         | IrExprKind::Local { .. }
         | IrExprKind::Decl { .. }
         | IrExprKind::OptionNone => {}
+        IrExprKind::Replay { trace, arms, else_body } => {
+            // Replay expressions can't reach native codegen today
+            // (cl_type_for rejects TraceId and routes to interpreter
+            // tier), but we still walk children so if that boundary
+            // is ever relaxed the prompt-pin analysis degrades to
+            // zero-pins rather than silently skipping interior
+            // prompt calls.
+            collect_prompt_pins_in_expr(trace, borrowed_reads, out);
+            for arm in arms {
+                collect_prompt_pins_in_expr(&arm.body, borrowed_reads, out);
+            }
+            collect_prompt_pins_in_expr(else_body, borrowed_reads, out);
+        }
     }
 }
 

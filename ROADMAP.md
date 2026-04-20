@@ -1187,7 +1187,7 @@ Users register local models (Ollama, vLLM, llama.cpp) with declared capabilities
 - [x] 21-inv-E-2a            Parser + AST: arm captures (`as <ident>` tail + tool-arg capture)
 - [x] 21-inv-E-2b            Resolver: pattern-name resolution + arm-capture scope opening
 - [x] 21-inv-E-3             Checker: `TraceId` / `TraceEvent` types + pattern exhaustiveness
-- [ ] 21-inv-E-4             IR lowering for replay blocks
+- [x] 21-inv-E-4             IR lowering for replay blocks
 - [ ] 21-inv-G-cli           `corvid test --from-traces <dir>` + trace-to-test harness
 - [ ] 21-inv-H               `corvid trace-diff <commit-a> <commit-b>` + git-integrated behavior diff
 - [ ] 21-docs                Spec section 21 + ROADMAP closeout + v1.0 demo script

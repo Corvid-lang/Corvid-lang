@@ -431,6 +431,85 @@ pub enum IrExprKind {
         attempts: u64,
         backoff: Backoff,
     },
+
+    /// `replay <trace>: when <pat> -> <body> else <body>` — the
+    /// language-level replay primitive. Runtime semantics
+    /// (21-inv-E-runtime): load the trace referenced by `trace`,
+    /// walk its event stream, match each event against the arms in
+    /// source order, and execute the first matching arm's body with
+    /// captures bound. If no event in the trace matches any arm,
+    /// execute `else_body`.
+    ///
+    /// Arms retain their `when` source order so runtime dispatch is
+    /// unambiguous (first-match-wins). The `else_body` is separate
+    /// rather than a trailing arm so codegen and the checker can
+    /// both treat it as required — the grammar enforced that in
+    /// 21-inv-E-1.
+    Replay {
+        trace: Box<IrExpr>,
+        arms: Vec<IrReplayArm>,
+        else_body: Box<IrExpr>,
+    },
+}
+
+/// One lowered arm of a replay block: pattern + optional
+/// whole-event capture + body. Per-arg captures (tool-arg
+/// identifier captures) live inside the pattern so the runtime
+/// sees them alongside the literal / wildcard arg shapes.
+#[derive(Debug, Clone)]
+pub struct IrReplayArm {
+    pub pattern: IrReplayPattern,
+    /// `Some(local)` iff the arm had an `as <ident>` tail. The
+    /// local's type is already in the type side-table from the
+    /// checker slice (21-inv-E-3) and will be populated with the
+    /// recorded event's payload value at runtime.
+    pub capture: Option<IrReplayCapture>,
+    pub body: Box<IrExpr>,
+    pub span: Span,
+}
+
+/// A whole-event capture's runtime handle: the `LocalId` the
+/// arm body reads from, plus the declared name for diagnostics.
+#[derive(Debug, Clone)]
+pub struct IrReplayCapture {
+    pub local_id: LocalId,
+    pub name: String,
+    pub span: Span,
+}
+
+/// A lowered replay pattern. The string `prompt` / `tool` /
+/// `label` fields are what the runtime matches against recorded
+/// events' names — trace events carry strings, not DefIds.
+#[derive(Debug, Clone)]
+pub enum IrReplayPattern {
+    Llm { prompt: String, span: Span },
+    Tool {
+        tool: String,
+        arg: IrReplayToolArgPattern,
+        span: Span,
+    },
+    Approve { label: String, span: Span },
+}
+
+impl IrReplayPattern {
+    pub fn span(&self) -> Span {
+        match self {
+            Self::Llm { span, .. }
+            | Self::Tool { span, .. }
+            | Self::Approve { span, .. } => *span,
+        }
+    }
+}
+
+/// The three shapes a tool-arg pattern can take, one-to-one with
+/// the AST forms. `Capture` carries the same `IrReplayCapture`
+/// handle the whole-event capture uses, so runtime binding is
+/// uniform.
+#[derive(Debug, Clone)]
+pub enum IrReplayToolArgPattern {
+    Wildcard,
+    StringLit(String),
+    Capture(IrReplayCapture),
 }
 
 #[derive(Debug, Clone)]
