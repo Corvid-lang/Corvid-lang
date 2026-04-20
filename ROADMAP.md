@@ -1201,7 +1201,7 @@ Users register local models (Ollama, vLLM, llama.cpp) with declared capabilities
 - [x] 21-inv-B-adapter       Model-swap seam for `corvid replay --model <id>`
 - [x] 21-inv-D-runtime       Counterfactual one-step mutation at runtime
 - [x] 21-inv-E-runtime       Runtime support for `replay` language primitive (trace ingestion + pattern dispatch)
-- [ ] 21-inv-G-harness       Trace-to-test-fixture adapter; divergence-as-test-failure reporting
+- [x] 21-inv-G-harness       Trace-to-test-fixture adapter; divergence-as-test-failure reporting
 - [ ] 21-inv-I               Live shadow replay daemon; real-time divergence alerts
 
 **Rules (standing):** CLAUDE.md rubric on every file (1–2 responsibilities). One commit per file extraction or feature step. Validation gate between every commit: `cargo check --workspace` + `cargo test -p <crate> --lib` + `cargo test -p <crate> --test <name> -- --list` (for test-file touches) + `cargo run -q -p corvid-cli -- verify --corpus tests/corpus` (must still exit 1 only on the two deliberate fixtures). Push before next slice. Wait for acknowledgement at slice boundaries. Zero semantic changes mid-refactor. No shortcuts — a thin feature is a shortcut.
