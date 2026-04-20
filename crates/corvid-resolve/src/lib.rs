@@ -17,7 +17,7 @@ pub mod scope;
 pub use depgraph::{build_dep_graph, decl_name, DepGraph};
 pub use errors::{ResolveError, ResolveErrorKind};
 pub use repl::{RedefinitionResult, ReplResolveSession, ResolvedTurn};
-pub use resolver::{resolve, Resolved};
+pub use resolver::{resolve, ReplayPatternBinding, Resolved};
 pub use scope::{Binding, BuiltIn, DeclEntry, DeclKind, DefId, LocalId, LocalScope, SymbolTable};
 
 #[cfg(test)]
@@ -506,5 +506,319 @@ model opus:
         assert!(r.symbols.lookup_def("haiku").is_some());
         assert!(r.symbols.lookup_def("sonnet").is_some());
         assert!(r.symbols.lookup_def("opus").is_some());
+    }
+
+    // ============================================================
+    // Replay pattern resolution (21-inv-E-2b)
+    // ============================================================
+
+    #[test]
+    fn replay_llm_pattern_resolves_known_prompt() {
+        let src = r#"
+type Decision:
+    label: String
+
+prompt classify(x: String) -> Decision:
+    """Classify."""
+
+agent check(x: String) -> Decision:
+    return replay "t.jsonl":
+        when llm("classify") -> Decision("fixture")
+        else Decision("unknown")
+"#;
+        let r = resolve_src(src);
+        assert!(
+            r.errors.is_empty(),
+            "expected clean resolve, got {:?}",
+            r.errors
+        );
+        assert!(
+            r.replay_pattern_bindings
+                .values()
+                .any(|b| matches!(b, ReplayPatternBinding::Llm(_))),
+            "expected an Llm binding in the side-table, got {:?}",
+            r.replay_pattern_bindings
+        );
+    }
+
+    #[test]
+    fn replay_llm_pattern_unknown_prompt_reports_error() {
+        let src = r#"
+type Decision:
+    label: String
+
+agent check(x: String) -> Decision:
+    return replay "t.jsonl":
+        when llm("nonexistent") -> Decision("fixture")
+        else Decision("unknown")
+"#;
+        let r = resolve_src(src);
+        assert!(
+            r.errors.iter().any(|e| matches!(
+                &e.kind,
+                ResolveErrorKind::UnknownReplayPrompt { name } if name == "nonexistent"
+            )),
+            "expected UnknownReplayPrompt, got {:?}",
+            r.errors
+        );
+    }
+
+    #[test]
+    fn replay_llm_pattern_naming_a_tool_reports_kind_mismatch() {
+        let src = r#"
+type Decision:
+    label: String
+
+tool get_order(id: String) -> Decision
+
+agent check(x: String) -> Decision:
+    return replay "t.jsonl":
+        when llm("get_order") -> Decision("fixture")
+        else Decision("unknown")
+"#;
+        let r = resolve_src(src);
+        assert!(
+            r.errors.iter().any(|e| matches!(
+                &e.kind,
+                ResolveErrorKind::ReplayPatternKindMismatch { name, expected_kind: "prompt", actual_kind: "tool" }
+                    if name == "get_order"
+            )),
+            "expected ReplayPatternKindMismatch (prompt vs tool), got {:?}",
+            r.errors
+        );
+    }
+
+    #[test]
+    fn replay_tool_pattern_resolves_known_tool() {
+        let src = r#"
+type Order:
+    id: String
+
+tool get_order(id: String) -> Order
+
+agent check(x: String) -> Order:
+    return replay "t.jsonl":
+        when tool("get_order", _) -> Order("fixture")
+        else Order("unknown")
+"#;
+        let r = resolve_src(src);
+        assert!(
+            r.errors.is_empty(),
+            "expected clean resolve, got {:?}",
+            r.errors
+        );
+        assert!(
+            r.replay_pattern_bindings
+                .values()
+                .any(|b| matches!(b, ReplayPatternBinding::Tool(_))),
+            "expected a Tool binding in the side-table"
+        );
+    }
+
+    #[test]
+    fn replay_tool_pattern_unknown_tool_reports_error() {
+        let src = r#"
+type Order:
+    id: String
+
+agent check(x: String) -> Order:
+    return replay "t.jsonl":
+        when tool("nonexistent", _) -> Order("fixture")
+        else Order("unknown")
+"#;
+        let r = resolve_src(src);
+        assert!(
+            r.errors.iter().any(|e| matches!(
+                &e.kind,
+                ResolveErrorKind::UnknownReplayTool { name } if name == "nonexistent"
+            )),
+            "expected UnknownReplayTool, got {:?}",
+            r.errors
+        );
+    }
+
+    #[test]
+    fn replay_approve_pattern_resolves_known_label() {
+        let src = r#"
+type Receipt:
+    id: String
+
+tool issue_refund(id: String, amount: Float) -> Receipt dangerous
+
+agent refund(id: String, amount: Float) -> Receipt:
+    approve IssueRefund(id, amount)
+    return replay "t.jsonl":
+        when approve("IssueRefund") -> issue_refund(id, amount)
+        else issue_refund(id, amount)
+"#;
+        let r = resolve_src(src);
+        assert!(
+            r.errors.is_empty(),
+            "expected clean resolve, got {:?}",
+            r.errors
+        );
+        assert!(
+            r.replay_pattern_bindings
+                .values()
+                .any(|b| matches!(b, ReplayPatternBinding::Approve)),
+            "expected an Approve binding in the side-table"
+        );
+    }
+
+    #[test]
+    fn replay_approve_pattern_unknown_label_reports_error() {
+        let src = r#"
+type Receipt:
+    id: String
+
+tool issue_refund(id: String, amount: Float) -> Receipt dangerous
+
+agent refund(id: String, amount: Float) -> Receipt:
+    approve IssueRefund(id, amount)
+    return replay "t.jsonl":
+        when approve("NonexistentSite") -> issue_refund(id, amount)
+        else issue_refund(id, amount)
+"#;
+        let r = resolve_src(src);
+        assert!(
+            r.errors.iter().any(|e| matches!(
+                &e.kind,
+                ResolveErrorKind::UnknownReplayApproval { label } if label == "NonexistentSite"
+            )),
+            "expected UnknownReplayApproval, got {:?}",
+            r.errors
+        );
+    }
+
+    #[test]
+    fn replay_arm_body_can_reference_as_capture() {
+        // The `as recorded` binding must be visible inside the arm
+        // body; referencing it must not produce an UndefinedName.
+        let src = r#"
+type Decision:
+    label: String
+
+prompt classify(x: String) -> Decision:
+    """Classify."""
+
+agent check(x: String) -> Decision:
+    return replay "t.jsonl":
+        when llm("classify") as recorded -> recorded
+        else Decision("unknown")
+"#;
+        let r = resolve_src(src);
+        assert!(
+            r.errors.is_empty(),
+            "expected `recorded` capture to resolve cleanly, got {:?}",
+            r.errors
+        );
+    }
+
+    #[test]
+    fn replay_arm_body_can_reference_tool_arg_capture() {
+        // The bare-ident `ticket_id` in the tool arg binds a local
+        // that the arm body can read.
+        let src = r#"
+type Order:
+    id: String
+
+tool get_order(id: String) -> Order
+
+agent check(x: String) -> Order:
+    return replay "t.jsonl":
+        when tool("get_order", ticket_id) -> Order(ticket_id)
+        else Order("unknown")
+"#;
+        let r = resolve_src(src);
+        assert!(
+            r.errors.is_empty(),
+            "expected `ticket_id` tool-arg capture to resolve cleanly, got {:?}",
+            r.errors
+        );
+    }
+
+    #[test]
+    fn replay_arm_captures_are_scoped_to_that_arm() {
+        // A capture bound in arm 1 is NOT visible in arm 2 or in
+        // the else body — each arm is its own scope.
+        let src = r#"
+type Decision:
+    label: String
+
+prompt classify(x: String) -> Decision:
+    """Classify."""
+
+prompt summarize(x: String) -> Decision:
+    """Summarize."""
+
+agent check(x: String) -> Decision:
+    return replay "t.jsonl":
+        when llm("classify") as recorded -> recorded
+        when llm("summarize") -> recorded
+        else Decision("unknown")
+"#;
+        let r = resolve_src(src);
+        // Arm 2 references `recorded`, which was bound only in
+        // arm 1 — expect an UndefinedName.
+        assert!(
+            r.errors.iter().any(|e| matches!(
+                &e.kind,
+                ResolveErrorKind::UndefinedName(n) if n == "recorded"
+            )),
+            "expected `recorded` to be out of scope in sibling arm, got {:?}",
+            r.errors
+        );
+    }
+
+    #[test]
+    fn replay_trace_subexpression_resolves_as_ordinary_expr() {
+        // The `<trace>` expression walks through ordinary
+        // resolution; undefined names in it surface normally.
+        let src = r#"
+type Decision:
+    label: String
+
+prompt classify(x: String) -> Decision:
+    """Classify."""
+
+agent check(x: String) -> Decision:
+    return replay unknown_var:
+        when llm("classify") -> Decision("fixture")
+        else Decision("unknown")
+"#;
+        let r = resolve_src(src);
+        assert!(
+            r.errors.iter().any(|e| matches!(
+                &e.kind,
+                ResolveErrorKind::UndefinedName(n) if n == "unknown_var"
+            )),
+            "expected UndefinedName for `unknown_var`, got {:?}",
+            r.errors
+        );
+    }
+
+    #[test]
+    fn replay_arm_without_capture_does_not_regress_binding_count() {
+        // Regression: arms without captures open a scope but insert
+        // nothing; ensure we don't leak stale locals into neighbor
+        // arms.
+        let src = r#"
+type Decision:
+    label: String
+
+prompt classify(x: String) -> Decision:
+    """Classify."""
+
+agent check(x: String) -> Decision:
+    return replay "t.jsonl":
+        when llm("classify") -> Decision("fixture")
+        else Decision("unknown")
+"#;
+        let r = resolve_src(src);
+        assert!(
+            r.errors.is_empty(),
+            "expected clean resolve, got {:?}",
+            r.errors
+        );
     }
 }

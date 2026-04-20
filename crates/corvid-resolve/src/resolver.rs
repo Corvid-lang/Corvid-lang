@@ -10,9 +10,10 @@ use crate::errors::{ResolveError, ResolveErrorKind};
 use crate::scope::{Binding, DefId, DeclKind, LocalId, LocalScope, SymbolTable};
 use corvid_ast::{
     AgentDecl, Block, Decl, EvalAssert, EvalDecl, Expr, ExtendDecl, ExtendMethodKind, File,
-    Ident, PromptDecl, Span, Stmt, ToolDecl, TypeDecl, TypeRef, Visibility,
+    Ident, PromptDecl, ReplayArm, ReplayPattern, Span, Stmt, ToolArgPattern, ToolDecl, TypeDecl,
+    TypeRef, Visibility,
 };
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 /// Output of name resolution. The AST itself is not mutated — bindings
 /// live in a side table keyed by the span of each identifier use.
@@ -27,6 +28,25 @@ pub struct Resolved {
     /// collide across types (`Point.distance` and `Line.distance`
     /// coexist) but must be unique within a single type.
     pub methods: HashMap<DefId, HashMap<String, MethodEntry>>,
+    /// Replay-pattern side-table — for each `ReplayPattern` the
+    /// resolver walked, either the `DefId` of the resolved
+    /// prompt/tool or `Approve` for approval-label patterns. Keyed
+    /// by the pattern's span so downstream passes (checker, IR)
+    /// can look up the resolution without re-walking string
+    /// literals. See [`ReplayPatternBinding`].
+    pub replay_pattern_bindings: HashMap<Span, ReplayPatternBinding>,
+}
+
+/// Resolver-side handle for a replay pattern.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReplayPatternBinding {
+    /// `llm("<name>")` resolved to the prompt declaration with this `DefId`.
+    Llm(DefId),
+    /// `tool("<name>", ...)` resolved to the tool declaration with this `DefId`.
+    Tool(DefId),
+    /// `approve("<label>")` — labels have no `DefId`; the resolver
+    /// only verifies the label is used somewhere in the file.
+    Approve,
 }
 
 /// One method's resolution metadata. The actual method body lives in
@@ -60,12 +80,14 @@ pub fn resolve(file: &File) -> Resolved {
     let mut r = Resolver::new();
     r.collect_decls(file);
     r.collect_methods(file);
+    r.collect_approval_labels(file);
     r.resolve_file(file);
     Resolved {
         symbols: r.symbols,
         bindings: r.bindings,
         errors: r.errors,
         methods: r.methods,
+        replay_pattern_bindings: r.replay_pattern_bindings,
     }
 }
 
@@ -82,6 +104,15 @@ struct Resolver {
     /// `collect_decls` has run (so type DefIds are known before we look
     /// up `extend T:` targets).
     methods: HashMap<DefId, HashMap<String, MethodEntry>>,
+    /// Replay-pattern side-table — populated as `resolve_expr` walks
+    /// `Expr::Replay` blocks.
+    replay_pattern_bindings: HashMap<Span, ReplayPatternBinding>,
+    /// Set of approval labels that appear at `approve Label(...)`
+    /// sites anywhere in the file. Populated by
+    /// `collect_approval_labels` after `collect_decls` so
+    /// `replay ... when approve("Label") -> ...` can be
+    /// presence-checked without walking the file a second time.
+    known_approval_labels: HashSet<String>,
 }
 
 impl Resolver {
@@ -93,6 +124,8 @@ impl Resolver {
             scopes: Vec::new(),
             next_local_id: 0,
             methods: HashMap::new(),
+            replay_pattern_bindings: HashMap::new(),
+            known_approval_labels: HashSet::new(),
         }
     }
 
@@ -606,15 +639,146 @@ impl Resolver {
                 else_body,
                 ..
             } => {
-                // Surface-level name resolution only in this slice.
-                // Trace-id locals + TraceEventPattern resolution
-                // land in 21-inv-E-2; today patterns are string
-                // literals and contribute no new bindings.
                 self.resolve_expr(trace);
                 for arm in arms {
-                    self.resolve_expr(&arm.body);
+                    self.resolve_replay_arm(arm);
                 }
                 self.resolve_expr(else_body);
+            }
+        }
+    }
+
+    /// Resolve one replay arm: validate the pattern name, open a
+    /// fresh scope with any arm-level captures (whole-event `as
+    /// <ident>` binding + per-arg tool captures), then walk the
+    /// arm body.
+    fn resolve_replay_arm(&mut self, arm: &ReplayArm) {
+        self.resolve_replay_pattern(&arm.pattern);
+
+        // Arm body has access to its captures only; siblings don't
+        // see each other's captures, and the `else` body sees none.
+        self.push_scope();
+
+        if let Some(capture) = &arm.capture {
+            let id = self.fresh_local();
+            self.current_scope_mut().insert(&capture.name, id);
+            self.bindings.insert(capture.span, Binding::Local(id));
+        }
+
+        // Per-arg tool captures bind alongside the whole-event capture.
+        if let ReplayPattern::Tool { arg, .. } = &arm.pattern {
+            if let ToolArgPattern::Capture { name, span } = arg {
+                let id = self.fresh_local();
+                self.current_scope_mut().insert(&name.name, id);
+                self.bindings.insert(*span, Binding::Local(id));
+            }
+        }
+
+        self.resolve_expr(&arm.body);
+        self.pop_scope();
+    }
+
+    /// Validate a replay pattern's name against the file's symbol
+    /// table (for `llm` / `tool`) or the known-approval-labels set
+    /// (for `approve`). Emits `UnknownReplay*` or
+    /// `ReplayPatternKindMismatch` on failure; records the
+    /// resolved binding in the pattern side-table on success.
+    fn resolve_replay_pattern(&mut self, pattern: &ReplayPattern) {
+        match pattern {
+            ReplayPattern::Llm { prompt, span } => {
+                match self.symbols.lookup_def(prompt) {
+                    Some(def_id) => {
+                        let entry = self.symbols.get(def_id);
+                        if entry.kind == DeclKind::Prompt {
+                            self.replay_pattern_bindings
+                                .insert(*span, ReplayPatternBinding::Llm(def_id));
+                        } else {
+                            self.errors.push(ResolveError {
+                                kind: ResolveErrorKind::ReplayPatternKindMismatch {
+                                    name: prompt.clone(),
+                                    expected_kind: "prompt",
+                                    actual_kind: decl_kind_label(entry.kind),
+                                },
+                                span: *span,
+                            });
+                        }
+                    }
+                    None => {
+                        self.errors.push(ResolveError {
+                            kind: ResolveErrorKind::UnknownReplayPrompt {
+                                name: prompt.clone(),
+                            },
+                            span: *span,
+                        });
+                    }
+                }
+            }
+            ReplayPattern::Tool { tool, span, .. } => {
+                match self.symbols.lookup_def(tool) {
+                    Some(def_id) => {
+                        let entry = self.symbols.get(def_id);
+                        if entry.kind == DeclKind::Tool {
+                            self.replay_pattern_bindings
+                                .insert(*span, ReplayPatternBinding::Tool(def_id));
+                        } else {
+                            self.errors.push(ResolveError {
+                                kind: ResolveErrorKind::ReplayPatternKindMismatch {
+                                    name: tool.clone(),
+                                    expected_kind: "tool",
+                                    actual_kind: decl_kind_label(entry.kind),
+                                },
+                                span: *span,
+                            });
+                        }
+                    }
+                    None => {
+                        self.errors.push(ResolveError {
+                            kind: ResolveErrorKind::UnknownReplayTool {
+                                name: tool.clone(),
+                            },
+                            span: *span,
+                        });
+                    }
+                }
+            }
+            ReplayPattern::Approve { label, span } => {
+                if self.known_approval_labels.contains(label) {
+                    self.replay_pattern_bindings
+                        .insert(*span, ReplayPatternBinding::Approve);
+                } else {
+                    self.errors.push(ResolveError {
+                        kind: ResolveErrorKind::UnknownReplayApproval {
+                            label: label.clone(),
+                        },
+                        span: *span,
+                    });
+                }
+            }
+        }
+    }
+
+    /// Walk the file once collecting every `approve Label(...)`
+    /// site's label name. `approve` is only valid inside agent
+    /// bodies today (top-level agents + agents-as-extend-methods);
+    /// prompts carry template strings, not executable blocks.
+    fn collect_approval_labels(&mut self, file: &File) {
+        for decl in &file.decls {
+            match decl {
+                Decl::Agent(a) => collect_approval_labels_in_block(
+                    &a.body,
+                    &mut self.known_approval_labels,
+                ),
+                Decl::Extend(ext) => {
+                    for method in &ext.methods {
+                        if let ExtendMethodKind::Agent(a) = &method.kind {
+                            collect_approval_labels_in_block(
+                                &a.body,
+                                &mut self.known_approval_labels,
+                            );
+                        }
+                    }
+                }
+                _ => {}
             }
         }
     }
@@ -658,5 +822,56 @@ impl Resolver {
         let id = LocalId(self.next_local_id);
         self.next_local_id += 1;
         id
+    }
+}
+
+/// Human-readable label for a `DeclKind`, used in replay
+/// pattern-kind-mismatch diagnostics ("`get_order` is a tool, not
+/// a prompt").
+fn decl_kind_label(kind: DeclKind) -> &'static str {
+    match kind {
+        DeclKind::Import => "import",
+        DeclKind::Type => "type",
+        DeclKind::Tool => "tool",
+        DeclKind::Prompt => "prompt",
+        DeclKind::Agent => "agent",
+        DeclKind::Eval => "eval",
+        DeclKind::Effect => "effect",
+        DeclKind::Model => "model",
+    }
+}
+
+/// Recursively walk a block collecting every `approve Label(...)`
+/// site's label name into `out`. The label is the callee of a
+/// `Call` expression inside a `Stmt::Approve`.
+fn collect_approval_labels_in_block(block: &Block, out: &mut HashSet<String>) {
+    for stmt in &block.stmts {
+        collect_approval_labels_in_stmt(stmt, out);
+    }
+}
+
+fn collect_approval_labels_in_stmt(stmt: &Stmt, out: &mut HashSet<String>) {
+    match stmt {
+        Stmt::Approve { action, .. } => {
+            if let Expr::Call { callee, .. } = action {
+                if let Expr::Ident { name, .. } = callee.as_ref() {
+                    out.insert(name.name.clone());
+                }
+            }
+        }
+        Stmt::If {
+            then_block,
+            else_block,
+            ..
+        } => {
+            collect_approval_labels_in_block(then_block, out);
+            if let Some(b) = else_block {
+                collect_approval_labels_in_block(b, out);
+            }
+        }
+        Stmt::For { body, .. } => {
+            collect_approval_labels_in_block(body, out);
+        }
+        _ => {}
     }
 }

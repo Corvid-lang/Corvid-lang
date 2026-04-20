@@ -41,6 +41,35 @@ pub enum ResolveErrorKind {
         method_name: String,
         field_span: Span,
     },
+
+    /// `replay <trace>: when llm("<name>") -> ...` — `<name>`
+    /// doesn't match any `prompt` declaration in scope. Either the
+    /// prompt doesn't exist, is declared under a different name,
+    /// or exists under a different declaration kind (tool, agent).
+    UnknownReplayPrompt { name: String },
+
+    /// `replay <trace>: when tool("<name>", ...) -> ...` — `<name>`
+    /// doesn't match any `tool` declaration in scope.
+    UnknownReplayTool { name: String },
+
+    /// `replay <trace>: when approve("<label>") -> ...` — `<label>`
+    /// doesn't appear at any `approve Label(...)` site in the file.
+    /// Labels aren't declarations (they're free-form identifiers at
+    /// approval sites), so resolution is a presence check against
+    /// the set of labels used elsewhere in the program.
+    UnknownReplayApproval { label: String },
+
+    /// A replay arm names the right kind of declaration (e.g. the
+    /// name *does* resolve), but the kind is wrong for the event
+    /// family. For example `when llm("get_order") -> ...` where
+    /// `get_order` is a `tool`, not a `prompt`. The wrong-kind
+    /// case is distinguished from UnknownReplayPrompt so the
+    /// diagnostic can suggest the right event family.
+    ReplayPatternKindMismatch {
+        name: String,
+        expected_kind: &'static str,
+        actual_kind: &'static str,
+    },
 }
 
 impl fmt::Display for ResolveErrorKind {
@@ -73,6 +102,26 @@ impl fmt::Display for ResolveErrorKind {
                 f,
                 "method `{method_name}` on type `{type_name}` collides with a field of the same name (declared at [{}..{}])",
                 field_span.start, field_span.end
+            ),
+            Self::UnknownReplayPrompt { name } => write!(
+                f,
+                "replay pattern `llm(\"{name}\")` does not match any `prompt` declaration"
+            ),
+            Self::UnknownReplayTool { name } => write!(
+                f,
+                "replay pattern `tool(\"{name}\", ...)` does not match any `tool` declaration"
+            ),
+            Self::UnknownReplayApproval { label } => write!(
+                f,
+                "replay pattern `approve(\"{label}\")` does not match any approval label used in this file"
+            ),
+            Self::ReplayPatternKindMismatch {
+                name,
+                expected_kind,
+                actual_kind,
+            } => write!(
+                f,
+                "replay pattern expects `{name}` to be a {expected_kind}, but `{name}` is a {actual_kind}"
             ),
         }
     }
