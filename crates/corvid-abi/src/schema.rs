@@ -56,6 +56,8 @@ pub struct AbiAgent {
     pub symbol: String,
     pub source_span: AbiSourceSpan,
     #[serde(default)]
+    pub source_line: u32,
+    #[serde(default)]
     pub params: Vec<AbiParam>,
     pub return_type: TypeDescription,
     pub effects: AbiEffects,

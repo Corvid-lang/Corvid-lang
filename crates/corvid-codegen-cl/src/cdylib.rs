@@ -11,6 +11,7 @@ pub fn build_library_to_disk(
     requested_path: &Path,
     build_target: BuildTarget,
     extra_tool_libs: &[&Path],
+    embedded_descriptor: Option<&[u8]>,
 ) -> Result<PathBuf, CodegenError> {
     if !ir
         .agents
@@ -54,7 +55,7 @@ pub fn build_library_to_disk(
     let object_path = obj_dir
         .path()
         .join(format!("{module_name}.{}", object_extension()));
-    crate::compile_to_object(ir, module_name, &object_path, None)?;
+    crate::compile_to_object(ir, module_name, &object_path, None, embedded_descriptor)?;
 
     match build_target {
         BuildTarget::Cdylib => {
@@ -81,6 +82,22 @@ fn exported_symbols(ir: &IrFile) -> Vec<String> {
     {
         exports.push("corvid_free_string".into());
     }
+    exports.extend(
+        [
+            corvid_abi::CORVID_ABI_DESCRIPTOR_SYMBOL,
+            "corvid_abi_descriptor_json",
+            "corvid_abi_descriptor_hash",
+            "corvid_abi_verify",
+            "corvid_list_agents",
+            "corvid_agent_signature_json",
+            "corvid_pre_flight",
+            "corvid_call_agent",
+            "corvid_free_result",
+            "corvid_register_approver",
+        ]
+        .into_iter()
+        .map(str::to_string),
+    );
     exports
 }
 
@@ -104,6 +121,7 @@ fn link_shared_library(
         .map_err(|e| CodegenError::link(format!("compiler discovery: {e}")))?;
 
     let runtime_staticlib_path = runtime_staticlib_path(&compiler)?;
+    let link_standalone_runtime = extra_tool_libs.is_empty();
     let mut cmd = Command::new(compiler.path());
     for (k, v) in compiler.env() {
         cmd.env(k, v);
@@ -112,8 +130,10 @@ fn link_shared_library(
     if compiler.is_like_msvc() {
         cmd.arg("/LD")
             .arg(object_path)
-            .arg(&runtime_staticlib_path)
             .arg(format!("/Fe:{}", output_path.display()));
+        if link_standalone_runtime {
+            cmd.arg(&runtime_staticlib_path);
+        }
         for lib in extra_tool_libs {
             cmd.arg(lib);
         }
@@ -134,7 +154,10 @@ fn link_shared_library(
             cmd.arg(format!("/EXPORT:{symbol}"));
         }
     } else {
-        cmd.arg("-shared").arg(object_path).arg(&runtime_staticlib_path);
+        cmd.arg("-shared").arg(object_path);
+        if link_standalone_runtime {
+            cmd.arg(&runtime_staticlib_path);
+        }
         for lib in extra_tool_libs {
             cmd.arg(lib);
         }
@@ -219,10 +242,46 @@ fn runtime_staticlib_path(compiler: &cc::Tool) -> Result<PathBuf, CodegenError> 
         staticlib_dir.join("libcorvid_runtime.a")
     };
     if !runtime_staticlib_path.exists() {
+        build_runtime_staticlib(staticlib_dir, &runtime_staticlib_path)?;
+    }
+    if !runtime_staticlib_path.exists() {
         return Err(CodegenError::link(format!(
-            "corvid-runtime staticlib missing at `{}`. Run `cargo build -p corvid-runtime --release`.",
+            "corvid-runtime staticlib missing at `{}` after auto-build.",
             runtime_staticlib_path.display()
         )));
     }
     Ok(runtime_staticlib_path)
+}
+
+fn build_runtime_staticlib(
+    staticlib_dir: &Path,
+    runtime_staticlib_path: &Path,
+) -> Result<(), CodegenError> {
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let workspace_root = manifest_dir
+        .ancestors()
+        .nth(2)
+        .ok_or_else(|| CodegenError::link("locate workspace root for corvid-runtime build"))?;
+    let profile = staticlib_dir
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or_default();
+    let mut cmd = Command::new("cargo");
+    cmd.arg("build").arg("-p").arg("corvid-runtime");
+    if profile.eq_ignore_ascii_case("release") {
+        cmd.arg("--release");
+    }
+    let output = cmd
+        .current_dir(workspace_root)
+        .output()
+        .map_err(|err| CodegenError::link(format!("spawn `cargo build -p corvid-runtime`: {err}")))?;
+    if !output.status.success() {
+        return Err(CodegenError::link(format!(
+            "auto-build of corvid-runtime staticlib for `{}` failed: {}{}",
+            runtime_staticlib_path.display(),
+            String::from_utf8_lossy(&output.stderr),
+            String::from_utf8_lossy(&output.stdout),
+        )));
+    }
+    Ok(())
 }

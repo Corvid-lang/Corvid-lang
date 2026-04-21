@@ -34,6 +34,11 @@ dotenvy = "0.15"
 # `corvid_runtime_init` to build the effect-policy table.
 inventory = { workspace = true }
 corvid-trace-schema = { workspace = true }
+corvid-abi = { workspace = true }
+libloading = "0.8"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_LibraryLoader"] }
 
 [features]
 default = []
@@ -47,11 +52,13 @@ optional = true
 tempfile = "3"
 wiremock = "0.6"
 criterion = "0.5"
+corvid-ast = { workspace = true }
 corvid-ir = { workspace = true }
 corvid-syntax = { workspace = true }
 corvid-vm = { workspace = true }
 corvid-resolve = { workspace = true }
 corvid-types = { workspace = true }
+corvid-codegen-cl = { workspace = true }
 
 [[bench]]
 name = "memory_runtime"

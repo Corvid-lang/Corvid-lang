@@ -1,0 +1,11 @@
+[package]
+name = "cdylib_catalog_demo_host"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = "1"
+hex = "0.4"
+libloading = "0.8"
+
+[workspace]

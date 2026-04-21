@@ -1437,7 +1437,9 @@ fn build_embedded_corvid_runtime() -> Runtime {
     Runtime::builder()
         .tracer(Tracer::null())
         .trace_schema_writer(WRITER_NATIVE)
-        .approver(Arc::new(ProgrammaticApprover::always_no()))
+        .approver(Arc::new(ProgrammaticApprover::new(|req| {
+            crate::catalog_c_api::decide_registered_approval(req)
+        })))
         .build()
 }
 

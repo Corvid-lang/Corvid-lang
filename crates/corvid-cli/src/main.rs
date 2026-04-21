@@ -13,10 +13,12 @@
 //!   corvid routing-report     aggregate dispatch traces into routing guidance
 //!   corvid replay <trace>     re-execute a recorded trace deterministically
 //!   corvid replay --model <id> <trace>  differential replay against a different model
+//!   corvid abi dump <lib>     inspect the embedded ABI/capability catalog
 //!   corvid trace list         list traces under target/trace/
 //!   corvid trace show <id>    print a recorded trace as formatted JSON
 //!   corvid trace dag <id>     render provenance DAG as Graphviz DOT
 
+mod abi_cmd;
 mod replay;
 mod routing_report;
 mod test_from_traces;
@@ -281,6 +283,11 @@ enum Command {
         )]
         mutate: Option<Vec<String>>,
     },
+    /// Inspect or verify the embedded Corvid ABI/capability descriptor.
+    Abi {
+        #[command(subcommand)]
+        command: AbiCommand,
+    },
     /// Inspect recorded traces under `target/trace/` (or a
     /// user-supplied directory).
     Trace {
@@ -347,6 +354,17 @@ enum TraceCommand {
         /// run id. Defaults to `target/trace`.
         #[arg(long, value_name = "PATH")]
         trace_dir: Option<PathBuf>,
+    },
+}
+
+#[derive(Subcommand)]
+enum AbiCommand {
+    Dump { library: PathBuf },
+    Hash { source: PathBuf },
+    Verify {
+        library: PathBuf,
+        #[arg(long, value_name = "HEX")]
+        expected_hash: String,
     },
 }
 
@@ -428,6 +446,14 @@ fn main() -> ExitCode {
             model.as_deref(),
             mutate.as_deref(),
         ),
+        Some(Command::Abi { command }) => match command {
+            AbiCommand::Dump { library } => abi_cmd::run_dump(&library),
+            AbiCommand::Hash { source } => abi_cmd::run_hash(&source),
+            AbiCommand::Verify {
+                library,
+                expected_hash,
+            } => abi_cmd::run_verify(&library, &expected_hash),
+        },
         Some(Command::Trace { command }) => match command {
             TraceCommand::List { trace_dir } => trace_cmd::run_list(trace_dir.as_deref()),
             TraceCommand::Show {

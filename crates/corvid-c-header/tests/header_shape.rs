@@ -101,6 +101,7 @@ fn header_has_extern_c_block() {
 #[test]
 fn header_includes_stdint_and_stdbool() {
     let header = render();
+    assert!(header.contains("#include <stddef.h>"));
     assert!(header.contains("#include <stdint.h>"));
     assert!(header.contains("#include <stdbool.h>"));
 }
@@ -114,13 +115,25 @@ fn header_exports_scalar_agent_with_correct_c_types() {
 #[test]
 fn header_exports_string_return_with_ownership_comment() {
     let header = render();
-    assert!(header.contains("release returned strings with `corvid_free_string(...)`"));
+    assert!(header.contains("release returned agent strings with `corvid_free_string(...)`"));
+    assert!(header.contains("release `corvid_call_agent` JSON payloads with `corvid_free_result(...)`"));
     assert!(header.contains("const char* echo_name(const char* name);"));
     assert!(header.contains("void corvid_free_string(const char* value);"));
+    assert!(header.contains("void corvid_free_result(char* result);"));
 }
 
 #[test]
 fn header_emits_nothing_return_as_void() {
     let header = render();
     assert!(header.contains("void touch(void);"));
+}
+
+#[test]
+fn header_exports_catalog_surface() {
+    let header = render();
+    assert!(header.contains("typedef struct {\n    const char* name;"));
+    assert!(header.contains("size_t corvid_list_agents(CorvidAgentHandle* out, size_t capacity);"));
+    assert!(header.contains("CorvidPreFlight corvid_pre_flight("));
+    assert!(header.contains("CorvidCallStatus corvid_call_agent("));
+    assert!(header.contains("void corvid_register_approver(CorvidApproverFn fn, void* user_data);"));
 }

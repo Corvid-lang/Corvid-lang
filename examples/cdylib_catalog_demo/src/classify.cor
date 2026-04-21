@@ -1,0 +1,7 @@
+@budget($0.01)
+pub extern "c"
+agent classify(text: String) -> String:
+    return classify_prompt(text)
+
+prompt classify_prompt(text: String) -> String:
+    """Classify the sentiment of the following text: {text}. Reply with positive, negative, or neutral."""

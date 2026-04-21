@@ -60,6 +60,7 @@ pub fn emit_descriptor_with_config(source: &str, config_toml: Option<&str>) -> C
         &bundle.registry,
         &EmitOptions {
             source_path: "src/refund_bot.cor",
+            source_text: source,
             compiler_version: "0.0.1",
             generated_at: FIXED_GENERATED_AT,
         },

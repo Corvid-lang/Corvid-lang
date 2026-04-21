@@ -67,8 +67,8 @@ pub use replay::{
 };
 pub use trace_fresh::run_fresh_from_source_async;
 pub use build::{
-    build_native_to_disk, build_target_to_disk, build_to_disk, BuildOutput, BuildTarget,
-    NativeBuildOutput, TargetBuildOutput,
+    build_catalog_descriptor_for_source, build_native_to_disk, build_target_to_disk,
+    build_to_disk, AbiBuildOutput, BuildOutput, BuildTarget, NativeBuildOutput, TargetBuildOutput,
 };
 pub use diagnostic::{summarize_diagnostics, Diagnostic};
 pub use law::{render_law_check_report, run_law_checks};
@@ -231,6 +231,7 @@ pub fn compile_to_abi_with_config(
         &effect_registry,
         &corvid_abi::EmitOptions {
             source_path: source_path_for_descriptor,
+            source_text: source,
             compiler_version: env!("CARGO_PKG_VERSION"),
             generated_at,
         },

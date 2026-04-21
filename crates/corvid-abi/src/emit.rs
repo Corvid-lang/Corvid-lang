@@ -18,6 +18,7 @@ use std::collections::{BTreeSet, HashMap};
 #[derive(Debug, Clone)]
 pub struct EmitOptions<'a> {
     pub source_path: &'a str,
+    pub source_text: &'a str,
     pub compiler_version: &'a str,
     pub generated_at: &'a str,
 }
@@ -59,7 +60,7 @@ pub fn emit_abi(
         .agents
         .iter()
         .filter(|agent| exported_agent_ids.contains(&agent.id))
-        .map(|agent| emit_agent(agent, file, resolved, registry, &summaries, &prompt_map))
+        .map(|agent| emit_agent(agent, file, resolved, registry, &summaries, &prompt_map, opts))
         .collect();
 
     let prompts = ir
@@ -150,6 +151,7 @@ fn emit_agent(
     registry: &EffectRegistry,
     summaries: &HashMap<corvid_resolve::DefId, corvid_types::AgentEffectSummary>,
     prompt_map: &HashMap<corvid_resolve::DefId, &IrPrompt>,
+    opts: &EmitOptions<'_>,
 ) -> AbiAgent {
     let ast_agent = file.decls.iter().find_map(|decl| match decl {
         Decl::Agent(ast_agent) if ast_agent.name.name == agent.name => Some(ast_agent),
@@ -170,6 +172,7 @@ fn emit_agent(
         name: agent.name.clone(),
         symbol: agent.name.clone(),
         source_span: source_span(agent.span),
+        source_line: source_line(opts.source_text, agent.span),
         params: ast_agent
             .params
             .iter()
@@ -554,4 +557,17 @@ fn source_span(span: Span) -> AbiSourceSpan {
         start: span.start,
         end: span.end,
     }
+}
+
+fn source_line(source: &str, span: Span) -> u32 {
+    let mut line = 1u32;
+    for (index, ch) in source.char_indices() {
+        if index >= span.start {
+            break;
+        }
+        if ch == '\n' {
+            line += 1;
+        }
+    }
+    line
 }

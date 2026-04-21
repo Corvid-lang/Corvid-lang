@@ -10,6 +10,7 @@ corvid-ast      = { workspace = true }
 corvid-ir       = { workspace = true }
 corvid-resolve  = { workspace = true }
 corvid-types    = { workspace = true }
+corvid-abi      = { workspace = true }
 # Regular dep (not dev-dep) so Cargo builds corvid-runtime's staticlib
 # variant whenever this crate is built — the `link.rs` step needs the
 # .lib / .a file on disk to link into every emitted Corvid binary.

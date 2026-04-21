@@ -115,12 +115,25 @@ pub struct TargetBuildOutput {
     pub diagnostics: Vec<Diagnostic>,
 }
 
+pub struct AbiBuildOutput {
+    pub source: String,
+    pub descriptor_json: Option<String>,
+    pub descriptor_hash: Option<[u8; 32]>,
+    pub diagnostics: Vec<Diagnostic>,
+}
+
 struct FrontendBundle {
+    source: String,
     file: corvid_ast::File,
     resolved: Resolved,
     checked: Checked,
     ir: IrFile,
     effect_registry: EffectRegistry,
+}
+
+struct CatalogDescriptorOutput {
+    json: String,
+    embedded_bytes: Vec<u8>,
 }
 
 pub fn build_target_to_disk(
@@ -150,6 +163,11 @@ pub fn build_target_to_disk(
                 .unwrap_or("program")
                 .to_string();
             let requested = out_dir.join(&stem);
+            let catalog_descriptor = if matches!(target, BuildTarget::Cdylib) {
+                Some(emit_catalog_descriptor(source_path, &frontend)?)
+            } else {
+                None
+            };
             let produced = match target {
                 BuildTarget::Native => {
                     corvid_codegen_cl::build_native_to_disk(&frontend.ir, &stem, &requested, &[])
@@ -161,6 +179,9 @@ pub fn build_target_to_disk(
                         &requested,
                         target,
                         &[],
+                        catalog_descriptor
+                            .as_ref()
+                            .map(|descriptor| descriptor.embedded_bytes.as_slice()),
                     )
                 }
             }
@@ -184,24 +205,11 @@ pub fn build_target_to_disk(
             };
 
             let abi_descriptor_path = if emit_abi_descriptor {
-                let generated_at = time::OffsetDateTime::now_utc()
-                    .format(&time::format_description::well_known::Rfc3339)
-                    .map_err(|e| anyhow::anyhow!("format descriptor timestamp: {e}"))?;
-                let normalized_source_path = source_path.to_string_lossy().to_string();
-                let descriptor = corvid_abi::emit_abi(
-                    &frontend.file,
-                    &frontend.resolved,
-                    &frontend.checked,
-                    &frontend.ir,
-                    &frontend.effect_registry,
-                    &corvid_abi::EmitOptions {
-                        source_path: &normalized_source_path,
-                        compiler_version: env!("CARGO_PKG_VERSION"),
-                        generated_at: &generated_at,
-                    },
-                );
-                let descriptor_json = corvid_abi::render_descriptor_json(&descriptor)
-                    .map_err(|e| anyhow::anyhow!("serialize descriptor: {e}"))?;
+                let descriptor_json = if let Some(descriptor) = &catalog_descriptor {
+                    descriptor.json.clone()
+                } else {
+                    emit_catalog_descriptor(source_path, &frontend)?.json
+                };
                 let path = out_dir.join(format!("{stem}.corvid-abi.json"));
                 if let Some(parent) = path.parent() {
                     std::fs::create_dir_all(parent)?;
@@ -221,6 +229,62 @@ pub fn build_target_to_disk(
             })
         }
     }
+}
+
+pub fn build_catalog_descriptor_for_source(source_path: &Path) -> anyhow::Result<AbiBuildOutput> {
+    let source = std::fs::read_to_string(source_path).map_err(|e| {
+        anyhow::anyhow!("cannot read `{}`: {}", source_path.display(), e)
+    })?;
+    let config = load_corvid_config_for(source_path);
+    match build_frontend_bundle(&source, config.as_ref()) {
+        Err(diagnostics) => Ok(AbiBuildOutput {
+            source,
+            descriptor_json: None,
+            descriptor_hash: None,
+            diagnostics,
+        }),
+        Ok(frontend) => {
+            let descriptor = emit_catalog_descriptor(source_path, &frontend)?;
+            let hash = corvid_abi::hash_json_str(&descriptor.json);
+            Ok(AbiBuildOutput {
+                source,
+                descriptor_json: Some(descriptor.json),
+                descriptor_hash: Some(hash),
+                diagnostics: Vec::new(),
+            })
+        }
+    }
+}
+
+fn emit_catalog_descriptor(
+    source_path: &Path,
+    frontend: &FrontendBundle,
+) -> anyhow::Result<CatalogDescriptorOutput> {
+    // Phase 22-C embeds and hashes the descriptor inside the produced cdylib,
+    // so the JSON body must be byte-stable across identical builds.
+    let generated_at = "1970-01-01T00:00:00Z".to_string();
+    let normalized_source_path = corvid_abi::normalize_source_path(&source_path.to_string_lossy());
+    let descriptor = corvid_abi::emit_catalog_abi(
+        &frontend.file,
+        &frontend.resolved,
+        &frontend.checked,
+        &frontend.ir,
+        &frontend.effect_registry,
+        &corvid_abi::EmitOptions {
+            source_path: &normalized_source_path,
+            source_text: &frontend.source,
+            compiler_version: env!("CARGO_PKG_VERSION"),
+            generated_at: &generated_at,
+        },
+    );
+    let json = corvid_abi::render_descriptor_json(&descriptor)
+        .map_err(|e| anyhow::anyhow!("serialize descriptor: {e}"))?;
+    let embedded_bytes = corvid_abi::descriptor_to_embedded_bytes(&descriptor)
+        .map_err(|e| anyhow::anyhow!("encode embedded descriptor: {e}"))?;
+    Ok(CatalogDescriptorOutput {
+        json,
+        embedded_bytes,
+    })
 }
 
 fn build_frontend_bundle(
@@ -255,6 +319,7 @@ fn build_frontend_bundle(
     let effect_registry = EffectRegistry::from_decls_with_config(&effect_decls, config);
     let ir = lower(&file, &resolved, &checked);
     Ok(FrontendBundle {
+        source: source.to_string(),
         file,
         resolved,
         checked,

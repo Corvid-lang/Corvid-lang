@@ -32,6 +32,8 @@
 pub mod abi;
 pub mod adversarial;
 pub mod approvals;
+pub mod catalog;
+pub mod catalog_c_api;
 pub mod ensemble;
 pub mod env;
 pub mod errors;
@@ -66,6 +68,12 @@ pub mod c_runtime {
 
 pub use approvals::{
     ApprovalDecision, ApprovalRequest, Approver, ProgrammaticApprover, StdinApprover,
+};
+pub use catalog::{
+    call_agent as catalog_call_agent, descriptor_hash as catalog_descriptor_hash,
+    descriptor_json as catalog_descriptor_json, list_agents as catalog_list_agents, pre_flight,
+    CorvidAgentHandle, CorvidApprovalDecision, CorvidApprovalRequired, CorvidApproverFn,
+    CorvidCallStatus, CorvidPreFlight, CorvidPreFlightStatus, CorvidTrustTier,
 };
 pub use adversarial::{contradiction_flag, trace_text};
 pub use ensemble::{majority_vote, EnsembleVoteOutcome};

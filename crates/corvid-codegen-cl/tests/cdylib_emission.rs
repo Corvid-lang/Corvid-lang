@@ -2,12 +2,14 @@ use std::ffi::{c_char, CStr, CString};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use corvid_abi::{descriptor_to_embedded_bytes, emit_catalog_abi, EmitOptions};
+use corvid_ast::File;
 use corvid_c_header::{emit_header, HeaderOptions};
 use corvid_codegen_cl::{build_library_to_disk, BuildTarget};
 use corvid_ir::lower;
-use corvid_resolve::resolve;
+use corvid_resolve::{resolve, Resolved};
 use corvid_syntax::{lex, parse_file};
-use corvid_types::typecheck;
+use corvid_types::{typecheck, Checked, EffectRegistry};
 use libloading::Library;
 
 const BOOL_SRC: &str = r#"
@@ -28,7 +30,15 @@ agent echo_amount(amount: Float) -> Float:
     return amount
 "#;
 
-fn ir_of(src: &str) -> corvid_ir::IrFile {
+struct FrontendBundle {
+    file: File,
+    resolved: Resolved,
+    checked: Checked,
+    effect_registry: EffectRegistry,
+    ir: corvid_ir::IrFile,
+}
+
+fn frontend_of(src: &str) -> FrontendBundle {
     let tokens = lex(src).expect("lex");
     let (file, parse_errors) = parse_file(&tokens);
     assert!(parse_errors.is_empty(), "parse errors: {parse_errors:?}");
@@ -36,29 +46,78 @@ fn ir_of(src: &str) -> corvid_ir::IrFile {
     assert!(resolved.errors.is_empty(), "resolve errors: {:?}", resolved.errors);
     let checked = typecheck(&file, &resolved);
     assert!(checked.errors.is_empty(), "type errors: {:?}", checked.errors);
-    lower(&file, &resolved, &checked)
+    let effect_decls = file
+        .decls
+        .iter()
+        .filter_map(|decl| match decl {
+            corvid_ast::Decl::Effect(effect) => Some(effect.clone()),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    let effect_registry = EffectRegistry::from_decls(&effect_decls);
+    let ir = lower(&file, &resolved, &checked);
+    FrontendBundle {
+        file,
+        resolved,
+        checked,
+        effect_registry,
+        ir,
+    }
+}
+
+fn embedded_descriptor_bytes(bundle: &FrontendBundle, src: &str) -> Vec<u8> {
+    let descriptor = emit_catalog_abi(
+        &bundle.file,
+        &bundle.resolved,
+        &bundle.checked,
+        &bundle.ir,
+        &bundle.effect_registry,
+        &EmitOptions {
+            source_path: "tests/cdylib_emission.cor",
+            source_text: src,
+            compiler_version: "0.6.0-phase22",
+            generated_at: "1970-01-01T00:00:00Z",
+        },
+    );
+    descriptor_to_embedded_bytes(&descriptor).expect("embed descriptor")
 }
 
 fn build_cdylib(src: &str, stem: &str) -> PathBuf {
-    let ir = ir_of(src);
+    let bundle = frontend_of(src);
     let tmp = tempfile::tempdir().unwrap();
     let out = tmp.path().join(stem);
-    let produced = build_library_to_disk(&ir, stem, &out, BuildTarget::Cdylib, &[])
-        .expect("build cdylib");
+    let embedded = embedded_descriptor_bytes(&bundle, src);
+    let produced = build_library_to_disk(
+        &bundle.ir,
+        stem,
+        &out,
+        BuildTarget::Cdylib,
+        &[],
+        Some(embedded.as_slice()),
+    )
+    .expect("build cdylib");
     let keep = tmp.keep();
     assert!(keep.exists());
     produced
 }
 
 fn build_staticlib(src: &str, stem: &str) -> PathBuf {
-    let ir = ir_of(src);
+    let bundle = frontend_of(src);
     let tmp = tempfile::tempdir().unwrap();
     let out = tmp.path().join(stem);
-    let produced = build_library_to_disk(&ir, stem, &out, BuildTarget::Staticlib, &[])
+    let produced = build_library_to_disk(&bundle.ir, stem, &out, BuildTarget::Staticlib, &[], None)
         .expect("build staticlib");
     let keep = tmp.keep();
     assert!(keep.exists());
     produced
+}
+
+fn load_library_leaked(path: &Path) -> &'static Library {
+    // SAFETY: tests load a freshly-built library and intentionally keep it
+    // resident for the life of the process. Repeated DLL unloads have been
+    // flaky on Windows once the embedded runtime spins background state, and
+    // that teardown noise is outside the ABI behavior this test is asserting.
+    unsafe { Box::leak(Box::new(Library::new(path).expect("load shared library"))) }
 }
 
 #[test]
@@ -72,7 +131,7 @@ fn cdylib_symbol_is_resolvable_via_dlopen() {
     let produced = build_cdylib(BOOL_SRC, "refund_bot_symbol");
     // SAFETY: test loads a library we just built and requests a known symbol.
     unsafe {
-        let lib = Library::new(&produced).expect("load shared library");
+        let lib = load_library_leaked(&produced);
         let _: libloading::Symbol<unsafe extern "C" fn(*const c_char, f64) -> bool> =
             lib.get(b"refund_bot").expect("resolve symbol");
     }
@@ -110,14 +169,22 @@ fn staticlib_target_produces_archive_file() {
 
 #[test]
 fn cdylib_minimal_c_harness_calls_and_returns_correct_value() {
-    let ir = ir_of(BOOL_SRC);
+    let bundle = frontend_of(BOOL_SRC);
     let tmp = tempfile::tempdir().unwrap();
     let stem = "refund_bot_harness";
     let requested = tmp.path().join(stem);
-    let lib_path = build_library_to_disk(&ir, stem, &requested, BuildTarget::Cdylib, &[])
-        .expect("build cdylib");
+    let embedded = embedded_descriptor_bytes(&bundle, BOOL_SRC);
+    let lib_path = build_library_to_disk(
+        &bundle.ir,
+        stem,
+        &requested,
+        BuildTarget::Cdylib,
+        &[],
+        Some(embedded.as_slice()),
+    )
+    .expect("build cdylib");
     let header = emit_header(
-        &ir,
+        &bundle.ir,
         &HeaderOptions {
             library_name: stem.into(),
         },
@@ -147,7 +214,7 @@ fn cdylib_string_param_roundtrip() {
     let produced = build_cdylib(STRING_SRC, "echo_name_cdylib");
     // SAFETY: symbols are loaded from the just-built library and invoked with valid ABI values.
     unsafe {
-        let lib = Library::new(&produced).expect("load shared library");
+        let lib = load_library_leaked(&produced);
         let echo: libloading::Symbol<unsafe extern "C" fn(*const c_char) -> *const c_char> =
             lib.get(b"echo_name").expect("resolve echo_name");
         let free: libloading::Symbol<unsafe extern "C" fn(*const c_char)> =
@@ -165,7 +232,7 @@ fn cdylib_float_precision_preserved() {
     let produced = build_cdylib(FLOAT_SRC, "echo_amount_cdylib");
     // SAFETY: symbol is loaded from the just-built library and invoked with a valid f64.
     unsafe {
-        let lib = Library::new(&produced).expect("load shared library");
+        let lib = load_library_leaked(&produced);
         let echo: libloading::Symbol<unsafe extern "C" fn(f64) -> f64> =
             lib.get(b"echo_amount").expect("resolve echo_amount");
         let input = 0.12345678912345678_f64;

@@ -10,9 +10,9 @@ name = "corvid"
 path = "src/main.rs"
 
 [dependencies]
+corvid-abi = { workspace = true }
 corvid-driver = { workspace = true }
 corvid-differential-verify = { workspace = true }
-corvid-abi = { workspace = true }
 corvid-types = { workspace = true }
 corvid-vm = { workspace = true }
 corvid-repl = { workspace = true }
