@@ -4011,6 +4011,78 @@ Interpretation:
   `21-inv-H` (behavior-diff PR tool) and `21-docs` remain, and `21-inv-H`
   needs a pre-phase design chat before code.
 
+## Day 48 — 2026-04-21 — Slice 21-inv-H-1: PR behavior receipt + Corvid reviewer agent
+
+`corvid trace-diff <base-sha> <head-sha> <path>` ships today. The CLI
+compiles a single `.cor` source at two git revisions, extracts the 22-B
+ABI descriptor from each, digests both to a shared `Descriptor` shape,
+and hands them to an in-repo Corvid reviewer agent that walks the
+algebra and emits a markdown PR behavior receipt.
+
+The pre-phase chat turned on one question: reviewer-in-Corvid vs.
+reviewer-in-Rust. The honest audit came out against the Rust path —
+shipping the flagship PR-review tool in the host language would have
+been the same shortcut Python would take shipping its linter in bash.
+The reviewer is therefore a `.cor` file
+(`crates/corvid-cli/src/trace_diff/reviewer.cor`), embedded via
+`include_str!` into the CLI binary, compiled + run through the
+interpreter on every invocation, and it owns the diff logic itself.
+Rust is plumbing (git, compile, descriptor extraction); Corvid owns
+the "what changed, and how do we render it."
+
+What shipped:
+
+- `corvid_driver::compile_to_abi_with_config(source, source_path, generated_at, config) -> Result<CorvidAbi, Vec<Diagnostic>>`
+  helper that runs the full frontend + effect-registry build +
+  `emit_abi`, exposed so trace-diff (and any future descriptor-consuming
+  tool) can go straight from source string to descriptor without
+  running codegen.
+- `crates/corvid-cli/src/trace_diff/reviewer.cor`: `@deterministic`
+  `review_pr(base: Descriptor, head: Descriptor) -> String`. Detects
+  added / removed agents, trust-tier changes, `@dangerous` transitions,
+  and `@replayable` transitions across the exported surface. Written
+  using only the Corvid surface that compiles today (no `.is_some()`,
+  no `.push()`, no `Float.to_string()` — those are explicit language
+  gaps a future slice will close).
+- `crates/corvid-cli/src/trace_diff/mod.rs`: the Rust plumbing —
+  `git_show(rev, path)` reads source at a revision, `digest(abi)`
+  collapses `CorvidAbi` to the reviewer's `Descriptor` shape, and
+  `invoke_reviewer` compiles the embedded reviewer source, coerces
+  both descriptors into typed `Value`s via `json_to_value`, and runs
+  `review_pr` through `run_ir_with_runtime`.
+- `corvid trace-diff` clap subcommand wired in `main.rs`.
+- 7 unit tests covering the reviewer in isolation (no changes, added,
+  removed, trust-tier change, `@dangerous` transition, determinism
+  across repeat calls, reviewer-source-compiles).
+- 3 integration tests against a real git tempdir repo (added-agent,
+  no-changes-on-unchanged-source, unknown-base-sha error path).
+- ROADMAP refactored: `21-inv-H` decomposed into H-1..H-5 (counterfactual
+  replay, structured approval + provenance, AI prose summary, CI
+  integration); H-1 checked off.
+
+Interpretation:
+
+- Corvid's thesis — AI-native governance is a first-class programming
+  domain with compile-time guarantees — is now load-bearing in the
+  CLI's own tooling. The reviewer is `@deterministic`: two invocations
+  on the same (base-sha, head-sha, path) triple produce byte-identical
+  receipts. CI can memoize. That's a property the Rust equivalent
+  couldn't honestly claim without threading a determinism contract
+  through its own code.
+- The scope question "what does trace-diff compare?" resolves
+  principally: exactly the `pub extern "c"` exported surface, because
+  that is 22-B's ABI boundary, because that is what hosts actually
+  consume. No arbitrary cut invented for the tool.
+- Writing the reviewer in Corvid surfaced one concrete language gap
+  (no `Float→String` primitive → receipt omits cost deltas for now).
+  That gap is an honest feature cost of shipping the thesis; the
+  follow-up slice that closes it improves everyone's language, not
+  just the reviewer.
+- Five follow-up slices remain: H-2 (replay-divergence), H-3
+  (structured approval/provenance), H-4 (LLM prose summary with
+  `Grounded<Phrase>`), H-5 (format modes for GitHub/JSON). Each
+  extends a surface H-1 established; each ships independently.
+
 
 
 

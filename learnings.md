@@ -1645,6 +1645,46 @@ per-trace verdict, and — when behavior genuinely changed for the better — le
 the operator promote the current run to the new golden instead of having them
 re-record by hand.
 
+### The flagship PR-review tool is itself a Corvid program
+
+Corvid now ships `corvid trace-diff <base-sha> <head-sha> <path>`, a
+git-integrated behavior-diff tool whose reviewer agent — the piece that
+walks two ABI descriptors and emits a markdown PR behavior receipt — is
+written in Corvid, not Rust. The `.cor` source lives at
+`crates/corvid-cli/src/trace_diff/reviewer.cor`, is embedded into the
+CLI binary via `include_str!`, and compiles + runs through the
+interpreter on every invocation. The reviewer is `@deterministic`
+(byte-identical receipts across reruns), declares its own
+`AgentSummary` and `Descriptor` types that the Rust CLI coerces into
+via `json_to_value`, and owns the diff logic itself — Rust is
+plumbing (git, compile, descriptor extraction) but the "what changed,
+and how do we render it" logic is the Corvid agent. That matters
+because Corvid's thesis is that AI-native governance is a first-class
+programming domain with compile-time guarantees; shipping the flagship
+governance tool in the host language would have softened the thesis
+the same way Python shipping its linter in bash would. Writing it in
+Corvid forced one honest early finding about language scope: there's
+no `Float→String` primitive today, which is why slice 1 omits cost
+deltas from the receipt (the reviewer will surface cost changes once
+the language grows one). Dogfooding surfaces language gaps by
+construction, which is exactly the v1.0 polish loop we want.
+
+### ABI-descriptor-as-behavior-surface gives PR review a principled scope
+
+The receipt compares exactly the `pub extern "c"` exported surface and
+its transitive closure — the same scope 22-B's `emit_abi` uses for the
+ABI descriptor. That is not an arbitrary cut. The exported surface is
+what a host actually consumes; it is also what users audit in a PR
+because it is the contract that leaves the compilation unit. Private
+helpers change often and don't change the host's view; comparing them
+would produce noisy receipts that cry wolf. Keeping the scope aligned
+with the ABI descriptor means a Corvid program's reviewable surface is
+exactly the surface a host relies on, which is the principled answer
+to "what should PR-level behavior-diff show." The lesson: when
+inventing a review tool, anchor its scope to a pre-existing, defensible
+boundary the rest of the system already respects — not a new boundary
+invented for the tool.
+
 ### Jest-snapshot promotion needs a fresh-run driver helper, not a replay-with-different-flags
 
 A `--promote` implementation that only adjusted replay's substitution knobs

@@ -22,6 +22,7 @@ mod routing_report;
 mod test_from_traces;
 mod trace_cmd;
 mod trace_dag;
+mod trace_diff;
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -286,6 +287,27 @@ enum Command {
         #[command(subcommand)]
         command: TraceCommand,
     },
+    /// Behavior-diff a PR: compile the source at two git
+    /// revisions, extract the Corvid ABI descriptor from each,
+    /// and render a PR behavior receipt describing every
+    /// algebraic change (trust tier, `@dangerous`, `@replayable`,
+    /// added / removed agents). Compares the *exported surface*
+    /// — `pub extern "c"` agents and their transitive closure —
+    /// since that is the AI-safety boundary a host consumes. The
+    /// reviewer is itself a Corvid `@deterministic` agent (see
+    /// `crates/corvid-cli/src/trace_diff/reviewer.cor`), so
+    /// receipts are byte-identical across reruns.
+    TraceDiff {
+        /// Git revision for the "before" side (typically the PR
+        /// base branch tip).
+        base_sha: String,
+        /// Git revision for the "after" side (typically the PR
+        /// head branch tip).
+        head_sha: String,
+        /// Path within the repo to the single `.cor` source file
+        /// to compare. Multi-file sources are a follow-up slice.
+        path: PathBuf,
+    },
     /// Start the interactive Corvid REPL.
     Repl,
     /// Check the local environment for required tools.
@@ -417,6 +439,15 @@ fn main() -> ExitCode {
                 trace_dir,
             } => trace_dag::run_dag(&id_or_path, trace_dir.as_deref()),
         },
+        Some(Command::TraceDiff {
+            base_sha,
+            head_sha,
+            path,
+        }) => trace_diff::run_trace_diff(trace_diff::TraceDiffArgs {
+            base_sha: &base_sha,
+            head_sha: &head_sha,
+            source_path: &path,
+        }),
         Some(Command::Repl) => cmd_repl(),
         Some(Command::Doctor) => cmd_doctor(),
         None => {

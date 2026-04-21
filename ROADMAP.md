@@ -1193,7 +1193,12 @@ Users register local models (Ollama, vLLM, llama.cpp) with declared capabilities
 - [x] 21-inv-D-cli-wire      Flip `--mutate` CLI stub to real counterfactual-mutation dispatch (4 driver integration tests)
 - [x] 21-inv-G-cli-wire      Flip `--from-traces` CLI stub to real regression-harness dispatch through `corvid_runtime::run_test_from_traces` (async driver variant; deferred `--promote` to follow-up)
 - [x] 21-inv-G-cli-wire-promote  Wire `--promote` through `RecordCurrent`: fresh-run-with-`trace_to` driver helper (`run_fresh_from_source_async`) + `PromotePromptMode::AutoStdin` (TTY: [y/N/a/q]; non-TTY: fail-closed with one-time warning)
-- [ ] 21-inv-H               `corvid trace-diff <commit-a> <commit-b>` + git-integrated behavior diff
+- [x] 21-inv-H-1             `corvid trace-diff <base-sha> <head-sha> <path>` + in-repo Corvid `@deterministic` reviewer agent: static algebra diff (added / removed agents, trust-tier / `@dangerous` / `@replayable` transitions) across `pub extern "c"` exported surface. Reviewer is a `.cor` program embedded via `include_str!` — the flagship PR-review tool dogfoods the language it reviews.
+- [ ] 21-inv-H-2             Counterfactual replay: `--traces <dir>` replays each trace against base and head via the 21-inv-G-harness, reports divergence population + counterfactual impact score.
+- [ ] 21-inv-H-3             Structured approval + provenance diff: receipt calls out specific `@dangerous` call-site additions, weakened approve predicates, grounding-source swaps (consumes 22-B's `approval_contract` + `provenance` surfaces).
+- [ ] 21-inv-H-4             AI-generated prose summary: LLM writes the top-of-receipt paragraph as `Grounded<Phrase>` tethered to specific algebraic deltas; reviewer gains a prompt-tier sibling agent.
+- [ ] 21-inv-H-5             GitHub/CI integration: `--format=github-check|markdown|json` outputs for PR annotations, PR comments, and bot consumption.
+- [ ] 21-inv-H               (rollup — closes when H-1..H-5 all land)
 - [ ] 21-docs                Spec section 21 + ROADMAP closeout + v1.0 demo script
 
 #### Dev B's lane (runtime + codegen + daemon — ~9 slices)

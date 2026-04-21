@@ -1,0 +1,100 @@
+# The `corvid trace-diff` PR behavior reviewer.
+#
+# This file ships inside the Corvid CLI (embedded via `include_str!`)
+# and is compiled at runtime when a user invokes
+# `corvid trace-diff <base-sha> <head-sha> <path>`. The reviewer
+# takes two pre-digested agent-summary descriptors — one from the
+# base commit, one from the head — and produces a markdown PR
+# behavior receipt describing every algebraic change.
+#
+# Why the reviewer is a Corvid program, not a Rust function:
+#
+# Corvid's thesis is that AI-native governance is a first-class
+# programming domain with compile-time guarantees. If the flagship
+# PR-review tool lived in Rust, we would be shipping the governance
+# layer for our own language in the host language — the same
+# shortcut Python would make shipping its linter in bash. The
+# reviewer is in Corvid so that the tool itself is effect-bounded,
+# @deterministic, and dogfoods the language on a real-world
+# orchestration problem. Users can read, fork, and extend it.
+#
+# Scope for slice 21-inv-H-1:
+#
+#   - Detect agents added / removed between base and head.
+#   - Flag trust-tier changes (String comparison).
+#   - Flag @dangerous transitions.
+#   - Flag @replayable transitions.
+#   - No LLM calls, no approval gates, no tool dispatch — the
+#     reviewer is a pure `@deterministic` Corvid agent that reads
+#     two typed values and returns a String.
+#
+# Not in slice 1 (deferred to follow-ups):
+#
+#   - Cost/budget deltas. Needs a Float→String primitive; the
+#     reviewer will render `cost/call` changes once the language
+#     has one.
+#   - Trace-replay divergence (21-inv-H-2).
+#   - Structured approval-contract drill-down (21-inv-H-3).
+#   - LLM-generated prose summary (21-inv-H-4).
+
+type AgentSummary:
+    name: String
+    trust_tier: String
+    is_dangerous: Bool
+    is_replayable: Bool
+
+type Descriptor:
+    agents: List<AgentSummary>
+
+# Produce the full PR behavior receipt from two descriptors.
+# `@deterministic`: the same two inputs always produce the same
+# receipt (byte-identical), so CI pipelines can memoize the
+# receipt keyed on (base-sha, head-sha) and the result survives
+# re-runs without drift.
+@deterministic
+agent review_pr(base: Descriptor, head: Descriptor) -> String:
+    body = "# PR Behavior Receipt\n\n"
+    body = body + "Comparing base vs. head along Corvid's effect algebra.\n\n"
+    any_changes = false
+
+    # Pass 1: agents that exist on base. Either removed on head, or
+    # changed in at least one algebraic field.
+    for b in base.agents:
+        in_head = false
+        for h in head.agents:
+            if b.name == h.name:
+                in_head = true
+                if b.trust_tier != h.trust_tier:
+                    body = body + "### `" + b.name + "` trust changed\n"
+                    body = body + "- base: `" + b.trust_tier + "`\n"
+                    body = body + "- head: `" + h.trust_tier + "`\n\n"
+                    any_changes = true
+                if b.is_dangerous != h.is_dangerous:
+                    if h.is_dangerous:
+                        body = body + "### `" + b.name + "` became `@dangerous`\n\n"
+                    else:
+                        body = body + "### `" + b.name + "` no longer `@dangerous`\n\n"
+                    any_changes = true
+                if b.is_replayable != h.is_replayable:
+                    if h.is_replayable:
+                        body = body + "### `" + b.name + "` gained `@replayable`\n\n"
+                    else:
+                        body = body + "### `" + b.name + "` lost `@replayable`\n\n"
+                    any_changes = true
+        if not in_head:
+            body = body + "### Removed: `" + b.name + "`\n\n"
+            any_changes = true
+
+    # Pass 2: agents that exist on head but not on base.
+    for h in head.agents:
+        in_base = false
+        for b in base.agents:
+            if b.name == h.name:
+                in_base = true
+        if not in_base:
+            body = body + "### Added: `" + h.name + "`\n\n"
+            any_changes = true
+
+    if not any_changes:
+        body = body + "_No algebraic changes detected._\n"
+    return body
