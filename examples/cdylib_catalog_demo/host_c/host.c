@@ -29,11 +29,18 @@ typedef CorvidCallStatus (*corvid_call_agent_fn)(
     size_t args_len,
     char** out_result,
     size_t* out_result_len,
+    uint64_t* out_observation_handle,
     CorvidApprovalRequired* out_approval);
 typedef void (*corvid_free_result_fn)(char* result);
 typedef int32_t (*corvid_grounded_sources_fn)(uint64_t handle, const char** out, size_t capacity);
 typedef double (*corvid_grounded_confidence_fn)(uint64_t handle);
 typedef void (*corvid_grounded_release_fn)(uint64_t handle);
+typedef double (*corvid_observation_cost_usd_fn)(uint64_t handle);
+typedef uint64_t (*corvid_observation_latency_ms_fn)(uint64_t handle);
+typedef uint64_t (*corvid_observation_tokens_in_fn)(uint64_t handle);
+typedef uint64_t (*corvid_observation_tokens_out_fn)(uint64_t handle);
+typedef bool (*corvid_observation_exceeded_bound_fn)(uint64_t handle);
+typedef void (*corvid_observation_release_fn)(uint64_t handle);
 
 static int decode_hex_64(const char* hex, uint8_t out[32]) {
     size_t len = strlen(hex);
@@ -138,6 +145,18 @@ int main(int argc, char** argv) {
         (corvid_grounded_confidence_fn)load_symbol(library, "corvid_grounded_confidence");
     corvid_grounded_release_fn corvid_grounded_release =
         (corvid_grounded_release_fn)load_symbol(library, "corvid_grounded_release");
+    corvid_observation_cost_usd_fn corvid_observation_cost_usd =
+        (corvid_observation_cost_usd_fn)load_symbol(library, "corvid_observation_cost_usd");
+    corvid_observation_latency_ms_fn corvid_observation_latency_ms =
+        (corvid_observation_latency_ms_fn)load_symbol(library, "corvid_observation_latency_ms");
+    corvid_observation_tokens_in_fn corvid_observation_tokens_in =
+        (corvid_observation_tokens_in_fn)load_symbol(library, "corvid_observation_tokens_in");
+    corvid_observation_tokens_out_fn corvid_observation_tokens_out =
+        (corvid_observation_tokens_out_fn)load_symbol(library, "corvid_observation_tokens_out");
+    corvid_observation_exceeded_bound_fn corvid_observation_exceeded_bound =
+        (corvid_observation_exceeded_bound_fn)load_symbol(library, "corvid_observation_exceeded_bound");
+    corvid_observation_release_fn corvid_observation_release =
+        (corvid_observation_release_fn)load_symbol(library, "corvid_observation_release");
     const char* (*grounded_tag_fn)(const char*, uint64_t*) =
         (const char* (*)(const char*, uint64_t*))load_symbol(library, "grounded_tag");
     void (*corvid_free_string_fn)(const char*) =
@@ -145,7 +164,9 @@ int main(int argc, char** argv) {
 
     if (!corvid_abi_verify || !corvid_list_agents || !corvid_find_agents_where || !corvid_pre_flight ||
         !corvid_call_agent || !corvid_free_result || !corvid_grounded_sources ||
-        !corvid_grounded_confidence || !corvid_grounded_release || !grounded_tag_fn ||
+        !corvid_grounded_confidence || !corvid_grounded_release || !corvid_observation_cost_usd ||
+        !corvid_observation_latency_ms || !corvid_observation_tokens_in || !corvid_observation_tokens_out ||
+        !corvid_observation_exceeded_bound || !corvid_observation_release || !grounded_tag_fn ||
         !corvid_free_string_fn) {
         fprintf(stderr, "required catalog symbol missing\n");
         return 1;
@@ -221,6 +242,7 @@ int main(int argc, char** argv) {
         const char* args_json = "[\"I loved the support experience\"]";
         char* result = NULL;
         size_t result_len = 0;
+        uint64_t observation_handle = CORVID_NULL_OBSERVATION_HANDLE;
         CorvidApprovalRequired approval = {0};
         CorvidCallStatus status = corvid_call_agent(
             "classify",
@@ -228,8 +250,18 @@ int main(int argc, char** argv) {
             strlen(args_json),
             &result,
             &result_len,
+            &observation_handle,
             &approval);
         printf("call_status=%u result=%.*s\n", (unsigned)status, (int)result_len, result);
+        printf(
+            "observation_handle=%llu cost_usd=%.4f latency_ms=%llu tokens_in=%llu tokens_out=%llu exceeded_bound=%u\n",
+            (unsigned long long)observation_handle,
+            corvid_observation_cost_usd(observation_handle),
+            (unsigned long long)corvid_observation_latency_ms(observation_handle),
+            (unsigned long long)corvid_observation_tokens_in(observation_handle),
+            (unsigned long long)corvid_observation_tokens_out(observation_handle),
+            (unsigned)corvid_observation_exceeded_bound(observation_handle));
+        corvid_observation_release(observation_handle);
         corvid_free_result(result);
     }
 

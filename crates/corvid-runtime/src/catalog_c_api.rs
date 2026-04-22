@@ -9,6 +9,7 @@ use crate::catalog::{
     OwnedApprovalRequired, OwnedPreFlight, ScalarAbiType, ScalarInvoker, ScalarReturnType,
 };
 use crate::grounded_handles;
+use crate::observation_handles;
 use crate::abi::CorvidString;
 use crate::effect_filter::CorvidFindAgentsStatus;
 use crate::errors::RuntimeError;
@@ -799,6 +800,42 @@ pub extern "C" fn corvid_grounded_release(handle: u64) {
 }
 
 #[no_mangle]
+pub extern "C" fn corvid_observation_cost_usd(handle: u64) -> f64 {
+    observation_handles::cost_usd_for_handle(handle).unwrap_or(f64::NAN)
+}
+
+#[no_mangle]
+pub extern "C" fn corvid_observation_latency_ms(handle: u64) -> u64 {
+    observation_handles::latency_ms_for_handle(handle).unwrap_or(0)
+}
+
+#[no_mangle]
+pub extern "C" fn corvid_observation_tokens_in(handle: u64) -> u64 {
+    observation_handles::tokens_in_for_handle(handle).unwrap_or(0)
+}
+
+#[no_mangle]
+pub extern "C" fn corvid_observation_tokens_out(handle: u64) -> u64 {
+    observation_handles::tokens_out_for_handle(handle).unwrap_or(0)
+}
+
+#[no_mangle]
+pub extern "C" fn corvid_observation_exceeded_bound(handle: u64) -> bool {
+    observation_handles::exceeded_bound_for_handle(handle).unwrap_or(false)
+}
+
+#[no_mangle]
+pub extern "C" fn corvid_observation_release(handle: u64) {
+    let released = observation_handles::release_handle(handle);
+    if cfg!(debug_assertions)
+        && handle != observation_handles::NULL_OBSERVATION_HANDLE
+        && !released
+    {
+        eprintln!("warning: observation handle {handle} was already released or never existed");
+    }
+}
+
+#[no_mangle]
 pub unsafe extern "C" fn corvid_grounded_attest_int(
     value: i64,
     source_name: CorvidString,
@@ -1012,6 +1049,7 @@ pub unsafe extern "C" fn corvid_call_agent(
     args_len: usize,
     out_result: *mut *mut c_char,
     out_result_len: *mut usize,
+    out_observation_handle: *mut u64,
     out_approval: *mut CorvidApprovalRequired,
 ) -> CorvidCallStatus {
     if !out_result.is_null() {
@@ -1019,6 +1057,9 @@ pub unsafe extern "C" fn corvid_call_agent(
     }
     if !out_result_len.is_null() {
         *out_result_len = 0;
+    }
+    if !out_observation_handle.is_null() {
+        *out_observation_handle = observation_handles::NULL_OBSERVATION_HANDLE;
     }
     let Ok(agent_name) = read_c_string(agent_name) else {
         return CorvidCallStatus::BadArgs;
@@ -1031,6 +1072,9 @@ pub unsafe extern "C" fn corvid_call_agent(
     };
     reset_transients();
     let outcome = call_agent(&agent_name, &args_json);
+    if !out_observation_handle.is_null() {
+        *out_observation_handle = outcome.observation_handle;
+    }
     if let Some(approval) = &outcome.approval {
         if !out_approval.is_null() {
             *out_approval = owned_approval_to_c(approval);

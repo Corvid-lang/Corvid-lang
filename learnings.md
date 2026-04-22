@@ -2030,6 +2030,43 @@ ask a second, explicit question. The durable lesson is that optional metadata in
 a safety-facing query surface should usually model "unknown" honestly rather
 than collapsing it into either branch of a boolean.
 
+### Effect bounds crossing into runtime should become attestations plus host policy, not runtime-owned walls
+
+`21-inv-H-5`, `22-F`, and `22-G` all hit the same architectural seam from
+different directions:
+
+- `H-5` turned the regression gate into a structured receipt plus policy output
+  instead of a hard-coded CLI branch.
+- `22-F` let `Grounded<T>` cross FFI as `(payload, handle)` so the host can
+  inspect provenance evidence without pretending the Corvid type wall survives
+  inside foreign code.
+- `22-G` applies the same pattern to cost and latency: the runtime records a
+  per-call observation handle, exposes realized cost / latency / token counts,
+  and reports whether the declared bound was exceeded, but it does **not**
+  unilaterally kill the call.
+
+The common lesson is the durable one: when a compile-time effect dimension
+meets runtime or FFI, the honest shape is usually **attestation + host policy**.
+The language keeps its compile-time guarantee where it is real; the runtime
+turns observed reality into structured evidence; the host decides what to do
+with that evidence. Trying to extend the compile-time wall wholesale into a
+foreign host or a runtime policy engine either centralizes too much policy in
+the runtime or offers false comfort when the host can always step around it.
+
+`22-G` makes that concrete:
+
+- one top-level `corvid_call_agent` returns one observation handle
+- the handle owns realized `cost_usd`, `latency_ms`, `tokens_in`,
+  `tokens_out`, and `exceeded_bound`
+- if no cost bound was declared, `exceeded_bound` is simply `false`
+- hosts that care about "no bound declared" can already learn that from the
+  embedded descriptor and write their own policy on top
+
+That pattern is now the default for future effect-facing Phase 22 / 23 slices:
+compile-time algebra inside Corvid, runtime attestations at the boundary,
+policy authored by the host unless a later slice makes a very explicit case for
+runtime enforcement.
+
 ## Contributing / feedback
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). The rules of the road are: design chat before code, per-scope commits at every boundary, dev-log entry for every session, no shortcuts. The `learnings.md` file you're reading gets updated when each user-visible feature ships.

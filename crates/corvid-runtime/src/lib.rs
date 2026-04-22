@@ -45,6 +45,7 @@ pub mod ffi_bridge;
 pub mod llm;
 pub mod models;
 mod native_trace;
+pub mod observation_handles;
 pub mod provenance;
 pub mod record;
 pub mod replay;
@@ -62,7 +63,8 @@ pub mod tracing;
 pub use abi::{
     registered_tool_count, CorvidGroundedBoolReturn, CorvidGroundedFloatReturn,
     CorvidGroundedHandle, CorvidGroundedIntReturn, CorvidGroundedStringReturn,
-    CorvidString, CORVID_NULL_GROUNDED_HANDLE, ToolMetadata,
+    CorvidObservationHandle, CorvidString, CORVID_NULL_GROUNDED_HANDLE,
+    CORVID_NULL_OBSERVATION_HANDLE, ToolMetadata,
 };
 pub use inventory;
 

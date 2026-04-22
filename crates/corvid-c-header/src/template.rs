@@ -12,6 +12,7 @@ pub fn render_header(opts: &HeaderOptions, agents: &[HeaderAgent]) -> String {
     out.push_str("//   * release returned agent strings with `corvid_free_string(...)`\n");
     out.push_str("//   * release `corvid_call_agent` JSON payloads with `corvid_free_result(...)`\n");
     out.push_str("//   * grounded-return handles are runtime attestations; release them with `corvid_grounded_release(...)`\n\n");
+    out.push_str("//   * observation handles are runtime attestations; release them with `corvid_observation_release(...)`\n\n");
     out.push_str(&format!("#ifndef {guard}\n"));
     out.push_str(&format!("#define {guard}\n\n"));
     out.push_str("#include <stddef.h>\n");
@@ -124,6 +125,7 @@ pub fn render_header(opts: &HeaderOptions, agents: &[HeaderAgent]) -> String {
     out.push_str("} CorvidPredicateResult;\n\n");
 
     out.push_str("#define CORVID_NULL_GROUNDED_HANDLE ((uint64_t)0)\n\n");
+    out.push_str("#define CORVID_NULL_OBSERVATION_HANDLE ((uint64_t)0)\n\n");
 
     out.push_str("const char* corvid_abi_descriptor_json(size_t* out_len);\n");
     out.push_str("void corvid_abi_descriptor_hash(uint8_t out_hash[32]);\n");
@@ -142,6 +144,7 @@ pub fn render_header(opts: &HeaderOptions, agents: &[HeaderAgent]) -> String {
     out.push_str("    size_t args_len,\n");
     out.push_str("    char** out_result,\n");
     out.push_str("    size_t* out_result_len,\n");
+    out.push_str("    uint64_t* out_observation_handle,\n");
     out.push_str("    CorvidApprovalRequired* out_approval);\n");
     out.push_str("void corvid_free_result(char* result);\n");
     out.push_str("void corvid_register_approver(CorvidApproverFn fn, void* user_data);\n");
@@ -158,6 +161,12 @@ pub fn render_header(opts: &HeaderOptions, agents: &[HeaderAgent]) -> String {
     out.push_str("int32_t corvid_grounded_sources(uint64_t handle, const char** out, size_t capacity);\n");
     out.push_str("double corvid_grounded_confidence(uint64_t handle);\n");
     out.push_str("void corvid_grounded_release(uint64_t handle);\n");
+    out.push_str("double corvid_observation_cost_usd(uint64_t handle);\n");
+    out.push_str("uint64_t corvid_observation_latency_ms(uint64_t handle);\n");
+    out.push_str("uint64_t corvid_observation_tokens_in(uint64_t handle);\n");
+    out.push_str("uint64_t corvid_observation_tokens_out(uint64_t handle);\n");
+    out.push_str("bool corvid_observation_exceeded_bound(uint64_t handle);\n");
+    out.push_str("void corvid_observation_release(uint64_t handle);\n");
     out.push_str("void corvid_free_string(const char* value);\n\n");
 
     for agent in agents {

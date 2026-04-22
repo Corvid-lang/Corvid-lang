@@ -339,6 +339,19 @@ impl Runtime {
         } else {
             self.llms.call(&req).await?
         };
+        let actual_model = live_model_override.as_deref().unwrap_or(req.model);
+        let cost_usd = if actual_model.is_empty() {
+            0.0
+        } else {
+            self.model_catalog
+                .describe_named_model(
+                    actual_model,
+                    resp.usage.prompt_tokens as u64,
+                    resp.usage.completion_tokens as u64,
+                )
+                .cost_estimate
+        };
+        crate::observation_handles::record_llm_usage(resp.usage, cost_usd);
         if self.tracer.is_enabled() {
             self.tracer.emit(TraceEvent::LlmResult {
                 ts_ms: now_ms(),

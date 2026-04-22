@@ -140,6 +140,7 @@ pub struct OwnedCallOutcome {
     pub status: CorvidCallStatus,
     pub result_json: Option<String>,
     pub approval: Option<OwnedApprovalRequired>,
+    pub observation_handle: u64,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -304,6 +305,7 @@ pub fn call_agent(agent_name: &str, args_json: &str) -> OwnedCallOutcome {
             status: CorvidCallStatus::RuntimeError,
             result_json: Some(serde_json::json!({ "error": err.to_string() }).to_string()),
             approval: None,
+            observation_handle: crate::observation_handles::NULL_OBSERVATION_HANDLE,
         },
     }
 }
@@ -445,6 +447,7 @@ fn call_agent_impl(agent_name: &str, args_json: &str) -> Result<OwnedCallOutcome
                 .to_string(),
             ),
             approval: None,
+            observation_handle: crate::observation_handles::NULL_OBSERVATION_HANDLE,
         });
     }
     let state = catalog()?;
@@ -453,6 +456,7 @@ fn call_agent_impl(agent_name: &str, args_json: &str) -> Result<OwnedCallOutcome
             status: CorvidCallStatus::AgentNotFound,
             result_json: None,
             approval: None,
+            observation_handle: crate::observation_handles::NULL_OBSERVATION_HANDLE,
         });
     };
     if let CatalogInvoker::Unsupported { .. } = &entry.invoker {
@@ -460,6 +464,7 @@ fn call_agent_impl(agent_name: &str, args_json: &str) -> Result<OwnedCallOutcome
             status: CorvidCallStatus::UnsupportedSig,
             result_json: None,
             approval: None,
+            observation_handle: crate::observation_handles::NULL_OBSERVATION_HANDLE,
         });
     }
     let validated = match validate_args_for_entry(entry, args_json) {
@@ -469,19 +474,25 @@ fn call_agent_impl(agent_name: &str, args_json: &str) -> Result<OwnedCallOutcome
                 status: CorvidCallStatus::BadArgs,
                 result_json: Some(serde_json::json!({ "error": err }).to_string()),
                 approval: None,
+                observation_handle: crate::observation_handles::NULL_OBSERVATION_HANDLE,
             });
         }
     };
+    let scope = crate::observation_handles::begin_observation(finite_option(cost_bound_for(
+        &entry.abi,
+    )));
 
     if entry.abi.approval_contract.required {
         let approval = build_approval_required(entry, args_json)?;
         match crate::catalog_c_api::request_host_approval(&approval) {
             crate::catalog_c_api::ApprovalRequestOutcome::MissingOrRejected => {
                 emit_embedded_rejected_approval(&approval, &validated.args);
+                let observation_handle = scope.finish();
                 return Ok(OwnedCallOutcome {
                     status: CorvidCallStatus::ApprovalRequired,
                     result_json: None,
                     approval: Some(approval),
+                    observation_handle,
                 });
             }
             crate::catalog_c_api::ApprovalRequestOutcome::Accepted(detail) => {
@@ -501,10 +512,12 @@ fn call_agent_impl(agent_name: &str, args_json: &str) -> Result<OwnedCallOutcome
     };
     let result_json = serde_json::to_string(&result)
         .map_err(|err| RuntimeError::Marshal(format!("serialize agent result: {err}")))?;
+    let observation_handle = scope.finish();
     Ok(OwnedCallOutcome {
         status: CorvidCallStatus::Ok,
         result_json: Some(result_json),
         approval: None,
+        observation_handle,
     })
 }
 

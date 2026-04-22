@@ -64,6 +64,12 @@ use crate::catalog_c_api::{
     corvid_grounded_confidence as _corvid_grounded_confidence_marker,
     corvid_grounded_release as _corvid_grounded_release_marker,
     corvid_grounded_sources as _corvid_grounded_sources_marker,
+    corvid_observation_cost_usd as _corvid_observation_cost_usd_marker,
+    corvid_observation_exceeded_bound as _corvid_observation_exceeded_bound_marker,
+    corvid_observation_latency_ms as _corvid_observation_latency_ms_marker,
+    corvid_observation_release as _corvid_observation_release_marker,
+    corvid_observation_tokens_in as _corvid_observation_tokens_in_marker,
+    corvid_observation_tokens_out as _corvid_observation_tokens_out_marker,
     corvid_list_agents as _corvid_list_agents_marker,
     corvid_pre_flight as _corvid_pre_flight_marker,
     corvid_register_approver as _corvid_register_approver_marker,
@@ -109,6 +115,7 @@ fn _depends_on_ffi_bridge() {
             usize,
             *mut *mut std::ffi::c_char,
             *mut usize,
+            *mut u64,
             *mut crate::catalog::CorvidApprovalRequired,
         ) -> crate::catalog::CorvidCallStatus;
     let _ = _corvid_free_result_marker as unsafe extern "C" fn(*mut std::ffi::c_char);
@@ -116,6 +123,12 @@ fn _depends_on_ffi_bridge() {
         as unsafe extern "C" fn(u64, *mut *const std::ffi::c_char, usize) -> i32;
     let _ = _corvid_grounded_confidence_marker as extern "C" fn(u64) -> f64;
     let _ = _corvid_grounded_release_marker as extern "C" fn(u64);
+    let _ = _corvid_observation_cost_usd_marker as extern "C" fn(u64) -> f64;
+    let _ = _corvid_observation_latency_ms_marker as extern "C" fn(u64) -> u64;
+    let _ = _corvid_observation_tokens_in_marker as extern "C" fn(u64) -> u64;
+    let _ = _corvid_observation_tokens_out_marker as extern "C" fn(u64) -> u64;
+    let _ = _corvid_observation_exceeded_bound_marker as extern "C" fn(u64) -> bool;
+    let _ = _corvid_observation_release_marker as extern "C" fn(u64);
     let _ = _corvid_grounded_attest_int_marker
         as unsafe extern "C" fn(i64, CorvidString, f64) -> i64;
     let _ = _corvid_grounded_attest_float_marker
@@ -307,6 +320,10 @@ impl CorvidString {
 pub type CorvidGroundedHandle = u64;
 
 pub const CORVID_NULL_GROUNDED_HANDLE: CorvidGroundedHandle = 0;
+
+pub type CorvidObservationHandle = u64;
+
+pub const CORVID_NULL_OBSERVATION_HANDLE: CorvidObservationHandle = 0;
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]

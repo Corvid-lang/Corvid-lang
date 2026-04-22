@@ -21,8 +21,10 @@ typedef CorvidCallStatus (*corvid_call_agent_fn)(
     size_t args_len,
     char** out_result,
     size_t* out_result_len,
+    uint64_t* out_observation_handle,
     CorvidApprovalRequired* out_approval);
 typedef void (*corvid_free_result_fn)(char* result);
+typedef void (*corvid_observation_release_fn)(uint64_t handle);
 typedef CorvidApproverLoadStatus (*corvid_register_approver_from_source_fn)(
     const char* source_path,
     double max_budget_usd_per_call,
@@ -154,11 +156,13 @@ static int has_agent_named(const CorvidAgentHandle* handles, size_t count, const
 static int run_issue_tag_call(
     corvid_call_agent_fn corvid_call_agent,
     corvid_free_result_fn corvid_free_result,
+    corvid_observation_release_fn corvid_observation_release,
     const char* args_json,
     const char* label,
     CorvidApprovalRequired* out_approval) {
     char* result = NULL;
     size_t result_len = 0;
+    uint64_t observation_handle = CORVID_NULL_OBSERVATION_HANDLE;
     CorvidCallStatus status;
     status = corvid_call_agent(
         "issue_tag",
@@ -166,18 +170,31 @@ static int run_issue_tag_call(
         strlen(args_json),
         &result,
         &result_len,
+        &observation_handle,
         out_approval);
     if (status == CORVID_CALL_OK && result != NULL) {
-        printf("%s_status=%u result=%.*s\n", label, (unsigned)status, (int)result_len, result);
-    } else if (out_approval != NULL && out_approval->site_name != NULL) {
         printf(
-            "%s_status=%u site=%s\n",
+            "%s_status=%u result=%.*s observation_handle=%llu\n",
             label,
             (unsigned)status,
-            out_approval->site_name);
+            (int)result_len,
+            result,
+            (unsigned long long)observation_handle);
+    } else if (out_approval != NULL && out_approval->site_name != NULL) {
+        printf(
+            "%s_status=%u site=%s observation_handle=%llu\n",
+            label,
+            (unsigned)status,
+            out_approval->site_name,
+            (unsigned long long)observation_handle);
     } else {
-        printf("%s_status=%u\n", label, (unsigned)status);
+        printf(
+            "%s_status=%u observation_handle=%llu\n",
+            label,
+            (unsigned)status,
+            (unsigned long long)observation_handle);
     }
+    corvid_observation_release(observation_handle);
     corvid_free_result(result);
     return (int)status;
 }
@@ -193,6 +210,7 @@ int main(int argc, char** argv) {
     corvid_pre_flight_fn corvid_pre_flight;
     corvid_call_agent_fn corvid_call_agent;
     corvid_free_result_fn corvid_free_result;
+    corvid_observation_release_fn corvid_observation_release;
     corvid_register_approver_from_source_fn corvid_register_approver_from_source;
     corvid_clear_approver_fn corvid_clear_approver;
     uint8_t expected_hash[32];
@@ -249,12 +267,14 @@ int main(int argc, char** argv) {
         (corvid_call_agent_fn)load_symbol(library, "corvid_call_agent");
     corvid_free_result =
         (corvid_free_result_fn)load_symbol(library, "corvid_free_result");
+    corvid_observation_release =
+        (corvid_observation_release_fn)load_symbol(library, "corvid_observation_release");
     corvid_register_approver_from_source =
         (corvid_register_approver_from_source_fn)load_symbol(library, "corvid_register_approver_from_source");
     corvid_clear_approver =
         (corvid_clear_approver_fn)load_symbol(library, "corvid_clear_approver");
     if (!corvid_abi_verify || !corvid_list_agents || !corvid_pre_flight ||
-        !corvid_call_agent || !corvid_free_result ||
+        !corvid_call_agent || !corvid_free_result || !corvid_observation_release ||
         !corvid_register_approver_from_source || !corvid_clear_approver) {
         fprintf(stderr, "required approval-bridge symbol missing\n");
         return 1;
@@ -292,6 +312,7 @@ int main(int argc, char** argv) {
     run_issue_tag_call(
         corvid_call_agent,
         corvid_free_result,
+        corvid_observation_release,
         "[\"approved\"]",
         "accept_call",
         &approval);
@@ -317,6 +338,7 @@ int main(int argc, char** argv) {
     run_issue_tag_call(
         corvid_call_agent,
         corvid_free_result,
+        corvid_observation_release,
         "[\"approved\"]",
         "reject_call",
         &approval);
@@ -327,6 +349,7 @@ int main(int argc, char** argv) {
     run_issue_tag_call(
         corvid_call_agent,
         corvid_free_result,
+        corvid_observation_release,
         "[\"approved\"]",
         "fail_closed_call",
         &approval);

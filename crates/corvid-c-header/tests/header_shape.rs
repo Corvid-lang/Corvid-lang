@@ -136,6 +136,7 @@ fn header_exports_string_return_with_ownership_comment() {
     let header = render();
     assert!(header.contains("release returned agent strings with `corvid_free_string(...)`"));
     assert!(header.contains("release `corvid_call_agent` JSON payloads with `corvid_free_result(...)`"));
+    assert!(header.contains("observation handles are runtime attestations; release them with `corvid_observation_release(...)`"));
     assert!(header.contains("const char* echo_name(const char* name);"));
     assert!(header.contains("void corvid_free_string(const char* value);"));
     assert!(header.contains("void corvid_free_result(char* result);"));
@@ -161,13 +162,21 @@ fn header_emits_nothing_return_as_void() {
 fn header_exports_catalog_surface() {
     let header = render();
     assert!(header.contains("typedef struct {\n    const char* name;"));
+    assert!(header.contains("#define CORVID_NULL_OBSERVATION_HANDLE ((uint64_t)0)"));
     assert!(header.contains("size_t corvid_list_agents(CorvidAgentHandle* out, size_t capacity);"));
     assert!(header.contains("CorvidFindAgentsResult corvid_find_agents_where("));
     assert!(header.contains("CorvidPreFlight corvid_pre_flight("));
     assert!(header.contains("CorvidCallStatus corvid_call_agent("));
+    assert!(header.contains("uint64_t* out_observation_handle,"));
     assert!(header.contains("void corvid_register_approver(CorvidApproverFn fn, void* user_data);"));
     assert!(header.contains("CorvidApproverLoadStatus corvid_register_approver_from_source("));
     assert!(header.contains("void corvid_clear_approver(void);"));
     assert!(header.contains("const char* corvid_approval_predicate_json(const char* site_name, size_t* out_len);"));
     assert!(header.contains("CorvidPredicateResult corvid_evaluate_approval_predicate("));
+    assert!(header.contains("double corvid_observation_cost_usd(uint64_t handle);"));
+    assert!(header.contains("uint64_t corvid_observation_latency_ms(uint64_t handle);"));
+    assert!(header.contains("uint64_t corvid_observation_tokens_in(uint64_t handle);"));
+    assert!(header.contains("uint64_t corvid_observation_tokens_out(uint64_t handle);"));
+    assert!(header.contains("bool corvid_observation_exceeded_bound(uint64_t handle);"));
+    assert!(header.contains("void corvid_observation_release(uint64_t handle);"));
 }

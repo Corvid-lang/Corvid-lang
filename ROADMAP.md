@@ -1258,7 +1258,7 @@ The determinism-source catalog and the language's treatment of non-reproducible 
 - [x] 22-D-effect-filter     Host-side effect-dimension filter: `corvid_find_agents_where(trust<=autonomous, cost<=0.10)` — the host can narrow the agent set by effect algebra without re-reading the descriptor
 - [x] 22-E-approval-bridge   Approval contracts survive FFI: `@dangerous` entrypoints reach back through the boundary to invoke a host-supplied approver; no way for a host to bypass by linking
 - [x] 22-F-grounded-return   `Grounded<T>` return values cross the boundary with their provenance chain intact; host receives `(payload, provenance_handle)` it can query
-- [ ] 22-G-budget-observe    Per-call cost/latency observability: host reads real-time budget burn per agent
+- [x] 22-G-budget-observe    Per-call cost/latency observability: host reads real-time budget burn per agent
 - [ ] 22-H-replay-across-ffi Traces recorded on one side of the boundary replay deterministically from the other; the embedded binary becomes a recordable unit
 - [ ] 22-I-host-bindings     Reference Rust + Python host crates; generated idiomatic bindings from the descriptor (Rust traits; Python Protocols)
 - [ ] 22-J-ownership-check   Compile-time checker on extern signatures (who frees what, who retains what)
