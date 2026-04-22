@@ -1244,9 +1244,9 @@ The determinism-source catalog and the language's treatment of non-reproducible 
 
 - [x] 22-A-cdylib            `pub extern "c"` + `--target=cdylib`/`--target=staticlib` + `--header` scalar C header
 - [x] 22-B-abi-descriptor    `--abi-descriptor` + `corvid-abi` crate (machine-readable effect/approval/provenance surface, deterministic JSON)
-- [ ] 22-C-prompt-catalog    Runtime-queryable typed prompt/agent catalog: cdylibs embed the descriptor, expose `corvid_list_agents` / `corvid_agent_signature` / `corvid_call_agent` so hosts can discover + dispatch agents with type-checked args at runtime
+- [x] 22-C-prompt-catalog    Runtime-queryable typed prompt/agent catalog: cdylibs embed the descriptor, expose `corvid_list_agents` / `corvid_agent_signature` / `corvid_call_agent` so hosts can discover + dispatch agents with type-checked args at runtime
 - [ ] 22-D-effect-filter     Host-side effect-dimension filter: `corvid_find_agents_where(trust<=autonomous, cost<=0.10)` — the host can narrow the agent set by effect algebra without re-reading the descriptor
-- [ ] 22-E-approval-bridge   Approval contracts survive FFI: `@dangerous` entrypoints reach back through the boundary to invoke a host-supplied approver; no way for a host to bypass by linking
+- [x] 22-E-approval-bridge   Approval contracts survive FFI: `@dangerous` entrypoints reach back through the boundary to invoke a host-supplied approver; no way for a host to bypass by linking
 - [ ] 22-F-grounded-return   `Grounded<T>` return values cross the boundary with their provenance chain intact; host receives `(payload, provenance_handle)` it can query
 - [ ] 22-G-budget-observe    Per-call cost/latency observability: host reads real-time budget burn per agent
 - [ ] 22-H-replay-across-ffi Traces recorded on one side of the boundary replay deterministically from the other; the embedded binary becomes a recordable unit
