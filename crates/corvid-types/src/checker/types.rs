@@ -27,18 +27,49 @@ impl<'a> Checker<'a> {
                 name,
                 span,
             } => {
-                // `alias.TypeName` parses but doesn't yet resolve —
-                // the module-loader + qualified-name resolution lands
-                // in `lang-cor-imports-basic-resolve`. Emit a typed
-                // error so users see a precise "not yet implemented"
-                // rather than a downstream "unknown type" cascade.
-                self.errors.push(TypeError::new(
-                    TypeErrorKind::CorvidImportNotYetResolved {
+                // When a `ModuleResolution` is available (driver
+                // populated it via `build_module_resolution`), we can
+                // validate the alias + visibility + member and
+                // surface one of three precise errors on failure.
+                // Successful lookup still stubs for now — full type
+                // resolution (fields + equality + rendering) lands
+                // in `lang-cor-imports-basic-resolve` step 2c-2.
+                let err_kind = match self.module_resolution {
+                    None => TypeErrorKind::CorvidImportNotYetResolved {
                         alias: alias.name.clone(),
                         name: name.name.clone(),
                     },
-                    *span,
-                ));
+                    Some(modules) => match modules.lookup_member(&alias.name, &name.name) {
+                        corvid_resolve::ModuleLookup::UnknownAlias => {
+                            TypeErrorKind::UnknownImportAlias {
+                                alias: alias.name.clone(),
+                            }
+                        }
+                        corvid_resolve::ModuleLookup::Private => {
+                            TypeErrorKind::ImportedDeclIsPrivate {
+                                alias: alias.name.clone(),
+                                name: name.name.clone(),
+                            }
+                        }
+                        corvid_resolve::ModuleLookup::UnknownMember => {
+                            TypeErrorKind::UnknownImportMember {
+                                alias: alias.name.clone(),
+                                name: name.name.clone(),
+                            }
+                        }
+                        corvid_resolve::ModuleLookup::Found { .. } => {
+                            // The import is valid and the member is
+                            // public — but we can't yet construct a
+                            // proper imported-struct `Type`. Stub
+                            // error until step 2c-2 lands.
+                            TypeErrorKind::CorvidImportNotYetResolved {
+                                alias: alias.name.clone(),
+                                name: name.name.clone(),
+                            }
+                        }
+                    },
+                };
+                self.errors.push(TypeError::new(err_kind, *span));
                 Type::Unknown
             }
             TypeRef::Generic { name, args, span } => match name.name.as_str() {

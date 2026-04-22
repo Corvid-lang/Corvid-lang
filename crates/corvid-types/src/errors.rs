@@ -134,6 +134,22 @@ pub enum TypeErrorKind {
         name: String,
     },
 
+    /// `alias.Name` references an import alias that isn't declared
+    /// in the current file's `import` statements. Either a typo or
+    /// a missing `import` line.
+    UnknownImportAlias { alias: String },
+
+    /// `alias.Name` references an imported file that exists, but
+    /// the declaration `Name` in that file is `Private` (no
+    /// `public` / `public(package)` modifier). The `lang-pub-toplevel`
+    /// private-by-default rule means imports only see declarations
+    /// their owner opted to expose.
+    ImportedDeclIsPrivate { alias: String, name: String },
+
+    /// `alias.Name` references a name that isn't declared in the
+    /// imported file at all (publicly or privately).
+    UnknownImportMember { alias: String, name: String },
+
     /// `yield` is only valid inside agent bodies.
     YieldOutsideAgent,
 
@@ -420,6 +436,18 @@ impl TypeErrorKind {
                      has not shipped"
                 )
             }
+            Self::UnknownImportAlias { alias } => {
+                format!("no import alias `{alias}` in scope; check the `import` statements at the top of the file")
+            }
+            Self::ImportedDeclIsPrivate { alias, name } => {
+                format!(
+                    "declaration `{name}` in the module imported as `{alias}` is private; \
+                     mark it with `public` in the imported file to make it importable"
+                )
+            }
+            Self::UnknownImportMember { alias, name } => {
+                format!("the module imported as `{alias}` has no declaration named `{name}`")
+            }
             Self::YieldOutsideAgent => "`yield` is only allowed inside agent bodies".into(),
             Self::YieldRequiresStreamReturn { declared } => {
                 format!("`yield` requires the enclosing agent to declare `Stream<T>`, got `{declared}`")
@@ -587,6 +615,15 @@ impl TypeErrorKind {
             Self::CorvidImportNotYetResolved { .. } => Some(
                 "for now, use an unqualified local type or wait for cross-file Corvid import resolution to land"
                     .into(),
+            ),
+            Self::UnknownImportAlias { alias } => Some(format!(
+                "add `import \"./path\" as {alias}` at the top of the file (or fix the alias spelling)"
+            )),
+            Self::ImportedDeclIsPrivate { name, .. } => Some(format!(
+                "in the imported file, add `public` before `{name}`'s declaration to export it"
+            )),
+            Self::UnknownImportMember { .. } => Some(
+                "check the imported file's top-level declarations for the name you meant".into(),
             ),
             Self::YieldOutsideAgent => Some(
                 "move `yield` into an `agent ... -> Stream<T>` body, or replace it with `return`".into(),

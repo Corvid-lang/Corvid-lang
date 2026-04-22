@@ -2954,6 +2954,172 @@ agent run(x: String) -> Decision:
 
     // -------------------- lang-cor-imports: qualified type syntax --------------------
 
+    /// Build a `ModuleResolution` with a single module bound to
+    /// `alias`, whose public exports are `public_names` (types by
+    /// default) and whose private (non-exported) declarations are
+    /// `private_names`. Internal resolver state is faked just
+    /// enough for `ModuleLookup` to distinguish "unknown" from
+    /// "private".
+    fn fake_module_resolution(
+        alias: &str,
+        public_names: &[&str],
+        private_names: &[&str],
+    ) -> corvid_resolve::ModuleResolution {
+        use std::collections::HashMap;
+        use std::path::PathBuf;
+        use std::sync::Arc;
+
+        // Build a fake imported file's source that declares the
+        // named types with appropriate visibility. We then parse
+        // and resolve it through the normal pipeline so the
+        // `Resolved` carries a real symbol table — which
+        // `ModuleLookup::Private` consults to distinguish
+        // "exists-but-private" from "doesn't-exist".
+        let mut src = String::new();
+        for name in public_names {
+            src.push_str(&format!("public type {name}:\n    x: Int\n"));
+        }
+        for name in private_names {
+            src.push_str(&format!("type {name}:\n    x: Int\n"));
+        }
+        let tokens = lex(&src).expect("lex");
+        let (file, perr) = parse_file(&tokens);
+        assert!(perr.is_empty(), "{perr:?}");
+        let resolved = resolve(&file);
+        let exports = corvid_resolve::collect_public_exports(&file, &resolved);
+        let module = corvid_resolve::ResolvedModule {
+            path: PathBuf::from(format!("/fake/{alias}.cor")),
+            resolved: Arc::new(resolved),
+            exports,
+        };
+        let mut modules = HashMap::new();
+        modules.insert(alias.to_string(), module);
+        corvid_resolve::ModuleResolution { modules }
+    }
+
+    fn check_with_modules(
+        src: &str,
+        modules: &corvid_resolve::ModuleResolution,
+    ) -> Checked {
+        let tokens = lex(src).expect("lex");
+        let (file, perr) = parse_file(&tokens);
+        assert!(perr.is_empty(), "{perr:?}");
+        let resolved = resolve(&file);
+        typecheck_with_modules(&file, &resolved, modules)
+    }
+
+    #[test]
+    fn qualified_type_with_modules_found_still_stubs_until_2c2() {
+        // Public export exists + is found → step 2c-1 still emits
+        // CorvidImportNotYetResolved because field-level
+        // resolution isn't wired yet. Step 2c-2 flips this to
+        // clean resolution.
+        let modules = fake_module_resolution("p", &["Receipt"], &[]);
+        let checked = check_with_modules(
+            "\
+import \"./default_policy\" as p
+
+agent f(r: p.Receipt) -> Bool:
+    return true
+",
+            &modules,
+        );
+        let err = checked
+            .errors
+            .iter()
+            .find(|e| matches!(e.kind, TypeErrorKind::CorvidImportNotYetResolved { .. }))
+            .expect("still stubs");
+        match &err.kind {
+            TypeErrorKind::CorvidImportNotYetResolved { alias, name } => {
+                assert_eq!(alias, "p");
+                assert_eq!(name, "Receipt");
+            }
+            _ => unreachable!(),
+        }
+    }
+
+    #[test]
+    fn qualified_type_with_unknown_alias_emits_typed_error() {
+        // User wrote `ghost.Foo` but never `import ... as ghost`.
+        let modules = fake_module_resolution("p", &["Receipt"], &[]);
+        let checked = check_with_modules(
+            "\
+import \"./default_policy\" as p
+
+agent f(x: ghost.Foo) -> Bool:
+    return true
+",
+            &modules,
+        );
+        let err = checked
+            .errors
+            .iter()
+            .find(|e| matches!(e.kind, TypeErrorKind::UnknownImportAlias { .. }))
+            .expect("expected UnknownImportAlias error");
+        match &err.kind {
+            TypeErrorKind::UnknownImportAlias { alias } => {
+                assert_eq!(alias, "ghost");
+            }
+            _ => unreachable!(),
+        }
+    }
+
+    #[test]
+    fn qualified_type_with_private_member_emits_typed_error() {
+        // `Internal` is declared in the imported file without
+        // `public`, so it shouldn't be importable.
+        let modules = fake_module_resolution("p", &["Receipt"], &["Internal"]);
+        let checked = check_with_modules(
+            "\
+import \"./default_policy\" as p
+
+agent f(x: p.Internal) -> Bool:
+    return true
+",
+            &modules,
+        );
+        let err = checked
+            .errors
+            .iter()
+            .find(|e| matches!(e.kind, TypeErrorKind::ImportedDeclIsPrivate { .. }))
+            .expect("expected ImportedDeclIsPrivate error");
+        match &err.kind {
+            TypeErrorKind::ImportedDeclIsPrivate { alias, name } => {
+                assert_eq!(alias, "p");
+                assert_eq!(name, "Internal");
+            }
+            _ => unreachable!(),
+        }
+    }
+
+    #[test]
+    fn qualified_type_with_unknown_member_emits_typed_error() {
+        // `DoesNotExist` is not declared in the imported file at
+        // all — not publicly, not privately.
+        let modules = fake_module_resolution("p", &["Receipt"], &[]);
+        let checked = check_with_modules(
+            "\
+import \"./default_policy\" as p
+
+agent f(x: p.DoesNotExist) -> Bool:
+    return true
+",
+            &modules,
+        );
+        let err = checked
+            .errors
+            .iter()
+            .find(|e| matches!(e.kind, TypeErrorKind::UnknownImportMember { .. }))
+            .expect("expected UnknownImportMember error");
+        match &err.kind {
+            TypeErrorKind::UnknownImportMember { alias, name } => {
+                assert_eq!(alias, "p");
+                assert_eq!(name, "DoesNotExist");
+            }
+            _ => unreachable!(),
+        }
+    }
+
     #[test]
     fn qualified_type_ref_emits_not_yet_resolved_error() {
         // `policy.Receipt` parses cleanly as a `TypeRef::Qualified`,

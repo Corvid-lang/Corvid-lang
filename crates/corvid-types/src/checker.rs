@@ -41,6 +41,21 @@ pub fn typecheck(file: &File, resolved: &Resolved) -> Checked {
     typecheck_with_config(file, resolved, None)
 }
 
+/// Typecheck `file` with an explicit cross-file module resolution.
+/// Callers that have already loaded + resolved imported `.cor`
+/// files via [`corvid_driver::build_module_resolution`] pass the
+/// resulting [`ModuleResolution`] here so qualified type
+/// references (`alias.TypeName`) can consult it. Callers without
+/// imports should use the plain [`typecheck`] or
+/// [`typecheck_with_config`] and get the same behavior as before.
+pub fn typecheck_with_modules(
+    file: &File,
+    resolved: &Resolved,
+    modules: &corvid_resolve::ModuleResolution,
+) -> Checked {
+    typecheck_with_everything(file, resolved, None, Some(modules))
+}
+
 /// Typecheck `file`, consuming an optional `corvid.toml` configuration.
 /// Custom dimensions declared under `[effect-system.dimensions.*]`
 /// are merged into the `EffectRegistry` alongside the built-ins.
@@ -51,7 +66,16 @@ pub fn typecheck_with_config(
     resolved: &Resolved,
     config: Option<&crate::config::CorvidConfig>,
 ) -> Checked {
-    let mut c = Checker::new(file, resolved);
+    typecheck_with_everything(file, resolved, config, None)
+}
+
+fn typecheck_with_everything(
+    file: &File,
+    resolved: &Resolved,
+    config: Option<&crate::config::CorvidConfig>,
+    modules: Option<&corvid_resolve::ModuleResolution>,
+) -> Checked {
+    let mut c = Checker::new(file, resolved, modules);
     c.check_file(file);
 
     let effect_decls: Vec<&corvid_ast::EffectDecl> = file.decls.iter().filter_map(|d| {
@@ -225,6 +249,17 @@ struct Checker<'a> {
     /// without re-resolving string literals.
     replay_pattern_bindings: &'a HashMap<Span, ReplayPatternBinding>,
 
+    /// Cross-file module resolution populated by
+    /// `corvid_driver::build_module_resolution`. When `None`, the
+    /// checker falls back to single-file semantics and any
+    /// `TypeRef::Qualified` yields a `CorvidImportNotYetResolved`
+    /// stub error (the pre-lang-cor-imports-basic-resolve-2c
+    /// behaviour). When `Some`, qualified references to unknown
+    /// aliases / private members / unknown members surface typed
+    /// errors; successful qualified lookups still stub for now
+    /// — full type resolution lands in step 2c-2.
+    module_resolution: Option<&'a corvid_resolve::ModuleResolution>,
+
     /// Type of each local binding, populated as we enter scopes.
     local_types: HashMap<LocalId, Type>,
 
@@ -307,7 +342,11 @@ impl EffectFrontier {
 }
 
 impl<'a> Checker<'a> {
-    fn new(file: &'a File, resolved: &'a Resolved) -> Self {
+    fn new(
+        file: &'a File,
+        resolved: &'a Resolved,
+        module_resolution: Option<&'a corvid_resolve::ModuleResolution>,
+    ) -> Self {
         let mut tools = HashMap::new();
         let mut prompts = HashMap::new();
         let mut agents = HashMap::new();
@@ -391,6 +430,7 @@ impl<'a> Checker<'a> {
             types_by_id: types,
             methods: &resolved.methods,
             replay_pattern_bindings: &resolved.replay_pattern_bindings,
+            module_resolution,
             local_types: HashMap::new(),
             current_return: None,
             in_agent_body: false,
