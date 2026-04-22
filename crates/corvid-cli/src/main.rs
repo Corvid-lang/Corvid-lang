@@ -20,6 +20,7 @@
 
 mod abi_cmd;
 mod approver_cmd;
+mod bind_cmd;
 mod capsule_cmd;
 mod receipt_cache;
 mod receipt_cmd;
@@ -297,6 +298,16 @@ enum Command {
         #[command(subcommand)]
         command: AbiCommand,
     },
+    /// Generate Rust or Python host bindings from a Corvid ABI descriptor.
+    Bind {
+        /// Output language: `rust` or `python`.
+        language: String,
+        /// Path to a `.corvid-abi.json` descriptor.
+        descriptor: PathBuf,
+        /// Output directory for the generated crate/package.
+        #[arg(long, value_name = "DIR")]
+        out: PathBuf,
+    },
     /// Check or simulate a Corvid approver source.
     Approver {
         #[command(subcommand)]
@@ -358,8 +369,12 @@ enum Command {
         /// Output format for the receipt. `markdown` (human
         /// review), `github-check` (GitHub Actions annotation
         /// commands on stdout), `json` (schema-versioned,
-        /// bot-consumable). `auto` (default) detects the
-        /// environment: GitHub Actions → `github-check`, piped
+        /// bot-consumable), `in-toto` (SLSA/Sigstore-compatible
+        /// Statement v1 with the Corvid receipt as predicate),
+        /// `gitlab` (CodeClimate-compatible codequality JSON for
+        /// GitLab MR widget via `artifacts.reports.codequality`).
+        /// `auto` (default) detects the environment: GitHub
+        /// Actions → `github-check`, GitLab CI → `gitlab`, piped
         /// stdout → `json`, tty → `markdown`. Non-zero exit on
         /// any regression the default policy flags regardless
         /// of format.
@@ -591,6 +606,11 @@ fn main() -> ExitCode {
                 expected_hash,
             } => abi_cmd::run_verify(&library, &expected_hash),
         },
+        Some(Command::Bind {
+            language,
+            descriptor,
+            out,
+        }) => bind_cmd::run_bind(&language, &descriptor, &out),
         Some(Command::Approver { command }) => match command {
             ApproverCommand::Check {
                 approver,

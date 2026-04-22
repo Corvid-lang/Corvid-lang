@@ -1744,6 +1744,46 @@ default, then ship the mechanism that makes the classifier
 load-bearing. Users migrate into intentional choices instead of
 migrating out of an accidental anti-pattern.
 
+### CI-specific formats are renderers over the canonical Receipt
+
+`21-inv-H-5-gitlab` added `--format=gitlab` in a single commit —
+~165 lines of renderer + 6 integration tests — because the
+canonical `Receipt` struct H-5 chose was already the source of
+truth. Every CI-specific format is "translate deltas + the
+verdict into the shape this CI expects"; no pipeline rewiring.
+GitLab's MR widget pulls findings from CodeClimate-compatible
+JSON (`artifacts.reports.codequality`), so the renderer emits
+exactly that shape and disappears into GitLab's native surface.
+
+Three small choices carry the weight:
+
+- **Severity maps one-to-one from the default policy's verdict.**
+  Regressions → `major`, everything else → `info`. We picked
+  `major` (not `blocker`) so the MR widget surfaces findings
+  without overriding the MR's own merge gate — the policy's
+  non-zero exit code is what actually blocks merges; severity is
+  for signal, not enforcement. The five-level CodeClimate scale
+  leaves room to split regressions further in a future slice.
+- **Fingerprint = hex-SHA256 of the canonical delta key.** This
+  is the GitLab-specific answer to the same "byte-stable across
+  runs" principle H-5-json chose with deterministic ordering.
+  GitLab dedupes MR-widget issues by fingerprint; if fingerprints
+  drift between re-runs, reviewers see phantom "new" findings on
+  every push. The fingerprint_stays_stable_across_runs test is
+  the regression guard that would catch a drift at commit time.
+- **`GITLAB_CI=true` auto-selects the renderer.** `--format=auto`
+  now has two CI-platform branches (GitHub Actions →
+  `github-check`, GitLab CI → `gitlab`) before falling through to
+  the pipe/tty default. Users drop `corvid trace-diff ...` into
+  a GitLab job without touching `--format`; the CLI reads
+  environment and does the right thing.
+
+The same pattern extends trivially to any future CI surface
+(CircleCI, Buildkite annotations, Azure Pipelines): add a
+renderer, add an env-var branch in `detect_from_environment`,
+done. The canonical Receipt absorbs the new integration as
+another translation target rather than a new pipeline.
+
 ### in-toto integration: the attestation ecosystem is a free composition
 
 `21-inv-H-5-in-toto` shipped in one commit because H-5-signed

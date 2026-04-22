@@ -53,6 +53,13 @@ pub enum OutputFormat {
     /// cosign / attest-tools / slsa-verifier consume the output
     /// natively. Explicit opt-in via `--format=in-toto`.
     InToto,
+    /// GitLab CI codequality report JSON (CodeClimate-compatible).
+    /// Array of issue objects that GitLab picks up via
+    /// `artifacts.reports.codequality` and surfaces inline on MR
+    /// diffs. Explicit opt-in via `--format=gitlab`. Each delta
+    /// in the receipt becomes one issue; severity follows the
+    /// policy (regressions = `major`, informational = `info`).
+    Gitlab,
 }
 
 impl OutputFormat {
@@ -67,8 +74,9 @@ impl OutputFormat {
             "github-check" => Ok(Self::GithubCheck),
             "json" => Ok(Self::Json),
             "in-toto" => Ok(Self::InToto),
+            "gitlab" => Ok(Self::Gitlab),
             other => Err(format!(
-                "unknown format `{other}`; expected `auto`, `markdown`, `github-check`, `json`, or `in-toto`"
+                "unknown format `{other}`; expected `auto`, `markdown`, `github-check`, `json`, `in-toto`, or `gitlab`"
             )),
         }
     }
@@ -79,6 +87,9 @@ impl OutputFormat {
     fn detect_from_environment() -> Self {
         if std::env::var_os("GITHUB_ACTIONS").is_some() {
             return Self::GithubCheck;
+        }
+        if std::env::var_os("GITLAB_CI").is_some() {
+            return Self::Gitlab;
         }
         if !std::io::stdout().is_terminal() {
             return Self::Json;
@@ -403,7 +414,10 @@ mod tests {
         // `GITHUB_ACTIONS` set.
         assert!(matches!(
             OutputFormat::parse("auto").unwrap(),
-            OutputFormat::Markdown | OutputFormat::GithubCheck | OutputFormat::Json
+            OutputFormat::Markdown
+                | OutputFormat::GithubCheck
+                | OutputFormat::Json
+                | OutputFormat::Gitlab
         ));
         assert_eq!(
             OutputFormat::parse("markdown").unwrap(),
@@ -414,6 +428,8 @@ mod tests {
             OutputFormat::GithubCheck
         );
         assert_eq!(OutputFormat::parse("json").unwrap(), OutputFormat::Json);
+        assert_eq!(OutputFormat::parse("in-toto").unwrap(), OutputFormat::InToto);
+        assert_eq!(OutputFormat::parse("gitlab").unwrap(), OutputFormat::Gitlab);
         assert!(OutputFormat::parse("wat").is_err());
     }
 

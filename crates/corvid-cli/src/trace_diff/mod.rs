@@ -44,6 +44,7 @@
 //! - `21-inv-H-4` LLM-generated prose summary grounded in the algebra.
 //! - `21-inv-H-5` `--format=github-check|markdown|json` outputs.
 
+mod gitlab;
 mod impact;
 mod in_toto;
 mod narrative;
@@ -170,6 +171,7 @@ pub fn run_trace_diff(args: TraceDiffArgs<'_>) -> Result<u8> {
             head_source.as_bytes(),
             &source_path_str,
         ),
+        OutputFormat::Gitlab => gitlab::render_gitlab(&receipt, &verdict),
     };
 
     // Signing path: when a key source is available, wrap the
