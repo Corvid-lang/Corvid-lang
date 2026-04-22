@@ -1744,6 +1744,54 @@ default, then ship the mechanism that makes the classifier
 load-bearing. Users migrate into intentional choices instead of
 migrating out of an accidental anti-pattern.
 
+### Signed receipts move governance from informational to defensible
+
+`21-inv-H-5-signed` turned the trace-diff receipt from "a text
+output the CLI prints" into a signed DSSE envelope that external
+tools can cryptographically verify. That's the step that moves
+Corvid receipts from "a nice audit log" to "a defensible
+artifact" — the kind of thing a regulator or security auditor
+can check on their own machine without trusting the developer
+who produced it.
+
+Design choices worth naming:
+
+- **DSSE over a hand-rolled format.** The Dead Simple Signing
+  Envelope is the format used by Sigstore, in-toto, cosign, and
+  every modern supply-chain tool. Adopting it means Corvid
+  receipts plug into those ecosystems for free — and the
+  follow-up `21-inv-H-5-in-toto` slice becomes just "wrap the
+  DSSE envelope in an in-toto Statement." Building our own
+  envelope would have been cheaper today and more expensive
+  forever.
+- **PAE over raw payload.** DSSE's Pre-Authentication Encoding
+  adds explicit length prefixes so the signature binds both the
+  payload AND its type. Ignoring PAE is a known class of
+  signature-transplantation bug where an attacker crafts a
+  different envelope that the signature still validates against.
+  The DSSE spec exists because the non-PAE version was
+  foot-guns; we followed it.
+- **ed25519 over RSA / ECDSA.** Smaller keys, smaller signatures,
+  deterministic (no per-signature RNG needed), single obvious
+  security level. Less to go wrong at every layer from key
+  generation to verification. Sigstore's keyless flow also
+  defaults to ed25519, so staying there keeps the upgrade path
+  cheap.
+- **Hash-addressed cache with prefix lookup.** Receipts are
+  shell-referenceable by their SHA-256 prefix (min 8 chars),
+  the same way Git refers to commits. Operators who stared at
+  commit hashes all day don't have to learn a new addressing
+  scheme.
+- **Key-source precedence: `--sign=<path>` > `CORVID_SIGNING_KEY`
+  env var.** Explicit flag wins over implicit env — matches how
+  every serious CLI handles auth material. Env var support is
+  free and useful for CI; file path is the local-dev ergonomic.
+
+The pattern that generalises: *when a domain has a standard
+cryptographic format, adopt it whole rather than reinventing.*
+The format committee already considered the attacks; your
+"simpler" version will rediscover them the hard way.
+
 ### Governance receipts are the audit layer, not just a reporter
 
 `21-inv-H-5` started as "add three output format modes" and was

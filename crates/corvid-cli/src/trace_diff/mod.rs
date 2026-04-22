@@ -48,6 +48,7 @@ mod impact;
 mod narrative;
 mod receipt;
 mod reviewer_invocation;
+pub(crate) mod signing;
 
 use std::path::Path;
 use std::process::Command;
@@ -93,6 +94,21 @@ pub struct TraceDiffArgs<'a> {
     /// consumption. Callers can pick via [`OutputFormat::parse`]
     /// from `--format=<mode>`.
     pub format: OutputFormat,
+    /// When `Some`, sign the canonical JSON receipt with the
+    /// ed25519 key at the given path and emit a DSSE envelope
+    /// instead of the raw format output. The key file is parsed
+    /// as hex (64 hex chars = 32-byte seed) or raw (32 bytes).
+    /// When `None` but `CORVID_SIGNING_KEY` is set in the
+    /// environment, fall back to the env var. When neither is
+    /// set, no signing happens and the `--format` output is
+    /// emitted unchanged.
+    pub sign_key_path: Option<&'a Path>,
+    /// Key ID to embed in the DSSE envelope's `signatures[0].keyid`
+    /// field. Free-form identifier; typically the hex prefix of
+    /// the verifying key or a project-chosen label. Defaults to
+    /// `"corvid-default"` when signing is active but no label
+    /// is supplied.
+    pub sign_key_id: Option<&'a str>,
 }
 
 /// Run `corvid trace-diff`: fetch source at both SHAs, compile each
@@ -148,7 +164,42 @@ pub fn run_trace_diff(args: TraceDiffArgs<'_>) -> Result<u8> {
         OutputFormat::GithubCheck => render_github_check(&receipt, &verdict),
         OutputFormat::Json => render_json(&receipt, &verdict),
     };
-    print!("{rendered}");
+
+    // Signing path: when a key source is available, wrap the
+    // canonical JSON receipt (regardless of `--format`) in a
+    // DSSE envelope and emit that instead. The `--format` flag
+    // is ignored under `--sign` because markdown/github-check
+    // aren't meaningful payload types for a signed attestation
+    // — the whole point is a byte-stable JSON body that
+    // cryptographic tools can verify.
+    let key_source = signing::resolve_key_source(args.sign_key_path);
+    if let Some(source) = key_source {
+        let receipt_json = render_json(&receipt, &verdict);
+        let signing_key = signing::load_signing_key(&source)
+            .with_context(|| "loading signing key")?;
+        let key_id = args.sign_key_id.unwrap_or("corvid-default");
+        let envelope = signing::sign_receipt(receipt_json.as_bytes(), &signing_key, key_id);
+        let envelope_json = signing::envelope_to_json(&envelope);
+
+        // Persist to the receipt cache so `corvid receipt show
+        // <hash>` can resolve it later. Cache failures are
+        // non-fatal — the envelope still prints, we just can't
+        // look it up locally by hash later.
+        match crate::receipt_cache::store(receipt_json.as_bytes(), envelope_json.as_bytes()) {
+            Ok(stored) => {
+                eprintln!("Corvid-Receipt: {}", stored.hash);
+            }
+            Err(e) => {
+                eprintln!(
+                    "warning: signed receipt not cached locally ({e}); signature is still emitted on stdout"
+                );
+            }
+        }
+
+        print!("{envelope_json}");
+    } else {
+        print!("{rendered}");
+    }
 
     // Every format surfaces the gate-failure reasons on stderr
     // so operators reading only stderr know what tripped. JSON

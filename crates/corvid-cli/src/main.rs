@@ -21,6 +21,8 @@
 mod abi_cmd;
 mod approver_cmd;
 mod capsule_cmd;
+mod receipt_cache;
+mod receipt_cmd;
 mod replay;
 mod routing_report;
 mod test_from_traces;
@@ -363,11 +365,59 @@ enum Command {
         /// of format.
         #[arg(long, value_name = "MODE", default_value = "auto")]
         format: String,
+        /// Sign the canonical JSON receipt with the ed25519 key
+        /// at the given path and emit a DSSE envelope instead
+        /// of the raw `--format` output. The key file is read
+        /// as 64 hex chars (32-byte ed25519 seed) or 32 raw
+        /// bytes. When omitted, the CLI falls back to the
+        /// `CORVID_SIGNING_KEY` env var (also hex or raw).
+        /// With neither set, signing is skipped and the
+        /// `--format` output prints unchanged.
+        #[arg(long, value_name = "KEY_PATH")]
+        sign: Option<PathBuf>,
+        /// Key ID embedded in the DSSE envelope's
+        /// `signatures[0].keyid` field. Free-form identifier
+        /// useful for downstream verifiers to pick the right
+        /// verifying key. Defaults to `corvid-default`.
+        #[arg(long, value_name = "ID")]
+        sign_key_id: Option<String>,
+    },
+    /// Work with receipts produced by `corvid trace-diff --sign`:
+    /// show a receipt from the local cache by its hash, or verify
+    /// a DSSE envelope against a supplied verifying key.
+    Receipt {
+        #[command(subcommand)]
+        command: ReceiptCommand,
     },
     /// Start the interactive Corvid REPL.
     Repl,
     /// Check the local environment for required tools.
     Doctor,
+}
+
+#[derive(Subcommand)]
+enum ReceiptCommand {
+    /// Resolve a cached receipt by its SHA-256 hash (or a
+    /// unique prefix of at least 8 characters) and print the
+    /// canonical JSON to stdout.
+    Show {
+        /// Receipt hash (full 64-char SHA-256, or a unique
+        /// prefix of at least 8 characters).
+        hash: String,
+    },
+    /// Verify a DSSE envelope against an ed25519 verifying key.
+    /// Prints the inner receipt payload on success; exits
+    /// non-zero with a typed error on any verification failure.
+    Verify {
+        /// Envelope location: either a filesystem path to a
+        /// `.envelope.json` file OR a hash-prefix matching a
+        /// cached `<hash>.envelope.json`.
+        envelope: String,
+        /// Path to the ed25519 verifying key (64 hex chars or
+        /// 32 raw bytes).
+        #[arg(long, value_name = "KEY_PATH")]
+        key: PathBuf,
+    },
 }
 
 #[derive(Subcommand)]
@@ -577,6 +627,8 @@ fn main() -> ExitCode {
             traces,
             narrative,
             format,
+            sign,
+            sign_key_id,
         }) => {
             let parsed = narrative
                 .parse::<trace_diff::NarrativeMode>()
@@ -595,11 +647,19 @@ fn main() -> ExitCode {
                         trace_dir: traces.as_deref(),
                         narrative_mode,
                         format,
+                        sign_key_path: sign.as_deref(),
+                        sign_key_id: sign_key_id.as_deref(),
                     })
                 }
                 Err(e) => Err(e),
             }
         }
+        Some(Command::Receipt { command }) => match command {
+            ReceiptCommand::Show { hash } => receipt_cmd::run_show(&hash),
+            ReceiptCommand::Verify { envelope, key } => {
+                receipt_cmd::run_verify(&envelope, &key)
+            }
+        },
         Some(Command::Repl) => cmd_repl(),
         Some(Command::Doctor) => cmd_doctor(),
         None => {
