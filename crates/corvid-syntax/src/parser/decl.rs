@@ -105,40 +105,75 @@ impl<'a> Parser<'a> {
         let start = self.peek_span();
         self.bump(); // import
 
-        // Source language: currently only `python` is accepted.
-        let (source_name, source_span) = self.expect_ident()?;
-        let source = match source_name.as_str() {
-            "python" => ImportSource::Python,
-            _ => {
-                return Err(ParseError {
-                    kind: ParseErrorKind::UnexpectedToken {
-                        got: format!("identifier `{source_name}`"),
-                        expected: "an import source (currently: `python`)".into(),
-                    },
-                    span: source_span,
-                });
-            }
-        };
-
-        // Module string.
-        let module_span = self.peek_span();
-        let module = match self.peek().clone() {
-            TokKind::StringLit(s) => {
+        // Two shapes are accepted:
+        //
+        //   (1) External ecosystem: `import python "foo" as bar`
+        //       — the next token is an identifier naming the source.
+        //
+        //   (2) Local Corvid file: `import "./path" as alias`
+        //       — the next token is a string literal. The extension
+        //       is implicit (`.cor`); the resolver handles path
+        //       resolution.
+        //
+        // The first token after `import` disambiguates.
+        let (source, module) = match self.peek().clone() {
+            TokKind::StringLit(path) => {
                 self.bump();
-                s
+                (ImportSource::Corvid, path)
+            }
+            TokKind::Ident(_) => {
+                let (source_name, source_span) = self.expect_ident()?;
+                let source = match source_name.as_str() {
+                    "python" => ImportSource::Python,
+                    _ => {
+                        return Err(ParseError {
+                            kind: ParseErrorKind::UnexpectedToken {
+                                got: format!("identifier `{source_name}`"),
+                                expected:
+                                    "an import source (`python`) or a Corvid path string"
+                                        .into(),
+                            },
+                            span: source_span,
+                        });
+                    }
+                };
+                let module_span = self.peek_span();
+                let module = match self.peek().clone() {
+                    TokKind::StringLit(s) => {
+                        self.bump();
+                        s
+                    }
+                    other => {
+                        return Err(ParseError {
+                            kind: ParseErrorKind::UnexpectedToken {
+                                got: describe_token(&other),
+                                expected: "a module name string".into(),
+                            },
+                            span: module_span,
+                        });
+                    }
+                };
+                (source, module)
             }
             other => {
                 return Err(ParseError {
                     kind: ParseErrorKind::UnexpectedToken {
                         got: describe_token(&other),
-                        expected: "a module name string".into(),
+                        expected:
+                            "an import source (`python`) or a Corvid path string after `import`"
+                                .into(),
                     },
-                    span: module_span,
+                    span: self.peek_span(),
                 });
             }
         };
 
-        // Optional `as IDENT`.
+        // Optional `as IDENT`. Note: Corvid imports (`import "./path"`)
+        // strongly expect an alias for the v1 resolver's qualified-
+        // access story, but the grammar accepts no-alias for
+        // consistency with external imports. The resolver will
+        // enforce alias-required once `lang-cor-imports-basic-resolve`
+        // lands.
         let alias = if matches!(self.peek(), TokKind::KwAs) {
             self.bump();
             let (name, span) = self.expect_ident()?;

@@ -145,6 +145,7 @@ impl<'a> Lowerer<'a> {
             .expect("import binding missing from symbol table");
         let source = match i.source {
             ImportSource::Python => IrImportSource::Python,
+            ImportSource::Corvid => IrImportSource::Corvid,
         };
         IrImport {
             id,

@@ -671,6 +671,70 @@ prompt generate(ctx: String) -> Stream<String>:
         }
     }
 
+    #[test]
+    fn parses_corvid_file_import_with_alias() {
+        let file = parse_file_src(r#"import "./default_policy" as p"#);
+        assert_eq!(file.decls.len(), 1);
+        match &file.decls[0] {
+            Decl::Import(i) => {
+                assert!(matches!(i.source, ImportSource::Corvid));
+                assert_eq!(i.module, "./default_policy");
+                assert_eq!(i.alias.as_ref().unwrap().name, "p");
+            }
+            other => panic!("expected Import, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_corvid_file_import_with_parent_dir() {
+        let file = parse_file_src(r#"import "../shared/types" as types"#);
+        match &file.decls[0] {
+            Decl::Import(i) => {
+                assert!(matches!(i.source, ImportSource::Corvid));
+                assert_eq!(i.module, "../shared/types");
+            }
+            other => panic!("expected Import, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_corvid_file_import_without_alias() {
+        // Grammatically accepted — the resolver will enforce
+        // alias-required semantics in `lang-cor-imports-basic-resolve`.
+        let file = parse_file_src(r#"import "./helpers""#);
+        match &file.decls[0] {
+            Decl::Import(i) => {
+                assert!(matches!(i.source, ImportSource::Corvid));
+                assert!(i.alias.is_none());
+            }
+            other => panic!("expected Import, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn corvid_and_python_imports_coexist() {
+        let src = "\
+import python \"anthropic\" as anthropic
+import \"./default_policy\" as policy
+";
+        let file = parse_file_src(src);
+        assert_eq!(file.decls.len(), 2);
+        match &file.decls[0] {
+            Decl::Import(i) => assert!(matches!(i.source, ImportSource::Python)),
+            other => panic!("expected Import, got {other:?}"),
+        }
+        match &file.decls[1] {
+            Decl::Import(i) => assert!(matches!(i.source, ImportSource::Corvid)),
+            other => panic!("expected Import, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn rejects_unknown_import_source_identifier() {
+        let (_, errs) = parse_file_errs(r#"import ruby "foo" as f"#);
+        assert!(!errs.is_empty(), "expected parse error for unknown import source");
+    }
+
     // -------------------- top-level visibility --------------------
 
     #[test]

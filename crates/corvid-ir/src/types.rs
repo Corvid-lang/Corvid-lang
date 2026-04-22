@@ -31,6 +31,7 @@ pub struct IrImport {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IrImportSource {
     Python,
+    Corvid,
 }
 
 /// A user-declared struct.

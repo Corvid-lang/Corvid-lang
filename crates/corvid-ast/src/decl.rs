@@ -141,11 +141,28 @@ impl ExtendMethod {
 /// Which external ecosystem an import pulls from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ImportSource {
+    /// `import python "anthropic" as anthropic` — Python module via FFI.
     Python,
+    /// `import "./path" as alias` — another `.cor` source file, relative
+    /// to the importing file. Resolver builds a module graph, detects
+    /// cycles, and makes the imported file's `pub` declarations visible
+    /// through qualified access (`alias.Name`). The string in the
+    /// [`ImportDecl::module`] field is the relative path *without* the
+    /// `.cor` extension (extension is implicit).
+    Corvid,
     // JavaScript, C, MCP — added in later versions.
 }
 
-/// An import statement: `import python "anthropic" as anthropic`.
+/// An import statement:
+///
+/// ```text
+/// import python "anthropic" as anthropic    # external Python module
+/// import "./default_policy" as p            # local Corvid file
+/// ```
+///
+/// `module` holds either the external module identifier (Python imports)
+/// or the relative filesystem path (Corvid imports). The distinction is
+/// carried by [`source`].
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ImportDecl {
     pub source: ImportSource,

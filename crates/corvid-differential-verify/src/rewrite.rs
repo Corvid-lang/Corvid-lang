@@ -1138,6 +1138,7 @@ fn render_decl(decl: &Decl, indent: usize, out: &mut String) {
             out.push_str("import ");
             out.push_str(match import.source {
                 ImportSource::Python => "python ",
+                ImportSource::Corvid => "",
             });
             out.push_str(&render_string_literal(&import.module));
             if let Some(alias) = &import.alias {
