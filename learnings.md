@@ -1816,6 +1816,35 @@ path. The lesson is architectural: representation widening should happen where
 the current encoding stops being semantically injective, not just where it is
 convenient to add one more case.
 
+### Restricted filter DSLs keep effect queries honest in a way general expression languages do not
+
+`22-D-effect-filter` could have shipped as "evaluate a tiny expression language
+over the embedded descriptor" and been superficially more flexible on day one.
+That would have been the wrong trade. The host-side question is narrow:
+"which capabilities definitely satisfy these effect constraints?" A JSON AST
+with only `all`, `any`, `not`, and leaf predicates makes that question explicit
+and keeps every failure mode denotationally crisp: unknown dimension is
+`UNKNOWN_DIMENSION`, invalid operator for a dimension is `OP_MISMATCH`, malformed
+syntax is `BAD_JSON`. A free-form expression language would blur those into a
+parser/runtime soup, make host bindings harder to generate, and invite
+stringly-typed shortcuts at the FFI boundary. The broader lesson is that when
+the domain is a constrained algebra, the honest API is a constrained algebraic
+surface too, not a miniature programming language.
+
+### Missing effect fields are a third truth value, not false and not true
+
+The subtle design choice in `22-D-effect-filter` was how to treat agents that do
+not declare the field a host queried. Returning true would silently widen
+safety-sensitive queries like `trust_tier <= autonomous`; returning false would
+make `not { dangerous == true }` look like a sound "definitely safe" query even
+though the descriptor never asserted that fact. Corvid's filter now treats
+missing fields as a third truth value: the predicate is unevaluable for that
+agent, so the agent is omitted from the result set. This keeps narrowing
+semantics monotonic and forces hosts that care about the omitted population to
+ask a second, explicit question. The durable lesson is that optional metadata in
+a safety-facing query surface should usually model "unknown" honestly rather
+than collapsing it into either branch of a boolean.
+
 ## Contributing / feedback
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). The rules of the road are: design chat before code, per-scope commits at every boundary, dev-log entry for every session, no shortcuts. The `learnings.md` file you're reading gets updated when each user-visible feature ships.

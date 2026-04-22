@@ -68,6 +68,13 @@ pub fn render_header(opts: &HeaderOptions, agents: &[HeaderAgent]) -> String {
     out.push_str("    CORVID_PREFLIGHT_UNSUPPORTED_SIG = 3,\n");
     out.push_str("} CorvidPreFlightStatus;\n\n");
 
+    out.push_str("typedef enum {\n");
+    out.push_str("    CORVID_FIND_AGENTS_OK = 0,\n");
+    out.push_str("    CORVID_FIND_AGENTS_BAD_JSON = 1,\n");
+    out.push_str("    CORVID_FIND_AGENTS_UNKNOWN_DIMENSION = 2,\n");
+    out.push_str("    CORVID_FIND_AGENTS_OP_MISMATCH = 3,\n");
+    out.push_str("} CorvidFindAgentsStatus;\n\n");
+
     out.push_str("typedef struct {\n");
     out.push_str("    CorvidPreFlightStatus status;\n");
     out.push_str("    double cost_bound_usd;\n");
@@ -76,6 +83,12 @@ pub fn render_header(opts: &HeaderOptions, agents: &[HeaderAgent]) -> String {
     out.push_str("    const char* grounded_source_set_json;\n");
     out.push_str("    const char* bad_args_message;\n");
     out.push_str("} CorvidPreFlight;\n\n");
+
+    out.push_str("typedef struct {\n");
+    out.push_str("    CorvidFindAgentsStatus status;\n");
+    out.push_str("    size_t matched_count;\n");
+    out.push_str("    const char* error_message;\n");
+    out.push_str("} CorvidFindAgentsResult;\n\n");
 
     out.push_str("typedef enum {\n");
     out.push_str("    CORVID_APPROVAL_ACCEPT = 0,\n");
@@ -113,6 +126,11 @@ pub fn render_header(opts: &HeaderOptions, agents: &[HeaderAgent]) -> String {
     out.push_str("void corvid_abi_descriptor_hash(uint8_t out_hash[32]);\n");
     out.push_str("int corvid_abi_verify(const uint8_t expected[32]);\n");
     out.push_str("size_t corvid_list_agents(CorvidAgentHandle* out, size_t capacity);\n");
+    out.push_str("CorvidFindAgentsResult corvid_find_agents_where(\n");
+    out.push_str("    const char* filter_json,\n");
+    out.push_str("    size_t filter_len,\n");
+    out.push_str("    size_t* out_indices,\n");
+    out.push_str("    size_t out_cap);\n");
     out.push_str("const char* corvid_agent_signature_json(const char* agent_name, size_t* out_len);\n");
     out.push_str("CorvidPreFlight corvid_pre_flight(const char* agent_name, const char* args_json, size_t args_len);\n");
     out.push_str("CorvidCallStatus corvid_call_agent(\n");

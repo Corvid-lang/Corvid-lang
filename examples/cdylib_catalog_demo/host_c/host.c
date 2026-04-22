@@ -17,6 +17,11 @@ typedef const char* (*corvid_abi_descriptor_json_fn)(size_t* out_len);
 typedef void (*corvid_abi_descriptor_hash_fn)(uint8_t out_hash[32]);
 typedef int (*corvid_abi_verify_fn)(const uint8_t expected[32]);
 typedef size_t (*corvid_list_agents_fn)(CorvidAgentHandle* out, size_t capacity);
+typedef CorvidFindAgentsResult (*corvid_find_agents_where_fn)(
+    const char* filter_json,
+    size_t filter_len,
+    size_t* out_indices,
+    size_t out_cap);
 typedef CorvidPreFlight (*corvid_pre_flight_fn)(const char* agent_name, const char* args_json, size_t args_len);
 typedef CorvidCallStatus (*corvid_call_agent_fn)(
     const char* agent_name,
@@ -83,9 +88,17 @@ static void* load_symbol(void* library, const char* name) {
 #endif
 
 int main(int argc, char** argv) {
-    if (argc != 3) {
-        fprintf(stderr, "usage: %s <library> <expected_hash_hex>\n", argv[0]);
+    const char* filter_arg = NULL;
+    if (argc != 3 && argc != 4) {
+        fprintf(stderr, "usage: %s <library> <expected_hash_hex> [--filter=<json>]\n", argv[0]);
         return 2;
+    }
+    if (argc == 4) {
+        if (strncmp(argv[3], "--filter=", 9) != 0) {
+            fprintf(stderr, "expected optional argument in the form --filter=<json>\n");
+            return 2;
+        }
+        filter_arg = argv[3] + 9;
     }
 
     set_demo_env();
@@ -108,6 +121,8 @@ int main(int argc, char** argv) {
         (corvid_abi_verify_fn)load_symbol(library, "corvid_abi_verify");
     corvid_list_agents_fn corvid_list_agents =
         (corvid_list_agents_fn)load_symbol(library, "corvid_list_agents");
+    corvid_find_agents_where_fn corvid_find_agents_where =
+        (corvid_find_agents_where_fn)load_symbol(library, "corvid_find_agents_where");
     corvid_pre_flight_fn corvid_pre_flight =
         (corvid_pre_flight_fn)load_symbol(library, "corvid_pre_flight");
     corvid_call_agent_fn corvid_call_agent =
@@ -115,8 +130,8 @@ int main(int argc, char** argv) {
     corvid_free_result_fn corvid_free_result =
         (corvid_free_result_fn)load_symbol(library, "corvid_free_result");
 
-    if (!corvid_abi_verify || !corvid_list_agents || !corvid_pre_flight || !corvid_call_agent ||
-        !corvid_free_result) {
+    if (!corvid_abi_verify || !corvid_list_agents || !corvid_find_agents_where || !corvid_pre_flight ||
+        !corvid_call_agent || !corvid_free_result) {
         fprintf(stderr, "required catalog symbol missing\n");
         return 1;
     }
@@ -145,6 +160,36 @@ int main(int argc, char** argv) {
             printf("first_agent=%s\n", handles[0].name);
         }
         free(handles);
+    }
+
+    if (filter_arg != NULL) {
+        size_t count = corvid_list_agents(NULL, 0);
+        size_t* indices = (size_t*)calloc(count == 0 ? 1 : count, sizeof(size_t));
+        CorvidFindAgentsResult filtered = corvid_find_agents_where(
+            filter_arg,
+            strlen(filter_arg),
+            indices,
+            count);
+        printf("filter_status=%u filtered_count=%zu\n", (unsigned)filtered.status, filtered.matched_count);
+        if (filtered.status == CORVID_FIND_AGENTS_OK && filtered.matched_count > 0) {
+            CorvidAgentHandle* handles = (CorvidAgentHandle*)calloc(count, sizeof(CorvidAgentHandle));
+            if (handles == NULL) {
+                fprintf(stderr, "out of memory\n");
+                free(indices);
+                return 1;
+            }
+            corvid_list_agents(handles, count);
+            for (size_t i = 0; i < filtered.matched_count && i < count; ++i) {
+                size_t index = indices[i];
+                if (index < count) {
+                    printf("filtered_agent=%s\n", handles[index].name);
+                }
+            }
+            free(handles);
+        } else if (filtered.error_message != NULL) {
+            printf("filter_error=%s\n", filtered.error_message);
+        }
+        free(indices);
     }
 
     {

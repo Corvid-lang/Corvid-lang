@@ -9,6 +9,7 @@ approval bridge:
 - `corvid_pre_flight`
 - `corvid_call_agent`
 - `corvid_register_approver_from_source`
+- `corvid_find_agents_where`
 - trace-backed `approval_decision` evidence
 
 The exported Corvid surface is scalar-only on purpose so the current
@@ -116,7 +117,8 @@ The trace file then contains the three approval outcomes:
 
 ## Other host demos
 
-- `host_c/host.c` remains the minimal `22-C` catalog smoke test
+- `host_c/host.c` remains the minimal `22-C` catalog smoke test and accepts
+  `--filter='{"all":[...]}'` to demonstrate `corvid_find_agents_where`
 - `host_rust/` shows catalog loading through `libloading`
 - `host_py/demo.py` shows the same flow through `ctypes`
 

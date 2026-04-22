@@ -37,6 +37,14 @@ pub fn introspection_agents() -> Vec<AbiAgent> {
             Vec::new(),
         ),
         introspection_agent(
+            "__corvid_find_agents_where",
+            "__corvid_find_agents_where",
+            vec![AbiParam {
+                name: "filter_json".to_string(),
+                ty: scalar(ScalarTypeName::String),
+            }],
+        ),
+        introspection_agent(
             "__corvid_agent_signature_json",
             "__corvid_agent_signature_json",
             vec![AbiParam {

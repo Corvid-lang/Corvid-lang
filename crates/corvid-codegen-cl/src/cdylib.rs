@@ -89,6 +89,7 @@ fn exported_symbols(ir: &IrFile) -> Vec<String> {
             "corvid_abi_descriptor_hash",
             "corvid_abi_verify",
             "corvid_list_agents",
+            "corvid_find_agents_where",
             "corvid_agent_signature_json",
             "corvid_pre_flight",
             "corvid_call_agent",
@@ -245,9 +246,7 @@ fn runtime_staticlib_path(compiler: &cc::Tool) -> Result<PathBuf, CodegenError> 
     } else {
         staticlib_dir.join("libcorvid_runtime.a")
     };
-    if !runtime_staticlib_path.exists() {
-        build_runtime_staticlib(staticlib_dir, &runtime_staticlib_path)?;
-    }
+    build_runtime_staticlib(staticlib_dir, &runtime_staticlib_path)?;
     if !runtime_staticlib_path.exists() {
         return Err(CodegenError::link(format!(
             "corvid-runtime staticlib missing at `{}` after auto-build.",

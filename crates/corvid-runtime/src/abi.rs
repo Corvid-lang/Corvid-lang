@@ -44,6 +44,22 @@ use crate::ffi_bridge::{
     corvid_string_into_cstr as _corvid_string_into_cstr_marker,
     tokio_handle as _tokio_handle_marker,
 }; // keep the bridge module referenced
+use crate::catalog_c_api::{
+    corvid_abi_descriptor_hash as _corvid_abi_descriptor_hash_marker,
+    corvid_abi_descriptor_json as _corvid_abi_descriptor_json_marker,
+    corvid_abi_verify as _corvid_abi_verify_marker,
+    corvid_agent_signature_json as _corvid_agent_signature_json_marker,
+    corvid_approval_predicate_json as _corvid_approval_predicate_json_marker,
+    corvid_call_agent as _corvid_call_agent_marker,
+    corvid_clear_approver as _corvid_clear_approver_marker,
+    corvid_evaluate_approval_predicate as _corvid_evaluate_approval_predicate_marker,
+    corvid_find_agents_where as _corvid_find_agents_where_marker,
+    corvid_free_result as _corvid_free_result_marker,
+    corvid_list_agents as _corvid_list_agents_marker,
+    corvid_pre_flight as _corvid_pre_flight_marker,
+    corvid_register_approver as _corvid_register_approver_marker,
+    corvid_register_approver_from_source as _corvid_register_approver_from_source_marker,
+}; // keep the catalog C-API surface referenced for cdylib/staticlib linking
 use std::marker::PhantomData;
 use std::sync::atomic::{AtomicI64, Ordering};
 
@@ -57,6 +73,56 @@ fn _depends_on_ffi_bridge() {
     let _ =
         _corvid_string_into_cstr_marker as unsafe extern "C" fn(CorvidString) -> *mut std::ffi::c_char;
     let _ = _corvid_free_string_marker as unsafe extern "C" fn(*const std::ffi::c_char);
+    let _ = _corvid_abi_descriptor_json_marker as unsafe extern "C" fn(*mut usize) -> *const std::ffi::c_char;
+    let _ = _corvid_abi_descriptor_hash_marker as extern "C" fn(*mut u8);
+    let _ = _corvid_abi_verify_marker as extern "C" fn(*const u8) -> i32;
+    let _ = _corvid_list_agents_marker
+        as unsafe extern "C" fn(*mut crate::catalog::CorvidAgentHandle, usize) -> usize;
+    let _ = _corvid_find_agents_where_marker
+        as unsafe extern "C" fn(
+            *const std::ffi::c_char,
+            usize,
+            *mut usize,
+            usize,
+        ) -> crate::catalog::CorvidFindAgentsResult;
+    let _ = _corvid_agent_signature_json_marker
+        as unsafe extern "C" fn(*const std::ffi::c_char, *mut usize) -> *const std::ffi::c_char;
+    let _ = _corvid_pre_flight_marker
+        as unsafe extern "C" fn(
+            *const std::ffi::c_char,
+            *const std::ffi::c_char,
+            usize,
+        ) -> crate::catalog::CorvidPreFlight;
+    let _ = _corvid_call_agent_marker
+        as unsafe extern "C" fn(
+            *const std::ffi::c_char,
+            *const std::ffi::c_char,
+            usize,
+            *mut *mut std::ffi::c_char,
+            *mut usize,
+            *mut crate::catalog::CorvidApprovalRequired,
+        ) -> crate::catalog::CorvidCallStatus;
+    let _ = _corvid_free_result_marker as unsafe extern "C" fn(*mut std::ffi::c_char);
+    let _ = _corvid_register_approver_marker
+        as extern "C" fn(
+            Option<crate::catalog::CorvidApproverFn>,
+            *mut std::ffi::c_void,
+        );
+    let _ = _corvid_register_approver_from_source_marker
+        as unsafe extern "C" fn(
+            *const std::ffi::c_char,
+            f64,
+            *mut *mut std::ffi::c_char,
+        ) -> crate::approver_bridge::CorvidApproverLoadStatus;
+    let _ = _corvid_clear_approver_marker as extern "C" fn();
+    let _ = _corvid_approval_predicate_json_marker
+        as unsafe extern "C" fn(*const std::ffi::c_char, *mut usize) -> *const std::ffi::c_char;
+    let _ = _corvid_evaluate_approval_predicate_marker
+        as unsafe extern "C" fn(
+            *const std::ffi::c_char,
+            *const std::ffi::c_char,
+            usize,
+        ) -> crate::approver_bridge::CorvidPredicateResult;
 }
 
 // ------------------------------------------------------------

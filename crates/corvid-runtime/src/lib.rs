@@ -35,6 +35,7 @@ pub mod approvals;
 pub mod approver_bridge;
 pub mod catalog;
 pub mod catalog_c_api;
+pub mod effect_filter;
 pub mod ensemble;
 pub mod env;
 pub mod errors;
@@ -72,10 +73,12 @@ pub use approvals::{
 };
 pub use catalog::{
     call_agent as catalog_call_agent, descriptor_hash as catalog_descriptor_hash,
-    descriptor_json as catalog_descriptor_json, list_agents as catalog_list_agents, pre_flight,
-    CorvidAgentHandle, CorvidApprovalDecision, CorvidApprovalRequired, CorvidApproverFn,
-    CorvidCallStatus, CorvidPreFlight, CorvidPreFlightStatus, CorvidTrustTier,
+    descriptor_json as catalog_descriptor_json, find_agents_where as catalog_find_agents_where,
+    list_agents as catalog_list_agents, pre_flight, CorvidAgentHandle, CorvidApprovalDecision,
+    CorvidApprovalRequired, CorvidApproverFn, CorvidCallStatus, CorvidFindAgentsResult,
+    CorvidPreFlight, CorvidPreFlightStatus, CorvidTrustTier,
 };
+pub use effect_filter::CorvidFindAgentsStatus;
 pub use adversarial::{contradiction_flag, trace_text};
 pub use ensemble::{majority_vote, EnsembleVoteOutcome};
 pub use env::{find_dotenv_walking, load_dotenv, load_dotenv_walking};

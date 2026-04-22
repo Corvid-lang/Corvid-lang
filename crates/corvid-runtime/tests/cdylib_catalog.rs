@@ -10,7 +10,7 @@ use corvid_codegen_cl::{build_library_to_disk, BuildTarget};
 use corvid_resolve::resolve;
 use corvid_runtime::{
     CorvidAgentHandle, CorvidApprovalDecision, CorvidApprovalRequired, CorvidCallStatus,
-    CorvidPreFlightStatus,
+    CorvidFindAgentsResult, CorvidFindAgentsStatus, CorvidPreFlightStatus,
 };
 use corvid_runtime::approver_bridge::{CorvidApproverLoadStatus, CorvidPredicateResult, CorvidPredicateStatus};
 use corvid_syntax::{lex, parse_file};
@@ -191,7 +191,7 @@ fn corvid_list_agents_lists_declaration_order_and_introspection_entries() {
         > = lib.get(b"corvid_list_agents").expect("resolve corvid_list_agents");
 
         let total = list(std::ptr::null_mut(), 0);
-        assert!(total >= 9, "expected user agents + introspection entries");
+        assert!(total >= 10, "expected user agents + introspection entries");
 
         let mut handles = vec![
             CorvidAgentHandle {
@@ -220,6 +220,7 @@ fn corvid_list_agents_lists_declaration_order_and_introspection_entries() {
         assert_eq!(names[0], "__corvid_abi_descriptor_json");
         assert_eq!(names[1], "__corvid_abi_verify");
         assert_eq!(names[2], "__corvid_list_agents");
+        assert_eq!(names[3], "__corvid_find_agents_where");
         assert!(names.contains(&"classify".to_string()));
         let classify = handles
             .iter()
@@ -392,6 +393,86 @@ fn corvid_call_agent_handles_happy_path_bad_args_and_approval_flow() {
 }
 
 #[test]
+fn corvid_find_agents_where_filters_in_live_catalog_order() {
+    let built = build_catalog_library();
+    unsafe {
+        let lib = Library::new(&built.path).expect("load library");
+        let list: libloading::Symbol<
+            unsafe extern "C" fn(*mut CorvidAgentHandle, usize) -> usize,
+        > = lib.get(b"corvid_list_agents").expect("resolve corvid_list_agents");
+        let find: libloading::Symbol<
+            unsafe extern "C" fn(*const c_char, usize, *mut usize, usize) -> CorvidFindAgentsResult,
+        > = lib
+            .get(b"corvid_find_agents_where")
+            .expect("resolve corvid_find_agents_where");
+
+        let total = list(std::ptr::null_mut(), 0);
+        let mut handles = vec![
+            CorvidAgentHandle {
+                name: std::ptr::null(),
+                symbol: std::ptr::null(),
+                source_file: std::ptr::null(),
+                source_line: 0,
+                trust_tier: 0,
+                cost_bound_usd: 0.0,
+                reversible: 0,
+                latency_instant: 0,
+                replayable: 0,
+                deterministic: 0,
+                dangerous: 0,
+                pub_extern_c: 0,
+                requires_approval: 0,
+                grounded_source_count: 0,
+                param_count: 0,
+            };
+            total
+        ];
+        list(handles.as_mut_ptr(), handles.len());
+
+        let filter = CString::new(
+            r#"{"all":[{"dim":"trust_tier","op":"le","value":"autonomous"},{"dim":"dangerous","op":"eq","value":false}]}"#,
+        )
+        .unwrap();
+        let mut indices = vec![usize::MAX; total];
+        let outcome = find(
+            filter.as_ptr(),
+            filter.as_bytes().len(),
+            indices.as_mut_ptr(),
+            indices.len(),
+        );
+        assert_eq!(outcome.status, CorvidFindAgentsStatus::Ok);
+        assert!(outcome.matched_count > 0);
+        let names = indices[..outcome.matched_count]
+            .iter()
+            .map(|idx| load_string(handles[*idx].name))
+            .collect::<Vec<_>>();
+        assert!(names.contains(&"classify".to_string()));
+        assert!(!names.contains(&"maybe_dangerous".to_string()));
+
+        let bad_filter = CString::new(r#"{"dim":"dangerous","op":"le","value":true}"#).unwrap();
+        let bad = find(
+            bad_filter.as_ptr(),
+            bad_filter.as_bytes().len(),
+            indices.as_mut_ptr(),
+            indices.len(),
+        );
+        assert_eq!(bad.status, CorvidFindAgentsStatus::OpMismatch);
+        assert!(!bad.error_message.is_null());
+
+        let missing_filter = CString::new(r#"{"dim":"does_not_exist","op":"eq","value":true}"#).unwrap();
+        let missing = find(
+            missing_filter.as_ptr(),
+            missing_filter.as_bytes().len(),
+            indices.as_mut_ptr(),
+            indices.len(),
+        );
+        assert_eq!(missing.status, CorvidFindAgentsStatus::UnknownDimension);
+        assert!(!missing.error_message.is_null());
+        std::mem::forget(lib);
+    }
+}
+
+#[test]
 fn corvid_source_approver_registration_and_predicate_eval_work() {
     let built = build_catalog_library();
     let approver_path = write_approver_source(
@@ -484,7 +565,7 @@ agent approve_site(site: ApprovalSite, args: ApprovalArgs, ctx: ApprovalContext)
             .iter()
             .position(|handle| load_string(handle.name) == "__corvid_approver")
             .expect("overlay approver present");
-        assert_eq!(overlay_index, 6);
+        assert_eq!(overlay_index, 7);
         assert_eq!(load_string(handles[overlay_index].symbol), "__corvid_approver");
         assert_eq!(handles[overlay_index].trust_tier, 0);
         assert_eq!(handles[overlay_index].dangerous, 0);

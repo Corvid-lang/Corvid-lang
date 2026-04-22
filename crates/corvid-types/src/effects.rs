@@ -45,6 +45,12 @@ pub struct EffectRegistry {
     pub custom_dimensions: HashMap<String, CustomDimensionMeta>,
 }
 
+/// Built-in trust tiers in ascending restrictiveness order. Runtime
+/// consumers that need to mirror the checker lattice should depend on
+/// this list in tests rather than silently re-encode their own order.
+pub const BUILTIN_TRUST_TIERS: &[&str] =
+    &["autonomous", "supervisor_required", "human_required"];
+
 /// The dimensional profile of a single declared effect.
 #[derive(Debug, Clone, Default)]
 pub struct EffectProfile {

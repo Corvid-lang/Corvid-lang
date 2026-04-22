@@ -1,3 +1,4 @@
+use crate::effect_filter::{self, CorvidFindAgentsStatus, FilterAgent};
 use crate::errors::RuntimeError;
 use crate::tracing::now_ms;
 use corvid_abi::{
@@ -35,6 +36,14 @@ pub struct CorvidAgentHandle {
     pub requires_approval: u8,
     pub grounded_source_count: u32,
     pub param_count: u32,
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CorvidFindAgentsResult {
+    pub status: CorvidFindAgentsStatus,
+    pub matched_count: usize,
+    pub error_message: *const c_char,
 }
 
 #[repr(C)]
@@ -133,6 +142,13 @@ pub struct OwnedCallOutcome {
     pub approval: Option<OwnedApprovalRequired>,
 }
 
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct OwnedFindAgentsOutcome {
+    pub status: CorvidFindAgentsStatus,
+    pub matched_indices: Vec<usize>,
+    pub error_message: Option<String>,
+}
+
 enum CatalogInvoker {
     Introspection(IntrospectionKind),
     Scalar(ScalarInvoker),
@@ -147,6 +163,7 @@ enum IntrospectionKind {
     AgentSignatureJson,
     PreFlight,
     CallAgent,
+    FindAgentsWhere,
 }
 
 struct AgentCatalogEntry {
@@ -287,6 +304,17 @@ pub fn call_agent(agent_name: &str, args_json: &str) -> OwnedCallOutcome {
             status: CorvidCallStatus::RuntimeError,
             result_json: Some(serde_json::json!({ "error": err.to_string() }).to_string()),
             approval: None,
+        },
+    }
+}
+
+pub fn find_agents_where(filter_json: &str) -> OwnedFindAgentsOutcome {
+    match find_agents_where_impl(filter_json) {
+        Ok(outcome) => outcome,
+        Err(err) => OwnedFindAgentsOutcome {
+            status: CorvidFindAgentsStatus::BadJson,
+            matched_indices: Vec::new(),
+            error_message: Some(err.to_string()),
         },
     }
 }
@@ -477,6 +505,33 @@ fn call_agent_impl(agent_name: &str, args_json: &str) -> Result<OwnedCallOutcome
         status: CorvidCallStatus::Ok,
         result_json: Some(result_json),
         approval: None,
+    })
+}
+
+fn find_agents_where_impl(filter_json: &str) -> Result<OwnedFindAgentsOutcome, RuntimeError> {
+    let state = catalog()?;
+    let mut agents = Vec::with_capacity(state.agents.len() + 1);
+    for entry in state.agents.iter().filter(|entry| is_introspection_agent(&entry.abi.name)) {
+        agents.push(filter_agent_from_entry(entry, None));
+    }
+    if let Some(overlay) = crate::approver_bridge::registered_approver_overlay() {
+        agents.push(FilterAgent {
+            abi: overlay.abi,
+            cost_bound_usd: finite_option(overlay.display_budget_usd),
+        });
+    }
+    for entry in state
+        .agents
+        .iter()
+        .filter(|entry| !is_introspection_agent(&entry.abi.name))
+    {
+        agents.push(filter_agent_from_entry(entry, None));
+    }
+    let result = effect_filter::find_matching_indices(&agents, filter_json);
+    Ok(OwnedFindAgentsOutcome {
+        status: result.status,
+        matched_indices: result.matched_indices,
+        error_message: result.error_message,
     })
 }
 
@@ -714,6 +769,22 @@ fn introspection_call(
                     .map_err(|err| RuntimeError::Marshal(format!("serialize call outcome JSON: {err}")))?,
             ))
         }
+        IntrospectionKind::FindAgentsWhere => {
+            let filter_json = args
+                .first()
+                .and_then(|value| value.as_str())
+                .ok_or_else(|| {
+                    RuntimeError::Marshal(
+                        "`__corvid_find_agents_where` expects one String filter argument"
+                            .to_string(),
+                    )
+                })?;
+            Ok(serde_json::Value::String(
+                serde_json::to_string(&find_agents_where(filter_json)).map_err(|err| {
+                    RuntimeError::Marshal(format!("serialize filter outcome JSON: {err}"))
+                })?,
+            ))
+        }
     }
 }
 
@@ -727,7 +798,7 @@ fn handle_from_entry(entry: &AgentCatalogEntry) -> CorvidAgentHandle {
         symbol: entry.symbol_c.as_ptr(),
         source_file: entry.source_file_c.as_ptr(),
         source_line: entry.abi.source_line,
-        trust_tier: map_trust_tier(entry.abi.effects.trust_tier.as_deref()),
+        trust_tier: effect_filter::trust_tier_to_handle_value(entry.abi.effects.trust_tier.as_deref()),
         cost_bound_usd: cost_bound_for(&entry.abi),
         reversible: entry
             .abi
@@ -757,16 +828,6 @@ fn is_introspection_agent(name: &str) -> bool {
     name.starts_with("__corvid_")
 }
 
-fn map_trust_tier(tier: Option<&str>) -> u8 {
-    match tier {
-        Some("autonomous") => CorvidTrustTier::Autonomous as u8,
-        Some("human_required") => CorvidTrustTier::HumanRequired as u8,
-        Some("security_review") => CorvidTrustTier::SecurityReview as u8,
-        Some(_) => 3,
-        None => CorvidTrustTier::Autonomous as u8,
-    }
-}
-
 fn cost_bound_for(agent: &AbiAgent) -> f64 {
     agent.budget
         .as_ref()
@@ -790,7 +851,26 @@ fn introspection_kind(name: &str) -> Option<IntrospectionKind> {
         "__corvid_agent_signature_json" => Some(IntrospectionKind::AgentSignatureJson),
         "__corvid_pre_flight" => Some(IntrospectionKind::PreFlight),
         "__corvid_call_agent" => Some(IntrospectionKind::CallAgent),
+        "__corvid_find_agents_where" => Some(IntrospectionKind::FindAgentsWhere),
         _ => None,
+    }
+}
+
+fn filter_agent_from_entry(
+    entry: &AgentCatalogEntry,
+    cost_bound_override: Option<f64>,
+) -> FilterAgent {
+    FilterAgent {
+        abi: entry.abi.clone(),
+        cost_bound_usd: cost_bound_override.or_else(|| finite_option(cost_bound_for(&entry.abi))),
+    }
+}
+
+fn finite_option(value: f64) -> Option<f64> {
+    if value.is_finite() {
+        Some(value)
+    } else {
+        None
     }
 }
 

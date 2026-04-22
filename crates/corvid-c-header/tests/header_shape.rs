@@ -133,6 +133,7 @@ fn header_exports_catalog_surface() {
     let header = render();
     assert!(header.contains("typedef struct {\n    const char* name;"));
     assert!(header.contains("size_t corvid_list_agents(CorvidAgentHandle* out, size_t capacity);"));
+    assert!(header.contains("CorvidFindAgentsResult corvid_find_agents_where("));
     assert!(header.contains("CorvidPreFlight corvid_pre_flight("));
     assert!(header.contains("CorvidCallStatus corvid_call_agent("));
     assert!(header.contains("void corvid_register_approver(CorvidApproverFn fn, void* user_data);"));

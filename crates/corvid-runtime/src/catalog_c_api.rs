@@ -5,9 +5,10 @@ use crate::approver_bridge::{ApprovalDecisionInfo, ApprovalSiteInput};
 use crate::catalog::{
     call_agent, descriptor_hash, descriptor_json_ptr, list_agent_handles_owned, pre_flight,
     CorvidAgentHandle, CorvidApprovalDecision, CorvidApprovalRequired, CorvidApproverFn,
-    CorvidCallStatus, CorvidPreFlight, CorvidPreFlightStatus, OwnedApprovalRequired,
-    OwnedPreFlight, ScalarAbiType, ScalarInvoker, ScalarReturnType,
+    CorvidCallStatus, CorvidFindAgentsResult, CorvidPreFlight, CorvidPreFlightStatus,
+    OwnedApprovalRequired, OwnedPreFlight, ScalarAbiType, ScalarInvoker, ScalarReturnType,
 };
+use crate::effect_filter::CorvidFindAgentsStatus;
 use crate::errors::RuntimeError;
 use corvid_abi::{read_embedded_section_from_library, EmbeddedDescriptorSection};
 #[cfg(unix)]
@@ -812,6 +813,39 @@ pub unsafe extern "C" fn corvid_list_agents(
         ptr::copy_nonoverlapping(handles.as_ptr(), out, count);
     }
     handles.len()
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn corvid_find_agents_where(
+    filter_ptr: *const c_char,
+    filter_len: usize,
+    out_indices: *mut usize,
+    out_cap: usize,
+) -> CorvidFindAgentsResult {
+    reset_transients();
+    if filter_ptr.is_null() {
+        return CorvidFindAgentsResult {
+            status: CorvidFindAgentsStatus::BadJson,
+            matched_count: 0,
+            error_message: stash_transient("filter JSON pointer was null"),
+        };
+    }
+    let bytes = std::slice::from_raw_parts(filter_ptr as *const u8, filter_len);
+    let filter_json = String::from_utf8_lossy(bytes).into_owned();
+    let outcome = crate::catalog::find_agents_where(&filter_json);
+    if !out_indices.is_null() {
+        let count = outcome.matched_indices.len().min(out_cap);
+        ptr::copy_nonoverlapping(outcome.matched_indices.as_ptr(), out_indices, count);
+    }
+    CorvidFindAgentsResult {
+        status: outcome.status,
+        matched_count: outcome.matched_indices.len(),
+        error_message: outcome
+            .error_message
+            .as_deref()
+            .map(stash_transient)
+            .unwrap_or(ptr::null()),
+    }
 }
 
 #[no_mangle]

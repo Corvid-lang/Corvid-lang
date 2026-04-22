@@ -1,5 +1,11 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::{Mutex, OnceLock};
+
+fn demo_lock() -> &'static Mutex<()> {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
+}
 
 fn read_text(path: &Path) -> String {
     std::fs::read_to_string(path).unwrap_or_else(|err| panic!("failed to read {}: {err}", path.display()))
@@ -68,10 +74,14 @@ fn compile_host(source: &Path, include_dir: &Path, out_dir: &Path) -> Option<Pat
             return None;
         }
     };
+    let output_stem = source
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .expect("host source stem");
     let output_path = if cfg!(windows) {
-        out_dir.join("approver_host.exe")
+        out_dir.join(format!("{output_stem}.exe"))
     } else {
-        out_dir.join("approver_host")
+        out_dir.join(output_stem)
     };
     let mut cmd = Command::new(compiler.path());
     for (key, value) in compiler.env() {
@@ -104,6 +114,7 @@ fn compile_host(source: &Path, include_dir: &Path, out_dir: &Path) -> Option<Pat
 
 #[test]
 fn cdylib_catalog_demo_c_host_shows_accept_reject_and_fail_closed() {
+    let _guard = demo_lock().lock().unwrap_or_else(|poisoned| poisoned.into_inner());
     let root = workspace_root();
     let demo_dir = root.join("examples").join("cdylib_catalog_demo");
     let source = demo_dir.join("src").join("classify.cor");
@@ -184,4 +195,74 @@ fn cdylib_catalog_demo_c_host_shows_accept_reject_and_fail_closed() {
     assert!(trace.contains("\"accepted\":true"), "trace was: {trace}");
     assert!(trace.contains("\"accepted\":false"), "trace was: {trace}");
     assert!(trace.contains("\"decider\":\"fail-closed-default\""), "trace was: {trace}");
+}
+
+#[test]
+fn cdylib_catalog_demo_filter_host_narrows_catalog() {
+    let _guard = demo_lock().lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let root = workspace_root();
+    let demo_dir = root.join("examples").join("cdylib_catalog_demo");
+    let source = demo_dir.join("src").join("classify.cor");
+    let tools_lib = test_tools_lib_path();
+
+    let build_output = run_corvid(
+        &[
+            "build",
+            source.to_str().expect("utf8 source path"),
+            "--target=cdylib",
+            "--with-tools-lib",
+            tools_lib.to_str().expect("utf8 tools path"),
+            "--all-artifacts",
+        ],
+        &root,
+    );
+    assert!(
+        build_output.status.success(),
+        "cdylib demo build failed: stdout={} stderr={}",
+        String::from_utf8_lossy(&build_output.stdout),
+        String::from_utf8_lossy(&build_output.stderr)
+    );
+
+    let hash_output = run_corvid(
+        &["abi", "hash", source.to_str().expect("utf8 source path")],
+        &root,
+    );
+    assert!(
+        hash_output.status.success(),
+        "abi hash failed: stdout={} stderr={}",
+        String::from_utf8_lossy(&hash_output.stdout),
+        String::from_utf8_lossy(&hash_output.stderr)
+    );
+    let hash = String::from_utf8(hash_output.stdout)
+        .expect("hash utf8")
+        .trim()
+        .to_string();
+
+    let release_dir = demo_dir.join("target").join("release");
+    let library = release_dir.join(shared_library_name("classify"));
+    let host_source = demo_dir.join("host_c").join("host.c");
+    let host_bin = match compile_host(&host_source, &release_dir, &demo_dir.join("host_c")) {
+        Some(path) => path,
+        None => return,
+    };
+
+    let output = Command::new(&host_bin)
+        .arg(&library)
+        .arg(&hash)
+        .arg("--filter={\"all\":[{\"dim\":\"trust_tier\",\"op\":\"le\",\"value\":\"autonomous\"},{\"dim\":\"dangerous\",\"op\":\"eq\",\"value\":false}]}")
+        .current_dir(&demo_dir)
+        .output()
+        .expect("run filter host");
+    assert!(
+        output.status.success(),
+        "filter host failed: stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("verified=1"), "stdout was: {stdout}");
+    assert!(stdout.contains("filter_status=0"), "stdout was: {stdout}");
+    assert!(stdout.contains("filtered_count="), "stdout was: {stdout}");
+    assert!(stdout.contains("filtered_agent=classify"), "stdout was: {stdout}");
 }
