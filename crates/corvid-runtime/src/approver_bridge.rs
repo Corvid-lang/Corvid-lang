@@ -7,6 +7,7 @@ use corvid_types::{typecheck_with_config, CorvidConfig, EffectRegistry};
 use serde::Serialize;
 use serde_json::Value;
 use std::collections::BTreeMap;
+use std::ffi::{c_char, CString};
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 
@@ -114,6 +115,23 @@ struct RegisteredApprover {
     source_path: PathBuf,
     abi: AbiAgent,
     program: MiniApproverProgram,
+    display_budget_usd: f64,
+    signature_json: String,
+    name_c: CString,
+    symbol_c: CString,
+    source_file_c: CString,
+    signature_json_c: CString,
+}
+
+pub(crate) struct RegisteredApproverOverlay {
+    pub abi: AbiAgent,
+    pub display_budget_usd: f64,
+    pub signature_json: String,
+    pub name_ptr: *const c_char,
+    pub symbol_ptr: *const c_char,
+    pub source_file_ptr: *const c_char,
+    pub signature_json_ptr: *const c_char,
+    pub signature_json_len: usize,
 }
 
 fn state() -> &'static Mutex<Option<RegisteredApprover>> {
@@ -125,14 +143,42 @@ pub fn register_approver_from_source(
     source_path: &Path,
     max_budget_usd_per_call: f64,
 ) -> Result<(), ApproverLoadError> {
-    let compiled = compile_approver_source(source_path)?;
+    let mut compiled = compile_approver_source(source_path)?;
     validate_approver_safety(&compiled.abi, max_budget_usd_per_call)?;
+    compiled.display_budget_usd = compiled
+        .abi
+        .budget
+        .as_ref()
+        .map(|budget| budget.usd_per_call)
+        .or_else(|| {
+            if max_budget_usd_per_call > 0.0 {
+                Some(max_budget_usd_per_call)
+            } else {
+                None
+            }
+        })
+        .unwrap_or(f64::NAN);
     *state().lock().unwrap() = Some(compiled);
     Ok(())
 }
 
 pub fn clear_registered_approver() {
     *state().lock().unwrap() = None;
+}
+
+pub(crate) fn registered_approver_overlay() -> Option<RegisteredApproverOverlay> {
+    let guard = state().lock().unwrap();
+    let registered = guard.as_ref()?;
+    Some(RegisteredApproverOverlay {
+        abi: registered.abi.clone(),
+        display_budget_usd: registered.display_budget_usd,
+        signature_json: registered.signature_json.clone(),
+        name_ptr: registered.name_c.as_ptr(),
+        symbol_ptr: registered.symbol_c.as_ptr(),
+        source_file_ptr: registered.source_file_c.as_ptr(),
+        signature_json_ptr: registered.signature_json_c.as_ptr(),
+        signature_json_len: registered.signature_json_c.as_bytes().len(),
+    })
 }
 
 pub fn evaluate_registered_approver(
@@ -249,10 +295,28 @@ fn compile_approver_source(source_path: &Path) -> Result<RegisteredApprover, App
         message: format!("no `{APPROVER_AGENT_NAME}` agent found in approver source"),
     })?;
     verify_approver_signature(&abi)?;
+    let mut overlay_abi = abi.clone();
+    overlay_abi.name = "__corvid_approver".to_string();
+    overlay_abi.symbol = "__corvid_approver".to_string();
+    overlay_abi.attributes.pub_extern_c = false;
+    overlay_abi.attributes.dangerous = false;
+    overlay_abi.approval_contract.required = false;
+    overlay_abi.approval_contract.labels.clear();
+    let signature_json = serde_json::to_string_pretty(&overlay_abi).map_err(|err| ApproverLoadError {
+        status: CorvidApproverLoadStatus::CompileError,
+        message: format!("serialize approver overlay ABI: {err}"),
+    })?;
     Ok(RegisteredApprover {
         source_path: source_path.to_path_buf(),
-        abi,
+        abi: overlay_abi,
         program: MiniApproverProgram::from_file(&file)?,
+        display_budget_usd: f64::NAN,
+        signature_json: signature_json.clone(),
+        name_c: CString::new("__corvid_approver").expect("valid approver overlay name"),
+        symbol_c: CString::new("__corvid_approver").expect("valid approver overlay symbol"),
+        source_file_c: CString::new(source_path.to_string_lossy().replace('\\', "/"))
+            .expect("valid approver overlay source path"),
+        signature_json_c: CString::new(signature_json).expect("valid approver overlay signature"),
     })
 }
 

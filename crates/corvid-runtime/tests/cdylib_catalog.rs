@@ -217,12 +217,15 @@ fn corvid_list_agents_lists_declaration_order_and_introspection_entries() {
         assert_eq!(copied, total);
 
         let names = handles.iter().map(|handle| load_string(handle.name)).collect::<Vec<_>>();
-        assert_eq!(names[0], "classify");
-        assert_eq!(names[1], "helper_wrap");
-        assert_eq!(names[2], "call_helper");
-        assert_eq!(names[3], "maybe_dangerous");
-        assert_eq!(handles[0].source_line, 9);
-        assert!(names.contains(&"__corvid_list_agents".to_string()));
+        assert_eq!(names[0], "__corvid_abi_descriptor_json");
+        assert_eq!(names[1], "__corvid_abi_verify");
+        assert_eq!(names[2], "__corvid_list_agents");
+        assert!(names.contains(&"classify".to_string()));
+        let classify = handles
+            .iter()
+            .find(|handle| load_string(handle.name) == "classify")
+            .expect("classify handle");
+        assert_eq!(classify.source_line, 9);
 
         let list_agents = handles
             .iter()
@@ -433,14 +436,74 @@ agent approve_site(site: ApprovalSite, args: ApprovalArgs, ctx: ApprovalContext)
                 *mut CorvidApprovalRequired,
             ) -> CorvidCallStatus,
         > = lib.get(b"corvid_call_agent").expect("resolve corvid_call_agent");
+        let list_agents: libloading::Symbol<
+            unsafe extern "C" fn(*mut CorvidAgentHandle, usize) -> usize,
+        > = lib.get(b"corvid_list_agents").expect("resolve corvid_list_agents");
+        let signature_json: libloading::Symbol<
+            unsafe extern "C" fn(*const c_char, *mut usize) -> *const c_char,
+        > = lib
+            .get(b"corvid_agent_signature_json")
+            .expect("resolve corvid_agent_signature_json");
+        let verify: libloading::Symbol<unsafe extern "C" fn(*const u8) -> i32> =
+            lib.get(b"corvid_abi_verify").expect("resolve corvid_abi_verify");
         let free_result: libloading::Symbol<unsafe extern "C" fn(*mut c_char)> =
             lib.get(b"corvid_free_result").expect("resolve corvid_free_result");
 
+        let baseline_count = list_agents(std::ptr::null_mut(), 0);
         let approver_path_c = CString::new(approver_path.to_string_lossy().to_string()).unwrap();
         let mut error = std::ptr::null_mut();
         let status = register_source(approver_path_c.as_ptr(), 1.0, &mut error);
         assert_eq!(status, CorvidApproverLoadStatus::Ok);
         assert!(error.is_null());
+
+        let with_approver_count = list_agents(std::ptr::null_mut(), 0);
+        assert_eq!(with_approver_count, baseline_count + 1);
+        let mut handles = vec![
+            CorvidAgentHandle {
+                name: std::ptr::null(),
+                symbol: std::ptr::null(),
+                source_file: std::ptr::null(),
+                source_line: 0,
+                trust_tier: 0,
+                cost_bound_usd: 0.0,
+                reversible: 0,
+                latency_instant: 0,
+                replayable: 0,
+                deterministic: 0,
+                dangerous: 0,
+                pub_extern_c: 0,
+                requires_approval: 0,
+                grounded_source_count: 0,
+                param_count: 0,
+            };
+            with_approver_count
+        ];
+        let copied = list_agents(handles.as_mut_ptr(), handles.len());
+        assert_eq!(copied, with_approver_count);
+        let overlay_index = handles
+            .iter()
+            .position(|handle| load_string(handle.name) == "__corvid_approver")
+            .expect("overlay approver present");
+        assert_eq!(overlay_index, 6);
+        assert_eq!(load_string(handles[overlay_index].symbol), "__corvid_approver");
+        assert_eq!(handles[overlay_index].trust_tier, 0);
+        assert_eq!(handles[overlay_index].dangerous, 0);
+        assert_eq!(handles[overlay_index].pub_extern_c, 0);
+        assert_eq!(handles[overlay_index].requires_approval, 0);
+        assert_eq!(handles[overlay_index].param_count, 3);
+
+        let approver_name = CString::new("__corvid_approver").unwrap();
+        let mut sig_len = 0usize;
+        let sig_ptr = signature_json(approver_name.as_ptr(), &mut sig_len);
+        assert!(!sig_ptr.is_null());
+        let sig_text = CStr::from_ptr(sig_ptr).to_str().unwrap();
+        let sig: corvid_abi::AbiAgent = serde_json::from_str(sig_text).expect("approver abi json");
+        assert_eq!(sig.name, "__corvid_approver");
+        assert_eq!(sig.symbol, "__corvid_approver");
+        assert!(sig_len > 0);
+
+        let section = read_embedded_section_from_library(&built.path).expect("embedded");
+        assert_eq!(verify(section.sha256.as_ptr()), 1);
 
         let label = CString::new("EchoString").unwrap();
         let mut json_len = 0usize;
@@ -478,7 +541,46 @@ agent approve_site(site: ApprovalSite, args: ApprovalArgs, ctx: ApprovalContext)
         free_result(result);
         assert_eq!(approved_json, "\"vip\"");
 
+        let direct_status = call_agent(
+            approver_name.as_ptr(),
+            dangerous_args.as_ptr(),
+            dangerous_args.as_bytes().len(),
+            &mut std::ptr::null_mut(),
+            &mut result_len,
+            &mut approval,
+        );
+        assert_eq!(direct_status, CorvidCallStatus::UnsupportedSig);
+
+        let replacement_path = write_approver_source(
+            &built._temp,
+            r#"
+@replayable
+@deterministic
+@budget($0.25)
+agent approve_site(site: ApprovalSite, args: ApprovalArgs, ctx: ApprovalContext) -> ApprovalDecision:
+    return ApprovalDecision(true, "replacement")
+"#,
+        );
+        let replacement_c = CString::new(replacement_path.to_string_lossy().to_string()).unwrap();
+        let status = register_source(replacement_c.as_ptr(), 1.0, &mut error);
+        assert_eq!(status, CorvidApproverLoadStatus::Ok);
+        let recounted = list_agents(std::ptr::null_mut(), 0);
+        assert_eq!(recounted, baseline_count + 1);
+        let mut replaced = vec![handles[0]; recounted];
+        let _ = list_agents(replaced.as_mut_ptr(), replaced.len());
+        let replaced_handle = replaced
+            .iter()
+            .find(|handle| load_string(handle.name) == "__corvid_approver")
+            .expect("replaced approver");
+        assert_eq!(replaced_handle.cost_bound_usd, 0.25);
+        assert_eq!(replaced_handle.replayable, 1);
+        assert_eq!(replaced_handle.deterministic, 1);
+
         clear_source();
+        let cleared_count = list_agents(std::ptr::null_mut(), 0);
+        assert_eq!(cleared_count, baseline_count);
+        let null_sig = signature_json(approver_name.as_ptr(), &mut sig_len);
+        assert!(null_sig.is_null());
         std::mem::forget(lib);
     }
 }

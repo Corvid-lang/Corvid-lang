@@ -201,39 +201,43 @@ pub fn list_agents() -> Result<&'static [CorvidAgentHandle], RuntimeError> {
 
 pub(crate) fn list_agent_handles_owned() -> Result<Vec<CorvidAgentHandle>, RuntimeError> {
     let state = catalog()?;
-    Ok(state
-        .agents
-        .iter()
-        .map(|entry| CorvidAgentHandle {
-            name: entry.name_c.as_ptr(),
-            symbol: entry.symbol_c.as_ptr(),
-            source_file: entry.source_file_c.as_ptr(),
-            source_line: entry.abi.source_line,
-            trust_tier: map_trust_tier(entry.abi.effects.trust_tier.as_deref()),
-            cost_bound_usd: cost_bound_for(&entry.abi),
-            reversible: entry
-                .abi
-                .effects
-                .reversibility
-                .as_deref()
-                .map(|value| value == "reversible")
-                .unwrap_or(false) as u8,
-            latency_instant: entry
+    let mut handles = Vec::with_capacity(state.agents.len() + 1);
+    for entry in state.agents.iter().filter(|entry| is_introspection_agent(&entry.abi.name)) {
+        handles.push(handle_from_entry(entry));
+    }
+    if let Some(overlay) = crate::approver_bridge::registered_approver_overlay() {
+        handles.push(CorvidAgentHandle {
+            name: overlay.name_ptr,
+            symbol: overlay.symbol_ptr,
+            source_file: overlay.source_file_ptr,
+            source_line: overlay.abi.source_line,
+            trust_tier: CorvidTrustTier::Autonomous as u8,
+            cost_bound_usd: overlay.display_budget_usd,
+            reversible: 1,
+            latency_instant: overlay
                 .abi
                 .effects
                 .latency_ms
                 .as_ref()
                 .map(|latency| latency.p99_estimate <= 1.0)
                 .unwrap_or(false) as u8,
-            replayable: entry.abi.attributes.replayable as u8,
-            deterministic: entry.abi.attributes.deterministic as u8,
-            dangerous: entry.abi.attributes.dangerous as u8,
-            pub_extern_c: entry.abi.attributes.pub_extern_c as u8,
-            requires_approval: entry.abi.approval_contract.required as u8,
-            grounded_source_count: entry.abi.provenance.grounded_param_deps.len() as u32,
-            param_count: entry.abi.params.len() as u32,
-        })
-        .collect())
+            replayable: overlay.abi.attributes.replayable as u8,
+            deterministic: overlay.abi.attributes.deterministic as u8,
+            dangerous: 0,
+            pub_extern_c: 0,
+            requires_approval: 0,
+            grounded_source_count: 0,
+            param_count: overlay.abi.params.len() as u32,
+        });
+    }
+    for entry in state
+        .agents
+        .iter()
+        .filter(|entry| !is_introspection_agent(&entry.abi.name))
+    {
+        handles.push(handle_from_entry(entry));
+    }
+    Ok(handles)
 }
 
 pub(crate) fn catalog_approval_sites() -> Result<Vec<AbiApprovalSite>, RuntimeError> {
@@ -243,6 +247,12 @@ pub(crate) fn catalog_approval_sites() -> Result<Vec<AbiApprovalSite>, RuntimeEr
 pub fn agent_signature_json(
     name: &str,
 ) -> Result<Option<(&'static str, usize, *const c_char)>, RuntimeError> {
+    if name == "__corvid_approver" {
+        return Ok(crate::approver_bridge::registered_approver_overlay().map(|overlay| {
+            let value: &'static str = Box::leak(overlay.signature_json.into_boxed_str());
+            (value, overlay.signature_json_len, overlay.signature_json_ptr)
+        }));
+    }
     let state = catalog()?;
     let Some(entry) = state.by_name.get(name).and_then(|idx| state.agents.get(*idx)) else {
         return Ok(None);
@@ -336,6 +346,19 @@ fn load_catalog() -> Result<CatalogState, RuntimeError> {
 }
 
 fn pre_flight_impl(agent_name: &str, args_json: &str) -> Result<OwnedPreFlight, RuntimeError> {
+    if agent_name == "__corvid_approver" {
+        return Ok(OwnedPreFlight {
+            status: CorvidPreFlightStatus::UnsupportedSig,
+            cost_bound_usd: f64::NAN,
+            requires_approval: false,
+            effect_row_json: String::new(),
+            grounded_source_set_json: String::new(),
+            bad_args_message: Some(
+                "`__corvid_approver` is a governance capability and is not directly callable"
+                    .to_string(),
+            ),
+        });
+    }
     let state = catalog()?;
     let Some(entry) = state.by_name.get(agent_name).and_then(|idx| state.agents.get(*idx)) else {
         return Ok(OwnedPreFlight {
@@ -382,6 +405,18 @@ fn pre_flight_impl(agent_name: &str, args_json: &str) -> Result<OwnedPreFlight, 
 }
 
 fn call_agent_impl(agent_name: &str, args_json: &str) -> Result<OwnedCallOutcome, RuntimeError> {
+    if agent_name == "__corvid_approver" {
+        return Ok(OwnedCallOutcome {
+            status: CorvidCallStatus::UnsupportedSig,
+            result_json: Some(
+                serde_json::json!({
+                    "error": "`__corvid_approver` is a governance capability and is not directly callable",
+                })
+                .to_string(),
+            ),
+            approval: None,
+        });
+    }
     let state = catalog()?;
     let Some(entry) = state.by_name.get(agent_name).and_then(|idx| state.agents.get(*idx)) else {
         return Ok(OwnedCallOutcome {
@@ -571,12 +606,27 @@ fn introspection_call(
         }
         IntrospectionKind::ListAgents => {
             let state = catalog()?;
-            let agents = state
+            let mut agents = state
                 .agents
                 .iter()
+                .filter(|entry| is_introspection_agent(&entry.abi.name))
                 .map(|entry| serde_json::to_value(&entry.abi))
                 .collect::<Result<Vec<_>, _>>()
                 .map_err(|err| RuntimeError::Marshal(format!("serialize agent catalog: {err}")))?;
+            if let Some(overlay) = crate::approver_bridge::registered_approver_overlay() {
+                agents.push(
+                    serde_json::to_value(&overlay.abi)
+                        .map_err(|err| RuntimeError::Marshal(format!("serialize approver overlay: {err}")))?,
+                );
+            }
+            let mut user_agents = state
+                .agents
+                .iter()
+                .filter(|entry| !is_introspection_agent(&entry.abi.name))
+                .map(|entry| serde_json::to_value(&entry.abi))
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|err| RuntimeError::Marshal(format!("serialize agent catalog: {err}")))?;
+            agents.append(&mut user_agents);
             Ok(serde_json::Value::String(
                 serde_json::to_string(&agents)
                     .map_err(|err| RuntimeError::Marshal(format!("serialize agent list JSON: {err}")))?,
@@ -625,6 +675,42 @@ fn introspection_call(
 
 fn cstring(value: &str) -> Result<CString, RuntimeError> {
     CString::new(value).map_err(|err| RuntimeError::Other(format!("catalog string contained NUL: {err}")))
+}
+
+fn handle_from_entry(entry: &AgentCatalogEntry) -> CorvidAgentHandle {
+    CorvidAgentHandle {
+        name: entry.name_c.as_ptr(),
+        symbol: entry.symbol_c.as_ptr(),
+        source_file: entry.source_file_c.as_ptr(),
+        source_line: entry.abi.source_line,
+        trust_tier: map_trust_tier(entry.abi.effects.trust_tier.as_deref()),
+        cost_bound_usd: cost_bound_for(&entry.abi),
+        reversible: entry
+            .abi
+            .effects
+            .reversibility
+            .as_deref()
+            .map(|value| value == "reversible")
+            .unwrap_or(false) as u8,
+        latency_instant: entry
+            .abi
+            .effects
+            .latency_ms
+            .as_ref()
+            .map(|latency| latency.p99_estimate <= 1.0)
+            .unwrap_or(false) as u8,
+        replayable: entry.abi.attributes.replayable as u8,
+        deterministic: entry.abi.attributes.deterministic as u8,
+        dangerous: entry.abi.attributes.dangerous as u8,
+        pub_extern_c: entry.abi.attributes.pub_extern_c as u8,
+        requires_approval: entry.abi.approval_contract.required as u8,
+        grounded_source_count: entry.abi.provenance.grounded_param_deps.len() as u32,
+        param_count: entry.abi.params.len() as u32,
+    }
+}
+
+fn is_introspection_agent(name: &str) -> bool {
+    name.starts_with("__corvid_")
 }
 
 fn map_trust_tier(tier: Option<&str>) -> u8 {
