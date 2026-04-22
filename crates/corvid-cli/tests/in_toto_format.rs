@@ -137,7 +137,7 @@ fn unsigned_in_toto_emits_valid_statement_v1() {
     // Predicate bundles verdict + receipt
     assert!(parsed["predicate"]["verdict"].is_object());
     assert!(parsed["predicate"]["receipt"].is_object());
-    assert_eq!(parsed["predicate"]["receipt"]["schema_version"], 1);
+    assert_eq!(parsed["predicate"]["receipt"]["schema_version"], 2);
 }
 
 #[test]

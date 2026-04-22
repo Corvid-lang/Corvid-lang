@@ -194,7 +194,7 @@ fn sign_then_verify_roundtrips_end_to_end() {
         // parse as a Corvid receipt (has `schema_version`).
         let payload: serde_json::Value =
             serde_json::from_slice(&verified.stdout).expect("inner payload is valid JSON");
-        assert_eq!(payload["schema_version"], 1);
+        assert_eq!(payload["schema_version"], 2);
     });
 }
 
@@ -445,7 +445,7 @@ fn receipt_show_by_hash_returns_cached_receipt() {
             String::from_utf8_lossy(&shown.stderr),
         );
         let payload: serde_json::Value = serde_json::from_slice(&shown.stdout).unwrap();
-        assert_eq!(payload["schema_version"], 1);
+        assert_eq!(payload["schema_version"], 2);
 
         // Prefix lookup works too.
         let shown_prefix = Command::new(corvid_bin())

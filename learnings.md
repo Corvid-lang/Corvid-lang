@@ -1744,6 +1744,40 @@ default, then ship the mechanism that makes the classifier
 load-bearing. Users migrate into intentional choices instead of
 migrating out of an accidental anti-pattern.
 
+### Honest names are load-bearing before algebraic composition
+
+`21-inv-H-5-schema-fix` was a five-line pre-slice to `-stacked`:
+rename `agent.approval.tier_weakened:` to `...tier_changed:` (same
+for `reversibility_weakened:` → `...reversibility_changed:`),
+bump `RECEIPT_SCHEMA_VERSION` 1 → 2. The delta emitter had always
+fired on *any* transition — strengthenings were shipping under a
+key called "weakened." The policy layer parsed the `from->to`
+suffix so the gate behaved correctly, but the key name lied about
+what it represented.
+
+That lie was fine in isolation — no consumer of a single-PR
+receipt was harmed by a misleading key. It becomes load-bearing
+the moment you try to *compose* receipts. A stack receipt reasons
+about the net algebra of N per-commit deltas; the first question
+the composer asks is "does `tier_weakened:A→B` cancel with
+`tier_weakened:B→A`?" The honest answer is yes (they're a
+round-trip). But with the old names, the composer would be saying
+"two weakenings cancel," which reads as nonsense and bakes the
+naming bug permanently into the algebra's explanation of itself.
+
+Fix the names *before* piling composition semantics on top. The
+hardest rule — no shortcuts — includes naming shortcuts taken in
+earlier slices, even when the shipped behavior is correct. The
+trigger to look was the design question "do strengthenings emit a
+delta?" asked in the middle of pre-phase chat for `-stacked`.
+Without that audit, `-stacked` would have inherited the lie.
+
+Schema bumps are load-bearing signal, not ceremony. v2 tells bots
+pattern-matching on `agent.approval.tier_weakened:` prefixes:
+*audit your matchers.* Without the bump, consumers would silently
+stop matching anything after the rename. With it, they get a
+clear "schema changed" signal they can pin on.
+
 ### CI-specific formats are renderers over the canonical Receipt
 
 `21-inv-H-5-gitlab` added `--format=gitlab` in a single commit —

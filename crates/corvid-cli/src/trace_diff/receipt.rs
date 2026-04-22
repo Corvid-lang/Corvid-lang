@@ -29,7 +29,16 @@ use super::narrative::{compute_diff_summary, DeltaRecord, DiffSummary, ReceiptNa
 /// whenever any shipped field's meaning or shape changes so bots
 /// can pin. Additive field additions are NOT a version bump —
 /// they're backward-compatible by construction.
-pub(super) const RECEIPT_SCHEMA_VERSION: u32 = 1;
+///
+/// v2 (2026-04-22): rename the misleadingly-named delta keys
+/// `agent.approval.tier_weakened` → `agent.approval.tier_changed`
+/// and `agent.approval.reversibility_weakened` →
+/// `agent.approval.reversibility_changed`. Both keys emit on any
+/// transition (weakening OR strengthening) — the old names lied
+/// about what they represented. The policy layer still gates only
+/// on weakenings by parsing the `from->to` suffix. Consumers
+/// pattern-matching on the old prefixes must update their matchers.
+pub(super) const RECEIPT_SCHEMA_VERSION: u32 = 2;
 
 /// Output format for the receipt. Each mode is a renderer over
 /// the same canonical [`Receipt`]; adding a new mode is a new
@@ -208,14 +217,20 @@ fn regression_flag_for(delta: &DeltaRecord) -> Option<String> {
             }
         }
     }
-    if key.starts_with("agent.approval.tier_weakened:") {
+    if key.starts_with("agent.approval.tier_changed:") {
+        // The key fires on any transition; the policy trips only
+        // when the transition lowers trust. Strengthenings flow
+        // through the receipt as info-level deltas without
+        // flipping the gate.
         if let Some(transition) = key.rsplit(':').next() {
             if is_trust_lowering(transition) {
                 return Some(delta.summary.clone());
             }
         }
     }
-    if key.starts_with("agent.approval.reversibility_weakened:") {
+    if key.starts_with("agent.approval.reversibility_changed:") {
+        // Same shape: all reversibility transitions emit, only
+        // `*->irreversible` trips the gate.
         if let Some(transition) = key.rsplit(':').next() {
             if transition.ends_with("->irreversible") {
                 return Some(delta.summary.clone());
@@ -324,7 +339,7 @@ fn escape_gha_title(s: &str) -> String {
 ///
 /// ```json
 /// {
-///   "schema_version": 1,
+///   "schema_version": 2,
 ///   "base_sha": "...",
 ///   "head_sha": "...",
 ///   "source_path": "...",
@@ -483,7 +498,7 @@ mod tests {
     fn default_policy_flags_reversibility_becoming_irreversible() {
         let r = receipt_with_deltas(
             vec![delta(
-                "agent.approval.reversibility_weakened:refund_bot:IssueRefund:reversible->irreversible",
+                "agent.approval.reversibility_changed:refund_bot:IssueRefund:reversible->irreversible",
                 "reversibility regression on IssueRefund",
             )],
             empty_impact(),
@@ -551,7 +566,7 @@ mod tests {
         let v = apply_default_policy(&r);
         let out = render_json(&r, &v);
         let parsed: serde_json::Value = serde_json::from_str(&out).unwrap();
-        assert_eq!(parsed["schema_version"], 1);
+        assert_eq!(parsed["schema_version"], 2);
         assert_eq!(parsed["verdict"]["ok"], true);
         assert_eq!(parsed["receipt"]["deltas"][0]["key"], "agent.added:foo");
     }

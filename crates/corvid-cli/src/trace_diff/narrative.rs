@@ -217,8 +217,8 @@ pub fn validate_narrative(
 ///   - `agent.replayable_gained:<name>` / `agent.replayable_lost:<name>`
 ///   - `agent.approval.label_added:<name>:<label>`
 ///   - `agent.approval.label_removed:<name>:<label>`
-///   - `agent.approval.tier_weakened:<name>:<label>:<from>-><to>`
-///   - `agent.approval.reversibility_weakened:<name>:<label>:<from>-><to>`
+///   - `agent.approval.tier_changed:<name>:<label>:<from>-><to>`
+///   - `agent.approval.reversibility_changed:<name>:<label>:<from>-><to>`
 ///   - `agent.provenance.grounded_gained:<name>` /
 ///     `agent.provenance.grounded_lost:<name>`
 ///   - `agent.provenance.dep_added:<name>:<dep>` /
@@ -345,7 +345,7 @@ fn diff_approval(
                 if bt != ht {
                     out.push(DeltaRecord {
                         key: format!(
-                            "agent.approval.tier_weakened:{name}:{label}:{bt}->{ht}"
+                            "agent.approval.tier_changed:{name}:{label}:{bt}->{ht}"
                         ),
                         summary: format!(
                             "approve site `{label}` on agent `{name}` required-tier changed from `{bt}` to `{ht}`"
@@ -363,7 +363,7 @@ fn diff_approval(
                 if br != hr {
                     out.push(DeltaRecord {
                         key: format!(
-                            "agent.approval.reversibility_weakened:{name}:{label}:{br}->{hr}"
+                            "agent.approval.reversibility_changed:{name}:{label}:{br}->{hr}"
                         ),
                         summary: format!(
                             "approve site `{label}` on agent `{name}` reversibility changed from `{br}` to `{hr}`"

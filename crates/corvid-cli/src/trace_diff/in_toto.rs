@@ -186,7 +186,7 @@ mod tests {
             head_source_digest(b"some source bytes")
         );
         assert_eq!(parsed["predicate"]["verdict"]["ok"], true);
-        assert_eq!(parsed["predicate"]["receipt"]["schema_version"], 1);
+        assert_eq!(parsed["predicate"]["receipt"]["schema_version"], 2);
     }
 
     #[test]
