@@ -41,6 +41,7 @@ inventory = { workspace = true }
 corvid-trace-schema = { workspace = true }
 corvid-abi = { workspace = true }
 libloading = "0.8"
+slotmap = "1"
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_LibraryLoader"] }

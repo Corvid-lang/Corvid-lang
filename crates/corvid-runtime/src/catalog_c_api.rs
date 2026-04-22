@@ -8,8 +8,11 @@ use crate::catalog::{
     CorvidCallStatus, CorvidFindAgentsResult, CorvidPreFlight, CorvidPreFlightStatus,
     OwnedApprovalRequired, OwnedPreFlight, ScalarAbiType, ScalarInvoker, ScalarReturnType,
 };
+use crate::grounded_handles;
+use crate::abi::CorvidString;
 use crate::effect_filter::CorvidFindAgentsStatus;
 use crate::errors::RuntimeError;
+use crate::ffi_bridge::read_corvid_string;
 use corvid_abi::{read_embedded_section_from_library, EmbeddedDescriptorSection};
 #[cfg(unix)]
 use corvid_abi::{parse_embedded_section_bytes, CORVID_ABI_DESCRIPTOR_SYMBOL};
@@ -753,6 +756,107 @@ unsafe fn read_c_string(ptr: *const c_char) -> Result<String, CorvidCallStatus> 
         .to_str()
         .map(|value| value.to_owned())
         .map_err(|_| CorvidCallStatus::BadArgs)
+}
+
+fn grounded_source_pointers(handle: u64) -> Option<Vec<*const c_char>> {
+    let sources = grounded_handles::sources_for_handle(handle)?;
+    reset_transients();
+    Some(
+        sources
+            .into_iter()
+            .map(|source| stash_transient(&source))
+            .collect(),
+    )
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn corvid_grounded_sources(
+    handle: u64,
+    out: *mut *const c_char,
+    capacity: usize,
+) -> i32 {
+    let Some(sources) = grounded_source_pointers(handle) else {
+        return -1;
+    };
+    if !out.is_null() {
+        let count = sources.len().min(capacity);
+        ptr::copy_nonoverlapping(sources.as_ptr(), out, count);
+    }
+    sources.len() as i32
+}
+
+#[no_mangle]
+pub extern "C" fn corvid_grounded_confidence(handle: u64) -> f64 {
+    grounded_handles::confidence_for_handle(handle).unwrap_or(f64::NAN)
+}
+
+#[no_mangle]
+pub extern "C" fn corvid_grounded_release(handle: u64) {
+    let released = grounded_handles::release_handle(handle);
+    if cfg!(debug_assertions) && handle != grounded_handles::NULL_GROUNDED_HANDLE && !released {
+        eprintln!("warning: grounded handle {handle} was already released or never existed");
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn corvid_grounded_attest_int(
+    value: i64,
+    source_name: CorvidString,
+    confidence: f64,
+) -> i64 {
+    let source = read_corvid_string(source_name);
+    let chain = crate::provenance::ProvenanceChain::with_retrieval(&source, crate::tracing::now_ms());
+    grounded_handles::set_last_scalar_attestation(grounded_handles::make_attestation(chain, confidence));
+    value
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn corvid_grounded_attest_float(
+    value: f64,
+    source_name: CorvidString,
+    confidence: f64,
+) -> f64 {
+    let source = read_corvid_string(source_name);
+    let chain = crate::provenance::ProvenanceChain::with_retrieval(&source, crate::tracing::now_ms());
+    grounded_handles::set_last_scalar_attestation(grounded_handles::make_attestation(chain, confidence));
+    value
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn corvid_grounded_attest_bool(
+    value: bool,
+    source_name: CorvidString,
+    confidence: f64,
+) -> bool {
+    let source = read_corvid_string(source_name);
+    let chain = crate::provenance::ProvenanceChain::with_retrieval(&source, crate::tracing::now_ms());
+    grounded_handles::set_last_scalar_attestation(grounded_handles::make_attestation(chain, confidence));
+    value
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn corvid_grounded_attest_string(
+    value: CorvidString,
+    source_name: CorvidString,
+    confidence: f64,
+) -> CorvidString {
+    let source = read_corvid_string(source_name);
+    let chain = crate::provenance::ProvenanceChain::with_retrieval(&source, crate::tracing::now_ms());
+    grounded_handles::attach_string_attestation(
+        value.descriptor_key(),
+        grounded_handles::make_attestation(chain, confidence),
+    );
+    value
+}
+
+#[no_mangle]
+pub extern "C" fn corvid_grounded_capture_scalar_handle() -> u64 {
+    grounded_handles::register_handle_for_last_scalar()
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn corvid_grounded_capture_string_handle(value: CorvidString) -> u64 {
+    grounded_handles::register_handle_for_string_ptr(value.descriptor_key())
 }
 
 #[no_mangle]

@@ -776,7 +776,7 @@ impl<'ir> Interpreter<'ir> {
                 // wrap the result in Grounded with a provenance chain.
                 let is_grounded = tool.effect_names.iter().any(|e| e == "retrieval");
                 if is_grounded {
-                    let chain = crate::value::ProvenanceChain::with_retrieval(
+                    let chain = crate::ProvenanceChain::with_retrieval(
                         callee_name,
                         corvid_runtime::now_ms(),
                     );

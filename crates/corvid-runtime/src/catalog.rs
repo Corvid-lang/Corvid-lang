@@ -915,8 +915,22 @@ pub(crate) fn scalar_return_type_from_descriptor(
         TypeDescription::Scalar {
             scalar: ScalarTypeName::Nothing,
         } => Ok(ScalarReturnType::Nothing),
+        TypeDescription::Grounded { grounded } => match grounded.inner.as_ref() {
+            TypeDescription::Scalar {
+                scalar: ScalarTypeName::Int
+                    | ScalarTypeName::Float
+                    | ScalarTypeName::Bool
+                    | ScalarTypeName::String,
+            } => Err(
+                "grounded return values are exposed through the direct exported symbol with an attestation handle; generic `corvid_call_agent` JSON dispatch still supports plain scalar returns only"
+                    .to_string(),
+            ),
+            other => Err(format!(
+                "grounded return type `{other:?}` is not yet supported by generic host dispatch"
+            )),
+        },
         other => Err(format!(
-            "non-scalar return type `{other:?}` is deferred to Phase 22-F grounded/structured returns"
+            "non-scalar return type `{other:?}` is not supported by generic host dispatch"
         )),
     }
 }

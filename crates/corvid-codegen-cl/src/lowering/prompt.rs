@@ -163,6 +163,43 @@ fn emit_concat_chain(
     Ok((acc, acc_borrowed))
 }
 
+fn emit_grounded_prompt_attestation(
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    runtime: &RuntimeFuncs,
+    value: ClValue,
+    grounded_ty: &Type,
+    prompt_name: &str,
+    confidence: f64,
+    span: Span,
+) -> Result<ClValue, CodegenError> {
+    let source_name = emit_string_const(builder, module, runtime, prompt_name, span)?;
+    let confidence_val = builder.ins().f64const(confidence);
+    let attest_id = match grounded_ty {
+        Type::Grounded(inner) => match inner.as_ref() {
+            Type::Int => runtime.grounded_attest_int,
+            Type::Bool => runtime.grounded_attest_bool,
+            Type::Float => runtime.grounded_attest_float,
+            Type::String => runtime.grounded_attest_string,
+            other => {
+                return Err(CodegenError::not_supported(
+                    format!(
+                        "prompt grounded return `{}` is not yet supported at the native ABI boundary",
+                        other.display_name()
+                    ),
+                    span,
+                ))
+            }
+        },
+        _ => unreachable!("grounded prompt attestation requires Grounded<T>"),
+    };
+    let attest_ref = module.declare_func_in_func(attest_id, builder.func);
+    let attest_call = builder.ins().call(attest_ref, &[value, source_name, confidence_val]);
+    let attested = builder.inst_results(attest_call)[0];
+    emit_release(builder, module, runtime, source_name);
+    Ok(attested)
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(super) fn lower_prompt_call(
     builder: &mut FunctionBuilder,
@@ -267,7 +304,11 @@ pub(super) fn lower_prompt_call(
     let arg_tys = args.iter().map(|arg| arg.ty.clone()).collect::<Vec<_>>();
     let trace_payload = emit_trace_payload(builder, module, runtime, &arg_vals, &arg_tys, span)?;
 
-    let bridge_id = match return_ty {
+    let bridge_return_ty = match return_ty {
+        Type::Grounded(inner) => inner.as_ref(),
+        other => other,
+    };
+    let bridge_id = match bridge_return_ty {
         Type::Int => runtime.prompt_call_int,
         Type::Bool => runtime.prompt_call_bool,
         Type::Float => runtime.prompt_call_float,
@@ -325,6 +366,18 @@ pub(super) fn lower_prompt_call(
             ),
             span,
         ));
+    }
+    if matches!(return_ty, Type::Grounded(_)) {
+        return emit_grounded_prompt_attestation(
+            builder,
+            module,
+            runtime,
+            result_vals[0],
+            return_ty,
+            &prompt.name,
+            prompt.effect_confidence,
+            span,
+        );
     }
     Ok(result_vals[0])
 }

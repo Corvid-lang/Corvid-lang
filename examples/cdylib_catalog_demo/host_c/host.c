@@ -31,6 +31,9 @@ typedef CorvidCallStatus (*corvid_call_agent_fn)(
     size_t* out_result_len,
     CorvidApprovalRequired* out_approval);
 typedef void (*corvid_free_result_fn)(char* result);
+typedef int32_t (*corvid_grounded_sources_fn)(uint64_t handle, const char** out, size_t capacity);
+typedef double (*corvid_grounded_confidence_fn)(uint64_t handle);
+typedef void (*corvid_grounded_release_fn)(uint64_t handle);
 
 static int decode_hex_64(const char* hex, uint8_t out[32]) {
     size_t len = strlen(hex);
@@ -129,9 +132,21 @@ int main(int argc, char** argv) {
         (corvid_call_agent_fn)load_symbol(library, "corvid_call_agent");
     corvid_free_result_fn corvid_free_result =
         (corvid_free_result_fn)load_symbol(library, "corvid_free_result");
+    corvid_grounded_sources_fn corvid_grounded_sources =
+        (corvid_grounded_sources_fn)load_symbol(library, "corvid_grounded_sources");
+    corvid_grounded_confidence_fn corvid_grounded_confidence =
+        (corvid_grounded_confidence_fn)load_symbol(library, "corvid_grounded_confidence");
+    corvid_grounded_release_fn corvid_grounded_release =
+        (corvid_grounded_release_fn)load_symbol(library, "corvid_grounded_release");
+    const char* (*grounded_tag_fn)(const char*, uint64_t*) =
+        (const char* (*)(const char*, uint64_t*))load_symbol(library, "grounded_tag");
+    void (*corvid_free_string_fn)(const char*) =
+        (void (*)(const char*))load_symbol(library, "corvid_free_string");
 
     if (!corvid_abi_verify || !corvid_list_agents || !corvid_find_agents_where || !corvid_pre_flight ||
-        !corvid_call_agent || !corvid_free_result) {
+        !corvid_call_agent || !corvid_free_result || !corvid_grounded_sources ||
+        !corvid_grounded_confidence || !corvid_grounded_release || !grounded_tag_fn ||
+        !corvid_free_string_fn) {
         fprintf(stderr, "required catalog symbol missing\n");
         return 1;
     }
@@ -216,6 +231,25 @@ int main(int argc, char** argv) {
             &approval);
         printf("call_status=%u result=%.*s\n", (unsigned)status, (int)result_len, result);
         corvid_free_result(result);
+    }
+
+    {
+        uint64_t grounded_handle = CORVID_NULL_GROUNDED_HANDLE;
+        const char* grounded_value = grounded_tag_fn("catalog-proof", &grounded_handle);
+        const char* sources[4] = {0};
+        int32_t source_count = corvid_grounded_sources(grounded_handle, sources, 4);
+        double grounded_conf = corvid_grounded_confidence(grounded_handle);
+        printf(
+            "grounded_result=%s grounded_handle=%llu grounded_source_count=%d grounded_confidence=%.2f\n",
+            grounded_value,
+            (unsigned long long)grounded_handle,
+            (int)source_count,
+            grounded_conf);
+        if (source_count > 0 && sources[0] != NULL) {
+            printf("grounded_source=%s\n", sources[0]);
+        }
+        corvid_grounded_release(grounded_handle);
+        corvid_free_string_fn(grounded_value);
     }
 
 #if defined(_WIN32)

@@ -399,7 +399,14 @@ fn extern_c_param_type_supported(ty: &Type) -> bool {
 }
 
 fn extern_c_return_type_supported(ty: &Type) -> bool {
-    matches!(ty, Type::Int | Type::Float | Type::Bool | Type::String | Type::Nothing)
+    match ty {
+        Type::Int | Type::Float | Type::Bool | Type::String | Type::Nothing => true,
+        Type::Grounded(inner) => matches!(
+            &**inner,
+            Type::Int | Type::Float | Type::Bool | Type::String
+        ),
+        _ => false,
+    }
 }
 
 // ----------------------------------------------------------------

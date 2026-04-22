@@ -679,7 +679,7 @@ impl TypeErrorKind {
                 "every arm (including `else`) of a replay block must produce the same type; adjust the arm body to return `{expected}`"
             )),
             Self::NonScalarInExternC { .. } => Some(
-                "Phase 22-A exports only Int/Float/Bool/String parameters plus scalar or `Nothing` returns; use a scalar wrapper now, or wait for Phase 22-B ABI descriptors for rich types".into(),
+                "extern \"c\" currently accepts Int/Float/Bool/String parameters plus scalar, `Grounded<scalar>`, or `Nothing` returns; rich structured boundary types still wait for later Phase 22 FFI slices".into(),
             ),
         }
     }

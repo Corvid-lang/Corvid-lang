@@ -71,6 +71,25 @@ fn scalar_ir() -> IrFile {
                 span: Span::new(0, 0),
                 borrow_sig: None,
             },
+            IrAgent {
+                id: DefId(4),
+                name: "grounded_lookup".into(),
+                extern_abi: Some(IrExternAbi::C),
+                params: vec![IrParam {
+                    name: "id".into(),
+                    local_id: LocalId(4),
+                    ty: Type::String,
+                    span: Span::new(0, 0),
+                }],
+                return_ty: Type::Grounded(Box::new(Type::String)),
+                cost_budget: None,
+                body: corvid_ir::IrBlock {
+                    stmts: vec![],
+                    span: Span::new(0, 0),
+                },
+                span: Span::new(0, 0),
+                borrow_sig: None,
+            },
         ],
         evals: vec![],
     }
@@ -120,6 +139,16 @@ fn header_exports_string_return_with_ownership_comment() {
     assert!(header.contains("const char* echo_name(const char* name);"));
     assert!(header.contains("void corvid_free_string(const char* value);"));
     assert!(header.contains("void corvid_free_result(char* result);"));
+}
+
+#[test]
+fn header_exports_grounded_string_return_with_handle_out_param() {
+    let header = render();
+    assert!(header.contains("#define CORVID_NULL_GROUNDED_HANDLE ((uint64_t)0)"));
+    assert!(header.contains("const char* grounded_lookup(const char* id, uint64_t* out_grounded_handle);"));
+    assert!(header.contains("int32_t corvid_grounded_sources(uint64_t handle, const char** out, size_t capacity);"));
+    assert!(header.contains("double corvid_grounded_confidence(uint64_t handle);"));
+    assert!(header.contains("void corvid_grounded_release(uint64_t handle);"));
 }
 
 #[test]

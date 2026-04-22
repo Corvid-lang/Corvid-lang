@@ -285,6 +285,7 @@ pub extern "C" fn corvid_runtime_shutdown() {
     // Dropping the bridge state drops the tokio runtime (joining worker
     // threads) and the Corvid runtime Arc.
     drop(bridge);
+    crate::grounded_handles::emit_debug_leak_warning();
 }
 
 /// Tool-call bridge for the narrow case `fn(no args) -> Int`.

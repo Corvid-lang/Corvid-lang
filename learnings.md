@@ -1795,6 +1795,27 @@ reasoning will apply to `@dangerous`, `@deterministic`, approval
 contracts — each has a compile-time teeth and a runtime receipt, and
 each receipt is what crosses the boundary.
 
+What actually shipped in `22-F` follows directly from that choice:
+
+- the host gets `(payload, handle)`, not an opaque grounded-only value
+- Level 1 exposes `List<String>` source names plus a confidence query,
+  which covers the common host questions without freezing the richer
+  internal provenance shape too early
+- `0` is the null grounded handle and `release(0)` is a no-op, matching
+  normal C conventions
+- handle lifetime lives in a slotmap-backed attestation store with a
+  generation counter, so stale or double-released handles fail cleanly
+  instead of degrading into silent misuse
+
+Just as important was what did *not* ship: host-side grounding minting.
+Returning a grounded value from Corvid is **earned grounding** - the
+runtime can point at the retrieval/prompt/tool path that produced it.
+Letting the host construct a grounded handle is **asserted grounding**,
+which needs a separate audit trail (`host_asserted`, provenance
+ownership, review semantics). Splitting those into separate slices
+keeps the trust model honest instead of blurring two very different
+claims behind one ABI.
+
 ### Citation validation is what makes grounding meaningful, not decoration
 
 `21-inv-H-4`'s citation rule from the pre-phase chat: all-or-nothing.

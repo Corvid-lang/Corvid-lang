@@ -30,6 +30,17 @@ agent echo_amount(amount: Float) -> Float:
     return amount
 "#;
 
+const GROUNDED_STRING_SRC: &str = r#"
+effect retrieval:
+    data: grounded
+
+tool grounded_echo(name: String) -> Grounded<String> uses retrieval
+
+pub extern "c"
+agent grounded_lookup(name: String) -> Grounded<String>:
+    return grounded_echo(name)
+"#;
+
 struct FrontendBundle {
     file: File,
     resolved: Resolved,
@@ -93,6 +104,48 @@ fn build_cdylib(src: &str, stem: &str) -> PathBuf {
         &out,
         BuildTarget::Cdylib,
         &[],
+        Some(embedded.as_slice()),
+    )
+    .expect("build cdylib");
+    let keep = tmp.keep();
+    assert!(keep.exists());
+    produced
+}
+
+fn test_tools_lib_path() -> PathBuf {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .ancestors()
+        .nth(2)
+        .expect("workspace root")
+        .to_path_buf();
+    let status = Command::new("cargo")
+        .arg("build")
+        .arg("-p")
+        .arg("corvid-test-tools")
+        .arg("--release")
+        .current_dir(&root)
+        .status()
+        .expect("build corvid-test-tools");
+    assert!(status.success(), "building corvid-test-tools failed");
+    if cfg!(windows) {
+        root.join("target").join("release").join("corvid_test_tools.lib")
+    } else {
+        root.join("target").join("release").join("libcorvid_test_tools.a")
+    }
+}
+
+fn build_cdylib_with_extra_libs(src: &str, stem: &str, extra_libs: &[PathBuf]) -> PathBuf {
+    let bundle = frontend_of(src);
+    let tmp = tempfile::tempdir().unwrap();
+    let out = tmp.path().join(stem);
+    let embedded = embedded_descriptor_bytes(&bundle, src);
+    let extra_lib_refs = extra_libs.iter().map(|path| path.as_path()).collect::<Vec<_>>();
+    let produced = build_library_to_disk(
+        &bundle.ir,
+        stem,
+        &out,
+        BuildTarget::Cdylib,
+        &extra_lib_refs,
         Some(embedded.as_slice()),
     )
     .expect("build cdylib");
@@ -253,6 +306,54 @@ fn cdylib_bool_maps_to_c99_bool_size() {
     let bin = compile_c_harness(&source, tmp.path());
     let output = Command::new(bin).output().expect("run bool size harness");
     assert!(output.status.success());
+}
+
+#[test]
+fn cdylib_grounded_string_return_exposes_attestation_handle() {
+    let tools_lib = test_tools_lib_path();
+    let produced = build_cdylib_with_extra_libs(
+        GROUNDED_STRING_SRC,
+        "grounded_lookup_cdylib",
+        &[tools_lib],
+    );
+    // SAFETY: symbols are loaded from the just-built library and invoked with valid ABI values.
+    unsafe {
+        let lib = load_library_leaked(&produced);
+        let grounded_lookup: libloading::Symbol<
+            unsafe extern "C" fn(*const c_char, *mut u64) -> *const c_char,
+        > = lib.get(b"grounded_lookup").expect("resolve grounded_lookup");
+        let grounded_sources: libloading::Symbol<
+            unsafe extern "C" fn(u64, *mut *const c_char, usize) -> i32,
+        > = lib
+            .get(b"corvid_grounded_sources")
+            .expect("resolve corvid_grounded_sources");
+        let grounded_confidence: libloading::Symbol<unsafe extern "C" fn(u64) -> f64> = lib
+            .get(b"corvid_grounded_confidence")
+            .expect("resolve corvid_grounded_confidence");
+        let grounded_release: libloading::Symbol<unsafe extern "C" fn(u64)> = lib
+            .get(b"corvid_grounded_release")
+            .expect("resolve corvid_grounded_release");
+        let free: libloading::Symbol<unsafe extern "C" fn(*const c_char)> =
+            lib.get(b"corvid_free_string").expect("resolve corvid_free_string");
+
+        let input = CString::new("lookup-me").unwrap();
+        let mut handle = 0u64;
+        let output_ptr = grounded_lookup(input.as_ptr(), &mut handle as *mut u64);
+        assert_ne!(handle, 0);
+        let output = CStr::from_ptr(output_ptr).to_str().unwrap().to_owned();
+        assert_eq!(output, "lookup-me");
+
+        let mut source_ptrs = [std::ptr::null(); 4];
+        let count = grounded_sources(handle, source_ptrs.as_mut_ptr(), source_ptrs.len());
+        assert_eq!(count, 1);
+        let source = CStr::from_ptr(source_ptrs[0]).to_str().unwrap().to_owned();
+        assert_eq!(source, "grounded_echo");
+        let confidence = grounded_confidence(handle);
+        assert!((confidence - 1.0).abs() < 1e-9);
+
+        grounded_release(handle);
+        free(output_ptr);
+    }
 }
 
 fn compile_c_harness(source: &Path, out_dir: &Path) -> PathBuf {

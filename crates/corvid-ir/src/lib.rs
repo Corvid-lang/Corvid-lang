@@ -213,6 +213,29 @@ agent refund_bot(ticket: Ticket) -> Decision:
     }
 
     #[test]
+    fn lowers_grounded_type_refs_to_ir_grounded_types() {
+        let src = "\
+effect retrieval:
+    data: grounded
+
+tool grounded_echo(name: String) -> Grounded<String> uses retrieval
+
+pub extern \"c\"
+agent grounded_lookup(name: String) -> Grounded<String>:
+    return grounded_echo(name)
+";
+        let ir = lower_src(src);
+        assert!(matches!(
+            &ir.tools[0].return_ty,
+            corvid_types::Type::Grounded(inner) if matches!(&**inner, corvid_types::Type::String)
+        ));
+        assert!(matches!(
+            &ir.agents[0].return_ty,
+            corvid_types::Type::Grounded(inner) if matches!(&**inner, corvid_types::Type::String)
+        ));
+    }
+
+    #[test]
     fn lowers_result_option_constructors_and_none() {
         let src = "\
 agent build(flag: Bool) -> Result<Option<String>, String>:

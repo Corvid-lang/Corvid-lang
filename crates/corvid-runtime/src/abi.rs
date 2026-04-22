@@ -55,6 +55,15 @@ use crate::catalog_c_api::{
     corvid_evaluate_approval_predicate as _corvid_evaluate_approval_predicate_marker,
     corvid_find_agents_where as _corvid_find_agents_where_marker,
     corvid_free_result as _corvid_free_result_marker,
+    corvid_grounded_attest_bool as _corvid_grounded_attest_bool_marker,
+    corvid_grounded_attest_float as _corvid_grounded_attest_float_marker,
+    corvid_grounded_attest_int as _corvid_grounded_attest_int_marker,
+    corvid_grounded_attest_string as _corvid_grounded_attest_string_marker,
+    corvid_grounded_capture_scalar_handle as _corvid_grounded_capture_scalar_handle_marker,
+    corvid_grounded_capture_string_handle as _corvid_grounded_capture_string_handle_marker,
+    corvid_grounded_confidence as _corvid_grounded_confidence_marker,
+    corvid_grounded_release as _corvid_grounded_release_marker,
+    corvid_grounded_sources as _corvid_grounded_sources_marker,
     corvid_list_agents as _corvid_list_agents_marker,
     corvid_pre_flight as _corvid_pre_flight_marker,
     corvid_register_approver as _corvid_register_approver_marker,
@@ -103,6 +112,21 @@ fn _depends_on_ffi_bridge() {
             *mut crate::catalog::CorvidApprovalRequired,
         ) -> crate::catalog::CorvidCallStatus;
     let _ = _corvid_free_result_marker as unsafe extern "C" fn(*mut std::ffi::c_char);
+    let _ = _corvid_grounded_sources_marker
+        as unsafe extern "C" fn(u64, *mut *const std::ffi::c_char, usize) -> i32;
+    let _ = _corvid_grounded_confidence_marker as extern "C" fn(u64) -> f64;
+    let _ = _corvid_grounded_release_marker as extern "C" fn(u64);
+    let _ = _corvid_grounded_attest_int_marker
+        as unsafe extern "C" fn(i64, CorvidString, f64) -> i64;
+    let _ = _corvid_grounded_attest_float_marker
+        as unsafe extern "C" fn(f64, CorvidString, f64) -> f64;
+    let _ = _corvid_grounded_attest_bool_marker
+        as unsafe extern "C" fn(bool, CorvidString, f64) -> bool;
+    let _ = _corvid_grounded_attest_string_marker
+        as unsafe extern "C" fn(CorvidString, CorvidString, f64) -> CorvidString;
+    let _ = _corvid_grounded_capture_scalar_handle_marker as extern "C" fn() -> u64;
+    let _ = _corvid_grounded_capture_string_handle_marker
+        as unsafe extern "C" fn(CorvidString) -> u64;
     let _ = _corvid_register_approver_marker
         as extern "C" fn(
             Option<crate::catalog::CorvidApproverFn>,
@@ -274,6 +298,42 @@ impl CorvidString {
             Err(_) => panic!("CorvidString contained invalid UTF-8"),
         }
     }
+
+    pub(crate) fn descriptor_key(self) -> usize {
+        self.descriptor as usize
+    }
+}
+
+pub type CorvidGroundedHandle = u64;
+
+pub const CORVID_NULL_GROUNDED_HANDLE: CorvidGroundedHandle = 0;
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct CorvidGroundedIntReturn {
+    pub value: i64,
+    pub handle: CorvidGroundedHandle,
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct CorvidGroundedFloatReturn {
+    pub value: f64,
+    pub handle: CorvidGroundedHandle,
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct CorvidGroundedBoolReturn {
+    pub value: bool,
+    pub handle: CorvidGroundedHandle,
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct CorvidGroundedStringReturn {
+    pub value: *const std::ffi::c_char,
+    pub handle: CorvidGroundedHandle,
 }
 
 // ------------------------------------------------------------

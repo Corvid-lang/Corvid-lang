@@ -36,6 +36,7 @@ pub mod approver_bridge;
 pub mod catalog;
 pub mod catalog_c_api;
 pub mod effect_filter;
+pub mod grounded_handles;
 pub mod ensemble;
 pub mod env;
 pub mod errors;
@@ -43,6 +44,7 @@ pub mod ffi_bridge;
 pub mod llm;
 pub mod models;
 mod native_trace;
+pub mod provenance;
 pub mod record;
 pub mod replay;
 pub mod replay_dispatch;
@@ -56,7 +58,11 @@ pub mod tracing;
 // emits `::corvid_runtime::inventory::submit! { ... }` and
 // `::corvid_runtime::ToolMetadata { ... }`; users never write these
 // paths by hand.
-pub use abi::{registered_tool_count, CorvidString, ToolMetadata};
+pub use abi::{
+    registered_tool_count, CorvidGroundedBoolReturn, CorvidGroundedFloatReturn,
+    CorvidGroundedHandle, CorvidGroundedIntReturn, CorvidGroundedStringReturn,
+    CorvidString, CORVID_NULL_GROUNDED_HANDLE, ToolMetadata,
+};
 pub use inventory;
 
 /// Path to the C-runtime staticlib (`corvid_c_runtime.lib` / `.a`)
@@ -107,4 +113,5 @@ pub use test_from_traces::{
 };
 pub use tools::{ToolHandler, ToolRegistry};
 pub use corvid_trace_schema::{TraceEvent, WRITER_INTERPRETER, WRITER_NATIVE};
+pub use provenance::{ProvenanceChain, ProvenanceEntry, ProvenanceKind};
 pub use tracing::{fresh_run_id, now_ms, Tracer};

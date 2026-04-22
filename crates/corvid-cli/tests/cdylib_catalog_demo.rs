@@ -265,4 +265,9 @@ fn cdylib_catalog_demo_filter_host_narrows_catalog() {
     assert!(stdout.contains("filter_status=0"), "stdout was: {stdout}");
     assert!(stdout.contains("filtered_count="), "stdout was: {stdout}");
     assert!(stdout.contains("filtered_agent=classify"), "stdout was: {stdout}");
+    assert!(stdout.contains("grounded_result=catalog-proof"), "stdout was: {stdout}");
+    assert!(stdout.contains("grounded_handle="), "stdout was: {stdout}");
+    assert!(stdout.contains("grounded_source_count=1"), "stdout was: {stdout}");
+    assert!(stdout.contains("grounded_source=grounded_echo"), "stdout was: {stdout}");
+    assert!(stdout.contains("grounded_confidence=1.00"), "stdout was: {stdout}");
 }

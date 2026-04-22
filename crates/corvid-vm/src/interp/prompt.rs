@@ -238,7 +238,7 @@ impl<'ir> Interpreter<'ir> {
             }
         }
 
-        let mut merged_chain = crate::value::ProvenanceChain::new();
+        let mut merged_chain = crate::ProvenanceChain::new();
         let mut has_grounded_input = false;
         for arg in arg_values {
             if let Value::Grounded(g) = arg {

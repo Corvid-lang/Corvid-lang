@@ -113,6 +113,11 @@ async fn echo_string(s: String) -> String {
     s
 }
 
+#[tool("grounded_echo")]
+async fn grounded_echo(s: String) -> String {
+    s
+}
+
 #[tool("greet_string")]
 async fn greet_string(name: String) -> String {
     format!("hi {name}")

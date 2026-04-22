@@ -15,6 +15,7 @@ pub struct HeaderAgent {
     pub signature_comment: String,
     pub return_c_type: &'static str,
     pub params_c: String,
+    pub uses_grounded_handle: bool,
 }
 
 pub fn emit_header(ir: &IrFile, opts: &HeaderOptions) -> String {
@@ -35,7 +36,7 @@ fn exported_agent(agent: &IrAgent) -> HeaderAgent {
             .params
             .iter()
             .map(|param| {
-                let c_ty = ScalarAbiType::from_type(&param.ty)
+                let c_ty = ScalarAbiType::from_param_type(&param.ty)
                     .expect("extern-c checker guarantees scalar params")
                     .c_param_type();
                 format!("{c_ty} {}", param.name)
@@ -43,9 +44,17 @@ fn exported_agent(agent: &IrAgent) -> HeaderAgent {
             .collect::<Vec<_>>()
             .join(", ")
     };
-    let return_c_type = ScalarAbiType::from_type(&agent.return_ty)
-        .expect("extern-c checker guarantees scalar return")
-        .c_return_type();
+    let return_abi = ScalarAbiType::from_return_type(&agent.return_ty)
+        .expect("extern-c checker guarantees scalar/grounded scalar return");
+    let mut params_c = params_c;
+    if return_abi.is_grounded_return() {
+        params_c = if params_c == "void" {
+            "uint64_t* out_grounded_handle".to_string()
+        } else {
+            format!("{params_c}, uint64_t* out_grounded_handle")
+        };
+    }
+    let return_c_type = return_abi.c_return_type();
     let signature_comment = format!(
         "agent {}({}) -> {}",
         agent.name,
@@ -62,5 +71,6 @@ fn exported_agent(agent: &IrAgent) -> HeaderAgent {
         signature_comment,
         return_c_type,
         params_c,
+        uses_grounded_handle: return_abi.is_grounded_return(),
     }
 }

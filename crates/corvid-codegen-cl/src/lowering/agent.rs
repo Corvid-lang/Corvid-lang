@@ -29,6 +29,10 @@ pub(super) fn define_extern_c_wrapper(
         sig.params
             .push(AbiParam::new(extern_c_abi_type(&param.ty, param.span)?));
     }
+    let grounded_return_inner = grounded_extern_c_return_inner(&agent.return_ty);
+    if grounded_return_inner.is_some() {
+        sig.params.push(AbiParam::new(I64));
+    }
     if !matches!(agent.return_ty, Type::Nothing) {
         sig.returns
             .push(AbiParam::new(extern_c_abi_type(&agent.return_ty, agent.span)?));
@@ -81,6 +85,7 @@ pub(super) fn define_extern_c_wrapper(
         let inner_ref = module.declare_func_in_func(inner_func_id, builder.func);
         let call = builder.ins().call(inner_ref, &call_args);
         let results: Vec<ClValue> = builder.inst_results(call).iter().copied().collect();
+        let grounded_handle_ptr = grounded_return_inner.map(|_| builder.block_params(entry)[agent.params.len()]);
 
         match &agent.return_ty {
             Type::Nothing => {
@@ -112,6 +117,50 @@ pub(super) fn define_extern_c_wrapper(
                 let converted = builder.ins().call(into_cstr_ref, &[result]);
                 let converted_value = builder.inst_results(converted)[0];
                 builder.ins().return_(&[converted_value]);
+            }
+            Type::Grounded(inner) if matches!(&**inner, Type::String) => {
+                let result = *results.first().ok_or_else(|| {
+                    CodegenError::cranelift(
+                        format!(
+                            "extern-c wrapper `{}` expected one grounded String result, got {}",
+                            agent.name,
+                            results.len()
+                        ),
+                        agent.span,
+                    )
+                })?;
+                let capture_ref = module.declare_func_in_func(
+                    runtime.grounded_capture_string_handle,
+                    builder.func,
+                );
+                let capture_call = builder.ins().call(capture_ref, &[result]);
+                let handle = builder.inst_results(capture_call)[0];
+                emit_grounded_handle_store(&mut builder, grounded_handle_ptr, handle);
+                let into_cstr_ref =
+                    module.declare_func_in_func(runtime.string_into_cstr, builder.func);
+                let converted = builder.ins().call(into_cstr_ref, &[result]);
+                let converted_value = builder.inst_results(converted)[0];
+                builder.ins().return_(&[converted_value]);
+            }
+            Type::Grounded(_) => {
+                let result = *results.first().ok_or_else(|| {
+                    CodegenError::cranelift(
+                        format!(
+                            "extern-c wrapper `{}` expected one grounded scalar result, got {}",
+                            agent.name,
+                            results.len()
+                        ),
+                        agent.span,
+                    )
+                })?;
+                let capture_ref = module.declare_func_in_func(
+                    runtime.grounded_capture_scalar_handle,
+                    builder.func,
+                );
+                let capture_call = builder.ins().call(capture_ref, &[]);
+                let handle = builder.inst_results(capture_call)[0];
+                emit_grounded_handle_store(&mut builder, grounded_handle_ptr, handle);
+                builder.ins().return_(&[result]);
             }
             _ => {
                 let result = *results.first().ok_or_else(|| {
@@ -176,18 +225,52 @@ fn extern_c_abi_type(ty: &Type, span: Span) -> Result<clir::Type, CodegenError> 
         Type::Float => Ok(F64),
         Type::Bool => Ok(I8),
         Type::String => Ok(I64),
+        Type::Grounded(inner) => extern_c_abi_type(inner, span),
         Type::Nothing => Err(CodegenError::cranelift(
             "`Nothing` is only valid as an extern-c return type",
             span,
         )),
         other => Err(CodegenError::not_supported(
             format!(
-                "extern-c wrapper lowering does not support `{}` in Phase 22-A",
+                "extern-c wrapper lowering does not support `{}` at this ABI boundary",
                 other.display_name()
             ),
             span,
         )),
     }
+}
+
+fn grounded_extern_c_return_inner(ty: &Type) -> Option<&Type> {
+    match ty {
+        Type::Grounded(inner) => Some(inner.as_ref()),
+        _ => None,
+    }
+}
+
+fn emit_grounded_handle_store(
+    builder: &mut FunctionBuilder,
+    grounded_handle_ptr: Option<ClValue>,
+    handle: ClValue,
+) {
+    let Some(out_ptr) = grounded_handle_ptr else {
+        return;
+    };
+    let zero = builder.ins().iconst(I64, 0);
+    let is_non_null = builder.ins().icmp(IntCC::NotEqual, out_ptr, zero);
+    let write_b = builder.create_block();
+    let done_b = builder.create_block();
+    builder.ins().brif(is_non_null, write_b, &[], done_b, &[]);
+    builder.switch_to_block(write_b);
+    builder.seal_block(write_b);
+    builder.ins().store(
+        cranelift_codegen::ir::MemFlags::trusted(),
+        handle,
+        out_ptr,
+        0,
+    );
+    builder.ins().jump(done_b, &[]);
+    builder.switch_to_block(done_b);
+    builder.seal_block(done_b);
 }
 
 /// Map a Corvid `Type` to the Cranelift IR type width we compile it to.

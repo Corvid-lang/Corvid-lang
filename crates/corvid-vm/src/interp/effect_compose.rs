@@ -1,6 +1,7 @@
 use super::Interpreter;
 use crate::errors::{InterpError, InterpErrorKind};
-use crate::value::{GroundedValue, ProvenanceChain, Value};
+use crate::value::{GroundedValue, Value};
+use crate::ProvenanceChain;
 use crate::value_to_json;
 use corvid_ast::{BackpressurePolicy, Span};
 use corvid_ir::IrPrompt;

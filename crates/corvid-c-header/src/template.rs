@@ -10,7 +10,8 @@ pub fn render_header(opts: &HeaderOptions, agents: &[HeaderAgent]) -> String {
     out.push_str("//   * inbound `const char*` parameters are UTF-8, null-terminated, caller-owned\n");
     out.push_str("//   * outbound `const char*` returns are UTF-8, null-terminated, Corvid-owned\n");
     out.push_str("//   * release returned agent strings with `corvid_free_string(...)`\n");
-    out.push_str("//   * release `corvid_call_agent` JSON payloads with `corvid_free_result(...)`\n\n");
+    out.push_str("//   * release `corvid_call_agent` JSON payloads with `corvid_free_result(...)`\n");
+    out.push_str("//   * grounded-return handles are runtime attestations; release them with `corvid_grounded_release(...)`\n\n");
     out.push_str(&format!("#ifndef {guard}\n"));
     out.push_str(&format!("#define {guard}\n\n"));
     out.push_str("#include <stddef.h>\n");
@@ -122,6 +123,8 @@ pub fn render_header(opts: &HeaderOptions, agents: &[HeaderAgent]) -> String {
     out.push_str("    const char* bad_args_message;\n");
     out.push_str("} CorvidPredicateResult;\n\n");
 
+    out.push_str("#define CORVID_NULL_GROUNDED_HANDLE ((uint64_t)0)\n\n");
+
     out.push_str("const char* corvid_abi_descriptor_json(size_t* out_len);\n");
     out.push_str("void corvid_abi_descriptor_hash(uint8_t out_hash[32]);\n");
     out.push_str("int corvid_abi_verify(const uint8_t expected[32]);\n");
@@ -152,6 +155,9 @@ pub fn render_header(opts: &HeaderOptions, agents: &[HeaderAgent]) -> String {
     out.push_str("    const char* site_name,\n");
     out.push_str("    const char* args_json,\n");
     out.push_str("    size_t args_len);\n");
+    out.push_str("int32_t corvid_grounded_sources(uint64_t handle, const char** out, size_t capacity);\n");
+    out.push_str("double corvid_grounded_confidence(uint64_t handle);\n");
+    out.push_str("void corvid_grounded_release(uint64_t handle);\n");
     out.push_str("void corvid_free_string(const char* value);\n\n");
 
     for agent in agents {

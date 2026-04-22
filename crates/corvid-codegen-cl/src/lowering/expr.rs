@@ -187,6 +187,43 @@ pub(super) fn lower_string_binop_with_ownership(
     }
 }
 
+fn emit_grounded_value_attestation(
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    runtime: &RuntimeFuncs,
+    value: ClValue,
+    grounded_ty: &Type,
+    source_name: &str,
+    confidence: f64,
+    span: Span,
+) -> Result<ClValue, CodegenError> {
+    let source_name_val = emit_string_const(builder, module, runtime, source_name, span)?;
+    let confidence_val = builder.ins().f64const(confidence);
+    let attest_id = match grounded_ty {
+        Type::Grounded(inner) => match inner.as_ref() {
+            Type::Int => runtime.grounded_attest_int,
+            Type::Bool => runtime.grounded_attest_bool,
+            Type::Float => runtime.grounded_attest_float,
+            Type::String => runtime.grounded_attest_string,
+            other => {
+                return Err(CodegenError::not_supported(
+                    format!(
+                        "grounded return `{}` is not yet supported at the native ABI boundary",
+                        other.display_name()
+                    ),
+                    span,
+                ))
+            }
+        },
+        _ => unreachable!("grounded attestation requires Grounded<T>"),
+    };
+    let attest_ref = module.declare_func_in_func(attest_id, builder.func);
+    let attest_call = builder.ins().call(attest_ref, &[value, source_name_val, confidence_val]);
+    let attested = builder.inst_results(attest_call)[0];
+    emit_release(builder, module, runtime, source_name_val);
+    Ok(attested)
+}
+
 
 /// Lower a struct constructor: allocate, store each field at its
 /// offset, return the struct pointer (refcount = 1, Owned).
@@ -1161,6 +1198,20 @@ pub(super) fn lower_expr(
                     builder.ins().jump(join_b, &[]);
                 } else {
                     let replay_value = builder.inst_results(replay_call)[0];
+                    let replay_value = if matches!(expr.ty, Type::Grounded(_)) {
+                        emit_grounded_value_attestation(
+                            builder,
+                            module,
+                            runtime,
+                            replay_value,
+                            &expr.ty,
+                            &tool.name,
+                            1.0,
+                            expr.span,
+                        )?
+                    } else {
+                        replay_value
+                    };
                     builder.ins().jump(join_b, &[replay_value]);
                 }
 
@@ -1206,10 +1257,24 @@ pub(super) fn lower_expr(
                     };
                     builder.ins().call(trace_result_call, &trace_args);
                 }
+                let live_result = if matches!(expr.ty, Type::Grounded(_)) {
+                    emit_grounded_value_attestation(
+                        builder,
+                        module,
+                        runtime,
+                        result_vals[0],
+                        &expr.ty,
+                        &tool.name,
+                        1.0,
+                        expr.span,
+                    )?
+                } else {
+                    result_vals[0]
+                };
                 if matches!(expr.ty, Type::Nothing) {
                     builder.ins().jump(join_b, &[]);
                 } else if result_vals.len() == 1 {
-                    builder.ins().jump(join_b, &[result_vals[0]]);
+                    builder.ins().jump(join_b, &[live_result]);
                 } else {
                     return Err(CodegenError::cranelift(
                         format!(

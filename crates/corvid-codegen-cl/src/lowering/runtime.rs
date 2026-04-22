@@ -414,6 +414,98 @@ pub(super) fn declare_runtime_funcs(
             )
         })?;
 
+    let grounded_capture_scalar_sig = module.make_signature();
+    let grounded_capture_scalar_handle_id = module
+        .declare_function(
+            GROUNDED_CAPTURE_SCALAR_HANDLE_SYMBOL,
+            Linkage::Import,
+            &grounded_capture_scalar_sig,
+        )
+        .map_err(|e| {
+            CodegenError::cranelift(
+                format!("declare grounded_capture_scalar_handle: {e}"),
+                Span::new(0, 0),
+            )
+        })?;
+
+    let mut grounded_capture_string_sig = module.make_signature();
+    grounded_capture_string_sig.params.push(AbiParam::new(I64));
+    grounded_capture_string_sig.returns.push(AbiParam::new(I64));
+    let grounded_capture_string_handle_id = module
+        .declare_function(
+            GROUNDED_CAPTURE_STRING_HANDLE_SYMBOL,
+            Linkage::Import,
+            &grounded_capture_string_sig,
+        )
+        .map_err(|e| {
+            CodegenError::cranelift(
+                format!("declare grounded_capture_string_handle: {e}"),
+                Span::new(0, 0),
+            )
+        })?;
+
+    let make_grounded_attest_sig =
+        |module: &mut ObjectModule, value_ty: cranelift_codegen::ir::Type| {
+            let mut sig = module.make_signature();
+            sig.params.push(AbiParam::new(value_ty));
+            sig.params.push(AbiParam::new(I64));
+            sig.params.push(AbiParam::new(F64));
+            sig.returns.push(AbiParam::new(value_ty));
+            sig
+        };
+    let grounded_attest_int_sig = make_grounded_attest_sig(module, I64);
+    let grounded_attest_int_id = module
+        .declare_function(
+            GROUNDED_ATTEST_INT_SYMBOL,
+            Linkage::Import,
+            &grounded_attest_int_sig,
+        )
+        .map_err(|e| {
+            CodegenError::cranelift(
+                format!("declare grounded_attest_int: {e}"),
+                Span::new(0, 0),
+            )
+        })?;
+    let grounded_attest_bool_sig = make_grounded_attest_sig(module, I8);
+    let grounded_attest_bool_id = module
+        .declare_function(
+            GROUNDED_ATTEST_BOOL_SYMBOL,
+            Linkage::Import,
+            &grounded_attest_bool_sig,
+        )
+        .map_err(|e| {
+            CodegenError::cranelift(
+                format!("declare grounded_attest_bool: {e}"),
+                Span::new(0, 0),
+            )
+        })?;
+    let grounded_attest_float_sig = make_grounded_attest_sig(module, F64);
+    let grounded_attest_float_id = module
+        .declare_function(
+            GROUNDED_ATTEST_FLOAT_SYMBOL,
+            Linkage::Import,
+            &grounded_attest_float_sig,
+        )
+        .map_err(|e| {
+            CodegenError::cranelift(
+                format!("declare grounded_attest_float: {e}"),
+                Span::new(0, 0),
+            )
+        })?;
+    let grounded_attest_string_sig = make_grounded_attest_sig(module, I64);
+    let grounded_attest_string_id = module
+        .declare_function(
+            GROUNDED_ATTEST_STRING_SYMBOL,
+            Linkage::Import,
+            &grounded_attest_string_sig,
+        )
+        .map_err(|e| {
+            CodegenError::cranelift(
+                format!("declare grounded_attest_string: {e}"),
+                Span::new(0, 0),
+            )
+        })?;
+
     let mut sleep_ms_sig = module.make_signature();
     sleep_ms_sig.params.push(AbiParam::new(I64));
     let sleep_ms_id = module
@@ -705,6 +797,12 @@ pub(super) fn declare_runtime_funcs(
         runtime_embed_init: embed_init_id,
         sleep_ms: sleep_ms_id,
         string_into_cstr: string_into_cstr_id,
+        grounded_capture_scalar_handle: grounded_capture_scalar_handle_id,
+        grounded_capture_string_handle: grounded_capture_string_handle_id,
+        grounded_attest_int: grounded_attest_int_id,
+        grounded_attest_bool: grounded_attest_bool_id,
+        grounded_attest_float: grounded_attest_float_id,
+        grounded_attest_string: grounded_attest_string_id,
         string_from_int: string_from_int_id,
         string_from_bool: string_from_bool_id,
         string_from_float: string_from_float_id,
@@ -2240,6 +2338,14 @@ pub(super) const RUNTIME_SHUTDOWN_SYMBOL: &str = "corvid_runtime_shutdown";
 pub(super) const RUNTIME_EMBED_INIT_SYMBOL: &str = "corvid_runtime_embed_init_default";
 pub(super) const SLEEP_MS_SYMBOL: &str = "corvid_sleep_ms";
 pub(super) const STRING_INTO_CSTR_SYMBOL: &str = "corvid_string_into_cstr";
+pub(super) const GROUNDED_CAPTURE_SCALAR_HANDLE_SYMBOL: &str =
+    "corvid_grounded_capture_scalar_handle";
+pub(super) const GROUNDED_CAPTURE_STRING_HANDLE_SYMBOL: &str =
+    "corvid_grounded_capture_string_handle";
+pub(super) const GROUNDED_ATTEST_INT_SYMBOL: &str = "corvid_grounded_attest_int";
+pub(super) const GROUNDED_ATTEST_BOOL_SYMBOL: &str = "corvid_grounded_attest_bool";
+pub(super) const GROUNDED_ATTEST_FLOAT_SYMBOL: &str = "corvid_grounded_attest_float";
+pub(super) const GROUNDED_ATTEST_STRING_SYMBOL: &str = "corvid_grounded_attest_string";
 
 /// Per-struct payload uses fixed 8-byte field slots for simple offset
 /// math. Tighter packing is a later optimization.
@@ -2310,6 +2416,12 @@ pub(super) struct RuntimeFuncs {
     pub runtime_embed_init: FuncId,
     pub sleep_ms: FuncId,
     pub string_into_cstr: FuncId,
+    pub grounded_capture_scalar_handle: FuncId,
+    pub grounded_capture_string_handle: FuncId,
+    pub grounded_attest_int: FuncId,
+    pub grounded_attest_bool: FuncId,
+    pub grounded_attest_float: FuncId,
+    pub grounded_attest_string: FuncId,
     // Scalar->String helpers for prompt-template interpolation.
     pub string_from_int: FuncId,
     pub string_from_bool: FuncId,

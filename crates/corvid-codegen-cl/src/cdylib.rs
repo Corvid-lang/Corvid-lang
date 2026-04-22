@@ -78,7 +78,16 @@ fn exported_symbols(ir: &IrFile) -> Vec<String> {
     if ir
         .agents
         .iter()
-        .any(|agent| matches!(agent.extern_abi, Some(IrExternAbi::C)) && matches!(agent.return_ty, corvid_types::Type::String))
+        .any(|agent| {
+            matches!(agent.extern_abi, Some(IrExternAbi::C))
+                && match &agent.return_ty {
+                    corvid_types::Type::String => true,
+                    corvid_types::Type::Grounded(inner) => {
+                        matches!(&**inner, corvid_types::Type::String)
+                    }
+                    _ => false,
+                }
+        })
     {
         exports.push("corvid_free_string".into());
     }
@@ -94,6 +103,9 @@ fn exported_symbols(ir: &IrFile) -> Vec<String> {
             "corvid_pre_flight",
             "corvid_call_agent",
             "corvid_free_result",
+            "corvid_grounded_sources",
+            "corvid_grounded_confidence",
+            "corvid_grounded_release",
             "corvid_register_approver",
             "corvid_register_approver_from_source",
             "corvid_clear_approver",
