@@ -11,6 +11,7 @@ pub mod add_dimension;
 pub mod approver;
 pub mod effect_diff;
 pub mod meta_verify;
+pub mod modules;
 mod native_ability;
 mod native_cache;
 mod render;
@@ -18,6 +19,7 @@ pub mod spec_check;
 
 pub use add_dimension::{add_dimension as install_dimension, AddDimensionOutcome};
 pub use approver::{simulate_approver, verify_approver_source};
+pub use modules::{build_module_resolution, ModuleLoadError};
 pub use effect_diff::{
     diff_snapshots, render_effect_diff, snapshot_revision, AgentDiff, AgentSnapshot,
     DimensionChange, EffectDiff, RevisionSnapshot,

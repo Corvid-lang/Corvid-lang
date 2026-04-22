@@ -316,6 +316,7 @@ mod tests {
             agents: vec![IrAgent {
                 id: DefId(0),
                 name: "streamer".into(),
+                extern_abi: None,
                 params: vec![],
                 return_ty: Type::Stream(Box::new(Type::String)),
                 cost_budget: None,
