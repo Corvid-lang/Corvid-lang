@@ -120,6 +120,12 @@ pub enum TraceEvent {
         label: String,
         approved: bool,
     },
+    HostEvent {
+        ts_ms: u64,
+        run_id: String,
+        name: String,
+        payload: serde_json::Value,
+    },
     /// A pseudo-random number read. Recorded per draw so replay
     /// can reproduce the exact sequence even when the seeded PRNG
     /// runs through different call paths.

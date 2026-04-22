@@ -1425,13 +1425,80 @@ fn build_corvid_runtime() -> Runtime {
 }
 
 fn build_embedded_corvid_runtime() -> Runtime {
-    Runtime::builder()
+    let mut b = Runtime::builder()
         .tracer(build_tracer_from_env_or_default())
         .trace_schema_writer(WRITER_NATIVE)
         .approver(Arc::new(ProgrammaticApprover::new(|req| {
             crate::catalog_c_api::decide_registered_approval(req)
-        })))
-        .build()
+        })));
+
+    if let Ok(model) = std::env::var("CORVID_MODEL") {
+        b = b.default_model(&model);
+    }
+    if let Ok(seed) = std::env::var("CORVID_ROLLOUT_SEED") {
+        if let Ok(parsed) = seed.parse::<u64>() {
+            b = b.rollout_seed(parsed);
+        }
+    }
+    if let Some(path) = std::env::var_os("CORVID_REPLAY_TRACE_PATH") {
+        if let (Some(step), Some(replacement)) = (
+            std::env::var_os("CORVID_REPLAY_MUTATE_STEP"),
+            std::env::var_os("CORVID_REPLAY_MUTATE_JSON"),
+        ) {
+            let step = step
+                .to_string_lossy()
+                .parse::<usize>()
+                .expect("CORVID_REPLAY_MUTATE_STEP must be a positive integer");
+            let replacement: serde_json::Value = serde_json::from_str(&replacement.to_string_lossy())
+                .expect("CORVID_REPLAY_MUTATE_JSON must contain valid JSON");
+            b = b.mutation_replay_from(PathBuf::from(path), step, replacement);
+        } else if let Some(model) = std::env::var_os("CORVID_REPLAY_MODEL") {
+            b = b.differential_replay_from(PathBuf::from(path), model.to_string_lossy().into_owned());
+        } else {
+            b = b.replay_from(PathBuf::from(path));
+        }
+    }
+    if std::env::var("CORVID_TEST_MOCK_LLM").ok().as_deref() == Some("1") {
+        b = b.llm(Arc::new(EnvVarMockAdapter::from_env()));
+    }
+    let anthropic_key = std::env::var("ANTHROPIC_API_KEY").unwrap_or_default();
+    b = b.llm(Arc::new(AnthropicAdapter::new(anthropic_key)));
+    let openai_key = std::env::var("OPENAI_API_KEY").unwrap_or_default();
+    b = b.llm(Arc::new(OpenAiAdapter::new(openai_key)));
+    let gemini_key = std::env::var("GOOGLE_API_KEY")
+        .or_else(|_| std::env::var("GEMINI_API_KEY"))
+        .unwrap_or_default();
+    b = b.llm(Arc::new(GeminiAdapter::new(gemini_key)));
+    b = b.llm(Arc::new(OllamaAdapter::new()));
+    let compat_key = std::env::var("OPENAI_COMPAT_API_KEY").unwrap_or_default();
+    b = b.llm(Arc::new(OpenAiCompatibleAdapter::new(compat_key)));
+
+    if let Ok(spec) = std::env::var("CORVID_TEST_MOCK_INT_TOOLS") {
+        for pair in spec.split(';') {
+            let pair = pair.trim();
+            if pair.is_empty() {
+                continue;
+            }
+            let Some((name, value_str)) = pair.split_once(':') else {
+                eprintln!(
+                    "corvid: malformed CORVID_TEST_MOCK_INT_TOOLS entry `{pair}` (expected `name:value`); skipping"
+                );
+                continue;
+            };
+            let Ok(value) = value_str.trim().parse::<i64>() else {
+                eprintln!(
+                    "corvid: CORVID_TEST_MOCK_INT_TOOLS value `{value_str}` for `{name}` isn't a valid i64; skipping"
+                );
+                continue;
+            };
+            let name_owned = name.trim().to_string();
+            b = b.tool(name_owned, move |_args| async move {
+                Ok(serde_json::json!(value))
+            });
+        }
+    }
+
+    b.build()
 }
 
 fn build_tracer_from_env_or_default() -> Tracer {

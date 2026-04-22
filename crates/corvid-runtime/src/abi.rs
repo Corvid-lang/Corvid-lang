@@ -70,6 +70,7 @@ use crate::catalog_c_api::{
     corvid_observation_release as _corvid_observation_release_marker,
     corvid_observation_tokens_in as _corvid_observation_tokens_in_marker,
     corvid_observation_tokens_out as _corvid_observation_tokens_out_marker,
+    corvid_record_host_event as _corvid_record_host_event_marker,
     corvid_list_agents as _corvid_list_agents_marker,
     corvid_pre_flight as _corvid_pre_flight_marker,
     corvid_register_approver as _corvid_register_approver_marker,
@@ -129,6 +130,9 @@ fn _depends_on_ffi_bridge() {
     let _ = _corvid_observation_tokens_out_marker as extern "C" fn(u64) -> u64;
     let _ = _corvid_observation_exceeded_bound_marker as extern "C" fn(u64) -> bool;
     let _ = _corvid_observation_release_marker as extern "C" fn(u64);
+    let _ = _corvid_record_host_event_marker
+        as unsafe extern "C" fn(*const std::ffi::c_char, *const std::ffi::c_char, usize)
+            -> crate::catalog_c_api::CorvidHostEventStatus;
     let _ = _corvid_grounded_attest_int_marker
         as unsafe extern "C" fn(i64, CorvidString, f64) -> i64;
     let _ = _corvid_grounded_attest_float_marker

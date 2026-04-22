@@ -144,6 +144,11 @@ fn collect_typeref_dep(ty: &TypeRef, resolved: &Resolved, deps: &mut HashSet<Def
                 deps.insert(id);
             }
         }
+        TypeRef::Qualified { alias, .. } => {
+            if let Some(id) = resolved.symbols.lookup_def(&alias.name) {
+                deps.insert(id);
+            }
+        }
         TypeRef::Generic { name, args, .. } => {
             if let Some(id) = resolved.symbols.lookup_def(&name.name) {
                 deps.insert(id);

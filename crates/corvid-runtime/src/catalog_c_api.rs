@@ -13,10 +13,11 @@ use crate::observation_handles;
 use crate::abi::CorvidString;
 use crate::effect_filter::CorvidFindAgentsStatus;
 use crate::errors::RuntimeError;
-use crate::ffi_bridge::read_corvid_string;
+use crate::ffi_bridge::{bridge, read_corvid_string};
 use corvid_abi::{read_embedded_section_from_library, EmbeddedDescriptorSection};
 #[cfg(unix)]
 use corvid_abi::{parse_embedded_section_bytes, CORVID_ABI_DESCRIPTOR_SYMBOL};
+use corvid_trace_schema::TraceEvent;
 use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::ffi::{c_char, c_void, CStr, CString};
@@ -29,6 +30,15 @@ thread_local! {
     static PREAPPROVED_REQUESTS: RefCell<VecDeque<(String, Vec<serde_json::Value>, ApprovalDecisionInfo)>> =
         RefCell::new(VecDeque::new());
     static LAST_APPROVAL_DETAIL: RefCell<Option<ApprovalDecisionInfo>> = RefCell::new(None);
+}
+
+#[repr(i32)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CorvidHostEventStatus {
+    Ok = 0,
+    BadJson = 1,
+    TraceDisabled = 2,
+    RuntimeError = 3,
 }
 
 #[derive(Default)]
@@ -770,6 +780,22 @@ fn grounded_source_pointers(handle: u64) -> Option<Vec<*const c_char>> {
     )
 }
 
+fn record_host_event(name: &str, payload: serde_json::Value) -> CorvidHostEventStatus {
+    let _ = crate::ffi_bridge::corvid_runtime_embed_init_default();
+    let runtime = bridge().corvid_runtime();
+    let tracer = runtime.tracer();
+    if !tracer.is_enabled() {
+        return CorvidHostEventStatus::TraceDisabled;
+    }
+    tracer.emit(TraceEvent::HostEvent {
+        ts_ms: crate::tracing::now_ms(),
+        run_id: tracer.run_id().to_string(),
+        name: name.to_string(),
+        payload,
+    });
+    CorvidHostEventStatus::Ok
+}
+
 #[no_mangle]
 pub unsafe extern "C" fn corvid_grounded_sources(
     handle: u64,
@@ -833,6 +859,31 @@ pub extern "C" fn corvid_observation_release(handle: u64) {
     {
         eprintln!("warning: observation handle {handle} was already released or never existed");
     }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn corvid_record_host_event(
+    name: *const c_char,
+    payload_json: *const c_char,
+    payload_len: usize,
+) -> CorvidHostEventStatus {
+    let Ok(name) = read_c_string(name) else {
+        return CorvidHostEventStatus::RuntimeError;
+    };
+    let _ = crate::ffi_bridge::corvid_runtime_embed_init_default();
+    let runtime = bridge().corvid_runtime();
+    if !runtime.tracer().is_enabled() {
+        return CorvidHostEventStatus::TraceDisabled;
+    }
+    if payload_json.is_null() {
+        return CorvidHostEventStatus::BadJson;
+    }
+    let bytes = std::slice::from_raw_parts(payload_json as *const u8, payload_len);
+    let payload_text = String::from_utf8_lossy(bytes).into_owned();
+    let Ok(payload) = serde_json::from_str::<serde_json::Value>(&payload_text) else {
+        return CorvidHostEventStatus::BadJson;
+    };
+    record_host_event(&name, payload)
 }
 
 #[no_mangle]

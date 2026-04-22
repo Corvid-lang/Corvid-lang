@@ -52,6 +52,19 @@ pub struct ReplaySource {
     mode: ReplayMode,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReplayApprovalDecision {
+    pub accepted: bool,
+    pub decider: String,
+    pub rationale: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReplayApprovalOutcome {
+    pub approved: bool,
+    pub decision: Option<ReplayApprovalDecision>,
+}
+
 impl ReplaySource {
     pub fn from_path(path: impl Into<PathBuf>) -> Result<Self, RuntimeError> {
         Self::from_path_for_writer(path, WRITER_INTERPRETER)
@@ -609,7 +622,7 @@ impl ReplaySource {
         &self,
         label: &str,
         args: &[serde_json::Value],
-    ) -> Result<bool, RuntimeError> {
+    ) -> Result<ReplayApprovalOutcome, RuntimeError> {
         let mut cursor = self.cursor.lock().unwrap();
         match &self.mode {
             ReplayMode::Substitute => {
@@ -710,14 +723,14 @@ impl ReplaySource {
                     }
                     recorded
                 };
-                let recorded_result = cursor.next_event(&self.events);
+                let recorded_result = next_approval_outcome_event(&mut cursor, &self.events);
                 if step == mutation.step_1based {
                     return mutated_approval_result(mutation, &recorded_call, recorded_result);
                 }
                 return replayed_approval_result(label, recorded_result);
             }
         }
-        replayed_approval_result(label, cursor.next_event(&self.events))
+        replayed_approval_result(label, next_approval_outcome_event(&mut cursor, &self.events))
     }
 
     pub fn replay_rollout_sample(&self) -> Result<u64, RuntimeError> {
@@ -908,12 +921,19 @@ fn mutated_llm_result(
 fn mutated_approval_result(
     mutation: &ReplayMutation,
     recorded_call: &TraceEvent,
-    recorded_result: TraceEvent,
-) -> Result<bool, RuntimeError> {
-    validate_mutation_result_pair(recorded_call, &recorded_result, mutation.step_1based)?;
-    mutation.replacement.as_bool().ok_or_else(|| RuntimeError::InvalidReplayMutation {
-        step: mutation.step_1based,
-        message: "replacement for approval_response must be bool".into(),
+    recorded_result: ReplayApprovalTraceOutcome,
+) -> Result<ReplayApprovalOutcome, RuntimeError> {
+    validate_mutation_result_pair(recorded_call, &recorded_result.response, mutation.step_1based)?;
+    let approved = mutation
+        .replacement
+        .as_bool()
+        .ok_or_else(|| RuntimeError::InvalidReplayMutation {
+            step: mutation.step_1based,
+            message: "replacement for approval_response must be bool".into(),
+        })?;
+    Ok(ReplayApprovalOutcome {
+        approved,
+        decision: recorded_result.decision,
     })
 }
 
@@ -958,11 +978,20 @@ fn replayed_json_result(tool: &str, event: TraceEvent) -> Result<serde_json::Val
     }
 }
 
-fn replayed_approval_result(label: &str, event: TraceEvent) -> Result<bool, RuntimeError> {
-    match event {
-        TraceEvent::ApprovalResponse { approved, .. } => Ok(approved),
+fn replayed_approval_result(
+    label: &str,
+    outcome: ReplayApprovalTraceOutcome,
+) -> Result<ReplayApprovalOutcome, RuntimeError> {
+    match outcome.response {
+        TraceEvent::ApprovalResponse { approved, .. } => Ok(ReplayApprovalOutcome {
+            approved,
+            decision: outcome.decision,
+        }),
         TraceEvent::ToolResult { result, .. } | TraceEvent::LlmResult { result, .. } => {
-            Ok(coerce_json_to_bool(&result))
+            Ok(ReplayApprovalOutcome {
+                approved: coerce_json_to_bool(&result),
+                decision: outcome.decision,
+            })
         }
         other => Err(RuntimeError::ReplayDivergence(ReplayDivergence {
             step: 0,
@@ -973,10 +1002,33 @@ fn replayed_approval_result(label: &str, event: TraceEvent) -> Result<bool, Runt
     }
 }
 
-fn next_approval_outcome_event(cursor: &mut TraceCursor, events: &[TraceEvent]) -> TraceEvent {
+struct ReplayApprovalTraceOutcome {
+    decision: Option<ReplayApprovalDecision>,
+    response: TraceEvent,
+}
+
+fn next_approval_outcome_event(
+    cursor: &mut TraceCursor,
+    events: &[TraceEvent],
+) -> ReplayApprovalTraceOutcome {
     match cursor.next_event(events) {
-        TraceEvent::ApprovalDecision { .. } => cursor.next_event(events),
-        other => other,
+        TraceEvent::ApprovalDecision {
+            accepted,
+            decider,
+            rationale,
+            ..
+        } => ReplayApprovalTraceOutcome {
+            decision: Some(ReplayApprovalDecision {
+                accepted,
+                decider,
+                rationale,
+            }),
+            response: cursor.next_event(events),
+        },
+        other => ReplayApprovalTraceOutcome {
+            decision: None,
+            response: other,
+        },
     }
 }
 
@@ -1017,6 +1069,7 @@ fn event_kind(event: &TraceEvent) -> &'static str {
         TraceEvent::ApprovalRequest { .. } => "approval_request",
         TraceEvent::ApprovalDecision { .. } => "approval_decision",
         TraceEvent::ApprovalResponse { .. } => "approval_response",
+        TraceEvent::HostEvent { .. } => "host_event",
         TraceEvent::SeedRead { .. } => "seed_read",
         TraceEvent::ClockRead { .. } => "clock_read",
         TraceEvent::ModelSelected { .. } => "model_selected",

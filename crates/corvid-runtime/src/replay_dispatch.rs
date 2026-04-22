@@ -110,21 +110,32 @@ pub fn find_first_replay_match(
                 i += 2;
             }
             TraceEvent::ApprovalRequest { label, .. } => {
-                let Some(TraceEvent::ApprovalResponse {
-                    label: response_label,
-                    approved,
-                    ..
-                }) = events.get(i + 1)
-                else {
-                    return malformed_pair(path, "approval_request", i + 1);
+                let (response_index, response_label, approved) = match events.get(i + 1) {
+                    Some(TraceEvent::ApprovalDecision { .. }) => {
+                        let Some(TraceEvent::ApprovalResponse {
+                            label: response_label,
+                            approved,
+                            ..
+                        }) = events.get(i + 2)
+                        else {
+                            return malformed_pair(path, "approval_request", i + 2);
+                        };
+                        (i + 2, response_label, *approved)
+                    }
+                    Some(TraceEvent::ApprovalResponse {
+                        label: response_label,
+                        approved,
+                        ..
+                    }) => (i + 1, response_label, *approved),
+                    _ => return malformed_pair(path, "approval_request", i + 1),
                 };
                 if response_label != label {
-                    return malformed_pair(path, "approval_request", i + 1);
+                    return malformed_pair(path, "approval_request", response_index);
                 }
-                if let Some(found) = match_approval(label, *approved, arms) {
+                if let Some(found) = match_approval(label, approved, arms) {
                     return Ok(Some(found));
                 }
-                i += 2;
+                i = response_index + 1;
             }
             _ => i += 1,
         }

@@ -20,6 +20,7 @@ members = [
     "crates/corvid-driver",
     "crates/corvid-differential-verify",
     "crates/corvid-cli",
+    "crates/corvid-host-compliance-tests",
     "crates/corvid-shadow-daemon",
     "crates/corvid-lsp",
     "examples/refund_bot_demo",

@@ -11,6 +11,27 @@ fn read_text(path: &Path) -> String {
     std::fs::read_to_string(path).unwrap_or_else(|err| panic!("failed to read {}: {err}", path.display()))
 }
 
+fn find_python() -> Option<Vec<String>> {
+    let candidates = if cfg!(windows) {
+        vec![
+            vec!["py".to_string(), "-3".to_string()],
+            vec!["python".to_string()],
+        ]
+    } else {
+        vec![vec!["python3".to_string()], vec!["python".to_string()]]
+    };
+    for candidate in candidates {
+        let mut cmd = Command::new(&candidate[0]);
+        for arg in &candidate[1..] {
+            cmd.arg(arg);
+        }
+        if cmd.arg("--version").output().map(|out| out.status.success()).unwrap_or(false) {
+            return Some(candidate);
+        }
+    }
+    None
+}
+
 fn workspace_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .ancestors()
@@ -276,4 +297,147 @@ fn cdylib_catalog_demo_filter_host_narrows_catalog() {
     assert!(stdout.contains("grounded_source_count=1"), "stdout was: {stdout}");
     assert!(stdout.contains("grounded_source=grounded_echo"), "stdout was: {stdout}");
     assert!(stdout.contains("grounded_confidence=1.00"), "stdout was: {stdout}");
+}
+
+#[test]
+fn cdylib_catalog_demo_capsule_create_and_replay_work() {
+    let _guard = demo_lock().lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let root = workspace_root();
+    let demo_dir = root.join("examples").join("cdylib_catalog_demo");
+    let source = demo_dir.join("src").join("classify.cor");
+    let tools_lib = test_tools_lib_path();
+
+    let build_output = run_corvid(
+        &[
+            "build",
+            source.to_str().expect("utf8 source path"),
+            "--target=cdylib",
+            "--with-tools-lib",
+            tools_lib.to_str().expect("utf8 tools path"),
+            "--all-artifacts",
+        ],
+        &root,
+    );
+    assert!(
+        build_output.status.success(),
+        "cdylib demo build failed: stdout={} stderr={}",
+        String::from_utf8_lossy(&build_output.stdout),
+        String::from_utf8_lossy(&build_output.stderr)
+    );
+
+    let hash_output = run_corvid(
+        &["abi", "hash", source.to_str().expect("utf8 source path")],
+        &root,
+    );
+    assert!(
+        hash_output.status.success(),
+        "abi hash failed: stdout={} stderr={}",
+        String::from_utf8_lossy(&hash_output.stdout),
+        String::from_utf8_lossy(&hash_output.stderr)
+    );
+    let hash = String::from_utf8(hash_output.stdout)
+        .expect("hash utf8")
+        .trim()
+        .to_string();
+
+    let release_dir = demo_dir.join("target").join("release");
+    let library = release_dir.join(shared_library_name("classify"));
+    let host_source = demo_dir.join("host_c").join("capsule_host.c");
+    let host_bin = match compile_host(&host_source, &release_dir, &demo_dir.join("host_c")) {
+        Some(path) => path,
+        None => return,
+    };
+    let trace_dir = demo_dir.join("trace_output");
+    std::fs::create_dir_all(&trace_dir).expect("create trace_output");
+    let trace_path = trace_dir.join("capsule_demo.jsonl");
+    let capsule_path = trace_dir.join("capsule_demo.capsule");
+
+    let host_output = Command::new(&host_bin)
+        .arg(&library)
+        .arg(&hash)
+        .arg(&trace_path)
+        .current_dir(&demo_dir)
+        .output()
+        .expect("run capsule host");
+    assert!(
+        host_output.status.success(),
+        "capsule host failed: stdout={} stderr={}",
+        String::from_utf8_lossy(&host_output.stdout),
+        String::from_utf8_lossy(&host_output.stderr)
+    );
+    let host_stdout = String::from_utf8_lossy(&host_output.stdout);
+    assert!(host_stdout.contains("verified=1"), "stdout was: {host_stdout}");
+    assert!(host_stdout.contains("host_event_status=0"), "stdout was: {host_stdout}");
+    assert!(host_stdout.contains("bad_json_status=1"), "stdout was: {host_stdout}");
+    assert!(host_stdout.contains("replay_line=status=0 result=\"positive\""), "stdout was: {host_stdout}");
+
+    let trace = read_text(&trace_path);
+    assert!(trace.contains("\"kind\":\"host_event\""), "trace was: {trace}");
+    assert!(trace.contains("\"name\":\"capsule_record\""), "trace was: {trace}");
+    assert!(!trace.contains("\"name\":\"bad_json\""), "trace was: {trace}");
+
+    let create_output = run_corvid(
+        &[
+            "capsule",
+            "create",
+            trace_path.to_str().expect("utf8 trace"),
+            library.to_str().expect("utf8 library"),
+            "--out",
+            capsule_path.to_str().expect("utf8 capsule"),
+        ],
+        &root,
+    );
+    assert!(
+        create_output.status.success(),
+        "capsule create failed: stdout={} stderr={}",
+        String::from_utf8_lossy(&create_output.stdout),
+        String::from_utf8_lossy(&create_output.stderr)
+    );
+
+    let replay_output = run_corvid(
+        &["capsule", "replay", capsule_path.to_str().expect("utf8 capsule")],
+        &root,
+    );
+    assert!(
+        replay_output.status.success(),
+        "capsule replay failed: stdout={} stderr={}",
+        String::from_utf8_lossy(&replay_output.stdout),
+        String::from_utf8_lossy(&replay_output.stderr)
+    );
+    let replay_stdout = String::from_utf8_lossy(&replay_output.stdout);
+    assert!(
+        replay_stdout.contains("agent=classify status=0 result=\"positive\""),
+        "stdout was: {replay_stdout}"
+    );
+
+    let python = match find_python() {
+        Some(python) => python,
+        None => {
+            eprintln!("skipping python replay check: no python on PATH");
+            return;
+        }
+    };
+    let replay_script = demo_dir.join("host_py").join("replay_host.py");
+    let mut cmd = Command::new(&python[0]);
+    for arg in &python[1..] {
+        cmd.arg(arg);
+    }
+    let python_output = cmd
+        .arg(&replay_script)
+        .arg(&library)
+        .arg(&trace_path)
+        .current_dir(&demo_dir)
+        .output()
+        .expect("run python replay host");
+    assert!(
+        python_output.status.success(),
+        "python replay host failed: stdout={} stderr={}",
+        String::from_utf8_lossy(&python_output.stdout),
+        String::from_utf8_lossy(&python_output.stderr)
+    );
+    let python_stdout = String::from_utf8_lossy(&python_output.stdout);
+    assert!(
+        python_stdout.contains("replay_line=status=0 result=\"positive\""),
+        "stdout was: {python_stdout}"
+    );
 }

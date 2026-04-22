@@ -16,6 +16,7 @@ use std::sync::OnceLock;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 static BENCH_TRACE_OVERHEAD_NS: AtomicU64 = AtomicU64::new(0);
+static DETERMINISTIC_CLOCK_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 fn profile_runtime_enabled() -> bool {
     static ENABLED: OnceLock<bool> = OnceLock::new();
@@ -229,6 +230,17 @@ impl Tracer {
                 label,
                 args: r.redact_args(args),
             },
+            TraceEvent::HostEvent {
+                ts_ms,
+                run_id,
+                name,
+                payload,
+            } => TraceEvent::HostEvent {
+                ts_ms,
+                run_id,
+                name,
+                payload: r.redact(payload),
+            },
             other => other,
         }
     }
@@ -243,6 +255,9 @@ fn redact_string(value: &serde_json::Value) -> String {
 
 /// Wall-clock millisecond timestamp. Used by event constructors.
 pub fn now_ms() -> u64 {
+    if let Some(seed) = deterministic_seed() {
+        return seed + DETERMINISTIC_CLOCK_COUNTER.fetch_add(1, Ordering::Relaxed);
+    }
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_millis() as u64)
@@ -253,6 +268,15 @@ pub fn now_ms() -> u64 {
 /// uniqueness inside a single process. UUIDs arrive when we need them.
 pub fn fresh_run_id() -> String {
     format!("run-{}", now_ms())
+}
+
+pub fn deterministic_seed() -> Option<u64> {
+    static SEED: OnceLock<Option<u64>> = OnceLock::new();
+    *SEED.get_or_init(|| {
+        std::env::var("CORVID_DETERMINISTIC_SEED")
+            .ok()
+            .and_then(|value| value.parse::<u64>().ok())
+    })
 }
 
 #[cfg(test)]

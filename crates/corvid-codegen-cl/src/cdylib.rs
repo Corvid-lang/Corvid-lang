@@ -112,6 +112,7 @@ fn exported_symbols(ir: &IrFile) -> Vec<String> {
             "corvid_observation_tokens_out",
             "corvid_observation_exceeded_bound",
             "corvid_observation_release",
+            "corvid_record_host_event",
             "corvid_register_approver",
             "corvid_register_approver_from_source",
             "corvid_clear_approver",

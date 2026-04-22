@@ -1,0 +1,10 @@
+[package]
+name = "corvid-host-compliance-tests"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Cross-language host compliance tests for Corvid replay capsules."
+
+[dev-dependencies]
+cc = "1"
+target-lexicon = "0.13"

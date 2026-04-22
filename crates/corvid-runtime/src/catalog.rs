@@ -310,6 +310,43 @@ pub fn call_agent(agent_name: &str, args_json: &str) -> OwnedCallOutcome {
     }
 }
 
+fn begin_catalog_run(agent_name: &str, args: &[serde_json::Value]) -> Result<(), RuntimeError> {
+    crate::ffi_bridge::corvid_runtime_embed_init_default();
+    let runtime = crate::ffi_bridge::runtime();
+    runtime.prepare_run(agent_name, args)?;
+    let tracer = runtime.tracer();
+    if tracer.is_enabled() {
+        tracer.emit(TraceEvent::RunStarted {
+            ts_ms: now_ms(),
+            run_id: tracer.run_id().to_string(),
+            agent: agent_name.to_string(),
+            args: args.to_vec(),
+        });
+    }
+    Ok(())
+}
+
+fn finish_catalog_run(
+    ok: bool,
+    result: Option<&serde_json::Value>,
+    error: Option<&str>,
+) -> Result<(), RuntimeError> {
+    crate::ffi_bridge::corvid_runtime_embed_init_default();
+    let runtime = crate::ffi_bridge::runtime();
+    runtime.complete_run(ok, result, error)?;
+    let tracer = runtime.tracer();
+    if tracer.is_enabled() {
+        tracer.emit(TraceEvent::RunCompleted {
+            ts_ms: now_ms(),
+            run_id: tracer.run_id().to_string(),
+            ok,
+            result: result.cloned(),
+            error: error.map(str::to_string),
+        });
+    }
+    Ok(())
+}
+
 pub fn find_agents_where(filter_json: &str) -> OwnedFindAgentsOutcome {
     match find_agents_where_impl(filter_json) {
         Ok(outcome) => outcome,
@@ -478,6 +515,7 @@ fn call_agent_impl(agent_name: &str, args_json: &str) -> Result<OwnedCallOutcome
             });
         }
     };
+    begin_catalog_run(agent_name, &validated.args)?;
     let scope = crate::observation_handles::begin_observation(finite_option(cost_bound_for(
         &entry.abi,
     )));
@@ -488,6 +526,7 @@ fn call_agent_impl(agent_name: &str, args_json: &str) -> Result<OwnedCallOutcome
             crate::catalog_c_api::ApprovalRequestOutcome::MissingOrRejected => {
                 emit_embedded_rejected_approval(&approval, &validated.args);
                 let observation_handle = scope.finish();
+                finish_catalog_run(false, None, Some("approval required"))?;
                 return Ok(OwnedCallOutcome {
                     status: CorvidCallStatus::ApprovalRequired,
                     result_json: None,
@@ -506,12 +545,26 @@ fn call_agent_impl(agent_name: &str, args_json: &str) -> Result<OwnedCallOutcome
     }
 
     let result = match &entry.invoker {
-        CatalogInvoker::Introspection(kind) => introspection_call(*kind, validated.args)?,
-        CatalogInvoker::Scalar(invoker) => (invoker)(&validated.args)?,
+        CatalogInvoker::Introspection(kind) => introspection_call(*kind, validated.args.clone()),
+        CatalogInvoker::Scalar(invoker) => (invoker)(&validated.args),
         CatalogInvoker::Unsupported { .. } => unreachable!(),
     };
-    let result_json = serde_json::to_string(&result)
-        .map_err(|err| RuntimeError::Marshal(format!("serialize agent result: {err}")))?;
+    let result = match result {
+        Ok(result) => result,
+        Err(err) => {
+            let _ = finish_catalog_run(false, None, Some(&err.to_string()));
+            return Err(err);
+        }
+    };
+    let result_json = match serde_json::to_string(&result) {
+        Ok(result_json) => result_json,
+        Err(err) => {
+            let err = RuntimeError::Marshal(format!("serialize agent result: {err}"));
+            let _ = finish_catalog_run(false, None, Some(&err.to_string()));
+            return Err(err);
+        }
+    };
+    finish_catalog_run(true, Some(&result), None)?;
     let observation_handle = scope.finish();
     Ok(OwnedCallOutcome {
         status: CorvidCallStatus::Ok,

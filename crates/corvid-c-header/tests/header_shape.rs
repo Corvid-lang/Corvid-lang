@@ -179,4 +179,6 @@ fn header_exports_catalog_surface() {
     assert!(header.contains("uint64_t corvid_observation_tokens_out(uint64_t handle);"));
     assert!(header.contains("bool corvid_observation_exceeded_bound(uint64_t handle);"));
     assert!(header.contains("void corvid_observation_release(uint64_t handle);"));
+    assert!(header.contains("typedef enum {\n    CORVID_HOST_EVENT_OK = 0,"));
+    assert!(header.contains("CorvidHostEventStatus corvid_record_host_event("));
 }

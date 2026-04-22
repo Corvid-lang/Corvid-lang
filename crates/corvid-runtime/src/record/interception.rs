@@ -33,3 +33,12 @@ pub(crate) fn clock_read(run_id: &str, source: &str, value: i64) -> TraceEvent {
         value,
     }
 }
+
+pub(crate) fn host_event(run_id: &str, name: &str, payload: serde_json::Value) -> TraceEvent {
+    TraceEvent::HostEvent {
+        ts_ms: now_ms(),
+        run_id: run_id.to_string(),
+        name: name.to_string(),
+        payload,
+    }
+}

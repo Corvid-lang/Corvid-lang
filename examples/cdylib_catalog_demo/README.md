@@ -115,6 +115,51 @@ The trace file then contains the three approval outcomes:
 - an `approval_decision` from `corvid-agent:.../approver_reject.cor` with `"accepted":false`
 - an `approval_decision` from `fail-closed-default` with `"accepted":false`
 
+## Replay Capsule In Five Minutes
+
+`22-H` turns the demo into a portable replay capsule:
+
+- `host_c/capsule_host.c` records one valid `host_event`, one malformed host event
+  (which must return `CORVID_HOST_EVENT_BAD_JSON`), and then dispatches `classify`
+- `host_py/replay_host.py` replays the recorded trace from Python via `ctypes`
+- `corvid capsule create <trace> <cdylib>` packages the library, descriptor, trace,
+  and manifest into one `.capsule` file
+- `corvid capsule replay <capsule>` loads the packaged library and replays the
+  recorded top-level call without recompiling source
+
+Example:
+
+```powershell
+$trace = "examples/cdylib_catalog_demo/trace_output/capsule_demo.jsonl"
+
+cc examples/cdylib_catalog_demo/host_c/capsule_host.c `
+  -I examples/cdylib_catalog_demo/target/release `
+  -o examples/cdylib_catalog_demo/host_c/capsule_host
+
+examples/cdylib_catalog_demo/host_c/capsule_host `
+  (Resolve-Path examples/cdylib_catalog_demo/target/release/classify.dll) `
+  $hash `
+  $trace
+
+cargo run -q -p corvid-cli -- capsule create `
+  $trace `
+  examples/cdylib_catalog_demo/target/release/classify.dll
+
+cargo run -q -p corvid-cli -- capsule replay `
+  examples/cdylib_catalog_demo/trace_output/capsule_demo.capsule
+```
+
+Expected recorder output includes:
+
+```text
+host_event_status=0
+bad_json_status=1
+replay_line=status=0 result="positive"
+```
+
+The recorded trace contains the valid `host_event` and omits the malformed one,
+which is the compliance guard against hosts silently discarding ABI return codes.
+
 ## Other host demos
 
 - `host_c/host.c` remains the minimal `22-C` catalog smoke test and accepts

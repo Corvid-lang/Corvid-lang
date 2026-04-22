@@ -70,6 +70,13 @@ impl Codegen {
                             .writeln(&format!("import {} as {}", imp.module, alias));
                     }
                 }
+                IrImportSource::Corvid => {
+                    let alias = imp.alias.as_deref().unwrap_or(&imp.module);
+                    self.out.writeln(&format!(
+                        "# corvid import {} as {} (lowered separately)",
+                        imp.module, alias
+                    ));
+                }
             }
         }
     }

@@ -292,6 +292,7 @@ fn corvid_call_agent_handles_happy_path_bad_args_and_approval_flow() {
                 usize,
                 *mut *mut c_char,
                 *mut usize,
+                *mut u64,
                 *mut CorvidApprovalRequired,
             ) -> CorvidCallStatus,
         > = lib.get(b"corvid_call_agent").expect("resolve corvid_call_agent");
@@ -313,6 +314,7 @@ fn corvid_call_agent_handles_happy_path_bad_args_and_approval_flow() {
 
         let mut result = std::ptr::null_mut();
         let mut result_len = 0usize;
+        let mut observation = 0u64;
         let mut approval = CorvidApprovalRequired {
             site_name: std::ptr::null(),
             predicate_json: std::ptr::null(),
@@ -328,10 +330,12 @@ fn corvid_call_agent_handles_happy_path_bad_args_and_approval_flow() {
             ok_args.as_bytes().len(),
             &mut result,
             &mut result_len,
+            &mut observation,
             &mut approval,
         );
         assert_eq!(status, CorvidCallStatus::Ok);
         assert_eq!(result_len, "\"positive\"".len());
+        assert_ne!(observation, 0);
         let result_json = CStr::from_ptr(result).to_str().unwrap().to_owned();
         free_result(result);
         assert_eq!(result_json, "\"positive\"");
@@ -343,6 +347,7 @@ fn corvid_call_agent_handles_happy_path_bad_args_and_approval_flow() {
             bad_args.as_bytes().len(),
             &mut std::ptr::null_mut(),
             &mut result_len,
+            std::ptr::null_mut(),
             &mut approval,
         );
         assert_eq!(status, CorvidCallStatus::BadArgs);
@@ -356,6 +361,7 @@ fn corvid_call_agent_handles_happy_path_bad_args_and_approval_flow() {
             dangerous_args.as_bytes().len(),
             &mut std::ptr::null_mut(),
             &mut result_len,
+            std::ptr::null_mut(),
             &mut approval,
         );
         assert_eq!(status, CorvidCallStatus::ApprovalRequired);
@@ -368,6 +374,7 @@ fn corvid_call_agent_handles_happy_path_bad_args_and_approval_flow() {
             dangerous_args.as_bytes().len(),
             &mut std::ptr::null_mut(),
             &mut result_len,
+            std::ptr::null_mut(),
             &mut approval,
         );
         assert_eq!(status, CorvidCallStatus::ApprovalRequired);
@@ -380,9 +387,11 @@ fn corvid_call_agent_handles_happy_path_bad_args_and_approval_flow() {
             dangerous_args.as_bytes().len(),
             &mut approved_result,
             &mut result_len,
+            &mut observation,
             &mut approval,
         );
         assert_eq!(status, CorvidCallStatus::Ok);
+        assert_ne!(observation, 0);
         let approved_json = CStr::from_ptr(approved_result).to_str().unwrap().to_owned();
         free_result(approved_result);
         assert_eq!(approved_json, "\"vip\"");
@@ -514,6 +523,7 @@ agent approve_site(site: ApprovalSite, args: ApprovalArgs, ctx: ApprovalContext)
                 usize,
                 *mut *mut c_char,
                 *mut usize,
+                *mut u64,
                 *mut CorvidApprovalRequired,
             ) -> CorvidCallStatus,
         > = lib.get(b"corvid_call_agent").expect("resolve corvid_call_agent");
@@ -603,6 +613,7 @@ agent approve_site(site: ApprovalSite, args: ApprovalArgs, ctx: ApprovalContext)
         let dangerous_args = CString::new("[true,\"vip\"]").unwrap();
         let mut result = std::ptr::null_mut();
         let mut result_len = 0usize;
+        let mut observation = 0u64;
         let mut approval = CorvidApprovalRequired {
             site_name: std::ptr::null(),
             predicate_json: std::ptr::null(),
@@ -615,9 +626,11 @@ agent approve_site(site: ApprovalSite, args: ApprovalArgs, ctx: ApprovalContext)
             dangerous_args.as_bytes().len(),
             &mut result,
             &mut result_len,
+            &mut observation,
             &mut approval,
         );
         assert_eq!(call_status, CorvidCallStatus::Ok);
+        assert_ne!(observation, 0);
         let approved_json = CStr::from_ptr(result).to_str().unwrap().to_owned();
         free_result(result);
         assert_eq!(approved_json, "\"vip\"");
@@ -628,6 +641,7 @@ agent approve_site(site: ApprovalSite, args: ApprovalArgs, ctx: ApprovalContext)
             dangerous_args.as_bytes().len(),
             &mut std::ptr::null_mut(),
             &mut result_len,
+            std::ptr::null_mut(),
             &mut approval,
         );
         assert_eq!(direct_status, CorvidCallStatus::UnsupportedSig);

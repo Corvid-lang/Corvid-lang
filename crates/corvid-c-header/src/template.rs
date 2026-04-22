@@ -124,6 +124,13 @@ pub fn render_header(opts: &HeaderOptions, agents: &[HeaderAgent]) -> String {
     out.push_str("    const char* bad_args_message;\n");
     out.push_str("} CorvidPredicateResult;\n\n");
 
+    out.push_str("typedef enum {\n");
+    out.push_str("    CORVID_HOST_EVENT_OK = 0,\n");
+    out.push_str("    CORVID_HOST_EVENT_BAD_JSON = 1,\n");
+    out.push_str("    CORVID_HOST_EVENT_TRACE_DISABLED = 2,\n");
+    out.push_str("    CORVID_HOST_EVENT_RUNTIME_ERROR = 3,\n");
+    out.push_str("} CorvidHostEventStatus;\n\n");
+
     out.push_str("#define CORVID_NULL_GROUNDED_HANDLE ((uint64_t)0)\n\n");
     out.push_str("#define CORVID_NULL_OBSERVATION_HANDLE ((uint64_t)0)\n\n");
 
@@ -167,6 +174,10 @@ pub fn render_header(opts: &HeaderOptions, agents: &[HeaderAgent]) -> String {
     out.push_str("uint64_t corvid_observation_tokens_out(uint64_t handle);\n");
     out.push_str("bool corvid_observation_exceeded_bound(uint64_t handle);\n");
     out.push_str("void corvid_observation_release(uint64_t handle);\n");
+    out.push_str("CorvidHostEventStatus corvid_record_host_event(\n");
+    out.push_str("    const char* name,\n");
+    out.push_str("    const char* payload_json,\n");
+    out.push_str("    size_t payload_len);\n");
     out.push_str("void corvid_free_string(const char* value);\n\n");
 
     for agent in agents {

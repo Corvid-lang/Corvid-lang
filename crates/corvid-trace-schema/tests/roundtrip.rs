@@ -87,6 +87,12 @@ fn sample_trace() -> Vec<TraceEvent> {
             label: "IssueRefund".into(),
             approved: true,
         },
+        TraceEvent::HostEvent {
+            ts_ms: 10,
+            run_id: "r-roundtrip".into(),
+            name: "capsule_record".into(),
+            payload: json!({"host": "c"}),
+        },
         TraceEvent::RunCompleted {
             ts_ms: 11,
             run_id: "r-roundtrip".into(),
@@ -277,6 +283,32 @@ fn provenance_edge_round_trips_through_jsonl() {
             assert_eq!(label.as_deref(), Some("order lookup"));
         }
         other => panic!("expected ProvenanceEdge, got {other:?}"),
+    }
+}
+
+#[test]
+fn host_event_round_trips_through_jsonl() {
+    let event = TraceEvent::HostEvent {
+        ts_ms: 17,
+        run_id: "r-host".into(),
+        name: "capsule_record".into(),
+        payload: json!({"host": "c", "ok": true}),
+    };
+    let line = serde_json::to_string(&event).unwrap();
+    assert!(line.contains("\"kind\":\"host_event\""), "got: {line}");
+    let round: TraceEvent = serde_json::from_str(&line).unwrap();
+    match round {
+        TraceEvent::HostEvent {
+            name,
+            payload,
+            run_id,
+            ..
+        } => {
+            assert_eq!(run_id, "r-host");
+            assert_eq!(name, "capsule_record");
+            assert_eq!(payload, json!({"host": "c", "ok": true}));
+        }
+        other => panic!("expected HostEvent, got {other:?}"),
     }
 }
 

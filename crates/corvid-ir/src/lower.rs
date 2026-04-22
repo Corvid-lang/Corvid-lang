@@ -911,6 +911,7 @@ impl<'a> Lowerer<'a> {
                     None => Type::Unknown,
                 },
             },
+            TypeRef::Qualified { .. } => Type::Unknown,
             TypeRef::Generic { name, args, .. } => match name.name.as_str() {
                 "List" if args.len() == 1 => Type::List(Box::new(self.type_ref_to_type(&args[0]))),
                 "Stream" if args.len() == 1 => {

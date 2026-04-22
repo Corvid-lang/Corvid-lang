@@ -305,6 +305,10 @@ impl ReplaySession {
                     run_id: event_run_id,
                     ..
                 }
+                | TraceEvent::HostEvent {
+                    run_id: event_run_id,
+                    ..
+                }
                 | TraceEvent::ProvenanceEdge {
                     run_id: event_run_id,
                     ..
@@ -502,6 +506,7 @@ fn first_run_id(events: &[TraceEvent]) -> Result<&str, ReplayLoadError> {
         | Some(TraceEvent::ApprovalRequest { run_id, .. })
         | Some(TraceEvent::ApprovalDecision { run_id, .. })
         | Some(TraceEvent::ApprovalResponse { run_id, .. })
+        | Some(TraceEvent::HostEvent { run_id, .. })
         | Some(TraceEvent::SeedRead { run_id, .. })
         | Some(TraceEvent::ClockRead { run_id, .. })
         | Some(TraceEvent::ModelSelected { run_id, .. })
@@ -539,6 +544,7 @@ fn first_ts(events: &[TraceEvent]) -> u64 {
         | Some(TraceEvent::ApprovalRequest { ts_ms, .. })
         | Some(TraceEvent::ApprovalDecision { ts_ms, .. })
         | Some(TraceEvent::ApprovalResponse { ts_ms, .. })
+        | Some(TraceEvent::HostEvent { ts_ms, .. })
         | Some(TraceEvent::SeedRead { ts_ms, .. })
         | Some(TraceEvent::ClockRead { ts_ms, .. })
         | Some(TraceEvent::ModelSelected { ts_ms, .. })
@@ -565,6 +571,7 @@ fn last_ts(events: &[TraceEvent]) -> u64 {
         | Some(TraceEvent::ApprovalRequest { ts_ms, .. })
         | Some(TraceEvent::ApprovalDecision { ts_ms, .. })
         | Some(TraceEvent::ApprovalResponse { ts_ms, .. })
+        | Some(TraceEvent::HostEvent { ts_ms, .. })
         | Some(TraceEvent::SeedRead { ts_ms, .. })
         | Some(TraceEvent::ClockRead { ts_ms, .. })
         | Some(TraceEvent::ModelSelected { ts_ms, .. })

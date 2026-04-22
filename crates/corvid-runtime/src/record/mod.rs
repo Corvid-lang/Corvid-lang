@@ -72,6 +72,11 @@ impl Recorder {
         let event = interception::clock_read(&self.run_id, source, value);
         self.writer.append(&event);
     }
+
+    pub fn emit_host_event(&self, name: &str, payload: serde_json::Value) {
+        let event = interception::host_event(&self.run_id, name, payload);
+        self.writer.append(&event);
+    }
 }
 
 fn build_commit_sha() -> Option<String> {

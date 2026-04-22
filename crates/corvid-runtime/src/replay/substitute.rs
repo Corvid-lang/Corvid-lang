@@ -12,6 +12,7 @@ pub(crate) fn is_dispatch_metadata(event: &TraceEvent) -> bool {
     matches!(
         event,
         TraceEvent::ModelSelected { .. }
+            | TraceEvent::HostEvent { .. }
             | TraceEvent::ProgressiveEscalation { .. }
             | TraceEvent::ProgressiveExhausted { .. }
             | TraceEvent::AbVariantChosen { .. }

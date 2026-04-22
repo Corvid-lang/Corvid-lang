@@ -507,6 +507,7 @@ impl Resolver {
     fn resolve_type_ref(&mut self, ty: &TypeRef) {
         match ty {
             TypeRef::Named { name, .. } => self.resolve_ident(name),
+            TypeRef::Qualified { alias, .. } => self.resolve_ident(alias),
             TypeRef::Generic { name, args, .. } => {
                 self.resolve_ident(name);
                 for arg in args {

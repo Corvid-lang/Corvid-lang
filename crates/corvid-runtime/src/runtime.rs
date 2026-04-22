@@ -389,28 +389,37 @@ impl Runtime {
             label: label_owned.clone(),
             args,
         };
-        let approved = if let Some(replay) = self.replay_source()? {
-            replay.replay_approval(&label_owned, &req.args)?
+        let (approved, detail) = if let Some(replay) = self.replay_source()? {
+            let outcome = replay.replay_approval(&label_owned, &req.args)?;
+            let detail = outcome.decision.map(|decision| crate::approver_bridge::ApprovalDecisionInfo {
+                accepted: decision.accepted,
+                decider: decision.decider,
+                rationale: decision.rationale,
+            });
+            (outcome.approved, detail)
         } else {
-            self.approver.approve(&req).await? == ApprovalDecision::Approve
-        };
-        if trace_enabled && self.replay_source()?.is_none() {
-            let detail = crate::catalog_c_api::take_last_approval_detail().unwrap_or(
+            let approved = self.approver.approve(&req).await? == ApprovalDecision::Approve;
+            let detail = Some(crate::catalog_c_api::take_last_approval_detail().unwrap_or(
                 crate::approver_bridge::ApprovalDecisionInfo {
                     accepted: approved,
                     decider: "runtime-approver".to_string(),
                     rationale: None,
                 },
-            );
-            self.tracer.emit(TraceEvent::ApprovalDecision {
-                ts_ms: now_ms(),
-                run_id: self.tracer.run_id().to_string(),
-                site: label_owned.clone(),
-                args: req.args.clone(),
-                accepted: detail.accepted,
-                decider: detail.decider,
-                rationale: detail.rationale,
-            });
+            ));
+            (approved, detail)
+        };
+        if trace_enabled {
+            if let Some(detail) = detail {
+                self.tracer.emit(TraceEvent::ApprovalDecision {
+                    ts_ms: now_ms(),
+                    run_id: self.tracer.run_id().to_string(),
+                    site: label_owned.clone(),
+                    args: req.args.clone(),
+                    accepted: detail.accepted,
+                    decider: detail.decider,
+                    rationale: detail.rationale,
+                });
+            }
         }
         if trace_enabled {
             self.tracer.emit(TraceEvent::ApprovalResponse {

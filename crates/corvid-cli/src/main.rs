@@ -20,6 +20,7 @@
 
 mod abi_cmd;
 mod approver_cmd;
+mod capsule_cmd;
 mod replay;
 mod routing_report;
 mod test_from_traces;
@@ -299,6 +300,12 @@ enum Command {
         #[command(subcommand)]
         command: ApproverCommand,
     },
+    /// Package or replay a portable execution capsule containing
+    /// the library, descriptor, trace, and manifest.
+    Capsule {
+        #[command(subcommand)]
+        command: CapsuleCommand,
+    },
     /// Inspect recorded traces under `target/trace/` (or a
     /// user-supplied directory).
     Trace {
@@ -427,6 +434,19 @@ enum ApproverCommand {
     },
 }
 
+#[derive(Subcommand)]
+enum CapsuleCommand {
+    Create {
+        trace: PathBuf,
+        cdylib: PathBuf,
+        #[arg(long, value_name = "PATH")]
+        out: Option<PathBuf>,
+    },
+    Replay {
+        capsule: PathBuf,
+    },
+}
+
 fn main() -> ExitCode {
     let cli = Cli::parse();
 
@@ -532,6 +552,12 @@ fn main() -> ExitCode {
                 args,
                 max_budget_usd,
             } => approver_cmd::run_simulate(&approver, &site_label, &args, max_budget_usd),
+        },
+        Some(Command::Capsule { command }) => match command {
+            CapsuleCommand::Create { trace, cdylib, out } => {
+                capsule_cmd::run_create(&trace, &cdylib, out.as_deref())
+            }
+            CapsuleCommand::Replay { capsule } => capsule_cmd::run_replay(&capsule),
         },
         Some(Command::Trace { command }) => match command {
             TraceCommand::List { trace_dir } => trace_cmd::run_list(trace_dir.as_deref()),

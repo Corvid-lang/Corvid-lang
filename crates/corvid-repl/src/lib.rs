@@ -1532,6 +1532,9 @@ fn display_type_rich(ty: &Type, symbols: &corvid_resolve::SymbolTable) -> String
 fn format_typeref(ty: &corvid_ast::TypeRef) -> String {
     match ty {
         corvid_ast::TypeRef::Named { name, .. } => name.name.clone(),
+        corvid_ast::TypeRef::Qualified { alias, name, .. } => {
+            format!("{}.{}", alias.name, name.name)
+        }
         corvid_ast::TypeRef::Generic { name, args, .. } => {
             let inner: Vec<String> = args.iter().map(format_typeref).collect();
             format!("{}<{}>", name.name, inner.join(", "))

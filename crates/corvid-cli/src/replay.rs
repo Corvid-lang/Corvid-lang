@@ -485,6 +485,7 @@ fn run_id_of(events: &[TraceEvent]) -> Option<&str> {
         | TraceEvent::ApprovalRequest { run_id, .. }
         | TraceEvent::ApprovalDecision { run_id, .. }
         | TraceEvent::ApprovalResponse { run_id, .. }
+        | TraceEvent::HostEvent { run_id, .. }
         | TraceEvent::SeedRead { run_id, .. }
         | TraceEvent::ClockRead { run_id, .. }
         | TraceEvent::ModelSelected { run_id, .. }
