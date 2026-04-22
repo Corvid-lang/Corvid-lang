@@ -103,6 +103,116 @@ fn trace_diff_end_to_end_reports_added_agent() {
     );
 }
 
+/// `--narrative=off` must produce a byte-deterministic receipt
+/// (no LLM call, no adapter probe, no stderr narrative warning).
+/// Used by CI for reproducible gating; exercised here to prove the
+/// H-4 wire path respects the opt-out.
+#[test]
+fn trace_diff_narrative_off_emits_boilerplate_deterministically() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = tmp.path();
+    run_git(repo, &["init", "--quiet", "-b", "main"]);
+
+    let src = repo.join("agent.cor");
+    write_file(&src, BASE_SOURCE);
+    run_git(repo, &["add", "agent.cor"]);
+    run_git(repo, &["commit", "--quiet", "-m", "base"]);
+    let base_sha = run_git(repo, &["rev-parse", "HEAD"]);
+    write_file(&src, HEAD_SOURCE_WITH_ADDED_AGENT);
+    run_git(repo, &["add", "agent.cor"]);
+    run_git(repo, &["commit", "--quiet", "-m", "head"]);
+    let head_sha = run_git(repo, &["rev-parse", "HEAD"]);
+
+    let run = |_: u32| {
+        Command::new(corvid_bin())
+            .args([
+                "trace-diff",
+                &base_sha,
+                &head_sha,
+                "agent.cor",
+                "--narrative=off",
+            ])
+            .current_dir(repo)
+            .env_remove("ANTHROPIC_API_KEY")
+            .env_remove("OPENAI_API_KEY")
+            .env_remove("CORVID_MODEL")
+            .output()
+            .expect("run corvid trace-diff --narrative=off")
+    };
+
+    let first = run(0);
+    let second = run(1);
+    assert!(first.status.success(), "first run failed");
+    assert!(second.status.success(), "second run failed");
+
+    let stdout1 = String::from_utf8_lossy(&first.stdout).into_owned();
+    let stdout2 = String::from_utf8_lossy(&second.stdout).into_owned();
+    assert_eq!(
+        stdout1, stdout2,
+        "`--narrative=off` must be byte-deterministic across reruns"
+    );
+
+    // Receipt must show the pre-H-4 boilerplate header (no prose).
+    assert!(
+        stdout1.contains("Comparing base vs. head along Corvid's effect algebra."),
+        "boilerplate header missing. stdout:\n{stdout1}"
+    );
+
+    // `--narrative=off` must not touch the adapter path, so
+    // stderr stays clean of any narrative-rejection messages.
+    let stderr1 = String::from_utf8_lossy(&first.stderr);
+    assert!(
+        !stderr1.contains("narrative rejected"),
+        "--narrative=off should never hit the validator: {stderr1}"
+    );
+}
+
+/// `--narrative=on` with no adapter configured must hard-fail
+/// with a specific error pointing at the missing env vars. Under
+/// `auto` the absence is silent; under `on` the caller opted in
+/// and deserves a typed failure.
+#[test]
+fn trace_diff_narrative_on_without_adapter_hard_fails() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = tmp.path();
+    run_git(repo, &["init", "--quiet", "-b", "main"]);
+
+    let src = repo.join("agent.cor");
+    write_file(&src, BASE_SOURCE);
+    run_git(repo, &["add", "agent.cor"]);
+    run_git(repo, &["commit", "--quiet", "-m", "base"]);
+    let base_sha = run_git(repo, &["rev-parse", "HEAD"]);
+    write_file(&src, HEAD_SOURCE_WITH_ADDED_AGENT);
+    run_git(repo, &["add", "agent.cor"]);
+    run_git(repo, &["commit", "--quiet", "-m", "head"]);
+    let head_sha = run_git(repo, &["rev-parse", "HEAD"]);
+
+    let output = Command::new(corvid_bin())
+        .args([
+            "trace-diff",
+            &base_sha,
+            &head_sha,
+            "agent.cor",
+            "--narrative=on",
+        ])
+        .current_dir(repo)
+        .env_remove("ANTHROPIC_API_KEY")
+        .env_remove("OPENAI_API_KEY")
+        .env_remove("CORVID_MODEL")
+        .output()
+        .expect("run corvid trace-diff --narrative=on");
+
+    assert!(
+        !output.status.success(),
+        "expected non-zero exit with --narrative=on and no adapter"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("--narrative=on requires an LLM adapter"),
+        "expected typed adapter-missing error, got stderr:\n{stderr}"
+    );
+}
+
 #[test]
 fn trace_diff_end_to_end_reports_no_changes_when_source_is_identical() {
     let tmp = tempfile::tempdir().unwrap();

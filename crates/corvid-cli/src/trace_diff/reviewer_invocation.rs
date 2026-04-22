@@ -22,11 +22,12 @@ use corvid_abi::{
     AbiAgent, AbiApprovalContract, AbiApprovalLabel, AbiProvenanceContract, CorvidAbi,
 };
 use corvid_driver::{compile_to_ir, run_ir_with_runtime, Runtime};
-use corvid_runtime::ProgrammaticApprover;
-use corvid_vm::{json_to_value, Value};
+use corvid_runtime::{AnthropicAdapter, OpenAiAdapter, ProgrammaticApprover};
+use corvid_vm::{json_to_value, value_to_json, Value};
 use serde::Serialize;
 
 use super::impact::TraceImpact;
+use super::narrative::{DiffSummary, ReceiptNarrative};
 
 /// The Corvid source of the reviewer agent. Baked into the binary
 /// so the CLI is self-contained: no lookup path, no user
@@ -133,12 +134,17 @@ fn digest_provenance(contract: &AbiProvenanceContract) -> ProvenanceSummary {
 }
 
 /// Compile the in-repo reviewer source, coerce descriptors +
-/// impact to typed `Value`s, and run `review_pr` through the
-/// interpreter.
+/// impact + narrative to typed `Value`s, and run `review_pr`
+/// through the interpreter. The narrative is either an LLM-
+/// generated + validated `ReceiptNarrative` (from
+/// [`invoke_narrative_prompt`]) or the empty sentinel when
+/// `--narrative=off`, no adapter was available under `auto`, or
+/// validation rejected the generated narrative.
 pub(super) fn invoke_reviewer(
     base_abi: &CorvidAbi,
     head_abi: &CorvidAbi,
     impact: &TraceImpact,
+    narrative: &ReceiptNarrative,
 ) -> Result<String> {
     let reviewer_ir = compile_to_ir(REVIEWER_SOURCE)
         .map_err(|diags| anyhow!("reviewer source failed to compile: {} diagnostic(s)", diags.len()))?;
@@ -153,10 +159,16 @@ pub(super) fn invoke_reviewer(
         .iter()
         .find(|t| t.name == "TraceImpact")
         .ok_or_else(|| anyhow!("reviewer source missing `TraceImpact` type"))?;
+    let narrative_type = reviewer_ir
+        .types
+        .iter()
+        .find(|t| t.name == "ReceiptNarrative")
+        .ok_or_else(|| anyhow!("reviewer source missing `ReceiptNarrative` type"))?;
     let types_by_id = reviewer_ir.types.iter().map(|t| (t.id, t)).collect();
 
     let descriptor_expected = corvid_types::Type::Struct(descriptor_type.id);
     let impact_expected = corvid_types::Type::Struct(impact_type.id);
+    let narrative_expected = corvid_types::Type::Struct(narrative_type.id);
 
     let base_value = json_to_value(
         serde_json::to_value(digest(base_abi))?,
@@ -176,6 +188,12 @@ pub(super) fn invoke_reviewer(
         &types_by_id,
     )
     .map_err(|e| anyhow!("impact → Value: {e:?}"))?;
+    let narrative_value = json_to_value(
+        serde_json::to_value(narrative)?,
+        &narrative_expected,
+        &types_by_id,
+    )
+    .map_err(|e| anyhow!("narrative → Value: {e:?}"))?;
 
     // The reviewer is `@deterministic` and calls no LLMs, tools, or
     // approvers. A minimal runtime with a programmatic approver (any
@@ -194,7 +212,7 @@ pub(super) fn invoke_reviewer(
         .block_on(run_ir_with_runtime(
             &reviewer_ir,
             Some("review_pr"),
-            vec![base_value, head_value, impact_value],
+            vec![base_value, head_value, impact_value, narrative_value],
             &runtime,
         ))
         .map_err(|e| anyhow!("reviewer `review_pr` failed: {e}"))?;
@@ -205,6 +223,97 @@ pub(super) fn invoke_reviewer(
             "reviewer `review_pr` returned non-String value: {other:?}"
         )),
     }
+}
+
+/// Reason the narrative path was skipped. Carried by
+/// [`AdapterConfig::None`] so the CLI can surface a specific
+/// stderr line under `--narrative=on`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) enum NoAdapter {
+    NoModelSelected,
+    NoApiKeyForModel,
+}
+
+/// Result of env-driven adapter detection. `Some(builder)` means
+/// the runtime will accept prompt calls; `None` means the narrative
+/// path should be skipped under `auto` or hard-fail under `on`.
+pub(super) fn detect_adapter() -> std::result::Result<corvid_driver::RuntimeBuilder, NoAdapter> {
+    let model = std::env::var("CORVID_MODEL").map_err(|_| NoAdapter::NoModelSelected)?;
+    let mut builder = Runtime::builder()
+        .approver(Arc::new(ProgrammaticApprover::always_no()))
+        .default_model(&model);
+
+    let mut has_key = false;
+    if let Ok(key) = std::env::var("ANTHROPIC_API_KEY") {
+        builder = builder.llm(Arc::new(AnthropicAdapter::new(key)));
+        has_key = true;
+    }
+    if let Ok(key) = std::env::var("OPENAI_API_KEY") {
+        builder = builder.llm(Arc::new(OpenAiAdapter::new(key)));
+        has_key = true;
+    }
+    if !has_key {
+        return Err(NoAdapter::NoApiKeyForModel);
+    }
+    Ok(builder)
+}
+
+/// Run `summarise_diff` through the interpreter with an LLM
+/// adapter configured. Caller is responsible for having detected
+/// an adapter via [`detect_adapter`]; the `builder` argument is
+/// the already-configured runtime factory. Returns the prompt's
+/// `ReceiptNarrative` un-validated — the caller validates against
+/// the `DiffSummary`'s allow-list.
+pub(super) fn invoke_narrative_prompt(
+    diff: &DiffSummary,
+    builder: corvid_driver::RuntimeBuilder,
+) -> Result<ReceiptNarrative> {
+    let reviewer_ir = compile_to_ir(REVIEWER_SOURCE).map_err(|diags| {
+        anyhow!(
+            "reviewer source failed to compile: {} diagnostic(s)",
+            diags.len()
+        )
+    })?;
+
+    let diff_type = reviewer_ir
+        .types
+        .iter()
+        .find(|t| t.name == "DiffSummary")
+        .ok_or_else(|| anyhow!("reviewer source missing `DiffSummary` type"))?;
+    let types_by_id = reviewer_ir.types.iter().map(|t| (t.id, t)).collect();
+    let diff_expected = corvid_types::Type::Struct(diff_type.id);
+
+    let diff_value = json_to_value(
+        serde_json::to_value(diff)?,
+        &diff_expected,
+        &types_by_id,
+    )
+    .map_err(|e| anyhow!("diff summary → Value: {e:?}"))?;
+
+    let runtime = builder.build();
+    let tokio_rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .context("build tokio runtime for narrative prompt")?;
+
+    let result = tokio_rt
+        .block_on(run_ir_with_runtime(
+            &reviewer_ir,
+            Some("summarise_diff"),
+            vec![diff_value],
+            &runtime,
+        ))
+        .map_err(|e| anyhow!("reviewer `summarise_diff` failed: {e}"))?;
+
+    // `summarise_diff` returns a `ReceiptNarrative` struct value.
+    // Convert through serde_json so we reuse the Deserialize impl
+    // on `ReceiptNarrative` rather than hand-walking the VM Value
+    // shape — that keeps narrative.rs the single source of truth
+    // for the Rust representation.
+    let json = value_to_json(&result);
+    let narrative: ReceiptNarrative = serde_json::from_value(json)
+        .context("deserialising `summarise_diff` result to ReceiptNarrative")?;
+    Ok(narrative)
 }
 
 #[cfg(test)]
@@ -273,7 +382,7 @@ mod tests {
     fn reviewer_reports_no_changes_when_both_sides_equal() {
         let base = synth_abi(&[("classify", "autonomous", false, true)]);
         let head = synth_abi(&[("classify", "autonomous", false, true)]);
-        let receipt = invoke_reviewer(&base, &head, &TraceImpact::empty()).unwrap();
+        let receipt = invoke_reviewer(&base, &head, &TraceImpact::empty(), &ReceiptNarrative::empty()).unwrap();
         assert!(receipt.contains("No algebraic changes detected"), "got: {receipt}");
     }
 
@@ -284,7 +393,7 @@ mod tests {
             ("classify", "autonomous", false, true),
             ("summarize", "autonomous", false, true),
         ]);
-        let receipt = invoke_reviewer(&base, &head, &TraceImpact::empty()).unwrap();
+        let receipt = invoke_reviewer(&base, &head, &TraceImpact::empty(), &ReceiptNarrative::empty()).unwrap();
         assert!(receipt.contains("Added"), "got: {receipt}");
         assert!(receipt.contains("summarize"), "got: {receipt}");
     }
@@ -296,7 +405,7 @@ mod tests {
             ("summarize", "autonomous", false, true),
         ]);
         let head = synth_abi(&[("classify", "autonomous", false, true)]);
-        let receipt = invoke_reviewer(&base, &head, &TraceImpact::empty()).unwrap();
+        let receipt = invoke_reviewer(&base, &head, &TraceImpact::empty(), &ReceiptNarrative::empty()).unwrap();
         assert!(receipt.contains("Removed"), "got: {receipt}");
         assert!(receipt.contains("summarize"), "got: {receipt}");
     }
@@ -305,7 +414,7 @@ mod tests {
     fn reviewer_flags_dangerous_transition() {
         let base = synth_abi(&[("refund_bot", "human_required", false, false)]);
         let head = synth_abi(&[("refund_bot", "human_required", true, false)]);
-        let receipt = invoke_reviewer(&base, &head, &TraceImpact::empty()).unwrap();
+        let receipt = invoke_reviewer(&base, &head, &TraceImpact::empty(), &ReceiptNarrative::empty()).unwrap();
         assert!(receipt.contains("became `@dangerous`"), "got: {receipt}");
         assert!(receipt.contains("refund_bot"), "got: {receipt}");
     }
@@ -314,7 +423,7 @@ mod tests {
     fn reviewer_flags_trust_tier_change() {
         let base = synth_abi(&[("refund_bot", "human_required", false, false)]);
         let head = synth_abi(&[("refund_bot", "autonomous", false, false)]);
-        let receipt = invoke_reviewer(&base, &head, &TraceImpact::empty()).unwrap();
+        let receipt = invoke_reviewer(&base, &head, &TraceImpact::empty(), &ReceiptNarrative::empty()).unwrap();
         assert!(receipt.contains("trust changed"), "got: {receipt}");
         assert!(receipt.contains("human_required"), "got: {receipt}");
         assert!(receipt.contains("autonomous"), "got: {receipt}");
@@ -330,8 +439,8 @@ mod tests {
             ("classify", "autonomous", false, true),
             ("summarize", "autonomous", false, false),
         ]);
-        let first = invoke_reviewer(&base, &head, &TraceImpact::empty()).unwrap();
-        let second = invoke_reviewer(&base, &head, &TraceImpact::empty()).unwrap();
+        let first = invoke_reviewer(&base, &head, &TraceImpact::empty(), &ReceiptNarrative::empty()).unwrap();
+        let second = invoke_reviewer(&base, &head, &TraceImpact::empty(), &ReceiptNarrative::empty()).unwrap();
         assert_eq!(first, second, "@deterministic reviewer must produce byte-identical receipts");
     }
 
@@ -345,7 +454,7 @@ mod tests {
     fn empty_impact_renders_no_section() {
         let base = synth_abi(&[("classify", "autonomous", false, true)]);
         let head = synth_abi(&[("classify", "autonomous", false, true)]);
-        let receipt = invoke_reviewer(&base, &head, &TraceImpact::empty()).unwrap();
+        let receipt = invoke_reviewer(&base, &head, &TraceImpact::empty(), &ReceiptNarrative::empty()).unwrap();
         assert!(
             !receipt.contains("Counterfactual Replay Impact"),
             "empty impact must not render a section; got: {receipt}"
@@ -367,7 +476,7 @@ mod tests {
         let base = synth_abi(&[("classify", "autonomous", false, true)]);
         let head = synth_abi(&[("classify", "autonomous", false, true)]);
         let impact = synth_impact(true, vec!["run-a.jsonl", "run-b.jsonl"]);
-        let receipt = invoke_reviewer(&base, &head, &impact).unwrap();
+        let receipt = invoke_reviewer(&base, &head, &impact, &ReceiptNarrative::empty()).unwrap();
         assert!(receipt.contains("Counterfactual Replay Impact"), "got: {receipt}");
         assert!(receipt.contains("Newly divergent under head"), "got: {receipt}");
         assert!(receipt.contains("run-a.jsonl"), "got: {receipt}");
@@ -380,7 +489,7 @@ mod tests {
         let base = synth_abi(&[("classify", "autonomous", false, true)]);
         let head = synth_abi(&[("classify", "autonomous", false, true)]);
         let impact = synth_impact(false, vec![]);
-        let receipt = invoke_reviewer(&base, &head, &impact).unwrap();
+        let receipt = invoke_reviewer(&base, &head, &impact, &ReceiptNarrative::empty()).unwrap();
         assert!(receipt.contains("Counterfactual Replay Impact"), "got: {receipt}");
         assert!(
             receipt.contains("No traces newly diverge under this PR"),
@@ -488,7 +597,7 @@ mod tests {
             false,
             &[],
         );
-        let receipt = invoke_reviewer(&base, &head, &TraceImpact::empty()).unwrap();
+        let receipt = invoke_reviewer(&base, &head, &TraceImpact::empty(), &ReceiptNarrative::empty()).unwrap();
         assert!(
             receipt.contains("approve site `WireTransfer` added"),
             "got: {receipt}"
@@ -518,7 +627,7 @@ mod tests {
             false,
             &[],
         );
-        let receipt = invoke_reviewer(&base, &head, &TraceImpact::empty()).unwrap();
+        let receipt = invoke_reviewer(&base, &head, &TraceImpact::empty(), &ReceiptNarrative::empty()).unwrap();
         assert!(
             receipt.contains("approve site `WireTransfer` removed"),
             "got: {receipt}"
@@ -545,7 +654,7 @@ mod tests {
             false,
             &[],
         );
-        let receipt = invoke_reviewer(&base, &head, &TraceImpact::empty()).unwrap();
+        let receipt = invoke_reviewer(&base, &head, &TraceImpact::empty(), &ReceiptNarrative::empty()).unwrap();
         assert!(
             receipt
                 .contains("approve site `IssueRefund` required-tier: `human_required` -> `autonomous`"),
@@ -573,7 +682,7 @@ mod tests {
             false,
             &[],
         );
-        let receipt = invoke_reviewer(&base, &head, &TraceImpact::empty()).unwrap();
+        let receipt = invoke_reviewer(&base, &head, &TraceImpact::empty(), &ReceiptNarrative::empty()).unwrap();
         assert!(
             receipt.contains("approve site `IssueRefund` became irreversible"),
             "got: {receipt}"
@@ -600,7 +709,7 @@ mod tests {
             true,
             &["source_docs"],
         );
-        let receipt = invoke_reviewer(&base, &head, &TraceImpact::empty()).unwrap();
+        let receipt = invoke_reviewer(&base, &head, &TraceImpact::empty(), &ReceiptNarrative::empty()).unwrap();
         assert!(
             receipt.contains("return value gained `Grounded<T>` provenance"),
             "got: {receipt}"
@@ -631,7 +740,7 @@ mod tests {
             false,
             &[],
         );
-        let receipt = invoke_reviewer(&base, &head, &TraceImpact::empty()).unwrap();
+        let receipt = invoke_reviewer(&base, &head, &TraceImpact::empty(), &ReceiptNarrative::empty()).unwrap();
         assert!(
             receipt.contains("return value lost `Grounded<T>` provenance"),
             "got: {receipt}"
@@ -662,7 +771,7 @@ mod tests {
             true,
             &["ticket"],
         );
-        let receipt = invoke_reviewer(&base, &head, &TraceImpact::empty()).unwrap();
+        let receipt = invoke_reviewer(&base, &head, &TraceImpact::empty(), &ReceiptNarrative::empty()).unwrap();
         assert!(
             receipt.contains("No algebraic changes detected"),
             "got: {receipt}"

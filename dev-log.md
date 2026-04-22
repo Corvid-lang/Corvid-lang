@@ -4287,6 +4287,112 @@ Interpretation:
   prose summary grounded in the diff) and H-5 (GitHub/CI format
   modes). Each still independently shippable.
 
+## Day 52 — 2026-04-22 — Slice 21-inv-H-4: structured narrative summary
+
+The PR-receipt top-of-page boilerplate ("Comparing base vs. head
+along Corvid's effect algebra.") is now an LLM-generated
+one-to-three-sentence prose paragraph when a model adapter is
+configured, with every specific change cited by canonical
+`delta_key` and a strict all-or-nothing validator that falls back
+to the boilerplate when anything smells wrong.
+
+Three preparatory commits landed first — `trace_diff/mod.rs` had
+drifted past the file-responsibility rubric (3+ internal sections
+sharing no state). Per CLAUDE.md "modifying-file-for-a-feature"
+rule, the splits go before the feature:
+
+- `319bf3a` — extract `trace_diff::impact` (trace replay +
+  bucket categorisation + TraceImpact)
+- `9e39206` — extract `trace_diff::reviewer_invocation` (compile
+  reviewer IR + descriptor digest + invoke_reviewer + reviewer
+  tests)
+- `<this>` — feat H-4 lands `trace_diff::narrative` as the third
+  submodule. `trace_diff/mod.rs` is now ~170 lines and owns just
+  the top-level orchestration.
+
+What shipped in H-4 proper:
+
+Types. `DiffSummary { records: List<DeltaRecord> }` where
+`DeltaRecord { key, summary }` uses a dot-separated
+category, colon-separated variadic-args grammar:
+`agent.added:<name>`,
+`agent.approval.label_added:<name>:<label>`,
+`agent.provenance.grounded_gained:<name>`, etc. The 15 grammar
+variants mirror H-3's detection surface plus net-new +/- for
+agent / approval-label / grounded-deps. `DeltaCitation {
+delta_key }` and `ReceiptNarrative { body, citations }` are the
+prompt's output and the reviewer's fourth `review_pr` argument.
+
+Corvid reviewer. New `summarise_diff(delta: DiffSummary) ->
+ReceiptNarrative` prompt. Extended `review_pr(base, head, impact,
+narrative) -> String` — still `@deterministic` because the
+narrative's non-determinism lives in `summarise_diff` one layer
+up. When `narrative.body != ""`, the reviewer renders it at the
+top; otherwise renders the H-3 boilerplate.
+
+Rust. `NarrativeMode { Auto, On, Off }` parses from the
+`--narrative` flag (default `auto`). `compute_diff_summary`
+walks base+head ABIs into the canonical `DiffSummary`. The
+orchestrator in `resolve_narrative`:
+1. `Off` → empty sentinel, no adapter probe.
+2. `Auto` + no adapter → empty sentinel silently.
+3. `On` + no adapter → typed error with guidance on which env
+   vars to set.
+4. Adapter present, empty diff → empty sentinel (skip the prompt
+   roundtrip).
+5. Adapter present, non-empty diff → `invoke_narrative_prompt` →
+   `validate_narrative` → either the narrative or empty + stderr
+   `narrative rejected: <reason>`.
+
+Validation rules (strict, all-or-nothing per the pre-phase chat):
+every cited `delta_key` must be in the allow-list; non-empty
+body with an empty citations list is rejected; duplicate keys
+are rejected. Any violation drops the whole narrative.
+
+CLI. `--narrative=auto|on|off` flag, default `auto`. `off` gives
+a byte-deterministic receipt for CI; `on` hard-fails when no
+adapter is available (with guidance on the missing env vars);
+`auto` silently falls back to boilerplate when no adapter.
+
+Tests. 10 new unit tests in `trace_diff::narrative` (mode
+parsing, all three validator rejection paths, well-formed
+acceptance, empty-sentinel acceptance, 4 `compute_diff_summary`
+cases including the sides-match-no-output invariant). Two new
+integration tests — `--narrative=off` byte-determinism across
+reruns + the boilerplate stays visible, and `--narrative=on`
+with no adapter hard-fails with the typed guidance string.
+31 trace_diff unit tests pass total (17 reviewer + 4 impact +
+10 narrative), 8 integration tests pass.
+
+Interpretation. The wrapping-layer pattern — deterministic
+orchestrator, narrow non-deterministic surface, deterministic
+pre-filter — is the generalisable shape for any language that
+wants to mix LLM output into deterministic artefacts. Fencing
+the non-determinism inside a single prompt call and gating its
+output through a deterministic validator keeps the surrounding
+structure reproducible. Phase 21's `@deterministic` modifier
+does the heavy lifting on the reviewer side; the CLI respects
+`--narrative=off` by construction because skipping the prompt
+means `review_pr` gets the empty sentinel and renders
+deterministically.
+
+What deliberately didn't ship. `Grounded<ReceiptNarrative>`. The
+ROADMAP called for it; the pre-phase chat re-scoped H-4 to
+ungrounded after discovering that Corvid can't mint a
+`Grounded<T>` from a plain `T` today (blocks on
+retrieval-tagged source material) and Dev B explicitly ruled
+out Rust manufacturing grounded handles before 22-F lands. The
+upgrade is a tracked follow-up, `21-inv-H-4-follow` in ROADMAP.
+
+Lane A coordination. While this slice was in progress, Dev B
+shipped `22-D-effect-filter` (`6483d20`) and docs-updates for
+the 22-C + 22-E checkboxes (`633e652`). Both rebased cleanly
+onto my preparatory extractions. 22-F is next on Dev B's queue
+and is the gating dependency for `21-inv-H-4-follow`.
+
+Lane A has one follow-up remaining for v1.0 proper: H-5
+(GitHub/CI format modes). The `21-inv-H-4-follow` waits on 22-F.
+
 
 
 

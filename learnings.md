@@ -1720,6 +1720,105 @@ runtime-panic price tag; if a crate offers a sync helper that other callers
 rely on, the answer is to expose the async variant alongside it, not to thread
 runtimes through function bodies.
 
+### Non-deterministic generators, deterministic receipts: the wrapping-layer pattern
+
+`21-inv-H-4` wanted an LLM-generated prose paragraph at the top of
+the trace-diff receipt, but the receipt overall still had to be
+byte-deterministic where it mattered (CI, `--format=json`). The
+conflict is real: prompts produce different strings each run.
+
+The resolution is a wrapping-layer pattern with three tiers:
+
+1. A deterministic orchestrator (`review_pr`) renders the whole
+   receipt from structured inputs. It is `@deterministic` —
+   identical inputs always produce byte-identical output.
+2. A narrow non-deterministic surface (`summarise_diff` prompt)
+   produces exactly one piece of the structure: the narrative
+   paragraph.
+3. A deterministic pre-filter between them (`validate_narrative`)
+   enforces strict all-or-nothing rules on the LLM's output; on
+   rejection it substitutes a deterministic sentinel.
+
+The critical property: the non-determinism is fenced inside tier 2
+and never leaks into tier 1 or tier 3. `review_pr` renders the
+narrative OR the boilerplate fallback, and both are deterministic
+given their inputs. The caller can *opt into* the non-deterministic
+path (`--narrative=on/auto`) or out of it (`--narrative=off`);
+opting out makes the whole receipt byte-deterministic again with no
+special casing in `review_pr`.
+
+The lesson generalises beyond this slice: any language that wants to
+mix LLM surfaces into deterministic artefacts needs a pattern like
+this. A pre-phase chat almost settled on `Grounded<ReceiptNarrative>`
+for H-4; what actually shipped is ungrounded plus strict
+post-validation, because the language couldn't mint a grounded value
+from a plain value today. The deferred follow-up is to re-wrap once
+22-F lands the provenance-handle path across FFI. The pattern
+doesn't change — only the type-level annotation gets sharper.
+
+### Grounding across FFI is a runtime attestation, not an extended type wall
+
+Thinking about how `Grounded<T>` crosses the FFI boundary (for the
+post-22-F H-4 follow-up) forced a choice that applies to any
+system mixing language-level effect walls with foreign hosts.
+
+Inside Corvid, `Grounded<T>` is an effect wall: you cannot extract
+`T` without staying in a grounded context. Across the FFI the host
+has `T` the moment it reads the return value. Two options:
+
+1. Grounding is informational at the boundary. Host receives
+   `(payload, handle)`; handle queries sources + confidence. The
+   Corvid-side guarantee survives as an *inspectable attestation*
+   but not as a compile-time wall.
+2. Grounding is enforced at the boundary. Host never receives `T`
+   directly; only operates on opaque handles through FFI
+   primitives.
+
+Option 2 sounds purer but is wrong in practice. It forces hosts to
+re-express their entire call graph through grounded-handle
+primitives — impractical for real C/Python/Rust hosts — and gives
+*false* security because a determined host casts the handle to a
+pointer and reads the bytes. Pretending the type wall extends into
+foreign code when it can't is worse than admitting it doesn't.
+
+Option 1 is honest: the compile-time wall stays a compile-time
+guarantee *inside* Corvid; at the boundary it transforms into a
+runtime attestation the host can inspect when it cares. The
+attestation surface (source names, confidence, handle lifetime)
+lets sophisticated hosts act on the evidence. Hosts that don't care
+just use the payload and release the handle.
+
+The deep lesson: when a language-level effect guarantee meets a
+foreign runtime, the honest move is to let the guarantee decompose
+into runtime evidence rather than try to extend the wall. The same
+reasoning will apply to `@dangerous`, `@deterministic`, approval
+contracts — each has a compile-time teeth and a runtime receipt, and
+each receipt is what crosses the boundary.
+
+### Citation validation is what makes grounding meaningful, not decoration
+
+`21-inv-H-4`'s citation rule from the pre-phase chat: all-or-nothing.
+Every `delta_key` an LLM cites must be in the allow-list we computed
+from the structural diff; a non-empty body with an empty citations
+list is rejected; duplicate keys are rejected. Any violation drops
+the entire narrative and falls back to boilerplate.
+
+The alternative — partial acceptance — was considered and rejected.
+Partial acceptance lets the narrative keep the phrases whose
+citations validated and drop the phrases whose citations didn't. But
+once the LLM's output has been surgically edited, the sentences that
+remain may no longer flow, may reference changes out of order, or
+(worst) may preserve a phrase whose cited `delta_key` was valid but
+whose *semantic* claim was about a different change entirely. The
+citation validates the key; it can't validate the prose. All-or-
+nothing keeps the validation's meaning crisp: *either this whole
+paragraph is honestly cited, or we don't trust any of it.*
+
+The lesson for any system that mixes LLM text with structured
+grounding: the grounding check is only meaningful when it's load-
+bearing. A check you only sometimes act on isn't a check, it's
+decoration.
+
 ### Positional struct constructors, not struct-literal braces
 
 `21-inv-H-3` tried to build a sentinel `ApprovalLabelSummary` inside

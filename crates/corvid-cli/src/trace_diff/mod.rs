@@ -45,6 +45,7 @@
 //! - `21-inv-H-5` `--format=github-check|markdown|json` outputs.
 
 mod impact;
+mod narrative;
 mod reviewer_invocation;
 
 use std::path::Path;
@@ -54,7 +55,9 @@ use anyhow::{anyhow, Context, Result};
 use corvid_driver::{compile_to_abi_with_config, load_corvid_config_for};
 
 use impact::{compute_trace_impact, TraceImpact};
-use reviewer_invocation::invoke_reviewer;
+pub use narrative::NarrativeMode;
+use narrative::{compute_diff_summary, validate_narrative, ReceiptNarrative};
+use reviewer_invocation::{detect_adapter, invoke_narrative_prompt, invoke_reviewer, NoAdapter};
 
 /// Parsed args for `corvid trace-diff`. Library-level callers
 /// construct directly; the `corvid` binary builds this from clap.
@@ -73,6 +76,12 @@ pub struct TraceDiffArgs<'a> {
     /// impact section; when absent, the receipt is the static
     /// algebra diff only (21-inv-H-1 behavior).
     pub trace_dir: Option<&'a Path>,
+    /// Whether to run the LLM narrative prompt for the top-of-
+    /// receipt prose paragraph. Default is [`NarrativeMode::Auto`]
+    /// (use when an adapter is configured, skip silently
+    /// otherwise). CI and deterministic-reproducer callers pick
+    /// [`NarrativeMode::Off`].
+    pub narrative_mode: NarrativeMode,
 }
 
 /// Run `corvid trace-diff`: fetch source at both SHAs, compile each
@@ -103,10 +112,73 @@ pub fn run_trace_diff(args: TraceDiffArgs<'_>) -> Result<u8> {
         None => TraceImpact::empty(),
     };
 
-    let receipt = invoke_reviewer(&base_abi, &head_abi, &impact)
+    let narrative = resolve_narrative(&base_abi, &head_abi, args.narrative_mode)?;
+
+    let receipt = invoke_reviewer(&base_abi, &head_abi, &impact, &narrative)
         .context("reviewer agent execution failed")?;
     print!("{receipt}");
     Ok(0)
+}
+
+/// Drive the narrative pipeline: compute the diff summary, detect
+/// (or refuse) an LLM adapter per the user's mode, invoke the
+/// `summarise_diff` prompt, validate the citations, emit a stderr
+/// warning on any rejection, and always fall back to
+/// `ReceiptNarrative::empty()` when anything goes sideways. The
+/// reviewer's byte-determinism invariant is preserved: identical
+/// inputs always produce an identical narrative *or* the same
+/// empty sentinel.
+fn resolve_narrative(
+    base: &corvid_abi::CorvidAbi,
+    head: &corvid_abi::CorvidAbi,
+    mode: NarrativeMode,
+) -> Result<ReceiptNarrative> {
+    if matches!(mode, NarrativeMode::Off) {
+        return Ok(ReceiptNarrative::empty());
+    }
+
+    let builder = match detect_adapter() {
+        Ok(b) => b,
+        Err(reason) => {
+            return match mode {
+                NarrativeMode::On => Err(anyhow!(
+                    "--narrative=on requires an LLM adapter ({})",
+                    match reason {
+                        NoAdapter::NoModelSelected =>
+                            "set `CORVID_MODEL` and one of `ANTHROPIC_API_KEY` / `OPENAI_API_KEY`",
+                        NoAdapter::NoApiKeyForModel =>
+                            "`CORVID_MODEL` is set but no matching API key is exported",
+                    }
+                )),
+                NarrativeMode::Auto => Ok(ReceiptNarrative::empty()),
+                NarrativeMode::Off => unreachable!(),
+            };
+        }
+    };
+
+    let diff = compute_diff_summary(base, head);
+    // Empty diff → empty narrative. Skip the prompt call entirely;
+    // there's nothing to summarise and the prompt would just pay a
+    // round-trip to generate an empty response.
+    if diff.records.is_empty() {
+        return Ok(ReceiptNarrative::empty());
+    }
+
+    let narrative = match invoke_narrative_prompt(&diff, builder) {
+        Ok(n) => n,
+        Err(e) => {
+            eprintln!("narrative rejected: prompt invocation failed: {e:#}");
+            return Ok(ReceiptNarrative::empty());
+        }
+    };
+
+    match validate_narrative(&narrative, &diff) {
+        Ok(()) => Ok(narrative),
+        Err(reason) => {
+            eprintln!("narrative rejected: {reason}");
+            Ok(ReceiptNarrative::empty())
+        }
+    }
 }
 
 /// `git show <rev>:<path>` → file contents. Returns a typed error
