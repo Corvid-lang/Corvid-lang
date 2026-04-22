@@ -54,6 +54,11 @@ fn exported_agent(agent: &IrAgent) -> HeaderAgent {
             format!("{params_c}, uint64_t* out_grounded_handle")
         };
     }
+    params_c = if params_c == "void" {
+        "uint64_t* out_observation_handle".to_string()
+    } else {
+        format!("{params_c}, uint64_t* out_observation_handle")
+    };
     let return_c_type = return_abi.c_return_type();
     let signature_comment = format!(
         "agent {}({}) -> {}",

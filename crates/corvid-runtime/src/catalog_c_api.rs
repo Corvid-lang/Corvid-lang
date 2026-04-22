@@ -87,7 +87,7 @@ pub(crate) fn request_host_approval(request: &OwnedApprovalRequired) -> Approval
     let c_request = owned_approval_to_c(request);
     let decision = unsafe { callback(&c_request, registration.user_data as *mut c_void) };
     let detail = ApprovalDecisionInfo {
-        accepted: matches!(decision, CorvidApprovalDecision::Accept),
+        accepted: decision == CorvidApprovalDecision::Accept as i32,
         decider: "c-callback".to_string(),
         rationale: None,
     };
@@ -862,6 +862,25 @@ pub extern "C" fn corvid_observation_release(handle: u64) {
 }
 
 #[no_mangle]
+pub extern "C" fn corvid_begin_direct_observation(declared_bound_usd: f64) {
+    let declared_bound = if declared_bound_usd.is_finite() {
+        Some(declared_bound_usd)
+    } else {
+        None
+    };
+    observation_handles::begin_direct_observation(declared_bound);
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn corvid_finish_direct_observation(out_handle: *mut u64) {
+    if out_handle.is_null() {
+        let _ = observation_handles::finish_direct_observation();
+        return;
+    }
+    *out_handle = observation_handles::finish_direct_observation();
+}
+
+#[no_mangle]
 pub unsafe extern "C" fn corvid_record_host_event(
     name: *const c_char,
     payload_json: *const c_char,
@@ -1162,6 +1181,36 @@ pub extern "C" fn corvid_register_approver(
     let mut registration = APPROVER_REGISTRATION.lock().unwrap();
     registration.callback = fn_ptr;
     registration.user_data = user_data as usize;
+    clear_corvid_approver_source();
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn corvid_mark_preapproved_request(
+    site_name: *const c_char,
+    args_json: *const c_char,
+    args_len: usize,
+) -> bool {
+    let Ok(site_name) = read_c_string(site_name) else {
+        return false;
+    };
+    if args_json.is_null() {
+        return false;
+    }
+    let bytes = std::slice::from_raw_parts(args_json as *const u8, args_len);
+    let args_json = String::from_utf8_lossy(bytes).into_owned();
+    let Ok(serde_json::Value::Array(args)) = serde_json::from_str::<serde_json::Value>(&args_json) else {
+        return false;
+    };
+    mark_preapproved_request(
+        site_name,
+        args,
+        ApprovalDecisionInfo {
+            accepted: true,
+            decider: "host-binding-local-approver".to_string(),
+            rationale: None,
+        },
+    );
+    true
 }
 
 #[no_mangle]
@@ -1191,6 +1240,10 @@ pub unsafe extern "C" fn corvid_register_approver_from_source(
 
 #[no_mangle]
 pub extern "C" fn corvid_clear_approver() {
+    let mut registration = APPROVER_REGISTRATION.lock().unwrap();
+    registration.callback = None;
+    registration.user_data = 0;
+    drop(registration);
     clear_corvid_approver_source();
 }
 
@@ -1237,4 +1290,41 @@ pub unsafe extern "C" fn corvid_evaluate_approval_predicate(
     };
     reset_transients();
     evaluate_approval_predicate(&site_name, &args_json)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    static CALLBACK_CALLS: AtomicUsize = AtomicUsize::new(0);
+
+    unsafe extern "C" fn counting_approver(
+        _request: *const CorvidApprovalRequired,
+        _user_data: *mut c_void,
+    ) -> i32 {
+        CALLBACK_CALLS.fetch_add(1, Ordering::SeqCst);
+        CorvidApprovalDecision::Accept as i32
+    }
+
+    #[test]
+    fn request_host_approval_callback_can_run_nontrivial_host_code() {
+        CALLBACK_CALLS.store(0, Ordering::SeqCst);
+        corvid_register_approver(Some(counting_approver), std::ptr::null_mut());
+        let request = OwnedApprovalRequired {
+            site_name: "EchoString".to_string(),
+            predicate_json: "{\"kind\":\"approval_contract\"}".to_string(),
+            args_json: "[\"vip\"]".to_string(),
+            rationale_prompt: "Approval required".to_string(),
+        };
+        let outcome = request_host_approval(&request);
+        corvid_clear_approver();
+        match outcome {
+            ApprovalRequestOutcome::Accepted(_) => {}
+            ApprovalRequestOutcome::MissingOrRejected => {
+                panic!("host callback unexpectedly rejected request")
+            }
+        }
+        assert_eq!(CALLBACK_CALLS.load(Ordering::SeqCst), 1);
+    }
 }

@@ -107,6 +107,8 @@ fn exported_symbols(ir: &IrFile) -> Vec<String> {
             "corvid_grounded_confidence",
             "corvid_grounded_release",
             "corvid_observation_cost_usd",
+            "corvid_begin_direct_observation",
+            "corvid_finish_direct_observation",
             "corvid_observation_latency_ms",
             "corvid_observation_tokens_in",
             "corvid_observation_tokens_out",
@@ -116,6 +118,7 @@ fn exported_symbols(ir: &IrFile) -> Vec<String> {
             "corvid_register_approver",
             "corvid_register_approver_from_source",
             "corvid_clear_approver",
+            "corvid_mark_preapproved_request",
             "corvid_approval_predicate_json",
             "corvid_evaluate_approval_predicate",
         ]

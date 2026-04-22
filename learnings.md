@@ -2290,6 +2290,58 @@ evidence, and the host decides what to do with it. `22-H` applies that to whole
 executions. The capsule is not just a convenience archive; it is the boundary
 artifact hosts can inspect, replay, diff, sign later, and build policy around.
 
+### Corvid does not flatten semantics at the FFI boundary; it projects them into the host as typed constructs
+
+`22-I-host-bindings` could have stopped at a familiar "generate wrappers from a
+descriptor" story. That would have produced callable Rust and Python surfaces,
+but it would also have thrown away the reason Corvid's ABI descriptor exists in
+the first place: the descriptor carries semantic layers, not just transport
+types.
+
+The slice becomes interesting only once those layers survive the boundary:
+
+- effect algebra surfaces as host-visible constants and typed catalog queries
+- `@dangerous` becomes an `Approver` requirement at the call site instead of a
+  runtime convention the host might forget
+- `Grounded<T>` becomes a payload wrapper plus provenance access with automatic
+  cleanup, not "raw value plus maybe some extra helper functions"
+- `Observation` becomes a first-class returned object with RAII/context-managed
+  lifetime, so cost and latency evidence are part of the host API rather than a
+  leak-prone side channel
+
+The architectural hinge is descriptor-hash drift detection. Generated bindings
+embed the descriptor hash they were projected from and compare it against the
+loaded cdylib's own `corvid_abi_descriptor_hash` bytes at load time. That keeps
+"bindings and library drifted apart" out of the realm of mysterious runtime
+misbehaviour and makes it a designed failure mode instead. The host gets a
+typed `DescriptorDrift` error before it can make the wrong call against the
+wrong binary.
+
+Two broader lessons fall out of that.
+
+First, the source of truth has to stay semantic. The bindings generator reads
+the `22-B` descriptor, not the C header. A header can tell you argument and
+return shapes; it cannot tell you trust tier, approval contract, replay
+metadata, reversibility, grounding, or future effect dimensions without
+re-encoding all of that in a second place. Once the descriptor is the only
+semantic source of truth, generated bindings stay projections instead of
+becoming a second specification.
+
+Second, "idiomatic bindings" is not the same thing as "thin bindings." The thin
+approach would have exposed stringly filter JSON, manual handle release, and a
+generic load error. The more honest idiomatic approach is slightly thicker: a
+typed builder that still lowers to the runtime's JSON DSL, RAII/context-managed
+wrappers over existing handle APIs, and a dedicated error variant for drift. In
+other words, preserve semantics in the host surface without inventing a second
+runtime or a parallel policy engine.
+
+That pattern will matter again for future boundary-facing slices. Once a
+language has real semantic layers, the boundary should preserve those layers as
+typed host constructs wherever possible, and fall back to structured evidence
+when compile-time projection is impossible. Flattening is the easy move. The
+interesting move is to keep the language's meaning intact on the far side of
+the FFI.
+
 ## Contributing / feedback
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). The rules of the road are: design chat before code, per-scope commits at every boundary, dev-log entry for every session, no shortcuts. The `learnings.md` file you're reading gets updated when each user-visible feature ships.

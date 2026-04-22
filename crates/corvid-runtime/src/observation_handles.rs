@@ -157,12 +157,31 @@ pub fn emit_debug_leak_warning() {
 
 thread_local! {
     static ACTIVE_OBSERVATIONS: RefCell<Vec<ActiveObservation>> = const { RefCell::new(Vec::new()) };
+    static DIRECT_OBSERVATION_SCOPES: RefCell<Vec<ObservationScope>> = const { RefCell::new(Vec::new()) };
 }
 
 static STORE: OnceLock<Mutex<AttestationStore<Observation>>> = OnceLock::new();
 
 fn store() -> &'static Mutex<AttestationStore<Observation>> {
     STORE.get_or_init(|| Mutex::new(AttestationStore::new("observation handle store")))
+}
+
+pub fn begin_direct_observation(declared_bound_usd: Option<f64>) {
+    DIRECT_OBSERVATION_SCOPES.with(|scopes| {
+        scopes
+            .borrow_mut()
+            .push(begin_observation(declared_bound_usd));
+    });
+}
+
+pub fn finish_direct_observation() -> u64 {
+    DIRECT_OBSERVATION_SCOPES.with(|scopes| {
+        scopes
+            .borrow_mut()
+            .pop()
+            .map(ObservationScope::finish)
+            .unwrap_or(NULL_OBSERVATION_HANDLE)
+    })
 }
 
 #[cfg(test)]

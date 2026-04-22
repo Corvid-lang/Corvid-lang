@@ -33,6 +33,7 @@ pub(super) fn define_extern_c_wrapper(
     if grounded_return_inner.is_some() {
         sig.params.push(AbiParam::new(I64));
     }
+    sig.params.push(AbiParam::new(I64));
     if !matches!(agent.return_ty, Type::Nothing) {
         sig.returns
             .push(AbiParam::new(extern_c_abi_type(&agent.return_ty, agent.span)?));
@@ -64,6 +65,15 @@ pub(super) fn define_extern_c_wrapper(
         let embed_init_ref =
             module.declare_func_in_func(runtime.runtime_embed_init, builder.func);
         builder.ins().call(embed_init_ref, &[]);
+        let begin_observation_ref =
+            module.declare_func_in_func(runtime.begin_direct_observation, builder.func);
+        let cost_bound = agent.cost_budget.unwrap_or(f64::NAN);
+        let bound_value = if cost_bound.is_finite() {
+            builder.ins().f64const(cost_bound)
+        } else {
+            builder.ins().f64const(f64::NAN)
+        };
+        builder.ins().call(begin_observation_ref, &[bound_value]);
 
         let mut call_args = Vec::with_capacity(agent.params.len());
         let mut converted_string_params = Vec::new();
@@ -86,6 +96,13 @@ pub(super) fn define_extern_c_wrapper(
         let call = builder.ins().call(inner_ref, &call_args);
         let results: Vec<ClValue> = builder.inst_results(call).iter().copied().collect();
         let grounded_handle_ptr = grounded_return_inner.map(|_| builder.block_params(entry)[agent.params.len()]);
+        let observation_handle_ptr = builder.block_params(entry)
+            [agent.params.len() + grounded_return_inner.map(|_| 1).unwrap_or(0)];
+        let finish_observation_ref =
+            module.declare_func_in_func(runtime.finish_direct_observation, builder.func);
+        builder
+            .ins()
+            .call(finish_observation_ref, &[observation_handle_ptr]);
 
         match &agent.return_ty {
             Type::Nothing => {

@@ -52,6 +52,7 @@ use crate::catalog_c_api::{
     corvid_approval_predicate_json as _corvid_approval_predicate_json_marker,
     corvid_call_agent as _corvid_call_agent_marker,
     corvid_clear_approver as _corvid_clear_approver_marker,
+    corvid_mark_preapproved_request as _corvid_mark_preapproved_request_marker,
     corvid_evaluate_approval_predicate as _corvid_evaluate_approval_predicate_marker,
     corvid_find_agents_where as _corvid_find_agents_where_marker,
     corvid_free_result as _corvid_free_result_marker,
@@ -66,6 +67,8 @@ use crate::catalog_c_api::{
     corvid_grounded_sources as _corvid_grounded_sources_marker,
     corvid_observation_cost_usd as _corvid_observation_cost_usd_marker,
     corvid_observation_exceeded_bound as _corvid_observation_exceeded_bound_marker,
+    corvid_begin_direct_observation as _corvid_begin_direct_observation_marker,
+    corvid_finish_direct_observation as _corvid_finish_direct_observation_marker,
     corvid_observation_latency_ms as _corvid_observation_latency_ms_marker,
     corvid_observation_release as _corvid_observation_release_marker,
     corvid_observation_tokens_in as _corvid_observation_tokens_in_marker,
@@ -125,6 +128,8 @@ fn _depends_on_ffi_bridge() {
     let _ = _corvid_grounded_confidence_marker as extern "C" fn(u64) -> f64;
     let _ = _corvid_grounded_release_marker as extern "C" fn(u64);
     let _ = _corvid_observation_cost_usd_marker as extern "C" fn(u64) -> f64;
+    let _ = _corvid_begin_direct_observation_marker as extern "C" fn(f64);
+    let _ = _corvid_finish_direct_observation_marker as unsafe extern "C" fn(*mut u64);
     let _ = _corvid_observation_latency_ms_marker as extern "C" fn(u64) -> u64;
     let _ = _corvid_observation_tokens_in_marker as extern "C" fn(u64) -> u64;
     let _ = _corvid_observation_tokens_out_marker as extern "C" fn(u64) -> u64;
@@ -156,6 +161,8 @@ fn _depends_on_ffi_bridge() {
             *mut *mut std::ffi::c_char,
         ) -> crate::approver_bridge::CorvidApproverLoadStatus;
     let _ = _corvid_clear_approver_marker as extern "C" fn();
+    let _ = _corvid_mark_preapproved_request_marker
+        as unsafe extern "C" fn(*const std::ffi::c_char, *const std::ffi::c_char, usize) -> bool;
     let _ = _corvid_approval_predicate_json_marker
         as unsafe extern "C" fn(*const std::ffi::c_char, *mut usize) -> *const std::ffi::c_char;
     let _ = _corvid_evaluate_approval_predicate_marker

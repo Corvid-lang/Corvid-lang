@@ -128,7 +128,9 @@ fn header_includes_stdint_and_stdbool() {
 #[test]
 fn header_exports_scalar_agent_with_correct_c_types() {
     let header = render();
-    assert!(header.contains("bool refund_bot(const char* ticket_id, double amount);"));
+    assert!(header.contains(
+        "bool refund_bot(const char* ticket_id, double amount, uint64_t* out_observation_handle);"
+    ));
 }
 
 #[test]
@@ -137,7 +139,7 @@ fn header_exports_string_return_with_ownership_comment() {
     assert!(header.contains("release returned agent strings with `corvid_free_string(...)`"));
     assert!(header.contains("release `corvid_call_agent` JSON payloads with `corvid_free_result(...)`"));
     assert!(header.contains("observation handles are runtime attestations; release them with `corvid_observation_release(...)`"));
-    assert!(header.contains("const char* echo_name(const char* name);"));
+    assert!(header.contains("const char* echo_name(const char* name, uint64_t* out_observation_handle);"));
     assert!(header.contains("void corvid_free_string(const char* value);"));
     assert!(header.contains("void corvid_free_result(char* result);"));
 }
@@ -146,7 +148,9 @@ fn header_exports_string_return_with_ownership_comment() {
 fn header_exports_grounded_string_return_with_handle_out_param() {
     let header = render();
     assert!(header.contains("#define CORVID_NULL_GROUNDED_HANDLE ((uint64_t)0)"));
-    assert!(header.contains("const char* grounded_lookup(const char* id, uint64_t* out_grounded_handle);"));
+    assert!(header.contains(
+        "const char* grounded_lookup(const char* id, uint64_t* out_grounded_handle, uint64_t* out_observation_handle);"
+    ));
     assert!(header.contains("int32_t corvid_grounded_sources(uint64_t handle, const char** out, size_t capacity);"));
     assert!(header.contains("double corvid_grounded_confidence(uint64_t handle);"));
     assert!(header.contains("void corvid_grounded_release(uint64_t handle);"));
@@ -155,7 +159,7 @@ fn header_exports_grounded_string_return_with_handle_out_param() {
 #[test]
 fn header_emits_nothing_return_as_void() {
     let header = render();
-    assert!(header.contains("void touch(void);"));
+    assert!(header.contains("void touch(uint64_t* out_observation_handle);"));
 }
 
 #[test]
@@ -171,6 +175,7 @@ fn header_exports_catalog_surface() {
     assert!(header.contains("void corvid_register_approver(CorvidApproverFn fn, void* user_data);"));
     assert!(header.contains("CorvidApproverLoadStatus corvid_register_approver_from_source("));
     assert!(header.contains("void corvid_clear_approver(void);"));
+    assert!(header.contains("bool corvid_mark_preapproved_request("));
     assert!(header.contains("const char* corvid_approval_predicate_json(const char* site_name, size_t* out_len);"));
     assert!(header.contains("CorvidPredicateResult corvid_evaluate_approval_predicate("));
     assert!(header.contains("double corvid_observation_cost_usd(uint64_t handle);"));

@@ -1,0 +1,15 @@
+[package]
+name = "corvid-bind"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Generate Rust and Python host bindings from Corvid ABI descriptors."
+
+[dependencies]
+anyhow = { workspace = true }
+serde_json = { workspace = true }
+corvid-abi = { workspace = true }
+
+[dev-dependencies]
+insta = { workspace = true }
+tempfile = { workspace = true }

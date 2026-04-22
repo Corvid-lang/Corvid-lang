@@ -87,7 +87,7 @@ pub struct CorvidPreFlight {
     pub bad_args_message: *const c_char,
 }
 
-#[repr(C)]
+#[repr(i32)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CorvidApprovalDecision {
     Accept = 0,
@@ -95,7 +95,7 @@ pub enum CorvidApprovalDecision {
 }
 
 pub type CorvidApproverFn =
-    unsafe extern "C" fn(*const CorvidApprovalRequired, *mut std::ffi::c_void) -> CorvidApprovalDecision;
+    unsafe extern "C" fn(*const CorvidApprovalRequired, *mut std::ffi::c_void) -> i32;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ScalarAbiType {

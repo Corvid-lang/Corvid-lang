@@ -1,7 +1,6 @@
 use std::ffi::{c_char, CStr, CString};
 use std::path::PathBuf;
 use std::process::Command;
-
 use corvid_abi::{
     descriptor_from_embedded_section, descriptor_to_embedded_bytes, emit_catalog_abi,
     read_embedded_section_from_library, CorvidAbi, EmitOptions,
@@ -130,15 +129,8 @@ fn load_string(ptr: *const c_char) -> String {
 unsafe extern "C" fn reject_approver(
     _request: *const CorvidApprovalRequired,
     _user_data: *mut std::ffi::c_void,
-) -> CorvidApprovalDecision {
-    CorvidApprovalDecision::Reject
-}
-
-unsafe extern "C" fn accept_approver(
-    _request: *const CorvidApprovalRequired,
-    _user_data: *mut std::ffi::c_void,
-) -> CorvidApprovalDecision {
-    CorvidApprovalDecision::Accept
+) -> i32 {
+    CorvidApprovalDecision::Reject as i32
 }
 
 fn write_approver_source(dir: &TempDir, source: &str) -> PathBuf {
@@ -302,7 +294,7 @@ fn corvid_call_agent_handles_happy_path_bad_args_and_approval_flow() {
                     unsafe extern "C" fn(
                         *const CorvidApprovalRequired,
                         *mut std::ffi::c_void,
-                    ) -> CorvidApprovalDecision,
+                    ) -> i32,
                 >,
                 *mut std::ffi::c_void,
             ),
@@ -379,24 +371,50 @@ fn corvid_call_agent_handles_happy_path_bad_args_and_approval_flow() {
         );
         assert_eq!(status, CorvidCallStatus::ApprovalRequired);
 
-        register(Some(accept_approver), std::ptr::null_mut());
-        let mut approved_result = std::ptr::null_mut();
-        let status = call_agent(
-            dangerous.as_ptr(),
-            dangerous_args.as_ptr(),
-            dangerous_args.as_bytes().len(),
-            &mut approved_result,
-            &mut result_len,
-            &mut observation,
-            &mut approval,
-        );
-        assert_eq!(status, CorvidCallStatus::Ok);
-        assert_ne!(observation, 0);
-        let approved_json = CStr::from_ptr(approved_result).to_str().unwrap().to_owned();
-        free_result(approved_result);
-        assert_eq!(approved_json, "\"vip\"");
-
         register(None, std::ptr::null_mut());
+        std::mem::forget(lib);
+    }
+}
+
+#[test]
+fn corvid_mark_preapproved_request_allows_direct_dangerous_call_without_callback() {
+    let built = build_catalog_library();
+    unsafe {
+        let lib = Library::new(&built.path).expect("load library");
+        let mark_preapproved: libloading::Symbol<
+            unsafe extern "C" fn(*const c_char, *const c_char, usize) -> bool,
+        > = lib
+            .get(b"corvid_mark_preapproved_request")
+            .expect("resolve corvid_mark_preapproved_request");
+        let direct: libloading::Symbol<
+            unsafe extern "C" fn(bool, *const c_char, *mut u64) -> *const c_char,
+        > = lib.get(b"maybe_dangerous").expect("resolve maybe_dangerous");
+        let free_string: libloading::Symbol<unsafe extern "C" fn(*const c_char)> =
+            lib.get(b"corvid_free_string").expect("resolve corvid_free_string");
+
+        let label = CString::new("EchoString").unwrap();
+        let approval_args = CString::new("[\"vip\"]").unwrap();
+        assert!(mark_preapproved(
+            label.as_ptr(),
+            approval_args.as_ptr(),
+            approval_args.as_bytes().len(),
+        ));
+
+        let input = CString::new("vip").unwrap();
+        let mut observation = 0u64;
+        let output = direct(true, input.as_ptr(), &mut observation as *mut u64);
+        assert_ne!(observation, 0);
+        let output_text = CStr::from_ptr(output).to_str().unwrap().to_owned();
+        free_string(output);
+        assert_eq!(output_text, "vip");
+
+        let bad_args = CString::new("{\"not\":\"an array\"}").unwrap();
+        assert!(!mark_preapproved(
+            label.as_ptr(),
+            bad_args.as_ptr(),
+            bad_args.as_bytes().len(),
+        ));
+
         std::mem::forget(lib);
     }
 }

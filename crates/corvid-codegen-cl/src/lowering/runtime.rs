@@ -414,6 +414,36 @@ pub(super) fn declare_runtime_funcs(
             )
         })?;
 
+    let mut begin_direct_observation_sig = module.make_signature();
+    begin_direct_observation_sig.params.push(AbiParam::new(F64));
+    let begin_direct_observation_id = module
+        .declare_function(
+            BEGIN_DIRECT_OBSERVATION_SYMBOL,
+            Linkage::Import,
+            &begin_direct_observation_sig,
+        )
+        .map_err(|e| {
+            CodegenError::cranelift(
+                format!("declare begin_direct_observation: {e}"),
+                Span::new(0, 0),
+            )
+        })?;
+
+    let mut finish_direct_observation_sig = module.make_signature();
+    finish_direct_observation_sig.params.push(AbiParam::new(I64));
+    let finish_direct_observation_id = module
+        .declare_function(
+            FINISH_DIRECT_OBSERVATION_SYMBOL,
+            Linkage::Import,
+            &finish_direct_observation_sig,
+        )
+        .map_err(|e| {
+            CodegenError::cranelift(
+                format!("declare finish_direct_observation: {e}"),
+                Span::new(0, 0),
+            )
+        })?;
+
     let grounded_capture_scalar_sig = module.make_signature();
     let grounded_capture_scalar_handle_id = module
         .declare_function(
@@ -797,6 +827,8 @@ pub(super) fn declare_runtime_funcs(
         runtime_embed_init: embed_init_id,
         sleep_ms: sleep_ms_id,
         string_into_cstr: string_into_cstr_id,
+        begin_direct_observation: begin_direct_observation_id,
+        finish_direct_observation: finish_direct_observation_id,
         grounded_capture_scalar_handle: grounded_capture_scalar_handle_id,
         grounded_capture_string_handle: grounded_capture_string_handle_id,
         grounded_attest_int: grounded_attest_int_id,
@@ -2338,6 +2370,8 @@ pub(super) const RUNTIME_SHUTDOWN_SYMBOL: &str = "corvid_runtime_shutdown";
 pub(super) const RUNTIME_EMBED_INIT_SYMBOL: &str = "corvid_runtime_embed_init_default";
 pub(super) const SLEEP_MS_SYMBOL: &str = "corvid_sleep_ms";
 pub(super) const STRING_INTO_CSTR_SYMBOL: &str = "corvid_string_into_cstr";
+pub(super) const BEGIN_DIRECT_OBSERVATION_SYMBOL: &str = "corvid_begin_direct_observation";
+pub(super) const FINISH_DIRECT_OBSERVATION_SYMBOL: &str = "corvid_finish_direct_observation";
 pub(super) const GROUNDED_CAPTURE_SCALAR_HANDLE_SYMBOL: &str =
     "corvid_grounded_capture_scalar_handle";
 pub(super) const GROUNDED_CAPTURE_STRING_HANDLE_SYMBOL: &str =
@@ -2416,6 +2450,8 @@ pub(super) struct RuntimeFuncs {
     pub runtime_embed_init: FuncId,
     pub sleep_ms: FuncId,
     pub string_into_cstr: FuncId,
+    pub begin_direct_observation: FuncId,
+    pub finish_direct_observation: FuncId,
     pub grounded_capture_scalar_handle: FuncId,
     pub grounded_capture_string_handle: FuncId,
     pub grounded_attest_int: FuncId,

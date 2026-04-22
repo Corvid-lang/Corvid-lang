@@ -160,6 +160,10 @@ pub fn render_header(opts: &HeaderOptions, agents: &[HeaderAgent]) -> String {
     out.push_str("    double max_budget_usd_per_call,\n");
     out.push_str("    char** out_error_message);\n");
     out.push_str("void corvid_clear_approver(void);\n");
+    out.push_str("bool corvid_mark_preapproved_request(\n");
+    out.push_str("    const char* site_name,\n");
+    out.push_str("    const char* args_json,\n");
+    out.push_str("    size_t args_len);\n");
     out.push_str("const char* corvid_approval_predicate_json(const char* site_name, size_t* out_len);\n");
     out.push_str("CorvidPredicateResult corvid_evaluate_approval_predicate(\n");
     out.push_str("    const char* site_name,\n");

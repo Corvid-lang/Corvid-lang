@@ -185,7 +185,7 @@ fn cdylib_symbol_is_resolvable_via_dlopen() {
     // SAFETY: test loads a library we just built and requests a known symbol.
     unsafe {
         let lib = load_library_leaked(&produced);
-        let _: libloading::Symbol<unsafe extern "C" fn(*const c_char, f64) -> bool> =
+        let _: libloading::Symbol<unsafe extern "C" fn(*const c_char, f64, *mut u64) -> bool> =
             lib.get(b"refund_bot").expect("resolve symbol");
     }
 }
@@ -268,12 +268,14 @@ fn cdylib_string_param_roundtrip() {
     // SAFETY: symbols are loaded from the just-built library and invoked with valid ABI values.
     unsafe {
         let lib = load_library_leaked(&produced);
-        let echo: libloading::Symbol<unsafe extern "C" fn(*const c_char) -> *const c_char> =
+        let echo: libloading::Symbol<unsafe extern "C" fn(*const c_char, *mut u64) -> *const c_char> =
             lib.get(b"echo_name").expect("resolve echo_name");
         let free: libloading::Symbol<unsafe extern "C" fn(*const c_char)> =
             lib.get(b"corvid_free_string").expect("resolve corvid_free_string");
         let input = CString::new("Grüße").unwrap();
-        let output_ptr = echo(input.as_ptr());
+        let mut observation = 0u64;
+        let output_ptr = echo(input.as_ptr(), &mut observation as *mut u64);
+        assert_ne!(observation, 0);
         let output = CStr::from_ptr(output_ptr).to_str().unwrap().to_owned();
         free(output_ptr);
         assert_eq!(output, "Grüße");
@@ -286,10 +288,12 @@ fn cdylib_float_precision_preserved() {
     // SAFETY: symbol is loaded from the just-built library and invoked with a valid f64.
     unsafe {
         let lib = load_library_leaked(&produced);
-        let echo: libloading::Symbol<unsafe extern "C" fn(f64) -> f64> =
+        let echo: libloading::Symbol<unsafe extern "C" fn(f64, *mut u64) -> f64> =
             lib.get(b"echo_amount").expect("resolve echo_amount");
         let input = 0.12345678912345678_f64;
-        let output = echo(input);
+        let mut observation = 0u64;
+        let output = echo(input, &mut observation as *mut u64);
+        assert_ne!(observation, 0);
         assert_eq!(output.to_bits(), input.to_bits());
     }
 }
@@ -320,7 +324,7 @@ fn cdylib_grounded_string_return_exposes_attestation_handle() {
     unsafe {
         let lib = load_library_leaked(&produced);
         let grounded_lookup: libloading::Symbol<
-            unsafe extern "C" fn(*const c_char, *mut u64) -> *const c_char,
+            unsafe extern "C" fn(*const c_char, *mut u64, *mut u64) -> *const c_char,
         > = lib.get(b"grounded_lookup").expect("resolve grounded_lookup");
         let grounded_sources: libloading::Symbol<
             unsafe extern "C" fn(u64, *mut *const c_char, usize) -> i32,
@@ -338,8 +342,14 @@ fn cdylib_grounded_string_return_exposes_attestation_handle() {
 
         let input = CString::new("lookup-me").unwrap();
         let mut handle = 0u64;
-        let output_ptr = grounded_lookup(input.as_ptr(), &mut handle as *mut u64);
+        let mut observation = 0u64;
+        let output_ptr = grounded_lookup(
+            input.as_ptr(),
+            &mut handle as *mut u64,
+            &mut observation as *mut u64,
+        );
         assert_ne!(handle, 0);
+        assert_ne!(observation, 0);
         let output = CStr::from_ptr(output_ptr).to_str().unwrap().to_owned();
         assert_eq!(output, "lookup-me");
 
@@ -410,9 +420,12 @@ fn c_harness_source(header_path: &Path, library_path: &Path) -> String {
 int main(void) {{
     HMODULE lib = LoadLibraryA("{library}");
     if (!lib) return 1;
-    bool (*refund_bot)(const char*, double) = (bool (*)(const char*, double))GetProcAddress(lib, "refund_bot");
+    bool (*refund_bot)(const char*, double, uint64_t*) =
+        (bool (*)(const char*, double, uint64_t*))GetProcAddress(lib, "refund_bot");
     if (!refund_bot) return 2;
-    if (!refund_bot("vip", 20.0)) return 3;
+    uint64_t observation = 0;
+    if (!refund_bot("vip", 20.0, &observation)) return 3;
+    if (observation == 0) return 4;
     FreeLibrary(lib);
     puts("ok");
     return 0;
@@ -422,9 +435,12 @@ int main(void) {{
 int main(void) {{
     void* lib = dlopen("{library}", RTLD_NOW);
     if (!lib) return 1;
-    bool (*refund_bot)(const char*, double) = (bool (*)(const char*, double))dlsym(lib, "refund_bot");
+    bool (*refund_bot)(const char*, double, uint64_t*) =
+        (bool (*)(const char*, double, uint64_t*))dlsym(lib, "refund_bot");
     if (!refund_bot) return 2;
-    if (!refund_bot("vip", 20.0)) return 3;
+    uint64_t observation = 0;
+    if (!refund_bot("vip", 20.0, &observation)) return 3;
+    if (observation == 0) return 4;
     dlclose(lib);
     puts("ok");
     return 0;

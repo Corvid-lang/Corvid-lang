@@ -20,6 +20,7 @@ members = [
     "crates/corvid-driver",
     "crates/corvid-differential-verify",
     "crates/corvid-cli",
+    "crates/corvid-bind",
     "crates/corvid-host-compliance-tests",
     "crates/corvid-shadow-daemon",
     "crates/corvid-lsp",
@@ -81,6 +82,7 @@ corvid-test-tools = { path = "crates/corvid-test-tools" }
 corvid-driver   = { path = "crates/corvid-driver" }
 corvid-differential-verify = { path = "crates/corvid-differential-verify" }
 corvid-shadow-daemon = { path = "crates/corvid-shadow-daemon" }
+corvid-bind = { path = "crates/corvid-bind" }
 
 # Proc-macro deps used by corvid-macros.
 proc-macro2 = "1"
