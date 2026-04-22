@@ -1209,6 +1209,14 @@ Users register local models (Ollama, vLLM, llama.cpp) with declared capabilities
 - [ ] 21-inv-H-5-stacked       Stacked-PR aggregate receipts. Per-commit receipts compose into a stack receipt via the effect-algebra's natural composition; regressions anywhere in the stack surface as regressions in the aggregate.
 - [ ] 21-inv-H-5-watch         `--format=watch` reactive mode: rebuild + rerender the receipt as the working tree changes. Tightens the AI-safety feedback loop to type-checker speed during local development.
 - [ ] 21-inv-H-5-gitlab        GitLab CI renderer (`--format=gitlab`). Trivial once the pattern is clear — MR widget JSON + CI command envelope.
+
+**Language-core slices (cross-lane; enable the custom-policy stack + every future multi-file `.cor` user surface):**
+
+- [ ] lang-cor-imports         Cross-file `.cor` imports. `import "./path" as alias` (qualified module access), `import "./path" use Name1, Name2 as Alias` (selective name lift, with rename), `pub` visibility modifier on types/agents/prompts/tools (private-by-default), relative-path resolution with cycle detection, **effect-typed imports** (`import "./path" requires @deterministic as p` — the imported module's symbol table type-checks under the given effect constraints at import time; a module calling an LLM cannot be imported into a `@deterministic` caller). The foundation for every multi-file custom-`.cor` story including custom policies, custom reviewers, custom analyzers.
+- [ ] lang-cor-imports-signed  Hash-pinned imports: `import "./path" hash:sha256:abc123... as p`. If the imported file's content drifts, compilation fails. Supply-chain integrity at the language level — Corvid sidesteps the npm/PyPI class of attacks by making content hashes first-class in the import syntax. Pairs with `21-inv-H-5-signed` so a signed receipt's policy hash chain extends through the import graph.
+- [ ] lang-cor-imports-remote  Remote imports: `import "https://.../policy.cor" hash:sha256:... as p`. HTTP/git-ref-resolved imports with mandatory hash pinning (no unhashed remote imports — that's the attack surface we refuse to ship). Enables federated policy baselines and cross-repo governance without a full package manager. Depends on `lang-cor-imports-signed`.
+- [ ] lang-cor-imports-versioned Versioned imports + package system: `import "corvid://@anthropic/safety-baseline/v2.3" as p`. Registry-resolved imports with semantic versioning, lockfile-tracked hashes, signed publish workflow. The package manager story. Large scope; depends on both `-signed` and `-remote` plus a registry protocol design.
+
 - [x] 21-docs                Spec [section 14](docs/effects-spec/14-replay.md) (Phase 21 implementation reference) + v1.0 launch demo at [docs/v1.0-demo-script.md](docs/v1.0-demo-script.md) + ROADMAP closeout status below.
 
 **Phase 21 closeout status (as of 2026-04-22).**
