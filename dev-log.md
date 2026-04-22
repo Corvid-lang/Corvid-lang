@@ -4393,6 +4393,104 @@ and is the gating dependency for `21-inv-H-4-follow`.
 Lane A has one follow-up remaining for v1.0 proper: H-5
 (GitHub/CI format modes). The `21-inv-H-4-follow` waits on 22-F.
 
+## Day 53 — 2026-04-22 — Slice 21-inv-H-5: canonical Receipt + format modes + default policy gating
+
+`corvid trace-diff` ends v1.0 with a proper audit layer. H-5's
+pre-phase chat started with "add three output formats" and got
+reframed mid-chat to "the receipt becomes the AI-safety audit
+artifact of Corvid programs." That reframe drove every
+implementation decision — documented at length in
+`learnings.md` under "Governance receipts are the audit layer"
+and "The CTO reframe: scope as leverage, not as a list."
+
+What shipped:
+
+- `crates/corvid-cli/src/trace_diff/receipt.rs`: canonical
+  `Receipt` struct (schema_version 1) that owns `base_sha`,
+  `head_sha`, `source_path`, the `deltas` list (populated via
+  the H-4 `compute_diff_summary`), the trace impact, the
+  validated narrative, and `narrative_rejected: bool`. Built
+  once by `Receipt::build`; every renderer is a view over the
+  same value.
+- `OutputFormat` enum parsed from `--format=<mode>`. `auto`
+  detects `$GITHUB_ACTIONS` (→ github-check), piped stdout
+  (→ json), tty (→ markdown). Magical default because CI
+  detection is already a solved problem — CLI just does the
+  right thing.
+- `render_github_check` (Rust): emits `::notice` / `::warning`
+  annotation commands on stdout with proper GHA escaping
+  (%25 / %0A / %3A / %2C) for payload safety. Narrative
+  renders as a `::notice title=PR Behavior Summary`;
+  regression flags render as `::warning title=Regression`;
+  non-regression deltas render as `::notice` per-delta.
+  Dedupe ensures a regression-shaped delta isn't surfaced
+  twice.
+- `render_json` (Rust): schema-versioned, structured,
+  stable-ordered via serde's field ordering. Top-level fields
+  `schema_version`, `base_sha`, `head_sha`, `source_path`,
+  `verdict`, `receipt` (nested `deltas`, `impact`, `narrative`,
+  `narrative_rejected`). Newline-terminated. Bots hashing the
+  output for caching get byte-stability.
+- Markdown stays Corvid-side via the reviewer agent. The
+  reviewer is still the load-bearing dogfood of the slice —
+  adding JSON / github-check as Rust renderers is the
+  pragmatic split (Corvid doesn't have JSON serialization or
+  string-starts-with primitives today; writing those in-
+  language would be ceremony without proportional payoff
+  until the language catches up).
+- `apply_default_policy` (Rust): walks the `DeltaRecord` list,
+  flags regressions (by delta-key prefix for the categorical
+  ones, by ordinal comparison of trust-tier `from->to`
+  transitions for the ordered ones), also flags
+  `any_newly_diverged` trace impact. Returns
+  `Verdict { ok, flags }`. Exit 0 on ok, exit 1 with stderr
+  line-per-flag on trip. Conservative set exactly matching
+  the pre-phase-chat agreement: @dangerous gained, trust
+  lowered, approval tier weakened, reversibility became
+  irreversible, grounded lost, grounded dep removed, newly-
+  diverged > 0. Improvements explicitly don't trip.
+- `tier_ordinal` backstop: internal tier-ordering table in
+  `receipt.rs` with a `tier_ordering_matches_policy` unit
+  test that guards against drift from
+  `corvid-types::dimensions` when a new tier lands. Mirror of
+  Dev B's tier-drift guard on the 22-D effect-filter side.
+
+14 new unit tests in `trace_diff::receipt::tests` (format
+parsing, all policy branches, tier ordering, JSON schema
+shape + regression flag surfacing, github-check rendering +
+escaping + dedupe + narrative header).
+
+Existing integration tests updated to pass explicit
+`--format=markdown` since the test harness's non-tty stdout
+would otherwise pick JSON under `auto`.
+
+Coordination: Dev B shipped 22-F (`aea780d`) as a complete
+slice (not just the green-tree restoration I'd asked for); that
+unblocks the deferred `21-inv-H-4-follow` (upgrade
+`ReceiptNarrative` to `Grounded<ReceiptNarrative>`). That
+follow-up is filed but remains separate — H-5 lands complete
+without it.
+
+Six follow-ups filed in ROADMAP, each independently
+shippable: `-custom-policy` (promotes the Rust default policy
+to a user-replaceable `.cor` program), `-signed` (DSSE signing
++ verify + receipt-show by hash), `-in-toto` (SLSA / Sigstore
+attestation renderer), `-stacked` (aggregate receipts over
+stacked PRs), `-watch` (reactive local-dev loop), `-gitlab`
+(GitLab CI renderer). Each extends the audit-layer thesis in
+a different direction without coupling to the others.
+
+Gate: cargo check --workspace clean; 45 trace_diff unit tests
+pass (14 new receipt + 10 narrative + 4 impact + 17
+reviewer_invocation); 8 integration tests pass; 10
+replay_orchestrator + 6 trace_fresh_orchestrator driver tests
+pass; verify --corpus tests/corpus exits 1 only on
+tier_disagree.cor and native_drops_effect.cor as intended.
+
+Phase 21 Lane A is now CLOSED. `21-inv-H` rollup flipped to
+`[x]`. `corvid trace-diff` is the flagship PR-review tool,
+dogfooding the language it reviews.
+
 
 
 

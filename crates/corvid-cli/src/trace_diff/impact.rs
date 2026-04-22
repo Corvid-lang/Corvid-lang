@@ -39,7 +39,7 @@ pub(super) const NEWLY_DIVERGED_PATH_CAP: usize = 20;
 /// owns whether the section is rendered, where it appears in the
 /// receipt, and the narrative lines between the pre-formatted
 /// summary and the path list.
-#[derive(Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub(super) struct TraceImpact {
     pub(super) has_traces: bool,
     pub(super) any_newly_diverged: bool,

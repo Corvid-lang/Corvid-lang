@@ -1720,6 +1720,71 @@ runtime-panic price tag; if a crate offers a sync helper that other callers
 rely on, the answer is to expose the async variant alongside it, not to thread
 runtimes through function bodies.
 
+### Governance receipts are the audit layer, not just a reporter
+
+`21-inv-H-5` started as "add three output format modes" and was
+reframed mid-chat to "the trace-diff receipt becomes the AI-safety
+audit artifact of Corvid programs." That reframe changed every
+design decision that followed:
+
+- Receipt is a canonical structured object, not a concatenated
+  string. Each format (`markdown`, `github-check`, `json`) is a
+  view over the same struct. Adding a format is adding a
+  renderer, never touching the pipeline.
+- JSON output is schema-versioned from day one (`schema_version:
+  1`). Bots pin against the version; breaking changes get v2
+  while v1 consumers keep working. Schema evolution is a
+  first-class commitment.
+- Regression policy is its own concern, separable from the
+  renderer. Shipping a baked-in conservative default today;
+  promotable to a user-replaceable `.cor` program in the
+  follow-up slice (`21-inv-H-5-custom-policy`). Governance-as-
+  code for the gate itself.
+- Exit code is policy output, not a flag. `--gate=on|off` was
+  tempting and would have worked; rejected because the gate's
+  WHY lives in the policy. Exit 0 on `verdict.ok`, exit 1
+  otherwise. Custom policies replace the verdict; they don't
+  ask the CLI for permission to fail.
+
+The pattern generalises: whenever a language ships a structured
+governance concept (effect algebra, approval contracts,
+provenance), the corresponding receipt should be a first-class
+audit artifact — structured, versioned, policy-gated, and
+eventually signed — not a pretty string. The receipt is how the
+compile-time guarantee becomes a durable record the rest of the
+world can inspect.
+
+The five follow-up slices filed (`-custom-policy`, `-signed`,
+`-in-toto`, `-stacked`, `-watch`, `-gitlab`) each extend this
+audit-layer thesis in a different direction. They land
+independently because the receipt is structured — no one
+follow-up has to know about the others.
+
+### The CTO reframe: scope as leverage, not as a list
+
+When planning `21-inv-H-5` I drafted a conservative chat with
+three questions and five implementation decisions. The user asked
+me to answer the questions "in the way that makes Corvid powerful
+and limitless." That reframe moved H-5 from an incremental
+feature to a category-defining one, and it taught an instruction
+worth honouring for future planning:
+
+**Default to ambition in design; default to discipline in scope.**
+The canonical receipt + policy-as-code is the ambitious design.
+The first slice ships the canonical receipt, three renderers,
+and a baked-in policy with exit-code gating. Everything else —
+`--policy=<path>`, signed receipts, in-toto attestations, stacked
+PRs, watch mode, GitLab renderer — is explicitly filed as a
+follow-up. The design vision is limitless; the shipping vehicle
+is disciplined.
+
+The failure mode to avoid is the opposite: conservative design
+("just add format flags") + generous scope ("land all three
+modes + signing + in-toto in one slice"). That's the worst of
+both — no leverage AND a brittle ship. Ambition in design gives
+follow-ups their meaning for free; discipline in scope makes the
+current slice shippable.
+
 ### Non-deterministic generators, deterministic receipts: the wrapping-layer pattern
 
 `21-inv-H-4` wanted an LLM-generated prose paragraph at the top of

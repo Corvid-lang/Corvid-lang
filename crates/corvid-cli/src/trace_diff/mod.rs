@@ -46,6 +46,7 @@
 
 mod impact;
 mod narrative;
+mod receipt;
 mod reviewer_invocation;
 
 use std::path::Path;
@@ -56,7 +57,11 @@ use corvid_driver::{compile_to_abi_with_config, load_corvid_config_for};
 
 use impact::{compute_trace_impact, TraceImpact};
 pub use narrative::NarrativeMode;
-use narrative::{compute_diff_summary, validate_narrative, ReceiptNarrative};
+use narrative::{
+    compute_diff_summary, validate_narrative, DiffSummary, NarrativeRejection, ReceiptNarrative,
+};
+pub use receipt::OutputFormat;
+use receipt::{apply_default_policy, render_github_check, render_json, Receipt};
 use reviewer_invocation::{detect_adapter, invoke_narrative_prompt, invoke_reviewer, NoAdapter};
 
 /// Parsed args for `corvid trace-diff`. Library-level callers
@@ -82,6 +87,12 @@ pub struct TraceDiffArgs<'a> {
     /// otherwise). CI and deterministic-reproducer callers pick
     /// [`NarrativeMode::Off`].
     pub narrative_mode: NarrativeMode,
+    /// Output format. [`OutputFormat::Markdown`] for human review,
+    /// [`OutputFormat::GithubCheck`] for GitHub Actions
+    /// annotation commands, [`OutputFormat::Json`] for bot
+    /// consumption. Callers can pick via [`OutputFormat::parse`]
+    /// from `--format=<mode>`.
+    pub format: OutputFormat,
 }
 
 /// Run `corvid trace-diff`: fetch source at both SHAs, compile each
@@ -112,29 +123,64 @@ pub fn run_trace_diff(args: TraceDiffArgs<'_>) -> Result<u8> {
         None => TraceImpact::empty(),
     };
 
-    let narrative = resolve_narrative(&base_abi, &head_abi, args.narrative_mode)?;
+    let diff = compute_diff_summary(&base_abi, &head_abi);
+    let (narrative, narrative_rejected) = resolve_narrative(&diff, args.narrative_mode)?;
 
-    let receipt = invoke_reviewer(&base_abi, &head_abi, &impact, &narrative)
-        .context("reviewer agent execution failed")?;
-    print!("{receipt}");
+    let receipt = Receipt::build(
+        args.base_sha,
+        args.head_sha,
+        &source_path_str,
+        &base_abi,
+        &head_abi,
+        impact,
+        narrative.clone(),
+        narrative_rejected,
+    );
+
+    let verdict = apply_default_policy(&receipt);
+
+    // Markdown stays Corvid-side — the reviewer agent owns the
+    // human-readable layout. Other formats are Rust renderers
+    // over the shared Receipt.
+    let rendered = match args.format {
+        OutputFormat::Markdown => invoke_reviewer(&base_abi, &head_abi, &receipt.impact, &narrative)
+            .context("reviewer agent execution failed")?,
+        OutputFormat::GithubCheck => render_github_check(&receipt, &verdict),
+        OutputFormat::Json => render_json(&receipt, &verdict),
+    };
+    print!("{rendered}");
+
+    // Every format surfaces the gate-failure reasons on stderr
+    // so operators reading only stderr know what tripped. JSON
+    // consumers parse `verdict.flags` directly; markdown readers
+    // see the receipt body + stderr reasons.
+    if !verdict.ok {
+        eprintln!("regression policy tripped:");
+        for flag in &verdict.flags {
+            eprintln!("  - {flag}");
+        }
+        return Ok(1);
+    }
+
     Ok(0)
 }
 
-/// Drive the narrative pipeline: compute the diff summary, detect
-/// (or refuse) an LLM adapter per the user's mode, invoke the
-/// `summarise_diff` prompt, validate the citations, emit a stderr
-/// warning on any rejection, and always fall back to
-/// `ReceiptNarrative::empty()` when anything goes sideways. The
-/// reviewer's byte-determinism invariant is preserved: identical
-/// inputs always produce an identical narrative *or* the same
-/// empty sentinel.
+/// Drive the narrative pipeline: detect (or refuse) an LLM
+/// adapter per the user's mode, invoke the `summarise_diff`
+/// prompt with the pre-computed diff summary, validate citations,
+/// emit a stderr warning on any rejection, and always fall back
+/// to `ReceiptNarrative::empty()` when anything goes sideways.
+/// Returns `(narrative, was_rejected)` — the `was_rejected`
+/// bool lets downstream renderers surface that the LLM
+/// generated *something* but we didn't trust it. Only the
+/// Rust-computed `diff` is passed in so there's one canonical
+/// delta-key set across the narrative + receipt path.
 fn resolve_narrative(
-    base: &corvid_abi::CorvidAbi,
-    head: &corvid_abi::CorvidAbi,
+    diff: &DiffSummary,
     mode: NarrativeMode,
-) -> Result<ReceiptNarrative> {
+) -> Result<(ReceiptNarrative, bool)> {
     if matches!(mode, NarrativeMode::Off) {
-        return Ok(ReceiptNarrative::empty());
+        return Ok((ReceiptNarrative::empty(), false));
     }
 
     let builder = match detect_adapter() {
@@ -150,33 +196,41 @@ fn resolve_narrative(
                             "`CORVID_MODEL` is set but no matching API key is exported",
                     }
                 )),
-                NarrativeMode::Auto => Ok(ReceiptNarrative::empty()),
+                NarrativeMode::Auto => Ok((ReceiptNarrative::empty(), false)),
                 NarrativeMode::Off => unreachable!(),
             };
         }
     };
 
-    let diff = compute_diff_summary(base, head);
     // Empty diff → empty narrative. Skip the prompt call entirely;
     // there's nothing to summarise and the prompt would just pay a
     // round-trip to generate an empty response.
     if diff.records.is_empty() {
-        return Ok(ReceiptNarrative::empty());
+        return Ok((ReceiptNarrative::empty(), false));
     }
 
-    let narrative = match invoke_narrative_prompt(&diff, builder) {
+    let narrative = match invoke_narrative_prompt(diff, builder) {
         Ok(n) => n,
         Err(e) => {
             eprintln!("narrative rejected: prompt invocation failed: {e:#}");
-            return Ok(ReceiptNarrative::empty());
+            return Ok((ReceiptNarrative::empty(), true));
         }
     };
 
-    match validate_narrative(&narrative, &diff) {
-        Ok(()) => Ok(narrative),
-        Err(reason) => {
+    match validate_narrative(&narrative, diff) {
+        Ok(()) => Ok((narrative, false)),
+        Err(NarrativeRejection::UnknownCitationKey(_))
+        | Err(NarrativeRejection::NonEmptyBodyWithoutCitations)
+        | Err(NarrativeRejection::DuplicateCitationKey(_)) => {
+            // Prompt returned something the validator refused.
+            // Surface the reason on stderr and flip the rejection
+            // flag so renderers + JSON consumers can mark it.
+            let reason = match validate_narrative(&narrative, diff) {
+                Err(r) => r.to_string(),
+                Ok(()) => "unknown".to_string(),
+            };
             eprintln!("narrative rejected: {reason}");
-            Ok(ReceiptNarrative::empty())
+            Ok((ReceiptNarrative::empty(), true))
         }
     }
 }

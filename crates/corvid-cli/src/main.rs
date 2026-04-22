@@ -346,6 +346,16 @@ enum Command {
         /// this for CI and reproducers.
         #[arg(long, value_name = "MODE", default_value = "auto")]
         narrative: String,
+        /// Output format for the receipt. `markdown` (human
+        /// review), `github-check` (GitHub Actions annotation
+        /// commands on stdout), `json` (schema-versioned,
+        /// bot-consumable). `auto` (default) detects the
+        /// environment: GitHub Actions → `github-check`, piped
+        /// stdout → `json`, tty → `markdown`. Non-zero exit on
+        /// any regression the default policy flags regardless
+        /// of format.
+        #[arg(long, value_name = "MODE", default_value = "auto")]
+        format: String,
     },
     /// Start the interactive Corvid REPL.
     Repl,
@@ -540,16 +550,30 @@ fn main() -> ExitCode {
             path,
             traces,
             narrative,
-        }) => match narrative.parse::<trace_diff::NarrativeMode>() {
-            Ok(narrative_mode) => trace_diff::run_trace_diff(trace_diff::TraceDiffArgs {
-                base_sha: &base_sha,
-                head_sha: &head_sha,
-                source_path: &path,
-                trace_dir: traces.as_deref(),
-                narrative_mode,
-            }),
-            Err(msg) => Err(anyhow::anyhow!(msg)),
-        },
+            format,
+        }) => {
+            let parsed = narrative
+                .parse::<trace_diff::NarrativeMode>()
+                .map_err(anyhow::Error::msg)
+                .and_then(|narrative_mode| {
+                    trace_diff::OutputFormat::parse(&format)
+                        .map_err(anyhow::Error::msg)
+                        .map(|format| (narrative_mode, format))
+                });
+            match parsed {
+                Ok((narrative_mode, format)) => {
+                    trace_diff::run_trace_diff(trace_diff::TraceDiffArgs {
+                        base_sha: &base_sha,
+                        head_sha: &head_sha,
+                        source_path: &path,
+                        trace_dir: traces.as_deref(),
+                        narrative_mode,
+                        format,
+                    })
+                }
+                Err(e) => Err(e),
+            }
+        }
         Some(Command::Repl) => cmd_repl(),
         Some(Command::Doctor) => cmd_doctor(),
         None => {

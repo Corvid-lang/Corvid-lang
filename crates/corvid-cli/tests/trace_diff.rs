@@ -80,7 +80,7 @@ fn trace_diff_end_to_end_reports_added_agent() {
     let head_sha = run_git(repo, &["rev-parse", "HEAD"]);
 
     let output = Command::new(corvid_bin())
-        .args(["trace-diff", &base_sha, &head_sha, "agent.cor"])
+        .args(["trace-diff", &base_sha, &head_sha, "agent.cor", "--format=markdown"])
         .current_dir(repo)
         .output()
         .expect("run corvid trace-diff");
@@ -131,6 +131,7 @@ fn trace_diff_narrative_off_emits_boilerplate_deterministically() {
                 &head_sha,
                 "agent.cor",
                 "--narrative=off",
+                "--format=markdown",
             ])
             .current_dir(repo)
             .env_remove("ANTHROPIC_API_KEY")
@@ -233,7 +234,7 @@ fn trace_diff_end_to_end_reports_no_changes_when_source_is_identical() {
     let head_sha = run_git(repo, &["rev-parse", "HEAD"]);
 
     let output = Command::new(corvid_bin())
-        .args(["trace-diff", &base_sha, &head_sha, "agent.cor"])
+        .args(["trace-diff", &base_sha, &head_sha, "agent.cor", "--format=markdown"])
         .current_dir(repo)
         .output()
         .expect("run corvid trace-diff");
@@ -325,7 +326,7 @@ fn trace_diff_reports_added_approval_label_and_grounded_promotion() {
     let head_sha = run_git(repo, &["rev-parse", "HEAD"]);
 
     let output = Command::new(corvid_bin())
-        .args(["trace-diff", &base_sha, &head_sha, "app.cor"])
+        .args(["trace-diff", &base_sha, &head_sha, "app.cor", "--format=markdown"])
         .current_dir(repo)
         .output()
         .expect("run corvid trace-diff");
@@ -378,6 +379,7 @@ fn trace_diff_with_empty_traces_dir_renders_no_impact_section() {
             "agent.cor",
             "--traces",
             traces_dir.to_str().unwrap(),
+            "--format=markdown",
         ])
         .current_dir(repo)
         .output()
