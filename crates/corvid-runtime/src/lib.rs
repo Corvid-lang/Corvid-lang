@@ -31,6 +31,7 @@
 
 pub mod abi;
 pub mod adversarial;
+pub(crate) mod attestation_store;
 pub mod approvals;
 pub mod approver_bridge;
 pub mod catalog;

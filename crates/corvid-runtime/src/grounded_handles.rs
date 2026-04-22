@@ -5,12 +5,11 @@
 //! process-global slotmap. The C-ABI wrappers only translate integer
 //! handles to these operations; they do not own any lifetime logic.
 
+use crate::attestation_store::AttestationStore;
 use crate::provenance::ProvenanceChain;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};
-
-use slotmap::{DefaultKey, Key, SlotMap};
 
 pub const NULL_GROUNDED_HANDLE: u64 = 0;
 
@@ -38,7 +37,7 @@ impl GroundedAttestation {
 impl Default for GroundedHandleStore {
     fn default() -> Self {
         Self {
-            handles: SlotMap::with_key(),
+            handles: AttestationStore::new("grounded handle store"),
             string_attestations: HashMap::new(),
         }
     }
@@ -66,7 +65,7 @@ pub fn register_handle_for_string_ptr(string_ptr: usize) -> u64 {
     let Some(attestation) = store.string_attestations.remove(&string_ptr) else {
         return NULL_GROUNDED_HANDLE;
     };
-    store.handles.insert(attestation).data().as_ffi()
+    store.handles.insert(attestation)
 }
 
 pub fn register_handle_for_last_scalar() -> u64 {
@@ -75,7 +74,7 @@ pub fn register_handle_for_last_scalar() -> u64 {
             return NULL_GROUNDED_HANDLE;
         };
         let mut store = store().lock().unwrap();
-        store.handles.insert(attestation).data().as_ffi()
+        store.handles.insert(attestation)
     })
 }
 
@@ -83,43 +82,35 @@ pub fn sources_for_handle(handle: u64) -> Option<Vec<String>> {
     if handle == NULL_GROUNDED_HANDLE {
         return None;
     }
-    let key = DefaultKey::from(slotmap::KeyData::from_ffi(handle));
     let store = store().lock().unwrap();
-    store.handles.get(key).map(|attestation| attestation.source_names())
+    store
+        .handles
+        .get(handle)
+        .map(|attestation| attestation.source_names())
 }
 
 pub fn confidence_for_handle(handle: u64) -> Option<f64> {
     if handle == NULL_GROUNDED_HANDLE {
         return None;
     }
-    let key = DefaultKey::from(slotmap::KeyData::from_ffi(handle));
     let store = store().lock().unwrap();
-    store.handles.get(key).map(|attestation| attestation.confidence)
+    store.handles.get(handle).map(|attestation| attestation.confidence)
 }
 
 pub fn release_handle(handle: u64) -> bool {
     if handle == NULL_GROUNDED_HANDLE {
         return true;
     }
-    let key = DefaultKey::from(slotmap::KeyData::from_ffi(handle));
     let mut store = store().lock().unwrap();
-    store.handles.remove(key).is_some()
+    store.handles.remove(handle)
 }
 
 pub fn emit_debug_leak_warning() {
-    if !cfg!(debug_assertions) {
-        return;
-    }
     let store = store().lock().unwrap();
-    let leaked = store.handles.len();
-    if leaked > 0 {
-        eprintln!(
-            "warning: grounded handle store shut down with {leaked} unreleased grounded handle(s)"
-        );
-    }
+    store.handles.emit_debug_leak_warning();
 }
 struct GroundedHandleStore {
-    handles: SlotMap<DefaultKey, Arc<GroundedAttestation>>,
+    handles: AttestationStore<GroundedAttestation>,
     string_attestations: HashMap<usize, Arc<GroundedAttestation>>,
 }
 
