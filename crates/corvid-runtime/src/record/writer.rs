@@ -1,5 +1,5 @@
 use corvid_trace_schema::{append_event, TraceEvent};
-use std::io::BufWriter;
+use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
@@ -51,6 +51,7 @@ impl JsonlTraceWriter {
         if let Ok(mut guard) = self.inner.file.lock() {
             if let Some(file) = guard.as_mut() {
                 let _ = append_event(file, event);
+                let _ = file.flush();
             }
         }
     }

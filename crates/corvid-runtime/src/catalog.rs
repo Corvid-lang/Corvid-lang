@@ -1,8 +1,10 @@
 use crate::errors::RuntimeError;
+use crate::tracing::now_ms;
 use corvid_abi::{
     descriptor_from_embedded_section, AbiAgent, AbiApprovalLabel, AbiApprovalSite, ScalarTypeName,
     TypeDescription,
 };
+use corvid_trace_schema::TraceEvent;
 use std::collections::HashMap;
 use std::ffi::{c_char, CString};
 use std::sync::{Arc, OnceLock};
@@ -447,6 +449,7 @@ fn call_agent_impl(agent_name: &str, args_json: &str) -> Result<OwnedCallOutcome
         let approval = build_approval_required(entry, args_json)?;
         match crate::catalog_c_api::request_host_approval(&approval) {
             crate::catalog_c_api::ApprovalRequestOutcome::MissingOrRejected => {
+                emit_embedded_rejected_approval(&approval, &validated.args);
                 return Ok(OwnedCallOutcome {
                     status: CorvidCallStatus::ApprovalRequired,
                     result_json: None,
@@ -588,6 +591,47 @@ fn build_approval_required(
             entry.abi.name
         ),
     })
+}
+
+fn emit_embedded_rejected_approval(
+    approval: &OwnedApprovalRequired,
+    args: &[serde_json::Value],
+) {
+    crate::ffi_bridge::corvid_runtime_embed_init_default();
+    let runtime = crate::ffi_bridge::runtime();
+    let tracer = runtime.tracer();
+    if !tracer.is_enabled() {
+        return;
+    }
+    let run_id = tracer.run_id().to_string();
+    tracer.emit(TraceEvent::ApprovalRequest {
+        ts_ms: now_ms(),
+        run_id: run_id.clone(),
+        label: approval.site_name.clone(),
+        args: args.to_vec(),
+    });
+    let detail = crate::catalog_c_api::take_last_approval_detail().unwrap_or(
+        crate::approver_bridge::ApprovalDecisionInfo {
+            accepted: false,
+            decider: "fail-closed-default".to_string(),
+            rationale: None,
+        },
+    );
+    tracer.emit(TraceEvent::ApprovalDecision {
+        ts_ms: now_ms(),
+        run_id: run_id.clone(),
+        site: approval.site_name.clone(),
+        args: args.to_vec(),
+        accepted: detail.accepted,
+        decider: detail.decider,
+        rationale: detail.rationale,
+    });
+    tracer.emit(TraceEvent::ApprovalResponse {
+        ts_ms: now_ms(),
+        run_id,
+        label: approval.site_name.clone(),
+        approved: false,
+    });
 }
 
 fn introspection_call(

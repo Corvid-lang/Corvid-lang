@@ -1,5 +1,9 @@
 @budget($0.05)
+@replayable
+@deterministic
 agent approve_site(site: ApprovalSite, args: ApprovalArgs, ctx: ApprovalContext) -> ApprovalDecision:
-    if site.label == "IssueRefund":
-        return ApprovalDecision(false, "IssueRefund requires manual review")
-    return ApprovalDecision(true, "approved")
+    if site.label == "EchoString":
+        if args.values[0] == "\"reject\"":
+            return ApprovalDecision(false, "demo approver rejected the `reject` tag")
+        return ApprovalDecision(true, "demo approver accepted the tag")
+    return ApprovalDecision(false, "unknown approval site")

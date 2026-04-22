@@ -1320,19 +1320,8 @@ fn build_tokio_runtime() -> tokio::runtime::Runtime {
 }
 
 fn build_corvid_runtime() -> Runtime {
-    let tracer = if std::env::var("CORVID_TRACE_DISABLE").ok().as_deref() == Some("1") {
-        Tracer::null()
-    } else if let Some(trace_path) = trace_path_from_env() {
-        Tracer::open_path(trace_path, fresh_run_id())
-            .with_redaction(RedactionSet::from_env())
-    } else {
-        let trace_dir = trace_dir_for_current_process();
-        Tracer::open(&trace_dir, fresh_run_id())
-            .with_redaction(RedactionSet::from_env())
-    };
-
     let mut b: RuntimeBuilder = Runtime::builder()
-        .tracer(tracer)
+        .tracer(build_tracer_from_env_or_default())
         .trace_schema_writer(WRITER_NATIVE);
 
     // Approver: interactive stdin by default; programmatic-yes if the
@@ -1435,12 +1424,23 @@ fn build_corvid_runtime() -> Runtime {
 
 fn build_embedded_corvid_runtime() -> Runtime {
     Runtime::builder()
-        .tracer(Tracer::null())
+        .tracer(build_tracer_from_env_or_default())
         .trace_schema_writer(WRITER_NATIVE)
         .approver(Arc::new(ProgrammaticApprover::new(|req| {
             crate::catalog_c_api::decide_registered_approval(req)
         })))
         .build()
+}
+
+fn build_tracer_from_env_or_default() -> Tracer {
+    if std::env::var("CORVID_TRACE_DISABLE").ok().as_deref() == Some("1") {
+        Tracer::null()
+    } else if let Some(trace_path) = trace_path_from_env() {
+        Tracer::open_path(trace_path, fresh_run_id()).with_redaction(RedactionSet::from_env())
+    } else {
+        let trace_dir = trace_dir_for_current_process();
+        Tracer::open(&trace_dir, fresh_run_id()).with_redaction(RedactionSet::from_env())
+    }
 }
 
 /// `target/trace/` under the current process's working directory. Same

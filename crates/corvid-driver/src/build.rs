@@ -63,7 +63,10 @@ pub struct BuildOutput {
 /// Layout convention mirrors `build_to_disk`: if the source is inside a
 /// `src/` directory, output goes to a sibling `target/bin/<stem>[.exe]`.
 /// Otherwise, output goes alongside the source in `./target/bin/`.
-pub fn build_native_to_disk(source_path: &Path) -> anyhow::Result<NativeBuildOutput> {
+pub fn build_native_to_disk(
+    source_path: &Path,
+    extra_tool_libs: &[&Path],
+) -> anyhow::Result<NativeBuildOutput> {
     let source = std::fs::read_to_string(source_path).map_err(|e| {
         anyhow::anyhow!("cannot read `{}`: {}", source_path.display(), e)
     })?;
@@ -89,9 +92,13 @@ pub fn build_native_to_disk(source_path: &Path) -> anyhow::Result<NativeBuildOut
             // Empty tools-lib list = no user tool crates linked — tool-using
             // programs fail at link time with an unresolved-symbol
             // error that surfaces the missing tool by name.
-            let produced =
-                corvid_codegen_cl::build_native_to_disk(&ir, &stem, &requested, &[])
-                    .map_err(|e| anyhow::anyhow!("native codegen failed: {e}"))?;
+            let produced = corvid_codegen_cl::build_native_to_disk(
+                &ir,
+                &stem,
+                &requested,
+                extra_tool_libs,
+            )
+            .map_err(|e| anyhow::anyhow!("native codegen failed: {e}"))?;
             Ok(NativeBuildOutput {
                 source,
                 output_path: Some(produced),
@@ -141,6 +148,7 @@ pub fn build_target_to_disk(
     target: BuildTarget,
     emit_header: bool,
     emit_abi_descriptor: bool,
+    extra_tool_libs: &[&Path],
 ) -> anyhow::Result<TargetBuildOutput> {
     let source = std::fs::read_to_string(source_path).map_err(|e| {
         anyhow::anyhow!("cannot read `{}`: {}", source_path.display(), e)
@@ -170,7 +178,12 @@ pub fn build_target_to_disk(
             };
             let produced = match target {
                 BuildTarget::Native => {
-                    corvid_codegen_cl::build_native_to_disk(&frontend.ir, &stem, &requested, &[])
+                    corvid_codegen_cl::build_native_to_disk(
+                        &frontend.ir,
+                        &stem,
+                        &requested,
+                        extra_tool_libs,
+                    )
                 }
                 BuildTarget::Cdylib | BuildTarget::Staticlib => {
                     corvid_codegen_cl::build_library_to_disk(
@@ -178,7 +191,7 @@ pub fn build_target_to_disk(
                         &stem,
                         &requested,
                         target,
-                        &[],
+                        extra_tool_libs,
                         catalog_descriptor
                             .as_ref()
                             .map(|descriptor| descriptor.embedded_bytes.as_slice()),

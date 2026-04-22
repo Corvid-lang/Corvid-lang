@@ -1,0 +1,187 @@
+use std::path::{Path, PathBuf};
+use std::process::Command;
+
+fn read_text(path: &Path) -> String {
+    std::fs::read_to_string(path).unwrap_or_else(|err| panic!("failed to read {}: {err}", path.display()))
+}
+
+fn workspace_root() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .ancestors()
+        .nth(2)
+        .expect("workspace root")
+        .to_path_buf()
+}
+
+fn run_corvid(args: &[&str], cwd: &Path) -> std::process::Output {
+    Command::new(env!("CARGO_BIN_EXE_corvid"))
+        .args(args)
+        .current_dir(cwd)
+        .output()
+        .expect("run corvid")
+}
+
+fn shared_library_name(stem: &str) -> String {
+    if cfg!(target_os = "macos") {
+        format!("lib{stem}.dylib")
+    } else if cfg!(windows) {
+        format!("{stem}.dll")
+    } else {
+        format!("lib{stem}.so")
+    }
+}
+
+fn test_tools_lib_path() -> PathBuf {
+    let root = workspace_root();
+    let status = Command::new("cargo")
+        .arg("build")
+        .arg("-p")
+        .arg("corvid-test-tools")
+        .arg("--release")
+        .current_dir(&root)
+        .status()
+        .expect("build corvid-test-tools");
+    assert!(status.success(), "building corvid-test-tools failed");
+    if cfg!(windows) {
+        root.join("target").join("release").join("corvid_test_tools.lib")
+    } else {
+        root.join("target").join("release").join("libcorvid_test_tools.a")
+    }
+}
+
+fn try_compiler() -> Option<cc::Tool> {
+    cc::Build::new()
+        .opt_level(0)
+        .cargo_metadata(false)
+        .cargo_warnings(false)
+        .host(&target_lexicon::HOST.to_string())
+        .target(&target_lexicon::HOST.to_string())
+        .try_get_compiler()
+        .ok()
+}
+
+fn compile_host(source: &Path, include_dir: &Path, out_dir: &Path) -> Option<PathBuf> {
+    let compiler = match try_compiler() {
+        Some(compiler) => compiler,
+        None => {
+            eprintln!("skipping: no C compiler on PATH");
+            return None;
+        }
+    };
+    let output_path = if cfg!(windows) {
+        out_dir.join("approver_host.exe")
+    } else {
+        out_dir.join("approver_host")
+    };
+    let mut cmd = Command::new(compiler.path());
+    for (key, value) in compiler.env() {
+        cmd.env(key, value);
+    }
+    if compiler.is_like_msvc() {
+        cmd.arg(source)
+            .arg(format!("/I{}", include_dir.display()))
+            .arg(format!("/Fe:{}", output_path.display()));
+    } else {
+        cmd.arg(source)
+            .arg("-I")
+            .arg(include_dir)
+            .arg("-Wall")
+            .arg("-Wextra")
+            .arg("-Werror")
+            .arg("-ldl")
+            .arg("-o")
+            .arg(&output_path);
+    }
+    let output = cmd.output().expect("compile approver host");
+    assert!(
+        output.status.success(),
+        "approver host compile failed: stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    Some(output_path)
+}
+
+#[test]
+fn cdylib_catalog_demo_c_host_shows_accept_reject_and_fail_closed() {
+    let root = workspace_root();
+    let demo_dir = root.join("examples").join("cdylib_catalog_demo");
+    let source = demo_dir.join("src").join("classify.cor");
+    let approver = demo_dir.join("src").join("approver.cor");
+    let tools_lib = test_tools_lib_path();
+
+    let build_output = run_corvid(
+        &[
+            "build",
+            source.to_str().expect("utf8 source path"),
+            "--target=cdylib",
+            "--with-tools-lib",
+            tools_lib.to_str().expect("utf8 tools path"),
+            "--all-artifacts",
+        ],
+        &root,
+    );
+    assert!(
+        build_output.status.success(),
+        "cdylib demo build failed: stdout={} stderr={}",
+        String::from_utf8_lossy(&build_output.stdout),
+        String::from_utf8_lossy(&build_output.stderr)
+    );
+
+    let hash_output = run_corvid(
+        &["abi", "hash", source.to_str().expect("utf8 source path")],
+        &root,
+    );
+    assert!(
+        hash_output.status.success(),
+        "abi hash failed: stdout={} stderr={}",
+        String::from_utf8_lossy(&hash_output.stdout),
+        String::from_utf8_lossy(&hash_output.stderr)
+    );
+    let hash = String::from_utf8(hash_output.stdout)
+        .expect("hash utf8")
+        .trim()
+        .to_string();
+
+    let release_dir = demo_dir.join("target").join("release");
+    let library = release_dir.join(shared_library_name("classify"));
+    let host_source = demo_dir.join("host_c").join("approver_host.c");
+    let trace_dir = demo_dir.join("trace_output");
+    let trace_path = trace_dir.join("approval_demo.jsonl");
+    let host_bin = match compile_host(&host_source, &release_dir, &demo_dir.join("host_c")) {
+        Some(path) => path,
+        None => return,
+    };
+    let _ = std::fs::remove_dir_all(&trace_dir);
+
+    let output = Command::new(&host_bin)
+        .arg(&library)
+        .arg(&approver)
+        .arg(&hash)
+        .current_dir(&demo_dir)
+        .output()
+        .expect("run approver host");
+    assert!(
+        output.status.success(),
+        "approver host failed: stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("verified_before=1"), "stdout was: {stdout}");
+    assert!(stdout.contains("verified_after_registration=1"), "stdout was: {stdout}");
+    assert!(stdout.contains("catalog_has_approver=1"), "stdout was: {stdout}");
+    assert!(stdout.contains("preflight_status=0 requires_approval=1"), "stdout was: {stdout}");
+    assert!(stdout.contains("accept_call_status=0 result=\"approved\""), "stdout was: {stdout}");
+    assert!(stdout.contains("reject_call_status=4 site=EchoString"), "stdout was: {stdout}");
+    assert!(stdout.contains("fail_closed_call_status=4 site=EchoString"), "stdout was: {stdout}");
+    assert!(stdout.contains("trace_path=trace_output/approval_demo.jsonl"), "stdout was: {stdout}");
+
+    let trace = read_text(&trace_path);
+    assert!(trace.contains("\"kind\":\"approval_decision\""), "trace was: {trace}");
+    assert!(trace.contains("\"decider\":\"corvid-agent:"), "trace was: {trace}");
+    assert!(trace.contains("\"accepted\":true"), "trace was: {trace}");
+    assert!(trace.contains("\"accepted\":false"), "trace was: {trace}");
+    assert!(trace.contains("\"decider\":\"fail-closed-default\""), "trace was: {trace}");
+}
