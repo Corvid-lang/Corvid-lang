@@ -10,12 +10,17 @@
 
 pub mod depgraph;
 pub mod errors;
+pub mod modules;
 pub mod repl;
 pub mod resolver;
 pub mod scope;
 
 pub use depgraph::{build_dep_graph, decl_name, DepGraph};
 pub use errors::{ResolveError, ResolveErrorKind};
+pub use modules::{
+    collect_public_exports, resolve_import_path, DeclExport, ModuleLookup, ModuleResolution,
+    ResolvedModule,
+};
 pub use repl::{RedefinitionResult, ReplResolveSession, ResolvedTurn};
 pub use resolver::{resolve, ReplayPatternBinding, Resolved};
 pub use scope::{Binding, BuiltIn, DeclEntry, DeclKind, DefId, LocalId, LocalScope, SymbolTable};
