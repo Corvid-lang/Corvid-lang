@@ -1,6 +1,7 @@
 #![allow(unsafe_code)]
 
 use crate::approvals::{ApprovalDecision, ApprovalRequest};
+use crate::approver_bridge::{ApprovalDecisionInfo, ApprovalSiteInput};
 use crate::catalog::{
     call_agent, descriptor_hash, descriptor_json_ptr, list_agent_handles_owned, pre_flight,
     CorvidAgentHandle, CorvidApprovalDecision, CorvidApprovalRequired, CorvidApproverFn,
@@ -20,7 +21,9 @@ use std::sync::{Arc, Mutex};
 
 thread_local! {
     static TRANSIENT_STRINGS: RefCell<Vec<CString>> = RefCell::new(Vec::new());
-    static PREAPPROVED_REQUESTS: RefCell<VecDeque<(String, Vec<serde_json::Value>)>> = RefCell::new(VecDeque::new());
+    static PREAPPROVED_REQUESTS: RefCell<VecDeque<(String, Vec<serde_json::Value>, ApprovalDecisionInfo)>> =
+        RefCell::new(VecDeque::new());
+    static LAST_APPROVAL_DETAIL: RefCell<Option<ApprovalDecisionInfo>> = RefCell::new(None);
 }
 
 #[derive(Default)]
@@ -35,41 +38,77 @@ static APPROVER_REGISTRATION: Mutex<ApproverRegistration> = Mutex::new(ApproverR
 });
 
 pub(crate) enum ApprovalRequestOutcome {
-    Accepted,
+    Accepted(ApprovalDecisionInfo),
     MissingOrRejected,
 }
 
 pub(crate) fn request_host_approval(request: &OwnedApprovalRequired) -> ApprovalRequestOutcome {
+    let args = match serde_json::from_str::<serde_json::Value>(&request.args_json) {
+        Ok(serde_json::Value::Array(values)) => values,
+        _ => Vec::new(),
+    };
+    if let Ok(Some(detail)) = crate::approver_bridge::evaluate_registered_approver(
+        &ApprovalSiteInput::fallback(&request.site_name),
+        &args,
+    ) {
+        return if detail.accepted {
+            ApprovalRequestOutcome::Accepted(detail)
+        } else {
+            LAST_APPROVAL_DETAIL.with(|slot| *slot.borrow_mut() = Some(detail));
+            ApprovalRequestOutcome::MissingOrRejected
+        };
+    }
     let registration = APPROVER_REGISTRATION.lock().unwrap();
     let Some(callback) = registration.callback else {
+        let detail = ApprovalDecisionInfo {
+            accepted: false,
+            decider: "fail-closed-default".to_string(),
+            rationale: None,
+        };
+        LAST_APPROVAL_DETAIL.with(|slot| *slot.borrow_mut() = Some(detail));
         return ApprovalRequestOutcome::MissingOrRejected;
     };
     reset_transients();
     let c_request = owned_approval_to_c(request);
     let decision = unsafe { callback(&c_request, registration.user_data as *mut c_void) };
-    match decision {
-        CorvidApprovalDecision::Accept => ApprovalRequestOutcome::Accepted,
-        CorvidApprovalDecision::Reject => ApprovalRequestOutcome::MissingOrRejected,
+    let detail = ApprovalDecisionInfo {
+        accepted: matches!(decision, CorvidApprovalDecision::Accept),
+        decider: "c-callback".to_string(),
+        rationale: None,
+    };
+    if detail.accepted {
+        ApprovalRequestOutcome::Accepted(detail)
+    } else {
+        LAST_APPROVAL_DETAIL.with(|slot| *slot.borrow_mut() = Some(detail));
+        ApprovalRequestOutcome::MissingOrRejected
     }
 }
 
-pub(crate) fn mark_preapproved_request(label: String, args: Vec<serde_json::Value>) {
-    PREAPPROVED_REQUESTS.with(|queue| queue.borrow_mut().push_back((label, args)));
+pub(crate) fn mark_preapproved_request(
+    label: String,
+    args: Vec<serde_json::Value>,
+    detail: ApprovalDecisionInfo,
+) {
+    PREAPPROVED_REQUESTS.with(|queue| queue.borrow_mut().push_back((label, args, detail)));
 }
 
 pub(crate) fn decide_registered_approval(req: &ApprovalRequest) -> ApprovalDecision {
     let preapproved = PREAPPROVED_REQUESTS.with(|queue| {
         let mut queue = queue.borrow_mut();
         match queue.front() {
-            Some((label, args)) if *label == req.label && *args == req.args => {
-                queue.pop_front();
-                true
+            Some((label, args, _)) if *label == req.label && *args == req.args => {
+                queue.pop_front()
             }
-            _ => false,
+            _ => None,
         }
     });
-    if preapproved {
-        return ApprovalDecision::Approve;
+    if let Some((_, _, detail)) = preapproved {
+        LAST_APPROVAL_DETAIL.with(|slot| *slot.borrow_mut() = Some(detail.clone()));
+        return if detail.accepted {
+            ApprovalDecision::Approve
+        } else {
+            ApprovalDecision::Deny
+        };
     }
     let request = OwnedApprovalRequired {
         site_name: req.label.clone(),
@@ -82,8 +121,97 @@ pub(crate) fn decide_registered_approval(req: &ApprovalRequest) -> ApprovalDecis
         rationale_prompt: format!("Approval required for `{}`.", req.label),
     };
     match request_host_approval(&request) {
-        ApprovalRequestOutcome::Accepted => ApprovalDecision::Approve,
+        ApprovalRequestOutcome::Accepted(detail) => {
+            LAST_APPROVAL_DETAIL.with(|slot| *slot.borrow_mut() = Some(detail));
+            ApprovalDecision::Approve
+        }
         ApprovalRequestOutcome::MissingOrRejected => ApprovalDecision::Deny,
+    }
+}
+
+pub(crate) fn take_last_approval_detail() -> Option<ApprovalDecisionInfo> {
+    LAST_APPROVAL_DETAIL.with(|slot| slot.borrow_mut().take())
+}
+
+pub(crate) fn register_corvid_approver_source(
+    source_path: &std::path::Path,
+    max_budget_usd_per_call: f64,
+) -> Result<(), crate::approver_bridge::ApproverLoadError> {
+    crate::approver_bridge::register_approver_from_source(source_path, max_budget_usd_per_call)
+}
+
+pub(crate) fn clear_corvid_approver_source() {
+    crate::approver_bridge::clear_registered_approver();
+}
+
+pub(crate) fn approval_predicate_json(site_name: &str) -> Option<String> {
+    crate::catalog::catalog_approval_sites()
+        .ok()?
+        .into_iter()
+        .find(|site| site.label == site_name)
+        .and_then(|site| site.predicate)
+        .map(|value| value.to_string())
+}
+
+pub(crate) fn evaluate_approval_predicate(
+    site_name: &str,
+    args_json: &str,
+) -> crate::approver_bridge::CorvidPredicateResult {
+    let Some(predicate_json) = approval_predicate_json(site_name) else {
+        return crate::approver_bridge::CorvidPredicateResult {
+            status: crate::approver_bridge::CorvidPredicateStatus::SiteNotFound,
+            requires_approval: 0,
+            bad_args_message: ptr::null(),
+        };
+    };
+    let predicate: serde_json::Value = match serde_json::from_str(&predicate_json) {
+        Ok(value) => value,
+        Err(_) => {
+            return crate::approver_bridge::CorvidPredicateResult {
+                status: crate::approver_bridge::CorvidPredicateStatus::Unevaluable,
+                requires_approval: 0,
+                bad_args_message: ptr::null(),
+            }
+        }
+    };
+    let args = match serde_json::from_str::<serde_json::Value>(args_json) {
+        Ok(serde_json::Value::Array(values)) => values,
+        Ok(_) => {
+            return crate::approver_bridge::CorvidPredicateResult {
+                status: crate::approver_bridge::CorvidPredicateStatus::BadArgs,
+                requires_approval: 0,
+                bad_args_message: stash_transient("args_json must be a JSON array"),
+            }
+        }
+        Err(err) => {
+            return crate::approver_bridge::CorvidPredicateResult {
+                status: crate::approver_bridge::CorvidPredicateStatus::BadArgs,
+                requires_approval: 0,
+                bad_args_message: stash_transient(&format!("args_json must be a JSON array: {err}")),
+            }
+        }
+    };
+    let Some(arity) = predicate.get("arity").and_then(|value| value.as_u64()) else {
+        return crate::approver_bridge::CorvidPredicateResult {
+            status: crate::approver_bridge::CorvidPredicateStatus::Unevaluable,
+            requires_approval: 0,
+            bad_args_message: ptr::null(),
+        };
+    };
+    if args.len() != arity as usize {
+        return crate::approver_bridge::CorvidPredicateResult {
+            status: crate::approver_bridge::CorvidPredicateStatus::BadArgs,
+            requires_approval: 0,
+            bad_args_message: stash_transient(&format!(
+                "arity mismatch for approval site `{site_name}`: expected {arity}, got {}",
+                args.len()
+            )),
+        };
+    }
+    crate::approver_bridge::CorvidPredicateResult {
+        status: crate::approver_bridge::CorvidPredicateStatus::Ok,
+        requires_approval: 1,
+        bad_args_message: ptr::null(),
     }
 }
 
@@ -801,4 +929,79 @@ pub extern "C" fn corvid_register_approver(
     let mut registration = APPROVER_REGISTRATION.lock().unwrap();
     registration.callback = fn_ptr;
     registration.user_data = user_data as usize;
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn corvid_register_approver_from_source(
+    source_path: *const c_char,
+    max_budget_usd_per_call: f64,
+    out_error_message: *mut *mut c_char,
+) -> crate::approver_bridge::CorvidApproverLoadStatus {
+    if !out_error_message.is_null() {
+        *out_error_message = ptr::null_mut();
+    }
+    let Ok(source_path) = read_c_string(source_path) else {
+        return crate::approver_bridge::CorvidApproverLoadStatus::IoError;
+    };
+    match register_corvid_approver_source(std::path::Path::new(&source_path), max_budget_usd_per_call) {
+        Ok(()) => crate::approver_bridge::CorvidApproverLoadStatus::Ok,
+        Err(err) => {
+            if !out_error_message.is_null() {
+                if let Ok(message) = CString::new(err.message) {
+                    *out_error_message = message.into_raw();
+                }
+            }
+            err.status
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn corvid_clear_approver() {
+    clear_corvid_approver_source();
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn corvid_approval_predicate_json(
+    site_name: *const c_char,
+    out_len: *mut usize,
+) -> *const c_char {
+    if !out_len.is_null() {
+        *out_len = 0;
+    }
+    let Ok(site_name) = read_c_string(site_name) else {
+        return ptr::null();
+    };
+    reset_transients();
+    let Some(json) = approval_predicate_json(&site_name) else {
+        return ptr::null();
+    };
+    let ptr = stash_transient(&json);
+    if !out_len.is_null() {
+        *out_len = json.len();
+    }
+    ptr
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn corvid_evaluate_approval_predicate(
+    site_name: *const c_char,
+    args_json: *const c_char,
+    args_len: usize,
+) -> crate::approver_bridge::CorvidPredicateResult {
+    let Ok(site_name) = read_c_string(site_name) else {
+        return crate::approver_bridge::CorvidPredicateResult {
+            status: crate::approver_bridge::CorvidPredicateStatus::BadArgs,
+            requires_approval: 0,
+            bad_args_message: ptr::null(),
+        };
+    };
+    let args_json = if args_json.is_null() {
+        String::new()
+    } else {
+        let bytes = std::slice::from_raw_parts(args_json as *const u8, args_len);
+        String::from_utf8_lossy(bytes).into_owned()
+    };
+    reset_transients();
+    evaluate_approval_predicate(&site_name, &args_json)
 }

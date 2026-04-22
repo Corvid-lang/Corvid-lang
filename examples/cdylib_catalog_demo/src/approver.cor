@@ -1,0 +1,5 @@
+@budget($0.05)
+agent approve_site(site: ApprovalSite, args: ApprovalArgs, ctx: ApprovalContext) -> ApprovalDecision:
+    if site.label == "IssueRefund":
+        return ApprovalDecision(false, "IssueRefund requires manual review")
+    return ApprovalDecision(true, "approved")

@@ -29,6 +29,11 @@ tokio = { workspace = true }
 futures = "0.3"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 dotenvy = "0.15"
+corvid-ast = { workspace = true }
+corvid-ir = { workspace = true }
+corvid-resolve = { workspace = true }
+corvid-syntax = { workspace = true }
+corvid-types = { workspace = true }
 # `inventory` collects `ToolMetadata` entries from every `#[tool]`
 # macro invocation across linked user tool crates. Read once by
 # `corvid_runtime_init` to build the effect-policy table.
@@ -52,12 +57,7 @@ optional = true
 tempfile = "3"
 wiremock = "0.6"
 criterion = "0.5"
-corvid-ast = { workspace = true }
-corvid-ir = { workspace = true }
-corvid-syntax = { workspace = true }
 corvid-vm = { workspace = true }
-corvid-resolve = { workspace = true }
-corvid-types = { workspace = true }
 corvid-codegen-cl = { workspace = true }
 
 [[bench]]

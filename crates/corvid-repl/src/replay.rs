@@ -215,6 +215,17 @@ impl ReplaySession {
                     let session_run_id = run_id.as_str();
                     let (end_ts_ms, approved, consumed, was_truncated) =
                         match events.get(i + 1) {
+                            Some(TraceEvent::ApprovalDecision { .. }) => match events.get(i + 2) {
+                                Some(TraceEvent::ApprovalResponse {
+                                    ts_ms,
+                                    run_id,
+                                    label: result_label,
+                                    approved,
+                                }) if run_id == session_run_id && result_label == label => {
+                                    (Some(*ts_ms), Some(*approved), 3, false)
+                                }
+                                _ => (None, None, 2, true),
+                            },
                             Some(TraceEvent::ApprovalResponse {
                                 ts_ms,
                                 run_id,
@@ -287,6 +298,10 @@ impl ReplaySession {
                     ..
                 }
                 | TraceEvent::AdversarialContradiction {
+                    run_id: event_run_id,
+                    ..
+                }
+                | TraceEvent::ApprovalDecision {
                     run_id: event_run_id,
                     ..
                 }
@@ -485,6 +500,7 @@ fn first_run_id(events: &[TraceEvent]) -> Result<&str, ReplayLoadError> {
         | Some(TraceEvent::LlmCall { run_id, .. })
         | Some(TraceEvent::LlmResult { run_id, .. })
         | Some(TraceEvent::ApprovalRequest { run_id, .. })
+        | Some(TraceEvent::ApprovalDecision { run_id, .. })
         | Some(TraceEvent::ApprovalResponse { run_id, .. })
         | Some(TraceEvent::SeedRead { run_id, .. })
         | Some(TraceEvent::ClockRead { run_id, .. })
@@ -521,6 +537,7 @@ fn first_ts(events: &[TraceEvent]) -> u64 {
         | Some(TraceEvent::LlmCall { ts_ms, .. })
         | Some(TraceEvent::LlmResult { ts_ms, .. })
         | Some(TraceEvent::ApprovalRequest { ts_ms, .. })
+        | Some(TraceEvent::ApprovalDecision { ts_ms, .. })
         | Some(TraceEvent::ApprovalResponse { ts_ms, .. })
         | Some(TraceEvent::SeedRead { ts_ms, .. })
         | Some(TraceEvent::ClockRead { ts_ms, .. })
@@ -546,6 +563,7 @@ fn last_ts(events: &[TraceEvent]) -> u64 {
         | Some(TraceEvent::LlmCall { ts_ms, .. })
         | Some(TraceEvent::LlmResult { ts_ms, .. })
         | Some(TraceEvent::ApprovalRequest { ts_ms, .. })
+        | Some(TraceEvent::ApprovalDecision { ts_ms, .. })
         | Some(TraceEvent::ApprovalResponse { ts_ms, .. })
         | Some(TraceEvent::SeedRead { ts_ms, .. })
         | Some(TraceEvent::ClockRead { ts_ms, .. })

@@ -72,14 +72,23 @@ fn sample_trace() -> Vec<TraceEvent> {
             label: "IssueRefund".into(),
             args: vec![json!("ticket-42"), json!(99.0)],
         },
-        TraceEvent::ApprovalResponse {
+        TraceEvent::ApprovalDecision {
             ts_ms: 9,
+            run_id: "r-roundtrip".into(),
+            site: "IssueRefund".into(),
+            args: vec![json!("ticket-42"), json!(99.0)],
+            accepted: true,
+            decider: "corvid-agent:examples/approver.cor".into(),
+            rationale: Some("approved".into()),
+        },
+        TraceEvent::ApprovalResponse {
+            ts_ms: 10,
             run_id: "r-roundtrip".into(),
             label: "IssueRefund".into(),
             approved: true,
         },
         TraceEvent::RunCompleted {
-            ts_ms: 10,
+            ts_ms: 11,
             run_id: "r-roundtrip".into(),
             ok: true,
             result: Some(json!("refunded")),

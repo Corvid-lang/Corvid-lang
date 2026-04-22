@@ -86,6 +86,29 @@ pub fn render_header(opts: &HeaderOptions, agents: &[HeaderAgent]) -> String {
     out.push_str("    const CorvidApprovalRequired* request,\n");
     out.push_str("    void* user_data);\n\n");
 
+    out.push_str("typedef enum {\n");
+    out.push_str("    CORVID_APPROVER_OK = 0,\n");
+    out.push_str("    CORVID_APPROVER_IO_ERROR = 1,\n");
+    out.push_str("    CORVID_APPROVER_COMPILE_ERROR = 2,\n");
+    out.push_str("    CORVID_APPROVER_MISSING_AGENT = 3,\n");
+    out.push_str("    CORVID_APPROVER_BAD_SIGNATURE = 4,\n");
+    out.push_str("    CORVID_APPROVER_UNSAFE = 5,\n");
+    out.push_str("    CORVID_APPROVER_OVER_BUDGET = 6,\n");
+    out.push_str("} CorvidApproverLoadStatus;\n\n");
+
+    out.push_str("typedef enum {\n");
+    out.push_str("    CORVID_PREDICATE_OK = 0,\n");
+    out.push_str("    CORVID_PREDICATE_BAD_ARGS = 1,\n");
+    out.push_str("    CORVID_PREDICATE_SITE_NOT_FOUND = 2,\n");
+    out.push_str("    CORVID_PREDICATE_UNEVALUABLE = 3,\n");
+    out.push_str("} CorvidPredicateStatus;\n\n");
+
+    out.push_str("typedef struct {\n");
+    out.push_str("    CorvidPredicateStatus status;\n");
+    out.push_str("    uint8_t requires_approval;\n");
+    out.push_str("    const char* bad_args_message;\n");
+    out.push_str("} CorvidPredicateResult;\n\n");
+
     out.push_str("const char* corvid_abi_descriptor_json(size_t* out_len);\n");
     out.push_str("void corvid_abi_descriptor_hash(uint8_t out_hash[32]);\n");
     out.push_str("int corvid_abi_verify(const uint8_t expected[32]);\n");
@@ -101,6 +124,16 @@ pub fn render_header(opts: &HeaderOptions, agents: &[HeaderAgent]) -> String {
     out.push_str("    CorvidApprovalRequired* out_approval);\n");
     out.push_str("void corvid_free_result(char* result);\n");
     out.push_str("void corvid_register_approver(CorvidApproverFn fn, void* user_data);\n");
+    out.push_str("CorvidApproverLoadStatus corvid_register_approver_from_source(\n");
+    out.push_str("    const char* source_path,\n");
+    out.push_str("    double max_budget_usd_per_call,\n");
+    out.push_str("    char** out_error_message);\n");
+    out.push_str("void corvid_clear_approver(void);\n");
+    out.push_str("const char* corvid_approval_predicate_json(const char* site_name, size_t* out_len);\n");
+    out.push_str("CorvidPredicateResult corvid_evaluate_approval_predicate(\n");
+    out.push_str("    const char* site_name,\n");
+    out.push_str("    const char* args_json,\n");
+    out.push_str("    size_t args_len);\n");
     out.push_str("void corvid_free_string(const char* value);\n\n");
 
     for agent in agents {

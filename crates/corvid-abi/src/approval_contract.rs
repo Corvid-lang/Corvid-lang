@@ -187,6 +187,12 @@ fn collect_sites_from_block(
                             },
                         },
                         agent_context: agent_name.to_string(),
+                        predicate: Some(serde_json::json!({
+                            "kind": "approval_site",
+                            "op": "requires_approval",
+                            "label": tool_name,
+                            "arity": maybe_tool.map(|tool| tool.params.len()).unwrap_or(0),
+                        })),
                         dangerous_targets: maybe_tool
                             .filter(|tool| tool.effect == Effect::Dangerous)
                             .map(|tool| vec![tool.name.name.clone()])

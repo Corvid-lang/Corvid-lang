@@ -973,6 +973,13 @@ fn replayed_approval_result(label: &str, event: TraceEvent) -> Result<bool, Runt
     }
 }
 
+fn next_approval_outcome_event(cursor: &mut TraceCursor, events: &[TraceEvent]) -> TraceEvent {
+    match cursor.next_event(events) {
+        TraceEvent::ApprovalDecision { .. } => cursor.next_event(events),
+        other => other,
+    }
+}
+
 fn replayed_event_json(event: &TraceEvent) -> serde_json::Value {
     match event {
         TraceEvent::ToolResult { result, .. } | TraceEvent::LlmResult { result, .. } => {
@@ -1008,6 +1015,7 @@ fn event_kind(event: &TraceEvent) -> &'static str {
         TraceEvent::LlmCall { .. } => "llm_call",
         TraceEvent::LlmResult { .. } => "llm_result",
         TraceEvent::ApprovalRequest { .. } => "approval_request",
+        TraceEvent::ApprovalDecision { .. } => "approval_decision",
         TraceEvent::ApprovalResponse { .. } => "approval_response",
         TraceEvent::SeedRead { .. } => "seed_read",
         TraceEvent::ClockRead { .. } => "clock_read",

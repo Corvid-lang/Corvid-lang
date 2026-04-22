@@ -213,6 +213,7 @@ fn event_run_id(event: &TraceEvent) -> Option<&str> {
         | TraceEvent::LlmCall { run_id, .. }
         | TraceEvent::LlmResult { run_id, .. }
         | TraceEvent::ApprovalRequest { run_id, .. }
+        | TraceEvent::ApprovalDecision { run_id, .. }
         | TraceEvent::ApprovalResponse { run_id, .. }
         | TraceEvent::SeedRead { run_id, .. }
         | TraceEvent::ClockRead { run_id, .. }
@@ -237,6 +238,7 @@ fn event_ts_ms(event: &TraceEvent) -> u64 {
         | TraceEvent::LlmCall { ts_ms, .. }
         | TraceEvent::LlmResult { ts_ms, .. }
         | TraceEvent::ApprovalRequest { ts_ms, .. }
+        | TraceEvent::ApprovalDecision { ts_ms, .. }
         | TraceEvent::ApprovalResponse { ts_ms, .. }
         | TraceEvent::SeedRead { ts_ms, .. }
         | TraceEvent::ClockRead { ts_ms, .. }

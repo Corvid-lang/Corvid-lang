@@ -567,6 +567,7 @@ fn event_ts_ms(event: &TraceEvent) -> u64 {
         | TraceEvent::LlmCall { ts_ms, .. }
         | TraceEvent::LlmResult { ts_ms, .. }
         | TraceEvent::ApprovalRequest { ts_ms, .. }
+        | TraceEvent::ApprovalDecision { ts_ms, .. }
         | TraceEvent::ApprovalResponse { ts_ms, .. }
         | TraceEvent::SeedRead { ts_ms, .. }
         | TraceEvent::ClockRead { ts_ms, .. }

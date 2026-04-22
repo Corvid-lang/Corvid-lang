@@ -32,6 +32,7 @@
 pub mod abi;
 pub mod adversarial;
 pub mod approvals;
+pub mod approver_bridge;
 pub mod catalog;
 pub mod catalog_c_api;
 pub mod ensemble;

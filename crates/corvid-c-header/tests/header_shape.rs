@@ -136,4 +136,8 @@ fn header_exports_catalog_surface() {
     assert!(header.contains("CorvidPreFlight corvid_pre_flight("));
     assert!(header.contains("CorvidCallStatus corvid_call_agent("));
     assert!(header.contains("void corvid_register_approver(CorvidApproverFn fn, void* user_data);"));
+    assert!(header.contains("CorvidApproverLoadStatus corvid_register_approver_from_source("));
+    assert!(header.contains("void corvid_clear_approver(void);"));
+    assert!(header.contains("const char* corvid_approval_predicate_json(const char* site_name, size_t* out_len);"));
+    assert!(header.contains("CorvidPredicateResult corvid_evaluate_approval_predicate("));
 }

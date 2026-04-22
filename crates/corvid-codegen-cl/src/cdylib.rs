@@ -94,6 +94,10 @@ fn exported_symbols(ir: &IrFile) -> Vec<String> {
             "corvid_call_agent",
             "corvid_free_result",
             "corvid_register_approver",
+            "corvid_register_approver_from_source",
+            "corvid_clear_approver",
+            "corvid_approval_predicate_json",
+            "corvid_evaluate_approval_predicate",
         ]
         .into_iter()
         .map(str::to_string),

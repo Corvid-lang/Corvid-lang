@@ -104,6 +104,16 @@ pub enum TraceEvent {
         label: String,
         args: Vec<serde_json::Value>,
     },
+    ApprovalDecision {
+        ts_ms: u64,
+        run_id: String,
+        site: String,
+        args: Vec<serde_json::Value>,
+        accepted: bool,
+        decider: String,
+        #[serde(default)]
+        rationale: Option<String>,
+    },
     ApprovalResponse {
         ts_ms: u64,
         run_id: String,

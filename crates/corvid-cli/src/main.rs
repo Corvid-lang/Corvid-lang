@@ -19,6 +19,7 @@
 //!   corvid trace dag <id>     render provenance DAG as Graphviz DOT
 
 mod abi_cmd;
+mod approver_cmd;
 mod replay;
 mod routing_report;
 mod test_from_traces;
@@ -288,6 +289,11 @@ enum Command {
         #[command(subcommand)]
         command: AbiCommand,
     },
+    /// Check or simulate a Corvid approver source.
+    Approver {
+        #[command(subcommand)]
+        command: ApproverCommand,
+    },
     /// Inspect recorded traces under `target/trace/` (or a
     /// user-supplied directory).
     Trace {
@@ -365,6 +371,23 @@ enum AbiCommand {
         library: PathBuf,
         #[arg(long, value_name = "HEX")]
         expected_hash: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum ApproverCommand {
+    Check {
+        approver: PathBuf,
+        #[arg(long, value_name = "USD")]
+        max_budget_usd: Option<f64>,
+    },
+    Simulate {
+        approver: PathBuf,
+        site_label: String,
+        #[arg(long, value_name = "JSON")]
+        args: String,
+        #[arg(long, value_name = "USD")]
+        max_budget_usd: Option<f64>,
     },
 }
 
@@ -453,6 +476,18 @@ fn main() -> ExitCode {
                 library,
                 expected_hash,
             } => abi_cmd::run_verify(&library, &expected_hash),
+        },
+        Some(Command::Approver { command }) => match command {
+            ApproverCommand::Check {
+                approver,
+                max_budget_usd,
+            } => approver_cmd::run_check(&approver, max_budget_usd),
+            ApproverCommand::Simulate {
+                approver,
+                site_label,
+                args,
+                max_budget_usd,
+            } => approver_cmd::run_simulate(&approver, &site_label, &args, max_budget_usd),
         },
         Some(Command::Trace { command }) => match command {
             TraceCommand::List { trace_dir } => trace_cmd::run_list(trace_dir.as_deref()),

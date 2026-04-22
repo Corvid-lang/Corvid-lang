@@ -12,6 +12,7 @@ use corvid_runtime::{
     CorvidAgentHandle, CorvidApprovalDecision, CorvidApprovalRequired, CorvidCallStatus,
     CorvidPreFlightStatus,
 };
+use corvid_runtime::approver_bridge::{CorvidApproverLoadStatus, CorvidPredicateResult, CorvidPredicateStatus};
 use corvid_syntax::{lex, parse_file};
 use corvid_types::{typecheck, EffectRegistry};
 use libloading::Library;
@@ -138,6 +139,12 @@ unsafe extern "C" fn accept_approver(
     _user_data: *mut std::ffi::c_void,
 ) -> CorvidApprovalDecision {
     CorvidApprovalDecision::Accept
+}
+
+fn write_approver_source(dir: &TempDir, source: &str) -> PathBuf {
+    let path = dir.path().join("approver.cor");
+    std::fs::write(&path, source).expect("write approver source");
+    path
 }
 
 #[test]
@@ -377,6 +384,101 @@ fn corvid_call_agent_handles_happy_path_bad_args_and_approval_flow() {
         assert_eq!(approved_json, "\"vip\"");
 
         register(None, std::ptr::null_mut());
+        std::mem::forget(lib);
+    }
+}
+
+#[test]
+fn corvid_source_approver_registration_and_predicate_eval_work() {
+    let built = build_catalog_library();
+    let approver_path = write_approver_source(
+        &built._temp,
+        r#"
+agent approve_site(site: ApprovalSite, args: ApprovalArgs, ctx: ApprovalContext) -> ApprovalDecision:
+    if site.label == "EchoString":
+        return ApprovalDecision(true, "approved")
+    return ApprovalDecision(false, "rejected")
+"#,
+    );
+    unsafe {
+        std::env::set_var("CORVID_MODEL", "mock-1");
+        std::env::set_var("CORVID_TEST_MOCK_LLM", "1");
+        std::env::set_var("CORVID_TEST_MOCK_LLM_REPLIES", "{\"classify_prompt\":\"positive\"}");
+
+        let lib = Library::new(&built.path).expect("load library");
+        let register_source: libloading::Symbol<
+            unsafe extern "C" fn(*const c_char, f64, *mut *mut c_char) -> CorvidApproverLoadStatus,
+        > = lib
+            .get(b"corvid_register_approver_from_source")
+            .expect("resolve corvid_register_approver_from_source");
+        let clear_source: libloading::Symbol<unsafe extern "C" fn()> =
+            lib.get(b"corvid_clear_approver").expect("resolve corvid_clear_approver");
+        let predicate_json: libloading::Symbol<
+            unsafe extern "C" fn(*const c_char, *mut usize) -> *const c_char,
+        > = lib
+            .get(b"corvid_approval_predicate_json")
+            .expect("resolve corvid_approval_predicate_json");
+        let predicate_eval: libloading::Symbol<
+            unsafe extern "C" fn(*const c_char, *const c_char, usize) -> CorvidPredicateResult,
+        > = lib
+            .get(b"corvid_evaluate_approval_predicate")
+            .expect("resolve corvid_evaluate_approval_predicate");
+        let call_agent: libloading::Symbol<
+            unsafe extern "C" fn(
+                *const c_char,
+                *const c_char,
+                usize,
+                *mut *mut c_char,
+                *mut usize,
+                *mut CorvidApprovalRequired,
+            ) -> CorvidCallStatus,
+        > = lib.get(b"corvid_call_agent").expect("resolve corvid_call_agent");
+        let free_result: libloading::Symbol<unsafe extern "C" fn(*mut c_char)> =
+            lib.get(b"corvid_free_result").expect("resolve corvid_free_result");
+
+        let approver_path_c = CString::new(approver_path.to_string_lossy().to_string()).unwrap();
+        let mut error = std::ptr::null_mut();
+        let status = register_source(approver_path_c.as_ptr(), 1.0, &mut error);
+        assert_eq!(status, CorvidApproverLoadStatus::Ok);
+        assert!(error.is_null());
+
+        let label = CString::new("EchoString").unwrap();
+        let mut json_len = 0usize;
+        let predicate = predicate_json(label.as_ptr(), &mut json_len);
+        assert!(!predicate.is_null());
+        let predicate_text = CStr::from_ptr(predicate).to_str().unwrap();
+        assert!(predicate_text.contains("\"requires_approval\""));
+        assert!(json_len > 0);
+
+        let args = CString::new("[\"vip\"]").unwrap();
+        let eval = predicate_eval(label.as_ptr(), args.as_ptr(), args.as_bytes().len());
+        assert_eq!(eval.status, CorvidPredicateStatus::Ok);
+        assert_eq!(eval.requires_approval, 1);
+
+        let dangerous = CString::new("maybe_dangerous").unwrap();
+        let dangerous_args = CString::new("[true,\"vip\"]").unwrap();
+        let mut result = std::ptr::null_mut();
+        let mut result_len = 0usize;
+        let mut approval = CorvidApprovalRequired {
+            site_name: std::ptr::null(),
+            predicate_json: std::ptr::null(),
+            args_json: std::ptr::null(),
+            rationale_prompt: std::ptr::null(),
+        };
+        let call_status = call_agent(
+            dangerous.as_ptr(),
+            dangerous_args.as_ptr(),
+            dangerous_args.as_bytes().len(),
+            &mut result,
+            &mut result_len,
+            &mut approval,
+        );
+        assert_eq!(call_status, CorvidCallStatus::Ok);
+        let approved_json = CStr::from_ptr(result).to_str().unwrap().to_owned();
+        free_result(result);
+        assert_eq!(approved_json, "\"vip\"");
+
+        clear_source();
         std::mem::forget(lib);
     }
 }

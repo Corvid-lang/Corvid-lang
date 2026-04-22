@@ -381,6 +381,24 @@ impl Runtime {
         } else {
             self.approver.approve(&req).await? == ApprovalDecision::Approve
         };
+        if trace_enabled && self.replay_source()?.is_none() {
+            let detail = crate::catalog_c_api::take_last_approval_detail().unwrap_or(
+                crate::approver_bridge::ApprovalDecisionInfo {
+                    accepted: approved,
+                    decider: "runtime-approver".to_string(),
+                    rationale: None,
+                },
+            );
+            self.tracer.emit(TraceEvent::ApprovalDecision {
+                ts_ms: now_ms(),
+                run_id: self.tracer.run_id().to_string(),
+                site: label_owned.clone(),
+                args: req.args.clone(),
+                accepted: detail.accepted,
+                decider: detail.decider,
+                rationale: detail.rationale,
+            });
+        }
         if trace_enabled {
             self.tracer.emit(TraceEvent::ApprovalResponse {
                 ts_ms: now_ms(),

@@ -1,6 +1,7 @@
 use crate::errors::RuntimeError;
 use corvid_abi::{
-    descriptor_from_embedded_section, AbiAgent, AbiApprovalLabel, ScalarTypeName, TypeDescription,
+    descriptor_from_embedded_section, AbiAgent, AbiApprovalLabel, AbiApprovalSite, ScalarTypeName,
+    TypeDescription,
 };
 use std::collections::HashMap;
 use std::ffi::{c_char, CString};
@@ -161,6 +162,7 @@ struct CatalogState {
     descriptor_json: String,
     descriptor_json_c: CString,
     descriptor_hash: [u8; 32],
+    approval_sites: Vec<AbiApprovalSite>,
     agents: Vec<AgentCatalogEntry>,
     by_name: HashMap<String, usize>,
 }
@@ -234,6 +236,10 @@ pub(crate) fn list_agent_handles_owned() -> Result<Vec<CorvidAgentHandle>, Runti
         .collect())
 }
 
+pub(crate) fn catalog_approval_sites() -> Result<Vec<AbiApprovalSite>, RuntimeError> {
+    Ok(catalog()?.approval_sites.clone())
+}
+
 pub fn agent_signature_json(
     name: &str,
 ) -> Result<Option<(&'static str, usize, *const c_char)>, RuntimeError> {
@@ -289,6 +295,7 @@ fn load_catalog() -> Result<CatalogState, RuntimeError> {
     let descriptor_json_c = CString::new(descriptor_json.clone())
         .map_err(|err| RuntimeError::Other(format!("descriptor JSON contained NUL: {err}")))?;
     let source_path = descriptor.source_path.clone();
+    let approval_sites = descriptor.approval_sites.clone();
 
     let mut agents = Vec::with_capacity(descriptor.agents.len());
     let mut by_name = HashMap::with_capacity(descriptor.agents.len());
@@ -322,6 +329,7 @@ fn load_catalog() -> Result<CatalogState, RuntimeError> {
         descriptor_json,
         descriptor_json_c,
         descriptor_hash: section.sha256,
+        approval_sites,
         agents,
         by_name,
     })
@@ -410,10 +418,11 @@ fn call_agent_impl(agent_name: &str, args_json: &str) -> Result<OwnedCallOutcome
                     approval: Some(approval),
                 });
             }
-            crate::catalog_c_api::ApprovalRequestOutcome::Accepted => {
+            crate::catalog_c_api::ApprovalRequestOutcome::Accepted(detail) => {
                 crate::catalog_c_api::mark_preapproved_request(
                     approval.site_name.clone(),
                     validated.args.clone(),
+                    detail,
                 );
             }
         }

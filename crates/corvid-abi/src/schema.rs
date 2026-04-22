@@ -124,6 +124,8 @@ pub struct AbiApprovalSite {
     pub declared_at: AbiDeclaredAt,
     pub agent_context: String,
     #[serde(default)]
+    pub predicate: Option<Value>,
+    #[serde(default)]
     pub dangerous_targets: Vec<String>,
     pub effects: AbiEffects,
     pub required_tier: String,
