@@ -80,6 +80,18 @@ pub enum TypeRef {
     /// A named type: `String`, `Ticket`, `Decision`.
     Named { name: Ident, span: Span },
 
+    /// A qualified type resolved through an import alias:
+    /// `policy.Receipt`, `types.Verdict`. The `alias` identifier
+    /// must bind to a Corvid `.cor` file import; the resolver
+    /// looks up `name` inside that imported module's exported
+    /// symbol table. Introduced by `lang-cor-imports-basic-parse`;
+    /// full resolution lands in `lang-cor-imports-basic-resolve`.
+    Qualified {
+        alias: Ident,
+        name: Ident,
+        span: Span,
+    },
+
     /// A generic application: `List[Order]`, `Map[String, Int]`.
     Generic {
         name: Ident,
@@ -106,6 +118,7 @@ impl TypeRef {
     pub fn span(&self) -> Span {
         match self {
             TypeRef::Named { span, .. }
+            | TypeRef::Qualified { span, .. }
             | TypeRef::Generic { span, .. }
             | TypeRef::Weak { span, .. }
             | TypeRef::Function { span, .. } => *span,

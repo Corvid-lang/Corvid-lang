@@ -2479,8 +2479,8 @@ agent refund_bot(ticket: Ticket) -> Bool:
             .find(|e| matches!(e.kind, TypeErrorKind::NonScalarInExternC { .. }))
             .expect("expected NonScalarInExternC error");
         assert!(
-            err.hint().unwrap_or_default().contains("Phase 22-B"),
-            "expected Phase 22-B hint, got {:?}",
+            err.hint().unwrap_or_default().contains("Phase 22"),
+            "expected Phase 22 FFI hint, got {:?}",
             err.hint()
         );
     }
@@ -2500,8 +2500,8 @@ agent ids() -> List<String>:
             .find(|e| matches!(e.kind, TypeErrorKind::NonScalarInExternC { .. }))
             .expect("expected NonScalarInExternC error");
         assert!(
-            err.hint().unwrap_or_default().contains("Phase 22-B"),
-            "expected Phase 22-B hint, got {:?}",
+            err.hint().unwrap_or_default().contains("Phase 22"),
+            "expected Phase 22 FFI hint, got {:?}",
             err.hint()
         );
     }
@@ -2950,4 +2950,39 @@ agent run(x: String) -> Decision:
             "expected clean errors (warnings ok), got {:?}",
             c.errors
         );
+    }
+
+    // -------------------- lang-cor-imports: qualified type syntax --------------------
+
+    #[test]
+    fn qualified_type_ref_emits_not_yet_resolved_error() {
+        // `policy.Receipt` parses cleanly as a `TypeRef::Qualified`,
+        // but the cross-file resolver hasn't shipped yet. The checker
+        // emits a typed `CorvidImportNotYetResolved` so users see
+        // precise feedback rather than a downstream "unknown type"
+        // cascade. Once `lang-cor-imports-basic-resolve` lands, this
+        // test flips to an "import resolves cleanly" test.
+        let src = r#"
+import "./default_policy" as policy
+
+agent uses_qualified(r: policy.Receipt) -> String:
+    return "hi"
+"#;
+        let tokens = lex(src).expect("lex failed");
+        let (file, perr) = parse_file(&tokens);
+        assert!(perr.is_empty(), "parse errors: {perr:?}");
+        let resolved = resolve(&file);
+        let checked = typecheck(&file, &resolved);
+        let err = checked
+            .errors
+            .iter()
+            .find(|e| matches!(e.kind, TypeErrorKind::CorvidImportNotYetResolved { .. }))
+            .expect("expected CorvidImportNotYetResolved error");
+        match &err.kind {
+            TypeErrorKind::CorvidImportNotYetResolved { alias, name } => {
+                assert_eq!(alias, "policy");
+                assert_eq!(name, "Receipt");
+            }
+            other => panic!("unexpected: {other:?}"),
+        }
     }

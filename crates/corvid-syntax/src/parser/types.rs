@@ -13,6 +13,21 @@ impl<'a> Parser<'a> {
     pub(super) fn parse_type_ref(&mut self) -> Result<TypeRef, ParseError> {
         let (name, name_span) = self.expect_ident()?;
         let name_ident = Ident::new(name, name_span);
+
+        // Qualified type: `alias.TypeName` — resolved through a
+        // Corvid-file import alias. Recognized at parse time;
+        // resolver does the module lookup in
+        // `lang-cor-imports-basic-resolve`.
+        if matches!(self.peek(), TokKind::Dot) {
+            self.bump(); // .
+            let (member, member_span) = self.expect_ident()?;
+            return Ok(TypeRef::Qualified {
+                alias: name_ident,
+                name: Ident::new(member, member_span),
+                span: name_span.merge(member_span),
+            });
+        }
+
         if !matches!(self.peek(), TokKind::Lt) {
             return Ok(TypeRef::Named {
                 name: name_ident,

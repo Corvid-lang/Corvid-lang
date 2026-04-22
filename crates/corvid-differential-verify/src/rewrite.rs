@@ -1510,6 +1510,7 @@ fn render_params(params: &[Param]) -> String {
 fn render_type_ref(ty: &TypeRef) -> String {
     match ty {
         TypeRef::Named { name, .. } => name.name.clone(),
+        TypeRef::Qualified { alias, name, .. } => format!("{}.{}", alias.name, name.name),
         TypeRef::Generic { name, args, .. } => format!(
             "{}<{}>",
             name.name,

@@ -257,6 +257,9 @@ fn check_return_grounded(
 fn format_type_ref(ty: &corvid_ast::TypeRef) -> String {
     match ty {
         corvid_ast::TypeRef::Named { name, .. } => name.name.clone(),
+        corvid_ast::TypeRef::Qualified { alias, name, .. } => {
+            format!("{}.{}", alias.name, name.name)
+        }
         corvid_ast::TypeRef::Generic { name, args, .. } => {
             let inner: Vec<String> = args.iter().map(format_type_ref).collect();
             format!("{}<{}>", name.name, inner.join(", "))
@@ -268,4 +271,3 @@ fn format_type_ref(ty: &corvid_ast::TypeRef) -> String {
         }
     }
 }
-

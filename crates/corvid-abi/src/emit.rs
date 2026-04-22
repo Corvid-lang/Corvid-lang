@@ -123,6 +123,13 @@ pub(crate) fn resolve_typeref_to_type(ty: &TypeRef, resolved: &Resolved) -> Type
                 .map(Type::Struct)
                 .unwrap_or(Type::Unknown),
         },
+        // Qualified types (`alias.TypeName`) parse but don't yet
+        // resolve — the cross-file module loader is
+        // `lang-cor-imports-basic-resolve`'s job. Emit `Unknown` so
+        // ABI emission doesn't crash; the type checker has already
+        // surfaced a `CorvidImportNotYetResolved` error on the same
+        // span so the user sees precise feedback.
+        TypeRef::Qualified { .. } => Type::Unknown,
         TypeRef::Generic { name, args, .. } => match name.name.as_str() {
             "List" | "Stream" if args.len() == 1 => Type::List(Box::new(resolve_typeref_to_type(&args[0], resolved))),
             "Option" if args.len() == 1 => Type::Option(Box::new(resolve_typeref_to_type(&args[0], resolved))),

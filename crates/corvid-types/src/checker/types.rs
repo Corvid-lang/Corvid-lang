@@ -22,6 +22,25 @@ impl<'a> Checker<'a> {
     pub(super) fn type_ref_to_type(&mut self, tr: &TypeRef) -> Type {
         match tr {
             TypeRef::Named { name, .. } => self.named_type_to_type(&name.name),
+            TypeRef::Qualified {
+                alias,
+                name,
+                span,
+            } => {
+                // `alias.TypeName` parses but doesn't yet resolve —
+                // the module-loader + qualified-name resolution lands
+                // in `lang-cor-imports-basic-resolve`. Emit a typed
+                // error so users see a precise "not yet implemented"
+                // rather than a downstream "unknown type" cascade.
+                self.errors.push(TypeError::new(
+                    TypeErrorKind::CorvidImportNotYetResolved {
+                        alias: alias.name.clone(),
+                        name: name.name.clone(),
+                    },
+                    *span,
+                ));
+                Type::Unknown
+            }
             TypeRef::Generic { name, args, span } => match name.name.as_str() {
                 "List" => {
                     if args.len() != 1 {

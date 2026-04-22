@@ -125,6 +125,15 @@ pub enum TypeErrorKind {
         got: String,
     },
 
+    /// `alias.TypeName` type reference encountered, but the Corvid
+    /// `.cor` import-resolver is not yet wired up. The grammar parses
+    /// cleanly; what's missing is module loading + qualified-name
+    /// resolution, which lands in `lang-cor-imports-basic-resolve`.
+    CorvidImportNotYetResolved {
+        alias: String,
+        name: String,
+    },
+
     /// `yield` is only valid inside agent bodies.
     YieldOutsideAgent,
 
@@ -402,6 +411,15 @@ impl TypeErrorKind {
                     "return type mismatch: declared `{expected}`, but the body returns `{got}`"
                 )
             }
+            Self::CorvidImportNotYetResolved { alias, name } => {
+                format!(
+                    "qualified type `{alias}.{name}` requires cross-file \
+                     resolution, which is not yet implemented \
+                     (lang-cor-imports-basic-resolve); the grammar parses \
+                     cleanly but the module-loader + qualified-name lookup \
+                     has not shipped"
+                )
+            }
             Self::YieldOutsideAgent => "`yield` is only allowed inside agent bodies".into(),
             Self::YieldRequiresStreamReturn { declared } => {
                 format!("`yield` requires the enclosing agent to declare `Stream<T>`, got `{declared}`")
@@ -566,6 +584,10 @@ impl TypeErrorKind {
             Self::ReturnTypeMismatch { expected, .. } => Some(format!(
                 "change the final `return` to produce a `{expected}`, or update the declared return type"
             )),
+            Self::CorvidImportNotYetResolved { .. } => Some(
+                "for now, use an unqualified local type or wait for cross-file Corvid import resolution to land"
+                    .into(),
+            ),
             Self::YieldOutsideAgent => Some(
                 "move `yield` into an `agent ... -> Stream<T>` body, or replace it with `return`".into(),
             ),
