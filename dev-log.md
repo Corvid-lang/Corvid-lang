@@ -4083,6 +4083,65 @@ Interpretation:
   `Grounded<Phrase>`), H-5 (format modes for GitHub/JSON). Each
   extends a surface H-1 established; each ships independently.
 
+## Day 49 — 2026-04-22 — Slice 21-docs: Phase 21 spec + v1.0 demo script + ROADMAP closeout
+
+Phase 21's primary user-visible slices are on `main` (through 21-inv-H-1);
+today closes the documentation loop so the thesis is explainable without
+me in the room.
+
+What shipped:
+
+- `docs/effects-spec/14-replay.md` — new spec section mirroring the
+  style of §13 (Phase 20h's "what shipped"). Covers the Phase 21 thesis
+  in eleven subsections: `@replayable` + `@deterministic` checkers,
+  the trace schema, three replay modes (plain / differential /
+  counterfactual-mutation), the `replay` language primitive with its
+  pattern exhaustiveness guarantee, `corvid test --from-traces` with
+  `--promote` + the six filter flags, `corvid trace-diff` with the
+  reviewer-as-Corvid-program story, the shadow daemon, the provenance
+  DAG + `corvid trace dag`, a CLI reference, and the determinism-source
+  catalogue. Every code block is a real `.cor` program that the
+  `corvid test spec` harness will re-compile on CI.
+- `docs/effects-spec/README.md` table of contents gains row 14.
+- `docs/v1.0-demo-script.md` — a five-act demo script for the v1.0
+  launch. Each act ends at a command whose output proves the previous
+  claim: compile-time `@dangerous`+`approve` ensibility (Act I),
+  cross-tier differential verification (Act II), prod-as-test-suite
+  with a live "now break the code" demo (Act III), PR behaviour receipt
+  with the reviewer source shown as a `.cor` file (Act IV), and the
+  three replay modes including counterfactual mutation (Act V). Also
+  ships a table of off-ramp one-liners keyed to likely audience
+  questions, a do-not-demo list, setup + rehearsal notes, and a
+  next-steps slide-list for interested engineers.
+- `ROADMAP.md` — `21-docs` checked off; a new "Phase 21 closeout status"
+  paragraph documents exactly what's between us and a clean
+  "Phase 21 done" (the four `21-inv-H-*` follow-up slices and the
+  explicitly-deferred `21-inv-I-native`).
+- `learnings.md` gains a section on treating the spec as a runnable
+  program — why `corvid test spec` keeps the documentation honest, why
+  writing `14-replay.md` forced an audit of which Phase-21 surface is
+  demonstrable *today* vs. which parts needed language features that
+  don't exist yet (e.g., `Int→String` for cost deltas in the trace-diff
+  receipt).
+
+Interpretation:
+
+- The spec section and the demo script are mutually reinforcing. The
+  spec is the normative reference that can't drift from the compiler
+  because `corvid test spec` rebuilds its examples. The demo script
+  is the operational translation: every claim in the spec resolves to
+  a command in the demo. An engineer who works through both ends up
+  with a mental model that matches the code, not the slide deck.
+- The ROADMAP closeout paragraph is load-bearing for credibility.
+  Phase 21 is the flagship invention of v1.0; the ROADMAP says
+  exactly which surfaces are shipped and which are deferred, which
+  matters more for launch-readiness than any speculative feature
+  list. `21-inv-I-native` being explicitly deferred is the kind of
+  honesty that makes the rest of the roadmap trustworthy.
+- Lane A's remaining slices are now all `21-inv-H-*` receipt
+  extensions. Each is independent; all five can ship to a v1.0.X
+  release train without blocking v1.0 itself.
+
 
 
 

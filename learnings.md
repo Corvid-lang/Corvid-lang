@@ -1720,6 +1720,26 @@ runtime-panic price tag; if a crate offers a sync helper that other callers
 rely on, the answer is to expose the async variant alongside it, not to thread
 runtimes through function bodies.
 
+### The spec is a runnable program, not a document
+
+Phase 21's documentation slice follows the pattern already established for
+the effect system: every numbered `.md` file in `docs/effects-spec/` is a
+program under disguise. Code blocks tagged `# expect: compile` are extracted
+by `corvid test spec` and re-compiled against the current toolchain on every
+build; a broken example fails CI. Writing [section 14](docs/effects-spec/14-replay.md)
+forced an honest audit of which Phase-21 surface is actually demonstrable
+*today* (the `replay` language primitive with only the constructs the parser
+accepts — no `.is_some()`, no `Int.to_string()`, no list `.push()`) vs. which
+parts I was tempted to illustrate with constructs the language doesn't have
+yet. Writing the spec as a runnable artefact is also what lets the v1.0
+launch demo at `docs/v1.0-demo-script.md` be a script of copy-pasteable
+commands rather than a slide deck — every claim resolves to a command whose
+output proves it. The lesson is durable across phases: specification work
+that ships alongside a "does the compiler still agree with this?" harness
+stays honest on its own; specification work that ships as prose drifts away
+from the shipped compiler within weeks. For a language whose thesis is
+"compile-time guarantees," the spec has to compile.
+
 ### Nullable-pointer options are only safe until they stop preserving information
 
 The cheap native encoding for `Option<T>` is a good one when the payload has a

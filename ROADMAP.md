@@ -1199,7 +1199,20 @@ Users register local models (Ollama, vLLM, llama.cpp) with declared capabilities
 - [ ] 21-inv-H-4             AI-generated prose summary: LLM writes the top-of-receipt paragraph as `Grounded<Phrase>` tethered to specific algebraic deltas; reviewer gains a prompt-tier sibling agent.
 - [ ] 21-inv-H-5             GitHub/CI integration: `--format=github-check|markdown|json` outputs for PR annotations, PR comments, and bot consumption.
 - [ ] 21-inv-H               (rollup — closes when H-1..H-5 all land)
-- [ ] 21-docs                Spec section 21 + ROADMAP closeout + v1.0 demo script
+- [x] 21-docs                Spec [section 14](docs/effects-spec/14-replay.md) (Phase 21 implementation reference) + v1.0 launch demo at [docs/v1.0-demo-script.md](docs/v1.0-demo-script.md) + ROADMAP closeout status below.
+
+**Phase 21 closeout status (as of 2026-04-22).**
+
+Lane A (compiler + CLI + docs) has shipped every primary slice except the four `21-inv-H` follow-ups (H-2 counterfactual replay, H-3 structured approval/provenance drill-down, H-4 LLM prose summary, H-5 GitHub/CI format modes). The thesis claim is demonstrable today: `@replayable` compiles only what can be deterministically reproduced, every run writes a trace, `corvid test --from-traces --promote` closes the Jest-snapshot loop, `corvid trace-diff` produces a PR behavior receipt whose reviewer is itself a `@deterministic` Corvid agent.
+
+Lane B (runtime + codegen + daemon) has shipped every slice except `21-inv-I-native` (native-tier shadow daemon parity), which is explicitly deferred to v0.6 — the interpreter-tier shadow daemon is the v1.0 claim; native parity is an optimisation.
+
+What's between us and a clean "Phase 21 done" on the ROADMAP:
+
+- Four receipt-extension slices (`21-inv-H-2` through `21-inv-H-5`). Each builds on `21-inv-H-1`'s surface, each is independently shippable, each is 1–3 days.
+- The deferred native shadow daemon (`21-inv-I-native`), post-v1.0.
+
+The determinism-source catalog and the language's treatment of non-reproducible sources are documented in [docs/phase-21-determinism-sources.md](docs/phase-21-determinism-sources.md) and summarised in [spec §14.11](docs/effects-spec/14-replay.md). Every trace axis the runtime records is enumerated there, and extensions land through monotonic `SCHEMA_VERSION` bumps + compile-time opt-in at `@replayable` level.
 
 #### Dev B's lane (runtime + codegen + daemon — ~9 slices)
 
