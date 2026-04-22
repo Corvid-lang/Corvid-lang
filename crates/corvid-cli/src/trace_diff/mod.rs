@@ -39,7 +39,9 @@ use std::process::Command;
 use std::sync::Arc;
 
 use anyhow::{anyhow, Context, Result};
-use corvid_abi::{AbiAgent, CorvidAbi};
+use corvid_abi::{
+    AbiAgent, AbiApprovalContract, AbiApprovalLabel, AbiProvenanceContract, CorvidAbi,
+};
 use corvid_driver::{
     compile_to_abi_with_config, compile_to_ir, load_corvid_config_for,
     run_ir_with_runtime, run_replay_from_source_with_builder_async, ReplayMode, Runtime,
@@ -134,6 +136,36 @@ struct AgentSummary {
     trust_tier: String,
     is_dangerous: bool,
     is_replayable: bool,
+    approval: ApprovalContractSummary,
+    provenance: ProvenanceSummary,
+}
+
+#[derive(Serialize)]
+struct ApprovalContractSummary {
+    required: bool,
+    labels: Vec<ApprovalLabelSummary>,
+}
+
+/// Approval label surface visible to the reviewer. `required_tier`
+/// and `reversibility` come from `AbiApprovalLabel` via
+/// `Option<String>` — absent is normalised to the literal
+/// `"unspecified"` so the Corvid side (which does not yet have an
+/// Option surface for these fields) compares strings uniformly.
+/// `cost_at_site` is deliberately omitted: Corvid does not yet
+/// have a Float→String primitive, so numeric cost deltas stay
+/// deferred to a follow-up slice rather than being pre-rendered in
+/// Rust and collapsing the layering.
+#[derive(Serialize)]
+struct ApprovalLabelSummary {
+    label: String,
+    required_tier: String,
+    reversibility: String,
+}
+
+#[derive(Serialize)]
+struct ProvenanceSummary {
+    returns_grounded: bool,
+    grounded_param_deps: Vec<String>,
 }
 
 /// Mirror of the reviewer's `TraceImpact` type. The Rust side owns
@@ -191,6 +223,36 @@ fn digest_agent(agent: &AbiAgent) -> AgentSummary {
             .unwrap_or_else(|| "unspecified".to_string()),
         is_dangerous: agent.attributes.dangerous,
         is_replayable: agent.attributes.replayable,
+        approval: digest_approval(&agent.approval_contract),
+        provenance: digest_provenance(&agent.provenance),
+    }
+}
+
+fn digest_approval(contract: &AbiApprovalContract) -> ApprovalContractSummary {
+    ApprovalContractSummary {
+        required: contract.required,
+        labels: contract.labels.iter().map(digest_approval_label).collect(),
+    }
+}
+
+fn digest_approval_label(label: &AbiApprovalLabel) -> ApprovalLabelSummary {
+    ApprovalLabelSummary {
+        label: label.label.clone(),
+        required_tier: label
+            .required_tier
+            .clone()
+            .unwrap_or_else(|| "unspecified".to_string()),
+        reversibility: label
+            .reversibility
+            .clone()
+            .unwrap_or_else(|| "unspecified".to_string()),
+    }
+}
+
+fn digest_provenance(contract: &AbiProvenanceContract) -> ProvenanceSummary {
+    ProvenanceSummary {
+        returns_grounded: contract.returns_grounded,
+        grounded_param_deps: contract.grounded_param_deps.clone(),
     }
 }
 
@@ -759,6 +821,283 @@ mod tests {
         let impact = categorise_impact(base, head);
         assert!(!impact.any_newly_diverged);
         assert!(impact.summary_line.contains("1 newly passing"));
+    }
+
+    /// Sibling of `synth_abi` for tests that need to exercise the
+    /// approval-contract + provenance fields. `approval_labels` is a
+    /// list of `(label, required_tier, reversibility)` tuples; empty
+    /// tiers/reversibilities are rendered as the `"unspecified"`
+    /// normalised form. `grounded_deps` goes verbatim into
+    /// `grounded_param_deps`; `returns_grounded` is the explicit
+    /// flag.
+    fn synth_abi_with_contracts(
+        name: &str,
+        trust: &str,
+        dangerous: bool,
+        replayable: bool,
+        approval_labels: &[(&str, &str, &str)],
+        returns_grounded: bool,
+        grounded_deps: &[&str],
+    ) -> CorvidAbi {
+        let labels_json: Vec<serde_json::Value> = approval_labels
+            .iter()
+            .map(|(label, tier, rev)| {
+                let mut v = serde_json::json!({
+                    "label": label,
+                    "args": [],
+                });
+                if !tier.is_empty() {
+                    v["required_tier"] = serde_json::Value::String(tier.to_string());
+                }
+                if !rev.is_empty() {
+                    v["reversibility"] = serde_json::Value::String(rev.to_string());
+                }
+                v
+            })
+            .collect();
+        let grounded_deps_json: Vec<serde_json::Value> = grounded_deps
+            .iter()
+            .map(|d| serde_json::Value::String(d.to_string()))
+            .collect();
+        let agent_json = serde_json::json!({
+            "name": name,
+            "symbol": name,
+            "source_span": { "start": 0, "end": 0 },
+            "params": [],
+            "return_type": { "kind": "scalar", "scalar": "Int" },
+            "effects": { "trust_tier": trust },
+            "attributes": {
+                "replayable": replayable,
+                "deterministic": false,
+                "dangerous": dangerous,
+                "pub_extern_c": false
+            },
+            "approval_contract": {
+                "required": dangerous,
+                "labels": labels_json,
+            },
+            "provenance": {
+                "returns_grounded": returns_grounded,
+                "grounded_param_deps": grounded_deps_json,
+            }
+        });
+        let json = serde_json::json!({
+            "corvid_abi_version": corvid_abi::CORVID_ABI_VERSION,
+            "compiler_version": "test",
+            "source_path": "test.cor",
+            "generated_at": "1970-01-01T00:00:00Z",
+            "agents": [agent_json],
+            "prompts": [],
+            "tools": [],
+            "types": [],
+            "approval_sites": []
+        });
+        corvid_abi::descriptor_from_json(&serde_json::to_string(&json).unwrap())
+            .expect("synth_abi_with_contracts JSON deserializes to a CorvidAbi")
+    }
+
+    #[test]
+    fn reviewer_reports_added_approval_label() {
+        let base = synth_abi_with_contracts(
+            "refund_bot",
+            "human_required",
+            true,
+            false,
+            &[("IssueRefund", "human_required", "reversible")],
+            false,
+            &[],
+        );
+        let head = synth_abi_with_contracts(
+            "refund_bot",
+            "human_required",
+            true,
+            false,
+            &[
+                ("IssueRefund", "human_required", "reversible"),
+                ("WireTransfer", "human_required", "irreversible"),
+            ],
+            false,
+            &[],
+        );
+        let receipt = invoke_reviewer(&base, &head, &TraceImpact::empty()).unwrap();
+        assert!(
+            receipt.contains("approve site `WireTransfer` added"),
+            "got: {receipt}"
+        );
+    }
+
+    #[test]
+    fn reviewer_reports_removed_approval_label() {
+        let base = synth_abi_with_contracts(
+            "refund_bot",
+            "human_required",
+            true,
+            false,
+            &[
+                ("IssueRefund", "human_required", "reversible"),
+                ("WireTransfer", "human_required", "irreversible"),
+            ],
+            false,
+            &[],
+        );
+        let head = synth_abi_with_contracts(
+            "refund_bot",
+            "human_required",
+            true,
+            false,
+            &[("IssueRefund", "human_required", "reversible")],
+            false,
+            &[],
+        );
+        let receipt = invoke_reviewer(&base, &head, &TraceImpact::empty()).unwrap();
+        assert!(
+            receipt.contains("approve site `WireTransfer` removed"),
+            "got: {receipt}"
+        );
+    }
+
+    #[test]
+    fn reviewer_flags_weakened_required_tier_on_approval_label() {
+        let base = synth_abi_with_contracts(
+            "refund_bot",
+            "human_required",
+            true,
+            false,
+            &[("IssueRefund", "human_required", "reversible")],
+            false,
+            &[],
+        );
+        let head = synth_abi_with_contracts(
+            "refund_bot",
+            "human_required",
+            true,
+            false,
+            &[("IssueRefund", "autonomous", "reversible")],
+            false,
+            &[],
+        );
+        let receipt = invoke_reviewer(&base, &head, &TraceImpact::empty()).unwrap();
+        assert!(
+            receipt
+                .contains("approve site `IssueRefund` required-tier: `human_required` -> `autonomous`"),
+            "got: {receipt}"
+        );
+    }
+
+    #[test]
+    fn reviewer_flags_reversibility_regression_on_approval_label() {
+        let base = synth_abi_with_contracts(
+            "refund_bot",
+            "human_required",
+            true,
+            false,
+            &[("IssueRefund", "human_required", "reversible")],
+            false,
+            &[],
+        );
+        let head = synth_abi_with_contracts(
+            "refund_bot",
+            "human_required",
+            true,
+            false,
+            &[("IssueRefund", "human_required", "irreversible")],
+            false,
+            &[],
+        );
+        let receipt = invoke_reviewer(&base, &head, &TraceImpact::empty()).unwrap();
+        assert!(
+            receipt.contains("approve site `IssueRefund` became irreversible"),
+            "got: {receipt}"
+        );
+    }
+
+    #[test]
+    fn reviewer_flags_gained_grounded_return() {
+        let base = synth_abi_with_contracts(
+            "answer_question",
+            "human_required",
+            false,
+            false,
+            &[],
+            false,
+            &[],
+        );
+        let head = synth_abi_with_contracts(
+            "answer_question",
+            "human_required",
+            false,
+            false,
+            &[],
+            true,
+            &["source_docs"],
+        );
+        let receipt = invoke_reviewer(&base, &head, &TraceImpact::empty()).unwrap();
+        assert!(
+            receipt.contains("return value gained `Grounded<T>` provenance"),
+            "got: {receipt}"
+        );
+        assert!(
+            receipt.contains("grounded dependency on `source_docs` added"),
+            "got: {receipt}"
+        );
+    }
+
+    #[test]
+    fn reviewer_flags_lost_grounded_return() {
+        let base = synth_abi_with_contracts(
+            "answer_question",
+            "human_required",
+            false,
+            false,
+            &[],
+            true,
+            &["source_docs"],
+        );
+        let head = synth_abi_with_contracts(
+            "answer_question",
+            "human_required",
+            false,
+            false,
+            &[],
+            false,
+            &[],
+        );
+        let receipt = invoke_reviewer(&base, &head, &TraceImpact::empty()).unwrap();
+        assert!(
+            receipt.contains("return value lost `Grounded<T>` provenance"),
+            "got: {receipt}"
+        );
+        assert!(
+            receipt.contains("grounded dependency on `source_docs` removed"),
+            "got: {receipt}"
+        );
+    }
+
+    #[test]
+    fn reviewer_reports_no_changes_when_contracts_are_identical() {
+        let base = synth_abi_with_contracts(
+            "refund_bot",
+            "human_required",
+            true,
+            false,
+            &[("IssueRefund", "human_required", "reversible")],
+            true,
+            &["ticket"],
+        );
+        let head = synth_abi_with_contracts(
+            "refund_bot",
+            "human_required",
+            true,
+            false,
+            &[("IssueRefund", "human_required", "reversible")],
+            true,
+            &["ticket"],
+        );
+        let receipt = invoke_reviewer(&base, &head, &TraceImpact::empty()).unwrap();
+        assert!(
+            receipt.contains("No algebraic changes detected"),
+            "got: {receipt}"
+        );
     }
 
     #[test]

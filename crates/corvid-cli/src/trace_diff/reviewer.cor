@@ -33,6 +33,13 @@
 #       list" — the reviewer is `@deterministic` so this
 #       survives identical across CI reruns.
 #
+#   21-inv-H-3 (structured approval + provenance drill-down):
+#     - Per-agent approval labels: detect added / removed
+#       `approve` call sites, lowered `required_tier`, and
+#       `reversibility` transitions to `irreversible`.
+#     - Per-agent provenance: detect `returns_grounded`
+#       transitions, added / removed `grounded_param_deps`.
+#
 # The reviewer is a pure `@deterministic` Corvid agent — no LLM
 # calls, no approval gates, no tool dispatch. Two invocations on
 # the same inputs produce byte-identical receipts.
@@ -42,14 +49,30 @@
 #   - Cost/budget deltas. Needs a Float→String primitive; the
 #     reviewer will render `cost/call` changes once the language
 #     has one.
-#   - Structured approval-contract drill-down (21-inv-H-3).
+#   - Structured 22-E predicate-JSON AST diff (needs typed JSON
+#     in Corvid; different language-surface work).
 #   - LLM-generated prose summary (21-inv-H-4).
+
+type ApprovalLabelSummary:
+    label: String
+    required_tier: String
+    reversibility: String
+
+type ApprovalContractSummary:
+    required: Bool
+    labels: List<ApprovalLabelSummary>
+
+type ProvenanceSummary:
+    returns_grounded: Bool
+    grounded_param_deps: List<String>
 
 type AgentSummary:
     name: String
     trust_tier: String
     is_dangerous: Bool
     is_replayable: Bool
+    approval: ApprovalContractSummary
+    provenance: ProvenanceSummary
 
 type Descriptor:
     agents: List<AgentSummary>
@@ -76,6 +99,95 @@ type TraceImpact:
     summary_line: String
     impact_percentage: String
     newly_diverged_paths: List<String>
+
+# Find the `ApprovalLabelSummary` for a given label name in a list,
+# or return a sentinel summary with empty strings when absent. The
+# sentinel approach lets the diff logic treat "not present" and
+# "present with defaults" uniformly and keeps the `@deterministic`
+# guarantee without needing Option-method support.
+@deterministic
+agent find_label(labels: List<ApprovalLabelSummary>, name: String) -> ApprovalLabelSummary:
+    sentinel = ApprovalLabelSummary("", "", "")
+    found = sentinel
+    for l in labels:
+        if l.label == name:
+            found = l
+    return found
+
+@deterministic
+agent label_present(labels: List<ApprovalLabelSummary>, name: String) -> Bool:
+    present = false
+    for l in labels:
+        if l.label == name:
+            present = true
+    return present
+
+# Render the approval-contract drill-down for one agent, returning
+# the Markdown lines describing any change (empty String when the
+# contracts are identical).
+@deterministic
+agent render_approval_diff_for_agent(name: String, base: ApprovalContractSummary, head: ApprovalContractSummary) -> String:
+    lines = ""
+
+    # Pass 1: labels present on base. Either removed on head, or
+    # changed in required_tier / reversibility.
+    for b in base.labels:
+        in_head = label_present(head.labels, b.label)
+        if not in_head:
+            lines = lines + "- approve site `" + b.label + "` removed\n"
+        else:
+            h = find_label(head.labels, b.label)
+            if b.required_tier != h.required_tier:
+                lines = lines + "- approve site `" + b.label + "` required-tier: `" + b.required_tier + "` -> `" + h.required_tier + "`\n"
+            if b.reversibility != h.reversibility:
+                if h.reversibility == "irreversible":
+                    lines = lines + "- approve site `" + b.label + "` became irreversible\n"
+                else:
+                    lines = lines + "- approve site `" + b.label + "` reversibility: `" + b.reversibility + "` -> `" + h.reversibility + "`\n"
+
+    # Pass 2: labels added on head.
+    for h in head.labels:
+        in_base = label_present(base.labels, h.label)
+        if not in_base:
+            lines = lines + "- approve site `" + h.label + "` added (required-tier: `" + h.required_tier + "`)\n"
+
+    if lines == "":
+        return ""
+    return "### `" + name + "` approval contract changed\n" + lines + "\n"
+
+@deterministic
+agent dep_present(deps: List<String>, name: String) -> Bool:
+    present = false
+    for d in deps:
+        if d == name:
+            present = true
+    return present
+
+# Render the provenance drill-down for one agent. Empty String when
+# grounded status + dependency list are identical.
+@deterministic
+agent render_provenance_diff_for_agent(name: String, base: ProvenanceSummary, head: ProvenanceSummary) -> String:
+    lines = ""
+
+    if base.returns_grounded != head.returns_grounded:
+        if head.returns_grounded:
+            lines = lines + "- return value gained `Grounded<T>` provenance\n"
+        else:
+            lines = lines + "- return value lost `Grounded<T>` provenance\n"
+
+    for b in base.grounded_param_deps:
+        in_head = dep_present(head.grounded_param_deps, b)
+        if not in_head:
+            lines = lines + "- grounded dependency on `" + b + "` removed\n"
+
+    for h in head.grounded_param_deps:
+        in_base = dep_present(base.grounded_param_deps, h)
+        if not in_base:
+            lines = lines + "- grounded dependency on `" + h + "` added\n"
+
+    if lines == "":
+        return ""
+    return "### `" + name + "` provenance changed\n" + lines + "\n"
 
 # Render the algebra-diff section of the receipt.
 @deterministic
@@ -104,6 +216,14 @@ agent render_algebra_diff(base: Descriptor, head: Descriptor) -> String:
                         body = body + "### `" + b.name + "` gained `@replayable`\n\n"
                     else:
                         body = body + "### `" + b.name + "` lost `@replayable`\n\n"
+                    any_changes = true
+                approval_section = render_approval_diff_for_agent(b.name, b.approval, h.approval)
+                if approval_section != "":
+                    body = body + approval_section
+                    any_changes = true
+                provenance_section = render_provenance_diff_for_agent(b.name, b.provenance, h.provenance)
+                if provenance_section != "":
+                    body = body + provenance_section
                     any_changes = true
         if not in_head:
             body = body + "### Removed: `" + b.name + "`\n\n"

@@ -1720,6 +1720,35 @@ runtime-panic price tag; if a crate offers a sync helper that other callers
 rely on, the answer is to expose the async variant alongside it, not to thread
 runtimes through function bodies.
 
+### Positional struct constructors, not struct-literal braces
+
+`21-inv-H-3` tried to build a sentinel `ApprovalLabelSummary` inside
+the Corvid reviewer with `ApprovalLabelSummary { label: "", ... }` —
+which parses as a call followed by a stray `{` and fails with
+`unexpected token LBrace`. Corvid user-defined types are constructed
+positionally: `ApprovalLabelSummary("", "", "")`. The language didn't
+borrow Rust's named-init syntax, and the lesson is worth remembering
+in future `.cor` authoring: *struct literal braces are not a Corvid
+construct, positional calls are the one shape*. Our existing
+`examples/structs.cor` demonstrates this and is the canonical
+reference.
+
+### Reachability, not visibility, decides what's in the ABI
+
+`21-inv-H-3`'s integration test needed a non-`pub extern "c"` helper
+agent (`explain`) to show a grounded-return transition, because
+`Grounded<T>` can't cross the C ABI. The first fixture attempt put
+the helper in the source but didn't call it from the exported
+`refund_bot` — and the helper silently disappeared from the ABI.
+`crates/corvid-abi/src/emit.rs` restricts `abi.agents` to the
+*transitive closure of `pub extern "c"` agents* via
+`collect_exported_agent_closure`. So for receipt tests (and for the
+real-world PR-review workflow), the rule is: if a helper's contract
+changes but nothing reachable from an exported agent calls it, the
+receipt won't see the change. That is the correct behaviour (dead
+code shouldn't pollute the receipt) but worth stating explicitly so
+future integration fixtures don't fall into the same trap.
+
 ### The Corvid reviewer keeps ownership of structure even when the language lacks Int→String
 
 `21-inv-H-2` wanted to render a "Counterfactual Replay Impact" section

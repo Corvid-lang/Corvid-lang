@@ -4211,6 +4211,82 @@ Interpretation:
   prose summary (H-4), GitHub/CI format modes (H-5). Each still
   independently shippable.
 
+## Day 51 — 2026-04-22 — Slice 21-inv-H-3: structured approval + provenance diff
+
+`corvid trace-diff`'s receipt now drills into the approval contract
+and provenance surface of every agent that appears on both sides.
+The receipt used to stop at three signals per agent (`@dangerous`
+transition, `@replayable` transition, trust-tier change); H-3 adds
+five more, all driven by the 22-B descriptor data that landed
+earlier:
+
+- added approval label (new `approve Foo(...)` site on an existing
+  exported agent)
+- removed approval label
+- weakened `required_tier` on an existing label (e.g.
+  `human_required -> autonomous`)
+- reversibility regression on an existing label (e.g. gaining
+  `irreversible`)
+- `returns_grounded: false -> true` (strengthened) and the converse
+  (weakened), plus added / removed entries in `grounded_param_deps`
+
+What shipped:
+
+- `reviewer.cor`: three new types (`ApprovalLabelSummary`,
+  `ApprovalContractSummary`, `ProvenanceSummary`), two helper agents
+  (`find_label`, `label_present`, `dep_present`) for list-membership
+  lookups since Corvid lists compare element-wise, and two
+  renderers (`render_approval_diff_for_agent`,
+  `render_provenance_diff_for_agent`). `render_algebra_diff` calls
+  them per agent-on-both-sides. All still `@deterministic`.
+- `trace_diff/mod.rs`: `AgentSummary` extended with `approval` +
+  `provenance`; `digest_approval` / `digest_approval_label` /
+  `digest_provenance` extract from the ABI's
+  `AbiApprovalContract` / `AbiApprovalLabel` /
+  `AbiProvenanceContract` fields. `required_tier` + `reversibility`
+  normalise `None -> "unspecified"` so the Corvid-side string
+  comparison is unambiguous.
+- `synth_abi_with_contracts` test helper for injecting approval
+  labels + grounded-deps via JSON round-trip.
+- Seven new unit tests (added / removed label, weakened tier,
+  reversibility regression, grounded gain, grounded loss, clean
+  no-change) + one new integration test
+  (`trace_diff_reports_added_approval_label_and_grounded_promotion`)
+  that exercises the full path on a real compiled Corvid source
+  with a `pub extern "c"` `refund_bot` gaining a `SendNotice`
+  approval label and a reachable helper `explain` gaining a
+  `Grounded<String>` return via `cite_source`. 21 unit tests total
+  in the module, 6 integration tests.
+
+Interpretation:
+
+- The integration-test fixture exposed a useful rule of the ABI
+  emitter: `abi.agents` is the transitive closure of
+  `pub extern "c"` agents, not every declared agent. A helper
+  agent's contract changes only surface in the receipt if the
+  helper is reachable from an exported agent. That is the correct
+  behaviour (dead code doesn't pollute the receipt) but the
+  integration fixture had to be written deliberately — the first
+  attempt had an orphan helper that silently vanished from the
+  descriptor.
+- The reviewer's new `find_label` / `label_present` / `dep_present`
+  helpers are the Corvid equivalent of a hash-map lookup. The
+  language compares lists element-wise but has no `List.find_by`
+  method today. Rewriting a lookup per-diff would have worked but
+  made the diff bodies noisy; the three helpers capture the
+  pattern once. A future language slice that adds list-method
+  support lets them go away.
+- Two deliberate defers kept the slice honest: numeric
+  `cost_at_site` deltas stay out (blocks on `Float->String`);
+  structured 22-E predicate-JSON AST diff stays out (needs typed
+  JSON in Corvid). Both would be shortcuts today — pre-rendering
+  numerics in Rust collapses the layering; partial JSON parsing in
+  Rust for the reviewer to consume would collapse it the same way.
+  Both get their own slice when the language catches up.
+- Lane A now has two follow-ups remaining: H-4 (LLM-generated
+  prose summary grounded in the diff) and H-5 (GitHub/CI format
+  modes). Each still independently shippable.
+
 
 
 

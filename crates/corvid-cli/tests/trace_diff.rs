@@ -136,6 +136,109 @@ fn trace_diff_end_to_end_reports_no_changes_when_source_is_identical() {
     );
 }
 
+// H-3 fixture: real Corvid source that compiles to an ABI with an
+// `IssueRefund` approval label and an un-grounded `answer` agent.
+// The head version adds a second approval label (`WireTransfer`) to
+// `refund_bot` and promotes `answer`'s return to `Grounded<String>`
+// via `cite_source`. Both changes are exactly what 21-inv-H-3 must
+// surface in the receipt.
+// Base source: one `pub extern "c"` agent `refund_bot` that already
+// needs `IssueRefund` approval; one internal helper `explain` whose
+// return is *not* `Grounded<T>`.
+const H3_BASE_SOURCE: &str = r#"
+effect retrieval:
+    data: grounded
+
+tool get_order(id: String) -> String
+tool cite_source(q: String) -> Grounded<String> uses retrieval
+tool issue_refund(id: String) -> String dangerous
+
+prompt explain_prompt(q: String) -> String:
+    "explain {q}"
+
+agent explain(q: String) -> String:
+    return explain_prompt(q)
+
+pub extern "c"
+agent refund_bot(id: String) -> String:
+    order = get_order(id)
+    note = explain(order)
+    approve IssueRefund(order)
+    return issue_refund(order)
+"#;
+
+// Head source — two differences vs base:
+//   1. `refund_bot` gains a second approve site (`SendNotice`), a
+//      non-dangerous approval label on the same exported agent.
+//   2. `explain` is strengthened to return `Grounded<String>` via a
+//      `cite_source` dependency — the reviewer must flag the
+//      provenance upgrade on the helper agent.
+const H3_HEAD_SOURCE: &str = r#"
+effect retrieval:
+    data: grounded
+
+tool get_order(id: String) -> String
+tool cite_source(q: String) -> Grounded<String> uses retrieval
+tool issue_refund(id: String) -> String dangerous
+
+prompt explain_prompt(q: Grounded<String>) -> Grounded<String>:
+    "explain {q}"
+
+agent explain(q: String) -> Grounded<String>:
+    source = cite_source(q)
+    return explain_prompt(source)
+
+pub extern "c"
+agent refund_bot(id: String) -> String:
+    order = get_order(id)
+    note = explain(order)
+    approve IssueRefund(order)
+    approve SendNotice(order)
+    return issue_refund(order)
+"#;
+
+#[test]
+fn trace_diff_reports_added_approval_label_and_grounded_promotion() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = tmp.path();
+    run_git(repo, &["init", "--quiet", "-b", "main"]);
+
+    let src = repo.join("app.cor");
+    write_file(&src, H3_BASE_SOURCE);
+    run_git(repo, &["add", "app.cor"]);
+    run_git(repo, &["commit", "--quiet", "-m", "base"]);
+    let base_sha = run_git(repo, &["rev-parse", "HEAD"]);
+
+    write_file(&src, H3_HEAD_SOURCE);
+    run_git(repo, &["add", "app.cor"]);
+    run_git(repo, &["commit", "--quiet", "-m", "head"]);
+    let head_sha = run_git(repo, &["rev-parse", "HEAD"]);
+
+    let output = Command::new(corvid_bin())
+        .args(["trace-diff", &base_sha, &head_sha, "app.cor"])
+        .current_dir(repo)
+        .output()
+        .expect("run corvid trace-diff");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "trace-diff failed: exit={:?} stdout=\n{stdout}\nstderr=\n{stderr}",
+        output.status.code()
+    );
+    // New approval label on an existing agent:
+    assert!(
+        stdout.contains("approve site `SendNotice` added"),
+        "receipt missing added-approve-label detection. stdout:\n{stdout}"
+    );
+    // Strengthened provenance on an existing agent:
+    assert!(
+        stdout.contains("return value gained `Grounded<T>` provenance"),
+        "receipt missing grounded-gained detection. stdout:\n{stdout}"
+    );
+}
+
 /// `--traces <dir>` on an empty directory must (a) parse, (b) reach
 /// the counterfactual-replay subsystem, (c) cleanly report that no
 /// traces were found, and (d) render the receipt without an impact
