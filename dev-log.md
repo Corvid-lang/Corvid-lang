@@ -4142,6 +4142,75 @@ Interpretation:
   extensions. Each is independent; all five can ship to a v1.0.X
   release train without blocking v1.0 itself.
 
+## Day 50 — 2026-04-22 — Slice 21-inv-H-2: counterfactual replay over --traces dir
+
+`corvid trace-diff` gains `--traces <dir>`. For each `.jsonl` under
+that directory the CLI replays the trace against the source at base
+and the source at head (writing both to a scratch tempdir and
+dispatching through the 21-inv-G-harness), categorises the per-trace
+verdicts, and extends the reviewer agent to render a new
+"Counterfactual Replay Impact" section.
+
+The receipt stops being purely descriptive ("what changed
+syntactically") and starts being predictive ("X% of recorded prod
+traffic would have diverged under this PR"). That is the point at
+which the behavior-diff tool earns its place in a PR-review
+workflow — a reviewer staring at the receipt sees the actual blast
+radius of the change, not just an algebra delta.
+
+What shipped:
+
+- `reviewer.cor` extended with a new `TraceImpact` type + a
+  `render_trace_impact` agent that renders the section only when
+  `has_traces == true`. `review_pr` now takes three arguments:
+  `(base, head, impact) -> String`. The reviewer is still
+  `@deterministic` — the same three inputs produce byte-identical
+  receipts.
+- `trace_diff/mod.rs` gains a `TraceImpact` struct that mirrors the
+  reviewer's type field-for-field; `compute_trace_impact` writes
+  base/head sources to a scratch dir, invokes the harness twice
+  (once per side), and calls `categorise_impact` to bucket the
+  per-trace verdicts into `passed_both` / `newly_diverged` /
+  `newly_passing` / `diverged_both` / `errored`. `NEWLY_DIVERGED_PATH_CAP = 20`
+  keeps receipts readable; overflow is signalled by an explicit
+  "... (and N more)" row so the reader always knows the cap fired.
+- `default_runtime_builder` in `trace_diff` uses env-driven adapters
+  (`CORVID_MODEL`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`) same as
+  `test_from_traces`'s equivalent.
+- `main.rs`: `TraceDiff` command gains `--traces <DIR>` flag,
+  threaded into `TraceDiffArgs.trace_dir`.
+- Seven new unit tests (impact rendering + `categorise_impact`
+  bucket coverage + path-cap behaviour) + two new integration tests
+  (`--traces` on an empty dir renders no impact section; `--traces`
+  on a missing dir errors cleanly). 14 unit tests total in the
+  `trace_diff` module, 5 integration tests.
+
+Interpretation:
+
+- Keeping the *structure* of the receipt in Corvid even when the
+  language lacks `Int→String` was the honest split. Rust formats the
+  numerics; the reviewer owns section placement, narrative lines,
+  heading choice, path list rendering. A future `Int.to_string()`
+  slice lets the reviewer be fully self-sufficient without a
+  receipt-layout change.
+- The five-bucket categorisation (`passed_both`, `newly_diverged`,
+  `newly_passing`, `diverged_both`, `errored`) is the right level of
+  detail for a PR receipt. "Newly passing under head" is the bug-fix
+  signal — a reviewer sees *improvement* just as explicitly as
+  *regression*, which matters because it means the tool rewards
+  correcting past mistakes, not only avoiding new ones.
+- Integration tests exercise the `--traces` wire path + empty-dir +
+  missing-dir error paths. The happy-path harness call is covered by
+  the existing `replay_orchestrator` driver tests; reproducing a
+  live recording inside an integration test would require spawning
+  `corvid run` against a .cor with a prompt under a mock adapter,
+  which is ceremony that adds environment sensitivity without new
+  coverage.
+- Phase 21 Lane A now has three `21-inv-H` follow-ups remaining:
+  structured approval+provenance drill-down (H-3), LLM-generated
+  prose summary (H-4), GitHub/CI format modes (H-5). Each still
+  independently shippable.
+
 
 
 

@@ -1720,6 +1720,40 @@ runtime-panic price tag; if a crate offers a sync helper that other callers
 rely on, the answer is to expose the async variant alongside it, not to thread
 runtimes through function bodies.
 
+### The Corvid reviewer keeps ownership of structure even when the language lacks Int→String
+
+`21-inv-H-2` wanted to render a "Counterfactual Replay Impact" section
+with sentence-shaped summary counts — "Replayed 10 trace(s) against base
+and head: 7 passed on both, 2 newly diverged under head, 1 newly passing
+(base bug fixes), 0 diverged on both, 0 errored." Corvid doesn't yet have
+an `Int→String` primitive. The temptation was to format the whole section
+in Rust and pass the fully-rendered block to the reviewer as a `String`,
+which would have collapsed the section into a Rust deliverable with the
+`.cor` file only responsible for deciding "include or omit." The honest
+split keeps the numeric formatting in Rust (where the primitive lives
+today) but keeps *structure* ownership in the reviewer: the reviewer
+chooses whether the section renders, where it sits in the receipt, what
+narrative lines surround the pre-formatted summary, the heading for the
+newly-divergent path list, and how the list itself is rendered. The
+lesson is durable: when a language gap forces some work out of the
+dogfooded layer, push only the narrowest possible piece out and keep
+structure ownership where the thesis wants it. A future language slice
+that adds `Int.to_string()` will make the reviewer fully self-sufficient
+without a receipt layout change.
+
+### Path-list caps in governance receipts protect the reader without losing data
+
+The counterfactual impact report caps the newly-divergent trace path
+list at twenty entries, appending an "... (and N more)" row so the
+reader always knows the cap fired. The full list will be available in
+the 21-inv-H-5 JSON output mode for bots that want it. The lesson
+isn't the specific number — it's that governance output intended for
+human review needs an explicit cap with a visible truncation marker,
+not silent omission. A PR reviewer staring at a list of 600 broken
+traces needs a "run the CLI locally for the full list" signal; a list
+of 600 names without that signal either drowns the reviewer or gets
+scrolled past.
+
 ### The spec is a runnable program, not a document
 
 Phase 21's documentation slice follows the pattern already established for

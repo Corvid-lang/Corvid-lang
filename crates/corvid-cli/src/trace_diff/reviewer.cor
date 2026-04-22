@@ -4,8 +4,9 @@
 # and is compiled at runtime when a user invokes
 # `corvid trace-diff <base-sha> <head-sha> <path>`. The reviewer
 # takes two pre-digested agent-summary descriptors — one from the
-# base commit, one from the head — and produces a markdown PR
-# behavior receipt describing every algebraic change.
+# base commit, one from the head — plus a pre-digested trace-replay
+# impact summary (empty when `--traces` wasn't supplied), and
+# produces a markdown PR behavior receipt.
 #
 # Why the reviewer is a Corvid program, not a Rust function:
 #
@@ -18,22 +19,29 @@
 # @deterministic, and dogfoods the language on a real-world
 # orchestration problem. Users can read, fork, and extend it.
 #
-# Scope for slice 21-inv-H-1:
+# Scope landed:
 #
-#   - Detect agents added / removed between base and head.
-#   - Flag trust-tier changes (String comparison).
-#   - Flag @dangerous transitions.
-#   - Flag @replayable transitions.
-#   - No LLM calls, no approval gates, no tool dispatch — the
-#     reviewer is a pure `@deterministic` Corvid agent that reads
-#     two typed values and returns a String.
+#   21-inv-H-1 (static algebra diff):
+#     - Detect agents added / removed between base and head.
+#     - Flag trust-tier changes (String comparison).
+#     - Flag `@dangerous` / `@replayable` transitions.
 #
-# Not in slice 1 (deferred to follow-ups):
+#   21-inv-H-2 (counterfactual replay impact):
+#     - Extra receipt section counting, over a user-supplied
+#       trace corpus, how many traces newly diverge under head.
+#     - Impact is the absolute count and a "newly-diverged path
+#       list" — the reviewer is `@deterministic` so this
+#       survives identical across CI reruns.
+#
+# The reviewer is a pure `@deterministic` Corvid agent — no LLM
+# calls, no approval gates, no tool dispatch. Two invocations on
+# the same inputs produce byte-identical receipts.
+#
+# Not yet in the reviewer (deferred to follow-up slices):
 #
 #   - Cost/budget deltas. Needs a Float→String primitive; the
 #     reviewer will render `cost/call` changes once the language
 #     has one.
-#   - Trace-replay divergence (21-inv-H-2).
 #   - Structured approval-contract drill-down (21-inv-H-3).
 #   - LLM-generated prose summary (21-inv-H-4).
 
@@ -46,19 +54,35 @@ type AgentSummary:
 type Descriptor:
     agents: List<AgentSummary>
 
-# Produce the full PR behavior receipt from two descriptors.
-# `@deterministic`: the same two inputs always produce the same
-# receipt (byte-identical), so CI pipelines can memoize the
-# receipt keyed on (base-sha, head-sha) and the result survives
-# re-runs without drift.
+# Counterfactual replay impact — the 21-inv-H-2 section of the
+# receipt. Every trace in a user-supplied corpus is replayed
+# against base and head; the Rust CLI digests the per-trace
+# verdicts into pre-formatted strings (Corvid does not yet have
+# an Int→String primitive — a follow-up language slice will close
+# that gap). The Corvid reviewer owns:
+#
+#   - whether the section is rendered at all (`has_traces`);
+#   - where it appears in the receipt;
+#   - which narrative lines accompany the counts;
+#   - the newly-divergent trace-path list.
+#
+# `has_traces: Bool = false` is the "no trace corpus was supplied"
+# sentinel — the reviewer renders nothing for that case to keep
+# slice-1 receipts stable for callers that didn't opt in to
+# `--traces`.
+type TraceImpact:
+    has_traces: Bool
+    any_newly_diverged: Bool
+    summary_line: String
+    impact_percentage: String
+    newly_diverged_paths: List<String>
+
+# Render the algebra-diff section of the receipt.
 @deterministic
-agent review_pr(base: Descriptor, head: Descriptor) -> String:
-    body = "# PR Behavior Receipt\n\n"
-    body = body + "Comparing base vs. head along Corvid's effect algebra.\n\n"
+agent render_algebra_diff(base: Descriptor, head: Descriptor) -> String:
+    body = ""
     any_changes = false
 
-    # Pass 1: agents that exist on base. Either removed on head, or
-    # changed in at least one algebraic field.
     for b in base.agents:
         in_head = false
         for h in head.agents:
@@ -85,7 +109,6 @@ agent review_pr(base: Descriptor, head: Descriptor) -> String:
             body = body + "### Removed: `" + b.name + "`\n\n"
             any_changes = true
 
-    # Pass 2: agents that exist on head but not on base.
     for h in head.agents:
         in_base = false
         for b in base.agents:
@@ -96,5 +119,37 @@ agent review_pr(base: Descriptor, head: Descriptor) -> String:
             any_changes = true
 
     if not any_changes:
-        body = body + "_No algebraic changes detected._\n"
+        body = body + "_No algebraic changes detected along the exported surface._\n\n"
+
+    return body
+
+# Render the counterfactual-replay-impact section (21-inv-H-2).
+# Empty string when `has_traces == false`, so callers that didn't
+# opt into `--traces` see zero footprint from this section.
+@deterministic
+agent render_trace_impact(impact: TraceImpact) -> String:
+    if not impact.has_traces:
+        return ""
+    body = "## Counterfactual Replay Impact\n\n"
+    body = body + impact.summary_line + "\n\n"
+    if impact.any_newly_diverged:
+        body = body + "**Impact:** " + impact.impact_percentage + " of traces would have newly diverged under this PR.\n\n"
+        body = body + "### Newly divergent under head\n\n"
+        for p in impact.newly_diverged_paths:
+            body = body + "- `" + p + "`\n"
+        body = body + "\n"
+    else:
+        body = body + "No traces newly diverge under this PR.\n\n"
+    return body
+
+# Produce the full PR behavior receipt. `@deterministic`: the same
+# three inputs always produce byte-identical output, so CI
+# pipelines can memoize the receipt on (base-sha, head-sha,
+# traces-hash) without drift across reruns.
+@deterministic
+agent review_pr(base: Descriptor, head: Descriptor, impact: TraceImpact) -> String:
+    body = "# PR Behavior Receipt\n\n"
+    body = body + "Comparing base vs. head along Corvid's effect algebra.\n\n"
+    body = body + render_algebra_diff(base, head)
+    body = body + render_trace_impact(impact)
     return body

@@ -136,6 +136,100 @@ fn trace_diff_end_to_end_reports_no_changes_when_source_is_identical() {
     );
 }
 
+/// `--traces <dir>` on an empty directory must (a) parse, (b) reach
+/// the counterfactual-replay subsystem, (c) cleanly report that no
+/// traces were found, and (d) render the receipt without an impact
+/// section. Exercises the H-2 wire path end-to-end without needing a
+/// recorded fixture.
+#[test]
+fn trace_diff_with_empty_traces_dir_renders_no_impact_section() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = tmp.path();
+    run_git(repo, &["init", "--quiet", "-b", "main"]);
+
+    let src = repo.join("agent.cor");
+    write_file(&src, BASE_SOURCE);
+    run_git(repo, &["add", "agent.cor"]);
+    run_git(repo, &["commit", "--quiet", "-m", "only"]);
+    let base_sha = run_git(repo, &["rev-parse", "HEAD"]);
+    let head_sha = base_sha.clone();
+
+    let traces_dir = repo.join("empty_traces");
+    std::fs::create_dir_all(&traces_dir).unwrap();
+
+    let output = Command::new(corvid_bin())
+        .args([
+            "trace-diff",
+            &base_sha,
+            &head_sha,
+            "agent.cor",
+            "--traces",
+            traces_dir.to_str().unwrap(),
+        ])
+        .current_dir(repo)
+        .output()
+        .expect("run corvid trace-diff --traces");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "trace-diff --traces failed: exit={:?} stdout=\n{stdout}\nstderr=\n{stderr}",
+        output.status.code()
+    );
+    assert!(
+        stdout.contains("# PR Behavior Receipt"),
+        "receipt header missing. stdout:\n{stdout}"
+    );
+    // The empty-dir branch sets `has_traces = false` so the reviewer
+    // renders zero content for the impact section — slice-1 receipts
+    // are unchanged by a `--traces` pointing at an empty dir.
+    assert!(
+        !stdout.contains("Counterfactual Replay Impact"),
+        "empty traces dir must not render an impact section. stdout:\n{stdout}"
+    );
+}
+
+/// `--traces <dir>` pointed at a non-existent path must fail cleanly
+/// with a typed error that names the directory, not an opaque panic.
+#[test]
+fn trace_diff_with_missing_traces_dir_errors_cleanly() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = tmp.path();
+    run_git(repo, &["init", "--quiet", "-b", "main"]);
+
+    let src = repo.join("agent.cor");
+    write_file(&src, BASE_SOURCE);
+    run_git(repo, &["add", "agent.cor"]);
+    run_git(repo, &["commit", "--quiet", "-m", "only"]);
+    let base_sha = run_git(repo, &["rev-parse", "HEAD"]);
+
+    let missing_dir = repo.join("does_not_exist");
+
+    let output = Command::new(corvid_bin())
+        .args([
+            "trace-diff",
+            &base_sha,
+            &base_sha,
+            "agent.cor",
+            "--traces",
+            missing_dir.to_str().unwrap(),
+        ])
+        .current_dir(repo)
+        .output()
+        .expect("run corvid trace-diff --traces missing-dir");
+
+    assert!(
+        !output.status.success(),
+        "expected non-zero exit for missing --traces dir"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("does not exist"),
+        "expected stderr to name the missing dir, got:\n{stderr}"
+    );
+}
+
 #[test]
 fn trace_diff_errors_cleanly_when_base_sha_unknown() {
     let tmp = tempfile::tempdir().unwrap();
