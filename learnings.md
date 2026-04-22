@@ -1744,6 +1744,46 @@ default, then ship the mechanism that makes the classifier
 load-bearing. Users migrate into intentional choices instead of
 migrating out of an accidental anti-pattern.
 
+### in-toto integration: the attestation ecosystem is a free composition
+
+`21-inv-H-5-in-toto` shipped in one commit because H-5-signed
+already chose DSSE. Wrapping the Receipt in an in-toto Statement
+v1 and swapping the DSSE envelope's `payloadType` to
+`application/vnd.in-toto+json` is all it took — cosign,
+slsa-verifier, and the rest of the in-toto ecosystem now consume
+Corvid receipts natively with zero adapter code.
+
+The lesson is the same one H-5-signed named in reverse:
+*choosing the ecosystem-standard format at the base layer pays
+compounding interest at every higher layer.* We didn't have to
+invent in-toto compatibility — we declared the subject, the
+predicateType, and the Statement wrapper, and the format
+committee's prior work did the rest.
+
+Design choices worth naming:
+
+- **Subject = reviewed artifact, not the receipt itself.** The
+  attestation is *about* the head source file (`sha256` in the
+  subject's digest field). Self-attesting would have been
+  redundant with H-5-signed's content-hash addressing, and
+  would have confused consumers expecting the subject to point
+  at the reviewed-thing.
+- **PredicateType is Corvid-specific, not SLSA Provenance.**
+  URI `https://corvid-lang.org/attestation/receipt/v1`. SLSA
+  Provenance describes build inputs/outputs; Corvid receipts
+  describe algebraic-effect deltas. Borrowing the wrong
+  predicate type would have confused SLSA consumers.
+- **Unsigned in-toto output is allowed.** Forcing `--sign` would
+  have excluded pipelines that sign externally with cosign's
+  KMS-backed signers or keyless OIDC. The unsigned-then-sign
+  flow is a legitimate use case we support by not getting in
+  the way.
+- **`receipt verify` accepts both payloadTypes transparently.**
+  The allow-list grew from one entry to two. Callers don't
+  branch on payloadType; they just verify and get the bytes.
+  Interpretation (Corvid receipt vs in-toto Statement) happens
+  at the consumer layer where it belongs.
+
 ### Signed receipts move governance from informational to defensible
 
 `21-inv-H-5-signed` turned the trace-diff receipt from "a text

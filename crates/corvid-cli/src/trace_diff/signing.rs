@@ -280,13 +280,22 @@ fn decode_ed25519_seed(raw: &[u8], source_label: &str) -> Result<[u8; 32], SignE
     })
 }
 
-/// Sign the receipt payload + return the DSSE envelope. `payload`
-/// is the canonical JSON bytes of the receipt as emitted by the
-/// canonical renderer; don't re-serialise before calling.
-pub(super) fn sign_receipt(payload: &[u8], key: &SigningKey, key_id: &str) -> DsseEnvelope {
-    let signed = key.sign(&pae(CORVID_RECEIPT_PAYLOAD_TYPE, payload));
+/// Sign a payload with the given `payload_type` + return the DSSE
+/// envelope. The signature covers the PAE of `(payload_type,
+/// payload)`, so an attacker can't replay the signature under a
+/// different payloadType. Caller supplies the payloadType so this
+/// function works for both Corvid receipts
+/// (`application/vnd.corvid-receipt+json`) and in-toto Statements
+/// (`application/vnd.in-toto+json`) without branching.
+pub(super) fn sign_envelope(
+    payload: &[u8],
+    payload_type: &str,
+    key: &SigningKey,
+    key_id: &str,
+) -> DsseEnvelope {
+    let signed = key.sign(&pae(payload_type, payload));
     DsseEnvelope {
-        payload_type: CORVID_RECEIPT_PAYLOAD_TYPE.to_string(),
+        payload_type: payload_type.to_string(),
         payload: B64.encode(payload),
         signatures: vec![DsseSignature {
             keyid: key_id.to_string(),
@@ -295,11 +304,32 @@ pub(super) fn sign_receipt(payload: &[u8], key: &SigningKey, key_id: &str) -> Ds
     }
 }
 
+/// Backward-compatible wrapper: sign a Corvid receipt payload
+/// with the `application/vnd.corvid-receipt+json` payloadType.
+/// Retained so existing callers + tests don't break.
+pub(super) fn sign_receipt(payload: &[u8], key: &SigningKey, key_id: &str) -> DsseEnvelope {
+    sign_envelope(payload, CORVID_RECEIPT_PAYLOAD_TYPE, key, key_id)
+}
+
+/// The set of payloadTypes we accept as known-good at verify
+/// time. A well-formed envelope with a payloadType outside this
+/// set is rejected — unknown types could be anything, and we
+/// shouldn't interpret them as Corvid-meaningful.
+const ACCEPTED_PAYLOAD_TYPES: &[&str] = &[
+    CORVID_RECEIPT_PAYLOAD_TYPE,
+    // `application/vnd.in-toto+json` for in-toto Statements
+    // (21-inv-H-5-in-toto). Kept as a literal rather than a
+    // cross-module import to avoid a circular dependency.
+    "application/vnd.in-toto+json",
+];
+
 /// Parse a DSSE envelope from JSON bytes, verify every included
 /// signature against the supplied verifying key, and return the
 /// base64-decoded payload on success. A single valid signature
 /// against the given key suffices — extra signatures from other
-/// keys don't cause rejection.
+/// keys don't cause rejection. Accepts any payloadType in
+/// [`ACCEPTED_PAYLOAD_TYPES`] — the caller decides what to do
+/// with the returned payload based on the envelope's type.
 pub(crate) fn verify_envelope(
     envelope_json: &[u8],
     key: &VerifyingKey,
@@ -307,10 +337,10 @@ pub(crate) fn verify_envelope(
     let envelope: DsseEnvelope =
         serde_json::from_slice(envelope_json).map_err(VerifyError::EnvelopeJson)?;
 
-    if envelope.payload_type != CORVID_RECEIPT_PAYLOAD_TYPE {
+    if !ACCEPTED_PAYLOAD_TYPES.contains(&envelope.payload_type.as_str()) {
         return Err(VerifyError::PayloadTypeMismatch {
             got: envelope.payload_type.clone(),
-            expected: CORVID_RECEIPT_PAYLOAD_TYPE.to_string(),
+            expected: ACCEPTED_PAYLOAD_TYPES.join(" or "),
         });
     }
     if envelope.signatures.is_empty() {

@@ -45,6 +45,7 @@
 //! - `21-inv-H-5` `--format=github-check|markdown|json` outputs.
 
 mod impact;
+mod in_toto;
 mod narrative;
 mod receipt;
 mod reviewer_invocation;
@@ -163,29 +164,60 @@ pub fn run_trace_diff(args: TraceDiffArgs<'_>) -> Result<u8> {
             .context("reviewer agent execution failed")?,
         OutputFormat::GithubCheck => render_github_check(&receipt, &verdict),
         OutputFormat::Json => render_json(&receipt, &verdict),
+        OutputFormat::InToto => in_toto::render_in_toto(
+            &receipt,
+            &verdict,
+            head_source.as_bytes(),
+            &source_path_str,
+        ),
     };
 
     // Signing path: when a key source is available, wrap the
-    // canonical JSON receipt (regardless of `--format`) in a
-    // DSSE envelope and emit that instead. The `--format` flag
-    // is ignored under `--sign` because markdown/github-check
-    // aren't meaningful payload types for a signed attestation
-    // — the whole point is a byte-stable JSON body that
-    // cryptographic tools can verify.
+    // canonical payload in a DSSE envelope. Payload shape +
+    // envelope payloadType both follow the `--format` flag —
+    // in-toto Statements get `application/vnd.in-toto+json` so
+    // cosign / slsa-verifier consume them natively; every other
+    // format signs the canonical JSON receipt with Corvid's
+    // native payloadType. Markdown and github-check fall back to
+    // signing the JSON receipt (signing a markdown string makes
+    // no sense for cryptographic tooling).
     let key_source = signing::resolve_key_source(args.sign_key_path);
     if let Some(source) = key_source {
-        let receipt_json = render_json(&receipt, &verdict);
+        let (payload, payload_type) = match args.format {
+            OutputFormat::InToto => (
+                in_toto::render_in_toto(
+                    &receipt,
+                    &verdict,
+                    head_source.as_bytes(),
+                    &source_path_str,
+                ),
+                in_toto::IN_TOTO_DSSE_PAYLOAD_TYPE,
+            ),
+            // All non-in-toto formats sign the canonical JSON
+            // receipt — that's the byte-stable, schema-versioned
+            // Corvid-native payload.
+            _ => (
+                render_json(&receipt, &verdict),
+                signing::CORVID_RECEIPT_PAYLOAD_TYPE,
+            ),
+        };
         let signing_key = signing::load_signing_key(&source)
             .with_context(|| "loading signing key")?;
         let key_id = args.sign_key_id.unwrap_or("corvid-default");
-        let envelope = signing::sign_receipt(receipt_json.as_bytes(), &signing_key, key_id);
+        let envelope =
+            signing::sign_envelope(payload.as_bytes(), payload_type, &signing_key, key_id);
         let envelope_json = signing::envelope_to_json(&envelope);
 
-        // Persist to the receipt cache so `corvid receipt show
-        // <hash>` can resolve it later. Cache failures are
-        // non-fatal — the envelope still prints, we just can't
-        // look it up locally by hash later.
-        match crate::receipt_cache::store(receipt_json.as_bytes(), envelope_json.as_bytes()) {
+        // Persist to the receipt cache keyed by the RECEIPT's
+        // hash (not the wrapped payload), so `corvid receipt
+        // show <hash>` always resolves to the raw receipt
+        // regardless of whether it was signed bare or wrapped
+        // in an in-toto Statement. Cache failures are non-fatal.
+        let receipt_json_for_cache = render_json(&receipt, &verdict);
+        match crate::receipt_cache::store(
+            receipt_json_for_cache.as_bytes(),
+            envelope_json.as_bytes(),
+        ) {
             Ok(stored) => {
                 eprintln!("Corvid-Receipt: {}", stored.hash);
             }

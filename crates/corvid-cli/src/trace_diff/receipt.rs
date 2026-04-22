@@ -47,21 +47,28 @@ pub enum OutputFormat {
     /// piped — bots usually want this. Explicit opt-in via
     /// `--format=json`.
     Json,
+    /// in-toto Statement v1 with the Corvid receipt as the
+    /// predicate. When combined with `--sign`, the DSSE envelope
+    /// uses `application/vnd.in-toto+json` as its payloadType so
+    /// cosign / attest-tools / slsa-verifier consume the output
+    /// natively. Explicit opt-in via `--format=in-toto`.
+    InToto,
 }
 
 impl OutputFormat {
-    /// Parse `--format=<mode>` accepting the four user-facing
+    /// Parse `--format=<mode>` accepting the five user-facing
     /// spellings: `auto` (environment-driven), `markdown`,
-    /// `github-check`, `json`. Rejects other values with a typed
-    /// error so the caller can surface guidance.
+    /// `github-check`, `json`, `in-toto`. Rejects other values
+    /// with a typed error so the caller can surface guidance.
     pub fn parse(s: &str) -> Result<Self, String> {
         match s {
             "auto" => Ok(Self::detect_from_environment()),
             "markdown" => Ok(Self::Markdown),
             "github-check" => Ok(Self::GithubCheck),
             "json" => Ok(Self::Json),
+            "in-toto" => Ok(Self::InToto),
             other => Err(format!(
-                "unknown format `{other}`; expected `auto`, `markdown`, `github-check`, or `json`"
+                "unknown format `{other}`; expected `auto`, `markdown`, `github-check`, `json`, or `in-toto`"
             )),
         }
     }
