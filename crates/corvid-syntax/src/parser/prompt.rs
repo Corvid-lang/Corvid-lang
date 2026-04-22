@@ -15,11 +15,11 @@ use crate::errors::{ParseError, ParseErrorKind};
 use crate::token::TokKind;
 use corvid_ast::{
     AdversarialSpec, EnsembleSpec, Ident, ProgressiveChain, ProgressiveStage, PromptDecl,
-    RolloutSpec, RouteArm, RoutePattern, RouteTable, VoteStrategy,
+    RolloutSpec, RouteArm, RoutePattern, RouteTable, Visibility, VoteStrategy,
 };
 
 impl<'a> Parser<'a> {
-    pub(super) fn parse_prompt_decl(&mut self) -> Result<PromptDecl, ParseError> {
+    pub(super) fn parse_prompt_decl(&mut self, visibility: Visibility) -> Result<PromptDecl, ParseError> {
         let start = self.peek_span();
         self.bump(); // prompt
 
@@ -172,6 +172,7 @@ impl<'a> Parser<'a> {
             rollout,
             ensemble,
             adversarial,
+            visibility,
             span: start.merge(end),
         })
     }

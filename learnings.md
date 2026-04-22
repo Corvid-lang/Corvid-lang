@@ -1720,6 +1720,30 @@ runtime-panic price tag; if a crate offers a sync helper that other callers
 rely on, the answer is to expose the async variant alongside it, not to thread
 runtimes through function bodies.
 
+### Visibility-before-imports: ship the rule first, then the mechanism
+
+`lang-pub-toplevel` extended `public` / `public(package)` to
+top-level `type` / `tool` / `prompt` / `agent` declarations —
+private-by-default, backward-compatible with every existing
+single-file program. The rule shipped **before** the mechanism
+that makes it load-bearing (`lang-cor-imports-basic`).
+
+Why that order: when imports land, every existing `.cor` file
+needs to decide which of its declarations are importable. If we
+shipped imports first, the entire ecosystem would be implicitly
+public until each file was migrated — exactly the default-public
+regret Python has lived with for 30 years. Shipping the rule
+first means every file defaults to the right answer (private);
+library authors opt in to `public` intentionally when they want
+something importable.
+
+The lesson generalises: when adding a language feature whose
+semantics depend on a classifier (public/private, safe/unsafe,
+pure/effectful), ship the classifier first with the conservative
+default, then ship the mechanism that makes the classifier
+load-bearing. Users migrate into intentional choices instead of
+migrating out of an accidental anti-pattern.
+
 ### Governance receipts are the audit layer, not just a reporter
 
 `21-inv-H-5` started as "add three output format modes" and was
@@ -2066,6 +2090,43 @@ That pattern is now the default for future effect-facing Phase 22 / 23 slices:
 compile-time algebra inside Corvid, runtime attestations at the boundary,
 policy authored by the host unless a later slice makes a very explicit case for
 runtime enforcement.
+
+### Computation can be distributed as a replay capsule, not just as code
+
+`22-H-replay-across-ffi` closes the loop on the earlier Phase 21 and 22
+guarantees. Corvid already had three strong pieces in isolation:
+
+- a compiled cdylib carrying its full ABI and effect surface
+- deterministic replay over recorded traces
+- structured receipts and policy outputs about what changed
+
+The important move in `22-H` was to make those one artifact instead of three
+related features. A Corvid execution can now be packaged as a **replay
+capsule**: library, embedded descriptor, trace, and manifest bound together by
+content hashes plus schema/version metadata. That turns an execution into a
+portable unit for debugging, audits, regressions, and cross-host reproduction.
+
+Two implementation choices are the durable lessons.
+
+First, host-originated events belong in the same trace stream as runtime
+events. `host_event` is not a sidecar file and not a separate schema. The host
+submits the event through the ABI, but the cdylib remains the single writer.
+That keeps replay, viewers, and tooling working over one timeline instead of
+teaching every consumer how to merge multiple partial histories.
+
+Second, determinism at the boundary has to be stated honestly. Corvid now seeds
+its own run identity and clock reads from deterministic metadata when replaying
+through the FFI, but it does **not** claim control over opaque SDK jitter or
+adapter-internal scheduling it does not own. The strong claim is therefore:
+seed-deterministic for the Corvid-controlled surface. That is still enough to
+make capsules durable and cross-host portable without quietly overstating the
+guarantee.
+
+This also extends the same architectural pattern that showed up in `H-5`,
+`22-F`, and `22-G`: runtime reality crosses the boundary as structured
+evidence, and the host decides what to do with it. `22-H` applies that to whole
+executions. The capsule is not just a convenience archive; it is the boundary
+artifact hosts can inspect, replay, diff, sign later, and build policy around.
 
 ## Contributing / feedback
 

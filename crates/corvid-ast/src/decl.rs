@@ -52,13 +52,14 @@ impl Decl {
 /// Defaults to `Private` (file-scoped). `Public` is callable anywhere
 /// the type is visible, and `PublicPackage` is reserved for a future
 /// package-level visibility boundary.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Visibility {
-    /// Default. Callable only from the file declaring the extend block.
+    /// Default. Only visible inside the declaring file.
+    #[default]
     Private,
-    /// `public` — callable from anywhere the type is visible.
+    /// `public` — visible wherever the declaring file is imported.
     Public,
-    /// `public(package)` — callable within the declaring package once
+    /// `public(package)` — visible within the declaring package once
     /// package-level visibility is wired up.
     PublicPackage,
 }
@@ -166,6 +167,13 @@ pub struct ImportDecl {
 pub struct TypeDecl {
     pub name: Ident,
     pub fields: Vec<Field>,
+    /// Module-level visibility. Defaults to [`Visibility::Private`]
+    /// (file-scoped). Marked `public` to be visible to importers
+    /// once cross-file `.cor` imports land in `lang-cor-imports-basic`.
+    /// Existing single-file programs behave identically regardless of
+    /// the field's value.
+    #[serde(default)]
+    pub visibility: Visibility,
     pub span: Span,
 }
 
@@ -188,6 +196,10 @@ pub struct ToolDecl {
     /// Dimensional effect row: `uses transfer_money, audit_log`.
     #[serde(default)]
     pub effect_row: EffectRow,
+    /// Module-level visibility. Defaults to [`Visibility::Private`]
+    /// (file-scoped). Marked `public` to be visible to importers.
+    #[serde(default)]
+    pub visibility: Visibility,
     pub span: Span,
 }
 
@@ -264,6 +276,10 @@ pub struct PromptDecl {
     /// See Phase 20h slice G.
     #[serde(default)]
     pub adversarial: Option<AdversarialSpec>,
+    /// Module-level visibility. Defaults to [`Visibility::Private`]
+    /// (file-scoped). Marked `public` to be visible to importers.
+    #[serde(default)]
+    pub visibility: Visibility,
     pub span: Span,
 }
 
@@ -401,6 +417,13 @@ pub struct AgentDecl {
     /// the way effect constraints do.
     #[serde(default)]
     pub attributes: Vec<AgentAttribute>,
+    /// Module-level visibility. Defaults to [`Visibility::Private`]
+    /// (file-scoped). Marked `public` to be visible to importers.
+    /// `pub extern "c"` agents are implicitly public regardless of
+    /// any preceding `public` keyword — FFI export requires external
+    /// visibility by definition.
+    #[serde(default)]
+    pub visibility: Visibility,
     pub span: Span,
 }
 

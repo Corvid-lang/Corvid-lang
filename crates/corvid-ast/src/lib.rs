@@ -59,6 +59,7 @@ mod tests {
             return_ty: ty_named("Order"),
             effect: Effect::Safe,
             effect_row: EffectRow::default(),
+            visibility: Visibility::Private,
             span: sp(),
         };
 
@@ -80,6 +81,7 @@ mod tests {
             return_ty: ty_named("Receipt"),
             effect: Effect::Dangerous,
             effect_row: EffectRow::default(),
+            visibility: Visibility::Private,
             span: sp(),
         };
 
@@ -175,6 +177,7 @@ mod tests {
             effect_row: EffectRow::default(),
             constraints: Vec::new(),
             attributes: Vec::new(),
+            visibility: Visibility::Private,
             span: sp(),
         };
 

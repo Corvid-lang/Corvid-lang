@@ -4491,6 +4491,99 @@ Phase 21 Lane A is now CLOSED. `21-inv-H` rollup flipped to
 `[x]`. `corvid trace-diff` is the flagship PR-review tool,
 dogfooding the language it reviews.
 
+## Day 54 — 2026-04-22 — Slice lang-pub-toplevel: module-level visibility modifier
+
+First of four language-core slices that together ship
+`lang-cor-imports` as an ambitious-design / disciplined-scope
+sequence. Started as "add `.cor` imports" in a pre-phase chat;
+the honest scope audit turned up four interlocking inventions
+(basic imports, selective-lift `use`, private-by-default `pub`
+visibility, effect-typed imports). Each now has its own slice.
+
+This slice — `lang-pub-toplevel` — extends the `public` /
+`public(package)` visibility modifier to top-level `type` /
+`tool` / `prompt` / `agent` declarations. It lands BEFORE
+imports do, deliberately: when imports arrive, every existing
+`.cor` file needs to have already decided which declarations
+are importable. Shipping imports first would leave the
+ecosystem implicitly public by default — exactly the
+Python-regret default we want to avoid.
+
+What shipped:
+
+- `Visibility` enum in `corvid-ast` gains `Copy` + `Default`
+  (defaults to `Private`). Was previously `Clone` + `Eq` only,
+  which made the enum awkward to pass by value.
+- `visibility: Visibility` field added to `TypeDecl`,
+  `ToolDecl`, `PromptDecl`, `AgentDecl` with
+  `#[serde(default)]` so deserialisers pick up `Private`
+  automatically on old JSON.
+- Parser (`crates/corvid-syntax/src/parser/decl.rs`): top of
+  `parse_decl` now peels off an optional visibility prefix via
+  the existing `parse_optional_visibility` helper (same
+  helper that already supported `public` / `public(package)`
+  in `extend` blocks — zero duplication). The prefix is then
+  threaded into `parse_type_decl`, `parse_tool_decl`,
+  `parse_prompt_decl`, `parse_agent_decl`.
+- `pub extern "c" agent` is implicitly `Visibility::Public`
+  — FFI export requires external visibility by definition. A
+  redundant `public pub extern "c" agent` is accepted and
+  resolves to `Public`.
+- `public` before `import` / `effect` / `model` / `eval` /
+  `extend` / `@`-annotated agents is rejected with a typed
+  error. Those forms don't currently carry module-level
+  visibility.
+
+Tests (in `crates/corvid-syntax/src/parser/tests.rs`):
+
+- `default_visibility_is_private` — existing single-file
+  programs continue to parse with `Private` on every top-level
+  decl (backward-compat invariant).
+- `public_prefix_marks_type_decl` / `_agent_decl` / `_prompt_decl`
+  / `_tool_decl` — the `public` prefix parses and sets
+  `Visibility::Public`.
+- `public_package_prefix_marks_public_package` — `public(package)`
+  resolves to `Visibility::PublicPackage`.
+- `pub_extern_c_agent_is_implicitly_public` — FFI-exported
+  agents carry `Visibility::Public` without an explicit prefix.
+- `public_before_non_top_level_decl_errors` — `public import`
+  is a parse error.
+
+Interpretation:
+
+- The classifier-before-mechanism pattern is the honest move
+  for language-feature ordering. Same lesson as H-5's
+  "default-to-ambition, disciplined-in-scope" — applied to
+  language surfaces rather than feature additions.
+- The existing `parse_optional_visibility` helper for `extend`
+  blocks turned out to be exactly the infrastructure needed.
+  Reusing it keeps the visibility grammar consistent across
+  contexts — `public` / `public(package)` behaves identically
+  inside `extend` blocks and at the top level.
+- `pub` stays reserved exclusively for `pub extern "c"` (the
+  FFI export marker). `public` is the generic visibility
+  keyword. Consistent with what Corvid had already chosen;
+  Rust convention (`pub`) doesn't generalise here because
+  Corvid's first visibility primitive picked `public`.
+
+Gate: 167 corvid-syntax unit tests pass (159 pre-existing + 8
+new visibility tests); full workspace check clean; 45 cli unit
+trace_diff tests pass; 8 integration tests pass; verify
+--corpus exits 1 only on tier_disagree.cor and
+native_drops_effect.cor as intended.
+
+Next in sequence: `lang-cor-imports-basic` — the module
+system itself. Builds on this visibility surface; pub will
+start enforcing ("private declarations not accessible via
+qualified access") when imports can see the classifier.
+
+Coordination: Dev B shipped 22-H (`aea780d` replay-across-FFI +
+capsule format) during this slice's work — cleanly landed on
+top of my in-progress changes because 22-H touched runtime /
+codegen / trace-schema while this slice was entirely in ast +
+syntax. Mutual non-interference preserved; my peer review of
+22-H is queued after `lang-cor-imports-basic` lands.
+
 
 
 

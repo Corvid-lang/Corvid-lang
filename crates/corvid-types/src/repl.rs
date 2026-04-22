@@ -2,7 +2,7 @@
 
 use crate::checker::{typecheck, Checked};
 use crate::types::Type;
-use corvid_ast::{AgentDecl, Expr, File, Ident, Literal, Param, Span, Stmt, TypeRef};
+use corvid_ast::{AgentDecl, Expr, File, Ident, Literal, Param, Span, Stmt, TypeRef, Visibility};
 use corvid_resolve::{Resolved, SymbolTable};
 
 const REPL_AGENT_NAME: &str = "__repl_turn__";
@@ -118,6 +118,7 @@ fn synthetic_agent(
         effect_row: Default::default(),
         constraints: Vec::new(),
         attributes: Vec::new(),
+        visibility: Visibility::Private,
         span,
     }
 }

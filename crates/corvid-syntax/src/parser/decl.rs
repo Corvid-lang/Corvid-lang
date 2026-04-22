@@ -20,13 +20,39 @@ use corvid_ast::{
 
 impl<'a> Parser<'a> {
     pub(super) fn parse_decl(&mut self) -> Result<Decl, ParseError> {
+        // Optional `public` / `public(package)` visibility prefix on
+        // top-level type / tool / prompt / agent declarations. The
+        // visibility modifier becomes load-bearing once cross-file
+        // `.cor` imports land; on its own, it changes nothing about
+        // existing single-file programs because same-file callers see
+        // both `public` and private items regardless.
+        let visibility = self.parse_optional_visibility()?;
+        if !matches!(visibility, Visibility::Private) {
+            match self.peek() {
+                TokKind::KwType
+                | TokKind::KwTool
+                | TokKind::KwPrompt
+                | TokKind::KwAgent => {}
+                other => {
+                    return Err(ParseError {
+                        kind: ParseErrorKind::UnexpectedToken {
+                            got: describe_token(other),
+                            expected:
+                                "`type`, `tool`, `prompt`, or `agent` after `public`".into(),
+                        },
+                        span: self.peek_span(),
+                    });
+                }
+            }
+        }
+
         match self.peek() {
             TokKind::KwImport => self.parse_import_decl().map(Decl::Import),
-            TokKind::KwType => self.parse_type_decl().map(Decl::Type),
-            TokKind::KwTool => self.parse_tool_decl().map(Decl::Tool),
-            TokKind::KwPrompt => self.parse_prompt_decl().map(Decl::Prompt),
+            TokKind::KwType => self.parse_type_decl(visibility).map(Decl::Type),
+            TokKind::KwTool => self.parse_tool_decl(visibility).map(Decl::Tool),
+            TokKind::KwPrompt => self.parse_prompt_decl(visibility).map(Decl::Prompt),
             TokKind::KwEval => self.parse_eval_decl().map(Decl::Eval),
-            TokKind::KwAgent => self.parse_agent_decl().map(Decl::Agent),
+            TokKind::KwAgent => self.parse_agent_decl(visibility).map(Decl::Agent),
             TokKind::KwPub => self.parse_extern_agent_decl().map(Decl::Agent),
             TokKind::KwExtend => self.parse_extend_decl().map(Decl::Extend),
             TokKind::KwEffect => self.parse_effect_decl().map(Decl::Effect),
@@ -49,7 +75,15 @@ impl<'a> Parser<'a> {
                         span: self.peek_span(),
                     });
                 }
-                let mut agent = self.parse_agent_decl()?;
+                // `pub extern "c"` agents are implicitly Public
+                // regardless of any preceding `public` keyword — FFI
+                // export requires external visibility by definition.
+                let effective_visibility = if extern_abi.is_some() {
+                    Visibility::Public
+                } else {
+                    Visibility::Private
+                };
+                let mut agent = self.parse_agent_decl(effective_visibility)?;
                 agent.extern_abi = extern_abi;
                 agent.constraints = constraints;
                 agent.attributes = attributes;
@@ -125,7 +159,7 @@ impl<'a> Parser<'a> {
 
     // -- type ----------------------------------------------------
 
-    fn parse_type_decl(&mut self) -> Result<TypeDecl, ParseError> {
+    fn parse_type_decl(&mut self, visibility: Visibility) -> Result<TypeDecl, ParseError> {
         let start = self.peek_span();
         self.bump(); // type
 
@@ -163,6 +197,7 @@ impl<'a> Parser<'a> {
         Ok(TypeDecl {
             name: Ident::new(name, name_span),
             fields,
+            visibility,
             span: start.merge(end),
         })
     }
@@ -183,7 +218,7 @@ impl<'a> Parser<'a> {
 
     // -- tool ----------------------------------------------------
 
-    pub(super) fn parse_tool_decl(&mut self) -> Result<ToolDecl, ParseError> {
+    pub(super) fn parse_tool_decl(&mut self, visibility: Visibility) -> Result<ToolDecl, ParseError> {
         let start = self.peek_span();
         self.bump(); // tool
 
@@ -209,6 +244,7 @@ impl<'a> Parser<'a> {
             return_ty,
             effect,
             effect_row,
+            visibility,
             span: start.merge(end),
         })
     }
@@ -427,7 +463,10 @@ impl<'a> Parser<'a> {
                 span: self.peek_span(),
             });
         }
-        let mut agent = self.parse_agent_decl()?;
+        // `pub extern "c" agent ...` is implicitly Public — FFI
+        // export means the agent is by definition visible to
+        // external callers.
+        let mut agent = self.parse_agent_decl(Visibility::Public)?;
         agent.extern_abi = Some(extern_abi);
         Ok(agent)
     }
@@ -463,7 +502,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    pub(super) fn parse_agent_decl(&mut self) -> Result<AgentDecl, ParseError> {
+    pub(super) fn parse_agent_decl(&mut self, visibility: Visibility) -> Result<AgentDecl, ParseError> {
         let start = self.peek_span();
         self.bump(); // agent
 
@@ -487,6 +526,7 @@ impl<'a> Parser<'a> {
             effect_row,
             constraints: Vec::new(),
             attributes: Vec::new(),
+            visibility,
             span: start.merge(end),
         })
     }
@@ -666,15 +706,15 @@ impl<'a> Parser<'a> {
             let visibility = self.parse_optional_visibility()?;
             let method_kind = match self.peek() {
                 TokKind::KwAgent => {
-                    let d = self.parse_agent_decl()?;
+                    let d = self.parse_agent_decl(visibility)?;
                     ExtendMethodKind::Agent(d)
                 }
                 TokKind::KwPrompt => {
-                    let d = self.parse_prompt_decl()?;
+                    let d = self.parse_prompt_decl(visibility)?;
                     ExtendMethodKind::Prompt(d)
                 }
                 TokKind::KwTool => {
-                    let d = self.parse_tool_decl()?;
+                    let d = self.parse_tool_decl(visibility)?;
                     ExtendMethodKind::Tool(d)
                 }
                 other => {

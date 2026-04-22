@@ -625,7 +625,7 @@ prompt generate(ctx: String) -> Stream<String>:
     // File / declaration parser tests
     // =================================================================
 
-    use corvid_ast::{AgentDecl, Decl, Effect, File, ImportSource, TypeRef};
+    use corvid_ast::{AgentDecl, Decl, Effect, File, ImportSource, TypeRef, Visibility};
 
     fn parse_file_src(src: &str) -> File {
         let tokens = lex(src).expect("lex failed");
@@ -669,6 +669,146 @@ prompt generate(ctx: String) -> Stream<String>:
             }
             other => panic!("expected Import, got {other:?}"),
         }
+    }
+
+    // -------------------- top-level visibility --------------------
+
+    #[test]
+    fn default_visibility_is_private() {
+        let file = parse_file_src(
+            "\
+type Ticket:
+    id: String
+
+tool get_order(id: String) -> String
+
+prompt ask(q: String) -> String:
+    \"ask {q}\"
+
+agent helper(q: String) -> String:
+    return q
+",
+        );
+        for decl in &file.decls {
+            match decl {
+                Decl::Type(t) => assert!(matches!(t.visibility, Visibility::Private)),
+                Decl::Tool(t) => assert!(matches!(t.visibility, Visibility::Private)),
+                Decl::Prompt(p) => assert!(matches!(p.visibility, Visibility::Private)),
+                Decl::Agent(a) => assert!(matches!(a.visibility, Visibility::Private)),
+                _ => {}
+            }
+        }
+    }
+
+    #[test]
+    fn public_prefix_marks_type_decl() {
+        let file = parse_file_src(
+            "\
+public type Receipt:
+    ok: Bool
+",
+        );
+        match &file.decls[0] {
+            Decl::Type(t) => {
+                assert_eq!(t.name.name, "Receipt");
+                assert!(matches!(t.visibility, Visibility::Public));
+            }
+            other => panic!("expected Type, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn public_prefix_marks_agent_decl() {
+        let file = parse_file_src(
+            "\
+public agent check(r: String) -> String:
+    return r
+",
+        );
+        match &file.decls[0] {
+            Decl::Agent(a) => {
+                assert_eq!(a.name.name, "check");
+                assert!(matches!(a.visibility, Visibility::Public));
+                assert!(a.extern_abi.is_none());
+            }
+            other => panic!("expected Agent, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn public_prefix_marks_prompt_decl() {
+        let file = parse_file_src(
+            "\
+public prompt summarise(s: String) -> String:
+    \"summarise {s}\"
+",
+        );
+        match &file.decls[0] {
+            Decl::Prompt(p) => {
+                assert_eq!(p.name.name, "summarise");
+                assert!(matches!(p.visibility, Visibility::Public));
+            }
+            other => panic!("expected Prompt, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn public_prefix_marks_tool_decl() {
+        let file = parse_file_src(r#"public tool fetch(id: String) -> String"#);
+        match &file.decls[0] {
+            Decl::Tool(t) => {
+                assert_eq!(t.name.name, "fetch");
+                assert!(matches!(t.visibility, Visibility::Public));
+            }
+            other => panic!("expected Tool, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn public_package_prefix_marks_public_package() {
+        let file = parse_file_src(
+            "\
+public(package) type Receipt:
+    ok: Bool
+",
+        );
+        match &file.decls[0] {
+            Decl::Type(t) => {
+                assert!(matches!(t.visibility, Visibility::PublicPackage));
+            }
+            other => panic!("expected Type, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn pub_extern_c_agent_is_implicitly_public() {
+        // FFI-exported agents are public by definition — external
+        // callers exist by construction, so the visibility field
+        // should reflect that without requiring a redundant `public`
+        // keyword.
+        let file = parse_file_src(
+            "\
+pub extern \"c\" agent greet(name: String) -> String:
+    return name
+",
+        );
+        match &file.decls[0] {
+            Decl::Agent(a) => {
+                assert!(a.extern_abi.is_some());
+                assert!(matches!(a.visibility, Visibility::Public));
+            }
+            other => panic!("expected Agent, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn public_before_non_top_level_decl_errors() {
+        // `public import` / `public effect` / `public extend` /
+        // `public @annotation ... agent` are not accepted — only
+        // type / tool / prompt / agent carry module-level
+        // visibility today.
+        let (_, errs) = parse_file_errs(r#"public import python "x" as x"#);
+        assert!(!errs.is_empty(), "expected parse error");
     }
 
     // -------------------- types --------------------
@@ -1242,7 +1382,7 @@ agent good(x: String) -> String:
     // `extend T:` block + visibility parsing
     // -----------------------------------------------------------------
 
-    use corvid_ast::{ExtendDecl, ExtendMethodKind, Visibility};
+    use corvid_ast::{ExtendDecl, ExtendMethodKind};
 
     fn first_extend(file: &File) -> &ExtendDecl {
         file.decls

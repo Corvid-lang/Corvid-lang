@@ -6,6 +6,7 @@
 
 use corvid_ast::{
     Decl, EffectRow, Field, Ident, Param, PromptDecl, Span, ToolDecl, TypeDecl, TypeRef,
+    Visibility,
 };
 use corvid_runtime::{Runtime, RuntimeError, TraceEvent};
 use serde_json::Value as JsonValue;
@@ -130,6 +131,7 @@ pub fn build_import(mocks: &TraceMocks) -> TraceImportResult {
             return_ty,
             effect: corvid_ast::Effect::Safe,
             effect_row: EffectRow::default(),
+            visibility: Visibility::Private,
             span: sp,
         }));
 
@@ -184,6 +186,7 @@ pub fn build_import(mocks: &TraceMocks) -> TraceImportResult {
             rollout: None,
             ensemble: None,
             adversarial: None,
+            visibility: Visibility::Private,
             span: sp,
         }));
     }
@@ -286,6 +289,7 @@ fn infer_typeref(
             type_decls.push(TypeDecl {
                 name: Ident::new(type_name.clone(), *sp),
                 fields,
+                visibility: Visibility::Private,
                 span: *sp,
             });
 
