@@ -50,6 +50,7 @@ mod in_toto;
 mod narrative;
 mod receipt;
 mod reviewer_invocation;
+mod stack_attribution;
 mod stack_driver;
 mod stacked;
 pub(crate) mod signing;

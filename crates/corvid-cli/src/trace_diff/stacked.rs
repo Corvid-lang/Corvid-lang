@@ -35,6 +35,7 @@ use serde::Serialize;
 use sha2::{Digest, Sha256};
 
 use super::narrative::DeltaRecord;
+use super::stack_attribution::Attribution;
 
 /// Schema version for `StackReceipt`. Independent counter from
 /// the per-commit `RECEIPT_SCHEMA_VERSION` — stack receipts are a
@@ -68,6 +69,14 @@ pub(super) struct StackReceipt {
     /// "was X ever true at some point in this stack?" questions.
     pub history: Vec<StackDelta>,
     pub anomalies: Vec<Anomaly>,
+    /// Per-trace attribution records. Populated when the driver
+    /// runs with `--stack --traces <dir>` (lands in the next
+    /// commit of step 3/N); empty for stack receipts composed
+    /// without counterfactual replay. Serialized only when
+    /// non-empty so the JSON shape of algebra-only stack receipts
+    /// stays byte-identical to step 1/N output.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub attributions: Vec<Attribution>,
 }
 
 /// Reference to a per-commit receipt that contributed to this
@@ -305,6 +314,7 @@ pub(super) fn compose_stack(
         normal_form,
         history,
         anomalies,
+        attributions: Vec::new(),
     }
 }
 
