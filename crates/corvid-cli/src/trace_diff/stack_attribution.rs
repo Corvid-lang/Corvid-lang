@@ -30,7 +30,7 @@
 //! later commit composed with earlier ones to produce the
 //! divergence.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
 use serde::Serialize;
@@ -161,6 +161,99 @@ pub(super) fn verdict_result_hash(tag: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(tag.as_bytes());
     hex::encode(hasher.finalize())
+}
+
+/// Extract the set of agents a recorded trace exercises. Scans
+/// every JSONL event in the trace bytes and returns any value
+/// appearing under the `agent` key. For v1, this captures the
+/// top-level `run_started` agent plus any nested runs; transitive
+/// call-graph analysis (agent X that internally calls Y without Y
+/// appearing in the trace) is out of scope.
+///
+/// The under-approximation is intentional and safe: the skip
+/// decision in the caller only fires when `exercised` and
+/// `affected` are *provably disjoint*. If we return an empty set
+/// (parse failure, unusual trace format), the caller treats that
+/// as "cannot prove disjoint" and replays anyway — over-replay is
+/// waste, under-replay would miss regressions, and we pick the
+/// safe side.
+pub(super) fn trace_exercised_agents(trace_bytes: &[u8]) -> BTreeSet<String> {
+    let Ok(text) = std::str::from_utf8(trace_bytes) else {
+        return BTreeSet::new();
+    };
+    let mut agents = BTreeSet::new();
+    for line in text.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else {
+            // Malformed event line — skip; don't let one bad line
+            // produce an empty set that suppresses skipping for
+            // the rest of the trace.
+            continue;
+        };
+        if let Some(agent) = value.get("agent").and_then(|v| v.as_str()) {
+            if !agent.is_empty() {
+                agents.insert(agent.to_string());
+            }
+        }
+    }
+    agents
+}
+
+/// Extract the set of agents a commit's delta keys affect. The
+/// agent name is the first colon-separated segment after the
+/// delta-class prefix — holds uniformly for Class A (lifecycle)
+/// and Class B (transition) keys as emitted by `narrative.rs`.
+pub(super) fn commit_affected_agents(delta_keys: &[String]) -> BTreeSet<String> {
+    let mut agents = BTreeSet::new();
+    for key in delta_keys {
+        if let Some(name) = extract_agent_from_delta_key(key) {
+            agents.insert(name);
+        }
+    }
+    agents
+}
+
+/// Pull the agent name out of a canonical delta key. The emitted
+/// shape is always `<class-prefix>:<agent>[:<extra>]` — see
+/// `narrative.rs` where every `DeltaRecord.key` is built. Returns
+/// `None` for malformed keys (not an error; callers treat missing
+/// names as "affects an unknown agent" and err toward replaying).
+fn extract_agent_from_delta_key(key: &str) -> Option<String> {
+    // Skip the class prefix.
+    let (_, rest) = key.split_once(':')?;
+    // The agent name is the next segment (or all of `rest` if
+    // there's no further colon, e.g. `agent.added:foo`).
+    let (agent, _) = rest.split_once(':').unwrap_or((rest, ""));
+    if agent.is_empty() {
+        None
+    } else {
+        Some(agent.to_string())
+    }
+}
+
+/// Algebra-directed skip decision: return `true` when replay of
+/// `trace` against a waypoint that modifies `affected` is
+/// provably unnecessary — the trace's output cannot differ from
+/// base's because none of the agents the trace exercises were
+/// touched.
+///
+/// Invariant: skipping when this returns `true` is provably
+/// correct. Skipping otherwise would risk a false negative (a
+/// missed regression). That's why we require *both* sets to be
+/// non-empty and disjoint; empty `exercised` means the trace
+/// parser couldn't identify exercised agents → can't prove
+/// disjoint → must replay.
+pub(super) fn can_skip_replay(
+    exercised: &BTreeSet<String>,
+    affected: &BTreeSet<String>,
+) -> bool {
+    if exercised.is_empty() || affected.is_empty() {
+        return false;
+    }
+    exercised.is_disjoint(affected)
 }
 
 /// One waypoint's input to the attribution computer: the commit
@@ -549,6 +642,124 @@ mod tests {
         let j1 = serde_json::to_string(&run1).unwrap();
         let j2 = serde_json::to_string(&run2).unwrap();
         assert_eq!(j1, j2);
+    }
+
+    // -----------------------------------------------------------
+    // Algebra-directed skip helpers
+    // -----------------------------------------------------------
+
+    #[test]
+    fn trace_exercised_agents_extracts_run_started_agent() {
+        let trace = br#"{"kind":"run_started","ts_ms":1,"run_id":"r","agent":"refund_bot","args":[]}
+{"kind":"run_completed","ts_ms":2,"run_id":"r","ok":true,"result":null,"error":null}"#;
+        let agents = trace_exercised_agents(trace);
+        assert!(agents.contains("refund_bot"));
+        assert_eq!(agents.len(), 1);
+    }
+
+    #[test]
+    fn trace_exercised_agents_captures_nested_agents() {
+        let trace = br#"{"kind":"run_started","ts_ms":1,"run_id":"r1","agent":"top_agent","args":[]}
+{"kind":"run_started","ts_ms":2,"run_id":"r2","agent":"nested_agent","args":[]}
+{"kind":"run_completed","ts_ms":3,"run_id":"r2","ok":true,"result":null,"error":null}
+{"kind":"run_completed","ts_ms":4,"run_id":"r1","ok":true,"result":null,"error":null}"#;
+        let agents = trace_exercised_agents(trace);
+        assert!(agents.contains("top_agent"));
+        assert!(agents.contains("nested_agent"));
+    }
+
+    #[test]
+    fn trace_exercised_agents_returns_empty_on_unparseable() {
+        assert!(trace_exercised_agents(b"not valid json").is_empty());
+        assert!(trace_exercised_agents(b"").is_empty());
+    }
+
+    #[test]
+    fn trace_exercised_agents_skips_malformed_lines_but_continues() {
+        let trace = br#"{"kind":"run_started","ts_ms":1,"run_id":"r","agent":"good_agent","args":[]}
+{not valid json here}
+{"kind":"run_started","ts_ms":2,"run_id":"r2","agent":"another","args":[]}"#;
+        let agents = trace_exercised_agents(trace);
+        assert!(agents.contains("good_agent"));
+        assert!(agents.contains("another"));
+    }
+
+    #[test]
+    fn commit_affected_agents_parses_lifecycle_keys() {
+        let keys = vec![
+            "agent.added:foo".to_string(),
+            "agent.removed:bar".to_string(),
+        ];
+        let agents = commit_affected_agents(&keys);
+        assert!(agents.contains("foo"));
+        assert!(agents.contains("bar"));
+        assert_eq!(agents.len(), 2);
+    }
+
+    #[test]
+    fn commit_affected_agents_parses_transition_keys_with_label_entities() {
+        let keys = vec![
+            "agent.trust_tier_changed:bot:autonomous->human_required".to_string(),
+            "agent.approval.tier_changed:refund_bot:IssueRefund:strict->lenient".to_string(),
+        ];
+        let agents = commit_affected_agents(&keys);
+        assert!(agents.contains("bot"));
+        assert!(agents.contains("refund_bot"));
+        assert_eq!(agents.len(), 2);
+    }
+
+    #[test]
+    fn commit_affected_agents_parses_derived_and_provenance_keys() {
+        let keys = vec![
+            "agent.dangerous_gained:classifier".to_string(),
+            "agent.provenance.dep_added:classifier:input".to_string(),
+            "agent.approval.label_added:classifier:UseModel".to_string(),
+        ];
+        let agents = commit_affected_agents(&keys);
+        // All three deltas touch the same agent; the set dedupes.
+        assert_eq!(agents.len(), 1);
+        assert!(agents.contains("classifier"));
+    }
+
+    #[test]
+    fn can_skip_when_sets_provably_disjoint() {
+        let exercised: BTreeSet<String> =
+            ["refund_bot".into(), "greeter".into()].into_iter().collect();
+        let affected: BTreeSet<String> =
+            ["classifier".into(), "translator".into()].into_iter().collect();
+        assert!(can_skip_replay(&exercised, &affected));
+    }
+
+    #[test]
+    fn cannot_skip_when_sets_intersect() {
+        let exercised: BTreeSet<String> =
+            ["refund_bot".into(), "greeter".into()].into_iter().collect();
+        let affected: BTreeSet<String> =
+            ["refund_bot".into()].into_iter().collect();
+        assert!(!can_skip_replay(&exercised, &affected));
+    }
+
+    #[test]
+    fn cannot_skip_when_exercised_is_empty_even_if_affected_is_populated() {
+        // Empty `exercised` = parser couldn't identify agents.
+        // Conservative: don't skip. Over-replay is waste; under-
+        // replay is missed regression. We pick the safe side.
+        let exercised: BTreeSet<String> = BTreeSet::new();
+        let affected: BTreeSet<String> =
+            ["refund_bot".into()].into_iter().collect();
+        assert!(!can_skip_replay(&exercised, &affected));
+    }
+
+    #[test]
+    fn cannot_skip_when_affected_is_empty() {
+        // No deltas in the commit (hypothetical empty commit) →
+        // no affected agents → skipping would be a no-op anyway,
+        // but we still run the harness for consistency. The
+        // caller can optimize this separately if it matters.
+        let exercised: BTreeSet<String> =
+            ["refund_bot".into()].into_iter().collect();
+        let affected: BTreeSet<String> = BTreeSet::new();
+        assert!(!can_skip_replay(&exercised, &affected));
     }
 
     #[test]

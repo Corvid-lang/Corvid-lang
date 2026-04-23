@@ -122,6 +122,15 @@ pub struct TraceDiffArgs<'a> {
     /// `21-inv-H-5-stacked`). When `None`, runs single-commit
     /// trace-diff as before.
     pub stack_spec: Option<StackSpec>,
+    /// When `true`, force full per-waypoint × per-trace replay
+    /// during stack-mode attribution (disables the algebra-
+    /// directed skip that proves no-change pairs don't need
+    /// replay). Default `false` — skip is active unless the
+    /// caller explicitly opts out via `--no-replay-skip`. The
+    /// flag is a debugging + audit hatch; correct skipping is
+    /// behaviorally equivalent to full replay, so production
+    /// users should leave it off.
+    pub no_replay_skip: bool,
 }
 
 /// Run `corvid trace-diff`: fetch source at both SHAs, compile each

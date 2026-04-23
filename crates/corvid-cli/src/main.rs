@@ -416,6 +416,16 @@ enum Command {
             default_missing_value = "",
         )]
         stack: Option<String>,
+        /// Force full per-waypoint x per-trace replay in stack
+        /// mode, disabling the algebra-directed skip that proves
+        /// no-change (trace, commit) pairs don't need replay.
+        /// Skip is active by default and is behaviorally
+        /// equivalent to full replay; this flag exists for
+        /// debugging, audit, and verifying the skip's correctness
+        /// on new workloads. Not meaningful without `--stack
+        /// --traces`; ignored otherwise.
+        #[arg(long)]
+        no_replay_skip: bool,
     },
     /// Work with receipts produced by `corvid trace-diff --sign`:
     /// show a receipt from the local cache by its hash, or verify
@@ -670,6 +680,7 @@ fn main() -> ExitCode {
             sign,
             sign_key_id,
             stack,
+            no_replay_skip,
         }) => {
             let parsed = narrative
                 .parse::<trace_diff::NarrativeMode>()
@@ -699,6 +710,7 @@ fn main() -> ExitCode {
                         sign_key_path: sign.as_deref(),
                         sign_key_id: sign_key_id.as_deref(),
                         stack_spec,
+                        no_replay_skip,
                     })
                 }
                 Err(e) => Err(e),

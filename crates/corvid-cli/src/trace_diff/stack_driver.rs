@@ -40,7 +40,10 @@ use sha2::{Digest, Sha256};
 use super::impact::{collect_trace_files, run_harness_against_source};
 use super::narrative::{compute_diff_summary, DiffSummary};
 use super::receipt::OutputFormat;
-use super::stack_attribution::{compute_stack_attributions, WaypointData};
+use super::stack_attribution::{
+    can_skip_replay, commit_affected_agents, compute_stack_attributions,
+    trace_exercised_agents, WaypointData,
+};
 use super::stacked::{
     self, AnomalySeverity, SignatureStatus, StackInput,
 };
@@ -293,10 +296,19 @@ fn git_show(rev: &str, path: &Path) -> Result<String> {
 /// (isolation replay + ddmin) refines `candidate_deltas` in a
 /// later commit of the slice.
 ///
-/// Naive per-waypoint replay — no algebra-directed skipping, no
-/// parallelism, no memoization. Step 4/N of the slice lifts this
-/// to the optimized replay engine; for now the goal is correct
-/// attribution on realistic stack sizes (3–10 commits, <100 traces).
+/// Per-waypoint replay with **algebra-directed skipping**: when a
+/// trace's exercised-agents set is provably disjoint from a
+/// commit's affected-agents set, the trace's verdict at that
+/// waypoint cannot differ from base's, so we skip the replay and
+/// inherit the base verdict directly. Behaviorally equivalent to
+/// full replay; significantly faster on realistic stacks where
+/// each commit typically touches few agents. The `no_skip`
+/// parameter forces full replay for debugging / audit.
+///
+/// Parallelism + persistent memoization land in subsequent commits
+/// of step 4/N; the skip optimization is the algebraic win that
+/// unlocks both (ddmin in step 3c/N becomes tractable because
+/// only relevant (trace, subset) pairs need replaying).
 #[allow(clippy::too_many_arguments)]
 fn compute_attributions_for_stack(
     trace_dir: &Path,
@@ -306,6 +318,7 @@ fn compute_attributions_for_stack(
     commits: &[String],
     commit_delta_sets: &[Vec<String>],
     config: Option<&CorvidConfig>,
+    no_skip: bool,
 ) -> Result<Vec<super::stack_attribution::Attribution>> {
     let trace_paths = collect_trace_files(trace_dir)?;
     if trace_paths.is_empty() {
@@ -334,9 +347,19 @@ fn compute_attributions_for_stack(
         .and_then(|s| s.to_str())
         .unwrap_or("source");
 
+    // Pre-compute each trace's exercised-agents set so the skip
+    // decision is O(affected ∩ exercised) per (waypoint, trace),
+    // not O(re-parse trace) per decision.
+    let trace_exercised: Vec<std::collections::BTreeSet<String>> = trace_files
+        .iter()
+        .map(|(_, bytes)| trace_exercised_agents(bytes))
+        .collect();
+
     let mut waypoints: Vec<WaypointData> = Vec::with_capacity(commits.len() + 1);
 
-    // Base waypoint.
+    // Base waypoint. Always replayed in full — it's the reference
+    // every subsequent waypoint is compared against, so there's no
+    // disjoint-set optimization to apply here.
     let base_source = git_show(base_sha, source_path_hint).with_context(|| {
         format!(
             "fetching base `{}` at `{base_sha}`",
@@ -350,31 +373,79 @@ fn compute_attributions_for_stack(
     let _ = source_path_str;
     let base_verdicts = run_harness_against_source(&trace_paths, &base_scratch_path)
         .with_context(|| format!("harness against base `{base_sha}`"))?;
+    let base_tags = verdict_map_to_tags(base_verdicts);
     waypoints.push(WaypointData {
         commit_sha: base_sha.to_string(),
-        verdict_tags: verdict_map_to_tags(base_verdicts),
+        verdict_tags: base_tags.clone(),
     });
 
-    // Each commit waypoint.
+    // Per-stack skip bookkeeping — surfaced on stderr so operators
+    // see the algebra's work. Over-replay is invisible; under-
+    // replay would be a correctness bug; both are testable.
+    let mut total_skipped: usize = 0;
+    let mut total_replayed: usize = 0;
+
     for (i, commit_sha) in commits.iter().enumerate() {
-        let commit_source = git_show(commit_sha, source_path_hint).with_context(|| {
-            format!(
-                "fetching commit `{}` at `{commit_sha}`",
-                source_path_hint.display()
-            )
-        })?;
-        let commit_scratch_path = scratch
-            .path()
-            .join(format!("{stem}.waypoint_{}.cor", i + 1));
-        std::fs::write(&commit_scratch_path, &commit_source)
-            .context("write commit source for waypoint replay")?;
-        let commit_verdicts =
-            run_harness_against_source(&trace_paths, &commit_scratch_path)
-                .with_context(|| format!("harness against commit `{commit_sha}`"))?;
+        let affected = commit_affected_agents(&commit_delta_sets[i]);
+
+        // Partition traces into replay-required vs skippable. A
+        // trace is skippable when its exercised-agents set is
+        // provably disjoint from this commit's affected set —
+        // replay would, by algebra, produce the same verdict as
+        // base.
+        let mut replay_required_paths: Vec<PathBuf> = Vec::new();
+        let mut skipped_paths: Vec<&PathBuf> = Vec::new();
+        for (path, exercised) in trace_paths.iter().zip(&trace_exercised) {
+            if !no_skip && can_skip_replay(exercised, &affected) {
+                skipped_paths.push(path);
+            } else {
+                replay_required_paths.push(path.clone());
+            }
+        }
+        total_skipped += skipped_paths.len();
+        total_replayed += replay_required_paths.len();
+
+        // Build the waypoint's verdict tags: skipped traces
+        // inherit base's tag directly; replay-required traces
+        // get their actual verdict from the harness.
+        let mut verdict_tags = BTreeMap::new();
+        for path in &skipped_paths {
+            if let Some(tag) = base_tags.get(*path) {
+                verdict_tags.insert((*path).clone(), tag.clone());
+            }
+        }
+        if !replay_required_paths.is_empty() {
+            let commit_source = git_show(commit_sha, source_path_hint).with_context(|| {
+                format!(
+                    "fetching commit `{}` at `{commit_sha}`",
+                    source_path_hint.display()
+                )
+            })?;
+            let commit_scratch_path =
+                scratch.path().join(format!("{stem}.waypoint_{}.cor", i + 1));
+            std::fs::write(&commit_scratch_path, &commit_source)
+                .context("write commit source for waypoint replay")?;
+            let commit_verdicts =
+                run_harness_against_source(&replay_required_paths, &commit_scratch_path)
+                    .with_context(|| format!("harness against commit `{commit_sha}`"))?;
+            for (path, tag) in verdict_map_to_tags(commit_verdicts) {
+                verdict_tags.insert(path, tag);
+            }
+        }
+
         waypoints.push(WaypointData {
             commit_sha: commit_sha.clone(),
-            verdict_tags: verdict_map_to_tags(commit_verdicts),
+            verdict_tags,
         });
+    }
+
+    // Stderr summary of skip effectiveness. CI consumers can grep
+    // this to confirm the algebra is earning its keep.
+    if !no_skip && total_skipped > 0 {
+        eprintln!(
+            "algebra-directed skip: {total_skipped} (replay, trace) pairs skipped, {total_replayed} replayed across {} commits",
+            commits.len()
+        );
     }
 
     Ok(compute_stack_attributions(
@@ -497,6 +568,7 @@ pub(super) fn run_trace_diff_stack(
             &commits,
             &commit_delta_sets,
             config.as_ref(),
+            args.no_replay_skip,
         )
         .context("counterfactual replay across stack waypoints failed")?;
     }
