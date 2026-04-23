@@ -500,6 +500,7 @@ mod tests {
                 source_line: 1,
                 params: Vec::new(),
                 return_type: scalar_string(),
+                return_ownership: None,
                 effects: AbiEffects::default(),
                 attributes: AbiAttributes::default(),
                 budget: None,

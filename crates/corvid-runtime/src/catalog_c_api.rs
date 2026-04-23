@@ -6,7 +6,8 @@ use crate::catalog::{
     call_agent, descriptor_hash, descriptor_json_ptr, list_agent_handles_owned, pre_flight,
     CorvidAgentHandle, CorvidApprovalDecision, CorvidApprovalRequired, CorvidApproverFn,
     CorvidCallStatus, CorvidFindAgentsResult, CorvidPreFlight, CorvidPreFlightStatus,
-    OwnedApprovalRequired, OwnedPreFlight, ScalarAbiType, ScalarInvoker, ScalarReturnType,
+    OwnedApprovalRequired, OwnedPreFlight, ScalarAbiType, ScalarInvocation, ScalarInvoker,
+    ScalarReturnType,
 };
 use crate::grounded_handles;
 use crate::observation_handles;
@@ -413,28 +414,44 @@ unsafe fn invoke0(
     symbol: &str,
     address: usize,
     ret: ScalarReturnType,
-) -> Result<serde_json::Value, RuntimeError> {
+) -> Result<ScalarInvocation, RuntimeError> {
+    let mut observation_handle = observation_handles::NULL_OBSERVATION_HANDLE;
     match ret {
         ScalarReturnType::Int => {
-            let func: unsafe extern "C" fn() -> i64 = std::mem::transmute(address);
-            Ok(serde_json::Value::from(func()))
+            let func: unsafe extern "C" fn(*mut u64) -> i64 = std::mem::transmute(address);
+            Ok(ScalarInvocation {
+                result: serde_json::Value::from(func(&mut observation_handle)),
+                observation_handle,
+            })
         }
         ScalarReturnType::Float => {
-            let func: unsafe extern "C" fn() -> f64 = std::mem::transmute(address);
-            float_json(symbol, func())
+            let func: unsafe extern "C" fn(*mut u64) -> f64 = std::mem::transmute(address);
+            Ok(ScalarInvocation {
+                result: float_json(symbol, func(&mut observation_handle))?,
+                observation_handle,
+            })
         }
         ScalarReturnType::Bool => {
-            let func: unsafe extern "C" fn() -> bool = std::mem::transmute(address);
-            Ok(serde_json::Value::Bool(func()))
+            let func: unsafe extern "C" fn(*mut u64) -> bool = std::mem::transmute(address);
+            Ok(ScalarInvocation {
+                result: serde_json::Value::Bool(func(&mut observation_handle)),
+                observation_handle,
+            })
         }
         ScalarReturnType::String => {
-            let func: unsafe extern "C" fn() -> *const c_char = std::mem::transmute(address);
-            string_json(symbol, func())
+            let func: unsafe extern "C" fn(*mut u64) -> *const c_char = std::mem::transmute(address);
+            Ok(ScalarInvocation {
+                result: string_json(symbol, func(&mut observation_handle))?,
+                observation_handle,
+            })
         }
         ScalarReturnType::Nothing => {
-            let func: unsafe extern "C" fn() = std::mem::transmute(address);
-            func();
-            Ok(serde_json::Value::Null)
+            let func: unsafe extern "C" fn(*mut u64) = std::mem::transmute(address);
+            func(&mut observation_handle);
+            Ok(ScalarInvocation {
+                result: serde_json::Value::Null,
+                observation_handle,
+            })
         }
     }
 }
@@ -445,7 +462,7 @@ unsafe fn invoke1(
     a0: ScalarAbiType,
     ret: ScalarReturnType,
     arg0: &serde_json::Value,
-) -> Result<serde_json::Value, RuntimeError> {
+) -> Result<ScalarInvocation, RuntimeError> {
     match a0 {
         ScalarAbiType::Int => invoke1_int(symbol, address, ret, parse_i64_arg(arg0, symbol, 0)?),
         ScalarAbiType::Float => invoke1_float(symbol, address, ret, parse_f64_arg(arg0, symbol, 0)?),
@@ -465,7 +482,7 @@ unsafe fn invoke2(
     ret: ScalarReturnType,
     arg0: &serde_json::Value,
     arg1: &serde_json::Value,
-) -> Result<serde_json::Value, RuntimeError> {
+) -> Result<ScalarInvocation, RuntimeError> {
     match a0 {
         ScalarAbiType::Int => {
             let arg0 = parse_i64_arg(arg0, symbol, 0)?;
@@ -493,28 +510,50 @@ macro_rules! impl_invoke1 {
             address: usize,
             ret: ScalarReturnType,
             arg0: $arg_ty,
-        ) -> Result<serde_json::Value, RuntimeError> {
+        ) -> Result<ScalarInvocation, RuntimeError> {
+            let mut observation_handle = observation_handles::NULL_OBSERVATION_HANDLE;
+            // Why: exported `pub extern "C"` wrappers append a hidden
+            // observation-handle out-pointer after the user-visible
+            // arguments. Generic host dispatch must pass that pointer
+            // too; skipping it "worked" on Linux by luck and crashed
+            // on Windows with a misaligned pointer in
+            // `corvid_finish_direct_observation`.
             match ret {
                 ScalarReturnType::Int => {
-                    let func: unsafe extern "C" fn($arg_ty) -> i64 = std::mem::transmute(address);
-                    Ok(serde_json::Value::from(func(arg0)))
+                    let func: unsafe extern "C" fn($arg_ty, *mut u64) -> i64 = std::mem::transmute(address);
+                    Ok(ScalarInvocation {
+                        result: serde_json::Value::from(func(arg0, &mut observation_handle)),
+                        observation_handle,
+                    })
                 }
                 ScalarReturnType::Float => {
-                    let func: unsafe extern "C" fn($arg_ty) -> f64 = std::mem::transmute(address);
-                    float_json(symbol, func(arg0))
+                    let func: unsafe extern "C" fn($arg_ty, *mut u64) -> f64 = std::mem::transmute(address);
+                    Ok(ScalarInvocation {
+                        result: float_json(symbol, func(arg0, &mut observation_handle))?,
+                        observation_handle,
+                    })
                 }
                 ScalarReturnType::Bool => {
-                    let func: unsafe extern "C" fn($arg_ty) -> bool = std::mem::transmute(address);
-                    Ok(serde_json::Value::Bool(func(arg0)))
+                    let func: unsafe extern "C" fn($arg_ty, *mut u64) -> bool = std::mem::transmute(address);
+                    Ok(ScalarInvocation {
+                        result: serde_json::Value::Bool(func(arg0, &mut observation_handle)),
+                        observation_handle,
+                    })
                 }
                 ScalarReturnType::String => {
-                    let func: unsafe extern "C" fn($arg_ty) -> *const c_char = std::mem::transmute(address);
-                    string_json(symbol, func(arg0))
+                    let func: unsafe extern "C" fn($arg_ty, *mut u64) -> *const c_char = std::mem::transmute(address);
+                    Ok(ScalarInvocation {
+                        result: string_json(symbol, func(arg0, &mut observation_handle))?,
+                        observation_handle,
+                    })
                 }
                 ScalarReturnType::Nothing => {
-                    let func: unsafe extern "C" fn($arg_ty) = std::mem::transmute(address);
-                    func(arg0);
-                    Ok(serde_json::Value::Null)
+                    let func: unsafe extern "C" fn($arg_ty, *mut u64) = std::mem::transmute(address);
+                    func(arg0, &mut observation_handle);
+                    Ok(ScalarInvocation {
+                        result: serde_json::Value::Null,
+                        observation_handle,
+                    })
                 }
             }
         }
@@ -534,28 +573,44 @@ macro_rules! impl_invoke2_matrix {
             ret: ScalarReturnType,
             arg0: $arg0_ty,
             arg1: $arg1_ty,
-        ) -> Result<serde_json::Value, RuntimeError> {
+        ) -> Result<ScalarInvocation, RuntimeError> {
+            let mut observation_handle = observation_handles::NULL_OBSERVATION_HANDLE;
             match ret {
                 ScalarReturnType::Int => {
-                    let func: unsafe extern "C" fn($arg0_ty, $arg1_ty) -> i64 = std::mem::transmute(address);
-                    Ok(serde_json::Value::from(func(arg0, arg1)))
+                    let func: unsafe extern "C" fn($arg0_ty, $arg1_ty, *mut u64) -> i64 = std::mem::transmute(address);
+                    Ok(ScalarInvocation {
+                        result: serde_json::Value::from(func(arg0, arg1, &mut observation_handle)),
+                        observation_handle,
+                    })
                 }
                 ScalarReturnType::Float => {
-                    let func: unsafe extern "C" fn($arg0_ty, $arg1_ty) -> f64 = std::mem::transmute(address);
-                    float_json(symbol, func(arg0, arg1))
+                    let func: unsafe extern "C" fn($arg0_ty, $arg1_ty, *mut u64) -> f64 = std::mem::transmute(address);
+                    Ok(ScalarInvocation {
+                        result: float_json(symbol, func(arg0, arg1, &mut observation_handle))?,
+                        observation_handle,
+                    })
                 }
                 ScalarReturnType::Bool => {
-                    let func: unsafe extern "C" fn($arg0_ty, $arg1_ty) -> bool = std::mem::transmute(address);
-                    Ok(serde_json::Value::Bool(func(arg0, arg1)))
+                    let func: unsafe extern "C" fn($arg0_ty, $arg1_ty, *mut u64) -> bool = std::mem::transmute(address);
+                    Ok(ScalarInvocation {
+                        result: serde_json::Value::Bool(func(arg0, arg1, &mut observation_handle)),
+                        observation_handle,
+                    })
                 }
                 ScalarReturnType::String => {
-                    let func: unsafe extern "C" fn($arg0_ty, $arg1_ty) -> *const c_char = std::mem::transmute(address);
-                    string_json(symbol, func(arg0, arg1))
+                    let func: unsafe extern "C" fn($arg0_ty, $arg1_ty, *mut u64) -> *const c_char = std::mem::transmute(address);
+                    Ok(ScalarInvocation {
+                        result: string_json(symbol, func(arg0, arg1, &mut observation_handle))?,
+                        observation_handle,
+                    })
                 }
                 ScalarReturnType::Nothing => {
-                    let func: unsafe extern "C" fn($arg0_ty, $arg1_ty) = std::mem::transmute(address);
-                    func(arg0, arg1);
-                    Ok(serde_json::Value::Null)
+                    let func: unsafe extern "C" fn($arg0_ty, $arg1_ty, *mut u64) = std::mem::transmute(address);
+                    func(arg0, arg1, &mut observation_handle);
+                    Ok(ScalarInvocation {
+                        result: serde_json::Value::Null,
+                        observation_handle,
+                    })
                 }
             }
         }
@@ -586,7 +641,7 @@ unsafe fn invoke2_after_int(
     ret: ScalarReturnType,
     arg0: i64,
     arg1: &serde_json::Value,
-) -> Result<serde_json::Value, RuntimeError> {
+) -> Result<ScalarInvocation, RuntimeError> {
     match a1 {
         ScalarAbiType::Int => invoke2_i64_i64(symbol, address, ret, arg0, parse_i64_arg(arg1, symbol, 1)?),
         ScalarAbiType::Float => invoke2_i64_f64(symbol, address, ret, arg0, parse_f64_arg(arg1, symbol, 1)?),
@@ -605,7 +660,7 @@ unsafe fn invoke2_after_float(
     ret: ScalarReturnType,
     arg0: f64,
     arg1: &serde_json::Value,
-) -> Result<serde_json::Value, RuntimeError> {
+) -> Result<ScalarInvocation, RuntimeError> {
     match a1 {
         ScalarAbiType::Int => invoke2_f64_i64(symbol, address, ret, arg0, parse_i64_arg(arg1, symbol, 1)?),
         ScalarAbiType::Float => invoke2_f64_f64(symbol, address, ret, arg0, parse_f64_arg(arg1, symbol, 1)?),
@@ -624,7 +679,7 @@ unsafe fn invoke2_after_bool(
     ret: ScalarReturnType,
     arg0: bool,
     arg1: &serde_json::Value,
-) -> Result<serde_json::Value, RuntimeError> {
+) -> Result<ScalarInvocation, RuntimeError> {
     match a1 {
         ScalarAbiType::Int => invoke2_bool_i64(symbol, address, ret, arg0, parse_i64_arg(arg1, symbol, 1)?),
         ScalarAbiType::Float => invoke2_bool_f64(symbol, address, ret, arg0, parse_f64_arg(arg1, symbol, 1)?),
@@ -643,7 +698,7 @@ unsafe fn invoke2_after_string(
     ret: ScalarReturnType,
     arg0: *const c_char,
     arg1: &serde_json::Value,
-) -> Result<serde_json::Value, RuntimeError> {
+) -> Result<ScalarInvocation, RuntimeError> {
     match a1 {
         ScalarAbiType::Int => invoke2_string_i64(symbol, address, ret, arg0, parse_i64_arg(arg1, symbol, 1)?),
         ScalarAbiType::Float => invoke2_string_f64(symbol, address, ret, arg0, parse_f64_arg(arg1, symbol, 1)?),

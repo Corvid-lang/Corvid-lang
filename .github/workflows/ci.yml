@@ -44,6 +44,21 @@ jobs:
       - name: trace replay compatibility (EnsembleVote + adversarial pipeline events)
         run: cargo test -p corvid-repl replay_accepts_routing_trace_events --test replay
 
+  windows-runtime-record:
+    name: Windows runtime record/replay guard
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      # Keep a focused Windows gate on the shared cdylib runtime
+      # path that records and replays traces through `corvid_call_agent`.
+      # This is the regression guard for 22-H-windows-record.
+      - name: cargo test -p corvid-runtime --test trace_record
+        run: cargo test -p corvid-runtime --test trace_record
+
   effect-system-gates:
     # Every one of these gates enforces a Phase 20g invention. If
     # any of them fails, the effect system has silently regressed.

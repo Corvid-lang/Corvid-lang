@@ -2385,6 +2385,29 @@ and destruction semantics structurally, and the host bindings have to derive
 their cleanup behavior from that structure. Anything weaker is still
 convention, just with better comments.
 
+## 22-H-windows-record
+
+Windows caught a real FFI bug that Linux had been letting us get away with.
+The generic `corvid_call_agent` path was reusing exported `pub extern "C"`
+wrappers as if their ABI were only the user-visible parameters plus the return
+value. They were not. Those wrappers also append a hidden observation-handle
+out-pointer. Linux happened not to explode when generic dispatch skipped that
+pointer; Windows faulted immediately in the direct-observation finish path.
+
+The lesson is narrower and more useful than "Windows is fragile." Shared FFI
+dispatch code has to call the real exported ABI, not a simplified mental model
+of it. If the wrapper owns observation bookkeeping, every generic call site has
+to supply the same hidden out-parameter that a hand-written host would. The
+fact that one platform survives undefined behavior is not evidence that the ABI
+is sound.
+
+The permanent fix is the guard, not just the patch. This slice added focused
+Windows record and replay tests in `corvid-runtime/tests/trace_record.rs` and a
+Windows CI job that runs them on every push. That changes the system: the next
+time a host-dispatch path drops a hidden ABI parameter or returns a silently
+wrong observation handle, the failure shows up in CI instead of months later in
+a demo slice.
+
 ## Contributing / feedback
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). The rules of the road are: design chat before code, per-scope commits at every boundary, dev-log entry for every session, no shortcuts. The `learnings.md` file you're reading gets updated when each user-visible feature ships.

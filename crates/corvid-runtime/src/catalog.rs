@@ -114,8 +114,13 @@ pub(crate) enum ScalarReturnType {
     Nothing,
 }
 
+pub(crate) struct ScalarInvocation {
+    pub result: serde_json::Value,
+    pub observation_handle: u64,
+}
+
 pub(crate) type ScalarInvoker =
-    Arc<dyn Fn(&[serde_json::Value]) -> Result<serde_json::Value, RuntimeError> + Send + Sync>;
+    Arc<dyn Fn(&[serde_json::Value]) -> Result<ScalarInvocation, RuntimeError> + Send + Sync>;
 
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct OwnedApprovalRequired {
@@ -516,22 +521,17 @@ fn call_agent_impl(agent_name: &str, args_json: &str) -> Result<OwnedCallOutcome
         }
     };
     begin_catalog_run(agent_name, &validated.args)?;
-    let scope = crate::observation_handles::begin_observation(finite_option(cost_bound_for(
-        &entry.abi,
-    )));
-
     if entry.abi.approval_contract.required {
         let approval = build_approval_required(entry, args_json)?;
         match crate::catalog_c_api::request_host_approval(&approval) {
             crate::catalog_c_api::ApprovalRequestOutcome::MissingOrRejected => {
                 emit_embedded_rejected_approval(&approval, &validated.args);
-                let observation_handle = scope.finish();
                 finish_catalog_run(false, None, Some("approval required"))?;
                 return Ok(OwnedCallOutcome {
                     status: CorvidCallStatus::ApprovalRequired,
                     result_json: None,
                     approval: Some(approval),
-                    observation_handle,
+                    observation_handle: crate::observation_handles::NULL_OBSERVATION_HANDLE,
                 });
             }
             crate::catalog_c_api::ApprovalRequestOutcome::Accepted(detail) => {
@@ -544,13 +544,21 @@ fn call_agent_impl(agent_name: &str, args_json: &str) -> Result<OwnedCallOutcome
         }
     }
 
-    let result = match &entry.invoker {
-        CatalogInvoker::Introspection(kind) => introspection_call(*kind, validated.args.clone()),
-        CatalogInvoker::Scalar(invoker) => (invoker)(&validated.args),
+    let invocation = match &entry.invoker {
+        CatalogInvoker::Introspection(kind) => {
+            let scope = crate::observation_handles::begin_observation(finite_option(cost_bound_for(
+                &entry.abi,
+            )));
+            introspection_call(*kind, validated.args.clone())
+                .map(|result| (result, scope.finish()))
+        }
+        CatalogInvoker::Scalar(invoker) => {
+            (invoker)(&validated.args).map(|invocation| (invocation.result, invocation.observation_handle))
+        }
         CatalogInvoker::Unsupported { .. } => unreachable!(),
     };
-    let result = match result {
-        Ok(result) => result,
+    let (result, observation_handle) = match invocation {
+        Ok(values) => values,
         Err(err) => {
             let _ = finish_catalog_run(false, None, Some(&err.to_string()));
             return Err(err);
@@ -565,7 +573,6 @@ fn call_agent_impl(agent_name: &str, args_json: &str) -> Result<OwnedCallOutcome
         }
     };
     finish_catalog_run(true, Some(&result), None)?;
-    let observation_handle = scope.finish();
     Ok(OwnedCallOutcome {
         status: CorvidCallStatus::Ok,
         result_json: Some(result_json),
