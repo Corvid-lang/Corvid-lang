@@ -44,6 +44,7 @@
 //! - `21-inv-H-4` LLM-generated prose summary grounded in the algebra.
 //! - `21-inv-H-5` `--format=github-check|markdown|json` outputs.
 
+mod delta_isolation;
 mod gitlab;
 mod impact;
 mod in_toto;
