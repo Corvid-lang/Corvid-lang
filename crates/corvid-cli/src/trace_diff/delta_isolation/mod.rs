@@ -40,6 +40,10 @@
 use std::fmt;
 use std::ops::Range;
 
+use corvid_ast::File;
+
+mod annotations;
+
 /// One localized edit in source text. Per-class isolators compute
 /// one or more of these per delta; the full set for an isolation
 /// subset is aggregated and handed to [`apply_splices`].
@@ -187,6 +191,126 @@ pub(super) fn apply_splices(
         result.replace_range(splice.range.clone(), &splice.replacement);
     }
     Ok(result)
+}
+
+// ---------------------------------------------------------------
+// Per-class dispatch
+// ---------------------------------------------------------------
+
+/// A prepared source input for isolation: the original text plus
+/// its parsed AST. Per-class isolators walk the AST to find the
+/// node they care about and consult the source to copy text
+/// ranges.
+pub(super) struct IsolationInput {
+    pub source: String,
+    pub file: File,
+}
+
+/// Errors from the isolation pipeline. Each variant carries
+/// enough context for the caller's attribution record to
+/// surface a specific reason for a non-minimal subset.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) enum IsolationError {
+    /// Lexing or parsing the input source failed. Attribution
+    /// falls back to commit-level (`confidence: CommitLevel`).
+    ParseFailure(Vec<String>),
+    /// Delta-key prefix isn't handled by any registered class
+    /// yet. Expected: will become rarer as more sub-commits of
+    /// step 3c/N ship classes. Surfaces as `CommitLevel`.
+    UnsupportedDeltaClass(String),
+    /// Delta-key shape is malformed relative to its declared
+    /// class. Indicates a bug in either the emitter or the
+    /// dispatch — not a user error.
+    MalformedDeltaKey { detail: String },
+    /// Agent named in the delta key isn't present in the
+    /// corresponding AST. Happens when the delta's lifecycle
+    /// pair (e.g., `agent.added` / `agent.removed`) is expected
+    /// in a side this isolator didn't know to check.
+    AgentNotFound {
+        name: String,
+        /// `"parent"` or `"commit"` — which AST was missing it.
+        side: &'static str,
+    },
+    /// The source state this isolator expected (e.g., a
+    /// `@replayable` attribute on an agent) isn't present. Means
+    /// either the delta key says one thing and source disagrees
+    /// (emitter bug) or the isolator is looking in the wrong
+    /// place.
+    ExpectedStateNotFound { detail: String },
+    /// Cross-case handling not yet implemented in this class.
+    /// Attribution surfaces as `NonCompilingSubsetsSkipped`
+    /// (commit-level fallback for this delta), not a failure of
+    /// the whole attribution run.
+    UnsupportedCrossCase { detail: String },
+    /// Splice application failed — usually overlap with another
+    /// isolator's output in the same subset.
+    Splice(SpliceError),
+}
+
+impl fmt::Display for IsolationError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            IsolationError::ParseFailure(errs) => {
+                write!(f, "source failed to parse: {} error(s)", errs.len())
+            }
+            IsolationError::UnsupportedDeltaClass(key) => {
+                write!(f, "no isolator handles delta key `{key}`")
+            }
+            IsolationError::MalformedDeltaKey { detail } => {
+                write!(f, "malformed delta key: {detail}")
+            }
+            IsolationError::AgentNotFound { name, side } => {
+                write!(f, "agent `{name}` not found in {side} AST")
+            }
+            IsolationError::ExpectedStateNotFound { detail } => write!(f, "{detail}"),
+            IsolationError::UnsupportedCrossCase { detail } => write!(f, "{detail}"),
+            IsolationError::Splice(err) => write!(f, "splice application failed: {err}"),
+        }
+    }
+}
+
+impl std::error::Error for IsolationError {}
+
+impl From<SpliceError> for IsolationError {
+    fn from(err: SpliceError) -> Self {
+        IsolationError::Splice(err)
+    }
+}
+
+/// Parse source text into an `IsolationInput` ready for per-class
+/// isolators to walk. Lexing and parse errors bubble up as
+/// `ParseFailure` with the error messages flattened — callers
+/// typically log and fall back to commit-level attribution.
+pub(super) fn prepare_isolation_input(source: &str) -> Result<IsolationInput, IsolationError> {
+    let tokens = corvid_syntax::lex(source).map_err(|errs| {
+        IsolationError::ParseFailure(errs.iter().map(|e| format!("{e:?}")).collect())
+    })?;
+    let (file, parse_errors) = corvid_syntax::parse_file(&tokens);
+    if !parse_errors.is_empty() {
+        return Err(IsolationError::ParseFailure(
+            parse_errors.iter().map(|e| format!("{e:?}")).collect(),
+        ));
+    }
+    Ok(IsolationInput {
+        source: source.to_string(),
+        file,
+    })
+}
+
+/// Dispatch to the per-class isolator that handles `delta_key`.
+/// Returns splice ops to be composed by the caller into a full
+/// subset splice list.
+pub(super) fn compute_splices_for_delta(
+    delta_key: &str,
+    parent: &IsolationInput,
+    commit: &IsolationInput,
+) -> Result<Vec<SpliceOp>, IsolationError> {
+    if delta_key.starts_with("agent.replayable_gained:")
+        || delta_key.starts_with("agent.replayable_lost:")
+    {
+        return annotations::isolate_replayable(delta_key, parent, commit);
+    }
+    Err(IsolationError::UnsupportedDeltaClass(delta_key.to_string()))
 }
 
 #[cfg(test)]
