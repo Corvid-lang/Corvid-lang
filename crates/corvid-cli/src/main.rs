@@ -396,6 +396,26 @@ enum Command {
         /// verifying key. Defaults to `corvid-default`.
         #[arg(long, value_name = "ID")]
         sign_key_id: Option<String>,
+        /// Enter stack mode: compose per-commit trace-diff
+        /// receipts across a commit range into one algebraic
+        /// `StackReceipt` with normal-form (cancelled) + history
+        /// (preserved) views and `introduced_at` provenance per
+        /// surviving delta. Without a value, the commit range is
+        /// derived from the positional `<base>..<head>` (or CI
+        /// env vars `GITHUB_BASE_REF` / `CI_MERGE_REQUEST_DIFF_BASE_SHA`
+        /// when set). With a value, accepts either a git range
+        /// expression (e.g. `main..feature`, `HEAD~5..HEAD`) or
+        /// a comma-separated list of SHAs. Currently only emits
+        /// `--format=json`; other renderers and `--sign` /
+        /// `--traces` integration land in later commits of
+        /// `21-inv-H-5-stacked`.
+        #[arg(
+            long,
+            value_name = "SPEC",
+            num_args = 0..=1,
+            default_missing_value = "",
+        )]
+        stack: Option<String>,
     },
     /// Work with receipts produced by `corvid trace-diff --sign`:
     /// show a receipt from the local cache by its hash, or verify
@@ -649,6 +669,7 @@ fn main() -> ExitCode {
             format,
             sign,
             sign_key_id,
+            stack,
         }) => {
             let parsed = narrative
                 .parse::<trace_diff::NarrativeMode>()
@@ -657,9 +678,17 @@ fn main() -> ExitCode {
                     trace_diff::OutputFormat::parse(&format)
                         .map_err(anyhow::Error::msg)
                         .map(|format| (narrative_mode, format))
+                })
+                .and_then(|(narrative_mode, format)| {
+                    stack
+                        .as_deref()
+                        .map(trace_diff::parse_stack_spec)
+                        .transpose()
+                        .map_err(anyhow::Error::msg)
+                        .map(|stack_spec| (narrative_mode, format, stack_spec))
                 });
             match parsed {
-                Ok((narrative_mode, format)) => {
+                Ok((narrative_mode, format, stack_spec)) => {
                     trace_diff::run_trace_diff(trace_diff::TraceDiffArgs {
                         base_sha: &base_sha,
                         head_sha: &head_sha,
@@ -669,6 +698,7 @@ fn main() -> ExitCode {
                         format,
                         sign_key_path: sign.as_deref(),
                         sign_key_id: sign_key_id.as_deref(),
+                        stack_spec,
                     })
                 }
                 Err(e) => Err(e),

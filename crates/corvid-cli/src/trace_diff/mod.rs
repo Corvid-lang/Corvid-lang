@@ -50,6 +50,7 @@ mod in_toto;
 mod narrative;
 mod receipt;
 mod reviewer_invocation;
+mod stack_driver;
 mod stacked;
 pub(crate) mod signing;
 
@@ -67,6 +68,7 @@ use narrative::{
 pub use receipt::OutputFormat;
 use receipt::{apply_default_policy, render_github_check, render_json, Receipt};
 use reviewer_invocation::{detect_adapter, invoke_narrative_prompt, invoke_reviewer, NoAdapter};
+pub(crate) use stack_driver::{parse_stack_spec, StackSpec};
 
 /// Parsed args for `corvid trace-diff`. Library-level callers
 /// construct directly; the `corvid` binary builds this from clap.
@@ -112,6 +114,13 @@ pub struct TraceDiffArgs<'a> {
     /// `"corvid-default"` when signing is active but no label
     /// is supplied.
     pub sign_key_id: Option<&'a str>,
+    /// When `Some`, enter stack mode: walk a commit range,
+    /// compose per-commit receipts into a [`StackReceipt`] via
+    /// the algebra in [`stacked`], emit the result (currently
+    /// JSON only; other renderers land in later commits of
+    /// `21-inv-H-5-stacked`). When `None`, runs single-commit
+    /// trace-diff as before.
+    pub stack_spec: Option<StackSpec>,
 }
 
 /// Run `corvid trace-diff`: fetch source at both SHAs, compile each
@@ -122,6 +131,9 @@ pub struct TraceDiffArgs<'a> {
 /// were found — the receipt itself carries the verdict. Downstream
 /// CI policy-gating slices can non-zero-exit based on receipt content.
 pub fn run_trace_diff(args: TraceDiffArgs<'_>) -> Result<u8> {
+    if let Some(spec) = args.stack_spec.clone() {
+        return stack_driver::run_trace_diff_stack(&spec, &args);
+    }
     let base_source = git_show(args.base_sha, args.source_path)
         .with_context(|| format!("fetching `{}` at base `{}`", args.source_path.display(), args.base_sha))?;
     let head_source = git_show(args.head_sha, args.source_path)
