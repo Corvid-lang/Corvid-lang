@@ -237,6 +237,13 @@ fn regression_flag_for(delta: &DeltaRecord) -> Option<String> {
             }
         }
     }
+    if key.starts_with("agent.extern.ownership_changed:") {
+        if let Some(transition) = key.rsplit(':').next() {
+            if is_ownership_loosening(transition) {
+                return Some(delta.summary.clone());
+            }
+        }
+    }
     None
 }
 
@@ -271,6 +278,13 @@ fn tier_ordinal(tier: &str) -> Option<u8> {
         "human_required" => Some(2),
         _ => None,
     }
+}
+
+fn is_ownership_loosening(transition: &str) -> bool {
+    let Some((from, to)) = transition.split_once("->") else {
+        return false;
+    };
+    !from.starts_with("@borrowed") && to.starts_with("@borrowed")
 }
 
 /// Render a receipt in the GitHub Actions annotation format.

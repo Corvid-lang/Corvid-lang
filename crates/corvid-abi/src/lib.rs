@@ -18,10 +18,11 @@ pub use emit::{emit_abi, normalize_source_path, EmitOptions};
 pub use introspection_catalog::{introspection_agents, with_introspection_agents};
 pub use schema::{
     AbiAgent, AbiApprovalContract, AbiApprovalLabel, AbiApprovalSite, AbiAttributes, AbiBudget,
-    AbiCostEnvelope, AbiDeclaredAt, AbiDispatch, AbiEffects, AbiField, AbiGroundedType,
-    AbiLatencyMs, AbiListType, AbiMinExpected, AbiOptionType, AbiParam, AbiProgressiveStage,
-    AbiProjectedTokens, AbiProjectedUsd, AbiPrompt, AbiProvenanceContract, AbiResultType,
-    AbiRouteArm, AbiSourceSpan, AbiTool, AbiTypeDecl, AbiVersionError, AbiWeakType, CorvidAbi,
+    AbiCostEnvelope, AbiDeclaredAt, AbiDestructor, AbiDestructorKind, AbiDispatch, AbiEffects,
+    AbiField, AbiGroundedType, AbiLatencyMs, AbiListType, AbiMinExpected, AbiOptionType,
+    AbiOwnership, AbiOwnershipMode, AbiParam, AbiProgressiveStage, AbiProjectedTokens,
+    AbiProjectedUsd, AbiPrompt, AbiProvenanceContract, AbiResultType, AbiRouteArm,
+    AbiSourceSpan, AbiTool, AbiTypeDecl, AbiVersionError, AbiWeakType, CorvidAbi,
     ScalarTypeName, TypeDescription, CORVID_ABI_VERSION, MIN_SUPPORTED_ABI_VERSION,
 };
 

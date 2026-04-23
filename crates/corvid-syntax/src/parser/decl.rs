@@ -13,7 +13,7 @@ use crate::errors::{ParseError, ParseErrorKind};
 use crate::token::TokKind;
 use corvid_ast::{
     AgentDecl, BinaryOp, Block, Decl, DimensionDecl, DimensionValue, Effect, EffectDecl,
-    ExternAbi,
+    ExternAbi, OwnershipAnnotation, OwnershipMode,
     EvalAssert, EvalDecl, ExtendDecl, ExtendMethod, ExtendMethodKind, Field, Ident, ImportDecl,
     ImportSource, ModelDecl, ModelField, Param, ToolDecl, TypeDecl, Visibility,
 };
@@ -261,6 +261,7 @@ impl<'a> Parser<'a> {
         let params = self.parse_params()?;
         self.expect(TokKind::Arrow, "`->` before return type")?;
         let return_ty = self.parse_type_ref()?;
+        let return_ownership = self.parse_optional_ownership_annotation()?;
 
         let effect = if matches!(self.peek(), TokKind::KwDangerous) {
             self.bump();
@@ -277,6 +278,7 @@ impl<'a> Parser<'a> {
             name: Ident::new(name, name_span),
             params,
             return_ty,
+            return_ownership,
             effect,
             effect_row,
             visibility,
@@ -545,6 +547,7 @@ impl<'a> Parser<'a> {
         let params = self.parse_params()?;
         self.expect(TokKind::Arrow, "`->` before return type")?;
         let return_ty = self.parse_type_ref()?;
+        let return_ownership = self.parse_optional_ownership_annotation()?;
         let effect_row = self.parse_uses_clause()?;
         self.expect(TokKind::Colon, "`:` after agent signature")?;
         self.expect_newline()?;
@@ -557,6 +560,7 @@ impl<'a> Parser<'a> {
             extern_abi: None,
             params,
             return_ty,
+            return_ownership,
             body,
             effect_row,
             constraints: Vec::new(),
@@ -846,11 +850,58 @@ impl<'a> Parser<'a> {
         let (name, name_span) = self.expect_ident()?;
         self.expect(TokKind::Colon, "`:` between parameter name and type")?;
         let ty = self.parse_type_ref()?;
-        let end = ty.span();
+        let ownership = self.parse_optional_ownership_annotation()?;
+        let end = ownership.as_ref().map(|o| o.span).unwrap_or_else(|| ty.span());
         Ok(Param {
             name: Ident::new(name, name_span),
             ty,
+            ownership,
             span: start.merge(end),
         })
+    }
+
+    pub(super) fn parse_optional_ownership_annotation(
+        &mut self,
+    ) -> Result<Option<OwnershipAnnotation>, ParseError> {
+        if !matches!(self.peek(), TokKind::At) {
+            return Ok(None);
+        }
+        let start = self.peek_span();
+        self.bump(); // @
+        let (mode_name, mode_span) = self.expect_ident()?;
+        let mode = match mode_name.as_str() {
+            "owned" => OwnershipMode::Owned,
+            "borrowed" => OwnershipMode::Borrowed,
+            "shared" => OwnershipMode::Shared,
+            "static" => OwnershipMode::Static,
+            _ => {
+                return Err(ParseError {
+                    kind: ParseErrorKind::UnexpectedToken {
+                        got: format!("ownership annotation `@{mode_name}`"),
+                        expected:
+                            "one of `@owned`, `@borrowed`, `@shared`, or `@static`".into(),
+                    },
+                    span: mode_span,
+                });
+            }
+        };
+
+        let lifetime = if matches!(mode, OwnershipMode::Borrowed)
+            && matches!(self.peek(), TokKind::Lt)
+        {
+            self.bump(); // <
+            self.expect(TokKind::Apostrophe, "`'` before borrowed lifetime name")?;
+            let (lifetime, _) = self.expect_ident()?;
+            self.expect(TokKind::Gt, "`>` after borrowed lifetime")?;
+            Some(lifetime)
+        } else {
+            None
+        };
+        let end = self.prev_span();
+        Ok(Some(OwnershipAnnotation {
+            mode,
+            lifetime,
+            span: start.merge(end),
+        }))
     }
 }

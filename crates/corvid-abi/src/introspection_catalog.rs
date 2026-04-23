@@ -29,6 +29,7 @@ pub fn introspection_agents() -> Vec<AbiAgent> {
             vec![AbiParam {
                 name: "expected_hash_hex".to_string(),
                 ty: scalar(ScalarTypeName::String),
+                ownership: None,
             }],
         ),
         introspection_agent(
@@ -42,6 +43,7 @@ pub fn introspection_agents() -> Vec<AbiAgent> {
             vec![AbiParam {
                 name: "filter_json".to_string(),
                 ty: scalar(ScalarTypeName::String),
+                ownership: None,
             }],
         ),
         introspection_agent(
@@ -50,6 +52,7 @@ pub fn introspection_agents() -> Vec<AbiAgent> {
             vec![AbiParam {
                 name: "agent_name".to_string(),
                 ty: scalar(ScalarTypeName::String),
+                ownership: None,
             }],
         ),
         introspection_agent(
@@ -59,10 +62,12 @@ pub fn introspection_agents() -> Vec<AbiAgent> {
                 AbiParam {
                     name: "agent_name".to_string(),
                     ty: scalar(ScalarTypeName::String),
+                    ownership: None,
                 },
                 AbiParam {
                     name: "args_json".to_string(),
                     ty: scalar(ScalarTypeName::String),
+                    ownership: None,
                 },
             ],
         ),
@@ -73,10 +78,12 @@ pub fn introspection_agents() -> Vec<AbiAgent> {
                 AbiParam {
                     name: "agent_name".to_string(),
                     ty: scalar(ScalarTypeName::String),
+                    ownership: None,
                 },
                 AbiParam {
                     name: "args_json".to_string(),
                     ty: scalar(ScalarTypeName::String),
+                    ownership: None,
                 },
             ],
         ),
@@ -91,6 +98,7 @@ fn introspection_agent(name: &str, symbol: &str, params: Vec<AbiParam>) -> AbiAg
         source_line: 0,
         params,
         return_type: scalar(ScalarTypeName::String),
+        return_ownership: None,
         effects: AbiEffects {
             cost: Some(AbiProjectedUsd { projected_usd: 0.0 }),
             trust_tier: Some("autonomous".to_string()),

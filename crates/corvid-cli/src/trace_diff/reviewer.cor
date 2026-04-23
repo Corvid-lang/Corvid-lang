@@ -84,11 +84,17 @@ type ProvenanceSummary:
     returns_grounded: Bool
     grounded_param_deps: List<String>
 
+type OwnershipSlotSummary:
+    position: String
+    ownership: String
+
 type AgentSummary:
     name: String
     trust_tier: String
     is_dangerous: Bool
     is_replayable: Bool
+    param_ownerships: List<OwnershipSlotSummary>
+    return_ownership: String
     approval: ApprovalContractSummary
     provenance: ProvenanceSummary
 
@@ -245,6 +251,40 @@ agent dep_present(deps: List<String>, name: String) -> Bool:
             present = true
     return present
 
+@deterministic
+agent ownership_slot_present(slots: List<OwnershipSlotSummary>, position: String) -> Bool:
+    present = false
+    for slot in slots:
+        if slot.position == position:
+            present = true
+    return present
+
+@deterministic
+agent find_ownership_slot(slots: List<OwnershipSlotSummary>, position: String) -> OwnershipSlotSummary:
+    sentinel = OwnershipSlotSummary("", "")
+    found = sentinel
+    for slot in slots:
+        if slot.position == position:
+            found = slot
+    return found
+
+@deterministic
+agent render_ownership_diff_for_agent(name: String, base: AgentSummary, head: AgentSummary) -> String:
+    lines = ""
+
+    if base.return_ownership != head.return_ownership:
+        lines = lines + "- return ownership: `" + base.return_ownership + "` -> `" + head.return_ownership + "`\n"
+
+    for b in base.param_ownerships:
+        if ownership_slot_present(head.param_ownerships, b.position):
+            h = find_ownership_slot(head.param_ownerships, b.position)
+            if b.ownership != h.ownership:
+                lines = lines + "- argument #" + b.position + " ownership: `" + b.ownership + "` -> `" + h.ownership + "`\n"
+
+    if lines == "":
+        return ""
+    return "### `" + name + "` extern ownership changed\n" + lines + "\n"
+
 # Render the provenance drill-down for one agent. Empty String when
 # grounded status + dependency list are identical.
 @deterministic
@@ -306,6 +346,10 @@ agent render_algebra_diff(base: Descriptor, head: Descriptor) -> String:
                 provenance_section = render_provenance_diff_for_agent(b.name, b.provenance, h.provenance)
                 if provenance_section != "":
                     body = body + provenance_section
+                    any_changes = true
+                ownership_section = render_ownership_diff_for_agent(b.name, b, h)
+                if ownership_section != "":
+                    body = body + ownership_section
                     any_changes = true
         if not in_head:
             body = body + "### Removed: `" + b.name + "`\n\n"

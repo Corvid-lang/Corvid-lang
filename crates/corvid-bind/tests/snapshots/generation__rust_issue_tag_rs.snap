@@ -29,11 +29,11 @@ impl IssueTag {
 }
 
 pub trait IssueTagApi {
-    fn issue_tag(&self, tag: String, approver: &dyn Approver) -> CorvidResult<(String, Observation)>;
+    fn issue_tag(&self, tag: &str, approver: &dyn Approver) -> CorvidResult<(String, Observation)>;
 }
 
 impl IssueTagApi for Client {
-    fn issue_tag(&self, tag: String, approver: &dyn Approver) -> CorvidResult<(String, Observation)> {
+    fn issue_tag(&self, tag: &str, approver: &dyn Approver) -> CorvidResult<(String, Observation)> {
         let args_json = json!([
             tag,
         ]);
@@ -50,8 +50,8 @@ impl IssueTagApi for Client {
                         let symbol: Symbol<unsafe extern "C" fn(*const std::ffi::c_char, *mut u64) -> *const std::ffi::c_char> = self.library.get(b"issue_tag").map_err(|err| CorvidError::Load(err.to_string()))?;
                         let mut observation_handle = 0u64;
                         let value = symbol(arg_0.as_ptr(), &mut observation_handle);
-                        let payload = take_owned_c_string(&self.library, value)?;
-                        Ok((payload, Observation::new(self.library.clone(), observation_handle)))
+                        let payload = take_owned_c_string(&self.library, value, "corvid_free_string")?;
+                        Ok((payload, Observation::new(self.library.clone(), observation_handle, "corvid_observation_release")))
                     }
                 }
             },

@@ -26,10 +26,12 @@ fn sample_descriptor() -> CorvidAbi {
                     ty: TypeDescription::Scalar {
                         scalar: ScalarTypeName::String,
                     },
+                    ownership: None,
                 }],
                 return_type: TypeDescription::Scalar {
                     scalar: ScalarTypeName::String,
                 },
+                return_ownership: None,
                 effects: AbiEffects {
                     trust_tier: Some("autonomous".to_string()),
                     ..AbiEffects::default()
@@ -62,10 +64,12 @@ fn sample_descriptor() -> CorvidAbi {
                     ty: TypeDescription::Scalar {
                         scalar: ScalarTypeName::String,
                     },
+                    ownership: None,
                 }],
                 return_type: TypeDescription::Scalar {
                     scalar: ScalarTypeName::String,
                 },
+                return_ownership: None,
                 effects: AbiEffects {
                     trust_tier: Some("human_required".to_string()),
                     ..AbiEffects::default()
@@ -88,6 +92,7 @@ fn sample_descriptor() -> CorvidAbi {
                             ty: TypeDescription::Scalar {
                                 scalar: ScalarTypeName::String,
                             },
+                            ownership: None,
                         }],
                         cost_at_site: Some(0.02),
                         reversibility: Some("reversible".to_string()),
@@ -109,6 +114,7 @@ fn sample_descriptor() -> CorvidAbi {
                     ty: TypeDescription::Scalar {
                         scalar: ScalarTypeName::String,
                     },
+                    ownership: None,
                 }],
                 return_type: TypeDescription::Grounded {
                     grounded: AbiGroundedType {
@@ -117,6 +123,7 @@ fn sample_descriptor() -> CorvidAbi {
                         }),
                     },
                 },
+                return_ownership: None,
                 effects: AbiEffects {
                     trust_tier: Some("autonomous".to_string()),
                     ..AbiEffects::default()
@@ -177,6 +184,7 @@ fn dangerous_grounded_descriptor() -> CorvidAbi {
             ty: TypeDescription::Scalar {
                 scalar: ScalarTypeName::String,
             },
+            ownership: None,
         }],
         return_type: TypeDescription::Grounded {
             grounded: AbiGroundedType {
@@ -185,6 +193,7 @@ fn dangerous_grounded_descriptor() -> CorvidAbi {
                 }),
             },
         },
+        return_ownership: None,
         effects: AbiEffects::default(),
         attributes: AbiAttributes {
             replayable: true,

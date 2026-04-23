@@ -3,9 +3,10 @@ use std::path::PathBuf;
 use anyhow::Result;
 
 use crate::{
-    grounded_inner_kind, is_generated_user_agent, pascal_case, python_ctypes_param_type,
-    python_ctypes_return_type, python_public_type, python_string_literal, returns_grounded,
-    snake_case, BindingContext, GeneratedFile,
+    effective_return_ownership, grounded_inner_kind,
+    is_generated_user_agent, pascal_case, python_ctypes_param_type, python_ctypes_return_type,
+    python_public_type, python_string_literal, returns_grounded, snake_case, BindingContext,
+    GeneratedFile,
 };
 
 pub(crate) fn render(context: &BindingContext) -> Result<Vec<GeneratedFile>> {
@@ -218,9 +219,10 @@ T = TypeVar("T")
 
 
 class Observation:
-    def __init__(self, library: ctypes.CDLL, handle: int) -> None:
+    def __init__(self, library: ctypes.CDLL, handle: int, release_symbol: str) -> None:
         self._library = library
         self._handle = handle
+        self._release_symbol = release_symbol
 
     @property
     def handle(self) -> int:
@@ -259,7 +261,7 @@ class Observation:
     def close(self) -> None:
         if self._handle == 0:
             return
-        fn = self._library.corvid_observation_release
+        fn = getattr(self._library, self._release_symbol)
         fn.argtypes = [ctypes.c_uint64]
         fn.restype = None
         fn(self._handle)
@@ -281,10 +283,11 @@ class Weak(Generic[T]):
 
 
 class Grounded(Generic[T]):
-    def __init__(self, library: ctypes.CDLL, payload: T, handle: int) -> None:
+    def __init__(self, library: ctypes.CDLL, payload: T, handle: int, release_symbol: str) -> None:
         self._library = library
         self._payload = payload
         self._handle = handle
+        self._release_symbol = release_symbol
 
     def payload(self) -> T:
         return self._payload
@@ -314,7 +317,7 @@ class Grounded(Generic[T]):
     def close(self) -> None:
         if self._handle == 0:
             return
-        fn = self._library.corvid_grounded_release
+        fn = getattr(self._library, self._release_symbol)
         fn.argtypes = [ctypes.c_uint64]
         fn.restype = None
         fn(self._handle)
@@ -419,11 +422,11 @@ class Client:
             result_text = ctypes.string_at(result_ptr.value, result_len.value).decode("utf-8")
             free_result(result_ptr)
         if status == 0:
-            observation = Observation(self._library, observation_handle.value)
+            observation = Observation(self._library, observation_handle.value, "corvid_observation_release")
             return True, json.loads(result_text if result_text is not None else "null"), observation, None
         if status == 4:
             if observation_handle.value:
-                Observation(self._library, observation_handle.value).close()
+                Observation(self._library, observation_handle.value, "corvid_observation_release").close()
             request = ApprovalRequest(
                 site_name=_decode(approval.site_name),
                 predicate_json=_decode(approval.predicate_json),
@@ -432,7 +435,7 @@ class Client:
             )
             return False, None, None, request
         if observation_handle.value:
-            Observation(self._library, observation_handle.value).close()
+            Observation(self._library, observation_handle.value, "corvid_observation_release").close()
         message = result_text or f"runtime call failed with status {{status}}"
         raise CallError(message)
 
@@ -786,6 +789,12 @@ fn render_python_direct_invoke_body(
     indent: &str,
 ) -> Result<String> {
     let mut out = String::new();
+    let return_ownership = effective_return_ownership(agent);
+    let return_destructor = return_ownership
+        .destructor
+        .as_ref()
+        .map(|destructor| destructor.symbol.as_str())
+        .unwrap_or("corvid_free_string");
     out.push_str(&format!(
         "{indent}fn = client.library.{}\n",
         agent.symbol
@@ -853,28 +862,29 @@ fn render_python_direct_invoke_body(
             _ => out.push_str(&format!("{indent}payload = value\n")),
         }
         out.push_str(&format!(
-            "{indent}return Grounded(client.library, payload, grounded_handle.value), Observation(client.library, observation_handle.value)\n",
+            "{indent}return Grounded(client.library, payload, grounded_handle.value, {:?}), Observation(client.library, observation_handle.value, 'corvid_observation_release')\n",
+            return_destructor
         ));
     } else {
         match crate::ffi_scalar_kind(&agent.return_type) {
             Some(corvid_abi::ScalarTypeName::String | corvid_abi::ScalarTypeName::TraceId) => {
-                out.push_str(&format!("{indent}free = client.library.corvid_free_string\n"));
+                out.push_str(&format!("{indent}free = client.library.{return_destructor}\n"));
                 out.push_str(&format!("{indent}free.argtypes = [ctypes.c_void_p]\n"));
                 out.push_str(&format!("{indent}free.restype = None\n"));
                 out.push_str(&format!("{indent}payload = ctypes.string_at(value).decode('utf-8')\n"));
                 out.push_str(&format!("{indent}free(value)\n"));
                 out.push_str(&format!(
-                    "{indent}return payload, Observation(client.library, observation_handle.value)\n",
+                    "{indent}return payload, Observation(client.library, observation_handle.value, 'corvid_observation_release')\n",
                 ));
             }
             Some(corvid_abi::ScalarTypeName::Nothing) => {
                 out.push_str(&format!(
-                    "{indent}return None, Observation(client.library, observation_handle.value)\n",
+                    "{indent}return None, Observation(client.library, observation_handle.value, 'corvid_observation_release')\n",
                 ));
             }
             _ => {
                 out.push_str(&format!(
-                    "{indent}return value, Observation(client.library, observation_handle.value)\n",
+                    "{indent}return value, Observation(client.library, observation_handle.value, 'corvid_observation_release')\n",
                 ));
             }
         }

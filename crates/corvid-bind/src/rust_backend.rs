@@ -4,8 +4,9 @@ use std::path::PathBuf;
 use anyhow::Result;
 
 use crate::{
-    grounded_inner_kind, is_generated_user_agent, pascal_case, returns_grounded,
-    rust_c_abi_param_type, rust_c_abi_return_type, rust_f64_literal, rust_public_type,
+    effective_param_ownership, effective_return_ownership, grounded_inner_kind,
+    is_generated_user_agent, pascal_case, returns_grounded, rust_c_abi_param_type,
+    rust_c_abi_return_type, rust_f64_literal, rust_public_param_type, rust_public_type,
     rust_string_literal, snake_case, BindingContext, GeneratedFile,
 };
 
@@ -394,7 +395,11 @@ impl Client {{
 
             match status {{
                 CORVID_CALL_OK => {{
-                    let observation = Observation::new(self.library.clone(), observation_handle);
+                    let observation = Observation::new(
+                        self.library.clone(),
+                        observation_handle,
+                        "corvid_observation_release",
+                    );
                     let payload = serde_json::from_str::<Ret>(
                         result_json.as_deref().unwrap_or("null"),
                     )
@@ -489,11 +494,12 @@ pub(crate) enum CallAttempt<T> {{
 pub struct Observation {{
     library: Arc<Library>,
     handle: u64,
+    release_symbol: &'static str,
 }}
 
 impl Observation {{
-    pub(crate) fn new(library: Arc<Library>, handle: u64) -> Self {{
-        Self {{ library, handle }}
+    pub(crate) fn new(library: Arc<Library>, handle: u64, release_symbol: &'static str) -> Self {{
+        Self {{ library, handle, release_symbol }}
     }}
 
     pub fn handle(&self) -> u64 {{
@@ -558,7 +564,7 @@ impl Drop for Observation {{
         }}
         unsafe {{
             if let Ok(symbol) =
-                self.library.get::<unsafe extern "C" fn(u64)>(b"corvid_observation_release")
+                self.library.get::<unsafe extern "C" fn(u64)>(self.release_symbol.as_bytes())
             {{
                 symbol(self.handle);
             }}
@@ -572,14 +578,21 @@ pub struct Grounded<T> {{
     payload: T,
     library: Arc<Library>,
     handle: u64,
+    release_symbol: &'static str,
 }}
 
 impl<T> Grounded<T> {{
-    pub(crate) fn new(payload: T, library: Arc<Library>, handle: u64) -> Self {{
+    pub(crate) fn new(
+        payload: T,
+        library: Arc<Library>,
+        handle: u64,
+        release_symbol: &'static str,
+    ) -> Self {{
         Self {{
             payload,
             library,
             handle,
+            release_symbol,
         }}
     }}
 
@@ -599,7 +612,7 @@ impl<T> Drop for Grounded<T> {{
         }}
         unsafe {{
             if let Ok(symbol) =
-                self.library.get::<unsafe extern "C" fn(u64)>(b"corvid_grounded_release")
+                self.library.get::<unsafe extern "C" fn(u64)>(self.release_symbol.as_bytes())
             {{
                 symbol(self.handle);
             }}
@@ -670,6 +683,7 @@ pub(crate) fn read_c_string_lossy(ptr: *const c_char) -> String {{
 pub(crate) fn take_owned_c_string(
     library: &Arc<Library>,
     ptr: *const c_char,
+    free_symbol: &'static str,
 ) -> CorvidResult<String> {{
     if ptr.is_null() {{
         return Ok(String::new());
@@ -680,7 +694,7 @@ pub(crate) fn take_owned_c_string(
         .to_string();
     unsafe {{
         let free: Symbol<unsafe extern "C" fn(*const c_char)> = library
-            .get(b"corvid_free_string")
+            .get(free_symbol.as_bytes())
             .map_err(|err| CorvidError::Load(err.to_string()))?;
         free(ptr);
     }}
@@ -1021,15 +1035,18 @@ fn render_agent_module(context: &BindingContext, agent: &corvid_abi::AbiAgent) -
     ));
     out.push_str("}\n\n");
 
+    let generics = render_method_generics(agent);
     out.push_str(&format!("pub trait {api_trait} {{\n"));
     out.push_str(&format!(
-        "    fn {method_name}(&self{sig}) -> CorvidResult<({return_type}, Observation)>;\n",
+        "    fn {method_name}{generics}(&self{sig}) -> CorvidResult<({return_type}, Observation)>;\n",
+        generics = generics,
         sig = render_trait_signature_params(agent)
     ));
     out.push_str("}\n\n");
     out.push_str(&format!("impl {api_trait} for Client {{\n"));
     out.push_str(&format!(
-        "    fn {method_name}(&self{sig}) -> CorvidResult<({return_type}, Observation)> {{\n",
+        "    fn {method_name}{generics}(&self{sig}) -> CorvidResult<({return_type}, Observation)> {{\n",
+        generics = generics,
         sig = render_trait_signature_params(agent)
     ));
     if agent.attributes.dangerous {
@@ -1071,12 +1088,38 @@ fn render_trait_signature_params(agent: &corvid_abi::AbiAgent) -> String {
         out.push_str(", ");
         out.push_str(&snake_case(&param.name));
         out.push_str(": ");
-        out.push_str(&rust_public_type(&param.ty));
+        out.push_str(&rust_public_param_type(param));
     }
     if agent.attributes.dangerous {
         out.push_str(", approver: &dyn Approver");
     }
     out
+}
+
+fn render_method_generics(agent: &corvid_abi::AbiAgent) -> String {
+    let mut lifetimes = Vec::new();
+    for param in &agent.params {
+        let ownership = effective_param_ownership(param);
+        if matches!(ownership.mode, corvid_abi::AbiOwnershipMode::Borrowed) {
+            if let Some(lifetime) = ownership.lifetime.as_deref() {
+                if lifetime != "call" && !lifetimes.iter().any(|existing| existing == lifetime) {
+                    lifetimes.push(lifetime.to_string());
+                }
+            }
+        }
+    }
+    if lifetimes.is_empty() {
+        String::new()
+    } else {
+        format!(
+            "<{}>",
+            lifetimes
+                .iter()
+                .map(|lifetime| format!("'{lifetime}"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
+    }
 }
 
 fn render_dangerous_agent_body(agent: &corvid_abi::AbiAgent) -> Result<String> {
@@ -1111,6 +1154,12 @@ fn render_direct_agent_body(agent: &corvid_abi::AbiAgent) -> Result<String> {
 
 fn render_direct_invoke_body(agent: &corvid_abi::AbiAgent, indent: &str) -> Result<String> {
     let mut out = String::new();
+    let return_ownership = effective_return_ownership(agent);
+    let return_destructor = return_ownership
+        .destructor
+        .as_ref()
+        .map(|destructor| destructor.symbol.as_str())
+        .unwrap_or("corvid_free_string");
     let mut argtypes = Vec::new();
     let mut call_args = Vec::new();
     let mut prelude = String::new();
@@ -1170,35 +1219,37 @@ fn render_direct_invoke_body(agent: &corvid_abi::AbiAgent, indent: &str) -> Resu
         match grounded_inner_kind(&agent.return_type).unwrap() {
             corvid_abi::ScalarTypeName::String | corvid_abi::ScalarTypeName::TraceId => {
                 out.push_str(&format!(
-                    "{indent}    let payload = take_owned_c_string(&self.library, value)?;\n",
+                    "{indent}    let payload = take_owned_c_string(&self.library, value, \"corvid_free_string\")?;\n",
                 ));
             }
             _ => out.push_str(&format!("{indent}    let payload = value;\n")),
         }
         out.push_str(&format!(
-            "{indent}    let grounded = Grounded::new(payload, self.library.clone(), grounded_handle);\n",
+            "{indent}    let grounded = Grounded::new(payload, self.library.clone(), grounded_handle, {:?});\n",
+            return_destructor
         ));
         out.push_str(&format!(
-            "{indent}    Ok((grounded, Observation::new(self.library.clone(), observation_handle)))\n",
+            "{indent}    Ok((grounded, Observation::new(self.library.clone(), observation_handle, \"corvid_observation_release\")))\n",
         ));
     } else {
         match crate::ffi_scalar_kind(&agent.return_type) {
             Some(corvid_abi::ScalarTypeName::String | corvid_abi::ScalarTypeName::TraceId) => {
                 out.push_str(&format!(
-                    "{indent}    let payload = take_owned_c_string(&self.library, value)?;\n",
+                    "{indent}    let payload = take_owned_c_string(&self.library, value, {:?})?;\n",
+                    return_destructor
                 ));
                 out.push_str(&format!(
-                    "{indent}    Ok((payload, Observation::new(self.library.clone(), observation_handle)))\n",
+                    "{indent}    Ok((payload, Observation::new(self.library.clone(), observation_handle, \"corvid_observation_release\")))\n",
                 ));
             }
             Some(corvid_abi::ScalarTypeName::Nothing) => {
                 out.push_str(&format!(
-                    "{indent}    Ok(((), Observation::new(self.library.clone(), observation_handle)))\n",
+                    "{indent}    Ok(((), Observation::new(self.library.clone(), observation_handle, \"corvid_observation_release\")))\n",
                 ));
             }
             _ => {
                 out.push_str(&format!(
-                    "{indent}    Ok((value, Observation::new(self.library.clone(), observation_handle)))\n",
+                    "{indent}    Ok((value, Observation::new(self.library.clone(), observation_handle, \"corvid_observation_release\")))\n",
                 ));
             }
         }

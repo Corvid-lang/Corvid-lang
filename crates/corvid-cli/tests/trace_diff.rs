@@ -61,6 +61,16 @@ pub extern "c" agent summarize() -> Int:
     return 2
 "#;
 
+const OWNERSHIP_BASE_SOURCE: &str = r#"
+pub extern "c" agent greet(flag: Bool) -> Bool:
+    return flag
+"#;
+
+const OWNERSHIP_HEAD_SOURCE: &str = r#"
+pub extern "c" agent greet(name: String) -> Bool:
+    return true
+"#;
+
 #[test]
 fn trace_diff_end_to_end_reports_added_agent() {
     let tmp = tempfile::tempdir().unwrap();
@@ -100,6 +110,48 @@ fn trace_diff_end_to_end_reports_added_agent() {
     assert!(
         stdout.contains("Added") && stdout.contains("summarize"),
         "added-agent section missing. stdout:\n{stdout}"
+    );
+}
+
+#[test]
+fn trace_diff_reports_ownership_loosening_and_trips_policy() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = tmp.path();
+    run_git(repo, &["init", "--quiet", "-b", "main"]);
+
+    let src = repo.join("agent.cor");
+
+    write_file(&src, OWNERSHIP_BASE_SOURCE);
+    run_git(repo, &["add", "agent.cor"]);
+    run_git(repo, &["commit", "--quiet", "-m", "base"]);
+    let base_sha = run_git(repo, &["rev-parse", "HEAD"]);
+
+    write_file(&src, OWNERSHIP_HEAD_SOURCE);
+    run_git(repo, &["add", "agent.cor"]);
+    run_git(repo, &["commit", "--quiet", "-m", "head"]);
+    let head_sha = run_git(repo, &["rev-parse", "HEAD"]);
+
+    let output = Command::new(corvid_bin())
+        .args(["trace-diff", &base_sha, &head_sha, "agent.cor", "--format=markdown"])
+        .current_dir(repo)
+        .output()
+        .expect("run corvid trace-diff");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "ownership loosening should trip policy. stdout=\n{stdout}\nstderr=\n{stderr}"
+    );
+    assert!(
+        stdout.contains("### `greet` extern ownership changed")
+            && stdout.contains("- argument #0 ownership: `@owned` -> `@borrowed`"),
+        "ownership delta missing. stdout:\n{stdout}"
+    );
+    assert!(
+        stderr.contains("regression policy tripped"),
+        "policy stderr missing. stderr:\n{stderr}"
     );
 }
 

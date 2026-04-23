@@ -2,11 +2,15 @@ use crate::approval_contract::{analyze_agent_approval_contract, collect_all_appr
 use crate::effect_emit::{emit_effects_from_composed, emit_effects_from_effect_names};
 use crate::provenance_emit::emit_provenance_contract;
 use crate::schema::{
-    AbiAgent, AbiAttributes, AbiBudget, AbiCostEnvelope, AbiDispatch, AbiField, AbiParam,
-    AbiProgressiveStage, AbiPrompt, AbiRouteArm, AbiSourceSpan, AbiTool, AbiTypeDecl, CorvidAbi,
+    AbiAgent, AbiAttributes, AbiBudget, AbiCostEnvelope, AbiDestructor, AbiDestructorKind,
+    AbiDispatch, AbiField, AbiOwnership, AbiOwnershipMode, AbiParam, AbiProgressiveStage,
+    AbiPrompt, AbiRouteArm, AbiSourceSpan, AbiTool, AbiTypeDecl, CorvidAbi,
 };
 use crate::type_description::emit_type_description;
-use corvid_ast::{AgentAttribute, Decl, DimensionValue, File, PromptDecl, Span, ToolDecl, TypeRef, WeakEffectRow};
+use corvid_ast::{
+    AgentAttribute, Decl, DimensionValue, File, OwnershipAnnotation, OwnershipMode, PromptDecl,
+    Span, ToolDecl, TypeRef, WeakEffectRow,
+};
 use corvid_ir::{
     IrAgent, IrCallKind, IrExpr, IrExprKind, IrFile, IrPrompt, IrRoutePattern, IrTool,
     IrVoteStrategy,
@@ -186,9 +190,23 @@ fn emit_agent(
             .map(|param| AbiParam {
                 name: param.name.name.clone(),
                 ty: emit_type_description(&resolve_typeref_to_type(&param.ty, resolved), resolved),
+                ownership: if ast_agent.extern_abi.is_some() {
+                    Some(emit_param_ownership(&param.ty, param.ownership.as_ref(), resolved))
+                } else {
+                    None
+                },
             })
             .collect(),
         return_type: emit_type_description(&declared_return_ty, resolved),
+        return_ownership: if ast_agent.extern_abi.is_some() {
+            Some(emit_return_ownership(
+                &ast_agent.return_ty,
+                ast_agent.return_ownership.as_ref(),
+                resolved,
+            ))
+        } else {
+            None
+        },
         effects,
         attributes: AbiAttributes {
             replayable: AgentAttribute::is_replayable(&ast_agent.attributes),
@@ -224,6 +242,7 @@ fn emit_prompt(
                             &resolve_typeref_to_type(&param.ty, resolved),
                             resolved,
                         ),
+                        ownership: None,
                     })
                     .collect()
             })
@@ -234,6 +253,7 @@ fn emit_prompt(
                     .map(|param| AbiParam {
                         name: param.name.clone(),
                         ty: emit_type_description(&param.ty, resolved),
+                        ownership: None,
                     })
                     .collect()
             }),
@@ -280,6 +300,7 @@ fn emit_tool(
                             &resolve_typeref_to_type(&param.ty, resolved),
                             resolved,
                         ),
+                        ownership: None,
                     })
                     .collect()
             })
@@ -290,6 +311,7 @@ fn emit_tool(
                     .map(|param| AbiParam {
                         name: param.name.clone(),
                         ty: emit_type_description(&param.ty, resolved),
+                        ownership: None,
                     })
                     .collect()
             }),
@@ -577,4 +599,77 @@ fn source_line(source: &str, span: Span) -> u32 {
         }
     }
     line
+}
+
+fn emit_param_ownership(
+    ty: &TypeRef,
+    declared: Option<&OwnershipAnnotation>,
+    resolved: &Resolved,
+) -> AbiOwnership {
+    if let Some(declared) = declared {
+        return emit_declared_ownership(declared, None);
+    }
+    match resolve_typeref_to_type(ty, resolved) {
+        Type::String | Type::TraceId => AbiOwnership {
+            mode: AbiOwnershipMode::Borrowed,
+            lifetime: Some("call".to_string()),
+            destructor: None,
+        },
+        _ => AbiOwnership {
+            mode: AbiOwnershipMode::Owned,
+            lifetime: None,
+            destructor: None,
+        },
+    }
+}
+
+fn emit_return_ownership(
+    ty: &TypeRef,
+    declared: Option<&OwnershipAnnotation>,
+    resolved: &Resolved,
+) -> AbiOwnership {
+    let inferred_destructor = match resolve_typeref_to_type(ty, resolved) {
+        Type::String | Type::TraceId => Some(AbiDestructor {
+            kind: AbiDestructorKind::Drop,
+            symbol: "corvid_free_string".to_string(),
+        }),
+        Type::Grounded(_) => Some(AbiDestructor {
+            kind: AbiDestructorKind::Release,
+            symbol: "corvid_grounded_release".to_string(),
+        }),
+        _ => None,
+    };
+    if let Some(declared) = declared {
+        return emit_declared_ownership(declared, inferred_destructor);
+    }
+    AbiOwnership {
+        mode: AbiOwnershipMode::Owned,
+        lifetime: None,
+        destructor: inferred_destructor,
+    }
+}
+
+fn emit_declared_ownership(
+    declared: &OwnershipAnnotation,
+    inferred_destructor: Option<AbiDestructor>,
+) -> AbiOwnership {
+    AbiOwnership {
+        mode: match declared.mode {
+            OwnershipMode::Owned => AbiOwnershipMode::Owned,
+            OwnershipMode::Borrowed => AbiOwnershipMode::Borrowed,
+            OwnershipMode::Shared => AbiOwnershipMode::Shared,
+            OwnershipMode::Static => AbiOwnershipMode::Static,
+        },
+        lifetime: declared.lifetime.clone().or_else(|| {
+            if matches!(declared.mode, OwnershipMode::Borrowed) {
+                Some("call".to_string())
+            } else {
+                None
+            }
+        }),
+        destructor: match declared.mode {
+            OwnershipMode::Owned | OwnershipMode::Shared => inferred_destructor,
+            OwnershipMode::Borrowed | OwnershipMode::Static => None,
+        },
+    }
 }

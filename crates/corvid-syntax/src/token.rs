@@ -133,6 +133,7 @@ pub enum TokKind {
     Arrow,    // ->
     Question, // ?
     At,       // @
+    Apostrophe, // '
     Dollar,   // $
 
     // --- operators ---

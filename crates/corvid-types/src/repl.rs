@@ -103,6 +103,7 @@ fn synthetic_agent(
         .map(|local| Param {
             name: Ident::new(local.name.clone(), span),
             ty: type_to_type_ref(&local.ty, symbols),
+            ownership: None,
             span,
         })
         .collect();
@@ -114,6 +115,7 @@ fn synthetic_agent(
             name: Ident::new("Nothing", span),
             span,
         },
+        return_ownership: None,
         body: corvid_ast::Block { stmts, span },
         effect_row: Default::default(),
         constraints: Vec::new(),

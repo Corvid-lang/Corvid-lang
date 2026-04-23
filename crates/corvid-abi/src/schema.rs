@@ -60,6 +60,8 @@ pub struct AbiAgent {
     #[serde(default)]
     pub params: Vec<AbiParam>,
     pub return_type: TypeDescription,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub return_ownership: Option<AbiOwnership>,
     pub effects: AbiEffects,
     pub attributes: AbiAttributes,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -141,6 +143,39 @@ pub struct AbiParam {
     pub name: String,
     #[serde(rename = "type")]
     pub ty: TypeDescription,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ownership: Option<AbiOwnership>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AbiOwnershipMode {
+    Owned,
+    Borrowed,
+    Shared,
+    Static,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AbiDestructorKind {
+    Drop,
+    Release,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AbiDestructor {
+    pub kind: AbiDestructorKind,
+    pub symbol: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AbiOwnership {
+    pub mode: AbiOwnershipMode,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub lifetime: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub destructor: Option<AbiDestructor>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

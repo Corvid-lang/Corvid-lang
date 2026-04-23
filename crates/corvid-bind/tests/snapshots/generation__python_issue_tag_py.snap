@@ -62,6 +62,6 @@ def _issue_tag(client: Client, tag: str, approver: Approver) -> tuple[str, Obser
     free.restype = None
     payload = ctypes.string_at(value).decode('utf-8')
     free(value)
-    return payload, Observation(client.library, observation_handle.value)
+    return payload, Observation(client.library, observation_handle.value, 'corvid_observation_release')
 
 setattr(Client, 'issue_tag', _issue_tag)

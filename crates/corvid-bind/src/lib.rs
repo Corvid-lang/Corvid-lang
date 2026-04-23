@@ -4,7 +4,10 @@ use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
 use anyhow::{anyhow, bail, Context, Result};
-use corvid_abi::{hash_json_str, AbiAgent, CorvidAbi, ScalarTypeName, TypeDescription};
+use corvid_abi::{
+    hash_json_str, AbiAgent, AbiDestructor, AbiOwnership, AbiOwnershipMode, AbiParam, CorvidAbi,
+    ScalarTypeName, TypeDescription,
+};
 
 mod python_backend;
 mod rust_backend;
@@ -224,6 +227,69 @@ pub(crate) fn rust_public_type(ty: &TypeDescription) -> String {
         TypeDescription::Weak { weak } => {
             format!("Weak<{}>", rust_public_type(weak.inner.as_ref()))
         }
+    }
+}
+
+pub(crate) fn effective_param_ownership(param: &AbiParam) -> AbiOwnership {
+    param.ownership.clone().unwrap_or_else(|| match ffi_scalar_kind(&param.ty) {
+        Some(ScalarTypeName::String | ScalarTypeName::TraceId) => AbiOwnership {
+            mode: AbiOwnershipMode::Borrowed,
+            lifetime: Some("call".to_string()),
+            destructor: None,
+        },
+        _ => AbiOwnership {
+            mode: AbiOwnershipMode::Owned,
+            lifetime: None,
+            destructor: None,
+        },
+    })
+}
+
+pub(crate) fn effective_return_ownership(agent: &AbiAgent) -> AbiOwnership {
+    agent.return_ownership.clone().unwrap_or_else(|| match &agent.return_type {
+        TypeDescription::Grounded { .. } => AbiOwnership {
+            mode: AbiOwnershipMode::Owned,
+            lifetime: None,
+            destructor: Some(AbiDestructor {
+                kind: corvid_abi::AbiDestructorKind::Release,
+                symbol: "corvid_grounded_release".to_string(),
+            }),
+        },
+        TypeDescription::Scalar {
+            scalar: ScalarTypeName::String | ScalarTypeName::TraceId,
+        } => AbiOwnership {
+            mode: AbiOwnershipMode::Owned,
+            lifetime: None,
+            destructor: Some(AbiDestructor {
+                kind: corvid_abi::AbiDestructorKind::Drop,
+                symbol: "corvid_free_string".to_string(),
+            }),
+        },
+        _ => AbiOwnership {
+            mode: AbiOwnershipMode::Owned,
+            lifetime: None,
+            destructor: None,
+        },
+    })
+}
+
+pub(crate) fn rust_public_param_type(param: &AbiParam) -> String {
+    match (
+        ffi_scalar_kind(&param.ty),
+        effective_param_ownership(param).mode,
+        effective_param_ownership(param).lifetime,
+    ) {
+        (
+            Some(ScalarTypeName::String | ScalarTypeName::TraceId),
+            AbiOwnershipMode::Borrowed,
+            Some(lifetime),
+        ) if lifetime != "call" => format!("&'{lifetime} str"),
+        (
+            Some(ScalarTypeName::String | ScalarTypeName::TraceId),
+            AbiOwnershipMode::Borrowed,
+            _,
+        ) => "&str".to_string(),
+        _ => rust_public_type(&param.ty),
     }
 }
 

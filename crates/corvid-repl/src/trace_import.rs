@@ -129,6 +129,7 @@ pub fn build_import(mocks: &TraceMocks) -> TraceImportResult {
             name: Ident::new(name.clone(), sp),
             params,
             return_ty,
+            return_ownership: None,
             effect: corvid_ast::Effect::Safe,
             effect_row: EffectRow::default(),
             visibility: Visibility::Private,
@@ -176,6 +177,7 @@ pub fn build_import(mocks: &TraceMocks) -> TraceImportResult {
             name: Ident::new(name.clone(), sp),
             params,
             return_ty,
+            return_ownership: None,
             template: first.rendered.clone().unwrap_or_default(),
             effect_row: EffectRow::default(),
             cites_strictly: None,
@@ -234,6 +236,7 @@ fn infer_params(
             Param {
                 name: Ident::new(param_name, *sp),
                 ty,
+                ownership: None,
                 span: *sp,
             }
         })

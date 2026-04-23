@@ -131,7 +131,26 @@ impl TypeRef {
 pub struct Param {
     pub name: Ident,
     pub ty: TypeRef,
+    #[serde(default)]
+    pub ownership: Option<OwnershipAnnotation>,
     pub span: Span,
+}
+
+/// Ownership contract on an FFI-visible boundary type.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OwnershipAnnotation {
+    pub mode: OwnershipMode,
+    #[serde(default)]
+    pub lifetime: Option<String>,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum OwnershipMode {
+    Owned,
+    Borrowed,
+    Shared,
+    Static,
 }
 
 /// A field in a struct-like type declaration.

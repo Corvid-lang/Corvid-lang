@@ -4,7 +4,7 @@ use crate::effect::{BackpressurePolicy, Effect, EffectConstraint, EffectDecl, Ef
 use crate::expr::{BinaryOp, Expr};
 use crate::span::{Ident, Span};
 use crate::stmt::Block;
-use crate::ty::{Field, Param, TypeRef};
+use crate::ty::{Field, OwnershipAnnotation, Param, TypeRef};
 use serde::{Deserialize, Serialize};
 
 /// A full `.cor` source file.
@@ -209,6 +209,8 @@ pub struct ToolDecl {
     pub name: Ident,
     pub params: Vec<Param>,
     pub return_ty: TypeRef,
+    #[serde(default)]
+    pub return_ownership: Option<OwnershipAnnotation>,
     pub effect: Effect,
     /// Dimensional effect row: `uses transfer_money, audit_log`.
     #[serde(default)]
@@ -243,6 +245,8 @@ pub struct PromptDecl {
     pub name: Ident,
     pub params: Vec<Param>,
     pub return_ty: TypeRef,
+    #[serde(default)]
+    pub return_ownership: Option<OwnershipAnnotation>,
     pub template: String,
     /// Dimensional effect row: `uses llm_call, reads_context`.
     #[serde(default)]
@@ -414,6 +418,8 @@ pub struct AgentDecl {
     pub extern_abi: Option<ExternAbi>,
     pub params: Vec<Param>,
     pub return_ty: TypeRef,
+    #[serde(default)]
+    pub return_ownership: Option<OwnershipAnnotation>,
     pub body: Block,
     /// Declared effect row: `uses search_knowledge, transfer_money`.
     /// If empty, the typechecker infers the effect row from the body.

@@ -264,7 +264,11 @@ impl Client {
 
             match status {
                 CORVID_CALL_OK => {
-                    let observation = Observation::new(self.library.clone(), observation_handle);
+                    let observation = Observation::new(
+                        self.library.clone(),
+                        observation_handle,
+                        "corvid_observation_release",
+                    );
                     let payload = serde_json::from_str::<Ret>(
                         result_json.as_deref().unwrap_or("null"),
                     )
@@ -359,11 +363,12 @@ pub(crate) enum CallAttempt<T> {
 pub struct Observation {
     library: Arc<Library>,
     handle: u64,
+    release_symbol: &'static str,
 }
 
 impl Observation {
-    pub(crate) fn new(library: Arc<Library>, handle: u64) -> Self {
-        Self { library, handle }
+    pub(crate) fn new(library: Arc<Library>, handle: u64, release_symbol: &'static str) -> Self {
+        Self { library, handle, release_symbol }
     }
 
     pub fn handle(&self) -> u64 {
@@ -428,7 +433,7 @@ impl Drop for Observation {
         }
         unsafe {
             if let Ok(symbol) =
-                self.library.get::<unsafe extern "C" fn(u64)>(b"corvid_observation_release")
+                self.library.get::<unsafe extern "C" fn(u64)>(self.release_symbol.as_bytes())
             {
                 symbol(self.handle);
             }
@@ -442,14 +447,21 @@ pub struct Grounded<T> {
     payload: T,
     library: Arc<Library>,
     handle: u64,
+    release_symbol: &'static str,
 }
 
 impl<T> Grounded<T> {
-    pub(crate) fn new(payload: T, library: Arc<Library>, handle: u64) -> Self {
+    pub(crate) fn new(
+        payload: T,
+        library: Arc<Library>,
+        handle: u64,
+        release_symbol: &'static str,
+    ) -> Self {
         Self {
             payload,
             library,
             handle,
+            release_symbol,
         }
     }
 
@@ -469,7 +481,7 @@ impl<T> Drop for Grounded<T> {
         }
         unsafe {
             if let Ok(symbol) =
-                self.library.get::<unsafe extern "C" fn(u64)>(b"corvid_grounded_release")
+                self.library.get::<unsafe extern "C" fn(u64)>(self.release_symbol.as_bytes())
             {
                 symbol(self.handle);
             }
@@ -540,6 +552,7 @@ pub(crate) fn read_c_string_lossy(ptr: *const c_char) -> String {
 pub(crate) fn take_owned_c_string(
     library: &Arc<Library>,
     ptr: *const c_char,
+    free_symbol: &'static str,
 ) -> CorvidResult<String> {
     if ptr.is_null() {
         return Ok(String::new());
@@ -550,7 +563,7 @@ pub(crate) fn take_owned_c_string(
         .to_string();
     unsafe {
         let free: Symbol<unsafe extern "C" fn(*const c_char)> = library
-            .get(b"corvid_free_string")
+            .get(free_symbol.as_bytes())
             .map_err(|err| CorvidError::Load(err.to_string()))?;
         free(ptr);
     }

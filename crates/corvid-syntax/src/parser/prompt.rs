@@ -27,6 +27,7 @@ impl<'a> Parser<'a> {
         let params = self.parse_params()?;
         self.expect(TokKind::Arrow, "`->` before return type")?;
         let return_ty = self.parse_type_ref()?;
+        let return_ownership = self.parse_optional_ownership_annotation()?;
         let effect_row = self.parse_uses_clause()?;
         self.expect(TokKind::Colon, "`:` after prompt signature")?;
         self.expect_newline()?;
@@ -162,6 +163,7 @@ impl<'a> Parser<'a> {
             name: Ident::new(name, name_span),
             params,
             return_ty,
+            return_ownership,
             template,
             effect_row,
             cites_strictly: None,

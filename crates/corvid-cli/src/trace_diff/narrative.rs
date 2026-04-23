@@ -25,7 +25,10 @@
 use std::collections::HashSet;
 use std::str::FromStr;
 
-use corvid_abi::{AbiAgent, AbiApprovalContract, AbiProvenanceContract, CorvidAbi};
+use corvid_abi::{
+    AbiAgent, AbiApprovalContract, AbiOwnership, AbiOwnershipMode, AbiParam,
+    AbiProvenanceContract, CorvidAbi, ScalarTypeName, TypeDescription,
+};
 use serde::{Deserialize, Serialize};
 
 /// Which narrative path `corvid trace-diff` should take.
@@ -223,6 +226,8 @@ pub fn validate_narrative(
 ///     `agent.provenance.grounded_lost:<name>`
 ///   - `agent.provenance.dep_added:<name>:<dep>` /
 ///     `agent.provenance.dep_removed:<name>:<dep>`
+///   - `agent.extern.ownership_changed:<name>:ret:<from>-><to>`
+///   - `agent.extern.ownership_changed:<name>:arg[<idx>]:<from>-><to>`
 ///
 /// The keys stay stable between record emission here and the
 /// matching rendering in `reviewer.cor` by convention: any new
@@ -314,6 +319,7 @@ fn diff_agent_pair(name: &str, base: &AbiAgent, head: &AbiAgent, out: &mut Vec<D
 
     diff_approval(name, &base.approval_contract, &head.approval_contract, out);
     diff_provenance(name, &base.provenance, &head.provenance, out);
+    diff_ownership(name, base, head, out);
 }
 
 fn diff_approval(
@@ -432,6 +438,36 @@ fn diff_provenance(
     }
 }
 
+fn diff_ownership(name: &str, base: &AbiAgent, head: &AbiAgent, out: &mut Vec<DeltaRecord>) {
+    let base_return = ownership_label(&effective_return_ownership(base));
+    let head_return = ownership_label(&effective_return_ownership(head));
+    if base_return != head_return {
+        out.push(DeltaRecord {
+            key: format!(
+                "agent.extern.ownership_changed:{name}:ret:{base_return}->{head_return}"
+            ),
+            summary: format!(
+                "agent `{name}` return ownership changed from `{base_return}` to `{head_return}`"
+            ),
+        });
+    }
+
+    for (index, (base_param, head_param)) in base.params.iter().zip(head.params.iter()).enumerate() {
+        let base_label = ownership_label(&effective_param_ownership(base_param));
+        let head_label = ownership_label(&effective_param_ownership(head_param));
+        if base_label != head_label {
+            out.push(DeltaRecord {
+                key: format!(
+                    "agent.extern.ownership_changed:{name}:arg[{index}]:{base_label}->{head_label}"
+                ),
+                summary: format!(
+                    "agent `{name}` argument #{index} ownership changed from `{base_label}` to `{head_label}`"
+                ),
+            });
+        }
+    }
+}
+
 /// When an agent is new under head, surface its initial approval
 /// labels + grounded contract as explicit deltas too — otherwise
 /// the narrative could only cite `agent.added:*` and wouldn't be
@@ -462,6 +498,63 @@ fn emit_initial_contract(agent: &AbiAgent, out: &mut Vec<DeltaRecord>) {
                 "new agent `{name}` declares grounded dependency on `{dep}`"
             ),
         });
+    }
+}
+
+fn effective_param_ownership(param: &AbiParam) -> AbiOwnership {
+    param.ownership.clone().unwrap_or_else(|| match &param.ty {
+        TypeDescription::Scalar {
+            scalar: ScalarTypeName::String | ScalarTypeName::TraceId,
+        } => AbiOwnership {
+            mode: AbiOwnershipMode::Borrowed,
+            lifetime: Some("call".to_string()),
+            destructor: None,
+        },
+        _ => AbiOwnership {
+            mode: AbiOwnershipMode::Owned,
+            lifetime: None,
+            destructor: None,
+        },
+    })
+}
+
+fn effective_return_ownership(agent: &AbiAgent) -> AbiOwnership {
+    agent.return_ownership.clone().unwrap_or_else(|| match &agent.return_type {
+        TypeDescription::Grounded { .. } => AbiOwnership {
+            mode: AbiOwnershipMode::Owned,
+            lifetime: None,
+            destructor: Some(corvid_abi::AbiDestructor {
+                kind: corvid_abi::AbiDestructorKind::Release,
+                symbol: "corvid_grounded_release".to_string(),
+            }),
+        },
+        TypeDescription::Scalar {
+            scalar: ScalarTypeName::String | ScalarTypeName::TraceId,
+        } => AbiOwnership {
+            mode: AbiOwnershipMode::Owned,
+            lifetime: None,
+            destructor: Some(corvid_abi::AbiDestructor {
+                kind: corvid_abi::AbiDestructorKind::Drop,
+                symbol: "corvid_free_string".to_string(),
+            }),
+        },
+        _ => AbiOwnership {
+            mode: AbiOwnershipMode::Owned,
+            lifetime: None,
+            destructor: None,
+        },
+    })
+}
+
+fn ownership_label(ownership: &AbiOwnership) -> String {
+    match ownership.mode {
+        AbiOwnershipMode::Owned => "@owned".to_string(),
+        AbiOwnershipMode::Borrowed => match ownership.lifetime.as_deref() {
+            Some("call") | None => "@borrowed".to_string(),
+            Some(lifetime) => format!("@borrowed<'{lifetime}>"),
+        },
+        AbiOwnershipMode::Shared => "@shared".to_string(),
+        AbiOwnershipMode::Static => "@static".to_string(),
     }
 }
 

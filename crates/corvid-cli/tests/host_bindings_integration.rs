@@ -143,13 +143,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let library_path = std::env::args().nth(1).expect("usage: smoke <library>");
     let client = Client::load(&library_path)?;
 
-    let (classification, observation) = client.classify("I loved the support experience".to_string())?;
+    let (classification, observation) = client.classify("I loved the support experience")?;
     println!("classification={classification} exceeded={}", observation.exceeded_bound());
 
-    let (issued, _) = client.issue_tag("approved".to_string(), &AcceptApprover)?;
+    let (issued, _) = client.issue_tag("approved", &AcceptApprover)?;
     println!("issue_tag={issued}");
 
-    let (grounded, _) = client.grounded_tag("catalog-proof".to_string())?;
+    let (grounded, _) = client.grounded_tag("catalog-proof")?;
     let sources = grounded.provenance().sources()?;
     println!("grounded={} sources={}", grounded.payload(), sources.len());
 

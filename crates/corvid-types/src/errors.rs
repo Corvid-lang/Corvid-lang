@@ -340,6 +340,23 @@ pub enum TypeErrorKind {
         offender_type: String,
         position: String,
     },
+
+    /// The compiler cannot infer a sound ownership contract for an
+    /// extern-visible boundary slot without an explicit annotation.
+    AmbiguousExternOwnership {
+        agent: String,
+        position: String,
+    },
+
+    /// A user-declared ownership annotation disagrees with the
+    /// compiler's inference for the same extern-visible boundary slot.
+    ExternOwnershipMismatch {
+        agent: String,
+        position: String,
+        declared: String,
+        inferred: String,
+        reason: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -556,6 +573,22 @@ impl TypeErrorKind {
                     "extern \"c\" agent `{agent}` uses unsupported ABI type `{offender_type}` in {position}"
                 )
             }
+            Self::AmbiguousExternOwnership { agent, position } => {
+                format!(
+                    "extern \"c\" agent `{agent}` has ambiguous ownership in {position}; annotate it explicitly"
+                )
+            }
+            Self::ExternOwnershipMismatch {
+                agent,
+                position,
+                declared,
+                inferred,
+                reason,
+            } => {
+                format!(
+                    "extern \"c\" agent `{agent}` declares {declared} in {position}, but the compiler inferred {inferred}: {reason}"
+                )
+            }
         }
     }
 
@@ -740,6 +773,12 @@ impl TypeErrorKind {
             Self::NonScalarInExternC { .. } => Some(
                 "extern \"c\" currently accepts Int/Float/Bool/String parameters plus scalar, `Grounded<scalar>`, or `Nothing` returns; rich structured boundary types still wait for later Phase 22 FFI slices".into(),
             ),
+            Self::AmbiguousExternOwnership { .. } => Some(
+                "add an explicit ownership annotation such as `@owned`, `@borrowed`, `@shared`, or `@static` after the boundary type".into(),
+            ),
+            Self::ExternOwnershipMismatch { inferred, .. } => Some(format!(
+                "either change the annotation to `{inferred}` or change the implementation so the inferred ownership matches the declared contract"
+            )),
         }
     }
 }

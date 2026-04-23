@@ -380,6 +380,7 @@ impl<'a> Lexer<'a> {
             b'/' => (TokKind::Slash, 1),
             b'%' => (TokKind::Percent, 1),
             b'@' => (TokKind::At, 1),
+            b'\'' => (TokKind::Apostrophe, 1),
             b'$' => (TokKind::Dollar, 1),
             b'-' => {
                 if self.peek(1) == Some(b'>') {

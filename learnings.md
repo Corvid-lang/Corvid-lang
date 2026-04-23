@@ -2342,6 +2342,49 @@ when compile-time projection is impossible. Flattening is the easy move. The
 interesting move is to keep the language's meaning intact on the far side of
 the FFI.
 
+### Corvid makes FFI ownership compile-time-guaranteed instead of host-side convention
+
+`22-J-ownership-check` closes the biggest semantic gap left after `22-I`. The
+bindings already gave hosts RAII/context-managed wrappers for grounded values
+and observation handles, but the ownership contract behind those wrappers was
+still partly implicit: descriptor conventions, destructor naming patterns, and
+generator-side knowledge of which handle families needed cleanup.
+
+The important move in `22-J` is not "add ownership annotations." The important
+move is to make ownership a structured semantic dimension of the FFI surface.
+Extern signatures now carry ownership information through three layers at once:
+
+- the checker infers or validates the contract at compile time and refuses
+  ambiguous or unsound extern signatures
+- the ABI descriptor carries ownership as typed JSON, including destructor kind
+  and symbol when a host must release or drop something
+- the Rust and Python generators read that ownership contract directly and emit
+  the correct host-side lifetime or cleanup shape from the descriptor instead
+  of from naming conventions
+
+That changes the category. Most systems languages stop tracking ownership at
+their FFI boundary. Rust's borrow checker is strong inside Rust and then hands
+off to `extern "C"` with no semantic guarantee about who frees what on the far
+side. Corvid keeps the ownership algebra intact across the boundary: a borrowed
+string parameter becomes a borrowed host view, an owned grounded result becomes
+a wrapper that knows which release symbol to call, and loosening ownership in a
+public extern surface shows up as a receipt delta that policy can flag.
+
+The destructor symbol is the load-bearing detail. Without it, a supposedly
+typed ownership system still falls back to convention: guess `corvid_<type>_drop`,
+hope the naming pattern survives, and special-case each new handle family in the
+generator forever. Once the descriptor carries both the ownership mode and the
+actual destructor contract, the generator no longer has to know that grounded
+values or observations are special. They become ordinary ownership-projected
+descriptor entries.
+
+That is the real lesson from the slice: if a language claims semantic richness
+at its FFI boundary, it cannot stop at "safe if documented carefully." The
+compiler has to refuse unsound contracts, the descriptor has to encode lifetime
+and destruction semantics structurally, and the host bindings have to derive
+their cleanup behavior from that structure. Anything weaker is still
+convention, just with better comments.
+
 ## Contributing / feedback
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). The rules of the road are: design chat before code, per-scope commits at every boundary, dev-log entry for every session, no shortcuts. The `learnings.md` file you're reading gets updated when each user-visible feature ships.

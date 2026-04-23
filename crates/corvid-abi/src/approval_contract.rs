@@ -100,6 +100,7 @@ fn collect_contract_from_block(
                                         &crate::emit::resolve_typeref_to_type(&param.ty, resolved),
                                         resolved,
                                     ),
+                                    ownership: None,
                                 })
                                 .collect(),
                             cost_at_site: effects.cost.as_ref().map(|cost| cost.projected_usd),
@@ -117,6 +118,7 @@ fn collect_contract_from_block(
                                     ty: crate::schema::TypeDescription::Scalar {
                                         scalar: crate::schema::ScalarTypeName::String,
                                     },
+                                    ownership: None,
                                 })
                                 .collect(),
                             cost_at_site: None,

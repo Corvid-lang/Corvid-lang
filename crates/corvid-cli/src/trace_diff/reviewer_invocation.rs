@@ -19,7 +19,8 @@ use std::sync::Arc;
 
 use anyhow::{anyhow, Context, Result};
 use corvid_abi::{
-    AbiAgent, AbiApprovalContract, AbiApprovalLabel, AbiProvenanceContract, CorvidAbi,
+    AbiAgent, AbiApprovalContract, AbiApprovalLabel, AbiOwnership, AbiOwnershipMode, AbiParam,
+    AbiProvenanceContract, CorvidAbi, ScalarTypeName, TypeDescription,
 };
 use corvid_driver::{compile_to_ir, run_ir_with_runtime, Runtime};
 use corvid_runtime::{AnthropicAdapter, OpenAiAdapter, ProgrammaticApprover};
@@ -52,8 +53,16 @@ struct AgentSummary {
     trust_tier: String,
     is_dangerous: bool,
     is_replayable: bool,
+    param_ownerships: Vec<OwnershipSlotSummary>,
+    return_ownership: String,
     approval: ApprovalContractSummary,
     provenance: ProvenanceSummary,
+}
+
+#[derive(Serialize)]
+struct OwnershipSlotSummary {
+    position: String,
+    ownership: String,
 }
 
 #[derive(Serialize)]
@@ -100,6 +109,16 @@ fn digest_agent(agent: &AbiAgent) -> AgentSummary {
             .unwrap_or_else(|| "unspecified".to_string()),
         is_dangerous: agent.attributes.dangerous,
         is_replayable: agent.attributes.replayable,
+        param_ownerships: agent
+            .params
+            .iter()
+            .enumerate()
+            .map(|(index, param)| OwnershipSlotSummary {
+                position: index.to_string(),
+                ownership: ownership_label(&effective_param_ownership(param)),
+            })
+            .collect(),
+        return_ownership: ownership_label(&effective_return_ownership(agent)),
         approval: digest_approval(&agent.approval_contract),
         provenance: digest_provenance(&agent.provenance),
     }
@@ -130,6 +149,63 @@ fn digest_provenance(contract: &AbiProvenanceContract) -> ProvenanceSummary {
     ProvenanceSummary {
         returns_grounded: contract.returns_grounded,
         grounded_param_deps: contract.grounded_param_deps.clone(),
+    }
+}
+
+fn effective_param_ownership(param: &AbiParam) -> AbiOwnership {
+    param.ownership.clone().unwrap_or_else(|| match &param.ty {
+        TypeDescription::Scalar {
+            scalar: ScalarTypeName::String | ScalarTypeName::TraceId,
+        } => AbiOwnership {
+            mode: AbiOwnershipMode::Borrowed,
+            lifetime: Some("call".to_string()),
+            destructor: None,
+        },
+        _ => AbiOwnership {
+            mode: AbiOwnershipMode::Owned,
+            lifetime: None,
+            destructor: None,
+        },
+    })
+}
+
+fn effective_return_ownership(agent: &AbiAgent) -> AbiOwnership {
+    agent.return_ownership.clone().unwrap_or_else(|| match &agent.return_type {
+        TypeDescription::Grounded { .. } => AbiOwnership {
+            mode: AbiOwnershipMode::Owned,
+            lifetime: None,
+            destructor: Some(corvid_abi::AbiDestructor {
+                kind: corvid_abi::AbiDestructorKind::Release,
+                symbol: "corvid_grounded_release".to_string(),
+            }),
+        },
+        TypeDescription::Scalar {
+            scalar: ScalarTypeName::String | ScalarTypeName::TraceId,
+        } => AbiOwnership {
+            mode: AbiOwnershipMode::Owned,
+            lifetime: None,
+            destructor: Some(corvid_abi::AbiDestructor {
+                kind: corvid_abi::AbiDestructorKind::Drop,
+                symbol: "corvid_free_string".to_string(),
+            }),
+        },
+        _ => AbiOwnership {
+            mode: AbiOwnershipMode::Owned,
+            lifetime: None,
+            destructor: None,
+        },
+    })
+}
+
+fn ownership_label(ownership: &AbiOwnership) -> String {
+    match ownership.mode {
+        AbiOwnershipMode::Owned => "@owned".to_string(),
+        AbiOwnershipMode::Borrowed => match ownership.lifetime.as_deref() {
+            Some("call") | None => "@borrowed".to_string(),
+            Some(lifetime) => format!("@borrowed<'{lifetime}>"),
+        },
+        AbiOwnershipMode::Shared => "@shared".to_string(),
+        AbiOwnershipMode::Static => "@static".to_string(),
     }
 }
 
