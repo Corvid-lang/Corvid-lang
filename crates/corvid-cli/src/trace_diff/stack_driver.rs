@@ -27,16 +27,20 @@
 //! see exactly which later commit of the slice unlocks what
 //! they're asking for.
 
-use std::path::Path;
+use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use anyhow::{anyhow, Context, Result};
 use corvid_driver::{compile_to_abi_with_config, load_corvid_config_for};
+use corvid_runtime::Verdict;
 use corvid_types::config::CorvidConfig;
 use sha2::{Digest, Sha256};
 
+use super::impact::{collect_trace_files, run_harness_against_source};
 use super::narrative::{compute_diff_summary, DiffSummary};
 use super::receipt::OutputFormat;
+use super::stack_attribution::{compute_stack_attributions, WaypointData};
 use super::stacked::{
     self, AnomalySeverity, SignatureStatus, StackInput,
 };
@@ -282,6 +286,133 @@ fn git_show(rev: &str, path: &Path) -> Result<String> {
         .with_context(|| format!("`git show {spec}` returned non-UTF-8 content"))
 }
 
+/// Run the 21-inv-G harness against every waypoint in the stack
+/// (base + each commit), producing per-trace `Attribution` records
+/// with commit-level `responsible_commit` and the full delta set
+/// of that commit as `candidate_deltas`. Delta-level narrowing
+/// (isolation replay + ddmin) refines `candidate_deltas` in a
+/// later commit of the slice.
+///
+/// Naive per-waypoint replay — no algebra-directed skipping, no
+/// parallelism, no memoization. Step 4/N of the slice lifts this
+/// to the optimized replay engine; for now the goal is correct
+/// attribution on realistic stack sizes (3–10 commits, <100 traces).
+#[allow(clippy::too_many_arguments)]
+fn compute_attributions_for_stack(
+    trace_dir: &Path,
+    source_path_hint: &Path,
+    source_path_str: &str,
+    base_sha: &str,
+    commits: &[String],
+    commit_delta_sets: &[Vec<String>],
+    config: Option<&CorvidConfig>,
+) -> Result<Vec<super::stack_attribution::Attribution>> {
+    let trace_paths = collect_trace_files(trace_dir)?;
+    if trace_paths.is_empty() {
+        // No traces → no attributions. Not an error; the user may
+        // be running `--stack --traces <dir>` defensively in CI
+        // without always having a populated corpus.
+        return Ok(Vec::new());
+    }
+
+    // Load trace bytes once for content-addressed `trace_id`.
+    let mut trace_files: Vec<(PathBuf, Vec<u8>)> = Vec::with_capacity(trace_paths.len());
+    for path in &trace_paths {
+        let bytes = std::fs::read(path)
+            .with_context(|| format!("reading trace `{}`", path.display()))?;
+        trace_files.push((path.clone(), bytes));
+    }
+
+    // Scratch directory for each waypoint's source: the harness
+    // compiles against a real filesystem path (it looks for
+    // `corvid.toml` via `load_corvid_config_for`), so each
+    // waypoint needs its own file.
+    let scratch = tempfile::tempdir()
+        .context("create scratch dir for per-waypoint replay sources")?;
+    let stem = source_path_hint
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("source");
+
+    let mut waypoints: Vec<WaypointData> = Vec::with_capacity(commits.len() + 1);
+
+    // Base waypoint.
+    let base_source = git_show(base_sha, source_path_hint).with_context(|| {
+        format!(
+            "fetching base `{}` at `{base_sha}`",
+            source_path_hint.display()
+        )
+    })?;
+    let base_scratch_path = scratch.path().join(format!("{stem}.waypoint_0.cor"));
+    std::fs::write(&base_scratch_path, &base_source)
+        .context("write base source for waypoint replay")?;
+    let _ = config; // config passed through for future compile-time use
+    let _ = source_path_str;
+    let base_verdicts = run_harness_against_source(&trace_paths, &base_scratch_path)
+        .with_context(|| format!("harness against base `{base_sha}`"))?;
+    waypoints.push(WaypointData {
+        commit_sha: base_sha.to_string(),
+        verdict_tags: verdict_map_to_tags(base_verdicts),
+    });
+
+    // Each commit waypoint.
+    for (i, commit_sha) in commits.iter().enumerate() {
+        let commit_source = git_show(commit_sha, source_path_hint).with_context(|| {
+            format!(
+                "fetching commit `{}` at `{commit_sha}`",
+                source_path_hint.display()
+            )
+        })?;
+        let commit_scratch_path = scratch
+            .path()
+            .join(format!("{stem}.waypoint_{}.cor", i + 1));
+        std::fs::write(&commit_scratch_path, &commit_source)
+            .context("write commit source for waypoint replay")?;
+        let commit_verdicts =
+            run_harness_against_source(&trace_paths, &commit_scratch_path)
+                .with_context(|| format!("harness against commit `{commit_sha}`"))?;
+        waypoints.push(WaypointData {
+            commit_sha: commit_sha.clone(),
+            verdict_tags: verdict_map_to_tags(commit_verdicts),
+        });
+    }
+
+    Ok(compute_stack_attributions(
+        &trace_files,
+        &waypoints,
+        commit_delta_sets,
+    ))
+}
+
+/// Map harness verdicts to the string tags the attribution algebra
+/// compares. Kept in the driver module because it's the only place
+/// that bridges `corvid_runtime::Verdict` into the tag vocabulary
+/// `stack_attribution` defines.
+fn verdict_map_to_tags(
+    verdicts: BTreeMap<PathBuf, Verdict>,
+) -> BTreeMap<PathBuf, String> {
+    verdicts
+        .into_iter()
+        .map(|(path, verdict)| {
+            let tag = match verdict {
+                Verdict::Passed => "passed",
+                Verdict::Diverged => "diverged",
+                // `Flaky`, `Promoted`, and `Error` shouldn't reach
+                // trace-diff's plain-replay path — they're
+                // promote-mode / record-current / infra-error
+                // signals. Map them to distinct tags so the
+                // algebra surfaces them as divergences from
+                // `passed`/`diverged` rather than silently
+                // collapsing to one of the two.
+                Verdict::Flaky => "flaky",
+                Verdict::Promoted => "promoted",
+                Verdict::Error => "errored",
+            };
+            (path, tag.to_string())
+        })
+        .collect()
+}
+
 /// Top-level stack-mode entry point. Called from `run_trace_diff`
 /// when `--stack` is present; emits the composed `StackReceipt`
 /// as canonical JSON on stdout.
@@ -289,14 +420,6 @@ pub(super) fn run_trace_diff_stack(
     spec: &StackSpec,
     args: &TraceDiffArgs<'_>,
 ) -> Result<u8> {
-    // Step 2/N deliberately narrow surface. Each restriction is a
-    // typed error so users see exactly which later commit unlocks
-    // the feature they asked for.
-    if args.trace_dir.is_some() {
-        return Err(anyhow!(
-            "`--stack` with `--traces` is not yet implemented (replay engine ships in a later commit of 21-inv-H-5-stacked)"
-        ));
-    }
     let env_signing_key = std::env::var_os("CORVID_SIGNING_KEY").is_some();
     if args.sign_key_path.is_some() || env_signing_key {
         return Err(anyhow!(
@@ -341,13 +464,42 @@ pub(super) fn run_trace_diff_stack(
         StackSpec::Explicit(shas) => shas.join(","),
     };
 
-    let receipt = stacked::compose_stack(
+    // Snapshot the per-commit delta keys before `inputs` is moved
+    // into `compose_stack`. Attribution needs them aligned to
+    // `commits[..]` (not including base) so the algebra can map a
+    // `diverged_at: commits[i]` back to the delta set that shipped
+    // in that commit.
+    let commit_delta_sets: Vec<Vec<String>> = inputs
+        .iter()
+        .map(|input| {
+            input
+                .deltas
+                .iter()
+                .map(|d| d.key.clone())
+                .collect()
+        })
+        .collect();
+
+    let mut receipt = stacked::compose_stack(
         &base_sha,
         &head_sha,
         &source_path_str,
         &range_spec_str,
         inputs,
     );
+
+    if let Some(trace_dir) = args.trace_dir {
+        receipt.attributions = compute_attributions_for_stack(
+            trace_dir,
+            args.source_path,
+            &source_path_str,
+            &base_sha,
+            &commits,
+            &commit_delta_sets,
+            config.as_ref(),
+        )
+        .context("counterfactual replay across stack waypoints failed")?;
+    }
 
     let json = serde_json::to_string_pretty(&receipt)
         .expect("StackReceipt is trivially serializable");

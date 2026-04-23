@@ -118,7 +118,7 @@ pub(super) fn compute_trace_impact(
 /// shape the recorder writes (siblings under one dir). Fails cleanly
 /// if `trace_dir` is missing or not a directory. Lexicographic sort
 /// so receipts are byte-stable across reruns on the same OS.
-fn collect_trace_files(trace_dir: &Path) -> Result<Vec<PathBuf>> {
+pub(super) fn collect_trace_files(trace_dir: &Path) -> Result<Vec<PathBuf>> {
     if !trace_dir.exists() {
         anyhow::bail!("trace directory `{}` does not exist", trace_dir.display());
     }
@@ -143,7 +143,7 @@ fn collect_trace_files(trace_dir: &Path) -> Result<Vec<PathBuf>> {
 /// replay mode. Returns a per-trace verdict map keyed by path so the
 /// caller can zip base-run and head-run results without caring about
 /// ordering.
-fn run_harness_against_source(
+pub(super) fn run_harness_against_source(
     trace_paths: &[PathBuf],
     source_path: &Path,
 ) -> Result<std::collections::BTreeMap<PathBuf, Verdict>> {

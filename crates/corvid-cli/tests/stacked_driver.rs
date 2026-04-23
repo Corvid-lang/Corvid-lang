@@ -348,6 +348,84 @@ fn stacked_explicit_list_spec_uses_provided_shas() {
 }
 
 #[test]
+fn stacked_with_empty_traces_dir_lifts_the_step2_ban_and_emits_no_attributions() {
+    // Step 2/N blocked `--stack --traces <dir>` with a typed error.
+    // Step 3b/N lifts that ban; an empty traces directory must now
+    // produce a clean exit with no attribution records (the receipt
+    // is still a valid algebra-only StackReceipt).
+    let (repo_tmp, shas) = setup_stack(&[BASE_SOURCE, ADD_FOO_SOURCE]);
+    let repo = repo_tmp.path();
+    let traces = tempfile::tempdir().unwrap();
+
+    let output = Command::new(corvid_bin())
+        .args([
+            "trace-diff",
+            &shas[0],
+            &shas[1],
+            "agent.cor",
+            "--narrative=off",
+            "--format=json",
+            "--stack",
+            "--traces",
+            traces.path().to_str().unwrap(),
+        ])
+        .current_dir(repo)
+        .output()
+        .expect("run corvid trace-diff --stack --traces <empty>");
+
+    assert!(
+        output.status.success(),
+        "empty traces dir must not error; exit={:?} stderr={}",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stderr),
+    );
+
+    let parsed: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    // Algebra-only receipt shape preserved; no `attributions` key
+    // because the vector is empty (skip_serializing_if kicks in).
+    assert!(
+        parsed.get("attributions").is_none()
+            || parsed["attributions"].as_array().map(|a| a.is_empty()).unwrap_or(false),
+        "empty traces corpus must produce no attributions; got: {}",
+        serde_json::to_string_pretty(&parsed).unwrap()
+    );
+}
+
+#[test]
+fn stacked_with_missing_traces_dir_errors_cleanly() {
+    // `--traces <missing>` must surface a structured error (not a
+    // panic, not a silent no-op).
+    let (repo_tmp, shas) = setup_stack(&[BASE_SOURCE, ADD_FOO_SOURCE]);
+    let repo = repo_tmp.path();
+
+    let output = Command::new(corvid_bin())
+        .args([
+            "trace-diff",
+            &shas[0],
+            &shas[1],
+            "agent.cor",
+            "--narrative=off",
+            "--format=json",
+            "--stack",
+            "--traces",
+            "/nonexistent/path/that/does/not/exist",
+        ])
+        .current_dir(repo)
+        .output()
+        .expect("run corvid trace-diff --stack --traces <missing>");
+
+    assert!(
+        !output.status.success(),
+        "missing traces dir must be an error"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("does not exist") || stderr.contains("nonexistent"),
+        "error must name the missing-dir cause; got: {stderr}"
+    );
+}
+
+#[test]
 fn stacked_json_is_byte_stable_across_runs() {
     // Same inputs → byte-identical JSON. Regression guard so
     // downstream consumers (cache, renderers) can trust stability.
