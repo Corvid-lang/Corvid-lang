@@ -26,6 +26,7 @@ serde_json = { workspace = true }
 tempfile = { workspace = true }
 time = { version = "0.3", features = ["parsing", "formatting"] }
 tokio = { workspace = true, features = ["rt", "macros"] }
+rayon = { workspace = true }
 libloading = "0.8"
 sha2 = "0.10"
 tar = "0.4"

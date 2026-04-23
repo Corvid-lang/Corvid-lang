@@ -51,6 +51,9 @@ time = { version = "0.3", features = ["formatting", "parsing", "serde"] }
 # async
 tokio = { version = "1", features = ["full"] }
 
+# parallelism
+rayon = "1"
+
 # CLI
 clap = { version = "4", features = ["derive"] }
 anyhow = "1"
