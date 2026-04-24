@@ -58,6 +58,8 @@ pub fn render_all_pretty(
 fn detect_error_code(msg: &str) -> &'static str {
     if msg.contains("dangerous tool") && msg.contains("without a prior") {
         "E0101"
+    } else if msg.contains("ungrounded return") {
+        "E0209"
     } else if msg.contains("wrong number of arguments") {
         "E0201"
     } else if msg.contains("no field named") {
@@ -92,6 +94,10 @@ fn detect_error_code(msg: &str) -> &'static str {
         "E0053"
     } else if msg.contains("block is empty") {
         "E0054"
+    } else if msg.contains("effect constraint violated") && msg.contains("budget") {
+        "E0250"
+    } else if msg.contains("cost analysis warning") {
+        "W0251"
     } else {
         "E0000"
     }
@@ -115,6 +121,12 @@ fn label_for(msg: &str) -> String {
     // phrasings that complement the top headline.
     if msg.contains("dangerous tool") {
         "this call needs prior approval".into()
+    } else if msg.contains("ungrounded return") {
+        "return value lacks a proven grounded source".into()
+    } else if msg.contains("effect constraint violated") && msg.contains("budget") {
+        "static worst-case cost exceeds the declared budget".into()
+    } else if msg.contains("cost analysis warning") {
+        "static cost bound could not be proven".into()
     } else if msg.contains("undefined name") {
         "not declared in this scope".into()
     } else if msg.contains("duplicate declaration") {
@@ -133,5 +145,37 @@ fn label_for(msg: &str) -> String {
         "wrong type here".into()
     } else {
         msg.to_string()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{detect_error_code, label_for};
+
+    #[test]
+    fn ungrounded_return_has_stable_code_and_label() {
+        let msg = "ungrounded return in agent `answer`: no retrieval source feeds into the return value";
+        assert_eq!(detect_error_code(msg), "E0209");
+        assert_eq!(
+            label_for(msg),
+            "return value lacks a proven grounded source"
+        );
+    }
+
+    #[test]
+    fn budget_violation_has_stable_code_and_label() {
+        let msg = "effect constraint violated in agent `planner`: cost: $1.031 > $1.00 budget (path: search -> generate_plan)";
+        assert_eq!(detect_error_code(msg), "E0250");
+        assert_eq!(
+            label_for(msg),
+            "static worst-case cost exceeds the declared budget"
+        );
+    }
+
+    #[test]
+    fn unbounded_cost_warning_has_stable_code_and_label() {
+        let msg = "cost analysis warning in agent `planner`: static iteration count unknown";
+        assert_eq!(detect_error_code(msg), "W0251");
+        assert_eq!(label_for(msg), "static cost bound could not be proven");
     }
 }

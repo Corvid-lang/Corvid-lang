@@ -520,7 +520,7 @@ The invention: groundedness is not an annotation — it's a compile-time provena
 
 - [x] `Grounded<T>` as a compiler-known stdlib type (like `Result`, `Option`). `Type::Grounded(Box<Type>)`, resolver built-in, checker generics, IR lowering, ABI type description, VM value support, and native/host binding surfaces are implemented.
 - [x] Provenance analyzer in the typechecker: walks each agent's data flow graph to determine which values inherit groundedness from tools with `data: grounded` in their effect declaration. If a value's provenance chain includes at least one grounded source, the value is provably grounded.
-- [ ] Stable diagnostic code for ungrounded returns. The checker already emits typed `UngroundedReturn` with the missing-provenance message; the pretty renderer still needs a dedicated stable code instead of the older string-based fallback.
+- [x] Stable diagnostic code for ungrounded returns. The checker emits typed `UngroundedReturn`; the pretty renderer maps it to `E0209` with a provenance-specific source label.
 - [x] Provenance flows compositionally across agent boundaries: if agent B calls a grounded tool and agent A calls B, A's return inherits B's groundedness.
 - [ ] `cites ctx strictly` runtime annotation: compile-time proves groundedness exists; runtime verifies the LLM's cited passages actually appear in the context. Emits citation-checking code in the interpreter + native codegen.
 - [ ] `.unwrap_discarding_sources()` method on `Grounded<T>` for when the caller consciously drops provenance.
@@ -537,7 +537,7 @@ Cost is a dimension in the effect system, not a standalone annotation. `@budget(
 
 - [x] Each tool/prompt carries `cost: $X.XX` in its effect declaration.
 - [x] Compile-time worst-case cost analysis sums the cost dimension over control-flow paths using the composition algebra, including multi-dimensional cost/tokens/latency estimates and `:cost` tree rendering.
-- [ ] Stable diagnostic codes for budget diagnostics. The checker already emits budget `EffectConstraintViolation` errors and `UnboundedCostAnalysis` warnings; the pretty renderer still needs explicit `E0250` / `W0251` codes instead of string fallback.
+- [x] Stable diagnostic codes for budget diagnostics. The checker emits budget `EffectConstraintViolation` errors and `UnboundedCostAnalysis` warnings; the pretty renderer maps them to `E0250` / `W0251`.
 - [ ] Also ships the `@wrapping` annotation for opt-out overflow checks deferred from Phase 12.
 
 #### Slice 20e — Confidence dimension (~2 weeks)
