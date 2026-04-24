@@ -1232,6 +1232,7 @@ Users register local models (Ollama, vLLM, llama.cpp) with declared capabilities
 - [ ] lang-cor-imports-basic-calls   **Owner preference: Dev B.** Qualified function calls: `p.apply_policy_default(r)`. Separate slice because it spans parser (or checker-side `FieldAccess` recognition of alias targets) + resolver + checker + IR lowering + codegen/interpreter runtime dispatch. Needed end-to-end for `21-inv-H-5-custom-policy` to compile + run. Biggest of the remaining pieces; may split further during implementation.
 - [ ] lang-cor-imports-use     Selective name lift: `import "./path" use Name, Name as Alias` — explicitly-listed names into current scope, no wildcard merge, no silent shadowing. Rename-on-import via `as Alias` for conflicts. Ships on top of `-basic`.
 - [ ] lang-cor-imports-requires Effect-typed imports — the extraordinary differentiator. `import "./path" requires @deterministic as p` asserts the imported module's symbol table type-checks under the given effect constraints at import time; a module calling an LLM cannot be imported into a `@deterministic` caller. No other language has module-boundary effect checking. Prevents "library silently broke our invariants" bugs; composes cleanly with Corvid's existing effect algebra.
+- [ ] lang-cor-imports-semantic-summaries Imported modules expose effect, approval, provenance, budget, replayability, and exported-agent summaries to the checker and CLI. Imports become semantic trust boundaries, not just file inclusion.
 - [ ] lang-cor-imports         ROLL-UP — closes when `-basic` + `-use` + `-requires` all land. (This is the top-level entry the later slices roll into; `lang-pub-toplevel` shipped independently as its own preceding slice because it applies even without imports.)
 - [ ] lang-cor-imports-signed  Hash-pinned imports: `import "./path" hash:sha256:abc123... as p`. If the imported file's content drifts, compilation fails. Supply-chain integrity at the language level — Corvid sidesteps the npm/PyPI class of attacks by making content hashes first-class in the import syntax. Pairs with `21-inv-H-5-signed` so a signed receipt's policy hash chain extends through the import graph.
 - [ ] lang-cor-imports-remote  Remote imports: `import "https://.../policy.cor" hash:sha256:... as p`. HTTP/git-ref-resolved imports with mandatory hash pinning (no unhashed remote imports — that's the attack surface we refuse to ship). Enables federated policy baselines and cross-repo governance without a full package manager. Depends on `lang-cor-imports-signed`.
@@ -1303,8 +1304,9 @@ The determinism-source catalog and the language's treatment of non-reproducible 
 **Scope:**
 - New `corvid-codegen-wasm` crate using `cranelift-wasm` (same Cranelift you've already shipped, different output target).
 - `corvid build --target=wasm` emits `.wasm` + an ES module loader + TypeScript types.
-- Runtime: the wasm module imports host functions for LLM calls + tool dispatch + approval UI + replay recording (host provides them — same pattern as JavaScript environments that delegate I/O).
+- Runtime: the wasm module imports typed host capabilities for LLM calls + tool dispatch + approval UI + replay recording. Each host import carries the same effect/provenance/budget contract as the native runtime boundary.
 - **Replay in WASM**: host functions that record tool + prompt + approve calls write to a JS-side trace store compatible with Phase 21's format. `corvid replay <trace>` on a WASM module runs via the same host-function contract, substituting recorded responses. Shared recording format means a trace captured from native can be replayed under WASM and vice versa — a property worth preserving from the start.
+- Browser and edge approval calls produce scoped approval tokens in the trace, so user-mediated actions remain auditable across deployment targets.
 - wasmtime / wasmer harness tests running the same IR-level programs the native parity harness runs.
 - Browser smoke test: a small Corvid program compiled to wasm and loaded in a web page.
 
@@ -1324,22 +1326,25 @@ The determinism-source catalog and the language's treatment of non-reproducible 
 - `corvid-lsp` crate implementing the Language Server Protocol. Backend-agnostic (same LSP serves native + interpreter + wasm users).
 - VS Code extension as the reference client.
 - Features: diagnostics (live), hover with inferred types, completion, go-to-def, find-references, rename, inline-documentation.
-- Effect rows shown in hover. `@budget($)` overruns shown as squigglies with the worst-case cost.
+- AI-native behavior visibility: effect rows, budget/cost trees, groundedness flow, approval boundaries, model routes, replayability, and import trust constraints shown inline where the programmer is making the decision.
+- `@budget($)` overruns, ungrounded returns, non-replayable calls, unsafe imports, and approval-boundary violations shown as live diagnostics with the same error codes as the compiler.
 - Debugging attach point wired even if debugger UI is post-v1.0 — protocol contract stable.
 
 **Non-scope:** Other editors (vim / emacs / JetBrains) — users can use the LSP via any LSP-compatible client, but official extensions are post-v1.0.
 
 ### Phase 25 — Package manager (~6–8 weeks)
 
-**Goal.** Users can share Corvid code. Table stakes for any language anyone takes seriously.
+**Goal.** Users can share Corvid code and AI capabilities with guarantees. Table stakes for any language anyone takes seriously, made Corvid-native by distributing effect, provenance, approval, budget, and replay contracts alongside source.
 
 **Hard dep:** nothing internal. Major external work: registry hosting.
 
 **Scope:**
 - `corvid add <pkg>`, `corvid remove`, `corvid update` CLI.
-- `Corvid.lock` lockfile with exact resolved versions + content hashes.
-- Registry service: stateless HTTP API + CDN for package tarballs. Hosting at `registry.corvid.dev`.
+- `Corvid.lock` lockfile with exact resolved versions, content hashes, semantic summaries, and signed publish metadata.
+- Registry service: stateless HTTP API + CDN for source package tarballs. Hosting at `registry.corvid.dev`.
 - SemVer-based resolution with conflict detection.
+- Effect-aware resolution: `corvid add` can warn or fail when a package exceeds a project policy for trust, cost, data, replayability, approvals, or grounded outputs.
+- Package pages and CLI metadata expose exported agents/tools/prompts, effect profile, approval boundaries, provenance guarantees, and replay guarantees.
 - `corvid.toml` `[dependencies]` section wired through the driver.
 
 **Non-scope:** Private registries (post-v1.0). Binary package distribution (post-v1.0 — all v1.0 packages are source).
@@ -1353,9 +1358,11 @@ The determinism-source catalog and the language's treatment of non-reproducible 
 
 **Scope:**
 - `test name: body` declaration. Discovered automatically; run by `corvid test`.
-- `mock tool_name: body` overrides a tool implementation within a test's scope.
+- `mock tool_name: body` overrides a tool implementation within a test's scope, while preserving or explicitly declaring the mocked effect profile.
 - `fixture name: body` for reusable test data; resolved by `corvid test` at run time.
 - Snapshot testing primitive — `assert_snapshot expr` writes the first run's value to a file, compares on subsequent runs.
+- AI-native assertions over traces, approvals, costs, provenance, grounding, and replay behavior. Ordinary tests verify values; Corvid tests can also verify that the right process happened.
+- Trace fixtures: production traces from Phase 21 can be used as deterministic test inputs and regression cases.
 - Interop with Phase 20's `eval ... assert ...` syntax (evals are tests, tests aren't necessarily evals — eval is statistical assertions over LLM behaviour).
 
 ### Phase 27 — Eval tooling CLI (~3 weeks)
@@ -1369,7 +1376,9 @@ The determinism-source catalog and the language's treatment of non-reproducible 
 - `corvid eval <file>` runs all `eval` blocks; produces terminal report + HTML report.
 - Regression detection against prior eval results (stored under `target/eval/`).
 - CI exit-code contract: non-zero if any `assert` fails or regression threshold crossed.
+- Trace-aware eval reporting: value pass rates, process assertions, approval assertions, groundedness, cost, latency, model route, and replay compatibility in one report.
 - Prompt-diff report: when a prompt body changed between runs, show before/after + delta in grounding / cost / assert pass-rates.
+- Model-swap eval mode uses Phase 21 replay and Phase 20 model metadata to compare provider/model choices without spending on unchanged tool paths.
 
 **v0.8 cuts here.** Full developer workflow: write in LSP, share via package manager, test + eval in CI.
 
@@ -1385,6 +1394,8 @@ The determinism-source catalog and the language's treatment of non-reproducible 
 - `ask(prompt, Type)` — structured input from the human. Returns `Type`. Ties into the approval runtime.
 - `choose(options: [T]) -> T` — pick one. UI presents options; user selects.
 - Rich `approve` UI: show context (why approval requested), diff preview (what will change), arguments inspection.
+- Scoped, replay-verifiable approval tokens: the trace records what the human approved, for which label, arguments, and time window.
+- Human-boundary effects: `ask`, `choose`, and `approve` compose into the same effect algebra as tools and prompts, so human interaction is visible to the compiler and host descriptors.
 - CLI + web-UI implementations; approval tokens same regardless of UI.
 
 ### Phase 29 — Memory primitives (~4–5 weeks)
@@ -1398,6 +1409,8 @@ The determinism-source catalog and the language's treatment of non-reproducible 
 - `memory { ... }` block declares long-lived state (survives process restarts).
 - Both backed by SQLite (native) and IndexedDB (wasm).
 - Effect-tagged: `reads_session` / `writes_session` / `reads_memory` / `writes_memory`. Integrate with Phase 20's effect rows.
+- Provenance-aware memory: stored values may carry `Grounded<T>` lineage, and retrieval from memory can preserve or require provenance.
+- Policy hooks for privacy, retention, and approval-required writes, so agent memory is governed state rather than an untyped vector store.
 
 ### Phase 30 — Python FFI via PyO3 (~5–6 weeks)
 
@@ -1411,6 +1424,7 @@ The determinism-source catalog and the language's treatment of non-reproducible 
 - `import python "requests" as requests effects: network` — untagged imports rejected by the effect checker. `effects: unsafe` is the opt-in escape hatch and is flagged for review.
 - Error marshalling: Python exceptions become Corvid `Result::Err` with preserved traceback.
 - Type marshalling: Python dicts ↔ Corvid structs (when schema known), lists ↔ lists, scalars ↔ scalars.
+- Python calls appear in traces, audit output, and effect summaries, so the Python ecosystem does not become an invisible safety hole inside AI workflows.
 - Interpreter tier gets the same FFI surface so both tiers behave identically.
 
 ### Phase 31 — Multi-provider LLM adapters (~2 weeks)
@@ -1422,7 +1436,9 @@ The determinism-source catalog and the language's treatment of non-reproducible 
 **Scope:**
 - `GoogleAdapter` in `corvid-runtime`. API compatibility with existing AnthropicAdapter + OpenAiAdapter surface.
 - `OllamaAdapter` for local-first Corvid.
-- Provider selection via `CORVID_MODEL` env var (existing convention).
+- Provider/model metadata includes cost, latency, privacy tier, jurisdiction, structured-output support, context window, and capability tags.
+- Provider selection via `CORVID_MODEL` env var remains supported, but compiler/runtime model routing can use declared model capabilities from Phase 20h.
+- Eval data can compare providers and feed routing reports, so model choice becomes measurable infrastructure rather than string configuration.
 
 ### Phase 32 — Standard library (~8 weeks)
 
@@ -1432,9 +1448,10 @@ The determinism-source catalog and the language's treatment of non-reproducible 
 
 **Scope:**
 - `std.rag` runtime pieces: sqlite-vec, document loaders (pdf / md / html), chunking, embedder trait with reference OpenAI + Ollama impls. Pairs with Phase 20's grounding-contract language half.
-- `std.http` — typed HTTP client with effect tags.
-- `std.io` — structured file I/O, streaming, path manipulation.
-- `std.agent` — common patterns: classification, extraction, summarization, ranking.
+- `std.rag` APIs return `Grounded<T>` by construction where retrieval provenance exists.
+- `std.http` — typed HTTP client with effect tags, retry semantics, timeout/budget accounting, and replay hooks where responses are recorded.
+- `std.io` — structured file I/O, streaming, path manipulation, and explicit filesystem effects.
+- `std.agent` — common AI patterns: classification, extraction, summarization, ranking, adjudication, routing, and grounded answer generation.
 - Everything in `std.*` effect-tagged so users get the moat's benefits from day one.
 
 **v0.9 cuts here.** Language feature-complete: HITL, memory, Python FFI, multi-provider LLMs, stdlib. Only polish remaining.
@@ -1453,6 +1470,9 @@ The determinism-source catalog and the language's treatment of non-reproducible 
 - Installer: `curl -fsSL corvid.dev/install.sh | sh` on Unix, PowerShell equivalent on Windows. Corresponding `cargo install` flow.
 - Website: landing page, live playground (runs the wasm target from Phase 23), docs site, blog, benchmarks page.
 - Documentation rewrite: reference, tutorial, cookbook, migration-from-Python guide.
+- Claim audit: every launch claim about effects, approvals, grounding, budgets, replay, evals, packages, WASM, and benchmarks links to a runnable command, test, or committed example.
+- `corvid doctor` checks provider keys, local model availability, replay storage, approval UI configuration, wasm/native toolchains, registry access, and platform support.
+- Reproducibility scripts for benchmark and bundle claims, including the Phase 17 performance baseline and Phase 22 public bundle verification.
 - Launch materials: 2-minute GIF/video showing the time-travel replay moment + effect-checker catching a bug + compile-time cost budget. HN + Reddit + ProductHunt announcement drafts reviewed with 3 external readers.
 - Beta round: 20 external developers build something real in Corvid; their feedback gates the final cut.
 
@@ -1472,6 +1492,7 @@ The determinism-source catalog and the language's treatment of non-reproducible 
 - [ ] Runnable invention index: `corvid tour --topic <name>` CLI command that opens the REPL pre-loaded with a runnable demo of each invention. `corvid tour --list` shows the full catalog.
 - [ ] Cross-references: each invention in the README links to (a) the roadmap slice that shipped it, (b) the spec section that formalizes it, (c) the example in the tour, (d) the test that validates it.
 - [ ] Headline inventions page (`docs/inventions.md`): the standalone artifact HN threads link to. No install prerequisite, no build system context — just the inventions, their syntax, and why each is unique.
+- [ ] Invention proof matrix: every catalog entry has columns for shipped status, runnable command, test coverage, docs/spec link, and explicit non-scope.
 - [ ] Update `CLAUDE.md` (or equivalent contributor doc) to require that every new invention ships with a README catalog entry + tour demo.
 
 **Non-scope:** marketing copy, video scripts, social-media assets — those belong to Phase 33's launch materials. Phase 34 is the authoritative technical catalog; Phase 33 is the launch campaign that points to it.
