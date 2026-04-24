@@ -4,12 +4,12 @@
 > For feature definitions see [`FEATURES.md`](./FEATURES.md).
 > For architecture see [`ARCHITECTURE.md`](./ARCHITECTURE.md).
 
-**Positioning.** Corvid is a **general-purpose AI-native language**, not an agent-only DSL. Ambition: be the default choice for the widest possible range of applications. "Best at everything" is a trap that has killed every language that tried it (PL/I, Ada, early Scala); the honest version is **narrow excellence on the moat, broad competence on table stakes, disqualified on nothing.**
+**Positioning.** Corvid is a **general-purpose AI-native language**, not an agent-only DSL and not a RAG framework. Ambition: be the default choice for building AI applications end to end: agents, copilots, workflow automation, model-routed services, human-in-the-loop systems, eval pipelines, memory-backed applications, RAG, and ordinary software around them. "Best at everything" is a trap that has killed every language that tried it (PL/I, Ada, early Scala); the honest version is **narrow excellence on the moat, broad competence on table stakes, disqualified on nothing.**
 
 ### Moat — dimensions Corvid is built to genuinely win on
 
 1. **Safety for AI-shaped software.** Effect checker, approve-before-dangerous, compile-time cost bounds, contract verification. Nobody else is competing here.
-2. **AI-native ergonomics.** `agent` / `tool` / `prompt` / `approve` as keywords; replay, grounding contracts, cost budgets as language constructs. Structurally impossible to match without owning the whole pipeline.
+2. **AI-native ergonomics.** `agent` / `tool` / `prompt` / `approve` / `model` / `eval` as language concepts; replay, grounding contracts, cost budgets, approval boundaries, model routing, trace assertions, and provenance as first-class constructs. Structurally impossible to match without owning the whole pipeline.
 3. **Readability for human + LLM.** Pythonic surface, shallow hierarchies, no pointer aliasing, explicit effects. The language machines both read and *write* best.
 
 ### Table stakes — top-tier, competitive with best in category (not best overall)
@@ -32,6 +32,8 @@
 ### Phase standard
 
 Every remaining phase must make Corvid more AI-native and more general-purpose at the same time. Generic infrastructure is allowed only when it carries Corvid's effect, provenance, approval, cost, replay, eval, model, human-boundary, distribution, or deployment semantics through that layer.
+
+AI-native does **not** mean "RAG with syntax." RAG is one standard-library pattern. The language primitives must be broad enough for the full AI application surface: autonomous and supervised agents, copilots, workflow orchestration, extraction/classification, tool-use, approval-gated actions, model routing, memory, replay, evals, governance, and normal application code.
 
 1. **More AI-native.** Each phase must ship at least one semantic capability that makes AI behavior more visible, constrained, replayable, typed, auditable, or governable.
 2. **More general-purpose.** Each phase must also make Corvid stronger as a normal programming language: modules, packages, tooling, deployment, tests, memory, FFI, standard library, editor support, portability, or maintainability.
@@ -1429,29 +1431,30 @@ The determinism-source catalog and the language's treatment of non-reproducible 
 
 ### Phase 31 — Multi-provider LLM adapters (~2 weeks)
 
-**Goal.** Google Gemini + Ollama + any other adapter users request.
+**Goal.** Provider coverage for the AI application surface, not just chat completion: hosted frontier models, local models, OpenAI-compatible gateways, structured-output providers, routing metadata, and adapters users actually request.
 
 **Hard dep:** runtime adapter trait (✅).
 
 **Scope:**
 - `GoogleAdapter` in `corvid-runtime`. API compatibility with existing AnthropicAdapter + OpenAiAdapter surface.
 - `OllamaAdapter` for local-first Corvid.
-- Provider/model metadata includes cost, latency, privacy tier, jurisdiction, structured-output support, context window, and capability tags.
+- Provider/model metadata includes cost, latency, privacy tier, jurisdiction, structured-output support, context window, tool-calling support, embedding support, multimodal capability tags where available, and task capability tags.
 - Provider selection via `CORVID_MODEL` env var remains supported, but compiler/runtime model routing can use declared model capabilities from Phase 20h.
 - Eval data can compare providers and feed routing reports, so model choice becomes measurable infrastructure rather than string configuration.
 
 ### Phase 32 — Standard library (~8 weeks)
 
-**Goal.** Batteries included. Common patterns available without a package install.
+**Goal.** Batteries included for general programming and AI-native applications. Common patterns available without a package install.
 
 **Hard dep:** everything language-core stable.
 
 **Scope:**
-- `std.rag` runtime pieces: sqlite-vec, document loaders (pdf / md / html), chunking, embedder trait with reference OpenAI + Ollama impls. Pairs with Phase 20's grounding-contract language half.
-- `std.rag` APIs return `Grounded<T>` by construction where retrieval provenance exists.
+- `std.ai` — reusable AI application primitives: typed message/session objects, prompt rendering helpers, model-route helpers, tool-result envelopes, structured-output validation, confidence helpers, and trace/event utilities.
+- `std.rag` runtime pieces as one `std.ai` subdomain: sqlite-vec, document loaders (pdf / md / html), chunking, embedder trait with reference OpenAI + Ollama impls. Pairs with Phase 20's grounding-contract language half.
+- `std.rag` APIs return `Grounded<T>` by construction where retrieval provenance exists, but grounding is not limited to RAG; any tool/effect that proves provenance can produce `Grounded<T>`.
 - `std.http` — typed HTTP client with effect tags, retry semantics, timeout/budget accounting, and replay hooks where responses are recorded.
 - `std.io` — structured file I/O, streaming, path manipulation, and explicit filesystem effects.
-- `std.agent` — common AI patterns: classification, extraction, summarization, ranking, adjudication, routing, and grounded answer generation.
+- `std.agent` — common AI patterns: classification, extraction, summarization, ranking, adjudication, routing, planning, tool-use loops, approval-gated action, review/critique, and grounded answer generation.
 - Everything in `std.*` effect-tagged so users get the moat's benefits from day one.
 
 **v0.9 cuts here.** Language feature-complete: HITL, memory, Python FFI, multi-provider LLMs, stdlib. Only polish remaining.
