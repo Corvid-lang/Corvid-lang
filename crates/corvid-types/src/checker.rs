@@ -35,6 +35,27 @@ pub struct Checked {
     pub errors: Vec<TypeError>,
     /// Non-fatal diagnostics.
     pub warnings: Vec<TypeWarning>,
+    /// Qualified calls that resolved across a `.cor` import boundary,
+    /// keyed by the `alias.member` callee expression span. IR lowering
+    /// consumes this to emit a direct call to the imported declaration
+    /// instead of treating the field access as an indirect value.
+    pub imported_calls: HashMap<Span, ImportedCallTarget>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ImportedCallTarget {
+    pub module_path: String,
+    pub def_id: DefId,
+    pub name: String,
+    pub kind: ImportedCallKind,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ImportedCallKind {
+    Type,
+    Tool,
+    Prompt,
+    Agent,
 }
 
 pub fn typecheck(file: &File, resolved: &Resolved) -> Checked {
@@ -230,6 +251,7 @@ fn typecheck_with_everything(
         local_types: c.local_types,
         errors: c.errors,
         warnings: c.warnings,
+        imported_calls: c.imported_calls,
     }
 }
 
@@ -239,6 +261,7 @@ struct Checker<'a> {
     types: HashMap<Span, Type>,
     errors: Vec<TypeError>,
     warnings: Vec<TypeWarning>,
+    imported_calls: HashMap<Span, ImportedCallTarget>,
 
     /// Indexed declarations for O(1) lookup by DefId. Methods from
     /// `extend` blocks get inserted here too — a method `extend Order: agent
@@ -435,6 +458,7 @@ impl<'a> Checker<'a> {
             types: HashMap::new(),
             errors: Vec::new(),
             warnings: Vec::new(),
+            imported_calls: HashMap::new(),
             tools_by_id: tools,
             prompts_by_id: prompts,
             agents_by_id: agents,
@@ -523,6 +547,7 @@ mod call;
 mod case;
 mod decl;
 mod expr;
+mod import_call;
 mod ops;
 mod prompt;
 mod stmt;

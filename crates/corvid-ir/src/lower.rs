@@ -3,6 +3,10 @@
 //! Every AST construct maps to an IR construct. References are resolved
 //! via the resolver's side-table; types come from the checker's side-table.
 
+use crate::imports::{
+    build_imported_def_ids, resolve_module_qualified_type_ref, resolve_root_imported_type_ref,
+    ImportedDefKey,
+};
 use crate::types::*;
 use corvid_ast::{
     AgentDecl, Block, Decl, Effect, EvalAssert, EvalDecl, Expr, ExtendMethodKind, ExternAbi,
@@ -12,16 +16,17 @@ use corvid_ast::{
 };
 use corvid_resolve::{
     resolver::MethodEntry, Binding, BuiltIn, DeclKind, DefId, LocalId, ModuleResolution, Resolved,
-    SymbolTable,
+    ResolvedModule, SymbolTable,
 };
-use corvid_types::{Checked, Type};
 use corvid_types::effects::{canonical_dimension_name, numeric_constraint_value, EffectRegistry};
-use corvid_types::types::ImportedStructType;
+use corvid_types::{Checked, ImportedCallKind, ImportedCallTarget, Type};
 use std::collections::HashMap;
+use std::path::PathBuf;
 
 /// Entry point: produce an `IrFile` from parsed/resolved/checked sources.
 pub fn lower(file: &File, resolved: &Resolved, checked: &Checked) -> IrFile {
-    let mut l = Lowerer::new(resolved, checked, None);
+    let imported_def_ids = HashMap::new();
+    let mut l = Lowerer::new(resolved, checked, None, None, &imported_def_ids);
     l.lower_file(file)
 }
 
@@ -34,9 +39,33 @@ pub fn lower_with_modules(
     resolved: &Resolved,
     checked: &Checked,
     modules: &ModuleResolution,
+    checked_modules: &HashMap<PathBuf, Checked>,
 ) -> IrFile {
-    let mut l = Lowerer::new(resolved, checked, Some(modules));
-    l.lower_file(file)
+    let imported_def_ids = build_imported_def_ids(resolved, modules);
+    let mut l = Lowerer::new(resolved, checked, Some(modules), None, &imported_def_ids);
+    let mut ir = l.lower_file(file);
+
+    let mut loaded = modules.all_modules.values().collect::<Vec<_>>();
+    loaded.sort_by(|a, b| a.path.cmp(&b.path));
+    for module in loaded {
+        let Some(module_checked) = checked_modules.get(&module.path) else {
+            continue;
+        };
+        let mut module_lowerer = Lowerer::new(
+            module.resolved.as_ref(),
+            module_checked,
+            Some(modules),
+            Some(module),
+            &imported_def_ids,
+        );
+        let module_ir = module_lowerer.lower_file(module.file.as_ref());
+        ir.types.extend(module_ir.types);
+        ir.tools.extend(module_ir.tools);
+        ir.prompts.extend(module_ir.prompts);
+        ir.agents.extend(module_ir.agents);
+    }
+
+    ir
 }
 
 struct Lowerer<'a> {
@@ -54,6 +83,9 @@ struct Lowerer<'a> {
     confidence_gates: HashMap<String, f64>,
     effect_registry: EffectRegistry,
     module_resolution: Option<&'a ModuleResolution>,
+    current_module: Option<&'a ResolvedModule>,
+    imported_def_ids: &'a HashMap<ImportedDefKey, DefId>,
+    imported_calls: &'a HashMap<Span, ImportedCallTarget>,
 }
 
 impl<'a> Lowerer<'a> {
@@ -61,6 +93,8 @@ impl<'a> Lowerer<'a> {
         resolved: &'a Resolved,
         checked: &'a Checked,
         module_resolution: Option<&'a ModuleResolution>,
+        current_module: Option<&'a ResolvedModule>,
+        imported_def_ids: &'a HashMap<ImportedDefKey, DefId>,
     ) -> Self {
         Self {
             symbols: &resolved.symbols,
@@ -70,7 +104,33 @@ impl<'a> Lowerer<'a> {
             confidence_gates: HashMap::new(),
             effect_registry: EffectRegistry::default(),
             module_resolution,
+            current_module,
+            imported_def_ids,
+            imported_calls: &checked.imported_calls,
         }
+    }
+
+    fn remap_def_id(&self, def_id: DefId) -> DefId {
+        let Some(module) = self.current_module else {
+            return def_id;
+        };
+        self.imported_def_ids
+            .get(&ImportedDefKey {
+                module_path: module.path.to_string_lossy().into_owned(),
+                def_id,
+            })
+            .copied()
+            .unwrap_or(def_id)
+    }
+
+    fn remap_imported_target(&self, target: &ImportedCallTarget) -> DefId {
+        self.imported_def_ids
+            .get(&ImportedDefKey {
+                module_path: target.module_path.clone(),
+                def_id: target.def_id,
+            })
+            .copied()
+            .unwrap_or(target.def_id)
     }
 
     /// Scan the file's effect declarations for `trust: autonomous_if_confident(T)`
@@ -184,7 +244,7 @@ impl<'a> Lowerer<'a> {
             .lookup_def(&e.name.name)
             .expect("eval missing from symbol table");
         IrEval {
-            id,
+            id: self.remap_def_id(id),
             name: e.name.name.clone(),
             body: self.lower_block(&e.body),
             assertions: e
@@ -215,7 +275,7 @@ impl<'a> Lowerer<'a> {
                     _ => panic!("eval called assertion missing resolved callable"),
                 };
                 IrEvalAssert::Called {
-                    def_id,
+                    def_id: self.remap_def_id(def_id),
                     name: tool.name.clone(),
                     span: *span,
                 }
@@ -243,9 +303,9 @@ impl<'a> Lowerer<'a> {
                     _ => panic!("eval ordering assertion missing resolved `after` callable"),
                 };
                 IrEvalAssert::Ordering {
-                    before_id,
+                    before_id: self.remap_def_id(before_id),
                     before_name: before.name.clone(),
-                    after_id,
+                    after_id: self.remap_def_id(after_id),
                     after_name: after.name.clone(),
                     span: *span,
                 }
@@ -268,7 +328,7 @@ impl<'a> Lowerer<'a> {
             })
             .collect();
         IrType {
-            id,
+            id: self.remap_def_id(id),
             name: t.name.name.clone(),
             fields,
             span: t.span,
@@ -301,7 +361,7 @@ impl<'a> Lowerer<'a> {
         }
 
         IrTool {
-            id,
+            id: self.remap_def_id(id),
             name: t.name.name.clone(),
             params: self.lower_params(&t.params),
             return_ty: self.type_ref_to_type(&t.return_ty),
@@ -343,8 +403,8 @@ impl<'a> Lowerer<'a> {
             .map(|chain| self.lower_progressive_stages(&chain.stages))
             .unwrap_or_default();
         let rollout = p.rollout.as_ref().and_then(|spec| {
-            let variant = self.symbols.lookup_def(&spec.variant.name)?;
-            let baseline = self.symbols.lookup_def(&spec.baseline.name)?;
+            let variant = self.remap_def_id(self.symbols.lookup_def(&spec.variant.name)?);
+            let baseline = self.remap_def_id(self.symbols.lookup_def(&spec.baseline.name)?);
             Some(IrRolloutSpec {
                 variant_percent: spec.variant_percent,
                 variant_def_id: variant,
@@ -361,7 +421,7 @@ impl<'a> Lowerer<'a> {
                 .filter_map(|model| {
                     let def_id = self.symbols.lookup_def(&model.name)?;
                     Some(IrEnsembleMember {
-                        def_id,
+                        def_id: self.remap_def_id(def_id),
                         name: model.name.clone(),
                         span: model.span,
                     })
@@ -377,9 +437,9 @@ impl<'a> Lowerer<'a> {
             }
         });
         let adversarial = p.adversarial.as_ref().and_then(|spec| {
-            let proposer = self.symbols.lookup_def(&spec.proposer.name)?;
-            let challenger = self.symbols.lookup_def(&spec.challenger.name)?;
-            let adjudicator = self.symbols.lookup_def(&spec.adjudicator.name)?;
+            let proposer = self.remap_def_id(self.symbols.lookup_def(&spec.proposer.name)?);
+            let challenger = self.remap_def_id(self.symbols.lookup_def(&spec.challenger.name)?);
+            let adjudicator = self.remap_def_id(self.symbols.lookup_def(&spec.adjudicator.name)?);
             Some(IrAdversarialSpec {
                 proposer_def_id: proposer,
                 proposer_name: spec.proposer.name.clone(),
@@ -391,7 +451,7 @@ impl<'a> Lowerer<'a> {
             })
         });
         IrPrompt {
-            id,
+            id: self.remap_def_id(id),
             name: p.name.name.clone(),
             params: self.lower_params(&p.params),
             return_ty: self.type_ref_to_type(&p.return_ty),
@@ -423,7 +483,7 @@ impl<'a> Lowerer<'a> {
                 continue;
             };
             out.push(IrProgressiveStage {
-                model_def_id: def_id,
+                model_def_id: self.remap_def_id(def_id),
                 model_name: stage.model.name.clone(),
                 threshold: stage.threshold,
                 span: stage.span,
@@ -449,7 +509,7 @@ impl<'a> Lowerer<'a> {
             };
             out.push(IrRouteArm {
                 pattern,
-                model_def_id: def_id,
+                model_def_id: self.remap_def_id(def_id),
                 model_name: arm.model.name.clone(),
                 span: arm.span,
             });
@@ -467,7 +527,7 @@ impl<'a> Lowerer<'a> {
 
     fn lower_agent_with_id(&self, a: &AgentDecl, id: DefId) -> IrAgent {
         IrAgent {
-            id,
+            id: self.remap_def_id(id),
             name: a.name.name.clone(),
             extern_abi: a.extern_abi.map(|abi| match abi {
                 ExternAbi::C => IrExternAbi::C,
@@ -745,7 +805,7 @@ impl<'a> Lowerer<'a> {
                 name: id.name.clone(),
             },
             Some(Binding::Decl(def_id)) => IrExprKind::Decl {
-                def_id: *def_id,
+                def_id: self.remap_def_id(*def_id),
                 name: id.name.clone(),
             },
             Some(Binding::BuiltIn(BuiltIn::None)) => IrExprKind::OptionNone,
@@ -771,6 +831,9 @@ impl<'a> Lowerer<'a> {
             // catchall narrower below.)
         }
         if let Expr::FieldAccess { target, field, .. } = callee {
+            if let Some(rewrite) = self.try_imported_call(callee, field, args) {
+                return rewrite;
+            }
             if let Some(rewrite) = self.try_method_call(target, field, args) {
                 return rewrite;
             }
@@ -846,6 +909,7 @@ impl<'a> Lowerer<'a> {
                 }
                 Some(Binding::Decl(def_id)) => {
                     let entry = self.symbols.get(*def_id);
+                    let lowered_def_id = self.remap_def_id(*def_id);
                     let kind = match entry.kind {
                         DeclKind::Tool => {
                             // Effect is stored on the AST ToolDecl; we need
@@ -853,13 +917,19 @@ impl<'a> Lowerer<'a> {
                             // stable default and let IrTool carry the truth.
                             // Codegen looks up the IrTool by def_id to route.
                             IrCallKind::Tool {
-                                def_id: *def_id,
-                                effect: lookup_tool_effect(self.symbols, *def_id),
+                                def_id: lowered_def_id,
+                                effect: lookup_tool_effect(self.symbols, lowered_def_id),
                             }
                         }
-                        DeclKind::Prompt => IrCallKind::Prompt { def_id: *def_id },
-                        DeclKind::Agent => IrCallKind::Agent { def_id: *def_id },
-                        DeclKind::Type => IrCallKind::StructConstructor { def_id: *def_id },
+                        DeclKind::Prompt => IrCallKind::Prompt {
+                            def_id: lowered_def_id,
+                        },
+                        DeclKind::Agent => IrCallKind::Agent {
+                            def_id: lowered_def_id,
+                        },
+                        DeclKind::Type => IrCallKind::StructConstructor {
+                            def_id: lowered_def_id,
+                        },
                         _ => IrCallKind::Unknown,
                     };
                     (kind, name.name.clone())
@@ -894,19 +964,20 @@ impl<'a> Lowerer<'a> {
             _ => return None,
         };
         let entry = self.methods.get(&recv_def_id)?.get(&field.name)?;
+        let def_id = self.remap_def_id(entry.def_id);
         let kind = match entry.kind {
             corvid_resolve::resolver::MethodKind::Tool => IrCallKind::Tool {
-                def_id: entry.def_id,
+                def_id,
                 // Method-tool effects keep `Safe` as the conservative
                 // default; the IR's `IrTool` carries the
                 // declared effect once `define_tool` lowers it.
                 effect: Effect::Safe,
             },
             corvid_resolve::resolver::MethodKind::Prompt => IrCallKind::Prompt {
-                def_id: entry.def_id,
+                def_id,
             },
             corvid_resolve::resolver::MethodKind::Agent => IrCallKind::Agent {
-                def_id: entry.def_id,
+                def_id,
             },
         };
         // Receiver becomes the first argument.
@@ -920,6 +991,30 @@ impl<'a> Lowerer<'a> {
         })
     }
 
+    fn try_imported_call(
+        &self,
+        callee: &Expr,
+        field: &Ident,
+        args: &[Expr],
+    ) -> Option<IrExprKind> {
+        let target = self.imported_calls.get(&callee.span())?;
+        let def_id = self.remap_imported_target(target);
+        let kind = match target.kind {
+            ImportedCallKind::Type => IrCallKind::StructConstructor { def_id },
+            ImportedCallKind::Tool => IrCallKind::Tool {
+                def_id,
+                effect: Effect::Safe,
+            },
+            ImportedCallKind::Prompt => IrCallKind::Prompt { def_id },
+            ImportedCallKind::Agent => IrCallKind::Agent { def_id },
+        };
+        Some(IrExprKind::Call {
+            kind,
+            callee_name: field.name.clone(),
+            args: args.iter().map(|arg| self.lower_expr(arg)).collect(),
+        })
+    }
+
     fn type_ref_to_type(&self, tr: &TypeRef) -> Type {
         match tr {
             TypeRef::Named { name, .. } => match name.name.as_str() {
@@ -929,16 +1024,30 @@ impl<'a> Lowerer<'a> {
                 "Bool" => Type::Bool,
                 "Nothing" => Type::Nothing,
                 _ => match self.symbols.lookup_def(&name.name) {
-                    Some(id) => Type::Struct(id),
+                    Some(id) => Type::Struct(self.remap_def_id(id)),
                     None => Type::Unknown,
                 },
             },
-            TypeRef::Qualified { alias, name, .. } => self
-                .module_resolution
-                .and_then(|resolution| {
-                    resolve_imported_type_ref(resolution, &alias.name, &name.name)
-                })
-                .unwrap_or(Type::Unknown),
+            TypeRef::Qualified { alias, name, .. } => match self.current_module {
+                Some(module) => self
+                    .module_resolution
+                    .and_then(|resolution| {
+                        resolve_module_qualified_type_ref(
+                            resolution,
+                            module,
+                            self.imported_def_ids,
+                            &alias.name,
+                            &name.name,
+                        )
+                    })
+                    .unwrap_or(Type::Unknown),
+                None => self
+                    .module_resolution
+                    .and_then(|resolution| {
+                        resolve_root_imported_type_ref(resolution, &alias.name, &name.name)
+                    })
+                    .unwrap_or(Type::Unknown),
+            },
             TypeRef::Generic { name, args, .. } => match name.name.as_str() {
                 "List" if args.len() == 1 => Type::List(Box::new(self.type_ref_to_type(&args[0]))),
                 "Stream" if args.len() == 1 => {
@@ -981,23 +1090,6 @@ fn confidence_profile_dimension(profile: &corvid_types::effects::ComposedProfile
         Some(corvid_ast::DimensionValue::Number(value)) => *value,
         _ => 1.0,
     }
-}
-
-fn resolve_imported_type_ref(
-    modules: &ModuleResolution,
-    alias: &str,
-    member: &str,
-) -> Option<Type> {
-    let module = modules.lookup(alias)?;
-    let export = module.exports.get(member)?;
-    if export.kind != DeclKind::Type {
-        return None;
-    }
-    Some(Type::ImportedStruct(ImportedStructType {
-        module_path: module.path.to_string_lossy().to_string(),
-        def_id: export.def_id,
-        name: export.name.clone(),
-    }))
 }
 
 fn agent_cost_budget(agent: &AgentDecl) -> Option<f64> {

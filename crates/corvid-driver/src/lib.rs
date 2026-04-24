@@ -43,7 +43,8 @@ pub use corvid_runtime::{
 };
 pub use corvid_vm::{build_struct, InterpError, InterpErrorKind, StructValue, Value};
 
-use std::path::Path;
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 
 use corvid_ast::{
     Decl, File, ImportSource, Span,
@@ -93,6 +94,7 @@ pub struct CompileResult {
 pub(crate) struct DriverTypecheck {
     pub(crate) checked: Checked,
     pub(crate) modules: Option<ModuleResolution>,
+    pub(crate) module_checked: HashMap<PathBuf, Checked>,
 }
 
 impl CompileResult {
@@ -246,10 +248,15 @@ pub(crate) fn typecheck_driver_file(
             .flat_map(module_load_error_diagnostics)
             .collect::<Vec<_>>();
         let checked = typecheck_with_config_and_modules(file, resolved, config, &modules);
+        let (module_checked, module_diagnostics) =
+            typecheck_imported_modules(&modules, config);
+        let mut diagnostics = diagnostics;
+        diagnostics.extend(module_diagnostics);
         DriverTypecheckOutcome {
             result: DriverTypecheck {
                 checked,
                 modules: Some(modules),
+                module_checked,
             },
             diagnostics,
         }
@@ -258,6 +265,7 @@ pub(crate) fn typecheck_driver_file(
             result: DriverTypecheck {
                 checked: typecheck_with_config(file, resolved, config),
                 modules: None,
+                module_checked: HashMap::new(),
             },
             diagnostics: Vec::new(),
         }
@@ -270,9 +278,57 @@ pub(crate) fn lower_driver_file(
     typechecked: &DriverTypecheck,
 ) -> IrFile {
     match &typechecked.modules {
-        Some(modules) => lower_with_modules(file, resolved, &typechecked.checked, modules),
+        Some(modules) => lower_with_modules(
+            file,
+            resolved,
+            &typechecked.checked,
+            modules,
+            &typechecked.module_checked,
+        ),
         None => lower(file, resolved, &typechecked.checked),
     }
+}
+
+fn typecheck_imported_modules(
+    modules: &ModuleResolution,
+    config: Option<&CorvidConfig>,
+) -> (HashMap<PathBuf, Checked>, Vec<Diagnostic>) {
+    let mut checked_by_path = HashMap::new();
+    let mut diagnostics = Vec::new();
+    let mut loaded = modules.all_modules.values().collect::<Vec<_>>();
+    loaded.sort_by(|a, b| a.path.cmp(&b.path));
+
+    for module in loaded {
+        let (module_resolution, load_errors) =
+            build_module_resolution(&module.file, &module.path);
+        diagnostics.extend(
+            load_errors
+                .into_iter()
+                .flat_map(module_load_error_diagnostics),
+        );
+        let checked = if has_corvid_imports(&module.file) {
+            typecheck_with_config_and_modules(
+                &module.file,
+                &module.resolved,
+                config,
+                &module_resolution,
+            )
+        } else {
+            typecheck_with_config(&module.file, &module.resolved, config)
+        };
+        diagnostics.extend(checked.errors.iter().cloned().map(|err| {
+            let mut diagnostic = Diagnostic::from(err);
+            diagnostic.message = format!(
+                "in imported module `{}`: {}",
+                module.path.display(),
+                diagnostic.message
+            );
+            diagnostic
+        }));
+        checked_by_path.insert(module.path.clone(), checked);
+    }
+
+    (checked_by_path, diagnostics)
 }
 
 fn has_corvid_imports(file: &File) -> bool {
@@ -711,6 +767,200 @@ agent bad(x: h.Internal) -> String:
             diagnostics.iter().any(|diagnostic| diagnostic
                 .message
                 .contains("declaration `Internal` in the module imported as `h` is private")),
+            "diagnostics: {diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn compile_to_ir_at_path_lowers_qualified_imported_agent_call() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            tmp.path().join("policy.cor"),
+            "\
+public agent apply_policy_default() -> Bool:
+    return true
+",
+        )
+        .unwrap();
+        let main_src = "\
+import \"./policy\" as p
+
+agent main() -> Bool:
+    return p.apply_policy_default()
+";
+        let main_path = tmp.path().join("main.cor");
+        std::fs::write(&main_path, main_src).unwrap();
+
+        let ir = compile_to_ir_with_config_at_path(main_src, &main_path, None)
+            .expect("qualified imported agent call should compile");
+        let imported = ir
+            .agents
+            .iter()
+            .find(|agent| agent.name == "apply_policy_default")
+            .expect("imported agent should be appended to IR");
+        let main = ir
+            .agents
+            .iter()
+            .find(|agent| agent.name == "main")
+            .expect("main agent");
+        let corvid_ir::IrStmt::Return {
+            value: Some(value), ..
+        } = &main.body.stmts[0]
+        else {
+            panic!("expected return call");
+        };
+        let corvid_ir::IrExprKind::Call { kind, .. } = &value.kind else {
+            panic!("expected call expression");
+        };
+        assert!(matches!(
+            kind,
+            corvid_ir::IrCallKind::Agent { def_id } if *def_id == imported.id
+        ));
+    }
+
+    #[tokio::test]
+    async fn run_with_runtime_executes_qualified_imported_agent_call() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            tmp.path().join("policy.cor"),
+            "\
+public agent apply_policy_default() -> Bool:
+    return true
+",
+        )
+        .unwrap();
+        let main_path = tmp.path().join("main.cor");
+        std::fs::write(
+            &main_path,
+            "\
+import \"./policy\" as p
+
+agent main() -> Bool:
+    return p.apply_policy_default()
+",
+        )
+        .unwrap();
+
+        let rt = Runtime::builder().build();
+        let value = run_with_runtime(&main_path, Some("main"), vec![], &rt)
+            .await
+            .expect("imported agent call should run");
+        assert_eq!(value, Value::Bool(true));
+    }
+
+    #[test]
+    fn compile_to_ir_at_path_lowers_qualified_imported_tool_call() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            tmp.path().join("tools.cor"),
+            "\
+public tool lookup() -> String
+",
+        )
+        .unwrap();
+        let main_src = "\
+import \"./tools\" as t
+
+agent main() -> String:
+    return t.lookup()
+";
+        let main_path = tmp.path().join("main.cor");
+        std::fs::write(&main_path, main_src).unwrap();
+
+        let ir = compile_to_ir_with_config_at_path(main_src, &main_path, None)
+            .expect("qualified imported tool call should compile");
+        let imported = ir
+            .tools
+            .iter()
+            .find(|tool| tool.name == "lookup")
+            .expect("imported tool should be appended to IR");
+        let main = ir.agents.iter().find(|agent| agent.name == "main").unwrap();
+        let corvid_ir::IrStmt::Return {
+            value: Some(value), ..
+        } = &main.body.stmts[0]
+        else {
+            panic!("expected return call");
+        };
+        let corvid_ir::IrExprKind::Call { kind, .. } = &value.kind else {
+            panic!("expected call expression");
+        };
+        assert!(matches!(
+            kind,
+            corvid_ir::IrCallKind::Tool { def_id, .. } if *def_id == imported.id
+        ));
+    }
+
+    #[test]
+    fn compile_to_ir_at_path_lowers_qualified_imported_type_constructor() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            tmp.path().join("types.cor"),
+            "\
+public type Receipt:
+    id: String
+",
+        )
+        .unwrap();
+        let main_src = "\
+import \"./types\" as t
+
+agent main() -> t.Receipt:
+    return t.Receipt(\"r_1\")
+";
+        let main_path = tmp.path().join("main.cor");
+        std::fs::write(&main_path, main_src).unwrap();
+
+        let ir = compile_to_ir_with_config_at_path(main_src, &main_path, None)
+            .expect("qualified imported type constructor should compile");
+        let imported = ir
+            .types
+            .iter()
+            .find(|ty| ty.name == "Receipt")
+            .expect("imported type should be appended to IR");
+        let main = ir.agents.iter().find(|agent| agent.name == "main").unwrap();
+        let corvid_ir::IrStmt::Return {
+            value: Some(value), ..
+        } = &main.body.stmts[0]
+        else {
+            panic!("expected return call");
+        };
+        let corvid_ir::IrExprKind::Call { kind, .. } = &value.kind else {
+            panic!("expected call expression");
+        };
+        assert!(matches!(
+            kind,
+            corvid_ir::IrCallKind::StructConstructor { def_id } if *def_id == imported.id
+        ));
+    }
+
+    #[test]
+    fn compile_to_ir_at_path_reports_private_imported_callable() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            tmp.path().join("policy.cor"),
+            "\
+agent hidden() -> Bool:
+    return true
+",
+        )
+        .unwrap();
+        let main_src = "\
+import \"./policy\" as p
+
+agent main() -> Bool:
+    return p.hidden()
+";
+        let main_path = tmp.path().join("main.cor");
+        std::fs::write(&main_path, main_src).unwrap();
+
+        let diagnostics = compile_to_ir_with_config_at_path(main_src, &main_path, None)
+            .expect_err("private imported callable should fail");
+        assert!(
+            diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic
+                    .message
+                    .contains("declaration `hidden` in the module imported as `p` is private")),
             "diagnostics: {diagnostics:?}"
         );
     }

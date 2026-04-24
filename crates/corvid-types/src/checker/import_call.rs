@@ -1,0 +1,284 @@
+//! Qualified imported call checking.
+//!
+//! `call.rs` owns ordinary call-shape dispatch. This module owns the
+//! import-specific branch for `alias.member(args)`: validating that
+//! `alias` is a Corvid import, resolving the public export, checking
+//! arguments in the imported module's type context, and recording the
+//! imported target for IR lowering.
+
+use super::{pascal_case, snake_case, Checker, ImportedCallKind, ImportedCallTarget};
+use crate::errors::{TypeError, TypeErrorKind};
+use crate::types::{ImportedStructType, Type};
+use corvid_ast::{Decl, Effect, Expr, Ident, Param, Span, WeakEffect};
+use corvid_resolve::{Binding, DeclKind, DefId, ModuleLookup, ResolvedModule};
+
+impl<'a> Checker<'a> {
+    pub(super) fn check_imported_call(
+        &mut self,
+        target: &Expr,
+        field: &Ident,
+        args: &[Expr],
+        callee_span: Span,
+        call_span: Span,
+    ) -> Option<Type> {
+        let Expr::Ident { name: alias, .. } = target else {
+            return None;
+        };
+        let Some(Binding::Decl(alias_def)) = self.bindings.get(&alias.span) else {
+            return None;
+        };
+        if !matches!(self.symbols.get(*alias_def).kind, DeclKind::Import) {
+            return None;
+        }
+
+        let Some(modules) = self.module_resolution else {
+            self.errors.push(TypeError::new(
+                TypeErrorKind::CorvidImportNotYetResolved {
+                    alias: alias.name.clone(),
+                    name: field.name.clone(),
+                },
+                callee_span,
+            ));
+            for arg in args {
+                let _ = self.check_expr(arg);
+            }
+            return Some(Type::Unknown);
+        };
+
+        match modules.lookup_member(&alias.name, &field.name) {
+            ModuleLookup::Found { module, export } => {
+                let target = ImportedCallTarget {
+                    module_path: module.path.to_string_lossy().into_owned(),
+                    def_id: export.def_id,
+                    name: export.name.clone(),
+                    kind: match export.kind {
+                        DeclKind::Type => ImportedCallKind::Type,
+                        DeclKind::Tool => ImportedCallKind::Tool,
+                        DeclKind::Prompt => ImportedCallKind::Prompt,
+                        DeclKind::Agent => ImportedCallKind::Agent,
+                        _ => {
+                            for arg in args {
+                                let _ = self.check_expr(arg);
+                            }
+                            return Some(Type::Unknown);
+                        }
+                    },
+                };
+                self.imported_calls.insert(callee_span, target);
+                Some(self.check_imported_decl_call(
+                    module,
+                    export.def_id,
+                    export.kind,
+                    &export.name,
+                    args,
+                    call_span,
+                ))
+            }
+            ModuleLookup::UnknownAlias => {
+                self.errors.push(TypeError::new(
+                    TypeErrorKind::UnknownImportAlias {
+                        alias: alias.name.clone(),
+                    },
+                    callee_span,
+                ));
+                for arg in args {
+                    let _ = self.check_expr(arg);
+                }
+                Some(Type::Unknown)
+            }
+            ModuleLookup::Private => {
+                self.errors.push(TypeError::new(
+                    TypeErrorKind::ImportedDeclIsPrivate {
+                        alias: alias.name.clone(),
+                        name: field.name.clone(),
+                    },
+                    callee_span,
+                ));
+                for arg in args {
+                    let _ = self.check_expr(arg);
+                }
+                Some(Type::Unknown)
+            }
+            ModuleLookup::UnknownMember => {
+                self.errors.push(TypeError::new(
+                    TypeErrorKind::UnknownImportMember {
+                        alias: alias.name.clone(),
+                        name: field.name.clone(),
+                    },
+                    callee_span,
+                ));
+                for arg in args {
+                    let _ = self.check_expr(arg);
+                }
+                Some(Type::Unknown)
+            }
+        }
+    }
+
+    fn check_imported_decl_call(
+        &mut self,
+        module: &ResolvedModule,
+        def_id: DefId,
+        kind: DeclKind,
+        name: &str,
+        args: &[Expr],
+        span: Span,
+    ) -> Type {
+        match kind {
+            DeclKind::Tool => {
+                let Some(Decl::Tool(tool)) = imported_decl(module, def_id) else {
+                    for arg in args {
+                        let _ = self.check_expr(arg);
+                    }
+                    return Type::Unknown;
+                };
+                self.check_args_against_imported_params(name, &tool.params, args, module);
+                if matches!(tool.effect, Effect::Dangerous) {
+                    let authorized = self
+                        .approvals
+                        .iter()
+                        .any(|a| snake_case(&a.label) == name && a.arity == args.len());
+                    if !authorized {
+                        self.errors.push(TypeError::new(
+                            TypeErrorKind::UnapprovedDangerousCall {
+                                tool: name.to_string(),
+                                expected_approve_label: pascal_case(name),
+                                arity: args.len(),
+                            },
+                            span,
+                        ));
+                    }
+                }
+                self.bump_effect(WeakEffect::ToolCall);
+                self.imported_type_ref_to_type(&tool.return_ty, module)
+            }
+            DeclKind::Prompt => {
+                let Some(Decl::Prompt(prompt)) = imported_decl(module, def_id) else {
+                    for arg in args {
+                        let _ = self.check_expr(arg);
+                    }
+                    return Type::Unknown;
+                };
+                self.check_args_against_imported_params(name, &prompt.params, args, module);
+                self.bump_effect(WeakEffect::Llm);
+                self.imported_type_ref_to_type(&prompt.return_ty, module)
+            }
+            DeclKind::Agent => {
+                let Some(Decl::Agent(agent)) = imported_decl(module, def_id) else {
+                    for arg in args {
+                        let _ = self.check_expr(arg);
+                    }
+                    return Type::Unknown;
+                };
+                self.check_args_against_imported_params(name, &agent.params, args, module);
+                self.bump_effect(WeakEffect::ToolCall);
+                self.bump_effect(WeakEffect::Llm);
+                self.bump_effect(WeakEffect::Approve);
+                self.imported_type_ref_to_type(&agent.return_ty, module)
+            }
+            DeclKind::Type => {
+                let Some(Decl::Type(ty)) = imported_decl(module, def_id) else {
+                    for arg in args {
+                        let _ = self.check_expr(arg);
+                    }
+                    return Type::Unknown;
+                };
+                if args.len() != ty.fields.len() {
+                    self.errors.push(TypeError::new(
+                        TypeErrorKind::ArityMismatch {
+                            callee: name.to_string(),
+                            expected: ty.fields.len(),
+                            got: args.len(),
+                        },
+                        args.first().map(|arg| arg.span()).unwrap_or(ty.span),
+                    ));
+                }
+                for (i, arg) in args.iter().enumerate() {
+                    if let Some(field) = ty.fields.get(i) {
+                        let field_ty = self.imported_type_ref_to_type(&field.ty, module);
+                        let arg_ty = self.check_expr_as(arg, Some(&field_ty));
+                        if !arg_ty.is_assignable_to(&field_ty) {
+                            self.errors.push(TypeError::new(
+                                TypeErrorKind::TypeMismatch {
+                                    expected: field_ty.display_name(),
+                                    got: arg_ty.display_name(),
+                                    context: format!("field `{}` of `{name}`", field.name.name),
+                                },
+                                arg.span(),
+                            ));
+                        }
+                    } else {
+                        let _ = self.check_expr(arg);
+                    }
+                }
+                Type::ImportedStruct(ImportedStructType {
+                    module_path: module.path.to_string_lossy().into_owned(),
+                    def_id,
+                    name: name.to_string(),
+                })
+            }
+            _ => {
+                for arg in args {
+                    let _ = self.check_expr(arg);
+                }
+                Type::Unknown
+            }
+        }
+    }
+
+    fn check_args_against_imported_params(
+        &mut self,
+        callee_name: &str,
+        params: &[Param],
+        args: &[Expr],
+        module: &ResolvedModule,
+    ) {
+        if params.len() != args.len() {
+            self.errors.push(TypeError::new(
+                TypeErrorKind::ArityMismatch {
+                    callee: callee_name.to_string(),
+                    expected: params.len(),
+                    got: args.len(),
+                },
+                args.first()
+                    .map(|arg| arg.span())
+                    .unwrap_or(Span::new(0, 0)),
+            ));
+        }
+        for (i, arg) in args.iter().enumerate() {
+            if let Some(param) = params.get(i) {
+                let param_ty = self.imported_type_ref_to_type(&param.ty, module);
+                let arg_ty = self.check_expr_as(arg, Some(&param_ty));
+                if !arg_ty.is_assignable_to(&param_ty) {
+                    self.errors.push(TypeError::new(
+                        TypeErrorKind::TypeMismatch {
+                            expected: param_ty.display_name(),
+                            got: arg_ty.display_name(),
+                            context: format!("argument {} to `{callee_name}`", i + 1),
+                        },
+                        arg.span(),
+                    ));
+                }
+            } else {
+                let _ = self.check_expr(arg);
+            }
+        }
+    }
+}
+
+fn imported_decl<'a>(module: &'a ResolvedModule, def_id: DefId) -> Option<&'a Decl> {
+    module.file.decls.iter().find(|decl| {
+        let name = match decl {
+            Decl::Type(decl) => &decl.name.name,
+            Decl::Tool(decl) => &decl.name.name,
+            Decl::Prompt(decl) => &decl.name.name,
+            Decl::Agent(decl) => &decl.name.name,
+            _ => return false,
+        };
+        module
+            .resolved
+            .symbols
+            .lookup_def(name)
+            .is_some_and(|candidate| candidate == def_id)
+    })
+}

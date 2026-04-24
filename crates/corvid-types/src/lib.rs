@@ -20,7 +20,7 @@ pub mod types;
 
 pub use checker::{
     typecheck, typecheck_with_config, typecheck_with_config_and_modules, typecheck_with_modules,
-    Checked,
+    Checked, ImportedCallKind, ImportedCallTarget,
 };
 pub use config::{
     CorvidConfig, CustomDimensionConfig, CustomDimensionMeta, DimensionConfigError,

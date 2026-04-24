@@ -29,7 +29,15 @@ impl<'a> Checker<'a> {
         // (receiver_type_def_id, method_name), validate args (with
         // the receiver implicitly prepended), reuse the appropriate
         // tool / prompt / agent dispatch path.
-        if let Expr::FieldAccess { target, field, .. } = callee {
+        if let Expr::FieldAccess {
+            target,
+            field,
+            span: callee_span,
+        } = callee
+        {
+            if let Some(ty) = self.check_imported_call(target, field, args, *callee_span, span) {
+                return ty;
+            }
             return self.check_method_call(target, field, args, span);
         }
 
