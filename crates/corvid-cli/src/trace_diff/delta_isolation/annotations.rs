@@ -29,8 +29,9 @@
 //! add/remove, provenance, lifecycle) live in their own modules
 //! in later sub-commits.
 
-use corvid_ast::{AgentAttribute, AgentDecl, Decl, File};
+use corvid_ast::{AgentAttribute, AgentDecl};
 
+use super::ast_helpers::find_agent;
 use super::{IsolationError, IsolationInput, SpliceOp};
 
 /// Isolate a `replayable_gained` or `replayable_lost` delta by
@@ -113,15 +114,8 @@ pub(super) fn isolate_replayable(
 }
 
 // ---------------------------------------------------------------
-// AST traversal helpers
+// Class-specific AST helpers (shared helpers live in `ast_helpers`)
 // ---------------------------------------------------------------
-
-fn find_agent<'a>(file: &'a File, name: &str) -> Option<&'a AgentDecl> {
-    file.decls.iter().find_map(|decl| match decl {
-        Decl::Agent(agent) if agent.name.name == name => Some(agent),
-        _ => None,
-    })
-}
 
 fn find_replayable_attribute(agent: &AgentDecl) -> Option<corvid_ast::Span> {
     agent.attributes.iter().find_map(|attr| match attr {

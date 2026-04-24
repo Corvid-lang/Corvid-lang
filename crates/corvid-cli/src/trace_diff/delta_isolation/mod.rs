@@ -43,12 +43,13 @@ use std::ops::Range;
 use corvid_ast::File;
 
 mod annotations;
+mod ast_helpers;
 
 /// One localized edit in source text. Per-class isolators compute
 /// one or more of these per delta; the full set for an isolation
 /// subset is aggregated and handed to [`apply_splices`].
 #[derive(Debug, Clone)]
-pub(super) struct SpliceOp {
+pub(crate) struct SpliceOp {
     /// Byte range in the parent source to replace. Empty ranges
     /// (`start == end`) are valid and represent pure insertions
     /// at that byte offset.
@@ -62,7 +63,7 @@ pub(super) struct SpliceOp {
 /// context for the caller's attribution record to explain why a
 /// subset was rejected.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) enum SpliceError {
+pub(crate) enum SpliceError {
     /// Two splices' byte ranges overlap — ambiguous merge.
     /// Indicates a bug in the per-class isolator that produced
     /// them (or in the class-dispatch logic that composed a
@@ -126,7 +127,7 @@ impl std::error::Error for SpliceError {}
 /// means earlier byte offsets aren't shifted by later-indexed
 /// edits. Output is a pure function of `(source, splices)`; the
 /// input order of the `splices` vec doesn't affect the result.
-pub(super) fn apply_splices(
+pub(crate) fn apply_splices(
     source: &str,
     mut splices: Vec<SpliceOp>,
 ) -> Result<String, SpliceError> {
@@ -201,7 +202,7 @@ pub(super) fn apply_splices(
 /// its parsed AST. Per-class isolators walk the AST to find the
 /// node they care about and consult the source to copy text
 /// ranges.
-pub(super) struct IsolationInput {
+pub(crate) struct IsolationInput {
     pub source: String,
     pub file: File,
 }
@@ -210,7 +211,7 @@ pub(super) struct IsolationInput {
 /// enough context for the caller's attribution record to
 /// surface a specific reason for a non-minimal subset.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) enum IsolationError {
+pub(crate) enum IsolationError {
     /// Lexing or parsing the input source failed. Attribution
     /// falls back to commit-level (`confidence: CommitLevel`).
     ParseFailure(Vec<String>),
@@ -281,7 +282,7 @@ impl From<SpliceError> for IsolationError {
 /// isolators to walk. Lexing and parse errors bubble up as
 /// `ParseFailure` with the error messages flattened — callers
 /// typically log and fall back to commit-level attribution.
-pub(super) fn prepare_isolation_input(source: &str) -> Result<IsolationInput, IsolationError> {
+pub(crate) fn prepare_isolation_input(source: &str) -> Result<IsolationInput, IsolationError> {
     let tokens = corvid_syntax::lex(source).map_err(|errs| {
         IsolationError::ParseFailure(errs.iter().map(|e| format!("{e:?}")).collect())
     })?;
@@ -300,7 +301,7 @@ pub(super) fn prepare_isolation_input(source: &str) -> Result<IsolationInput, Is
 /// Dispatch to the per-class isolator that handles `delta_key`.
 /// Returns splice ops to be composed by the caller into a full
 /// subset splice list.
-pub(super) fn compute_splices_for_delta(
+pub(crate) fn compute_splices_for_delta(
     delta_key: &str,
     parent: &IsolationInput,
     commit: &IsolationInput,
