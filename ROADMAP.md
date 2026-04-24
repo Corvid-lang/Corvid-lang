@@ -46,20 +46,22 @@ Every phase has:
 
 ### Autonomous execution protocol
 
-Default working mode after Phase 22: proceed through the remaining roadmap automatically, one coherent slice at a time, without asking for routine permission between phases. The next phase starts only after the current slice has real implementation, tests, docs or roadmap updates where required, validation through user-facing commands, and a commit.
+Default working mode after Phase 22: proceed through the remaining roadmap automatically, one coherent slice at a time, without asking for routine permission between phases. Product, security, scope, and marketing decisions are delegated to the implementation lane by default: choose the design that is more durable, more auditable, more AI-native, and more general-purpose, even when it is harder.
+
+The next phase starts only after the current slice has real implementation, tests, docs or roadmap updates where required, validation through user-facing commands, and a commit. Do not optimize for the easiest path. A shortcut is any change that preserves the appearance of progress while weakening semantics, skipping validation, hiding a limitation, or moving a hard requirement into vague follow-up language.
 
 Pause and ask only for:
-- Product decisions with more than one defensible direction.
-- Scope changes that would weaken the roadmap or convert a real feature into a shortcut.
-- Security, signing, registry, network, or launch decisions that create long-term trust commitments.
+- Secrets, credentials, payments, domain/account ownership, or external service actions that cannot be completed safely from the local repository alone.
+- Destructive actions against user work, published artifacts, tags, releases, or remote history.
 - Any conflict with user work, dirty files owned by someone else, or failing validation that cannot be resolved locally.
-- Claims that would affect public marketing, benchmark interpretation, or launch positioning.
+- Evidence gaps where a public claim cannot be backed by a committed test, command, benchmark archive, or spec.
 
 Do not pause for:
 - Routine implementation sequencing.
 - Normal refactors needed to keep the code correct.
 - Adding positive and negative tests.
 - Documentation needed to make a shipped feature honest.
+- Product, security, scope, or marketing tradeoffs when the stronger non-shortcut direction is clear from the roadmap.
 - Continuing from one completed roadmap slice to the next.
 
 ---
