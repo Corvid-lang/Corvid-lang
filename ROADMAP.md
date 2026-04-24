@@ -518,26 +518,26 @@ Corvid's moat: effects carry typed dimensions (cost, trust, reversibility, data,
 
 The invention: groundedness is not an annotation — it's a compile-time provenance property that the compiler infers by tracing data flow from retrieval tools through prompts to return types. No other language does this.
 
-- [ ] `Grounded<T>` as a compiler-known stdlib type (like `Result`, `Option`). AST `TypeRef` variant + `Type::Grounded(Box<Type>)` + IR lowering.
-- [ ] Provenance analyzer in the typechecker: walks each agent's data flow graph to determine which values inherit groundedness from tools with `data: grounded` in their effect declaration. If a value's provenance chain includes at least one grounded source, the value is provably grounded.
-- [ ] Compile error `E0201` when an agent returns `Grounded<T>` but no path from a `data: grounded` tool feeds into the return value. Error message names the missing provenance link.
-- [ ] Provenance flows compositionally across agent boundaries: if agent B calls a grounded tool and agent A calls B, A's return inherits B's groundedness.
+- [x] `Grounded<T>` as a compiler-known stdlib type (like `Result`, `Option`). `Type::Grounded(Box<Type>)`, resolver built-in, checker generics, IR lowering, ABI type description, VM value support, and native/host binding surfaces are implemented.
+- [x] Provenance analyzer in the typechecker: walks each agent's data flow graph to determine which values inherit groundedness from tools with `data: grounded` in their effect declaration. If a value's provenance chain includes at least one grounded source, the value is provably grounded.
+- [ ] Stable diagnostic code for ungrounded returns. The checker already emits typed `UngroundedReturn` with the missing-provenance message; the pretty renderer still needs a dedicated stable code instead of the older string-based fallback.
+- [x] Provenance flows compositionally across agent boundaries: if agent B calls a grounded tool and agent A calls B, A's return inherits B's groundedness.
 - [ ] `cites ctx strictly` runtime annotation: compile-time proves groundedness exists; runtime verifies the LLM's cited passages actually appear in the context. Emits citation-checking code in the interpreter + native codegen.
 - [ ] `.unwrap_discarding_sources()` method on `Grounded<T>` for when the caller consciously drops provenance.
-- [ ] Built-in `retrieval` effect with `data: grounded` dimension registered in the `EffectRegistry` so tools can declare themselves as grounded sources.
+- [x] Built-in `retrieval` effect with `data: grounded` dimension registered in the `EffectRegistry` so tools can declare themselves as grounded sources.
 
 #### Slice 20c — `eval ... assert ...` language syntax (~2 weeks)
-- [ ] Parser + typechecker + lowering for `eval name: body ... assert expr` declarations.
-- [ ] IR node `IrEval` alongside `IrAgent`.
-- [ ] Runner CLI is out of scope — ships in Phase 27. This slice is language only.
+- [x] Parser + typechecker + lowering for `eval name: body ... assert expr` declarations, including value, trace, cost, ordering, and statistical assertions.
+- [x] IR node `IrEval` alongside `IrAgent`.
+- [x] Runner CLI is out of scope — ships in Phase 27. This slice is language only.
 
 #### Slice 20d — Cost dimension + `@budget` compile-time analysis (~3 weeks)
 
 Cost is a dimension in the effect system, not a standalone annotation. `@budget($1.00)` is an `EffectConstraint` on the cost dimension.
 
-- [ ] Each tool/prompt carries `cost: $X.XX` in its effect declaration.
-- [ ] Compile-time worst-case cost analysis sums the cost dimension over control-flow paths using the composition algebra.
-- [ ] `E0250` if worst-case cost > budget. `W0251` when the analysis can't prove a bound.
+- [x] Each tool/prompt carries `cost: $X.XX` in its effect declaration.
+- [x] Compile-time worst-case cost analysis sums the cost dimension over control-flow paths using the composition algebra, including multi-dimensional cost/tokens/latency estimates and `:cost` tree rendering.
+- [ ] Stable diagnostic codes for budget diagnostics. The checker already emits budget `EffectConstraintViolation` errors and `UnboundedCostAnalysis` warnings; the pretty renderer still needs explicit `E0250` / `W0251` codes instead of string fallback.
 - [ ] Also ships the `@wrapping` annotation for opt-out overflow checks deferred from Phase 12.
 
 #### Slice 20e — Confidence dimension (~2 weeks)
@@ -558,16 +558,16 @@ The invention: confidence isn't a number — it's a dynamic authorization gate. 
 Streaming in Corvid isn't just async iteration — streams are **first-class participants in the dimensional effect system**. Every dimension (cost, confidence, provenance, trust, latency) flows through stream types. No other language can do this because no other language has dimensional effects.
 
 **Foundation:**
-- [ ] `Stream<T>` as compiler-known stdlib type. Prompts + tools can declare streaming returns.
-- [ ] `for x in stream:` consumes the stream. `yield` in agent bodies produces streams.
-- [ ] `latency: streaming(backpressure: bounded(N) | unbounded)` dimension value.
-- [ ] Tokio `mpsc::Receiver` backing; agent bodies with `yield` run as async tasks.
+- [x] `Stream<T>` as compiler-known stdlib type. Prompts + tools can declare streaming returns.
+- [x] `for x in stream:` consumes the stream. `yield` in agent bodies produces streams.
+- [x] `latency` / `latency_ms` dimension support exists for cost analysis; richer `latency: streaming(backpressure: bounded(N) | unbounded)` algebra remains in the streaming integration bullets below.
+- [x] Tokio `mpsc::Receiver` backing; agent bodies with `yield` run as async tasks.
 
 **Streaming effect integration (the inventions):**
-- [ ] **Live cost termination mid-stream.** `@budget($1.00)` on an agent calling a streaming prompt tracks cumulative cost per yielded token. If the budget is exceeded while the stream is still producing, the runtime terminates and raises `BudgetExceeded`. No framework terminates streams by accumulated cost.
+- [x] **Live cost termination mid-stream.** `@budget($1.00)` on an agent calling a streaming prompt tracks cumulative cost per yielded token. If the budget is exceeded while the stream is still producing, the runtime terminates and raises `BudgetExceeded`. No framework terminates streams by accumulated cost.
 - [ ] **Per-element provenance in `Stream<Grounded<T>>`.** Each yielded element carries its own `ProvenanceChain`. Aggregate stream provenance is the union. Step-through REPL shows provenance building up in real time.
-- [ ] **`try ... retry` over streams — stream-start semantics.** Retries fire at stream-open, not per-element. Transient connection failures retry with backoff; mid-stream errors propagate.
-- [ ] **Confidence-floor termination.** `with min_confidence 0.80` on a streaming prompt terminates the stream if streaming confidence drops below threshold, raising `ConfidenceFloorBreached`.
+- [x] **`try ... retry` over streams — stream-start semantics.** Retries fire at stream-open, not per-element. Transient connection failures retry with backoff; mid-stream errors propagate.
+- [x] **Confidence-floor termination.** `with min_confidence 0.80` on a streaming prompt terminates the stream if streaming confidence drops below threshold, raising `ConfidenceFloorBreached`.
 - [ ] **Mid-stream model escalation** (paired with 20h). On confidence drop, the runtime opens a continuation stream on a stronger model, feeding the partial output as continuation context. Consumer sees seamless tokens with a `StreamUpgradeEvent` in the trace. No framework has this.
 - [ ] **Progressive structured types: `Stream<Partial<T>>`.** Compiler-known `Partial<T>` where each field is `Complete(V)` or `Streaming`. Users access fields the moment they're complete without waiting for the full response. Type-level progressive structure.
 - [ ] **Resumption tokens.** Cancellation produces a typed `resume_token` capturing elements delivered + provider session state. `resume(prompt, token)` continues from the interruption point, using provider continuation APIs when available, local re-run with accumulated context otherwise.
