@@ -44,6 +44,7 @@ use corvid_ast::File;
 
 mod annotations;
 mod ast_helpers;
+mod structural;
 
 /// One localized edit in source text. Per-class isolators compute
 /// one or more of these per delta; the full set for an isolation
@@ -310,6 +311,9 @@ pub(crate) fn compute_splices_for_delta(
         || delta_key.starts_with("agent.replayable_lost:")
     {
         return annotations::isolate_replayable(delta_key, parent, commit);
+    }
+    if delta_key.starts_with("agent.added:") || delta_key.starts_with("agent.removed:") {
+        return structural::isolate_lifecycle(delta_key, parent, commit);
     }
     Err(IsolationError::UnsupportedDeltaClass(delta_key.to_string()))
 }
