@@ -7,13 +7,15 @@
 //! Extracted from `lib.rs` as part of Phase 20i responsibility
 //! decomposition (20i-audit-driver-d).
 
-use super::{compile_to_ir_with_config, compile_with_config, load_corvid_config_for, Diagnostic};
-use corvid_codegen_py::emit;
+use super::{
+    compile_to_ir_with_config_at_path, compile_with_config_at_path, load_corvid_config_for,
+    lower_driver_file, typecheck_driver_file, Diagnostic,
+};
 pub use corvid_codegen_cl::BuildTarget;
-use corvid_ir::{lower, IrFile};
+use corvid_ir::IrFile;
 use corvid_resolve::{resolve, Resolved};
 use corvid_syntax::{lex, parse_file};
-use corvid_types::{typecheck_with_config, Checked, CorvidConfig, EffectRegistry};
+use corvid_types::{Checked, CorvidConfig, EffectRegistry};
 use std::path::{Path, PathBuf};
 
 /// Compile `source_path` and write the generated Python to disk.
@@ -28,7 +30,7 @@ pub fn build_to_disk(source_path: &Path) -> anyhow::Result<BuildOutput> {
     })?;
 
     let config = load_corvid_config_for(source_path);
-    let result = compile_with_config(&source, config.as_ref());
+    let result = compile_with_config_at_path(&source, source_path, config.as_ref());
 
     if !result.ok() {
         return Ok(BuildOutput {
@@ -72,7 +74,7 @@ pub fn build_native_to_disk(
     })?;
 
     let config = load_corvid_config_for(source_path);
-    match compile_to_ir_with_config(&source, config.as_ref()) {
+    match compile_to_ir_with_config_at_path(&source, source_path, config.as_ref()) {
         Err(diagnostics) => Ok(NativeBuildOutput {
             source,
             output_path: None,
@@ -155,7 +157,7 @@ pub fn build_target_to_disk(
     })?;
 
     let config = load_corvid_config_for(source_path);
-    match build_frontend_bundle(&source, config.as_ref()) {
+    match build_frontend_bundle(&source, source_path, config.as_ref()) {
         Err(diagnostics) => Ok(TargetBuildOutput {
             source,
             output_path: None,
@@ -249,7 +251,7 @@ pub fn build_catalog_descriptor_for_source(source_path: &Path) -> anyhow::Result
         anyhow::anyhow!("cannot read `{}`: {}", source_path.display(), e)
     })?;
     let config = load_corvid_config_for(source_path);
-    match build_frontend_bundle(&source, config.as_ref()) {
+    match build_frontend_bundle(&source, source_path, config.as_ref()) {
         Err(diagnostics) => Ok(AbiBuildOutput {
             source,
             descriptor_json: None,
@@ -302,6 +304,7 @@ fn emit_catalog_descriptor(
 
 fn build_frontend_bundle(
     source: &str,
+    source_path: &Path,
     config: Option<&CorvidConfig>,
 ) -> Result<FrontendBundle, Vec<Diagnostic>> {
     let mut diagnostics = Vec::new();
@@ -316,8 +319,17 @@ fn build_frontend_bundle(
     diagnostics.extend(parse_errs.into_iter().map(Diagnostic::from));
     let resolved = resolve(&file);
     diagnostics.extend(resolved.errors.iter().cloned().map(Diagnostic::from));
-    let checked = typecheck_with_config(&file, &resolved, config);
-    diagnostics.extend(checked.errors.iter().cloned().map(Diagnostic::from));
+    let typechecked = typecheck_driver_file(&file, &resolved, source_path, config);
+    diagnostics.extend(typechecked.diagnostics);
+    diagnostics.extend(
+        typechecked
+            .result
+            .checked
+            .errors
+            .iter()
+            .cloned()
+            .map(Diagnostic::from),
+    );
     if !diagnostics.is_empty() {
         return Err(diagnostics);
     }
@@ -330,7 +342,8 @@ fn build_frontend_bundle(
         })
         .collect::<Vec<_>>();
     let effect_registry = EffectRegistry::from_decls_with_config(&effect_decls, config);
-    let ir = lower(&file, &resolved, &checked);
+    let checked = typechecked.result.checked.clone();
+    let ir = lower_driver_file(&file, &resolved, &typechecked.result);
     Ok(FrontendBundle {
         source: source.to_string(),
         file,

@@ -11,15 +11,31 @@ use corvid_ast::{
     ToolArgPattern, ToolDecl, TypeDecl, TypeRef,
 };
 use corvid_resolve::{
-    resolver::MethodEntry, Binding, BuiltIn, DeclKind, DefId, LocalId, Resolved, SymbolTable,
+    resolver::MethodEntry, Binding, BuiltIn, DeclKind, DefId, LocalId, ModuleResolution, Resolved,
+    SymbolTable,
 };
 use corvid_types::{Checked, Type};
 use corvid_types::effects::{canonical_dimension_name, numeric_constraint_value, EffectRegistry};
+use corvid_types::types::ImportedStructType;
 use std::collections::HashMap;
 
 /// Entry point: produce an `IrFile` from parsed/resolved/checked sources.
 pub fn lower(file: &File, resolved: &Resolved, checked: &Checked) -> IrFile {
-    let mut l = Lowerer::new(resolved, checked);
+    let mut l = Lowerer::new(resolved, checked, None);
+    l.lower_file(file)
+}
+
+/// Lower with cross-file module metadata. This is the file-backed
+/// counterpart to [`lower`]: it preserves successful `alias.Type`
+/// resolutions as `Type::ImportedStruct` in IR signatures instead
+/// of degrading them to `Unknown` after typechecking.
+pub fn lower_with_modules(
+    file: &File,
+    resolved: &Resolved,
+    checked: &Checked,
+    modules: &ModuleResolution,
+) -> IrFile {
+    let mut l = Lowerer::new(resolved, checked, Some(modules));
     l.lower_file(file)
 }
 
@@ -37,10 +53,15 @@ struct Lowerer<'a> {
     /// Used during tool lowering to set `IrTool.confidence_gate`.
     confidence_gates: HashMap<String, f64>,
     effect_registry: EffectRegistry,
+    module_resolution: Option<&'a ModuleResolution>,
 }
 
 impl<'a> Lowerer<'a> {
-    fn new(resolved: &'a Resolved, checked: &'a Checked) -> Self {
+    fn new(
+        resolved: &'a Resolved,
+        checked: &'a Checked,
+        module_resolution: Option<&'a ModuleResolution>,
+    ) -> Self {
         Self {
             symbols: &resolved.symbols,
             bindings: &resolved.bindings,
@@ -48,6 +69,7 @@ impl<'a> Lowerer<'a> {
             methods: &resolved.methods,
             confidence_gates: HashMap::new(),
             effect_registry: EffectRegistry::default(),
+            module_resolution,
         }
     }
 
@@ -911,7 +933,12 @@ impl<'a> Lowerer<'a> {
                     None => Type::Unknown,
                 },
             },
-            TypeRef::Qualified { .. } => Type::Unknown,
+            TypeRef::Qualified { alias, name, .. } => self
+                .module_resolution
+                .and_then(|resolution| {
+                    resolve_imported_type_ref(resolution, &alias.name, &name.name)
+                })
+                .unwrap_or(Type::Unknown),
             TypeRef::Generic { name, args, .. } => match name.name.as_str() {
                 "List" if args.len() == 1 => Type::List(Box::new(self.type_ref_to_type(&args[0]))),
                 "Stream" if args.len() == 1 => {
@@ -954,6 +981,23 @@ fn confidence_profile_dimension(profile: &corvid_types::effects::ComposedProfile
         Some(corvid_ast::DimensionValue::Number(value)) => *value,
         _ => 1.0,
     }
+}
+
+fn resolve_imported_type_ref(
+    modules: &ModuleResolution,
+    alias: &str,
+    member: &str,
+) -> Option<Type> {
+    let module = modules.lookup(alias)?;
+    let export = module.exports.get(member)?;
+    if export.kind != DeclKind::Type {
+        return None;
+    }
+    Some(Type::ImportedStruct(ImportedStructType {
+        module_path: module.path.to_string_lossy().to_string(),
+        def_id: export.def_id,
+        name: export.name.clone(),
+    }))
 }
 
 fn agent_cost_budget(agent: &AgentDecl) -> Option<f64> {

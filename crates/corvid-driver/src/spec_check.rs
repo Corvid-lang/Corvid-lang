@@ -5,21 +5,17 @@
 //! Corvid toolchain. A directive on the first comment line inside
 //! each block tells the verifier what outcome to expect:
 //!
-//! ```markdown
-//! ```corvid
-//! # expect: compile
-//! effect transfer:
-//!     cost: $0.001
-//! ```
-//! ```
+//! Example fence contents: `# expect: compile`, followed by Corvid code.
 //!
 //! Supported directives:
 //!
+//! ```text
 //!   `# expect: compile`           — must compile with zero errors (default)
 //!   `# expect: error`             — must produce at least one error
 //!   `# expect: error "pattern"`   — must produce an error whose message
 //!                                   contains the pattern (case-sensitive)
 //!   `# expect: skip`              — illustrative fragment, don't compile
+//! ```
 //!
 //! When the extractor + verifier run under `corvid test spec`, a
 //! mismatch between the declared expectation and the actual compile

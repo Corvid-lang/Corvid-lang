@@ -56,6 +56,19 @@ pub fn typecheck_with_modules(
     typecheck_with_everything(file, resolved, None, Some(modules))
 }
 
+/// Typecheck `file` with both an explicit `corvid.toml` configuration
+/// and cross-file module resolution. Production file-backed compiles
+/// use this path so custom dimensions and `import "./path" as alias`
+/// semantics compose rather than one disabling the other.
+pub fn typecheck_with_config_and_modules(
+    file: &File,
+    resolved: &Resolved,
+    config: Option<&crate::config::CorvidConfig>,
+    modules: &corvid_resolve::ModuleResolution,
+) -> Checked {
+    typecheck_with_everything(file, resolved, config, Some(modules))
+}
+
 /// Typecheck `file`, consuming an optional `corvid.toml` configuration.
 /// Custom dimensions declared under `[effect-system.dimensions.*]`
 /// are merged into the `EffectRegistry` alongside the built-ins.

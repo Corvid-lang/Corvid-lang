@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use corvid_ast::{AgentAttribute, Decl, Effect};
-use corvid_driver::{compile_to_ir_with_config, load_corvid_config_for};
+use corvid_driver::{compile_to_ir_with_config_at_path, load_corvid_config_for};
 use corvid_ir::IrFile;
 use corvid_runtime::{
     AnthropicAdapter, EnvVarMockAdapter, OpenAiAdapter, ProgrammaticApprover,
@@ -389,16 +389,17 @@ pub fn parse_program_source(path: &Path) -> Result<(IrFile, HashMap<String, Agen
     let source = std::fs::read_to_string(path)
         .with_context(|| format!("failed to read `{}`", path.display()))?;
     let config = load_corvid_config_for(path);
-    let ir = compile_to_ir_with_config(&source, config.as_ref()).map_err(|diagnostics| {
-        anyhow::anyhow!(
-            "{}",
-            diagnostics
-                .into_iter()
-                .map(|d| d.message)
-                .collect::<Vec<_>>()
-                .join("\n")
-        )
-    })?;
+    let ir =
+        compile_to_ir_with_config_at_path(&source, path, config.as_ref()).map_err(|diagnostics| {
+            anyhow::anyhow!(
+                "{}",
+                diagnostics
+                    .into_iter()
+                    .map(|d| d.message)
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            )
+        })?;
 
     let tokens = lex(&source).map_err(|errs| {
         anyhow::anyhow!(

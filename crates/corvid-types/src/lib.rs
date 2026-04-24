@@ -18,7 +18,10 @@ pub mod law_check;
 pub mod repl;
 pub mod types;
 
-pub use checker::{typecheck, typecheck_with_config, typecheck_with_modules, Checked};
+pub use checker::{
+    typecheck, typecheck_with_config, typecheck_with_config_and_modules, typecheck_with_modules,
+    Checked,
+};
 pub use config::{
     CorvidConfig, CustomDimensionConfig, CustomDimensionMeta, DimensionConfigError,
     DimensionValueType, EffectSystemConfig, BUILTIN_DIMENSION_NAMES,

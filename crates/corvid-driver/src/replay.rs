@@ -32,7 +32,7 @@
 //! get those exact arguments back in the shadow run.
 
 use super::{
-    compile_to_ir_with_config, load_corvid_config_for, run_ir_with_runtime, RunError,
+    compile_to_ir_with_config_at_path, load_corvid_config_for, run_ir_with_runtime, RunError,
 };
 use anyhow::{anyhow, Context, Result};
 use corvid_ir::{IrAgent, IrFile, IrType};
@@ -189,13 +189,14 @@ pub async fn run_replay_from_source_with_builder_async(
         format!("failed to read source at `{}`", source_path.display())
     })?;
     let config = load_corvid_config_for(source_path);
-    let ir = compile_to_ir_with_config(&source, config.as_ref()).map_err(|diags| {
-        anyhow!(
-            "source `{}` failed to compile: {} diagnostic(s)",
-            source_path.display(),
-            diags.len()
-        )
-    })?;
+    let ir =
+        compile_to_ir_with_config_at_path(&source, source_path, config.as_ref()).map_err(|diags| {
+            anyhow!(
+                "source `{}` failed to compile: {} diagnostic(s)",
+                source_path.display(),
+                diags.len()
+            )
+        })?;
 
     // Extract recorded agent + args from RunStarted.
     let (agent_name, json_args) = find_run_started(&events).ok_or_else(|| {

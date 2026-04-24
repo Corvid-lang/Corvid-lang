@@ -31,7 +31,7 @@ use anyhow::{anyhow, Context, Result};
 use corvid_runtime::{load_dotenv_walking, RuntimeBuilder};
 use corvid_trace_schema::{read_events_from_path, validate_supported_schema, TraceEvent};
 
-use super::{compile_to_ir_with_config, load_corvid_config_for, run_ir_with_runtime};
+use super::{compile_to_ir_with_config_at_path, load_corvid_config_for, run_ir_with_runtime};
 
 /// Run the current source under `source_path` against the agent +
 /// args recorded in `trace_path`, emitting the fresh trace into
@@ -80,13 +80,14 @@ pub async fn run_fresh_from_source_async(
         format!("failed to read source at `{}`", source_path.display())
     })?;
     let config = load_corvid_config_for(source_path);
-    let ir = compile_to_ir_with_config(&source, config.as_ref()).map_err(|diags| {
-        anyhow!(
-            "source `{}` failed to compile: {} diagnostic(s)",
-            source_path.display(),
-            diags.len()
-        )
-    })?;
+    let ir =
+        compile_to_ir_with_config_at_path(&source, source_path, config.as_ref()).map_err(|diags| {
+            anyhow!(
+                "source `{}` failed to compile: {} diagnostic(s)",
+                source_path.display(),
+                diags.len()
+            )
+        })?;
 
     // Extract recorded agent + args from RunStarted.
     let (agent_name, json_args) = find_run_started(&events).ok_or_else(|| {

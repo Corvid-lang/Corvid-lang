@@ -8,18 +8,17 @@
 //! Extracted from `lib.rs` as part of Phase 20i responsibility
 //! decomposition (20i-audit-driver-e).
 
-use super::build::{native_output_dir_for, output_path_for};
 use super::native_cache;
 use super::{
-    build_native_to_disk, compile_to_ir, compile_to_ir_with_config, load_corvid_config_for,
-    native_ability, render_all_pretty, run_ir_with_runtime, Diagnostic, NotNativeReason,
+    compile_to_ir_with_config_at_path, load_corvid_config_for, native_ability, render_all_pretty,
+    run_ir_with_runtime, Diagnostic, NotNativeReason,
 };
 use corvid_ir::IrFile;
 use corvid_runtime::{
-    load_dotenv_walking, AnthropicAdapter, Approver, MockAdapter, OpenAiAdapter, RedactionSet,
-    Runtime, RuntimeBuilder, StdinApprover, Tracer,
+    load_dotenv_walking, AnthropicAdapter, OpenAiAdapter, RedactionSet, Runtime, StdinApprover,
+    Tracer,
 };
-use corvid_vm::{InterpError, InterpErrorKind};
+use corvid_vm::InterpError;
 use std::fmt;
 use std::path::{Path, PathBuf};
 
@@ -127,7 +126,7 @@ pub fn run_with_target(
         }
     };
     let config = load_corvid_config_for(path);
-    let ir = match compile_to_ir_with_config(&source, config.as_ref()) {
+    let ir = match compile_to_ir_with_config_at_path(&source, path, config.as_ref()) {
         Ok(ir) => ir,
         Err(diags) => {
             eprint!("{}", render_all_pretty(&diags, path, &source));

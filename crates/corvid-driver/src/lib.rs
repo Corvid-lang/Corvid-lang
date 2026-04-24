@@ -43,18 +43,18 @@ pub use corvid_runtime::{
 };
 pub use corvid_vm::{build_struct, InterpError, InterpErrorKind, StructValue, Value};
 
-use std::fmt;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
-use corvid_ast::{CompositionRule as AstCompositionRule, DimensionSchema as AstDimensionSchema, DimensionValue as AstDimensionValue, Span};
+use corvid_ast::{
+    Decl, File, ImportSource, Span,
+};
 use corvid_codegen_py::emit;
-use corvid_ir::{lower, IrFile};
-use corvid_resolve::{resolve, ResolveError};
-use corvid_syntax::{lex, parse_file, LexError, ParseError};
+use corvid_ir::{lower, lower_with_modules, IrFile};
+use corvid_resolve::{resolve, ModuleResolution, Resolved};
+use corvid_syntax::{lex, parse_file};
 pub use corvid_types::{Verdict as LawVerdict, DEFAULT_SAMPLES};
 use corvid_types::{
-    check_dimension, typecheck_with_config, CorvidConfig, DimensionUnderTest, LawCheckResult,
-    TypeError, Verdict,
+    typecheck_with_config, typecheck_with_config_and_modules, Checked, CorvidConfig,
 };
 
 
@@ -81,7 +81,6 @@ pub use run::{
     RunTarget,
 };
 pub use scaffold::{scaffold_new, scaffold_new_in};
-use diagnostic::line_col_of;
 
 
 /// Outcome of a compile. Always contains the Python source (even partial)
@@ -89,6 +88,11 @@ use diagnostic::line_col_of;
 pub struct CompileResult {
     pub python_source: Option<String>,
     pub diagnostics: Vec<Diagnostic>,
+}
+
+pub(crate) struct DriverTypecheck {
+    pub(crate) checked: Checked,
+    pub(crate) modules: Option<ModuleResolution>,
 }
 
 impl CompileResult {
@@ -172,12 +176,219 @@ pub fn compile_with_config(source: &str, config: Option<&CorvidConfig>) -> Compi
     }
 }
 
+/// Compile a source string that came from `source_path`. Unlike
+/// [`compile_with_config`], this path can resolve sibling `.cor`
+/// imports because the driver still has a filesystem anchor.
+pub fn compile_with_config_at_path(
+    source: &str,
+    source_path: &Path,
+    config: Option<&CorvidConfig>,
+) -> CompileResult {
+    let mut diagnostics: Vec<Diagnostic> = Vec::new();
+    let tokens = match lex(source) {
+        Ok(t) => t,
+        Err(errs) => {
+            diagnostics.extend(errs.into_iter().map(Diagnostic::from));
+            return CompileResult {
+                python_source: None,
+                diagnostics,
+            };
+        }
+    };
+    let (file, parse_errs) = parse_file(&tokens);
+    diagnostics.extend(parse_errs.into_iter().map(Diagnostic::from));
+    let resolved = resolve(&file);
+    diagnostics.extend(resolved.errors.iter().cloned().map(Diagnostic::from));
+
+    let typechecked = typecheck_driver_file(&file, &resolved, source_path, config);
+    diagnostics.extend(typechecked.diagnostics);
+    diagnostics.extend(
+        typechecked
+            .result
+            .checked
+            .errors
+            .iter()
+            .cloned()
+            .map(Diagnostic::from),
+    );
+
+    if !diagnostics.is_empty() {
+        return CompileResult {
+            python_source: None,
+            diagnostics,
+        };
+    }
+
+    let ir = lower_driver_file(&file, &resolved, &typechecked.result);
+    let py = emit(&ir);
+
+    CompileResult {
+        python_source: Some(py),
+        diagnostics: Vec::new(),
+    }
+}
+
+pub(crate) struct DriverTypecheckOutcome {
+    pub result: DriverTypecheck,
+    pub diagnostics: Vec<Diagnostic>,
+}
+
+pub(crate) fn typecheck_driver_file(
+    file: &File,
+    resolved: &Resolved,
+    source_path: &Path,
+    config: Option<&CorvidConfig>,
+) -> DriverTypecheckOutcome {
+    if has_corvid_imports(file) {
+        let (modules, load_errors) = build_module_resolution(file, source_path);
+        let diagnostics = load_errors
+            .into_iter()
+            .flat_map(module_load_error_diagnostics)
+            .collect::<Vec<_>>();
+        let checked = typecheck_with_config_and_modules(file, resolved, config, &modules);
+        DriverTypecheckOutcome {
+            result: DriverTypecheck {
+                checked,
+                modules: Some(modules),
+            },
+            diagnostics,
+        }
+    } else {
+        DriverTypecheckOutcome {
+            result: DriverTypecheck {
+                checked: typecheck_with_config(file, resolved, config),
+                modules: None,
+            },
+            diagnostics: Vec::new(),
+        }
+    }
+}
+
+pub(crate) fn lower_driver_file(
+    file: &File,
+    resolved: &Resolved,
+    typechecked: &DriverTypecheck,
+) -> IrFile {
+    match &typechecked.modules {
+        Some(modules) => lower_with_modules(file, resolved, &typechecked.checked, modules),
+        None => lower(file, resolved, &typechecked.checked),
+    }
+}
+
+fn has_corvid_imports(file: &File) -> bool {
+    file.decls.iter().any(|decl| {
+        matches!(
+            decl,
+            Decl::Import(import) if matches!(import.source, ImportSource::Corvid)
+        )
+    })
+}
+
+fn module_load_error_diagnostics(error: ModuleLoadError) -> Vec<Diagnostic> {
+    let top = Span::new(0, 0);
+    match error {
+        ModuleLoadError::FileNotFound {
+            importing_file,
+            requested,
+            resolved,
+        } => vec![Diagnostic {
+            span: top,
+            message: format!(
+                "import `{requested}` from `{}` could not be found at `{}`",
+                importing_file.display(),
+                resolved.display()
+            ),
+            hint: Some("check the import path relative to the importing `.cor` file".into()),
+        }],
+        ModuleLoadError::ReadError { path, message } => vec![Diagnostic {
+            span: top,
+            message: format!("failed to read imported module `{}`: {message}", path.display()),
+            hint: None,
+        }],
+        ModuleLoadError::LexError { path, errors } => errors
+            .into_iter()
+            .map(|err| Diagnostic {
+                span: top,
+                message: format!(
+                    "imported module `{}` failed to lex: {}",
+                    path.display(),
+                    err.kind
+                ),
+                hint: None,
+            })
+            .collect(),
+        ModuleLoadError::ParseErrors { path, errors } => errors
+            .into_iter()
+            .map(|err| Diagnostic {
+                span: top,
+                message: format!(
+                    "imported module `{}` failed to parse: {}",
+                    path.display(),
+                    err.kind
+                ),
+                hint: None,
+            })
+            .collect(),
+        ModuleLoadError::Cycle { cycle } => {
+            let path = cycle
+                .iter()
+                .map(|p| p.display().to_string())
+                .collect::<Vec<_>>()
+                .join(" -> ");
+            vec![Diagnostic {
+                span: top,
+                message: format!("cyclic Corvid import graph: {path}"),
+                hint: Some(
+                    "break the cycle by moving shared declarations into a third module".into(),
+                ),
+            }]
+        }
+    }
+}
+
 
 
 
 /// Compile a source string to IR. Returns the IR or the full diagnostic list.
 pub fn compile_to_ir(source: &str) -> Result<IrFile, Vec<Diagnostic>> {
     compile_to_ir_with_config(source, None)
+}
+
+/// Compile a file-backed source string to IR with module-aware import
+/// resolution. Production paths that have a real `.cor` path should
+/// use this instead of [`compile_to_ir_with_config`].
+pub fn compile_to_ir_with_config_at_path(
+    source: &str,
+    source_path: &Path,
+    config: Option<&CorvidConfig>,
+) -> Result<IrFile, Vec<Diagnostic>> {
+    let mut diagnostics: Vec<Diagnostic> = Vec::new();
+    let tokens = match lex(source) {
+        Ok(t) => t,
+        Err(errs) => {
+            diagnostics.extend(errs.into_iter().map(Diagnostic::from));
+            return Err(diagnostics);
+        }
+    };
+    let (file, parse_errs) = parse_file(&tokens);
+    diagnostics.extend(parse_errs.into_iter().map(Diagnostic::from));
+    let resolved = resolve(&file);
+    diagnostics.extend(resolved.errors.iter().cloned().map(Diagnostic::from));
+    let typechecked = typecheck_driver_file(&file, &resolved, source_path, config);
+    diagnostics.extend(typechecked.diagnostics);
+    diagnostics.extend(
+        typechecked
+            .result
+            .checked
+            .errors
+            .iter()
+            .cloned()
+            .map(Diagnostic::from),
+    );
+    if !diagnostics.is_empty() {
+        return Err(diagnostics);
+    }
+    Ok(lower_driver_file(&file, &resolved, &typechecked.result))
 }
 
 /// Compile a source string all the way to a `CorvidAbi` descriptor.
@@ -284,7 +495,8 @@ pub async fn run_with_runtime(
         error: e,
     })?;
     let config = load_corvid_config_for(path);
-    let ir = compile_to_ir_with_config(&source, config.as_ref()).map_err(RunError::Compile)?;
+    let ir = compile_to_ir_with_config_at_path(&source, path, config.as_ref())
+        .map_err(RunError::Compile)?;
     run_ir_with_runtime(&ir, agent, args, runtime).await
 }
 
@@ -345,6 +557,7 @@ pub async fn run_ir_with_runtime(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::diagnostic::line_col_of;
 
     const OK_SRC: &str = r#"
 tool get_order(id: String) -> Order
@@ -403,6 +616,103 @@ agent bad(id: String, amount: Float) -> Receipt:
         assert!(path.exists(), "expected {} to exist", path.display());
         let py = std::fs::read_to_string(&path).unwrap();
         assert!(py.contains("async def fetch"));
+    }
+
+    #[test]
+    fn build_to_disk_resolves_corvid_imports() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            tmp.path().join("types.cor"),
+            "\
+public type Receipt:
+    id: String
+",
+        )
+        .unwrap();
+        let src_path = tmp.path().join("main.cor");
+        std::fs::write(
+            &src_path,
+            "\
+import \"./types\" as t
+
+agent read(r: t.Receipt) -> String:
+    return r.id
+",
+        )
+        .unwrap();
+
+        let out = build_to_disk(&src_path).unwrap();
+        assert!(
+            out.diagnostics.is_empty(),
+            "build should resolve imported type: {:?}",
+            out.diagnostics
+        );
+        let path = out.output_path.expect("expected output path");
+        let py = std::fs::read_to_string(&path).unwrap();
+        assert!(py.contains("async def read"));
+    }
+
+    #[test]
+    fn compile_to_ir_at_path_resolves_imported_struct_signatures() {
+        let tmp = tempfile::tempdir().unwrap();
+        let types_path = tmp.path().join("types.cor");
+        std::fs::write(
+            &types_path,
+            "\
+public type Receipt:
+    id: String
+",
+        )
+        .unwrap();
+        let main_src = "\
+import \"./types\" as t
+
+agent read(r: t.Receipt) -> String:
+    return r.id
+";
+        let main_path = tmp.path().join("main.cor");
+        std::fs::write(&main_path, main_src).unwrap();
+
+        let ir = compile_to_ir_with_config_at_path(main_src, &main_path, None)
+            .expect("file-backed compile should resolve imported struct");
+        let read = ir.agents.iter().find(|agent| agent.name == "read").unwrap();
+        match &read.params[0].ty {
+            corvid_types::Type::ImportedStruct(imported) => {
+                assert_eq!(imported.name, "Receipt");
+                assert!(imported.module_path.ends_with("types.cor"));
+            }
+            other => panic!("expected imported struct param, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn compile_to_ir_at_path_reports_private_imported_type() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            tmp.path().join("hidden.cor"),
+            "\
+type Internal:
+    secret: String
+",
+        )
+        .unwrap();
+        let main_src = "\
+import \"./hidden\" as h
+
+agent bad(x: h.Internal) -> String:
+    return \"no\"
+";
+        let main_path = tmp.path().join("main.cor");
+        std::fs::write(&main_path, main_src).unwrap();
+
+        let diagnostics = compile_to_ir_with_config_at_path(main_src, &main_path, None)
+            .expect_err("private imported type should fail");
+        assert!(
+            diagnostics.iter().any(|diagnostic| diagnostic
+                .message
+                .contains("declaration `Internal` in the module imported as `h` is private")),
+            "diagnostics: {diagnostics:?}"
+        );
     }
 
     #[test]
@@ -1226,12 +1536,15 @@ agent load(id: String) -> String:
     }
 
     #[test]
-    fn native_ability_rejects_retry_over_non_result_or_option_body() {
-        let ir = compile_to_ir(NATIVE_STRING_RETRY_REJECTED_SRC).expect("compile");
-        match native_ability(&ir) {
-            Err(NotNativeReason::TaggedUnionRetryNotNative) => {}
-            other => panic!("expected retry subset rejection, got {other:?}"),
-        }
+    fn retry_over_non_result_or_option_errors_before_native_scan() {
+        let diagnostics = compile_to_ir(NATIVE_STRING_RETRY_REJECTED_SRC)
+            .expect_err("retry over plain String should fail typecheck");
+        assert!(
+            diagnostics.iter().any(|diagnostic| diagnostic
+                .message
+                .contains("can only be used on `Result` or `Option`")),
+            "diagnostics: {diagnostics:?}"
+        );
     }
 
     /// Second compilation of the same source hits the cache: no

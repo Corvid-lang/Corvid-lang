@@ -10,7 +10,7 @@
 pub mod lower;
 pub mod types;
 
-pub use lower::lower;
+pub use lower::{lower, lower_with_modules};
 pub use types::*;
 
 #[cfg(test)]
