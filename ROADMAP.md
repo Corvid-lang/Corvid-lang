@@ -29,6 +29,14 @@
 
 **The test applied to every proposed feature:** does it strengthen a moat dimension, or bring us to parity on a table-stakes dimension where we're below the floor? If yes, build it. If it moves neither bar, defer.
 
+### Phase standard
+
+Every remaining phase must make Corvid more AI-native and more general-purpose at the same time. Generic infrastructure is allowed only when it carries Corvid's effect, provenance, approval, cost, replay, eval, model, human-boundary, distribution, or deployment semantics through that layer.
+
+1. **More AI-native.** Each phase must ship at least one semantic capability that makes AI behavior more visible, constrained, replayable, typed, auditable, or governable.
+2. **More general-purpose.** Each phase must also make Corvid stronger as a normal programming language: modules, packages, tooling, deployment, tests, memory, FFI, standard library, editor support, portability, or maintainability.
+3. **More powerful without shortcuts.** Corvid does not ship feature-shaped placeholders. A feature is not done until it has real semantics, user-visible behavior, positive and negative tests, honest docs, clear non-scope, and validation through the command path users will actually run.
+
 Every phase has:
 - A pre-phase chat (concepts, decisions, success criteria) before any code.
 - Tests green at the phase boundary.
