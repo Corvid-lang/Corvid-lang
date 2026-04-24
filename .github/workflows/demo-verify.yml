@@ -1,0 +1,67 @@
+name: demo-verify
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  bundle-demo:
+    name: 22-K bundle demo gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry + target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
+      - name: cargo check --workspace
+        run: cargo check --workspace
+
+      - name: cargo test -p corvid-cli --test bundle_verify
+        run: cargo test -p corvid-cli --test bundle_verify
+
+      - name: cargo test -p corvid-cli --test bundle_integration
+        run: cargo test -p corvid-cli --test bundle_integration
+
+      - name: cargo test -p corvid-cli --test bundle_rebuild
+        run: cargo test -p corvid-cli --test bundle_rebuild
+
+      - name: cargo test -p corvid-cli --test bundle_query
+        run: cargo test -p corvid-cli --test bundle_query
+
+      - name: cargo test -p corvid-cli --test bundle_lineage
+        run: cargo test -p corvid-cli --test bundle_lineage
+
+      - name: examples/phase22_demo/verify.sh
+        run: bash examples/phase22_demo/verify.sh
+
+      - name: examples/failing_hash/verify.sh
+        run: bash examples/failing_hash/verify.sh
+
+      - name: examples/failing_signature/verify.sh
+        run: bash examples/failing_signature/verify.sh
+
+      - name: examples/failing_rebuild/verify.sh
+        run: bash examples/failing_rebuild/verify.sh
+
+      - name: examples/failing_lineage/verify.sh
+        run: bash examples/failing_lineage/verify.sh
+
+      - name: examples/failing_adversarial/verify.sh
+        run: bash examples/failing_adversarial/verify.sh

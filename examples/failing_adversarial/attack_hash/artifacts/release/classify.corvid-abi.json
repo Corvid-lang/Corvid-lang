@@ -1,0 +1,738 @@
+{
+  "corvid_abi_version": 1,
+  "compiler_version": "0.0.1",
+  "source_path": "examples/phase22_demo/src/classify.cor",
+  "generated_at": "1970-01-01T00:00:00Z",
+  "agents": [
+    {
+      "name": "classify",
+      "symbol": "classify",
+      "source_span": {
+        "start": 202,
+        "end": 276
+      },
+      "source_line": 9,
+      "params": [
+        {
+          "name": "text",
+          "type": {
+            "scalar": "String"
+          },
+          "ownership": {
+            "mode": "borrowed",
+            "lifetime": "call"
+          }
+        }
+      ],
+      "return_type": {
+        "scalar": "String"
+      },
+      "return_ownership": {
+        "mode": "owned",
+        "destructor": {
+          "kind": "drop",
+          "symbol": "corvid_free_string"
+        }
+      },
+      "effects": {
+        "cost": {
+          "projected_usd": 0.0
+        },
+        "trust_tier": "autonomous",
+        "latency_ms": {
+          "p99_estimate": 0.0
+        },
+        "reversibility": "reversible",
+        "data": "none",
+        "confidence": {
+          "min_expected": 1.0
+        },
+        "tokens": {
+          "projected": 0.0
+        },
+        "custom": {
+          "capability": "basic",
+          "compliance": "none",
+          "jurisdiction": "none",
+          "latency": "instant",
+          "privacy_tier": "standard"
+        }
+      },
+      "attributes": {
+        "replayable": true,
+        "deterministic": false,
+        "dangerous": false,
+        "pub_extern_c": true
+      },
+      "budget": {
+        "usd_per_call": 0.01
+      },
+      "required_capability": "basic",
+      "approval_contract": {
+        "required": false,
+        "labels": []
+      },
+      "provenance": {
+        "returns_grounded": false,
+        "grounded_param_deps": []
+      }
+    },
+    {
+      "name": "issue_tag",
+      "symbol": "issue_tag",
+      "source_span": {
+        "start": 306,
+        "end": 403
+      },
+      "source_line": 13,
+      "params": [
+        {
+          "name": "tag",
+          "type": {
+            "scalar": "String"
+          },
+          "ownership": {
+            "mode": "borrowed",
+            "lifetime": "call"
+          }
+        }
+      ],
+      "return_type": {
+        "scalar": "String"
+      },
+      "return_ownership": {
+        "mode": "owned",
+        "destructor": {
+          "kind": "drop",
+          "symbol": "corvid_free_string"
+        }
+      },
+      "effects": {
+        "cost": {
+          "projected_usd": 0.0
+        },
+        "trust_tier": "human_required",
+        "latency_ms": {
+          "p99_estimate": 0.0
+        },
+        "reversibility": "non_reversible",
+        "data": "none",
+        "confidence": {
+          "min_expected": 1.0
+        },
+        "tokens": {
+          "projected": 0.0
+        },
+        "custom": {
+          "capability": "basic",
+          "compliance": "none",
+          "jurisdiction": "none",
+          "latency": "instant",
+          "privacy_tier": "standard"
+        }
+      },
+      "attributes": {
+        "replayable": false,
+        "deterministic": false,
+        "dangerous": true,
+        "pub_extern_c": true
+      },
+      "budget": {
+        "usd_per_call": 0.02
+      },
+      "required_capability": "basic",
+      "approval_contract": {
+        "required": true,
+        "labels": [
+          {
+            "label": "EchoString",
+            "args": [
+              {
+                "name": "value",
+                "type": {
+                  "scalar": "String"
+                }
+              }
+            ],
+            "cost_at_site": 0.0,
+            "reversibility": "reversible",
+            "required_tier": "autonomous"
+          }
+        ]
+      },
+      "provenance": {
+        "returns_grounded": false,
+        "grounded_param_deps": []
+      }
+    },
+    {
+      "name": "grounded_tag",
+      "symbol": "grounded_tag",
+      "source_span": {
+        "start": 433,
+        "end": 517
+      },
+      "source_line": 18,
+      "params": [
+        {
+          "name": "tag",
+          "type": {
+            "scalar": "String"
+          },
+          "ownership": {
+            "mode": "borrowed",
+            "lifetime": "call"
+          }
+        }
+      ],
+      "return_type": {
+        "grounded": {
+          "inner": {
+            "scalar": "String"
+          }
+        }
+      },
+      "return_ownership": {
+        "mode": "owned",
+        "destructor": {
+          "kind": "release",
+          "symbol": "corvid_grounded_release"
+        }
+      },
+      "effects": {
+        "cost": {
+          "projected_usd": 0.0
+        },
+        "trust_tier": "autonomous",
+        "latency_ms": {
+          "p99_estimate": 0.0
+        },
+        "reversibility": "reversible",
+        "data": "grounded",
+        "confidence": {
+          "min_expected": 1.0
+        },
+        "tokens": {
+          "projected": 0.0
+        },
+        "custom": {
+          "capability": "basic",
+          "compliance": "none",
+          "jurisdiction": "none",
+          "latency": "instant",
+          "privacy_tier": "standard"
+        }
+      },
+      "attributes": {
+        "replayable": false,
+        "deterministic": false,
+        "dangerous": false,
+        "pub_extern_c": true
+      },
+      "budget": {
+        "usd_per_call": 0.01
+      },
+      "required_capability": "basic",
+      "approval_contract": {
+        "required": false,
+        "labels": []
+      },
+      "provenance": {
+        "returns_grounded": true,
+        "grounded_param_deps": [
+          "tag"
+        ]
+      }
+    },
+    {
+      "name": "__corvid_abi_descriptor_json",
+      "symbol": "__corvid_abi_descriptor_json",
+      "source_span": {
+        "start": 0,
+        "end": 0
+      },
+      "source_line": 0,
+      "params": [],
+      "return_type": {
+        "scalar": "String"
+      },
+      "effects": {
+        "cost": {
+          "projected_usd": 0.0
+        },
+        "trust_tier": "autonomous",
+        "reversibility": "reversible"
+      },
+      "attributes": {
+        "replayable": false,
+        "deterministic": true,
+        "dangerous": false,
+        "pub_extern_c": true
+      },
+      "budget": {
+        "usd_per_call": 0.0
+      },
+      "approval_contract": {
+        "required": false,
+        "labels": []
+      },
+      "provenance": {
+        "returns_grounded": false,
+        "grounded_param_deps": []
+      }
+    },
+    {
+      "name": "__corvid_abi_verify",
+      "symbol": "__corvid_abi_verify",
+      "source_span": {
+        "start": 0,
+        "end": 0
+      },
+      "source_line": 0,
+      "params": [
+        {
+          "name": "expected_hash_hex",
+          "type": {
+            "scalar": "String"
+          }
+        }
+      ],
+      "return_type": {
+        "scalar": "String"
+      },
+      "effects": {
+        "cost": {
+          "projected_usd": 0.0
+        },
+        "trust_tier": "autonomous",
+        "reversibility": "reversible"
+      },
+      "attributes": {
+        "replayable": false,
+        "deterministic": true,
+        "dangerous": false,
+        "pub_extern_c": true
+      },
+      "budget": {
+        "usd_per_call": 0.0
+      },
+      "approval_contract": {
+        "required": false,
+        "labels": []
+      },
+      "provenance": {
+        "returns_grounded": false,
+        "grounded_param_deps": []
+      }
+    },
+    {
+      "name": "__corvid_list_agents",
+      "symbol": "__corvid_list_agents",
+      "source_span": {
+        "start": 0,
+        "end": 0
+      },
+      "source_line": 0,
+      "params": [],
+      "return_type": {
+        "scalar": "String"
+      },
+      "effects": {
+        "cost": {
+          "projected_usd": 0.0
+        },
+        "trust_tier": "autonomous",
+        "reversibility": "reversible"
+      },
+      "attributes": {
+        "replayable": false,
+        "deterministic": true,
+        "dangerous": false,
+        "pub_extern_c": true
+      },
+      "budget": {
+        "usd_per_call": 0.0
+      },
+      "approval_contract": {
+        "required": false,
+        "labels": []
+      },
+      "provenance": {
+        "returns_grounded": false,
+        "grounded_param_deps": []
+      }
+    },
+    {
+      "name": "__corvid_find_agents_where",
+      "symbol": "__corvid_find_agents_where",
+      "source_span": {
+        "start": 0,
+        "end": 0
+      },
+      "source_line": 0,
+      "params": [
+        {
+          "name": "filter_json",
+          "type": {
+            "scalar": "String"
+          }
+        }
+      ],
+      "return_type": {
+        "scalar": "String"
+      },
+      "effects": {
+        "cost": {
+          "projected_usd": 0.0
+        },
+        "trust_tier": "autonomous",
+        "reversibility": "reversible"
+      },
+      "attributes": {
+        "replayable": false,
+        "deterministic": true,
+        "dangerous": false,
+        "pub_extern_c": true
+      },
+      "budget": {
+        "usd_per_call": 0.0
+      },
+      "approval_contract": {
+        "required": false,
+        "labels": []
+      },
+      "provenance": {
+        "returns_grounded": false,
+        "grounded_param_deps": []
+      }
+    },
+    {
+      "name": "__corvid_agent_signature_json",
+      "symbol": "__corvid_agent_signature_json",
+      "source_span": {
+        "start": 0,
+        "end": 0
+      },
+      "source_line": 0,
+      "params": [
+        {
+          "name": "agent_name",
+          "type": {
+            "scalar": "String"
+          }
+        }
+      ],
+      "return_type": {
+        "scalar": "String"
+      },
+      "effects": {
+        "cost": {
+          "projected_usd": 0.0
+        },
+        "trust_tier": "autonomous",
+        "reversibility": "reversible"
+      },
+      "attributes": {
+        "replayable": false,
+        "deterministic": true,
+        "dangerous": false,
+        "pub_extern_c": true
+      },
+      "budget": {
+        "usd_per_call": 0.0
+      },
+      "approval_contract": {
+        "required": false,
+        "labels": []
+      },
+      "provenance": {
+        "returns_grounded": false,
+        "grounded_param_deps": []
+      }
+    },
+    {
+      "name": "__corvid_pre_flight",
+      "symbol": "__corvid_pre_flight",
+      "source_span": {
+        "start": 0,
+        "end": 0
+      },
+      "source_line": 0,
+      "params": [
+        {
+          "name": "agent_name",
+          "type": {
+            "scalar": "String"
+          }
+        },
+        {
+          "name": "args_json",
+          "type": {
+            "scalar": "String"
+          }
+        }
+      ],
+      "return_type": {
+        "scalar": "String"
+      },
+      "effects": {
+        "cost": {
+          "projected_usd": 0.0
+        },
+        "trust_tier": "autonomous",
+        "reversibility": "reversible"
+      },
+      "attributes": {
+        "replayable": false,
+        "deterministic": true,
+        "dangerous": false,
+        "pub_extern_c": true
+      },
+      "budget": {
+        "usd_per_call": 0.0
+      },
+      "approval_contract": {
+        "required": false,
+        "labels": []
+      },
+      "provenance": {
+        "returns_grounded": false,
+        "grounded_param_deps": []
+      }
+    },
+    {
+      "name": "__corvid_call_agent",
+      "symbol": "__corvid_call_agent",
+      "source_span": {
+        "start": 0,
+        "end": 0
+      },
+      "source_line": 0,
+      "params": [
+        {
+          "name": "agent_name",
+          "type": {
+            "scalar": "String"
+          }
+        },
+        {
+          "name": "args_json",
+          "type": {
+            "scalar": "String"
+          }
+        }
+      ],
+      "return_type": {
+        "scalar": "String"
+      },
+      "effects": {
+        "cost": {
+          "projected_usd": 0.0
+        },
+        "trust_tier": "autonomous",
+        "reversibility": "reversible"
+      },
+      "attributes": {
+        "replayable": false,
+        "deterministic": true,
+        "dangerous": false,
+        "pub_extern_c": true
+      },
+      "budget": {
+        "usd_per_call": 0.0
+      },
+      "approval_contract": {
+        "required": false,
+        "labels": []
+      },
+      "provenance": {
+        "returns_grounded": false,
+        "grounded_param_deps": []
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "name": "classify_prompt",
+      "source_span": {
+        "start": 517,
+        "end": 672
+      },
+      "params": [
+        {
+          "name": "text",
+          "type": {
+            "scalar": "String"
+          }
+        }
+      ],
+      "return_type": {
+        "scalar": "String"
+      },
+      "effects": {
+        "cost": {
+          "projected_usd": 0.0
+        },
+        "trust_tier": "autonomous",
+        "latency_ms": {
+          "p99_estimate": 0.0
+        },
+        "reversibility": "reversible",
+        "data": "none",
+        "confidence": {
+          "min_expected": 1.0
+        },
+        "tokens": {
+          "projected": 0.0
+        },
+        "custom": {
+          "capability": "basic",
+          "compliance": "none",
+          "jurisdiction": "none",
+          "latency": "instant",
+          "privacy_tier": "standard"
+        }
+      },
+      "cost_envelope": {
+        "min_usd": 0.0,
+        "typical_usd": 0.0,
+        "max_usd": 0.0
+      },
+      "confidence_floor": 1.0,
+      "cited_params": []
+    }
+  ],
+  "tools": [
+    {
+      "name": "echo_string",
+      "symbol": "corvid_tool_echo_string",
+      "params": [
+        {
+          "name": "value",
+          "type": {
+            "scalar": "String"
+          }
+        }
+      ],
+      "return_type": {
+        "scalar": "String"
+      },
+      "effects": {
+        "cost": {
+          "projected_usd": 0.0
+        },
+        "trust_tier": "autonomous",
+        "latency_ms": {
+          "p99_estimate": 0.0
+        },
+        "reversibility": "reversible",
+        "data": "none",
+        "confidence": {
+          "min_expected": 1.0
+        },
+        "tokens": {
+          "projected": 0.0
+        },
+        "custom": {
+          "capability": "basic",
+          "compliance": "none",
+          "jurisdiction": "none",
+          "latency": "instant",
+          "privacy_tier": "standard"
+        }
+      },
+      "dangerous": true
+    },
+    {
+      "name": "grounded_echo",
+      "symbol": "corvid_tool_grounded_echo",
+      "params": [
+        {
+          "name": "value",
+          "type": {
+            "scalar": "String"
+          }
+        }
+      ],
+      "return_type": {
+        "grounded": {
+          "inner": {
+            "scalar": "String"
+          }
+        }
+      },
+      "effects": {
+        "cost": {
+          "projected_usd": 0.0
+        },
+        "trust_tier": "autonomous",
+        "latency_ms": {
+          "p99_estimate": 0.0
+        },
+        "reversibility": "reversible",
+        "data": "grounded",
+        "confidence": {
+          "min_expected": 1.0
+        },
+        "tokens": {
+          "projected": 0.0
+        },
+        "custom": {
+          "capability": "basic",
+          "compliance": "none",
+          "jurisdiction": "none",
+          "latency": "instant",
+          "privacy_tier": "standard"
+        }
+      },
+      "dangerous": false
+    }
+  ],
+  "types": [],
+  "approval_sites": [
+    {
+      "label": "EchoString",
+      "declared_at": {
+        "source_span": {
+          "start": 350,
+          "end": 373
+        }
+      },
+      "agent_context": "issue_tag",
+      "predicate": {
+        "arity": 1,
+        "kind": "approval_site",
+        "label": "echo_string",
+        "op": "requires_approval"
+      },
+      "dangerous_targets": [
+        "echo_string"
+      ],
+      "effects": {
+        "cost": {
+          "projected_usd": 0.0
+        },
+        "trust_tier": "autonomous",
+        "latency_ms": {
+          "p99_estimate": 0.0
+        },
+        "reversibility": "reversible",
+        "data": "none",
+        "confidence": {
+          "min_expected": 1.0
+        },
+        "tokens": {
+          "projected": 0.0
+        },
+        "custom": {
+          "capability": "basic",
+          "compliance": "none",
+          "jurisdiction": "none",
+          "latency": "instant",
+          "privacy_tier": "standard"
+        }
+      },
+      "required_tier": "autonomous"
+    }
+  ]
+}

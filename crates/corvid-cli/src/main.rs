@@ -21,6 +21,7 @@
 mod abi_cmd;
 mod approver_cmd;
 mod bind_cmd;
+mod bundle_cmd;
 mod capsule_cmd;
 mod receipt_cache;
 mod receipt_cmd;
@@ -308,6 +309,11 @@ enum Command {
         #[arg(long, value_name = "DIR")]
         out: PathBuf,
     },
+    /// Work with reproducibility-spec bundles.
+    Bundle {
+        #[command(subcommand)]
+        command: BundleCommand,
+    },
     /// Check or simulate a Corvid approver source.
     Approver {
         #[command(subcommand)]
@@ -462,6 +468,54 @@ enum ReceiptCommand {
         /// 32 raw bytes).
         #[arg(long, value_name = "KEY_PATH")]
         key: PathBuf,
+    },
+}
+
+#[derive(Subcommand)]
+enum BundleCommand {
+    Verify {
+        path: PathBuf,
+        #[arg(long)]
+        rebuild: bool,
+    },
+    Diff {
+        old: PathBuf,
+        new: PathBuf,
+        #[arg(long)]
+        json: bool,
+    },
+    Audit {
+        path: PathBuf,
+        #[arg(long)]
+        question: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+    Explain {
+        path: PathBuf,
+        #[arg(long)]
+        json: bool,
+    },
+    Report {
+        path: PathBuf,
+        #[arg(long, default_value = "soc2")]
+        format: String,
+        #[arg(long)]
+        json: bool,
+    },
+    Query {
+        path: PathBuf,
+        #[arg(long, value_name = "DELTA_KEY")]
+        delta: String,
+        #[arg(long, value_name = "NAME")]
+        predecessor: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+    Lineage {
+        path: PathBuf,
+        #[arg(long)]
+        json: bool,
     },
 }
 
@@ -641,6 +695,26 @@ fn main() -> ExitCode {
             descriptor,
             out,
         }) => bind_cmd::run_bind(&language, &descriptor, &out),
+        Some(Command::Bundle { command }) => match command {
+            BundleCommand::Verify { path, rebuild } => bundle_cmd::run_verify(&path, rebuild),
+            BundleCommand::Diff { old, new, json } => bundle_cmd::run_diff(&old, &new, json),
+            BundleCommand::Audit {
+                path,
+                question,
+                json,
+            } => bundle_cmd::run_audit(&path, question.as_deref(), json),
+            BundleCommand::Explain { path, json } => bundle_cmd::run_explain(&path, json),
+            BundleCommand::Report { path, format, json } => {
+                bundle_cmd::run_report(&path, &format, json)
+            }
+            BundleCommand::Query {
+                path,
+                delta,
+                predecessor,
+                json,
+            } => bundle_cmd::run_query(&path, &delta, predecessor.as_deref(), json),
+            BundleCommand::Lineage { path, json } => bundle_cmd::run_lineage(&path, json),
+        },
         Some(Command::Approver { command }) => match command {
             ApproverCommand::Check {
                 approver,

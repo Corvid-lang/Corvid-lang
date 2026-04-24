@@ -29,6 +29,7 @@
  * trace level — only at the destroy level.
  */
 
+#include <stddef.h>
 #include <stdint.h>
 
 #define CORVID_HEADER_BYTES 16

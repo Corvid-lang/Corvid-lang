@@ -13,6 +13,10 @@
  * registered by the generated main via `corvid_init` → `atexit(...)`.
  */
 
+#if !defined(_MSC_VER)
+#define _POSIX_C_SOURCE 200809L
+#endif
+
 #include <stdio.h>
 #include <stdlib.h>
 #if defined(_MSC_VER)

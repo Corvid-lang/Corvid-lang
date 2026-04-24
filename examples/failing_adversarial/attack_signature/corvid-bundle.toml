@@ -1,0 +1,38 @@
+bundle_schema_version = 1
+name = "attack-signature"
+target_triple = "x86_64-unknown-linux-gnu"
+primary_source = "src/classify.cor"
+tools_staticlib_path = "artifacts/libcorvid_test_tools.a"
+library_path = "artifacts/release/libclassify.so"
+descriptor_path = "artifacts/release/classify.corvid-abi.json"
+header_path = "artifacts/release/lib_classify.h"
+bindings_rust_dir = "bindings_rust"
+bindings_python_dir = "bindings_python"
+receipt_envelope_path = "keys/receipt.envelope.json"
+receipt_verify_key_path = "keys/verify.hex"
+
+[lineage]
+bundle_id = "attack-signature"
+[[lineage.predecessors]]
+name = "base"
+path = "../phase22_demo_base"
+relation = "parent"
+[[traces]]
+name = "safe"
+path = "traces/safe.jsonl"
+source = "src/classify.cor"
+sha256 = "108bbdba10262d0452976d48e5fa9673f534262516dace5e7fdd4b7c5d9ea5c4"
+expected_agent = "classify"
+expected_result_json = "\"positive\""
+expected_grounded_sources = []
+expected_observation = true
+
+[hashes]
+library = "fead8b7efad23262f01c3c207e8fcd798fc92dc09166e753766dada20d1d5259"
+descriptor = "b0a8fd4e20c07d83faf63179bbd39053c8eaa3496d6a9e2ea53a9d5750b0c6e5"
+header = "86e1ef445e1d28f203f80cd750a7af0fea939abf1989c35e043f3a455588979e"
+bindings_rust = "5154bb8553d76d73f28638326eb80736f6b02686302fe11e633a652521308149"
+bindings_python = "dbd4baf780a03a0048b2eb4e4cb05f504fcbf3abc7236fb18260dc49172703b0"
+receipt_envelope = "4e7b7bc7d7e0c7cf094a616731dd51430aabd819406689efea9d013a199e9713"
+receipt_verify_key = "74d49ad2eabb1d8334b9c30245027f3db7ab0bc6ff0eee4de44f00be06e48168"
+tools_staticlib = "f2a06ffb3010863df8ceca906ba5b190c8d90f10488372af4cc05bb3d8da545b"

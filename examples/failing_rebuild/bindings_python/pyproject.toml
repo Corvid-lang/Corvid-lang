@@ -1,0 +1,9 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "classify"
+version = "0.0.1"
+description = "Generated Corvid Python bindings for classify"
+requires-python = ">=3.9"

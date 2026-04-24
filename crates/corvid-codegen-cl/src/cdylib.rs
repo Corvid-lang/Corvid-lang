@@ -169,6 +169,10 @@ fn link_shared_library(
                 "/IMPLIB:{}",
                 output_path.with_extension("lib").display()
             ))
+            // Make the PE deterministic so bundle rebuild verification
+            // can compare committed and rebuilt shared libraries
+            // byte-for-byte on MSVC hosts.
+            .arg("/BREPRO")
             .arg("bcrypt.lib")
             .arg("advapi32.lib")
             .arg("kernel32.lib")

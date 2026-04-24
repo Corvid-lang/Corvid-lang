@@ -107,6 +107,9 @@ pub fn link_binary(
             // `/link` separates cl.exe driver args from linker args.
             // Everything after this goes straight to link.exe.
             .arg("/link")
+            // Make the PE deterministic so rebuild verification can
+            // compare committed and rebuilt binaries byte-for-byte.
+            .arg("/BREPRO")
             // Native system libs tokio + reqwest + rustls + Rust's
             // std need on MSVC. Discovered via
             //   `rustc --print native-static-libs --crate-type staticlib`

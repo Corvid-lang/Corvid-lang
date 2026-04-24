@@ -1,0 +1,10 @@
+{
+  "payload": "ewogICJidW5kbGUiOiAicGhhc2UyMi1kZW1vLWJhc2UiLAogICJraW5kIjogImNvcnZpZC5idW5kbGUucmVjZWlwdCIsCiAgInNjaGVtYV92ZXJzaW9uIjogMSwKICAic2lnbmVkIjogdHJ1ZSwKICAidGFyZ2V0IjogIng4Nl82NC11bmtub3duLWxpbnV4LWdudSIKfQ==",
+  "payloadType": "application/vnd.corvid-receipt+json",
+  "signatures": [
+    {
+      "keyid": "corvid-bundle-demo",
+      "sig": "PedfmJj0yVUwU11Nkj86NupjscL1jAVpTIf3E0Ur5iSmAuMAjCnP/rvN2ZjkvGVHGGrXlvB1kDFDCt7QZ08UCw=="
+    }
+  ]
+}

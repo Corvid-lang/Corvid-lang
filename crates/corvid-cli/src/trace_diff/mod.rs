@@ -67,9 +67,15 @@ pub use narrative::NarrativeMode;
 use narrative::{
     compute_diff_summary, validate_narrative, DiffSummary, NarrativeRejection, ReceiptNarrative,
 };
+pub(crate) use narrative::compute_diff_summary as compute_bundle_diff_summary;
 pub use receipt::OutputFormat;
 use receipt::{apply_default_policy, render_github_check, render_json, Receipt};
 use reviewer_invocation::{detect_adapter, invoke_narrative_prompt, invoke_reviewer, NoAdapter};
+pub(crate) use delta_isolation::{
+    apply_splices as apply_splices_for_bundle_query,
+    compute_splices_for_delta as compute_splices_for_bundle_delta,
+    prepare_isolation_input as prepare_bundle_isolation_input,
+};
 pub(crate) use stack_driver::{parse_stack_spec, StackSpec};
 
 /// Parsed args for `corvid trace-diff`. Library-level callers

@@ -1,0 +1,6 @@
+{"kind":"schema_header","version":2,"writer":"corvid-codegen-cl","commit_sha":null,"source_path":null,"ts_ms":1777053705936,"run_id":"run-1777053705935"}
+{"kind":"seed_read","ts_ms":1777053705936,"run_id":"run-1777053705935","purpose":"rollout_default_seed","value":1777053705936}
+{"kind":"run_started","ts_ms":1777053705937,"run_id":"run-1777053705935","agent":"classify","args":["I loved the support experience"]}
+{"kind":"llm_call","ts_ms":1777053705937,"run_id":"run-1777053705935","prompt":"classify_prompt","model":"mock-1","rendered":"Classify the sentiment of the following text: I loved the support experience. Reply with positive, negative, or neutral.","args":["I loved the support experience"]}
+{"kind":"llm_result","ts_ms":1777053705937,"run_id":"run-1777053705935","prompt":"classify_prompt","model":"mock-1","result":"positive"}
+{"kind":"run_completed","ts_ms":1777053705937,"run_id":"run-1777053705935","ok":true,"result":"positive","error":null}

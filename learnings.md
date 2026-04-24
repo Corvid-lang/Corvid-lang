@@ -2408,6 +2408,31 @@ time a host-dispatch path drops a hidden ABI parameter or returns a silently
 wrong observation handle, the failure shows up in CI instead of months later in
 a demo slice.
 
+## 22-K-bundle-public-spec
+
+The bundle story only became launch-grade once the demo stopped being private
+scaffolding and became a public spec artifact. A happy-path bundle by itself is
+easy to fake. A happy bundle plus typed failing siblings, lineage traversal,
+counterfactual query, rebuild verification, and offline audit forces the
+implementation to state exactly what it believes a trustworthy Corvid artifact
+is.
+
+That changed the quality bar in a useful way. The public surface could not stop
+at `verify`; it had to answer six different questions with one coherent model:
+is the artifact intact, does it rebuild, what changed from its predecessor,
+what approval/provenance semantics are inside, which counterfactual delta
+explains the difference, and does the predecessor chain still verify? Once the
+examples were committed, any drift between those answers became visible
+immediately.
+
+The real lesson is that credibility comes from adversarial siblings, not from
+README prose. The neighboring broken bundles matter as much as the happy path,
+because they prove the failure boundaries are typed and reproducible: hash
+tamper, receipt-signature tamper, rebuild drift, lineage fraud, and unsupported
+counterfactual asks all fail for distinct reasons. That is what turns the
+bundle format into a one-time public proposal moment rather than a screenshot
+of an internal demo.
+
 ## Contributing / feedback
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). The rules of the road are: design chat before code, per-scope commits at every boundary, dev-log entry for every session, no shortcuts. The `learnings.md` file you're reading gets updated when each user-visible feature ships.

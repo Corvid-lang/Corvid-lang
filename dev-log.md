@@ -4584,6 +4584,64 @@ codegen / trace-schema while this slice was entirely in ast +
 syntax. Mutual non-interference preserved; my peer review of
 22-H is queued after `lang-cor-imports-basic` lands.
 
+## 2026-04-24 - 22-K launch-gate closeout
+
+Scope: finished the locked 22-K public bundle/spec slice on top
+of the earlier bundle command surface.
+
+Shipped:
+
+- public happy-path bundles in `examples/phase22_demo/` and
+  `examples/phase22_demo_base/`
+- five failing sibling bundles with typed failure assertions:
+  `failing_hash`, `failing_signature`, `failing_rebuild`,
+  `failing_lineage`, `failing_adversarial`
+- `docs/bundle-format.md` as the public spec mirror of the
+  shipped implementation
+- `.github/workflows/demo-verify.yml`
+- committed example coverage in
+  `crates/corvid-cli/tests/bundle_integration.rs`
+- deterministic rebuild support fixes:
+  `/BREPRO` for MSVC native link/cdylib paths
+- Linux portability fixes required for committed public release
+  artifacts: `runtime/lists.c` (`NULL`) and `runtime/shim.c`
+  (`_POSIX_C_SOURCE` for `nanosleep`)
+- non-destructive `bundle verify --rebuild` via committed-file
+  snapshot/restore guards
+
+Validation:
+
+- `cargo check --workspace`
+- `cargo test -p corvid-cli --test bundle_verify`
+- `cargo test -p corvid-cli --test bundle_integration`
+- `cargo test -p corvid-cli --test bundle_rebuild`
+- `cargo test -p corvid-cli --test bundle_query`
+- `cargo test -p corvid-cli --test bundle_lineage`
+- `cargo run -q -p corvid-cli -- verify --corpus tests/corpus`
+  exits 1 only on `tier_disagree.cor` and
+  `native_drops_effect.cor`
+- `examples/phase22_demo/verify.sh`
+- every failing bundle `verify.sh`
+
+Interpretation:
+
+- The demo became real only when it was forced to act as a
+  public spec. The failing siblings do as much work as the
+  happy path: together they define the trust boundary.
+- Offline structural audit is the non-negotiable semantic
+  fallback. If a bundle cannot answer "what approval-gated
+  behavior is inside?" without cloud help, it is not
+  self-describing enough to be a trustworthy artifact.
+- Real Windows-recorded traces plus committed Linux release
+  artifacts flushed out portability and reproducibility bugs
+  that synthetic fixtures would not have found.
+
+Next:
+
+- 22-K is closed. Post-slice hygiene and perf reproducibility
+  remain separate follow-ups and were intentionally not bundled
+  into this gate.
+
 
 
 

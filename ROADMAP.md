@@ -1282,7 +1282,7 @@ The determinism-source catalog and the language's treatment of non-reproducible 
 - [x] 22-H-replay-across-ffi Traces recorded on one side of the boundary replay deterministically from the other; the embedded binary becomes a recordable unit
 - [x] 22-I-host-bindings     Reference Rust + Python host crates; generated idiomatic bindings from the descriptor (Rust traits; Python Protocols)
 - [x] 22-J-ownership-check   Compile-time checker on extern signatures (who frees what, who retains what)
-- [ ] 22-K-cdylib-demo       End-to-end `pub extern "c"` scalar-signature agent shipping as `.so`/`.dll`, plus a matching host-side Rust + Python demo that reads the descriptor and dispatches
+- [x] 22-K-cdylib-demo       End-to-end `pub extern "c"` scalar-signature agent shipping as `.so`/`.dll`, plus a matching host-side Rust + Python demo that reads the descriptor and dispatches
 
 **Non-scope:** WASM (Phase 23). Language-level FFI imports of other languages.
 
