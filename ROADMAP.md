@@ -44,6 +44,24 @@ Every phase has:
 - Tests green at the phase boundary.
 - A dev-log entry describing decisions made.
 
+### Autonomous execution protocol
+
+Default working mode after Phase 22: proceed through the remaining roadmap automatically, one coherent slice at a time, without asking for routine permission between phases. The next phase starts only after the current slice has real implementation, tests, docs or roadmap updates where required, validation through user-facing commands, and a commit.
+
+Pause and ask only for:
+- Product decisions with more than one defensible direction.
+- Scope changes that would weaken the roadmap or convert a real feature into a shortcut.
+- Security, signing, registry, network, or launch decisions that create long-term trust commitments.
+- Any conflict with user work, dirty files owned by someone else, or failing validation that cannot be resolved locally.
+- Claims that would affect public marketing, benchmark interpretation, or launch positioning.
+
+Do not pause for:
+- Routine implementation sequencing.
+- Normal refactors needed to keep the code correct.
+- Adding positive and negative tests.
+- Documentation needed to make a shipped feature honest.
+- Continuing from one completed roadmap slice to the next.
+
 ---
 
 ## Completed phases
