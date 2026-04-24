@@ -50,6 +50,8 @@ Default working mode after Phase 22: proceed through the remaining roadmap autom
 
 The next phase starts only after the current slice has real implementation, tests, docs or roadmap updates where required, validation through user-facing commands, and a commit. Do not optimize for the easiest path. A shortcut is any change that preserves the appearance of progress while weakening semantics, skipping validation, hiding a limitation, or moving a hard requirement into vague follow-up language.
 
+Planning assumption: the remaining roadmap is repo-local. It should not require credentials, payments, external account setup, destructive remote-history changes, or public claims without committed evidence. If a slice appears to require one of those, redesign the slice to keep the strongest local, testable version first; document any truly external launch step as operational follow-up, not implementation scope.
+
 Pause and ask only for:
 - Secrets, credentials, payments, domain/account ownership, or external service actions that cannot be completed safely from the local repository alone.
 - Destructive actions against user work, published artifacts, tags, releases, or remote history.
