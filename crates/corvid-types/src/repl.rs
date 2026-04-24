@@ -137,6 +137,7 @@ fn type_to_type_ref(ty: &Type, symbols: &SymbolTable) -> TypeRef {
             let name = symbols.get(*id).name.clone();
             named_type(name, span)
         }
+        Type::ImportedStruct(imported) => named_type(imported.name.clone(), span),
         Type::List(inner) => generic_type("List", vec![type_to_type_ref(inner, symbols)], span),
         Type::Stream(inner) => {
             generic_type("Stream", vec![type_to_type_ref(inner, symbols)], span)

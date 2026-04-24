@@ -2987,14 +2987,21 @@ agent run(x: String) -> Decision:
         assert!(perr.is_empty(), "{perr:?}");
         let resolved = resolve(&file);
         let exports = corvid_resolve::collect_public_exports(&file, &resolved);
+        let path = PathBuf::from(format!("/fake/{alias}.cor"));
         let module = corvid_resolve::ResolvedModule {
-            path: PathBuf::from(format!("/fake/{alias}.cor")),
+            path: path.clone(),
             resolved: Arc::new(resolved),
+            file: Arc::new(file),
             exports,
         };
         let mut modules = HashMap::new();
-        modules.insert(alias.to_string(), module);
-        corvid_resolve::ModuleResolution { modules }
+        modules.insert(alias.to_string(), module.clone());
+        let mut all_modules = HashMap::new();
+        all_modules.insert(path, module);
+        corvid_resolve::ModuleResolution {
+            modules,
+            all_modules,
+        }
     }
 
     fn check_with_modules(
@@ -3009,11 +3016,9 @@ agent run(x: String) -> Decision:
     }
 
     #[test]
-    fn qualified_type_with_modules_found_still_stubs_until_2c2() {
-        // Public export exists + is found → step 2c-1 still emits
-        // CorvidImportNotYetResolved because field-level
-        // resolution isn't wired yet. Step 2c-2 flips this to
-        // clean resolution.
+    fn qualified_type_with_modules_found_resolves_cleanly() {
+        // Public export exists + is found: step 2c-2
+        // resolution returns a real imported struct type.
         let modules = fake_module_resolution("p", &["Receipt"], &[]);
         let checked = check_with_modules(
             "\
@@ -3024,15 +3029,45 @@ agent f(r: p.Receipt) -> Bool:
 ",
             &modules,
         );
+        assert!(checked.errors.is_empty(), "{:?}", checked.errors);
+    }
+
+    #[test]
+    fn imported_struct_field_access_resolves_field_type() {
+        let modules = fake_module_resolution("p", &["Receipt"], &[]);
+        let checked = check_with_modules(
+            "\
+import \"./default_policy\" as p
+
+agent f(r: p.Receipt) -> Int:
+    return r.x
+",
+            &modules,
+        );
+        assert!(checked.errors.is_empty(), "{:?}", checked.errors);
+    }
+
+    #[test]
+    fn imported_struct_unknown_field_errors() {
+        let modules = fake_module_resolution("p", &["Receipt"], &[]);
+        let checked = check_with_modules(
+            "\
+import \"./default_policy\" as p
+
+agent f(r: p.Receipt) -> Int:
+    return r.missing
+",
+            &modules,
+        );
         let err = checked
             .errors
             .iter()
-            .find(|e| matches!(e.kind, TypeErrorKind::CorvidImportNotYetResolved { .. }))
-            .expect("still stubs");
+            .find(|e| matches!(e.kind, TypeErrorKind::UnknownField { .. }))
+            .expect("expected UnknownField");
         match &err.kind {
-            TypeErrorKind::CorvidImportNotYetResolved { alias, name } => {
-                assert_eq!(alias, "p");
-                assert_eq!(name, "Receipt");
+            TypeErrorKind::UnknownField { struct_name, field } => {
+                assert_eq!(struct_name, "Receipt");
+                assert_eq!(field, "missing");
             }
             _ => unreachable!(),
         }

@@ -29,6 +29,9 @@ pub fn emit_type_description(ty: &Type, resolved: &Resolved) -> TypeDescription 
         Type::Struct(def_id) => TypeDescription::Struct {
             name: lookup_name(resolved, *def_id),
         },
+        Type::ImportedStruct(imported) => TypeDescription::Struct {
+            name: imported.name.clone(),
+        },
         Type::List(inner) | Type::Stream(inner) => TypeDescription::List {
             list: AbiListType {
                 element: Box::new(emit_type_description(inner, resolved)),

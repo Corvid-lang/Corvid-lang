@@ -402,7 +402,7 @@ fn check_entry_boundary_type(
 ) -> Result<(), CodegenError> {
     match ty {
         Type::Int | Type::Bool | Type::Float | Type::String => Ok(()),
-        Type::Struct(_) | Type::List(_) | Type::Nothing
+        Type::Struct(_) | Type::ImportedStruct(_) | Type::List(_) | Type::Nothing
         | Type::Result(_, _) | Type::Option(_) | Type::Weak(_, _) | Type::Stream(_) => {
             Err(CodegenError::not_supported(
                 format!(

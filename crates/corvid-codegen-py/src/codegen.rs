@@ -432,9 +432,12 @@ fn python_type_hint_of(ty: &corvid_types::Type) -> String {
         T::String => "str".into(),
         T::Bool => "bool".into(),
         T::Nothing => "None".into(),
-        T::Struct(_) | T::Function { .. } | T::List(_) | T::Stream(_) | T::Unknown => {
-            "object".into()
-        }
+        T::Struct(_)
+        | T::ImportedStruct(_)
+        | T::Function { .. }
+        | T::List(_)
+        | T::Stream(_)
+        | T::Unknown => "object".into(),
         // Emitting "object" here is a safe approximation until the
         // Python backend decides on its representation
         // (wrapper classes vs typing.Optional[T] vs plain T-or-Exception

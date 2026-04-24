@@ -122,6 +122,7 @@ fn schema_for_inner(
                 "additionalProperties": false,
             })
         }
+        Type::ImportedStruct(_) => json!({ "type": "object" }),
         // `Function` and `Unknown` shouldn't appear as prompt return
         // types in well-typed programs. Emit a permissive schema so the
         // adapter doesn't fail catastrophically; the type checker is the

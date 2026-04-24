@@ -31,7 +31,7 @@
 //! as much of the graph as possible so the user sees every
 //! problem in a single pass.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -117,6 +117,23 @@ pub fn build_module_resolution(
     // entries in the alias map; transitive imports are loaded
     // (for cycle detection + type-through resolution) but not
     // exposed under the root's alias namespace.
+    let mut all_modules = HashMap::new();
+    for (path, file) in &loaded {
+        let Some(resolved) = resolved_map.get(path) else {
+            continue;
+        };
+        let exports = collect_public_exports(file, resolved);
+        all_modules.insert(
+            path.clone(),
+            ResolvedModule {
+                path: path.clone(),
+                resolved: resolved.clone(),
+                file: Arc::new(file.clone()),
+                exports,
+            },
+        );
+    }
+
     let mut modules = HashMap::new();
     for import in corvid_imports(root_file) {
         let Some(alias) = import.alias.as_ref() else {
@@ -137,24 +154,22 @@ pub fn build_module_resolution(
             // reason; skip silently here.
             continue;
         };
-        let Some(file) = loaded.get(&loaded_path) else {
+        let Some(module) = all_modules.get(&loaded_path).cloned() else {
             continue;
         };
-        let Some(resolved) = resolved_map.get(&loaded_path) else {
-            continue;
-        };
-        let exports = collect_public_exports(file, resolved);
         modules.insert(
             alias.name.clone(),
-            ResolvedModule {
-                path: loaded_path,
-                resolved: resolved.clone(),
-                exports,
-            },
+            module,
         );
     }
 
-    (ModuleResolution { modules }, errors)
+    (
+        ModuleResolution {
+            modules,
+            all_modules,
+        },
+        errors,
+    )
 }
 
 /// Recursive DFS that loads the file at `target`, appends any

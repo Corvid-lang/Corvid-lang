@@ -253,11 +253,9 @@ struct Checker<'a> {
     /// `corvid_driver::build_module_resolution`. When `None`, the
     /// checker falls back to single-file semantics and any
     /// `TypeRef::Qualified` yields a `CorvidImportNotYetResolved`
-    /// stub error (the pre-lang-cor-imports-basic-resolve-2c
-    /// behaviour). When `Some`, qualified references to unknown
-    /// aliases / private members / unknown members surface typed
-    /// errors; successful qualified lookups still stub for now
-    /// — full type resolution lands in step 2c-2.
+    /// error. When `Some`, qualified references to unknown aliases /
+    /// private members / unknown members surface typed errors, and
+    /// successful public type exports resolve to `Type::ImportedStruct`.
     module_resolution: Option<&'a corvid_resolve::ModuleResolution>,
 
     /// Type of each local binding, populated as we enter scopes.
@@ -520,5 +518,8 @@ mod types;
 use case::{pascal_case, snake_case};
 
 fn is_weakable_type(ty: &Type) -> bool {
-    matches!(ty, Type::String | Type::Struct(_) | Type::List(_))
+    matches!(
+        ty,
+        Type::String | Type::Struct(_) | Type::ImportedStruct(_) | Type::List(_)
+    )
 }

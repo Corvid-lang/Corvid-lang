@@ -15,6 +15,7 @@ use crate::errors::{TypeError, TypeErrorKind, TypeWarning, TypeWarningKind};
 use crate::types::Type;
 use corvid_ast::{Expr, Ident, Literal, ReplayArm, ReplayPattern, Span, ToolArgPattern};
 use corvid_resolve::{Binding, BuiltIn, DeclKind, DefId, ReplayPatternBinding};
+use std::path::Path;
 
 impl<'a> Checker<'a> {
     pub(super) fn check_expr(&mut self, e: &Expr) -> Type {
@@ -216,6 +217,30 @@ impl<'a> Checker<'a> {
                     self.errors.push(TypeError::new(
                         TypeErrorKind::UnknownField {
                             struct_name: type_decl.name.name.clone(),
+                            field: field.name.clone(),
+                        },
+                        span,
+                    ));
+                    Type::Unknown
+                }
+            }
+            Type::ImportedStruct(imported) => {
+                let Some(module) = self
+                    .module_resolution
+                    .and_then(|modules| modules.lookup_by_path(Path::new(&imported.module_path)))
+                else {
+                    return Type::Unknown;
+                };
+                let Some((struct_name, fields)) = imported_type_fields(module, imported.def_id)
+                else {
+                    return Type::Unknown;
+                };
+                if let Some(f) = fields.iter().find(|f| f.name.name == field.name) {
+                    self.imported_type_ref_to_type(&f.ty, module)
+                } else {
+                    self.errors.push(TypeError::new(
+                        TypeErrorKind::UnknownField {
+                            struct_name: struct_name.to_string(),
                             field: field.name.clone(),
                         },
                         span,
@@ -436,6 +461,24 @@ fn type_ref_to_type_readonly(tr: &corvid_ast::TypeRef, checker: &Checker<'_>) ->
         }
         _ => Type::Unknown,
     }
+}
+
+fn imported_type_fields(
+    module: &corvid_resolve::ResolvedModule,
+    def_id: DefId,
+) -> Option<(&str, &[corvid_ast::Field])> {
+    module.file.decls.iter().find_map(|decl| match decl {
+        corvid_ast::Decl::Type(t)
+            if module
+                .resolved
+                .symbols
+                .lookup_def(&t.name.name)
+                .is_some_and(|id| id == def_id) =>
+        {
+            Some((t.name.name.as_str(), t.fields.as_slice()))
+        }
+        _ => None,
+    })
 }
 
 /// Fingerprint a replay pattern for duplicate-arm detection. Two

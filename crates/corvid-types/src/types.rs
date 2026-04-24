@@ -6,6 +6,16 @@
 use corvid_ast::{Effect, WeakEffectRow};
 use corvid_resolve::DefId;
 
+/// Stable identity for a struct imported from another `.cor` module.
+/// The module path is part of the type identity so two modules can
+/// both export `Receipt` without becoming accidentally assignable.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct ImportedStructType {
+    pub module_path: String,
+    pub def_id: DefId,
+    pub name: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Type {
     // Primitives
@@ -17,6 +27,9 @@ pub enum Type {
 
     /// A user-declared `type` (struct-like).
     Struct(DefId),
+
+    /// A public `type` imported through `alias.Name`.
+    ImportedStruct(ImportedStructType),
 
     /// A tool/prompt/agent, considered as a first-class value.
     Function {
@@ -70,6 +83,7 @@ impl Type {
             Type::Bool => "Bool".into(),
             Type::Nothing => "Nothing".into(),
             Type::Struct(_) => "struct".into(),
+            Type::ImportedStruct(imported) => imported.name.clone(),
             Type::Function { .. } => "function".into(),
             Type::List(inner) => format!("List<{}>", inner.display_name()),
             Type::Stream(inner) => format!("Stream<{}>", inner.display_name()),

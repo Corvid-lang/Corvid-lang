@@ -217,6 +217,7 @@ fn type_label(t: &Type) -> String {
         Type::Bool => "Bool".into(),
         Type::Nothing => "Nothing".into(),
         Type::Struct(_) => "struct".into(),
+        Type::ImportedStruct(imported) => imported.name.clone(),
         Type::List(elem) => format!("List<{}>", type_label(elem)),
         Type::Stream(inner) => format!("Stream<{}>", type_label(inner)),
         Type::Result(ok, err) => format!("Result<{}, {}>", type_label(ok), type_label(err)),

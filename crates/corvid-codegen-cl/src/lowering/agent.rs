@@ -300,6 +300,10 @@ pub(super) fn cl_type_for(ty: &Type, span: Span) -> Result<clir::Type, CodegenEr
         Type::Float => Ok(F64),
         Type::String => Ok(I64),
         Type::Struct(_) => Ok(I64),
+        Type::ImportedStruct(_) => Err(CodegenError::not_supported(
+            "imported struct lowering in native codegen - cross-file native layout metadata lands after lang-cor-imports-basic driver integration",
+            span,
+        )),
         Type::List(_) => Ok(I64),
         Type::Weak(_, _) => Ok(I64),
         Type::Result(_, _) if is_native_result_type(ty) => Ok(I64),

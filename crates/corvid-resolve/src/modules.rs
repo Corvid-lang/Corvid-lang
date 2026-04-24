@@ -28,7 +28,7 @@
 //! export-collection time: private declarations simply don't appear
 //! in [`ResolvedModule::exports`].
 
-use corvid_ast::{File, Visibility};
+use corvid_ast::{File, Field, Visibility};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -50,6 +50,11 @@ pub struct DeclExport {
     /// so consumers don't need to chase the def_id for trivial
     /// error messages.
     pub name: String,
+    /// Struct fields for exported `type` declarations. Non-type
+    /// exports leave this empty. Carrying the surface `TypeRef`s is
+    /// intentional: the consumer resolves field types in the imported
+    /// module's own symbol context, preserving the file boundary.
+    pub type_fields: Option<Vec<Field>>,
 }
 
 /// A module referenced from the root file's `import` statements.
@@ -63,6 +68,10 @@ pub struct ResolvedModule {
     /// the same module can be shared if multiple files in the
     /// project import it.
     pub resolved: Arc<Resolved>,
+    /// Parsed AST for the imported file. The type checker needs this
+    /// to inspect struct fields by imported `DefId` without
+    /// re-registering them as synthetic local declarations.
+    pub file: Arc<File>,
     /// Public top-level declarations, indexed by name. Private
     /// declarations are deliberately absent — the visibility check
     /// is enforced at insertion time, not at lookup time, so we
@@ -82,6 +91,11 @@ pub struct ResolvedModule {
 #[derive(Debug, Clone, Default)]
 pub struct ModuleResolution {
     pub modules: HashMap<String, ResolvedModule>,
+    /// Every loaded module keyed by canonical-ish path, including
+    /// transitive imports. The root alias map above controls what
+    /// names the root file may use; this path map lets the checker
+    /// resolve field types inside an imported module's own context.
+    pub all_modules: HashMap<PathBuf, ResolvedModule>,
 }
 
 impl ModuleResolution {
@@ -91,6 +105,14 @@ impl ModuleResolution {
 
     pub fn lookup(&self, alias: &str) -> Option<&ResolvedModule> {
         self.modules.get(alias)
+    }
+
+    pub fn lookup_by_path(&self, path: &Path) -> Option<&ResolvedModule> {
+        self.all_modules.get(path).or_else(|| {
+            self.all_modules
+                .iter()
+                .find_map(|(p, module)| if p == path { Some(module) } else { None })
+        })
     }
 
     pub fn lookup_member(&self, alias: &str, name: &str) -> ModuleLookup<'_> {
@@ -146,11 +168,20 @@ pub enum ModuleLookup<'a> {
 pub fn collect_public_exports(file: &File, resolved: &Resolved) -> HashMap<String, DeclExport> {
     let mut out = HashMap::new();
     for decl in &file.decls {
-        let (name, visibility, kind) = match decl {
-            corvid_ast::Decl::Type(t) => (t.name.name.as_str(), t.visibility, DeclKind::Type),
-            corvid_ast::Decl::Tool(t) => (t.name.name.as_str(), t.visibility, DeclKind::Tool),
-            corvid_ast::Decl::Prompt(p) => (p.name.name.as_str(), p.visibility, DeclKind::Prompt),
-            corvid_ast::Decl::Agent(a) => (a.name.name.as_str(), a.visibility, DeclKind::Agent),
+        let (name, visibility, kind, type_fields) = match decl {
+            corvid_ast::Decl::Type(t) => (
+                t.name.name.as_str(),
+                t.visibility,
+                DeclKind::Type,
+                Some(t.fields.clone()),
+            ),
+            corvid_ast::Decl::Tool(t) => (t.name.name.as_str(), t.visibility, DeclKind::Tool, None),
+            corvid_ast::Decl::Prompt(p) => {
+                (p.name.name.as_str(), p.visibility, DeclKind::Prompt, None)
+            }
+            corvid_ast::Decl::Agent(a) => {
+                (a.name.name.as_str(), a.visibility, DeclKind::Agent, None)
+            }
             // Imports, effects, models, evals, extends don't carry
             // module-level visibility today. `extend` methods do, but
             // those ride on the underlying type's visibility and
@@ -167,6 +198,7 @@ pub fn collect_public_exports(file: &File, resolved: &Resolved) -> HashMap<Strin
                     def_id,
                     kind,
                     name: name.to_string(),
+                    type_fields,
                 },
             );
         }
