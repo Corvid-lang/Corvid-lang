@@ -191,6 +191,7 @@ async fn stream_budget_termination_fires_before_over_budget_yield() {
         agents: vec![IrAgent {
             id: DefId(2),
             name: "relay".into(),
+            extern_abi: None,
             params: vec![IrParam {
                 name: "ctx".into(),
                 local_id: LocalId(1),

@@ -522,7 +522,8 @@ The invention: groundedness is not an annotation — it's a compile-time provena
 - [x] Provenance analyzer in the typechecker: walks each agent's data flow graph to determine which values inherit groundedness from tools with `data: grounded` in their effect declaration. If a value's provenance chain includes at least one grounded source, the value is provably grounded.
 - [x] Stable diagnostic code for ungrounded returns. The checker emits typed `UngroundedReturn`; the pretty renderer maps it to `E0209` with a provenance-specific source label.
 - [x] Provenance flows compositionally across agent boundaries: if agent B calls a grounded tool and agent A calls B, A's return inherits B's groundedness.
-- [ ] `cites ctx strictly` runtime annotation: compile-time proves groundedness exists; runtime verifies the LLM's cited passages actually appear in the context. Emits citation-checking code in the interpreter + native codegen.
+- [x] `cites ctx strictly` runtime annotation in syntax, typechecking, IR, and interpreter: compile-time proves the cited prompt parameter is `Grounded<T>`; the VM verifies the response cites content from the grounded payload.
+- [ ] Native `cites ctx strictly` emission in Cranelift/codegen-cl so compiled prompts enforce the same citation check as the interpreter.
 - [ ] `.unwrap_discarding_sources()` method on `Grounded<T>` for when the caller consciously drops provenance.
 - [x] Built-in `retrieval` effect with `data: grounded` dimension registered in the `EffectRegistry` so tools can declare themselves as grounded sources.
 

@@ -210,8 +210,12 @@ impl<'ir> Interpreter<'ir> {
         usage: TokenUsage,
         span: Span,
     ) -> Result<PromptCallResult, InterpError> {
-        let result_ty = match &prompt.return_ty {
+        let declared_result_ty = match &prompt.return_ty {
             Type::Stream(inner) => inner.as_ref(),
+            other => other,
+        };
+        let result_ty = match declared_result_ty {
+            Type::Grounded(inner) => inner.as_ref(),
             other => other,
         };
 
@@ -224,7 +228,10 @@ impl<'ir> Interpreter<'ir> {
 
         if let Some(param_idx) = prompt.cites_strictly_param {
             if let Some(ctx_value) = arg_values.get(param_idx) {
-                let ctx_text = value_to_json(ctx_value).to_string();
+                let ctx_text = match ctx_value {
+                    Value::Grounded(g) => value_to_json(&g.inner.get()).to_string(),
+                    other => value_to_json(other).to_string(),
+                };
                 let response_text = value_to_json(&value).to_string();
                 if !super::effect_compose::citation_verified(&ctx_text, &response_text) {
                     return Err(InterpError::new(

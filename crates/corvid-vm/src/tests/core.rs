@@ -144,6 +144,7 @@ async fn if_non_bool_condition_is_defensive_runtime_error() {
     let agent = IrAgent {
         id: DefId(0),
         name: "bad".into(),
+        extern_abi: None,
         params: vec![],
         return_ty: Type::Int,
         cost_budget: None,

@@ -384,6 +384,18 @@ prompt generate(ctx: String) -> Stream<String>:
         );
     }
 
+    #[test]
+    fn lowers_prompt_cites_strictly_param_index() {
+        let src = "\
+prompt answer(question: String, ctx: Grounded<String>) -> Grounded<String>:
+    cites ctx strictly
+    \"Answer from {ctx}\"
+";
+        let ir = lower_src(src);
+        let prompt = &ir.prompts[0];
+        assert_eq!(prompt.cites_strictly_param, Some(1));
+    }
+
     // ============================================================
     // Replay IR lowering (21-inv-E-4)
     // ============================================================

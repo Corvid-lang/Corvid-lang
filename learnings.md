@@ -2433,6 +2433,20 @@ counterfactual asks all fail for distinct reasons. That is what turns the
 bundle format into a one-time public proposal moment rather than a screenshot
 of an internal demo.
 
+## 20b-strict-prompt-citations
+
+`cites ctx strictly` is only meaningful if the compiler and runtime agree on
+what "ctx" means. The compiler side now rejects strict citation clauses unless
+the cited prompt parameter is explicitly `Grounded<T>`, so the annotation cannot
+silently attach to an ordinary string with no provenance.
+
+The runtime lesson was sharper: provenance wrappers are not citation text.
+Citation verification must inspect the grounded payload, not the JSON envelope
+that carries provenance metadata. The same boundary rule applies to tools and
+prompts that return `Grounded<T>`: external JSON supplies the inner `T`; Corvid
+adds the provenance wrapper after the trusted retrieval or grounded transform
+has been established.
+
 ## Contributing / feedback
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). The rules of the road are: design chat before code, per-scope commits at every boundary, dev-log entry for every session, no shortcuts. The `learnings.md` file you're reading gets updated when each user-visible feature ships.

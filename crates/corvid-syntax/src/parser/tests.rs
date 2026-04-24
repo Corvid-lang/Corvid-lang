@@ -1640,6 +1640,17 @@ agent good(x: String) -> String:
     }
 
     #[test]
+    fn parses_prompt_with_cites_strictly_clause() {
+        let file = parse_file_src(
+            "prompt answer(ctx: Grounded<String>) -> Grounded<String>:\n    cites ctx strictly\n    \"Answer from {ctx}\"\n",
+        );
+        match &file.decls[0] {
+            Decl::Prompt(p) => assert_eq!(p.cites_strictly.as_deref(), Some("ctx")),
+            other => panic!("expected Prompt, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn rejects_requires_without_value() {
         let (_file, errs) = parse_file_errs(
             "prompt classify(t: String) -> String:\n    requires:\n    \"Classify {t}\"\n",

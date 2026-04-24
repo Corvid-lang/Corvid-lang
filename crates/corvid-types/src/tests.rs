@@ -1093,6 +1093,45 @@ agent grounded_bot(ticket: Ticket) -> Grounded<Decision>:
     }
 
     #[test]
+    fn prompt_cites_strictly_accepts_grounded_param() {
+        let src = r#"
+prompt answer(ctx: Grounded<String>) -> Grounded<String>:
+    cites ctx strictly
+    "Answer from {ctx}"
+"#;
+        let c = check(src);
+        assert!(c.errors.is_empty(), "errors: {:?}", c.errors);
+    }
+
+    #[test]
+    fn prompt_cites_strictly_rejects_unknown_param() {
+        let src = r#"
+prompt answer(ctx: Grounded<String>) -> Grounded<String>:
+    cites source strictly
+    "Answer from {ctx}"
+"#;
+        let c = check(src);
+        assert!(c.errors.iter().any(|e| matches!(
+            e.kind,
+            TypeErrorKind::PromptCitationUnknownParam { .. }
+        )), "got: {:?}", c.errors);
+    }
+
+    #[test]
+    fn prompt_cites_strictly_requires_grounded_param() {
+        let src = r#"
+prompt answer(ctx: String) -> String:
+    cites ctx strictly
+    "Answer from {ctx}"
+"#;
+        let c = check(src);
+        assert!(c.errors.iter().any(|e| matches!(
+            e.kind,
+            TypeErrorKind::PromptCitationRequiresGrounded { .. }
+        )), "got: {:?}", c.errors);
+    }
+
+    #[test]
     fn mutation_cross_agent_grounded_provenance_flows() {
         // Grounded provenance should survive an agent-to-agent hop.
         let src = r#"

@@ -4662,3 +4662,8 @@ Next:
 
 
 
+## 2026-04-25 — Phase 20b strict prompt citations, interpreter path
+
+Shipped the language/interpreter half of `cites ctx strictly`. Prompt parsing now accepts the contextual `cites <param> strictly` clause, the typechecker proves the cited parameter exists and is `Grounded<T>`, IR lowering records the parameter index, and the VM verifies the model response cites content from the grounded payload before returning.
+
+Two runtime boundary issues surfaced during real VM tests and were fixed instead of hidden in fixtures: retrieval tools declared as `Grounded<T>` now decode host JSON as `T` before provenance wrapping, and prompts returning `Grounded<T>` decode the LLM payload as `T` before merging grounded input provenance. Native Cranelift emission remains open and is tracked separately in the roadmap.

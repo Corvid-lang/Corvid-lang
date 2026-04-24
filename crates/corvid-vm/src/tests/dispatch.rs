@@ -147,6 +147,83 @@ agent run(reason: String) -> Decision:
 }
 
 #[tokio::test]
+async fn prompt_cites_strictly_accepts_response_with_context_phrase() {
+    let src = r#"
+effect retrieval:
+    data: grounded
+
+tool lookup(id: String) -> Grounded<String> uses retrieval
+
+prompt answer(ctx: Grounded<String>) -> Grounded<String>:
+    cites ctx strictly
+    "Answer from {ctx}"
+
+agent run(id: String) -> Grounded<String>:
+    ctx = lookup(id)
+    return answer(ctx)
+"#;
+    let ir = ir_of(src);
+    let rt = Runtime::builder()
+        .tool("lookup", |_args| async move {
+            Ok(json!("alpha beta gamma delta epsilon"))
+        })
+        .llm(Arc::new(
+            MockAdapter::new("mock-1")
+                .reply("answer", json!("beta gamma delta epsilon")),
+        ))
+        .default_model("mock-1")
+        .build();
+
+    let value = run_agent(&ir, "run", vec![Value::String(Arc::from("doc-1"))], &rt)
+        .await
+        .expect("run");
+    match value {
+        Value::Grounded(g) => {
+            assert_eq!(g.inner.get(), Value::String(Arc::from("beta gamma delta epsilon")));
+        }
+        other => panic!("expected grounded string, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn prompt_cites_strictly_rejects_response_without_context_phrase() {
+    let src = r#"
+effect retrieval:
+    data: grounded
+
+tool lookup(id: String) -> Grounded<String> uses retrieval
+
+prompt answer(ctx: Grounded<String>) -> Grounded<String>:
+    cites ctx strictly
+    "Answer from {ctx}"
+
+agent run(id: String) -> Grounded<String>:
+    ctx = lookup(id)
+    return answer(ctx)
+"#;
+    let ir = ir_of(src);
+    let rt = Runtime::builder()
+        .tool("lookup", |_args| async move {
+            Ok(json!("alpha beta gamma delta epsilon"))
+        })
+        .llm(Arc::new(
+            MockAdapter::new("mock-1").reply("answer", json!("unrelated answer")),
+        ))
+        .default_model("mock-1")
+        .build();
+
+    let err = run_agent(&ir, "run", vec![Value::String(Arc::from("doc-1"))], &rt)
+        .await
+        .unwrap_err();
+    match err.kind {
+        InterpErrorKind::Other(message) => {
+            assert!(message.contains("citation verification failed"), "{message}");
+        }
+        other => panic!("expected citation verification failure, got {other:?}"),
+    }
+}
+
+#[tokio::test]
 async fn capability_dispatch_chooses_cheapest_eligible_model_and_traces_it() {
     let src = r#"
 model haiku:

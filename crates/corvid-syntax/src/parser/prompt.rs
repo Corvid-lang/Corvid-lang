@@ -53,6 +53,8 @@ impl<'a> Parser<'a> {
             None
         };
 
+        let cites_strictly = self.parse_prompt_cites_strictly_clause()?;
+
         // Phase 20h slice C: optional `route:` block. Each arm is
         // `<guard-expr> -> <model-ident>` or `_ -> <model-ident>`.
         let route = if matches!(self.peek(), TokKind::KwRoute) {
@@ -166,7 +168,7 @@ impl<'a> Parser<'a> {
             return_ownership,
             template,
             effect_row,
-            cites_strictly: None,
+            cites_strictly,
             stream,
             capability_required,
             route,
@@ -177,6 +179,29 @@ impl<'a> Parser<'a> {
             visibility,
             span: start.merge(end),
         })
+    }
+
+    fn parse_prompt_cites_strictly_clause(
+        &mut self,
+    ) -> Result<Option<String>, ParseError> {
+        if !matches!(self.peek(), TokKind::Ident(name) if name == "cites") {
+            return Ok(None);
+        }
+
+        self.bump(); // cites
+        let (param, _) = self.expect_ident()?;
+        let (strictly, strictly_span) = self.expect_ident()?;
+        if strictly != "strictly" {
+            return Err(ParseError {
+                kind: ParseErrorKind::UnexpectedToken {
+                    got: format!("identifier `{strictly}`"),
+                    expected: "`strictly` after `cites <param>`".into(),
+                },
+                span: strictly_span,
+            });
+        }
+        self.expect_newline()?;
+        Ok(Some(param))
     }
 
     /// Parse:

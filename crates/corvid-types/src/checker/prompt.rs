@@ -13,8 +13,8 @@
 use super::Checker;
 use crate::errors::{TypeError, TypeErrorKind};
 use crate::types::Type;
-use corvid_ast::{Ident, PromptDecl, RoutePattern, TypeRef};
-use corvid_resolve::{Binding, DeclKind};
+use corvid_ast::{Ident, PromptDecl, TypeRef};
+use corvid_resolve::Binding;
 
 impl<'a> Checker<'a> {
     pub(super) fn check_prompt(&mut self, p: &PromptDecl) {
@@ -40,6 +40,35 @@ impl<'a> Checker<'a> {
                     TypeErrorKind::InvalidConfidence { value: confidence },
                     p.span,
                 ));
+            }
+        }
+
+        if let Some(param_name) = &p.cites_strictly {
+            match p
+                .params
+                .iter()
+                .find(|param| param.name.name == *param_name)
+            {
+                Some(param) => {
+                    let param_ty = self.type_ref_to_type(&param.ty);
+                    if !matches!(param_ty, Type::Grounded(_) | Type::Unknown) {
+                        self.errors.push(TypeError::new(
+                            TypeErrorKind::PromptCitationRequiresGrounded {
+                                prompt: p.name.name.clone(),
+                                param: param_name.clone(),
+                                got: param_ty.display_name(),
+                            },
+                            param.name.span,
+                        ));
+                    }
+                }
+                None => self.errors.push(TypeError::new(
+                    TypeErrorKind::PromptCitationUnknownParam {
+                        prompt: p.name.name.clone(),
+                        param: param_name.clone(),
+                    },
+                    p.span,
+                )),
             }
         }
 

@@ -721,6 +721,11 @@ impl<'ir> Interpreter<'ir> {
 
                 let json_args: Vec<serde_json::Value> =
                     arg_values.iter().map(value_to_json).collect();
+                let is_grounded = tool.effect_names.iter().any(|e| e == "retrieval");
+                let result_decode_ty = match (&tool.return_ty, is_grounded) {
+                    (Type::Grounded(inner), true) => inner.as_ref(),
+                    _ => &tool.return_ty,
+                };
 
                 if self.should_yield_boundary() {
                     let action = self.maybe_yield(StepEvent::BeforeToolCall {
@@ -730,12 +735,16 @@ impl<'ir> Interpreter<'ir> {
                         env: self.env_snapshot(),
                     }).await?;
                     if let StepAction::Override(val) = action {
-                        return json_to_value(val, &tool.return_ty, &self.types_by_id)
-                            .map(ExprFlow::Value)
+                        let value = json_to_value(val, result_decode_ty, &self.types_by_id)
                             .map_err(|e| InterpError::new(
                                 InterpErrorKind::Marshal(format!("tool `{callee_name}` override: {e}")),
                                 span,
-                            ));
+                            ))?;
+                        return Ok(ExprFlow::Value(maybe_ground_tool_result(
+                            tool,
+                            callee_name,
+                            value,
+                        )));
                     }
                 }
 
@@ -755,16 +764,20 @@ impl<'ir> Interpreter<'ir> {
                         span,
                     }).await?;
                     if let StepAction::Override(val) = action {
-                        return json_to_value(val, &tool.return_ty, &self.types_by_id)
-                            .map(ExprFlow::Value)
+                        let value = json_to_value(val, result_decode_ty, &self.types_by_id)
                             .map_err(|e| InterpError::new(
                                 InterpErrorKind::Marshal(format!("tool `{callee_name}` override: {e}")),
                                 span,
-                            ));
+                            ))?;
+                        return Ok(ExprFlow::Value(maybe_ground_tool_result(
+                            tool,
+                            callee_name,
+                            value,
+                        )));
                     }
                 }
 
-                let value = json_to_value(result, &tool.return_ty, &self.types_by_id)
+                let value = json_to_value(result, result_decode_ty, &self.types_by_id)
                     .map_err(|e| {
                     InterpError::new(
                         InterpErrorKind::Marshal(format!("tool `{callee_name}`: {e}")),
@@ -774,18 +787,11 @@ impl<'ir> Interpreter<'ir> {
 
                 // If the tool has a `retrieval` effect (data: grounded),
                 // wrap the result in Grounded with a provenance chain.
-                let is_grounded = tool.effect_names.iter().any(|e| e == "retrieval");
-                if is_grounded {
-                    let chain = crate::ProvenanceChain::with_retrieval(
-                        callee_name,
-                        corvid_runtime::now_ms(),
-                    );
-                    Ok(ExprFlow::Value(Value::Grounded(
-                        crate::value::GroundedValue::new(value, chain),
-                    )))
-                } else {
-                    Ok(ExprFlow::Value(value))
-                }
+                Ok(ExprFlow::Value(maybe_ground_tool_result(
+                    tool,
+                    callee_name,
+                    value,
+                )))
             }
             IrCallKind::Prompt { def_id } => {
                 self.dispatch_prompt_expr(*def_id, callee_name, &arg_values, span)
@@ -884,5 +890,13 @@ impl<'ir> Interpreter<'ir> {
     }
 }
 
+fn maybe_ground_tool_result(tool: &IrTool, callee_name: &str, value: Value) -> Value {
+    if !tool.effect_names.iter().any(|e| e == "retrieval") {
+        return value;
+    }
+
+    let chain = crate::ProvenanceChain::with_retrieval(callee_name, corvid_runtime::now_ms());
+    Value::Grounded(crate::value::GroundedValue::new(value, chain))
+}
 
 

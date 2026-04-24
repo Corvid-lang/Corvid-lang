@@ -202,6 +202,22 @@ pub enum TypeErrorKind {
         message: String,
     },
 
+    /// A prompt-level `cites <param> strictly` clause names a parameter
+    /// that does not exist on the prompt.
+    PromptCitationUnknownParam {
+        prompt: String,
+        param: String,
+    },
+
+    /// A prompt-level `cites <param> strictly` clause can only cite a
+    /// `Grounded<T>` parameter, because runtime citation verification
+    /// must be tied to a compile-time provenance-carrying context.
+    PromptCitationRequiresGrounded {
+        prompt: String,
+        param: String,
+        got: String,
+    },
+
     /// An agent marked `@replayable` calls a function that
     /// introduces nondeterminism the trace schema cannot capture.
     /// See `crate::determinism` for the catalog of nondeterministic
@@ -493,6 +509,16 @@ impl TypeErrorKind {
             Self::UngroundedReturn { agent, message } => {
                 format!("ungrounded return in agent `{agent}`: {message}")
             }
+            Self::PromptCitationUnknownParam { prompt, param } => {
+                format!(
+                    "prompt `{prompt}` cites unknown parameter `{param}` in `cites {param} strictly`"
+                )
+            }
+            Self::PromptCitationRequiresGrounded { prompt, param, got } => {
+                format!(
+                    "prompt `{prompt}` cites `{param}` strictly, but `{param}` has type `{got}` instead of `Grounded<T>`"
+                )
+            }
             Self::NonReplayableCall {
                 agent,
                 call,
@@ -698,6 +724,13 @@ impl TypeErrorKind {
             Self::UngroundedReturn { .. } => Some(
                 "call a tool declared `uses retrieval` (or any effect with `data: grounded`) \
                  and pass its result to the return value, directly or through a prompt"
+                    .into(),
+            ),
+            Self::PromptCitationUnknownParam { .. } => Some(
+                "cite one of the prompt parameters, for example `cites ctx strictly`".into(),
+            ),
+            Self::PromptCitationRequiresGrounded { .. } => Some(
+                "make the cited parameter `Grounded<T>` or pass a retrieval-backed value into the prompt"
                     .into(),
             ),
             Self::NonReplayableCall { call, .. } => Some(format!(
