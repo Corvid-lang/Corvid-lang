@@ -147,7 +147,7 @@ The tool's design load-bearing claim: **the reviewer is itself a Corvid program.
 
 Receipt scope is the *exported surface* — `pub extern "c"` agents and their transitive closure, matching the 22-B ABI boundary that hosts actually consume. Private helpers that change often but never cross the boundary do not appear in the receipt, so the tool never cries wolf on internal refactoring.
 
-Follow-up slices (in progress): `21-inv-H-2` counterfactual replay over `--traces <dir>`, `21-inv-H-3` structured approval + provenance drill-down, `21-inv-H-4` LLM-generated prose summary grounded in the algebra, `21-inv-H-5` `--format=github-check|markdown|json` output modes.
+Follow-up slices shipped after the first receipt surface: `21-inv-H-2` counterfactual replay over `--traces <dir>`, `21-inv-H-3` structured approval + provenance drill-down, `21-inv-H-4` grounded receipt narratives, and `21-inv-H-5` CI / signing / policy renderers.
 
 ## 14.8 Shadow daemon (slice 21-inv-I)
 
@@ -162,7 +162,17 @@ corvid-shadow-daemon \
 
 Implementation reference: [crates/corvid-shadow-daemon](../../crates/corvid-shadow-daemon/).
 
-Native-tier shadow parity (`21-inv-I-native`) is deferred to v0.6 per ROADMAP.
+The daemon can replay either interpreter-recorded or native-recorded traces. The execution tier is explicit in the config:
+
+```toml
+[daemon]
+trace_dir = "target/trace"
+ir_path = "src/agent.cor"
+execution_tier = "native"
+alert_log = "target/shadow/alerts.jsonl"
+```
+
+`execution_tier = "interpreter"` is the default. `execution_tier = "native"` builds or reuses the native binary for `ir_path`, replays native traces through the native writer, and preserves the same differential and mutation report paths as interpreter shadow replay. Cross-tier replay is intentionally rejected: an interpreter-recorded trace must replay under the interpreter executor, and a native-recorded trace must replay under the native executor. That keeps replay equivalence honest instead of masking backend-specific behavior.
 
 ## 14.9 Provenance DAG (slices 21-inv-C-1, 21-inv-C-2)
 

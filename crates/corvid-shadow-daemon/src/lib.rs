@@ -20,8 +20,9 @@ pub use enrollment::{AckMetadata, EnrollmentAction, EnrollmentManager};
 pub use exports::{ExportSink, OtelExporter, PrometheusExporter};
 pub use replay_pool::{
     approval_label_for_tool, parse_program_source, AgentInvariantInfo, DangerousToolSpec,
-    DimensionSnapshot, InterpreterShadowExecutor, MutationSpec, ProvenanceSnapshot, ReplayPool,
-    ShadowExecutionMode, ShadowExecutorError, ShadowReplayExecutor, ShadowReplayOutcome,
+    DimensionSnapshot, InterpreterShadowExecutor, MutationSpec, NativeShadowExecutor,
+    ProvenanceSnapshot, ReplayPool, ShadowExecutionMode, ShadowExecutorError, ShadowReplayExecutor,
+    ShadowReplayOutcome,
     TrustTier,
 };
 pub use subscribe::{FileWatchSubscription, TraceSubscription};

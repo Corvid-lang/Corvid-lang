@@ -1,15 +1,9 @@
-mod common;
-
-use common::{outcome, FakeExecutor};
-use corvid_shadow_daemon::alerts::MemoryAlertSink;
 use corvid_shadow_daemon::config::{
     AlertsConfig, DaemonConfig, DaemonSection, EnrollmentConfig, ExportConfig, SubscribeConfig,
 };
-use corvid_shadow_daemon::daemon::{start_daemon, ShadowDaemon};
-use corvid_shadow_daemon::subscribe::{FileWatchSubscription, QueueSubscription, TraceSubscription};
-use std::path::PathBuf;
-use std::sync::Arc;
-use tokio::time::{sleep, timeout, Duration};
+use corvid_shadow_daemon::daemon::start_daemon;
+use corvid_shadow_daemon::subscribe::{FileWatchSubscription, TraceSubscription};
+use tokio::time::{timeout, Duration};
 
 fn valid_config(dir: &std::path::Path) -> DaemonConfig {
     let program = dir.join("program.cor");
@@ -18,6 +12,7 @@ fn valid_config(dir: &std::path::Path) -> DaemonConfig {
         daemon: DaemonSection {
             trace_dir: dir.join("trace"),
             ir_path: program,
+            execution_tier: "interpreter".into(),
             max_concurrent_replays: 2,
             alert_log: dir.join("alerts.jsonl"),
         },

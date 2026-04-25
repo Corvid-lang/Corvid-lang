@@ -3,7 +3,8 @@ use crate::config::{load_config, DaemonConfig};
 use crate::enrollment::{EnrollmentAction, EnrollmentManager};
 use crate::exports::{ExportSink, OtelExporter, PrometheusExporter};
 use crate::replay_pool::{
-    InterpreterShadowExecutor, ReplayPool, ShadowExecutionMode, ShadowReplayExecutor,
+    InterpreterShadowExecutor, NativeShadowExecutor, ReplayPool, ShadowExecutionMode,
+    ShadowReplayExecutor,
 };
 use crate::subscribe::{FileWatchSubscription, TraceSubscription};
 use anyhow::{Context, Result};
@@ -220,9 +221,17 @@ pub async fn start_daemon(config_path: &Path) -> Result<ShadowDaemonHandle> {
         eprintln!("warning: {warning}");
     }
 
-    let executor = Arc::new(InterpreterShadowExecutor::from_program_path(
-        &config.daemon.ir_path,
-    )?);
+    let executor: Arc<dyn ShadowReplayExecutor> = match config.daemon.execution_tier.as_str() {
+        "interpreter" | "interp" => Arc::new(InterpreterShadowExecutor::from_program_path(
+            &config.daemon.ir_path,
+        )?),
+        "native" => Arc::new(NativeShadowExecutor::from_program_path(
+            &config.daemon.ir_path,
+        )?),
+        other => anyhow::bail!(
+            "unknown shadow daemon execution_tier `{other}`; valid values are `interpreter` and `native`"
+        ),
+    };
     let subscription = Box::new(
         FileWatchSubscription::watch(&config.daemon.trace_dir, config.subscribe.debounce_ms)
             .map_err(anyhow::Error::msg)?,

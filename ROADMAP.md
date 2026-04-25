@@ -1272,16 +1272,15 @@ Users register local models (Ollama, vLLM, llama.cpp) with declared capabilities
 
 - [x] 21-docs                Spec [section 14](docs/effects-spec/14-replay.md) (Phase 21 implementation reference) + v1.0 launch demo at [docs/v1.0-demo-script.md](docs/v1.0-demo-script.md) + ROADMAP closeout status below.
 
-**Phase 21 closeout status (as of 2026-04-22).**
+**Phase 21 closeout status (as of 2026-04-25).**
 
-Lane A (compiler + CLI + docs) has shipped every primary slice except the four `21-inv-H` follow-ups (H-2 counterfactual replay, H-3 structured approval/provenance drill-down, H-4 LLM prose summary, H-5 GitHub/CI format modes). The thesis claim is demonstrable today: `@replayable` compiles only what can be deterministically reproduced, every run writes a trace, `corvid test --from-traces --promote` closes the Jest-snapshot loop, `corvid trace-diff` produces a PR behavior receipt whose reviewer is itself a `@deterministic` Corvid agent.
+Lane A (compiler + CLI + docs) has shipped the primary replay/test/receipt surface and the receipt hardening follow-ups: counterfactual replay, structured approval/provenance drill-down, grounded narrative receipts, custom Corvid policies, DSSE / in-toto signing, stacked receipts, watch mode, GitLab CI output, and schema-v2 delta names. The thesis claim is demonstrable today: `@replayable` compiles only what can be deterministically reproduced, every run writes a trace, `corvid test --from-traces --promote` closes the Jest-snapshot loop, and `corvid trace-diff` produces a PR behavior receipt whose reviewer and policy can themselves be Corvid programs.
 
-Lane B (runtime + codegen + daemon) has shipped every slice except `21-inv-I-native` (native-tier shadow daemon parity), which is explicitly deferred to v0.6 — the interpreter-tier shadow daemon is the v1.0 claim; native parity is an optimisation.
+Lane B (runtime + codegen + daemon) has shipped interpreter and native recording/replay, runtime counterfactuals, trace-to-test promotion, and the shadow daemon. Native-tier shadow replay parity is now available through `execution_tier = "native"` in the daemon config for native-recorded traces; cross-tier replay remains rejected by design so trace equivalence never hides backend differences.
 
 What's between us and a clean "Phase 21 done" on the ROADMAP:
 
-- Four receipt-extension slices (`21-inv-H-2` through `21-inv-H-5`). Each builds on `21-inv-H-1`'s surface, each is independently shippable, each is 1–3 days.
-- The deferred native shadow daemon (`21-inv-I-native`), post-v1.0.
+- Nothing in the Phase 21 checklist. Remaining replay work, if any, is future hardening on top of the shipped surface rather than a Phase 21 blocker.
 
 The determinism-source catalog and the language's treatment of non-reproducible sources are documented in [docs/phase-21-determinism-sources.md](docs/phase-21-determinism-sources.md) and summarised in [spec §14.11](docs/effects-spec/14-replay.md). Every trace axis the runtime records is enumerated there, and extensions land through monotonic `SCHEMA_VERSION` bumps + compile-time opt-in at `@replayable` level.
 
@@ -1296,9 +1295,9 @@ The determinism-source catalog and the language's treatment of non-reproducible 
 - [x] 21-inv-E-runtime       Runtime support for `replay` language primitive (trace ingestion + pattern dispatch)
 - [x] 21-inv-G-harness       Trace-to-test-fixture adapter; divergence-as-test-failure reporting
 - [x] 21-inv-I               Live shadow replay daemon; real-time divergence alerts
-- [ ] 21-inv-I-native        Native-tier shadow replay daemon parity (interpreter shadow ships in v0.6)
+- [x] 21-inv-I-native        Native-tier shadow replay daemon parity: `execution_tier = "native"` builds/caches the native binary, replays native-recorded traces under the native writer, reads differential/mutation reports, and preserves cross-tier rejection for interpreter-recorded traces.
 
-**Rules (standing):** CLAUDE.md rubric on every file (1–2 responsibilities). One commit per file extraction or feature step. Validation gate between every commit: `cargo check --workspace` + `cargo test -p <crate> --lib` + `cargo test -p <crate> --test <name> -- --list` (for test-file touches) + `cargo run -q -p corvid-cli -- verify --corpus tests/corpus` (must still exit 1 only on the two deliberate fixtures). Push before next slice. Wait for acknowledgement at slice boundaries. Zero semantic changes mid-refactor. No shortcuts — a thin feature is a shortcut.
+**Rules (standing):** CLAUDE.md rubric on every file (1–2 responsibilities). One commit per file extraction or feature step. Validation gate between every commit: `cargo check --workspace` + `cargo test -p <crate> --lib` + `cargo test -p <crate> --test <name> -- --list` (for test-file touches) + `cargo run -q -p corvid-cli -- verify --corpus tests/corpus` (must still exit 1 only on the two deliberate fixtures). Push before next slice, then continue to the next roadmap item automatically unless blocked by a real product/security/scope decision. Zero semantic changes mid-refactor. No shortcuts — a thin feature is a shortcut.
 
 **Success criteria.** Every agent marked `@replayable` compiles iff it can be deterministically replayed. Every run under recording produces a JSONL trace that replays to byte-identical state. `corvid replay --model claude-opus-5.0 trace.jsonl` runs cost-free and reports divergences. `replay` is a first-class Corvid expression. Prod traces become regression tests with `corvid test --from-traces`. PRs show a behavior diff before merge. Live shadow mode detects regressions in production.
 

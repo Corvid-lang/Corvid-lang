@@ -3067,6 +3067,19 @@ asking the compiler team to hard-code their dimension. The compiler accepts the
 extension only if the algebra is executable: property tests pass, and declared
 formal proofs actually replay on the local toolchain.
 
+## native shadow replay daemon
+
+Shadow replay is only credible if the daemon can exercise the same tier that
+served production traffic. Corvid now makes that tier an explicit daemon
+contract: interpreter traces replay under the interpreter executor, and native
+traces replay under the native executor selected with `execution_tier = "native"`.
+
+The important invariant is no cross-tier pretending. Native parity is not an
+adapter that "mostly" compares native output to interpreter output; it runs the
+compiled binary, records a native shadow trace, and rejects traces whose writer
+does not match the selected executor. That gives the daemon real deployment
+coverage without weakening replay determinism.
+
 ## Contributing / feedback
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). The rules of the road are: design chat before code, per-scope commits at every boundary, dev-log entry for every session, no shortcuts. The `learnings.md` file you're reading gets updated when each user-visible feature ships.

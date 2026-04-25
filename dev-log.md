@@ -5195,3 +5195,19 @@ The hook is fail-closed: missing proof files, unsupported extensions, missing
 proof assistants, timeouts, and non-zero proof-assistant exits all reject the
 dimension or fail the test report with an actionable diagnostic. This keeps
 formal proofs as executable artifacts instead of marketing prose.
+
+## 2026-04-25 - native shadow replay daemon parity
+
+Closed `21-inv-I-native`. The shadow daemon config now accepts
+`execution_tier = "native"` alongside the interpreter default. Native mode
+builds or reuses the current program's native binary, replays native-recorded
+traces with the native writer, reads differential and mutation reports emitted
+by the native replay runtime, and compares normalized traces without treating
+run IDs or timestamps as semantic divergence.
+
+Cross-tier replay stays fail-closed. Interpreter traces still replay through
+the interpreter executor and native traces through the native executor; the
+daemon returns the existing `CrossTierReplayUnsupported` error if a trace's
+recorded writer does not match the selected replay writer. The current native
+executor passes scalar CLI arguments only, matching the native command-line
+entry boundary.

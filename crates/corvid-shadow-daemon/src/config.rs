@@ -22,6 +22,8 @@ pub struct DaemonSection {
     /// ends in `.cor`, the daemon treats it as the current program source.
     /// Serialized IR loading is reserved for a follow-up.
     pub ir_path: PathBuf,
+    #[serde(default = "default_execution_tier")]
+    pub execution_tier: String,
     #[serde(default = "default_max_concurrent_replays")]
     pub max_concurrent_replays: usize,
     pub alert_log: PathBuf,
@@ -233,6 +235,10 @@ pub fn load_config(path: &Path) -> Result<(DaemonConfig, Vec<String>)> {
 
 fn default_max_concurrent_replays() -> usize {
     4
+}
+
+fn default_execution_tier() -> String {
+    "interpreter".into()
 }
 
 fn default_subscribe_kind() -> String {
