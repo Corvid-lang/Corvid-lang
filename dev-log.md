@@ -5252,3 +5252,15 @@ This does not claim full `corvid replay` execution over WASM modules yet. The
 important invariant for this slice is schema alignment: browser/edge host calls
 are no longer opaque glue, and the recorded events are shaped for the existing
 trace readers.
+
+## 2026-04-25 - WASM browser approval demo
+
+Closed `23-D-browser-demo` with `examples/wasm_browser_demo`. The demo compiles
+`src/refund_gate.cor` through `corvid build --target=wasm`, imports the
+generated ES loader from the browser page, supplies typed scalar prompt/tool/
+approval host capabilities, displays the dangerous-action approval decision,
+and renders the generated replay-compatible trace events.
+
+The demo includes PowerShell and POSIX verification scripts plus a CLI
+integration test. The important constraint is that the page imports the real
+generated loader and artifact names; it is not a hand-written WASM mock.

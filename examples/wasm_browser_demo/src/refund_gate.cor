@@ -1,0 +1,17 @@
+# Phase 23 browser deployment smoke demo.
+# The source is intentionally scalar because the current WASM ABI supports
+# Int/Float/Bool/Nothing plus typed host imports. The AI-native boundary is
+# still real: a prompt decides risk, an approval gate protects a dangerous tool,
+# and the generated loader records replay-compatible trace events.
+
+prompt refund_score(amount: Int) -> Int:
+    """Return an integer risk score from 0 to 100 for this refund amount."""
+
+tool issue_refund(amount: Int) -> Int dangerous
+
+agent review_refund(amount: Int) -> Int:
+    score = refund_score(amount)
+    if score > 75:
+        approve IssueRefund(amount)
+        return issue_refund(amount)
+    return 0

@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Corvid WASM Approval Demo</title>
+    <style>
+      :root {
+        --ink: #111315;
+        --paper: #f6f1e8;
+        --line: #d8c9b4;
+        --accent: #0f6b5c;
+        --danger: #9c321f;
+        --panel: rgba(255, 252, 245, 0.88);
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        color: var(--ink);
+        background:
+          radial-gradient(circle at top left, rgba(15, 107, 92, 0.2), transparent 34rem),
+          linear-gradient(135deg, #f8f3ea 0%, #ede0cc 100%);
+        font-family: ui-serif, Georgia, "Times New Roman", serif;
+      }
+
+      main {
+        width: min(980px, calc(100vw - 32px));
+        margin: 0 auto;
+        padding: 64px 0;
+      }
+
+      h1 {
+        max-width: 780px;
+        margin: 0 0 18px;
+        font-size: clamp(2.6rem, 7vw, 5.8rem);
+        line-height: 0.9;
+        letter-spacing: -0.07em;
+      }
+
+      .lede {
+        max-width: 720px;
+        margin: 0 0 38px;
+        font-size: 1.25rem;
+        line-height: 1.55;
+      }
+
+      .grid {
+        display: grid;
+        grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+        gap: 20px;
+      }
+
+      section {
+        border: 1px solid var(--line);
+        border-radius: 24px;
+        background: var(--panel);
+        box-shadow: 0 24px 80px rgba(50, 42, 28, 0.16);
+        padding: 24px;
+      }
+
+      label {
+        display: block;
+        margin-bottom: 8px;
+        font-size: 0.83rem;
+        letter-spacing: 0.11em;
+        text-transform: uppercase;
+      }
+
+      input {
+        width: 100%;
+        box-sizing: border-box;
+        border: 1px solid var(--line);
+        border-radius: 16px;
+        padding: 14px 16px;
+        color: var(--ink);
+        background: #fffaf1;
+        font: inherit;
+        font-size: 1.25rem;
+      }
+
+      button {
+        margin-top: 16px;
+        border: 0;
+        border-radius: 999px;
+        padding: 12px 18px;
+        color: white;
+        background: var(--accent);
+        font: 700 0.95rem ui-sans-serif, system-ui, sans-serif;
+        cursor: pointer;
+      }
+
+      button.secondary {
+        margin-left: 8px;
+        background: var(--danger);
+      }
+
+      .metric {
+        margin-top: 20px;
+        font-size: 3rem;
+        font-weight: 700;
+        letter-spacing: -0.05em;
+      }
+
+      pre {
+        min-height: 360px;
+        max-height: 520px;
+        overflow: auto;
+        margin: 0;
+        border-radius: 18px;
+        padding: 18px;
+        color: #f4efe7;
+        background: #17130f;
+        font-size: 0.82rem;
+        line-height: 1.45;
+      }
+
+      @media (max-width: 760px) {
+        .grid {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>One Corvid agent. A browser host. A visible approval boundary.</h1>
+      <p class="lede">
+        This page loads the generated WASM module, supplies typed prompt/tool/approval
+        host capabilities, and records the same trace events used by Corvid replay.
+      </p>
+
+      <div class="grid">
+        <section>
+          <label for="amount">Refund amount</label>
+          <input id="amount" type="number" min="1" value="120" />
+          <button id="approve">Approve dangerous action</button>
+          <button id="deny" class="secondary">Deny dangerous action</button>
+          <div class="metric" id="result">not run</div>
+          <p id="status">Build the WASM artifacts, then open this page from a local server.</p>
+        </section>
+
+        <section>
+          <pre id="trace">[]</pre>
+        </section>
+      </div>
+    </main>
+
+    <script type="module" src="./demo.js"></script>
+  </body>
+</html>

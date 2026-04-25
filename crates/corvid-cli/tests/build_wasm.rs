@@ -102,3 +102,45 @@ agent main() -> Int:
     assert!(js.contains("kind: 'llm_call'"));
     assert!(js.contains("kind: 'run_completed'"));
 }
+
+#[test]
+fn committed_wasm_browser_demo_builds_and_uses_generated_loader() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(|p| p.parent())
+        .expect("workspace root")
+        .to_path_buf();
+    let demo = root.join("examples").join("wasm_browser_demo");
+    let source = demo.join("src").join("refund_gate.cor");
+    let output = run_corvid(
+        &["build", source.to_str().unwrap(), "--target=wasm"],
+        &root,
+    );
+    assert!(
+        output.status.success(),
+        "stdout={}\nstderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let out_dir = demo.join("target").join("wasm");
+    let wasm = std::fs::read(out_dir.join("refund_gate.wasm")).expect("wasm");
+    wasmparser::Validator::new()
+        .validate_all(&wasm)
+        .expect("valid wasm");
+
+    let loader = std::fs::read_to_string(out_dir.join("refund_gate.js")).expect("loader");
+    assert!(loader.contains("kind: 'approval_decision'"));
+    assert!(loader.contains("kind: 'tool_result'"));
+
+    let types = std::fs::read_to_string(out_dir.join("refund_gate.d.ts")).expect("types");
+    assert!(types.contains("review_refund(amount: bigint): bigint"));
+    assert!(types.contains("'IssueRefund': (arg1: bigint) => boolean"));
+
+    let page = std::fs::read_to_string(demo.join("web").join("index.html")).expect("page");
+    assert!(page.contains("demo.js"));
+    let browser_host = std::fs::read_to_string(demo.join("web").join("demo.js")).expect("host");
+    assert!(browser_host.contains("../target/wasm/refund_gate.js"));
+    assert!(browser_host.contains("approvals"));
+    assert!(browser_host.contains("trace"));
+}

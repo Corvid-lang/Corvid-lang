@@ -58,12 +58,34 @@ export interface CorvidWasmModule {
   add_one(x: bigint): bigint;
 }
 
-export function instantiate(imports?: WebAssembly.Imports): Promise<CorvidWasmModule>;
+export type CorvidWasmTraceSink =
+  | Array<Record<string, unknown>>
+  | ((event: Record<string, unknown>) => void)
+  | { events: Array<Record<string, unknown>> };
+
+export function instantiate(
+  hostOrImports?: WebAssembly.Imports | CorvidWasmHost,
+  options?: { trace?: CorvidWasmTraceSink },
+): Promise<CorvidWasmModule>;
 ```
+
+## Browser Demo
+
+The committed browser smoke demo lives in
+`examples/wasm_browser_demo`. It compiles `src/refund_gate.cor` to WASM,
+loads the generated ES module from `target/wasm/refund_gate.js`, supplies typed
+prompt/tool/approval host capabilities, displays the approval decision, and
+renders the generated trace events.
+
+```powershell
+examples/wasm_browser_demo/verify.ps1
+python -m http.server 8000 -d examples/wasm_browser_demo
+```
+
+Open `http://localhost:8000/web/` after the build finishes.
 
 ## Next Slice
 
-The next Phase 23 slice is a browser smoke demo that loads a generated module,
-provides typed host capabilities, records a trace, and displays the approval
-boundary in UI. Full `corvid replay` execution against WASM modules belongs in
-the Wasmtime/Wasmer parity harness slice.
+The next Phase 23 slice is a Wasmtime/Wasmer parity harness against the native
+parity corpus. Full `corvid replay` execution against WASM modules belongs
+there, not in the browser smoke page.

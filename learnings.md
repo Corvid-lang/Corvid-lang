@@ -3117,6 +3117,18 @@ events, but `corvid replay` does not yet drive a WASM module through a
 Wasmtime/Wasmer host. That distinction matters because trace shape compatibility
 is necessary but not sufficient for deterministic replay.
 
+## wasm browser demo
+
+A browser demo only proves deployment if it imports the generated loader and the
+generated WASM module. `examples/wasm_browser_demo` keeps that invariant: the
+source is Corvid, the artifacts come from `corvid build --target=wasm`, and the
+page supplies the typed host object that the generated `.d.ts` describes.
+
+The honest browser boundary is currently scalar AI-native host capabilities:
+prompt, approval, dangerous tool, and trace recording. Strings, structs,
+provenance handles, and streaming callbacks are still compiler/runtime work, not
+demo-only shortcuts.
+
 ## Contributing / feedback
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). The rules of the road are: design chat before code, per-scope commits at every boundary, dev-log entry for every session, no shortcuts. The `learnings.md` file you're reading gets updated when each user-visible feature ships.
