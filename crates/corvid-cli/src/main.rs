@@ -58,13 +58,14 @@ use routing_report::{build_report, render_report as render_routing_report, Routi
 #[allow(unused_imports)]
 use corvid_driver::{
     build_native_to_disk, build_target_to_disk, build_to_disk, build_wasm_to_disk, compile,
-    compile_with_config, diff_snapshots, inspect_import_semantics, load_corvid_config_for,
-    load_corvid_config_with_path_for,
+    compile_with_config, diff_snapshots, file_github_issues_for_escapes, inspect_import_semantics,
+    load_corvid_config_for, load_corvid_config_with_path_for,
     load_dotenv_walking, render_all_pretty, render_dimension_verification_report,
-    render_effect_diff, render_import_semantic_summaries, render_law_check_report,
-    render_test_report, render_spec_report, run_dimension_verification, run_law_checks, run_native,
-    run_tests_at_path_with_options, run_with_target, scaffold_new, snapshot_revision, test_options,
-    verify_spec_examples, BuildTarget, RunTarget, VerdictKind, DEFAULT_SAMPLES,
+    render_adversarial_report, render_effect_diff, render_import_semantic_summaries,
+    render_law_check_report, render_test_report, render_spec_report, run_adversarial_suite,
+    run_dimension_verification, run_law_checks, run_native, run_tests_at_path_with_options,
+    run_with_target, scaffold_new, snapshot_revision, test_options, verify_spec_examples,
+    BuildTarget, RunTarget, VerdictKind, DEFAULT_SAMPLES,
 };
 
 #[derive(Parser)]
@@ -1458,13 +1459,10 @@ fn cmd_test_rewrites() -> Result<u8> {
 
 fn cmd_test_adversarial(count: u32, model: &str) -> Result<u8> {
     println!("corvid test adversarial --count {count} --model {model}\n");
-    println!("Drives an LLM to generate programs designed to bypass the dimensional");
-    println!("effect checker. Every generated program runs through `corvid check`;");
-    println!("any that compiles is a real bypass and is filed as an issue.");
-    println!();
-    println!("Implementation tracked in ROADMAP Phase 20g — generator not yet wired.");
-    println!("See docs/effects-spec/README.md for the verification guarantees.");
-    Ok(0)
+    let mut report = run_adversarial_suite(count, model);
+    file_github_issues_for_escapes(&mut report)?;
+    print!("{}", render_adversarial_report(&report));
+    Ok(if report.escaped_count == 0 { 0 } else { 1 })
 }
 
 // ------------------------------------------------------------

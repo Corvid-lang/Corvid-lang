@@ -5475,3 +5475,15 @@ unsupported placeholders: `called`, `called A before B`, `approved Label`, and
 `cost < bound` all produce pass/fail output from the fixture. Fixture loading
 also validates schema compatibility and requires `run_started` plus
 `run_completed`, so malformed traces cannot accidentally bless a process claim.
+
+## 2026-04-25 - Adversarial bypass generator
+
+Unparked the Phase 20g adversarial bypass generator follow-up. `corvid test
+adversarial --count N --model M` now builds a deterministic seed corpus from a
+six-category bypass taxonomy, runs each generated `.cor` program through the
+full compiler frontend, and exits non-zero if any attempt compiles clean.
+
+The taxonomy covers approval, trust, budget, provenance, reversibility, and
+confidence. Escaped bypasses can file GitHub issues automatically when
+`CORVID_ADVERSARIAL_FILE_ISSUES=1` and `GITHUB_TOKEN` are configured; otherwise
+the command stays offline and CI-safe while still failing on escapes.

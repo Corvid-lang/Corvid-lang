@@ -3317,6 +3317,18 @@ Trace-fixture paths belong in the language declaration, while path resolution
 belongs in the driver. The VM should evaluate already-lowered tests and inspect
 schema-validated events; it should not guess where the user's source file lives.
 
+## adversarial bypass testing
+
+Corvid should use AI against itself, but the safety gate cannot depend on live
+API calls. The stable core is a deterministic taxonomy plus compiler
+classifier: generate complete `.cor` bypass attempts, run each through the full
+frontend, and treat any clean compile as an escaped safety bug.
+
+The first shipped taxonomy covers approval, trust, budget, provenance,
+reversibility, and confidence. Live LLM generation can expand the corpus later,
+but it must feed the same classifier rather than becoming a separate testing
+path with weaker rules.
+
 ## Contributing / feedback
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). The rules of the road are: design chat before code, per-scope commits at every boundary, dev-log entry for every session, no shortcuts. The `learnings.md` file you're reading gets updated when each user-visible feature ships.

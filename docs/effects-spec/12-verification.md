@@ -27,9 +27,11 @@ Five independent techniques run on every build. A regression in any one fails CI
 
 **Why it matters.** If the LLM finds a program that compiles clean but the spec says should fail, either (a) the LLM found a real bypass and the checker needs fixing, or (b) the program is actually legal and the prompt was wrong. Either outcome surfaces an issue worth resolving.
 
-**Implementation status.** CLI stub wired at `corvid test adversarial --count N --model M`. Generator infrastructure (prompt engineering, category taxonomy, issue-filing pipeline) is parked as follow-up — the harness design is done but the prompt corpus isn't built yet. Tracked as explicit follow-up in the ROADMAP.
+**Implementation status.** `corvid test adversarial --count N --model M` now runs a deterministic seed generator plus the same accept/reject classifier used for future provider-backed attempts. The shipped taxonomy covers approval, trust, budget, provenance, reversibility, and confidence bypass families. Every generated `.cor` program goes through the full compiler frontend. A clean compile is reported as `ESCAPED` and makes the command exit non-zero.
 
-**When it ships.** Post-20g. Needs a prompt-engineering framework plus a model-cost budget; neither is a blocker for the rest of 20g's soundness claims.
+**Issue filing.** Escaped bypasses can file GitHub issues automatically when `CORVID_ADVERSARIAL_FILE_ISSUES=1` and `GITHUB_TOKEN` are set. Without those variables the suite remains CI-safe and offline: escaped rows still fail the command, but no network side effect is attempted.
+
+**Provider generation.** The `--model` flag is recorded in the report and prompt pack. Live LLM sampling is intentionally separate from the deterministic seed path so CI can exercise the soundness harness without API spend or nondeterminism.
 
 ## 3. Preserved-semantics fuzzing
 

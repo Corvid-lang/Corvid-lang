@@ -8,6 +8,7 @@
 #![allow(dead_code)]
 
 pub mod add_dimension;
+pub mod adversarial;
 pub mod approver;
 pub mod effect_diff;
 pub mod meta_verify;
@@ -27,6 +28,11 @@ mod render;
 pub mod spec_check;
 
 pub use add_dimension::{add_dimension as install_dimension, AddDimensionOutcome};
+pub use adversarial::{
+    file_github_issues_for_escapes, render_adversarial_prompt, render_adversarial_report,
+    run_adversarial_suite, AdversarialAttempt, AdversarialCategory, AdversarialIssueOutcome,
+    AdversarialOutcome, AdversarialReport, AdversarialVerdict,
+};
 pub use package_registry::{
     add_package, publish_package, remove_package, update_package, AddPackageOutcome,
     PackageMutationOutcome, PublishPackageOptions, PublishPackageOutcome,
