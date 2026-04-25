@@ -5339,3 +5339,16 @@ The important implementation choice is identity-based navigation. Declaration
 references use resolver `DefId`s and local references use `LocalId`s, so rename
 does not do text replacement and does not accidentally edit a tool named the
 same as a parameter.
+
+## 2026-04-25 - VS Code reference client
+
+Closed `24-F-vscode-client`. Added `extensions/vscode-corvid` as the reference
+editor client for Corvid. It registers `.cor`, starts `corvid-lsp` over stdio,
+and wires diagnostics, hover, completion, go-to-definition, references, rename,
+and workspace symbols through `vscode-languageclient`.
+
+The extension also ships product-grade basics: syntax highlighting, language
+configuration, snippets for agents/prompts/effects/models/dangerous tools, a
+restart command, a log command, configurable server path, and a verification
+script. This makes Phase 24 a usable developer workflow, not only a backend LSP
+crate.

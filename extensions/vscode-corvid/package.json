@@ -1,0 +1,87 @@
+{
+  "name": "corvid",
+  "displayName": "Corvid",
+  "description": "Reference VS Code client for the Corvid AI-native general programming language.",
+  "version": "0.0.1",
+  "publisher": "corvid-lang",
+  "license": "MIT OR Apache-2.0",
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Linters"
+  ],
+  "activationEvents": [
+    "onLanguage:corvid",
+    "onCommand:corvid.restartLanguageServer"
+  ],
+  "main": "./src/extension.js",
+  "contributes": {
+    "languages": [
+      {
+        "id": "corvid",
+        "aliases": [
+          "Corvid",
+          "corvid"
+        ],
+        "extensions": [
+          ".cor"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "corvid",
+        "scopeName": "source.corvid",
+        "path": "./syntaxes/corvid.tmLanguage.json"
+      }
+    ],
+    "snippets": [
+      {
+        "language": "corvid",
+        "path": "./snippets/corvid.code-snippets"
+      }
+    ],
+    "commands": [
+      {
+        "command": "corvid.restartLanguageServer",
+        "title": "Corvid: Restart Language Server"
+      },
+      {
+        "command": "corvid.showLanguageServerLog",
+        "title": "Corvid: Show Language Server Log"
+      }
+    ],
+    "configuration": {
+      "title": "Corvid",
+      "properties": {
+        "corvid.lsp.path": {
+          "type": "string",
+          "default": "",
+          "description": "Path to the corvid-lsp executable. Leave empty to use CORVID_LSP_PATH, the repository target/debug binary, or corvid-lsp on PATH."
+        },
+        "corvid.lsp.trace.server": {
+          "type": "string",
+          "enum": [
+            "off",
+            "messages",
+            "verbose"
+          ],
+          "default": "off",
+          "description": "Trace communication with corvid-lsp."
+        }
+      }
+    }
+  },
+  "dependencies": {
+    "vscode-languageclient": "^9.0.1"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.90.0"
+  },
+  "scripts": {
+    "verify": "node ./scripts/verify.mjs"
+  }
+}

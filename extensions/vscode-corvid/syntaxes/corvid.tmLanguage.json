@@ -1,0 +1,95 @@
+{
+  "scopeName": "source.corvid",
+  "name": "Corvid",
+  "patterns": [
+    { "include": "#comments" },
+    { "include": "#strings" },
+    { "include": "#numbers" },
+    { "include": "#annotations" },
+    { "include": "#keywords" },
+    { "include": "#aiNative" },
+    { "include": "#types" }
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        {
+          "name": "comment.line.number-sign.corvid",
+          "match": "#.*$"
+        }
+      ]
+    },
+    "strings": {
+      "patterns": [
+        {
+          "name": "string.quoted.triple.corvid",
+          "begin": "\"\"\"",
+          "end": "\"\"\""
+        },
+        {
+          "name": "string.quoted.double.corvid",
+          "begin": "\"",
+          "end": "\"",
+          "patterns": [
+            {
+              "name": "constant.character.escape.corvid",
+              "match": "\\\\."
+            }
+          ]
+        }
+      ]
+    },
+    "numbers": {
+      "patterns": [
+        {
+          "name": "constant.numeric.money.corvid",
+          "match": "\\$[0-9]+(?:\\.[0-9]+)?"
+        },
+        {
+          "name": "constant.numeric.corvid",
+          "match": "\\b[0-9]+(?:\\.[0-9]+)?\\b"
+        }
+      ]
+    },
+    "annotations": {
+      "patterns": [
+        {
+          "name": "storage.modifier.annotation.corvid",
+          "match": "@[A-Za-z_][A-Za-z0-9_]*"
+        }
+      ]
+    },
+    "keywords": {
+      "patterns": [
+        {
+          "name": "keyword.declaration.corvid",
+          "match": "\\b(agent|tool|prompt|effect|type|model|eval|extend|import|public)\\b"
+        },
+        {
+          "name": "keyword.control.corvid",
+          "match": "\\b(if|else|for|in|return|yield|break|continue|pass|try|retry|on|error|times|backoff|replay|when)\\b"
+        },
+        {
+          "name": "constant.language.corvid",
+          "match": "\\b(true|false|nothing|Ok|Err|Some|None)\\b"
+        }
+      ]
+    },
+    "aiNative": {
+      "patterns": [
+        {
+          "name": "keyword.other.ai-native.corvid",
+          "match": "\\b(uses|dangerous|approve|budget|trust|reversible|grounded|cacheable|calibrated|cites|strictly|requires|output_format|route|progressive|rollout|ensemble|vote|adversarial|propose|challenge|adjudicate|confidence|tokens|latency|cost)\\b"
+        }
+      ]
+    },
+    "types": {
+      "patterns": [
+        {
+          "name": "support.type.corvid",
+          "match": "\\b(Int|Float|String|Bool|Nothing|List|Stream|Result|Option|Grounded|Weak|Partial|ResumeToken)\\b"
+        }
+      ]
+    }
+  }
+}

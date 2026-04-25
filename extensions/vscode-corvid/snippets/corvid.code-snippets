@@ -1,0 +1,55 @@
+{
+  "Agent": {
+    "prefix": "agent",
+    "body": [
+      "agent ${1:name}(${2:input}: ${3:String}) -> ${4:String}:",
+      "    ${5:return $2}"
+    ],
+    "description": "Declare a Corvid agent."
+  },
+  "Dangerous Tool With Approval": {
+    "prefix": "dangerous-tool",
+    "body": [
+      "tool ${1:issue_refund}(${2:id}: ${3:String}) -> ${4:String} dangerous",
+      "",
+      "agent ${5:run}($2: $3) -> $4:",
+      "    approve ${6:IssueRefund}($2)",
+      "    return $1($2)"
+    ],
+    "description": "Declare a dangerous tool and matching approval boundary."
+  },
+  "Grounded Prompt": {
+    "prefix": "grounded-prompt",
+    "body": [
+      "prompt ${1:answer}(${2:ctx}: Grounded<${3:String}>) -> Grounded<${4:String}>:",
+      "    calibrated",
+      "    cites $2 strictly",
+      "    \"\"\"",
+      "    ${5:Answer using only the cited context.}",
+      "    \"\"\""
+    ],
+    "description": "Declare a grounded prompt with strict citations."
+  },
+  "Effect": {
+    "prefix": "effect",
+    "body": [
+      "effect ${1:retrieval}:",
+      "    cost: ${2:$0.001}",
+      "    reversible: ${3:true}",
+      "    trust: ${4:autonomous}",
+      "    data: ${5:grounded}"
+    ],
+    "description": "Declare a dimensional effect."
+  },
+  "Model": {
+    "prefix": "model",
+    "body": [
+      "model ${1:haiku}:",
+      "    capability: ${2:basic}",
+      "    cost_per_token_in: ${3:$0.00000025}",
+      "    cost_per_token_out: ${4:$0.00000125}",
+      "    latency: ${5:fast}"
+    ],
+    "description": "Declare a typed model catalog entry."
+  }
+}

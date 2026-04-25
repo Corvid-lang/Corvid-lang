@@ -3196,6 +3196,18 @@ Single-file navigation is the correct first layer. It gives users definition,
 references, rename, and workspace symbols for open documents now, while leaving
 cross-file package indexing as a separate package-manager/workspace problem.
 
+## vscode client
+
+The reference editor client should be thin but real. VS Code should not
+reimplement diagnostics, hover, completion, or navigation; it should start the
+same `corvid-lsp` binary every editor can use and add editor-specific polish:
+language registration, highlighting, snippets, restart, and logs.
+
+Server discovery matters for contributors. Supporting explicit setting,
+environment variable, repository-local debug/release binaries, and PATH lets the
+same extension work in development, installed-tool, and packaged workflows
+without hardcoding one layout.
+
 ## Contributing / feedback
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). The rules of the road are: design chat before code, per-scope commits at every boundary, dev-log entry for every session, no shortcuts. The `learnings.md` file you're reading gets updated when each user-visible feature ships.

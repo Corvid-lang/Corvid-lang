@@ -1,0 +1,35 @@
+{
+  "comments": {
+    "lineComment": "#"
+  },
+  "brackets": [
+    ["(", ")"],
+    ["[", "]"],
+    ["{", "}"],
+    ["<", ">"]
+  ],
+  "autoClosingPairs": [
+    ["(", ")"],
+    ["[", "]"],
+    ["{", "}"],
+    ["\"", "\""],
+    ["'''", "'''"],
+    ["\"\"\"", "\"\"\""]
+  ],
+  "surroundingPairs": [
+    ["(", ")"],
+    ["[", "]"],
+    ["{", "}"],
+    ["\"", "\""]
+  ],
+  "folding": {
+    "markers": {
+      "start": "^\\s*#\\s*region\\b",
+      "end": "^\\s*#\\s*endregion\\b"
+    }
+  },
+  "indentationRules": {
+    "increaseIndentPattern": "^\\s*(agent|tool|prompt|effect|type|model|eval|extend|if|else|for|route|progressive|ensemble|adversarial)\\b.*:\\s*(#.*)?$",
+    "decreaseIndentPattern": "^\\s*(else)\\b.*:\\s*(#.*)?$"
+  }
+}

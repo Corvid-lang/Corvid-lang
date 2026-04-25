@@ -58,9 +58,25 @@ document and uses `DefId` / `LocalId` identity for:
 - workspace symbol results for open documents, including agents, tools,
   prompts, types, effects, models, and evals.
 
+The reference VS Code client lives at
+`extensions/vscode-corvid`. It registers `.cor` files, starts `corvid-lsp` over
+stdio, and exposes the server's diagnostics, hover, completion, definition,
+references, rename, and workspace-symbol features through the standard
+`vscode-languageclient` package. It also includes syntax highlighting, language
+configuration, and snippets for Corvid's general and AI-native constructs.
+
+Server discovery order:
+
+1. `corvid.lsp.path` VS Code setting.
+2. `CORVID_LSP_PATH` environment variable.
+3. Repository-local `target/debug/corvid-lsp(.exe)`.
+4. Repository-local `target/release/corvid-lsp(.exe)`.
+5. `corvid-lsp` on `PATH`.
+
 Current validation:
 
 ```text
 cargo test -p corvid-lsp
 cargo check --workspace
+npm run verify --prefix extensions/vscode-corvid
 ```

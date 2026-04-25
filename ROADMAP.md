@@ -1378,7 +1378,7 @@ The determinism-source catalog and the language's treatment of non-reproducible 
 - [x] 24-C-hover-types       Hover with compiler-backed inferred expression types plus declaration summaries for agents, tools, prompts, types, and effects. Prompt hovers surface AI-native metadata such as effect rows, calibration, cacheability, strict citations, and model routing mode; tool hovers show dangerous/approval boundaries.
 - [x] 24-D-completion        Context-aware completion for keywords, declarations, tools, prompts, approval labels, effect names, and model names. The completion engine is compiler/parser-backed, uses partial source while the user is typing, and keeps approval/effect/model contexts narrow instead of dumping every symbol everywhere.
 - [x] 24-E-navigation        Single-file navigation over resolver identity: go-to-definition, find-references, rename edits, and workspace symbol search across open documents. Navigation uses DefId/LocalId bindings, not text search, so local rename does not touch unrelated declarations with the same spelling.
-- [ ] 24-F-vscode-client     Reference VS Code extension wiring the server, diagnostics, hover, completion, and semantic visibility.
+- [x] 24-F-vscode-client     Reference VS Code extension at `extensions/vscode-corvid`: registers `.cor`, starts `corvid-lsp`, wires diagnostics/hover/completion/definition/references/rename/workspace symbols, ships syntax highlighting, language configuration, snippets for AI-native constructs, restart/log commands, and a local verification script.
 
 ### Phase 25 — Package manager (~6–8 weeks)
 
