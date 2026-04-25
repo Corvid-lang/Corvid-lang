@@ -86,6 +86,8 @@ pub enum TraceEvent {
         prompt: String,
         model: Option<String>,
         #[serde(default)]
+        model_version: Option<String>,
+        #[serde(default)]
         rendered: Option<String>,
         #[serde(default)]
         args: Vec<serde_json::Value>,
@@ -96,6 +98,8 @@ pub enum TraceEvent {
         prompt: String,
         #[serde(default)]
         model: Option<String>,
+        #[serde(default)]
+        model_version: Option<String>,
         result: serde_json::Value,
     },
     /// Metadata for a cacheable prompt call. A cache hit is still recorded
@@ -107,6 +111,8 @@ pub enum TraceEvent {
         prompt: String,
         #[serde(default)]
         model: Option<String>,
+        #[serde(default)]
+        model_version: Option<String>,
         fingerprint: String,
         hit: bool,
     },
@@ -173,6 +179,8 @@ pub enum TraceEvent {
         run_id: String,
         prompt: String,
         model: String,
+        #[serde(default)]
+        model_version: Option<String>,
         #[serde(default)]
         capability_required: Option<String>,
         #[serde(default)]

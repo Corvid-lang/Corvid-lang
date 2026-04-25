@@ -585,6 +585,7 @@ fn trace_mock_llm_attempt(
         } else {
             Some(effective_model.to_string())
         },
+        model_version: runtime.model_version(effective_model),
         rendered: Some(rendered.to_string()),
         args: args.to_vec(),
     });
@@ -597,6 +598,7 @@ fn trace_mock_llm_attempt(
         } else {
             Some(effective_model.to_string())
         },
+        model_version: runtime.model_version(effective_model),
         result,
     });
 }

@@ -180,6 +180,15 @@ impl Runtime {
         ))
     }
 
+    pub fn model_version(&self, model_name: &str) -> Option<String> {
+        if model_name.is_empty() {
+            return None;
+        }
+        self.model_catalog
+            .get(model_name)
+            .and_then(|model| model.version.clone())
+    }
+
     pub fn choose_rollout_variant(&self, variant_percent: f64) -> Result<bool, RuntimeError> {
         if variant_percent <= 0.0 {
             return Ok(false);
@@ -337,6 +346,8 @@ impl Runtime {
             .and_then(|source| source.live_model_override())
             .map(str::to_owned);
         let trace_model = live_model_override.as_deref().unwrap_or(req.model);
+        let recorded_model_version = self.model_version(req.model);
+        let trace_model_version = self.model_version(trace_model);
         if self.tracer.is_enabled() {
             self.tracer.emit(TraceEvent::LlmCall {
                 ts_ms: now_ms(),
@@ -347,6 +358,7 @@ impl Runtime {
                 } else {
                     Some(trace_model.to_string())
                 },
+                model_version: trace_model_version.clone(),
                 rendered: Some(trace_rendered.to_string()),
                 args: req.args.to_vec(),
             });
@@ -368,6 +380,7 @@ impl Runtime {
                         } else {
                             Some(trace_model.to_string())
                         },
+                        model_version: trace_model_version.clone(),
                         fingerprint: fingerprint.to_string(),
                         hit: true,
                     });
@@ -380,6 +393,7 @@ impl Runtime {
                         } else {
                             Some(trace_model.to_string())
                         },
+                        model_version: trace_model_version.clone(),
                         result: cached.value.clone(),
                     });
                 }
@@ -399,6 +413,7 @@ impl Runtime {
                 } else {
                     Some(req.model)
                 },
+                recorded_model_version.as_deref(),
                 trace_rendered,
                 req.args,
                 live_req,
@@ -421,6 +436,7 @@ impl Runtime {
                     } else {
                         Some(trace_model.to_string())
                     },
+                    model_version: trace_model_version.clone(),
                     fingerprint: fingerprint.to_string(),
                     hit: false,
                 });
@@ -449,6 +465,7 @@ impl Runtime {
                 } else {
                     Some(trace_model.to_string())
                 },
+                model_version: trace_model_version,
                 result: resp.value.clone(),
             });
         }

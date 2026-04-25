@@ -470,6 +470,7 @@ impl ReplaySource {
         &self,
         prompt: &str,
         recorded_model: Option<&str>,
+        recorded_model_version: Option<&str>,
         rendered: &str,
         args: &[serde_json::Value],
         live_req: LlmRequestRef<'_>,
@@ -487,11 +488,13 @@ impl ReplaySource {
                                 TraceEvent::LlmCall {
                                     prompt: expected_prompt,
                                     model: expected_model,
+                                    model_version: expected_model_version,
                                     rendered: expected_rendered,
                                     args: expected_args,
                                     ..
                                 } if expected_prompt == prompt
                                     && expected_model.as_deref() == recorded_model
+                                    && expected_model_version.as_deref() == recorded_model_version
                                     && expected_rendered.as_deref() == Some(rendered)
                                     && expected_args == args
                             ),
@@ -508,10 +511,12 @@ impl ReplaySource {
                         TraceEvent::LlmResult {
                             prompt: expected_prompt,
                             model: expected_model,
+                            model_version: expected_model_version,
                             result,
                             ..
                         } if expected_prompt == prompt
-                            && expected_model.as_deref() == recorded_model =>
+                            && expected_model.as_deref() == recorded_model
+                            && expected_model_version.as_deref() == recorded_model_version =>
                         {
                             result
                         }
@@ -540,11 +545,13 @@ impl ReplaySource {
                                     TraceEvent::LlmCall {
                                         prompt: expected_prompt,
                                         model: expected_model,
+                                        model_version: expected_model_version,
                                         rendered: expected_rendered,
                                         args: expected_args,
                                         ..
                                     } if expected_prompt == prompt
                                         && expected_model.as_deref() == recorded_model
+                                        && expected_model_version.as_deref() == recorded_model_version
                                         && expected_rendered.as_deref() == Some(rendered)
                                         && expected_args == args
                                 ),
@@ -563,11 +570,13 @@ impl ReplaySource {
                             TraceEvent::LlmCall {
                                 prompt: expected_prompt,
                                 model: expected_model,
+                                model_version: expected_model_version,
                                 rendered: expected_rendered,
                                 args: expected_args,
                                 ..
                             } if expected_prompt == prompt
                                 && expected_model.as_deref() == recorded_model
+                                && expected_model_version.as_deref() == recorded_model_version
                                 && expected_rendered.as_deref() == Some(rendered)
                                 && expected_args == args
                         ) {
@@ -578,6 +587,7 @@ impl ReplaySource {
                                 got: serde_json::json!({
                                     "prompt": prompt,
                                     "model": recorded_model,
+                                    "model_version": recorded_model_version,
                                     "rendered": rendered,
                                     "args": args,
                                 }),

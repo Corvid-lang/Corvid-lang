@@ -29,6 +29,7 @@ impl<'ir> Interpreter<'ir> {
         &self,
         callee_name: &str,
         model: String,
+        model_version: Option<String>,
         capability_required: Option<String>,
         capability_picked: Option<String>,
         cost_estimate: f64,
@@ -40,6 +41,7 @@ impl<'ir> Interpreter<'ir> {
             run_id: self.runtime.tracer().run_id().to_string(),
             prompt: callee_name.to_string(),
             model,
+            model_version,
             capability_required,
             capability_picked,
             cost_estimate,
@@ -65,6 +67,7 @@ impl<'ir> Interpreter<'ir> {
         self.emit_model_selected(
             callee_name,
             selection.model.clone(),
+            selection.version,
             selection.capability_required,
             selection.capability_picked,
             selection.cost_estimate,
@@ -118,6 +121,7 @@ impl<'ir> Interpreter<'ir> {
         self.emit_model_selected(
             callee_name,
             selection.model.clone(),
+            selection.version,
             selection.capability_required,
             selection.capability_picked,
             selection.cost_estimate,

@@ -565,6 +565,7 @@ fn write_classify_trace(
             run_id: run_id.clone(),
             prompt: "classify_prompt".to_string(),
             model: Some("mock-1".to_string()),
+            model_version: None,
             rendered: None,
             args: vec![serde_json::json!(text)],
         },
@@ -573,6 +574,7 @@ fn write_classify_trace(
             run_id: run_id.clone(),
             prompt: "classify_prompt".to_string(),
             model: Some("mock-1".to_string()),
+            model_version: None,
             result: serde_json::json!(result),
         },
         TraceEvent::RunCompleted {

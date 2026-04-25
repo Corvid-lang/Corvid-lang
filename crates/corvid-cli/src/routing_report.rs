@@ -116,18 +116,20 @@ pub fn build_report(opts: RoutingReportOptions<'_>) -> Result<RoutingReport> {
             TraceEvent::ModelSelected {
                 prompt,
                 model,
+                model_version,
                 cost_estimate,
                 stage_index,
                 ..
             } => {
-                let row = usage.entry((prompt.clone(), model.clone())).or_default();
+                let model_label = model_label(model, model_version.as_deref());
+                let row = usage.entry((prompt.clone(), model_label.clone())).or_default();
                 row.count += 1;
                 row.total_cost += cost_estimate;
                 if let Some(stage) = stage_index {
                     let agg = escalations.entry((prompt.clone(), *stage)).or_default();
                     agg.entry_count += 1;
                     if agg.model.is_none() {
-                        agg.model = Some(model.clone());
+                        agg.model = Some(model_label);
                     }
                 }
             }
@@ -136,11 +138,13 @@ pub fn build_report(opts: RoutingReportOptions<'_>) -> Result<RoutingReport> {
                 run_id,
                 prompt,
                 model,
+                model_version,
                 ..
             } => {
                 if let Some(model) = model {
+                    let model_label = model_label(model, model_version.as_deref());
                     pending_llm
-                        .entry((run_id.clone(), prompt.clone(), model.clone()))
+                        .entry((run_id.clone(), prompt.clone(), model_label))
                         .or_default()
                         .push_back(*ts_ms);
                 }
@@ -150,13 +154,15 @@ pub fn build_report(opts: RoutingReportOptions<'_>) -> Result<RoutingReport> {
                 run_id,
                 prompt,
                 model,
+                model_version,
                 ..
             } => {
                 if let Some(model) = model {
-                    let key = (run_id.clone(), prompt.clone(), model.clone());
+                    let model_label = model_label(model, model_version.as_deref());
+                    let key = (run_id.clone(), prompt.clone(), model_label.clone());
                     if let Some(queue) = pending_llm.get_mut(&key) {
                         if let Some(start) = queue.pop_front() {
-                            if let Some(row) = usage.get_mut(&(prompt.clone(), model.clone())) {
+                            if let Some(row) = usage.get_mut(&(prompt.clone(), model_label)) {
                                 row.latencies.push(ts_ms.saturating_sub(start));
                             }
                         }
@@ -611,6 +617,13 @@ fn fmt_conf(value: Option<f64>) -> String {
     value
         .map(|v| format!("{v:.2}"))
         .unwrap_or_else(|| "n/a".to_string())
+}
+
+fn model_label(model: &str, version: Option<&str>) -> String {
+    match version {
+        Some(version) if !version.is_empty() => format!("{model}@{version}"),
+        _ => model.to_string(),
+    }
 }
 
 #[cfg(test)]

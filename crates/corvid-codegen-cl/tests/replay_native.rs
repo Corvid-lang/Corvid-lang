@@ -141,6 +141,7 @@ fn normalize_event(event: &TraceEvent) -> TraceEvent {
         TraceEvent::LlmCall {
             prompt,
             model,
+            model_version,
             rendered,
             args,
             ..
@@ -149,12 +150,14 @@ fn normalize_event(event: &TraceEvent) -> TraceEvent {
             run_id: "normalized-run".into(),
             prompt: prompt.clone(),
             model: model.clone(),
+            model_version: model_version.clone(),
             rendered: rendered.clone(),
             args: args.clone(),
         },
         TraceEvent::LlmResult {
             prompt,
             model,
+            model_version,
             result,
             ..
         } => TraceEvent::LlmResult {
@@ -162,6 +165,7 @@ fn normalize_event(event: &TraceEvent) -> TraceEvent {
             run_id: "normalized-run".into(),
             prompt: prompt.clone(),
             model: model.clone(),
+            model_version: model_version.clone(),
             result: result.clone(),
         },
         TraceEvent::ApprovalRequest { label, args, .. } => TraceEvent::ApprovalRequest {

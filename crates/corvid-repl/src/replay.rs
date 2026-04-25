@@ -183,6 +183,7 @@ impl ReplaySession {
                     model,
                     rendered,
                     args,
+                    ..
                 } => {
                     ensure_run_id(&path, &run_id, event_run_id)?;
                     let session_run_id = run_id.as_str();

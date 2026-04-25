@@ -196,12 +196,14 @@ impl Tracer {
                 run_id,
                 prompt,
                 model,
+                model_version,
                 result,
             } => TraceEvent::LlmResult {
                 ts_ms,
                 run_id,
                 prompt,
                 model,
+                model_version,
                 result: r.redact(result),
             },
             TraceEvent::LlmCall {
@@ -209,6 +211,7 @@ impl Tracer {
                 run_id,
                 prompt,
                 model,
+                model_version,
                 rendered,
                 args,
             } => TraceEvent::LlmCall {
@@ -216,6 +219,7 @@ impl Tracer {
                 run_id,
                 prompt,
                 model,
+                model_version,
                 rendered: rendered.map(|s| redact_string(&r.redact(serde_json::Value::String(s)))),
                 args: r.redact_args(args),
             },

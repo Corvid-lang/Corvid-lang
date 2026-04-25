@@ -344,6 +344,7 @@ fn native_differential_prompt_mismatch_is_replay_divergence() {
             ts_ms,
             run_id,
             model,
+            model_version,
             rendered,
             args,
             ..
@@ -352,6 +353,7 @@ fn native_differential_prompt_mismatch_is_replay_divergence() {
             run_id: run_id.clone(),
             prompt: "mutated_prompt".into(),
             model: model.clone(),
+            model_version: model_version.clone(),
             rendered: rendered.clone(),
             args: args.clone(),
         },

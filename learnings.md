@@ -2896,6 +2896,18 @@ cache hits as metadata while still emitting the normal LLM call/result pair,
 so replay sees the same behavioral trace and metadata consumers can still
 distinguish live calls from cache hits.
 
+## 20h-model-version-pinning
+
+Model names are not stable enough for replay safety. A provider can change the
+weights or behavior behind the same name, so Corvid traces now carry an
+optional `model_version` and replay treats version drift as semantic drift.
+
+The important product rule is backwards compatibility without silent
+weakening. Old traces deserialize with `model_version: null`; new pinned traces
+fail fast when the runtime catalog points the same name at a different
+version. Reports also use `model@version` labels so operators can see which
+revision produced which cost and latency behavior.
+
 ## Contributing / feedback
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). The rules of the road are: design chat before code, per-scope commits at every boundary, dev-log entry for every session, no shortcuts. The `learnings.md` file you're reading gets updated when each user-visible feature ships.

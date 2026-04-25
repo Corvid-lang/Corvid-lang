@@ -545,6 +545,7 @@ mod tests {
                 run_id: run_id.into(),
                 prompt: "classify".into(),
                 model: Some("claude-opus-4-6".into()),
+                model_version: None,
                 rendered: None,
                 args: vec![],
             });
@@ -553,6 +554,7 @@ mod tests {
                 run_id: run_id.into(),
                 prompt: "classify".into(),
                 model: Some("claude-opus-4-6".into()),
+                model_version: None,
                 result: serde_json::json!("refund"),
             });
         }

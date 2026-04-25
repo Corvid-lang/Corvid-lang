@@ -5015,3 +5015,18 @@ semantic trace shape whether a response came from a live provider or cache.
 Replay mode bypasses the live cache and consumes the recorded result. That
 keeps cache state from becoming hidden nondeterminism while still making
 cacheability a language-level AI workflow primitive.
+
+## 2026-04-25 - model version replay pinning
+
+Closed the Phase 20h model-versioning item. Runtime model registrations now
+carry an optional `version`, the TOML model catalog accepts `version = "..."`,
+and model selection/LLM trace events record the resolved version alongside the
+model name.
+
+Replay now compares both model name and model version for recorded LLM calls.
+If a replay uses the same model name with a different catalog version, Corvid
+raises replay divergence instead of silently treating the provider dependency
+as equivalent. Legacy traces remain compatible through `model_version: null`.
+
+Routing reports aggregate versioned models as `name@version`, so operational
+reports do not collapse two model revisions into one row.

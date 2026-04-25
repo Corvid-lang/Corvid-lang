@@ -619,6 +619,7 @@ model haiku:
 
 model opus:
     capability: expert
+    version: "2024-10-22"
 
 prompt answer(q: String) -> String:
     requires: expert
@@ -646,6 +647,7 @@ agent run(q: String) -> String:
         .model(
             RegisteredModel::new("opus")
                 .capability("expert")
+                .version("2024-10-22")
                 .cost_per_token_in(0.000015)
                 .cost_per_token_out(0.00002),
         )
@@ -670,18 +672,22 @@ agent run(q: String) -> String:
         TraceEvent::ModelSelected {
             prompt,
             model,
+            model_version,
             capability_required,
             capability_picked,
             ..
         } if prompt == "answer"
             && model == "opus"
+            && model_version.as_deref() == Some("2024-10-22")
             && capability_required.as_deref() == Some("expert")
             && capability_picked.as_deref() == Some("expert")
     )));
     assert!(events.iter().any(|event| matches!(
         event,
-        TraceEvent::LlmCall { prompt, model, .. }
-            if prompt == "answer" && model.as_deref() == Some("opus")
+        TraceEvent::LlmCall { prompt, model, model_version, .. }
+            if prompt == "answer"
+                && model.as_deref() == Some("opus")
+                && model_version.as_deref() == Some("2024-10-22")
     )));
 }
 

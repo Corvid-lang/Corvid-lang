@@ -5,7 +5,7 @@ use corvid_ir::lower;
 use corvid_resolve::resolve;
 use corvid_runtime::{
     llm::mock::MockAdapter, ProgrammaticApprover, Runtime, RuntimeBuilder, RuntimeError,
-    TraceEvent,
+    RegisteredModel, TraceEvent,
 };
 use corvid_syntax::{lex, parse_file};
 use corvid_trace_schema::{read_events_from_path, write_events_to_path};
@@ -27,6 +27,10 @@ fn ir_of(src: &str) -> corvid_ir::IrFile {
 }
 
 fn refund_bot_builder() -> RuntimeBuilder {
+    refund_bot_builder_with_model_version("mock-fixture-v1")
+}
+
+fn refund_bot_builder_with_model_version(version: &str) -> RuntimeBuilder {
     Runtime::builder()
         .tool("get_order", |args| async move {
             let id = args.first().and_then(|v| v.as_str()).unwrap_or("");
@@ -53,6 +57,7 @@ fn refund_bot_builder() -> RuntimeBuilder {
             }),
         )))
         .default_model("mock-1")
+        .model(RegisteredModel::new("mock-1").version(version))
 }
 
 fn refund_bot_runtime(trace_dir: Option<&Path>) -> Runtime {
@@ -65,6 +70,18 @@ fn refund_bot_runtime(trace_dir: Option<&Path>) -> Runtime {
 
 fn refund_bot_replay_runtime(trace_path: &Path, trace_dir: Option<&Path>) -> Runtime {
     let mut builder = refund_bot_builder().replay_from(trace_path);
+    if let Some(trace_dir) = trace_dir {
+        builder = builder.trace_to(trace_dir);
+    }
+    builder.build()
+}
+
+fn refund_bot_replay_runtime_with_model_version(
+    trace_path: &Path,
+    trace_dir: Option<&Path>,
+    version: &str,
+) -> Runtime {
+    let mut builder = refund_bot_builder_with_model_version(version).replay_from(trace_path);
     if let Some(trace_dir) = trace_dir {
         builder = builder.trace_to(trace_dir);
     }
@@ -129,6 +146,31 @@ async fn replay_refund_bot_matches_recorded_output_and_trace_shape() {
 
     assert_eq!(recorded_output, replay_output);
     assert_eq!(normalized_events(&recorded_trace), normalized_events(&replay_trace));
+}
+
+#[tokio::test]
+async fn replay_rejects_same_model_name_with_different_recorded_version() {
+    let recorded_dir = tempfile::tempdir().unwrap();
+    let recorded_runtime = refund_bot_runtime(Some(recorded_dir.path()));
+    let _ = run_refund_bot(&recorded_runtime)
+        .await
+        .expect("recorded run should succeed");
+    let recorded_trace = recorded_runtime.tracer().path().to_path_buf();
+    drop(recorded_runtime);
+
+    let replay_dir = tempfile::tempdir().unwrap();
+    let replay_runtime = refund_bot_replay_runtime_with_model_version(
+        &recorded_trace,
+        Some(replay_dir.path()),
+        "mock-fixture-v2",
+    );
+    let err = run_refund_bot(&replay_runtime)
+        .await
+        .expect_err("model version drift must diverge replay");
+    match err.kind {
+        InterpErrorKind::Runtime(RuntimeError::ReplayDivergence(_)) => {}
+        other => panic!("expected replay divergence, got {other:?}"),
+    }
 }
 
 #[tokio::test]

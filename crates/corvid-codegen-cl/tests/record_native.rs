@@ -163,6 +163,7 @@ fn normalize_event(event: &TraceEvent) -> TraceEvent {
             run_id: "normalized-run".into(),
             prompt: prompt.clone(),
             model: None,
+            model_version: None,
             rendered: rendered.clone(),
             args: args.clone(),
         },
@@ -175,6 +176,7 @@ fn normalize_event(event: &TraceEvent) -> TraceEvent {
             run_id: "normalized-run".into(),
             prompt: prompt.clone(),
             model: None,
+            model_version: None,
             result: result.clone(),
         },
         TraceEvent::ApprovalRequest { label, args, .. } => TraceEvent::ApprovalRequest {

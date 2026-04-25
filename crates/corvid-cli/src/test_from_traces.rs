@@ -756,6 +756,7 @@ mod tests {
                 run_id: shape.run_id.clone(),
                 prompt: p.clone(),
                 model: None,
+                model_version: None,
                 rendered: None,
                 args: vec![],
             });
@@ -764,6 +765,7 @@ mod tests {
                 run_id: shape.run_id.clone(),
                 prompt: p.clone(),
                 model: None,
+                model_version: None,
                 result: json!("ok"),
             });
         }

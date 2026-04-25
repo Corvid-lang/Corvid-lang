@@ -249,6 +249,7 @@ async fn prompt_mismatch_is_a_replay_divergence_not_a_model_swap_diff() {
             ts_ms,
             run_id,
             model,
+            model_version,
             rendered,
             args,
             ..
@@ -257,6 +258,7 @@ async fn prompt_mismatch_is_a_replay_divergence_not_a_model_swap_diff() {
             run_id: run_id.clone(),
             prompt: "mutated_prompt".into(),
             model: model.clone(),
+            model_version: model_version.clone(),
             rendered: rendered.clone(),
             args: args.clone(),
         },

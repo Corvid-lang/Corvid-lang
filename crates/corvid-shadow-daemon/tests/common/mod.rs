@@ -55,6 +55,7 @@ pub fn llm_events(run_id: &str, writer: &str, agent: &str, prompt: &str, result:
             run_id: run_id.into(),
             prompt: prompt.into(),
             model: Some("mock-1".into()),
+            model_version: None,
             rendered: Some("rendered".into()),
             args: vec![],
         },
@@ -63,6 +64,7 @@ pub fn llm_events(run_id: &str, writer: &str, agent: &str, prompt: &str, result:
             run_id: run_id.into(),
             prompt: prompt.into(),
             model: Some("mock-1".into()),
+            model_version: None,
             result: result.clone(),
         },
         TraceEvent::RunCompleted {

@@ -1101,7 +1101,7 @@ Users register local models (Ollama, vLLM, llama.cpp) with declared capabilities
 - [x] `@jurisdiction`, `@compliance`, `privacy_tier` as dimensions
 - [x] `cacheable: true` + fingerprint cache in interpreter + replay integration
 - [x] `rollout(P%)` weighted routing for A/B tests
-- [ ] `version: "..."` model versioning + replay-pinned safety
+- [x] `version: "..."` model versioning + replay-pinned safety
 - [ ] Output-format-aware routing (`strict_json`, `markdown_strict`, etc.)
 - [x] Runtime adaptive selection + confidence-driven auto-escalation (capability dispatch, route dispatch, progressive confidence escalation, rollout, ensemble, and adversarial runtime paths shipped)
 - [ ] `corvid eval --swap-model` retrospective migration tooling

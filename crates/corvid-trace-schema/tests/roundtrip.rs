@@ -56,6 +56,7 @@ fn sample_trace() -> Vec<TraceEvent> {
             run_id: "r-roundtrip".into(),
             prompt: "classify".into(),
             model: Some("claude-opus-4-7".into()),
+            model_version: Some("2024-10-22".into()),
             rendered: Some("Classify: ticket-42".into()),
             args: vec![],
         },
@@ -64,6 +65,7 @@ fn sample_trace() -> Vec<TraceEvent> {
             run_id: "r-roundtrip".into(),
             prompt: "classify".into(),
             model: Some("claude-opus-4-7".into()),
+            model_version: Some("2024-10-22".into()),
             fingerprint: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
                 .into(),
             hit: true,
@@ -73,6 +75,7 @@ fn sample_trace() -> Vec<TraceEvent> {
             run_id: "r-roundtrip".into(),
             prompt: "classify".into(),
             model: Some("claude-opus-4-7".into()),
+            model_version: Some("2024-10-22".into()),
             result: json!("refund"),
         },
         TraceEvent::ApprovalRequest {

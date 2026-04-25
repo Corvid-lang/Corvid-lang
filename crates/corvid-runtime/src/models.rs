@@ -6,6 +6,7 @@ use std::path::Path;
 pub struct RegisteredModel {
     pub name: String,
     pub capability: Option<String>,
+    pub version: Option<String>,
     pub cost_per_token_in: f64,
     pub cost_per_token_out: f64,
 }
@@ -15,6 +16,7 @@ impl RegisteredModel {
         Self {
             name: name.into(),
             capability: None,
+            version: None,
             cost_per_token_in: 0.0,
             cost_per_token_out: 0.0,
         }
@@ -22,6 +24,11 @@ impl RegisteredModel {
 
     pub fn capability(mut self, capability: impl Into<String>) -> Self {
         self.capability = Some(capability.into());
+        self
+    }
+
+    pub fn version(mut self, version: impl Into<String>) -> Self {
+        self.version = Some(version.into());
         self
     }
 
@@ -51,6 +58,7 @@ pub struct ModelSelection {
     pub model: String,
     pub capability_required: Option<String>,
     pub capability_picked: Option<String>,
+    pub version: Option<String>,
     pub cost_estimate: f64,
 }
 
@@ -139,6 +147,7 @@ impl ModelCatalog {
             model: selected.name.clone(),
             capability_required: Some(required_capability.to_string()),
             capability_picked: selected.capability.clone(),
+            version: selected.version.clone(),
             cost_estimate: selected.estimated_cost(prompt_tokens, completion_tokens),
         })
     }
@@ -154,12 +163,14 @@ impl ModelCatalog {
                 model: model.name.clone(),
                 capability_required: None,
                 capability_picked: model.capability.clone(),
+                version: model.version.clone(),
                 cost_estimate: model.estimated_cost(prompt_tokens, completion_tokens),
             },
             None => ModelSelection {
                 model: model_name.to_string(),
                 capability_required: None,
                 capability_picked: None,
+                version: None,
                 cost_estimate: 0.0,
             },
         }
@@ -189,11 +200,16 @@ fn parse_catalog_toml(path: &Path, value: toml::Value) -> Result<ModelCatalog, R
             .get("capability")
             .and_then(toml::Value::as_str)
             .map(ToString::to_string);
+        let version = spec
+            .get("version")
+            .and_then(toml::Value::as_str)
+            .map(ToString::to_string);
         let cost_per_token_in = parse_cost_field(path, name, spec.get("cost_per_token_in"))?;
         let cost_per_token_out = parse_cost_field(path, name, spec.get("cost_per_token_out"))?;
         catalog.register(RegisteredModel {
             name: name.clone(),
             capability,
+            version,
             cost_per_token_in,
             cost_per_token_out,
         });
@@ -265,6 +281,7 @@ mod tests {
             r#"
 [llm.models.haiku]
 capability = "basic"
+version = "2024-10-22"
 cost_per_token_in = "$0.00000025"
 cost_per_token_out = 0.00000125
 
@@ -279,6 +296,10 @@ cost_per_token_in = 0.000015
             .unwrap()
             .expect("catalog");
         assert_eq!(catalog.get("haiku").unwrap().capability.as_deref(), Some("basic"));
+        assert_eq!(
+            catalog.get("haiku").unwrap().version.as_deref(),
+            Some("2024-10-22")
+        );
         assert!((catalog.get("haiku").unwrap().cost_per_token_in - 0.00000025).abs() < 1e-12);
         assert!((catalog.get("opus").unwrap().cost_per_token_in - 0.000015).abs() < 1e-12);
     }
@@ -345,6 +366,7 @@ cost_per_token_in = 0.000015
         let selection = catalog.describe_named_model("opus", 2, 3);
         assert_eq!(selection.model, "opus");
         assert_eq!(selection.capability_picked.as_deref(), Some("expert"));
+        assert_eq!(selection.version, None);
         assert!((selection.cost_estimate - 0.8).abs() < 1e-12);
     }
 
