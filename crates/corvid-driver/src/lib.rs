@@ -26,6 +26,7 @@ pub use add_dimension::{add_dimension as install_dimension, AddDimensionOutcome}
 pub use package_registry::{
     add_package, publish_package, remove_package, update_package, AddPackageOutcome,
     PackageMutationOutcome, PublishPackageOptions, PublishPackageOutcome,
+    RegistryVerificationFailure, RegistryVerificationReport, verify_registry_contract,
 };
 pub use approver::{simulate_approver, verify_approver_source};
 pub use modules::{

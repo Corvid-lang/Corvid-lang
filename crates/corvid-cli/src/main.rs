@@ -622,6 +622,14 @@ enum BundleCommand {
 
 #[derive(Subcommand)]
 enum PackageCommand {
+    /// Verify a registry index and all referenced source artifacts.
+    VerifyRegistry {
+        /// Registry index URL, local index.toml, or registry directory.
+        registry: String,
+        /// Emit structured JSON.
+        #[arg(long)]
+        json: bool,
+    },
     /// Publish a signed source package into a registry directory.
     Publish {
         /// Source `.cor` file to publish.
@@ -949,6 +957,9 @@ fn main() -> ExitCode {
             }
         },
         Some(Command::Package { command }) => match command {
+            PackageCommand::VerifyRegistry { registry, json } => {
+                cmd_package_verify_registry(&registry, json)
+            }
             PackageCommand::Publish {
                 source,
                 name,
@@ -1551,6 +1562,28 @@ fn cmd_package_publish(
         outcome.sha256
     );
     Ok(0)
+}
+
+fn cmd_package_verify_registry(registry: &str, json: bool) -> Result<u8> {
+    let report = corvid_driver::verify_registry_contract(registry)?;
+    if json {
+        println!("{}", serde_json::to_string_pretty(&report)?);
+    } else {
+        println!("corvid package verify-registry {registry}\n");
+        println!("checked package entries: {}", report.checked);
+        if report.failures.is_empty() {
+            println!("registry contract: ok");
+        } else {
+            println!("registry contract: failed");
+            for failure in &report.failures {
+                println!(
+                    "- {}@{}: {}",
+                    failure.package, failure.version, failure.reason
+                );
+            }
+        }
+    }
+    Ok(if report.is_clean() { 0 } else { 1 })
 }
 
 fn cmd_routing_report(

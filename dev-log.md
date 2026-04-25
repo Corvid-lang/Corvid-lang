@@ -5365,3 +5365,16 @@ manifest editing, `package_lock.rs` owns lockfile removal, and
 `package_registry.rs` owns registry resolution plus the hash/signature/policy
 checks. Update reuses the same add path, so refreshed packages cannot bypass
 semantic-summary or package-policy validation.
+
+## 2026-04-25 - Package registry contract verifier
+
+Closed `25-D-registry-http-contract`. Added `corvid package verify-registry`
+and the driver-level `verify_registry_contract` harness. It validates that a
+registry can be static files plus CDN: scoped names, semver, canonical
+`corvid://` URIs, immutable versioned `.cor` URLs, duplicate entries,
+Cache-Control immutability, SHA-256 bytes, semantic summaries, and package
+signatures are all checked client-side.
+
+This keeps registry trust out of the server. The registry serves bytes and
+metadata; Corvid verifies the content address, exported semantic contract, and
+signature before a package can become part of a project.

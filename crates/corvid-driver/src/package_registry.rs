@@ -75,6 +75,26 @@ pub struct PublishPackageOutcome {
     pub sha256: String,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct RegistryVerificationReport {
+    pub registry: String,
+    pub checked: usize,
+    pub failures: Vec<RegistryVerificationFailure>,
+}
+
+impl RegistryVerificationReport {
+    pub fn is_clean(&self) -> bool {
+        self.failures.is_empty()
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct RegistryVerificationFailure {
+    pub package: String,
+    pub version: String,
+    pub reason: String,
+}
+
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 struct RegistryIndex {
     #[serde(default)]
@@ -329,6 +349,81 @@ pub fn publish_package(options: PublishPackageOptions<'_>) -> Result<PublishPack
     })
 }
 
+pub fn verify_registry_contract(location: &str) -> Result<RegistryVerificationReport> {
+    let index = load_registry_index(location)?;
+    let mut report = RegistryVerificationReport {
+        registry: location.to_string(),
+        checked: 0,
+        failures: Vec::new(),
+    };
+    let mut seen = std::collections::BTreeSet::<(String, String)>::new();
+
+    for package in &index.package {
+        report.checked += 1;
+        if !seen.insert((package.name.clone(), package.version.clone())) {
+            report.failures.push(failure(
+                package,
+                "duplicate package name/version entry in registry index",
+            ));
+            continue;
+        }
+        if let Err(err) = validate_registry_entry_contract(package) {
+            report.failures.push(failure(package, err));
+            continue;
+        }
+        let fetched = match fetch_package_for_verification(&package.url) {
+            Ok(fetched) => fetched,
+            Err(err) => {
+                report.failures.push(failure(package, err.to_string()));
+                continue;
+            }
+        };
+        if let Some(reason) = cache_header_violation(&fetched.cache_control) {
+            report.failures.push(failure(package, reason));
+        }
+        let actual = sha256_hex(&fetched.bytes);
+        if !actual.eq_ignore_ascii_case(&package.sha256) {
+            report.failures.push(failure(
+                package,
+                format!(
+                    "artifact hash mismatch: expected sha256:{}, actual sha256:{actual}",
+                    package.sha256
+                ),
+            ));
+            continue;
+        }
+        let source = match String::from_utf8(fetched.bytes) {
+            Ok(source) => source,
+            Err(err) => {
+                report.failures.push(failure(package, format!("artifact is not UTF-8: {err}")));
+                continue;
+            }
+        };
+        let summary = match summarize_module_source(&source) {
+            Ok(summary) => summary,
+            Err(err) => {
+                report.failures.push(failure(package, format!("semantic summary failed: {err}")));
+                continue;
+            }
+        };
+        if let Some(index_summary) = &package.semantic_summary {
+            if index_summary != &summary {
+                report.failures.push(failure(
+                    package,
+                    "index semantic_summary does not match artifact source",
+                ));
+            }
+        }
+        if let Some(signature) = &package.signature {
+            if let Err(reason) = verify_package_signature(package, &summary, signature) {
+                report.failures.push(failure(package, reason));
+            }
+        }
+    }
+
+    Ok(report)
+}
+
 fn parse_package_spec(spec: &str) -> Result<PackageSpec> {
     let Some(idx) = spec.rfind('@') else {
         return Err(anyhow!(
@@ -517,6 +612,83 @@ fn validate_package_name(name: &str) -> Result<()> {
         Ok(())
     } else {
         Err(anyhow!("package name must be scoped, e.g. `@scope/name`"))
+    }
+}
+
+fn validate_registry_entry_contract(package: &RegistryPackage) -> Result<(), String> {
+    validate_package_name(&package.name).map_err(|err| err.to_string())?;
+    let version = Version::parse(&normalize_version(&package.version))
+        .map_err(|err| format!("invalid semver version `{}`: {err}", package.version))?;
+    let expected_uri = format!("corvid://{}/v{}", package.name, version);
+    if let Some(uri) = &package.uri {
+        if uri != &expected_uri {
+            return Err(format!(
+                "uri `{uri}` does not match canonical package uri `{expected_uri}`"
+            ));
+        }
+    }
+    if !(package.url.starts_with("https://") || package.url.starts_with("http://")) {
+        return Err("artifact URL must be http(s)".to_string());
+    }
+    if package.url.contains('?') || package.url.contains('#') {
+        return Err("artifact URL must be immutable: query strings and fragments are forbidden".to_string());
+    }
+    if !package.url.ends_with(".cor") {
+        return Err("artifact URL must point at a `.cor` source artifact".to_string());
+    }
+    if !package.url.contains(&version.to_string()) {
+        return Err(format!(
+            "artifact URL must include the concrete version `{}`",
+            version
+        ));
+    }
+    if package.sha256.len() != 64 || !package.sha256.chars().all(|ch| ch.is_ascii_hexdigit()) {
+        return Err(format!("invalid sha256 digest `{}`", package.sha256));
+    }
+    Ok(())
+}
+
+struct FetchedPackage {
+    bytes: Vec<u8>,
+    cache_control: Option<String>,
+}
+
+fn fetch_package_for_verification(location: &str) -> Result<FetchedPackage> {
+    let response = ureq::get(location).call().map_err(|err| anyhow!(err.to_string()))?;
+    if !(200..=299).contains(&response.status()) {
+        return Err(anyhow!("HTTP status {}", response.status()));
+    }
+    let cache_control = response.header("Cache-Control").map(str::to_string);
+    let mut bytes = Vec::new();
+    response
+        .into_reader()
+        .read_to_end(&mut bytes)
+        .context("failed reading HTTP response")?;
+    Ok(FetchedPackage {
+        bytes,
+        cache_control,
+    })
+}
+
+fn cache_header_violation(cache_control: &Option<String>) -> Option<String> {
+    let Some(value) = cache_control else {
+        return Some("artifact response must include Cache-Control".to_string());
+    };
+    let lower = value.to_ascii_lowercase();
+    if !lower.contains("immutable") {
+        return Some("artifact Cache-Control must include `immutable`".to_string());
+    }
+    if !lower.contains("max-age=") {
+        return Some("artifact Cache-Control must include `max-age=`".to_string());
+    }
+    None
+}
+
+fn failure(package: &RegistryPackage, reason: impl Into<String>) -> RegistryVerificationFailure {
+    RegistryVerificationFailure {
+        package: package.name.clone(),
+        version: package.version.clone(),
+        reason: reason.into(),
     }
 }
 
@@ -833,6 +1005,69 @@ sha256 = \"{digest}\"
     }
 
     #[test]
+    fn registry_contract_verifies_hash_cache_and_summary() {
+        let tmp = tempfile::tempdir().unwrap();
+        let package_src = "public type SafetyReceipt:\n    id: String\n";
+        let digest = sha256_hex(package_src.as_bytes());
+        let (base_url, _server) = serve_many(vec![(
+            "/scope-name-1.0.0.cor",
+            package_src.to_string(),
+            Some("public, max-age=31536000, immutable".to_string()),
+        )]);
+        fs::write(
+            tmp.path().join("index.toml"),
+            format!(
+                "\
+[[package]]
+name = \"@scope/name\"
+version = \"1.0.0\"
+uri = \"corvid://@scope/name/v1.0.0\"
+url = \"{base_url}/scope-name-1.0.0.cor\"
+sha256 = \"{digest}\"
+"
+            ),
+        )
+        .unwrap();
+
+        let report = verify_registry_contract(tmp.path().join("index.toml").to_str().unwrap())
+            .unwrap();
+
+        assert!(report.is_clean(), "{report:?}");
+        assert_eq!(report.checked, 1);
+    }
+
+    #[test]
+    fn registry_contract_reports_missing_immutable_cache_header() {
+        let tmp = tempfile::tempdir().unwrap();
+        let package_src = "public type SafetyReceipt:\n    id: String\n";
+        let digest = sha256_hex(package_src.as_bytes());
+        let (base_url, _server) = serve_many(vec![(
+            "/scope-name-1.0.0.cor",
+            package_src.to_string(),
+            Some("public, max-age=31536000".to_string()),
+        )]);
+        fs::write(
+            tmp.path().join("index.toml"),
+            format!(
+                "\
+[[package]]
+name = \"@scope/name\"
+version = \"1.0.0\"
+url = \"{base_url}/scope-name-1.0.0.cor\"
+sha256 = \"{digest}\"
+"
+            ),
+        )
+        .unwrap();
+
+        let report = verify_registry_contract(tmp.path().join("index.toml").to_str().unwrap())
+            .unwrap();
+
+        assert_eq!(report.failures.len(), 1, "{report:?}");
+        assert!(report.failures[0].reason.contains("immutable"));
+    }
+
+    #[test]
     fn remove_package_updates_manifest_and_lock() {
         let tmp = tempfile::tempdir().unwrap();
         fs::write(
@@ -956,5 +1191,38 @@ sha256 = \"{}\"
             .unwrap();
         });
         format!("http://{addr}{path}")
+    }
+
+    fn serve_many(
+        routes: Vec<(&'static str, String, Option<String>)>,
+    ) -> (String, thread::JoinHandle<()>) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let handle = thread::spawn(move || {
+            for _ in 0..routes.len() {
+                let (mut stream, _) = listener.accept().unwrap();
+                let mut request = [0u8; 1024];
+                let n = stream.read(&mut request).unwrap_or(0);
+                let request = String::from_utf8_lossy(&request[..n]);
+                let route = routes
+                    .iter()
+                    .find(|(path, _, _)| request.starts_with(&format!("GET {path} ")));
+                let (status, body, cache) = match route {
+                    Some((_, body, cache)) => ("HTTP/1.1 200 OK", body.as_str(), cache.as_deref()),
+                    None => ("HTTP/1.1 404 Not Found", "not found", None),
+                };
+                write!(
+                    stream,
+                    "{status}\r\nContent-Length: {}\r\nConnection: close\r\n",
+                    body.as_bytes().len()
+                )
+                .unwrap();
+                if let Some(cache) = cache {
+                    write!(stream, "Cache-Control: {cache}\r\n").unwrap();
+                }
+                write!(stream, "\r\n{body}").unwrap();
+            }
+        });
+        (format!("http://{addr}"), handle)
     }
 }

@@ -125,3 +125,30 @@ The signature covers:
 `corvid add` verifies any `ed25519:<key-id>:<public-key>:<signature>` entry it
 finds in the index. If `require-package-signatures = true`, unsigned entries are
 rejected before the lockfile changes.
+
+## Registry Contract Verification
+
+`corvid package verify-registry <index>` checks that a registry is a stateless
+content-addressed source registry, not a trusted server:
+
+```text
+corvid package verify-registry ./registry/index.toml
+corvid package verify-registry https://registry.corvid.dev/index.toml --json
+```
+
+The verifier checks each index entry for:
+
+- scoped package name and valid semantic version;
+- canonical `corvid://@scope/name/vX.Y.Z` URI when present;
+- immutable HTTP(S) `.cor` artifact URL with the concrete version in the path;
+- no query strings or fragments in artifact URLs;
+- 64-character SHA-256 digest;
+- artifact `Cache-Control` containing `max-age=` and `immutable`;
+- fetched artifact bytes matching the advertised SHA-256;
+- valid UTF-8 Corvid source;
+- semantic summary in the index matching the source, when present;
+- Ed25519 signature validity, when present;
+- no duplicate `(name, version)` entries.
+
+A registry can therefore be hosted by static files and a CDN. The compiler and
+CLI verify the bytes, signature, and semantic contract themselves.

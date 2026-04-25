@@ -3220,6 +3220,18 @@ chain event, so it must re-run source hash verification, signature verification,
 semantic-summary extraction, and project policy checks before changing the
 lockfile.
 
+## package registry contract
+
+The package registry should be dumb infrastructure. If a registry can be static
+`index.toml` plus immutable `.cor` artifacts, the hard security logic stays in
+the Corvid client: hash verification, signature verification, semantic-summary
+reconstruction, and policy gates.
+
+CDN cache headers are part of the contract. Versioned artifact URLs should be
+immutable; if a registry cannot serve `Cache-Control: ... immutable`, users
+cannot tell whether a URL is content-stable without relying on trust in the
+server.
+
 ## Contributing / feedback
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). The rules of the road are: design chat before code, per-scope commits at every boundary, dev-log entry for every session, no shortcuts. The `learnings.md` file you're reading gets updated when each user-visible feature ships.
