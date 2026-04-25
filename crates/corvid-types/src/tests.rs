@@ -1698,6 +1698,38 @@ prompt generate(ctx: String) -> String:
         )), "got: {:?}", c.errors);
     }
 
+    #[test]
+    fn prompt_stream_escalate_target_must_be_model() {
+        let src = "\
+tool fallback(ctx: String) -> String
+
+prompt generate(ctx: String) -> Stream<String>:
+    with min_confidence 0.80
+    with escalate_to fallback
+    \"Generate {ctx}\"
+";
+        let c = check(src);
+        assert!(c.errors.iter().any(|e| matches!(
+            &e.kind,
+            TypeErrorKind::RouteTargetNotModel { target, .. } if target == "fallback"
+        )), "got: {:?}", c.errors);
+    }
+
+    #[test]
+    fn prompt_stream_escalate_undefined_target_is_resolve_error() {
+        let src = "\
+prompt generate(ctx: String) -> Stream<String>:
+    with min_confidence 0.80
+    with escalate_to missing_model
+    \"Generate {ctx}\"
+";
+        let resolve_errs = resolve_errors(src);
+        assert!(resolve_errs.iter().any(|e| matches!(
+            &e.kind,
+            corvid_resolve::ResolveErrorKind::UndefinedName(name) if name == "missing_model"
+        )), "got: {:?}", resolve_errs);
+    }
+
     // --- Custom dimensions via corvid.toml (Phase 20g invention #6) ---
 
     fn check_with_config(src: &str, config: &crate::config::CorvidConfig) -> Checked {

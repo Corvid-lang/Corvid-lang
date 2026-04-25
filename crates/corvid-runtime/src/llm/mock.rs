@@ -181,6 +181,20 @@ impl MockAdapter {
         self
     }
 
+    pub fn reply_with_confidence(
+        self,
+        prompt: impl Into<String>,
+        value: serde_json::Value,
+        usage: TokenUsage,
+        confidence: f64,
+    ) -> Self {
+        self.replies.lock().unwrap().insert(
+            prompt.into(),
+            LlmResponse::with_confidence(value, usage, confidence),
+        );
+        self
+    }
+
     pub fn reply_with_calibration(
         self,
         prompt: impl Into<String>,
@@ -210,6 +224,19 @@ impl MockAdapter {
             .lock()
             .unwrap()
             .insert(prompt.into(), LlmResponse::new(value, usage));
+    }
+
+    pub fn add_reply_with_confidence(
+        &self,
+        prompt: impl Into<String>,
+        value: serde_json::Value,
+        usage: TokenUsage,
+        confidence: f64,
+    ) {
+        self.replies.lock().unwrap().insert(
+            prompt.into(),
+            LlmResponse::with_confidence(value, usage, confidence),
+        );
     }
 
     pub fn add_reply_with_calibration(

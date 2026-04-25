@@ -182,6 +182,12 @@ pub fn build_report(opts: RoutingReportOptions<'_>) -> Result<RoutingReport> {
                     }
                 }
             }
+            TraceEvent::StreamUpgrade { prompt, .. } => {
+                escalations
+                    .entry((prompt.clone(), 0))
+                    .or_default()
+                    .escalation_count += 1;
+            }
             TraceEvent::AbVariantChosen {
                 prompt,
                 variant,
@@ -575,6 +581,7 @@ fn event_ts_ms(event: &TraceEvent) -> u64 {
         | TraceEvent::ModelSelected { ts_ms, .. }
         | TraceEvent::ProgressiveEscalation { ts_ms, .. }
         | TraceEvent::ProgressiveExhausted { ts_ms, .. }
+        | TraceEvent::StreamUpgrade { ts_ms, .. }
         | TraceEvent::AbVariantChosen { ts_ms, .. }
         | TraceEvent::EnsembleVote { ts_ms, .. }
         | TraceEvent::AdversarialPipelineCompleted { ts_ms, .. }

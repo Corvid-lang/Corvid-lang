@@ -491,6 +491,7 @@ fn run_id_of(events: &[TraceEvent]) -> Option<&str> {
         | TraceEvent::ModelSelected { run_id, .. }
         | TraceEvent::ProgressiveEscalation { run_id, .. }
         | TraceEvent::ProgressiveExhausted { run_id, .. }
+        | TraceEvent::StreamUpgrade { run_id, .. }
         | TraceEvent::AbVariantChosen { run_id, .. }
         | TraceEvent::EnsembleVote { run_id, .. }
         | TraceEvent::AdversarialPipelineCompleted { run_id, .. }

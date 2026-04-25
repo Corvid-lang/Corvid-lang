@@ -2604,6 +2604,31 @@ elements are actually delivered.
 This keeps streaming provenance honest: the aggregate describes observed
 stream content, while each element keeps its precise source chain.
 
+## 20f-mid-stream-model-escalation
+
+Use `with escalate_to <model>` with a streaming prompt confidence floor when a
+low-confidence stream should continue on a stronger model instead of failing:
+
+```corvid
+model expert:
+    capability: expert
+
+prompt draft(ctx: String) -> Stream<String>:
+    with min_confidence 0.80
+    with escalate_to expert
+    "Draft {ctx}"
+```
+
+If the initial stream result is below `0.80`, Corvid records a
+`StreamUpgrade` trace event and issues a continuation call to `expert` with the
+partial output included as context. The stream consumer receives the upgraded
+result through the same stream value; the trace shows where the model boundary
+changed.
+
+The escalation target is checked like other model-routing features. An
+undefined target is a resolver error, and a target that resolves to a non-model
+declaration is a type error.
+
 ## Contributing / feedback
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). The rules of the road are: design chat before code, per-scope commits at every boundary, dev-log entry for every session, no shortcuts. The `learnings.md` file you're reading gets updated when each user-visible feature ships.

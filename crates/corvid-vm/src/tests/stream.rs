@@ -157,6 +157,96 @@ agent relay(ctx: String) -> Stream<String>:
 }
 
 #[tokio::test]
+async fn stream_prompt_escalates_to_stronger_model_on_low_confidence() {
+    let src = "\
+model expert:
+    capability: expert
+
+prompt generate(ctx: String) -> Stream<String>:
+    with min_confidence 0.80
+    with escalate_to expert
+    \"Generate {ctx}\"
+
+agent relay(ctx: String) -> Stream<String>:
+    for chunk in generate(ctx):
+        yield chunk
+";
+    let ir = ir_of(src);
+    let trace_dir = std::env::temp_dir().join(format!(
+        "corvid-vm-stream-upgrade-{}",
+        corvid_runtime::now_ms()
+    ));
+    std::fs::create_dir_all(&trace_dir).unwrap();
+    let rt = Runtime::builder()
+        .tracer(corvid_runtime::Tracer::open(&trace_dir, "run-stream-upgrade"))
+        .approver(Arc::new(ProgrammaticApprover::always_yes()))
+        .llm(Arc::new(MockAdapter::new("cheap").reply_with_confidence(
+            "generate",
+            json!("draft"),
+            TokenUsage::default(),
+            0.40,
+        )))
+        .llm(Arc::new(MockAdapter::new("expert").reply_with_confidence(
+            "generate",
+            json!("final"),
+            TokenUsage::default(),
+            0.95,
+        )))
+        .model(RegisteredModel::new("expert").capability("expert"))
+        .default_model("cheap")
+        .build();
+    let stream = run_agent(&ir, "relay", vec![Value::String(Arc::from("ctx"))], &rt)
+        .await
+        .expect("run");
+    let items = collect_stream(stream).await.expect("collect");
+    assert_eq!(items.len(), 1);
+    match &items[0] {
+        Value::Grounded(g) => {
+            assert_eq!(g.inner.get(), Value::String(Arc::from("final")));
+            assert!((g.confidence - 0.95).abs() < 0.001);
+        }
+        other => panic!("expected confidence-wrapped stream item, got {other:?}"),
+    }
+    drop(rt);
+
+    let body =
+        std::fs::read_to_string(trace_dir.join("run-stream-upgrade.jsonl")).expect("trace file");
+    let events: Vec<TraceEvent> = body
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| serde_json::from_str(line).expect("valid trace event"))
+        .collect();
+
+    assert!(events.iter().any(|event| matches!(
+        event,
+        TraceEvent::StreamUpgrade {
+            prompt,
+            to_model,
+            confidence_observed,
+            threshold,
+            partial,
+            ..
+        } if prompt == "generate"
+            && to_model == "expert"
+            && (*confidence_observed - 0.40).abs() < 0.001
+            && (*threshold - 0.80).abs() < 0.001
+            && partial.get("value") == Some(&json!("draft"))
+    )));
+    assert!(events.iter().any(|event| matches!(
+        event,
+        TraceEvent::LlmCall {
+            prompt,
+            model: Some(model),
+            rendered: Some(rendered),
+            ..
+        } if prompt == "generate"
+            && model == "expert"
+            && rendered.contains("Continue from partial output")
+            && rendered.contains("draft")
+    )));
+}
+
+#[tokio::test]
 async fn stream_prompt_token_limit_breaches_mid_stream() {
     let src = "\
 prompt generate(ctx: String) -> Stream<String>:
@@ -239,6 +329,7 @@ async fn stream_budget_termination_fires_before_over_budget_yield() {
             min_confidence: None,
             max_tokens: None,
             backpressure: Some(BackpressurePolicy::Bounded(1)),
+            escalate_to: None,
             calibrated: false,
             capability_required: None,
             route: Vec::new(),

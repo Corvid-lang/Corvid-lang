@@ -61,11 +61,15 @@ impl<'a> Parser<'a> {
                 "backpressure" => {
                     settings.backpressure = Some(self.parse_backpressure_policy()?);
                 }
+                "escalate_to" => {
+                    let (model, model_span) = self.expect_ident()?;
+                    settings.escalate_to = Some(Ident::new(model, model_span));
+                }
                 _ => {
                     return Err(ParseError {
                         kind: ParseErrorKind::UnexpectedToken {
                             got: format!("identifier `{name}`"),
-                            expected: "`min_confidence`, `max_tokens`, or `backpressure`".into(),
+                            expected: "`min_confidence`, `max_tokens`, `backpressure`, or `escalate_to`".into(),
                         },
                         span,
                     });

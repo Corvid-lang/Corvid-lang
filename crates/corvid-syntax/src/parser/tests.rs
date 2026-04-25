@@ -527,6 +527,7 @@ prompt generate(ctx: String) -> Stream<String>:
     with min_confidence 0.80
     with max_tokens 5000
     with backpressure bounded(100)
+    with escalate_to expert
     \"Generate {ctx} in chunks.\"
 ";
         let file = parse_file_src(src);
@@ -545,6 +546,10 @@ prompt generate(ctx: String) -> Stream<String>:
         assert_eq!(
             prompt.stream.backpressure,
             Some(BackpressurePolicy::Bounded(100))
+        );
+        assert_eq!(
+            prompt.stream.escalate_to.as_ref().map(|model| model.name.as_str()),
+            Some("expert")
         );
     }
 

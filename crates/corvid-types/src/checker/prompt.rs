@@ -21,7 +21,8 @@ impl<'a> Checker<'a> {
         let return_ty = self.type_ref_to_type(&p.return_ty);
         let has_stream_modifiers = p.stream.min_confidence.is_some()
             || p.stream.max_tokens.is_some()
-            || p.stream.backpressure.is_some();
+            || p.stream.backpressure.is_some()
+            || p.stream.escalate_to.is_some();
 
         if has_stream_modifiers && !matches!(return_ty, Type::Stream(_) | Type::Unknown) {
             self.errors.push(TypeError::new(
@@ -40,6 +41,25 @@ impl<'a> Checker<'a> {
                     TypeErrorKind::InvalidConfidence { value: confidence },
                     p.span,
                 ));
+            }
+        }
+
+        if let Some(model) = &p.stream.escalate_to {
+            match self.bindings.get(&model.span) {
+                Some(Binding::Decl(def_id)) => {
+                    let entry = self.symbols.get(*def_id);
+                    if entry.kind != corvid_resolve::DeclKind::Model {
+                        self.errors.push(TypeError::new(
+                            TypeErrorKind::RouteTargetNotModel {
+                                prompt: p.name.name.clone(),
+                                target: model.name.clone(),
+                                got_kind: format!("{:?}", entry.kind).to_lowercase(),
+                            },
+                            model.span,
+                        ));
+                    }
+                }
+                _ => {}
             }
         }
 

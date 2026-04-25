@@ -186,6 +186,15 @@ pub enum TraceEvent {
         prompt: String,
         stages: Vec<String>,
     },
+    StreamUpgrade {
+        ts_ms: u64,
+        run_id: String,
+        prompt: String,
+        to_model: String,
+        confidence_observed: f64,
+        threshold: f64,
+        partial: serde_json::Value,
+    },
     AbVariantChosen {
         ts_ms: u64,
         run_id: String,

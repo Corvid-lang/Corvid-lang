@@ -4772,3 +4772,21 @@ REPL value rendering now includes stream provenance sources once they are
 observed. VM coverage uses two retrieval tools feeding a
 `Stream<Grounded<String>>` and proves the aggregate stream provenance grows from
 empty, to `fetch_a`, then to `fetch_a + fetch_b` as elements are consumed.
+
+## 2026-04-25 - Phase 20f mid-stream model escalation
+
+Closed the confidence-driven stream escalation item. Streaming prompts now accept
+`with escalate_to model_name` alongside `with min_confidence P`; if the first
+chunk lands below the confidence floor, the VM opens a continuation prompt call
+on the named stronger model and feeds the partial output into the continuation
+context.
+
+The consumer still sees a single stream. The trace records the boundary as a
+typed `StreamUpgrade` event with the prompt name, destination model, observed
+confidence, threshold, and partial output. Replay rendering recognizes that
+event as its own step instead of hiding it as generic metadata.
+
+The surface stays split by responsibility: syntax parses the stream modifier,
+resolver/typechecker validate that the escalation target is a `model`, IR carries
+the target name, runtime adapters can report response confidence, and the VM owns
+the actual continuation behavior.

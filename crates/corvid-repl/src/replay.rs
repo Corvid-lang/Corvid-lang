@@ -45,6 +45,14 @@ pub enum ReplayStep {
         args: Vec<Value>,
         approved: Option<bool>,
     },
+    StreamUpgrade {
+        ts_ms: u64,
+        prompt: String,
+        to_model: String,
+        confidence_observed: f64,
+        threshold: f64,
+        partial: Value,
+    },
     RunComplete {
         ts_ms: u64,
         ok: bool,
@@ -316,6 +324,26 @@ impl ReplaySession {
                     ensure_run_id(&path, &run_id, event_run_id)?;
                     i += 1;
                 }
+                TraceEvent::StreamUpgrade {
+                    ts_ms,
+                    run_id: event_run_id,
+                    prompt,
+                    to_model,
+                    confidence_observed,
+                    threshold,
+                    partial,
+                } => {
+                    ensure_run_id(&path, &run_id, event_run_id)?;
+                    steps.push(ReplayStep::StreamUpgrade {
+                        ts_ms: *ts_ms,
+                        prompt: prompt.clone(),
+                        to_model: to_model.clone(),
+                        confidence_observed: *confidence_observed,
+                        threshold: *threshold,
+                        partial: partial.clone(),
+                    });
+                    i += 1;
+                }
                 TraceEvent::SchemaHeader {
                     run_id: event_run_id,
                     ..
@@ -378,6 +406,11 @@ impl ReplayStep {
             ReplayStep::Tool { tool, .. } => format!("tool: {tool}"),
             ReplayStep::Llm { prompt, .. } => format!("llm: {prompt}"),
             ReplayStep::Approval { label, .. } => format!("approval: {label}"),
+            ReplayStep::StreamUpgrade {
+                prompt, to_model, ..
+            } => {
+                format!("stream upgrade: {prompt} -> {to_model}")
+            }
             ReplayStep::RunComplete { ok, .. } => {
                 if *ok {
                     "run complete: ok".into()
@@ -440,6 +473,19 @@ impl ReplayStep {
                 approved
                     .map(|value| value.to_string())
                     .unwrap_or_else(|| "<missing>".into())
+            ),
+            ReplayStep::StreamUpgrade {
+                ts_ms,
+                prompt,
+                to_model,
+                confidence_observed,
+                threshold,
+                partial,
+            } => format!(
+                "stream upgrade\n  ts        : {ts_ms}\n  prompt    : {prompt}\n  to_model  : {to_model}\n  confidence: {:.3} < {:.3}\n  partial   : {}",
+                confidence_observed,
+                threshold,
+                partial
             ),
             ReplayStep::RunComplete {
                 ts_ms,
@@ -516,6 +562,7 @@ fn first_run_id(events: &[TraceEvent]) -> Result<&str, ReplayLoadError> {
         | Some(TraceEvent::EnsembleVote { run_id, .. })
         | Some(TraceEvent::AdversarialPipelineCompleted { run_id, .. })
         | Some(TraceEvent::AdversarialContradiction { run_id, .. })
+        | Some(TraceEvent::StreamUpgrade { run_id, .. })
         | Some(TraceEvent::ProvenanceEdge { run_id, .. }) => Ok(run_id),
         None => unreachable!("empty event list handled earlier"),
     }
@@ -554,6 +601,7 @@ fn first_ts(events: &[TraceEvent]) -> u64 {
         | Some(TraceEvent::EnsembleVote { ts_ms, .. })
         | Some(TraceEvent::AdversarialPipelineCompleted { ts_ms, .. })
         | Some(TraceEvent::AdversarialContradiction { ts_ms, .. })
+        | Some(TraceEvent::StreamUpgrade { ts_ms, .. })
         | Some(TraceEvent::ProvenanceEdge { ts_ms, .. }) => *ts_ms,
         None => 0,
     }
@@ -581,6 +629,7 @@ fn last_ts(events: &[TraceEvent]) -> u64 {
         | Some(TraceEvent::EnsembleVote { ts_ms, .. })
         | Some(TraceEvent::AdversarialPipelineCompleted { ts_ms, .. })
         | Some(TraceEvent::AdversarialContradiction { ts_ms, .. })
+        | Some(TraceEvent::StreamUpgrade { ts_ms, .. })
         | Some(TraceEvent::ProvenanceEdge { ts_ms, .. }) => *ts_ms,
         None => 0,
     }

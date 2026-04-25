@@ -85,6 +85,7 @@ pub struct IrPrompt {
     pub min_confidence: Option<f64>,
     pub max_tokens: Option<u64>,
     pub backpressure: Option<BackpressurePolicy>,
+    pub escalate_to: Option<String>,
     /// Runtime calibration flag. When true, prompt calls record
     /// confidence-vs-accuracy observations if the adapter supplies
     /// correctness metadata.

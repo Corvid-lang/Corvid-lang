@@ -221,6 +221,7 @@ fn event_run_id(event: &TraceEvent) -> Option<&str> {
         | TraceEvent::ModelSelected { run_id, .. }
         | TraceEvent::ProgressiveEscalation { run_id, .. }
         | TraceEvent::ProgressiveExhausted { run_id, .. }
+        | TraceEvent::StreamUpgrade { run_id, .. }
         | TraceEvent::AbVariantChosen { run_id, .. }
         | TraceEvent::EnsembleVote { run_id, .. }
         | TraceEvent::AdversarialPipelineCompleted { run_id, .. }
@@ -247,6 +248,7 @@ fn event_ts_ms(event: &TraceEvent) -> u64 {
         | TraceEvent::ModelSelected { ts_ms, .. }
         | TraceEvent::ProgressiveEscalation { ts_ms, .. }
         | TraceEvent::ProgressiveExhausted { ts_ms, .. }
+        | TraceEvent::StreamUpgrade { ts_ms, .. }
         | TraceEvent::AbVariantChosen { ts_ms, .. }
         | TraceEvent::EnsembleVote { ts_ms, .. }
         | TraceEvent::AdversarialPipelineCompleted { ts_ms, .. }

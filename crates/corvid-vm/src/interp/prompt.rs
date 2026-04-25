@@ -2,7 +2,7 @@ use super::{ExprFlow, Interpreter};
 use crate::conv::json_to_value;
 use crate::errors::{InterpError, InterpErrorKind};
 use crate::step::{StepAction, StepEvent};
-use crate::value::{StreamChunk, Value};
+use crate::value::{value_confidence, StreamChunk, Value};
 use crate::value_to_json;
 use async_recursion::async_recursion;
 use corvid_ast::Span;
@@ -208,6 +208,7 @@ impl<'ir> Interpreter<'ir> {
         actual_model: &str,
         response_value: serde_json::Value,
         usage: TokenUsage,
+        response_confidence: Option<f64>,
         calibration_actual: Option<bool>,
         span: Span,
     ) -> Result<PromptCallResult, InterpError> {
@@ -264,6 +265,12 @@ impl<'ir> Interpreter<'ir> {
         } else {
             value
         };
+        let value = response_confidence
+            .map(|confidence| {
+                let combined = confidence.min(value_confidence(&value));
+                super::effect_compose::with_value_confidence(value.clone(), combined)
+            })
+            .unwrap_or(value);
 
         let confidence = super::effect_compose::prompt_effective_confidence(prompt, &value);
         if prompt.calibrated {
@@ -432,6 +439,7 @@ impl<'ir> Interpreter<'ir> {
             &actual_model,
             resp.value,
             resp.usage,
+            resp.confidence,
             resp.calibration.map(|c| c.actual_correct),
             span,
         )
@@ -493,6 +501,70 @@ impl<'ir> Interpreter<'ir> {
                 super::effect_compose::with_value_confidence(result.value, result.confidence),
             ))
         }
+    }
+
+    async fn maybe_escalate_stream_result(
+        &mut self,
+        prompt: &'ir IrPrompt,
+        callee_name: &str,
+        arg_values: &[Value],
+        result: PromptCallResult,
+        span: Span,
+    ) -> Result<PromptCallResult, InterpError> {
+        if !matches!(&prompt.return_ty, Type::Stream(_)) {
+            return Ok(result);
+        }
+        let Some(threshold) = prompt.min_confidence else {
+            return Ok(result);
+        };
+        if result.confidence >= threshold {
+            return Ok(result);
+        }
+        let Some(escalate_to) = prompt.escalate_to.as_deref() else {
+            return Ok(result);
+        };
+
+        let rendered = render_prompt(prompt, arg_values);
+        let partial = value_to_json(&result.value);
+        let continuation_rendered = format!(
+            "{rendered}\n\nContinue from partial output:\n{}",
+            trace_text(&partial)
+        );
+        let prompt_tokens = super::effect_compose::estimate_tokens(&continuation_rendered);
+        let completion_tokens = prompt
+            .max_tokens
+            .unwrap_or(DEFAULT_COMPLETION_TOKEN_ESTIMATE);
+        let selected_model = self.select_named_prompt_model(
+            callee_name,
+            escalate_to,
+            prompt_tokens,
+            completion_tokens,
+            None,
+            None,
+            span,
+        )?;
+        self.runtime.tracer().emit(TraceEvent::StreamUpgrade {
+            ts_ms: corvid_runtime::now_ms(),
+            run_id: self.runtime.tracer().run_id().to_string(),
+            prompt: callee_name.to_string(),
+            to_model: selected_model.clone(),
+            confidence_observed: result.confidence,
+            threshold,
+            partial: partial.clone(),
+        });
+        let mut upgraded = self
+            .execute_prompt_call(
+                prompt,
+                callee_name,
+                arg_values,
+                &continuation_rendered,
+                Some(selected_model),
+                span,
+            )
+            .await?;
+        upgraded.cost += result.cost;
+        upgraded.tokens += result.tokens;
+        Ok(upgraded)
     }
 
     fn prompt_by_id(
@@ -620,6 +692,7 @@ impl<'ir> Interpreter<'ir> {
                     &model_name,
                     response.value,
                     response.usage,
+                    response.confidence,
                     response.calibration.map(|c| c.actual_correct),
                     span,
                 )?;
@@ -969,6 +1042,9 @@ impl<'ir> Interpreter<'ir> {
     ) -> Result<ExprFlow, InterpError> {
         let prompt = self.prompt_by_id(def_id, callee_name, span)?;
         let result = self.dispatch_prompt(prompt, callee_name, arg_values, span).await?;
+        let result = self
+            .maybe_escalate_stream_result(prompt, callee_name, arg_values, result, span)
+            .await?;
         if !result.cost_charged && !matches!(&prompt.return_ty, Type::Stream(_)) {
             self.charge_cost(result.cost, span)?;
         }

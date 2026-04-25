@@ -15,6 +15,7 @@ pub(crate) fn is_dispatch_metadata(event: &TraceEvent) -> bool {
             | TraceEvent::HostEvent { .. }
             | TraceEvent::ProgressiveEscalation { .. }
             | TraceEvent::ProgressiveExhausted { .. }
+            | TraceEvent::StreamUpgrade { .. }
             | TraceEvent::AbVariantChosen { .. }
             | TraceEvent::EnsembleVote { .. }
             | TraceEvent::AdversarialPipelineCompleted { .. }

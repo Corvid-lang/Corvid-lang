@@ -389,6 +389,16 @@ impl Resolver {
         }
         self.resolve_type_ref(&p.return_ty);
         self.resolve_effect_row(&p.effect_row);
+        if let Some(model) = &p.stream.escalate_to {
+            if let Some(def_id) = self.symbols.lookup_def(&model.name) {
+                self.bindings.insert(model.span, Binding::Decl(def_id));
+            } else {
+                self.errors.push(ResolveError {
+                    kind: ResolveErrorKind::UndefinedName(model.name.clone()),
+                    span: model.span,
+                });
+            }
+        }
         // Phase 20h slice C: resolve each `route:` arm in the prompt's
         // parameter scope. Guard expressions can reference the prompt's
         // params and any declaration in the file. Model idents must

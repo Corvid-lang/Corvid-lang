@@ -99,6 +99,7 @@ impl<'a> LlmRequestRef<'a> {
 pub struct LlmResponse {
     pub value: serde_json::Value,
     pub usage: TokenUsage,
+    pub confidence: Option<f64>,
     pub calibration: Option<CalibrationObservation>,
 }
 
@@ -107,6 +108,20 @@ impl LlmResponse {
         Self {
             value,
             usage,
+            confidence: None,
+            calibration: None,
+        }
+    }
+
+    pub fn with_confidence(
+        value: serde_json::Value,
+        usage: TokenUsage,
+        confidence: f64,
+    ) -> Self {
+        Self {
+            value,
+            usage,
+            confidence: Some(confidence.clamp(0.0, 1.0)),
             calibration: None,
         }
     }
@@ -119,6 +134,7 @@ impl LlmResponse {
         Self {
             value,
             usage,
+            confidence: None,
             calibration: Some(CalibrationObservation { actual_correct }),
         }
     }

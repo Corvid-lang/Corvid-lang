@@ -1075,6 +1075,7 @@ fn event_kind(event: &TraceEvent) -> &'static str {
         TraceEvent::ModelSelected { .. } => "model_selected",
         TraceEvent::ProgressiveEscalation { .. } => "progressive_escalation",
         TraceEvent::ProgressiveExhausted { .. } => "progressive_exhausted",
+        TraceEvent::StreamUpgrade { .. } => "stream_upgrade",
         TraceEvent::AbVariantChosen { .. } => "ab_variant_chosen",
         TraceEvent::EnsembleVote { .. } => "ensemble_vote",
         TraceEvent::AdversarialPipelineCompleted { .. } => "adversarial_pipeline_completed",

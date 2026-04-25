@@ -368,10 +368,14 @@ agent chunks(text: String) -> Stream<String>:
     #[test]
     fn lowers_prompt_stream_metadata() {
         let src = "\
+model expert:
+    capability: expert
+
 prompt generate(ctx: String) -> Stream<String>:
     with min_confidence 0.80
     with max_tokens 5000
     with backpressure bounded(100)
+    with escalate_to expert
     \"Generate {ctx}\"
 ";
         let ir = lower_src(src);
@@ -382,6 +386,7 @@ prompt generate(ctx: String) -> Stream<String>:
             prompt.backpressure,
             Some(BackpressurePolicy::Bounded(100))
         );
+        assert_eq!(prompt.escalate_to.as_deref(), Some("expert"));
     }
 
     #[test]

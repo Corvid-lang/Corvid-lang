@@ -230,6 +230,8 @@ pub struct PromptStreamSettings {
     pub max_tokens: Option<u64>,
     #[serde(default)]
     pub backpressure: Option<BackpressurePolicy>,
+    #[serde(default)]
+    pub escalate_to: Option<Ident>,
 }
 
 /// A prompt declaration:
