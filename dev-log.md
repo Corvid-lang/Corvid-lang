@@ -5378,3 +5378,17 @@ signatures are all checked client-side.
 This keeps registry trust out of the server. The registry serves bytes and
 metadata; Corvid verifies the content address, exported semantic contract, and
 signature before a package can become part of a project.
+
+## 2026-04-25 - Package metadata pages
+
+Closed `25-E-package-metadata-pages`. Added `corvid package metadata`, backed
+by a new driver-owned `package_metadata.rs` module. It renders Markdown or JSON
+from the same semantic summary the package resolver and registry verifier use:
+exports, effect names, approval boundaries, grounded source/return guarantees,
+replayability, determinism, cost notes, effect-violation counts, install
+snippet, canonical package URI, and optional signature provenance.
+
+The important product decision is that package pages are generated from
+compiler facts, not registry marketing copy. The registry can display the page,
+but the package source determines the AI-native contract users are about to
+install.

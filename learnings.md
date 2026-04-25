@@ -3232,6 +3232,19 @@ immutable; if a registry cannot serve `Cache-Control: ... immutable`, users
 cannot tell whether a URL is content-stable without relying on trust in the
 server.
 
+## package metadata pages
+
+Package pages should be compiler output. A Corvid package is valuable because
+of the behavioral contract it exports: effects, approval requirements,
+grounding, replayability, determinism, and costs. If those are copied into a
+README by hand, they drift. Rendering them from the semantic summary keeps the
+registry honest by construction.
+
+Signature provenance is different from source semantics. A local source file can
+prove its exported contract, but it cannot prove who published it unless the
+registry or publish path supplies a signature. The metadata command therefore
+accepts signature provenance explicitly instead of inventing it.
+
 ## Contributing / feedback
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). The rules of the road are: design chat before code, per-scope commits at every boundary, dev-log entry for every session, no shortcuts. The `learnings.md` file you're reading gets updated when each user-visible feature ships.

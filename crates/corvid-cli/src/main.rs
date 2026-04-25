@@ -622,6 +622,23 @@ enum BundleCommand {
 
 #[derive(Subcommand)]
 enum PackageCommand {
+    /// Render the public semantic metadata page for a source package.
+    Metadata {
+        /// Source `.cor` file to inspect.
+        source: PathBuf,
+        /// Scoped package name, e.g. `@scope/name`.
+        #[arg(long)]
+        name: String,
+        /// Semantic version to display in install snippets.
+        #[arg(long)]
+        version: String,
+        /// Optional package signature to render on the metadata page.
+        #[arg(long)]
+        signature: Option<String>,
+        /// Emit structured JSON instead of Markdown.
+        #[arg(long)]
+        json: bool,
+    },
     /// Verify a registry index and all referenced source artifacts.
     VerifyRegistry {
         /// Registry index URL, local index.toml, or registry directory.
@@ -957,6 +974,13 @@ fn main() -> ExitCode {
             }
         },
         Some(Command::Package { command }) => match command {
+            PackageCommand::Metadata {
+                source,
+                name,
+                version,
+                signature,
+                json,
+            } => cmd_package_metadata(&source, &name, &version, signature.as_deref(), json),
             PackageCommand::VerifyRegistry { registry, json } => {
                 cmd_package_verify_registry(&registry, json)
             }
@@ -1561,6 +1585,22 @@ fn cmd_package_publish(
         outcome.artifact.display(),
         outcome.sha256
     );
+    Ok(0)
+}
+
+fn cmd_package_metadata(
+    source: &Path,
+    name: &str,
+    version: &str,
+    signature: Option<&str>,
+    json: bool,
+) -> Result<u8> {
+    let metadata = corvid_driver::package_metadata_from_source(source, name, version, signature)?;
+    if json {
+        println!("{}", serde_json::to_string_pretty(&metadata)?);
+    } else {
+        print!("{}", corvid_driver::render_package_metadata_markdown(&metadata));
+    }
     Ok(0)
 }
 

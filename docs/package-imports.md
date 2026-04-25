@@ -152,3 +152,36 @@ The verifier checks each index entry for:
 
 A registry can therefore be hosted by static files and a CDN. The compiler and
 CLI verify the bytes, signature, and semantic contract themselves.
+
+## Package Metadata Pages
+
+`corvid package metadata` renders a package page from the compiler's semantic
+summary:
+
+```text
+corvid package metadata policy.cor \
+  --name @anthropic/safety-baseline \
+  --version 2.3.4 \
+  --signature ed25519:anthropic-release:...
+```
+
+The Markdown output is suitable for a registry package page. The JSON output is
+the same data for web frontends:
+
+```text
+corvid package metadata policy.cor --name @scope/name --version 1.0.0 --json
+```
+
+Metadata pages show:
+
+- package identity, canonical `corvid://...` URI, and install command;
+- supplied signature provenance, or `not supplied` for local source-only pages;
+- public exports and their declaration kind;
+- exported effect names and dangerous approval boundaries;
+- grounded source/return guarantees;
+- replayability and determinism declarations;
+- cost notes and effect-violation counts for exported agents.
+
+The page is intentionally generated from compiler facts rather than handwritten
+README claims. If a package changes its effects, approval boundary, grounding,
+or replay contract, the metadata page changes with the source.

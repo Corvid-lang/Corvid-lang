@@ -16,6 +16,7 @@ pub mod proof_replay;
 mod import_integrity;
 mod package_lock;
 mod package_manifest;
+mod package_metadata;
 mod package_registry;
 mod native_ability;
 mod native_cache;
@@ -27,6 +28,9 @@ pub use package_registry::{
     add_package, publish_package, remove_package, update_package, AddPackageOutcome,
     PackageMutationOutcome, PublishPackageOptions, PublishPackageOutcome,
     RegistryVerificationFailure, RegistryVerificationReport, verify_registry_contract,
+};
+pub use package_metadata::{
+    package_metadata_from_source, render_package_metadata_markdown, PackageMetadata,
 };
 pub use approver::{simulate_approver, verify_approver_source};
 pub use modules::{
