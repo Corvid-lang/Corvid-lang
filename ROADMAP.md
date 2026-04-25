@@ -1099,7 +1099,7 @@ Users register local models (Ollama, vLLM, llama.cpp) with declared capabilities
 - [ ] `weighted_by accuracy_history` + `on disagreement escalate_to X`
 - [x] Adversarial validation shipped as `adversarial:` prompt-stage pipeline (`propose`, `challenge`, `adjudicate`) with typed chaining contract and runtime contradiction traces. The original `generator: X validator: Y acts_as critic` spelling was replaced by the stricter three-stage prompt contract.
 - [x] `@jurisdiction`, `@compliance`, `privacy_tier` as dimensions
-- [ ] `cacheable: true` + fingerprint cache in interpreter + replay integration
+- [x] `cacheable: true` + fingerprint cache in interpreter + replay integration
 - [x] `rollout(P%)` weighted routing for A/B tests
 - [ ] `version: "..."` model versioning + replay-pinned safety
 - [ ] Output-format-aware routing (`strict_json`, `markdown_strict`, etc.)

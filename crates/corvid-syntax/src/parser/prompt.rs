@@ -136,13 +136,7 @@ impl<'a> Parser<'a> {
             None
         };
 
-        let calibrated = if self.peek_ident_is("calibrated") {
-            self.bump();
-            self.expect_newline()?;
-            true
-        } else {
-            false
-        };
+        let (calibrated, cacheable) = self.parse_prompt_flags()?;
 
         let stream = self.parse_prompt_stream_settings()?;
 
@@ -179,6 +173,7 @@ impl<'a> Parser<'a> {
             cites_strictly,
             stream,
             calibrated,
+            cacheable,
             capability_required,
             route,
             progressive,
@@ -188,6 +183,46 @@ impl<'a> Parser<'a> {
             visibility,
             span: start.merge(end),
         })
+    }
+
+    fn parse_prompt_flags(&mut self) -> Result<(bool, bool), ParseError> {
+        let mut calibrated = false;
+        let mut cacheable = false;
+        loop {
+            if self.peek_ident_is("calibrated") {
+                self.bump();
+                self.expect_newline()?;
+                calibrated = true;
+                continue;
+            }
+            if self.peek_ident_is("cacheable") {
+                let start = self.peek_span();
+                self.bump(); // cacheable
+                self.expect(TokKind::Colon, "`:` after `cacheable`")?;
+                cacheable = match self.peek().clone() {
+                    TokKind::KwTrue => {
+                        self.bump();
+                        true
+                    }
+                    TokKind::KwFalse => {
+                        self.bump();
+                        false
+                    }
+                    other => {
+                        return Err(ParseError {
+                            kind: ParseErrorKind::UnexpectedToken {
+                                got: describe_token(&other),
+                                expected: "`true` or `false` after `cacheable:`".into(),
+                            },
+                            span: start.merge(self.peek_span()),
+                        });
+                    }
+                };
+                self.expect_newline()?;
+                continue;
+            }
+            return Ok((calibrated, cacheable));
+        }
     }
 
     fn parse_prompt_cites_strictly_clause(

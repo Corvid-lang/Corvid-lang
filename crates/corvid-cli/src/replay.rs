@@ -482,6 +482,7 @@ fn run_id_of(events: &[TraceEvent]) -> Option<&str> {
         | TraceEvent::ToolResult { run_id, .. }
         | TraceEvent::LlmCall { run_id, .. }
         | TraceEvent::LlmResult { run_id, .. }
+        | TraceEvent::PromptCache { run_id, .. }
         | TraceEvent::ApprovalRequest { run_id, .. }
         | TraceEvent::ApprovalDecision { run_id, .. }
         | TraceEvent::ApprovalResponse { run_id, .. }

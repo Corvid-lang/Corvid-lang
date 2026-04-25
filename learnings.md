@@ -2884,6 +2884,18 @@ became a typed three-stage adversarial prompt contract. Those are not
 shortcuts; they are stricter language designs. Items that truly did not ship
 remain open.
 
+## 20h-cacheable-prompts
+
+Prompt caching is language semantics, not an adapter convenience. The prompt
+declares `cacheable: true`, IR carries that bit, and runtime computes a stable
+fingerprint from the full semantic call boundary.
+
+Replay determinism is the hard part. A cache hit cannot silently skip trace
+events, because then replay would depend on local cache state. Corvid records
+cache hits as metadata while still emitting the normal LLM call/result pair,
+so replay sees the same behavioral trace and metadata consumers can still
+distinguish live calls from cache hits.
+
 ## Contributing / feedback
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). The rules of the road are: design chat before code, per-scope commits at every boundary, dev-log entry for every session, no shortcuts. The `learnings.md` file you're reading gets updated when each user-visible feature ships.

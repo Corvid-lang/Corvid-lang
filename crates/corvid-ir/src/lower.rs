@@ -469,6 +469,7 @@ impl<'a> Lowerer<'a> {
             backpressure: p.stream.backpressure.clone(),
             escalate_to: p.stream.escalate_to.as_ref().map(|model| model.name.clone()),
             calibrated: p.calibrated,
+            cacheable: p.cacheable,
             capability_required: p.capability_required.as_ref().map(|c| c.name.clone()),
             route,
             progressive,

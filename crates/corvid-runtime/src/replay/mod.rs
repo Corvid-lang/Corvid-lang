@@ -1066,6 +1066,7 @@ fn event_kind(event: &TraceEvent) -> &'static str {
         TraceEvent::ToolResult { .. } => "tool_result",
         TraceEvent::LlmCall { .. } => "llm_call",
         TraceEvent::LlmResult { .. } => "llm_result",
+        TraceEvent::PromptCache { .. } => "prompt_cache",
         TraceEvent::ApprovalRequest { .. } => "approval_request",
         TraceEvent::ApprovalDecision { .. } => "approval_decision",
         TraceEvent::ApprovalResponse { .. } => "approval_response",

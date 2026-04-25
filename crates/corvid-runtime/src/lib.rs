@@ -48,6 +48,7 @@ pub mod llm;
 pub mod models;
 mod native_trace;
 pub mod observation_handles;
+pub mod prompt_cache;
 pub mod provenance;
 pub mod record;
 pub mod replay;

@@ -4999,3 +4999,19 @@ constraints, weighted ensembles with disagreement escalation, prompt
 fingerprint cache, model version pinning, output-format-aware routing,
 `corvid eval --swap-model`, `corvid cost-frontier`, and hard sandboxing policy.
 This keeps the roadmap marketable without overclaiming.
+
+## 2026-04-25 - cacheable prompt fingerprints
+
+Closed the Phase 20h prompt-cache item. Prompts can now declare
+`cacheable: true`; the parser preserves it, IR lowers it, and the VM routes
+cacheable calls through a runtime prompt cache.
+
+The runtime cache key is a stable SHA-256 fingerprint over the semantic prompt
+boundary: prompt name, selected model, rendered prompt, JSON arguments, and
+declared output schema. Cache hits still emit normal `llm_call` / `llm_result`
+trace events, plus a `prompt_cache` metadata event, so replay consumes the same
+semantic trace shape whether a response came from a live provider or cache.
+
+Replay mode bypasses the live cache and consumes the recorded result. That
+keeps cache state from becoming hidden nondeterminism while still making
+cacheability a language-level AI workflow primitive.

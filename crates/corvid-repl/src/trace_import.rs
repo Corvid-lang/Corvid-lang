@@ -183,6 +183,7 @@ pub fn build_import(mocks: &TraceMocks) -> TraceImportResult {
             cites_strictly: None,
             stream: corvid_ast::PromptStreamSettings::default(),
             calibrated: false,
+            cacheable: false,
             capability_required: None,
             route: None,
             progressive: None,

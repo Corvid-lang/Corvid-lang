@@ -264,6 +264,10 @@ pub struct PromptDecl {
     /// when an adapter/eval supplies correctness observations.
     #[serde(default)]
     pub calibrated: bool,
+    /// `cacheable: true` declares that the prompt is a pure function of
+    /// its selected model, rendered input, arguments, and output schema.
+    #[serde(default)]
+    pub cacheable: bool,
     /// `requires: <capability>` — minimum model capability this prompt
     /// needs to execute. Composed via Max through the call graph. The
     /// runtime uses this to pick the cheapest model whose `capability`

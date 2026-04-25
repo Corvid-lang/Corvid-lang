@@ -498,6 +498,17 @@ prompt classify(ctx: String) -> String:
     }
 
     #[test]
+    fn lowers_cacheable_prompt_modifier() {
+        let src = "\
+prompt classify(ctx: String) -> String:
+    cacheable: true
+    \"Classify {ctx}.\"
+";
+        let ir = lower_src(src);
+        assert!(ir.prompts[0].cacheable);
+    }
+
+    #[test]
     fn lowers_prompt_cites_strictly_param_index() {
         let src = "\
 prompt answer(question: String, ctx: Grounded<String>) -> Grounded<String>:

@@ -586,6 +586,23 @@ prompt classify(ctx: String) -> String:
         assert!(prompt.calibrated);
     }
 
+    #[test]
+    fn parses_cacheable_prompt_modifier() {
+        let src = "\
+prompt classify(ctx: String) -> String:
+    cacheable: true
+    calibrated
+    \"Classify {ctx}.\"
+";
+        let file = parse_file_src(src);
+        let prompt = match &file.decls[0] {
+            Decl::Prompt(prompt) => prompt,
+            other => panic!("expected Prompt, got {other:?}"),
+        };
+        assert!(prompt.cacheable);
+        assert!(prompt.calibrated);
+    }
+
     // -------------------- canonical refund_bot body --------------------
 
     #[test]

@@ -10,6 +10,7 @@ use crate::calibration::{CalibrationStats, CalibrationStore};
 use crate::errors::RuntimeError;
 use crate::llm::{LlmAdapter, LlmRegistry, LlmRequest, LlmRequestRef, LlmResponse};
 use crate::models::{ModelCatalog, ModelSelection, RegisteredModel};
+use crate::prompt_cache::PromptCache;
 use crate::record::Recorder;
 use crate::replay::{ReplayDifferentialReport, ReplayMutationReport, ReplaySource};
 use crate::tools::ToolRegistry;
@@ -36,6 +37,7 @@ pub struct Runtime {
     model_catalog_error: Option<RuntimeError>,
     rollout_state: Arc<AtomicU64>,
     calibration: CalibrationStore,
+    prompt_cache: PromptCache,
 }
 
 #[derive(Clone)]
@@ -289,25 +291,40 @@ impl Runtime {
         self.call_llm_ref(req.as_ref()).await
     }
 
+    /// Call an LLM through the prompt-response cache when the source
+    /// prompt declared `cacheable: true`. Replay mode bypasses the live
+    /// cache and consumes the recorded `LlmCall` / `LlmResult` pair instead.
+    pub async fn call_llm_cacheable(
+        &self,
+        mut req: LlmRequest,
+        cacheable: bool,
+    ) -> Result<LlmResponse, RuntimeError> {
+        if req.model.is_empty() {
+            req.model = self.default_model.clone();
+        }
+        self.call_llm_ref_impl(req.as_ref(), None, cacheable).await
+    }
+
     pub async fn call_llm_ref_with_trace_rendered(
         &self,
         req: LlmRequestRef<'_>,
         trace_rendered: Option<&str>,
     ) -> Result<LlmResponse, RuntimeError> {
-        self.call_llm_ref_impl(req, trace_rendered).await
+        self.call_llm_ref_impl(req, trace_rendered, false).await
     }
 
     /// Borrowed LLM-call path for native bridges that already hold prompt and
     /// rendered text as borrowed strings and only need owned clones when
     /// tracing or provider JSON construction requires them.
     pub async fn call_llm_ref(&self, req: LlmRequestRef<'_>) -> Result<LlmResponse, RuntimeError> {
-        self.call_llm_ref_impl(req, None).await
+        self.call_llm_ref_impl(req, None, false).await
     }
 
     async fn call_llm_ref_impl(
         &self,
         req: LlmRequestRef<'_>,
         trace_rendered_override: Option<&str>,
+        cacheable: bool,
     ) -> Result<LlmResponse, RuntimeError> {
         let req = if req.model.is_empty() {
             req.with_model(&self.default_model)
@@ -334,6 +351,41 @@ impl Runtime {
                 args: req.args.to_vec(),
             });
         }
+        let cache_fingerprint = if cacheable && replay.is_none() {
+            Some(PromptCache::fingerprint(req))
+        } else {
+            None
+        };
+        if let Some(fingerprint) = cache_fingerprint.as_deref() {
+            if let Some(cached) = self.prompt_cache.get(fingerprint) {
+                if self.tracer.is_enabled() {
+                    self.tracer.emit(TraceEvent::PromptCache {
+                        ts_ms: now_ms(),
+                        run_id: self.tracer.run_id().to_string(),
+                        prompt: req.prompt.to_string(),
+                        model: if trace_model.is_empty() {
+                            None
+                        } else {
+                            Some(trace_model.to_string())
+                        },
+                        fingerprint: fingerprint.to_string(),
+                        hit: true,
+                    });
+                    self.tracer.emit(TraceEvent::LlmResult {
+                        ts_ms: now_ms(),
+                        run_id: self.tracer.run_id().to_string(),
+                        prompt: req.prompt.to_string(),
+                        model: if trace_model.is_empty() {
+                            None
+                        } else {
+                            Some(trace_model.to_string())
+                        },
+                        result: cached.value.clone(),
+                    });
+                }
+                return Ok(PromptCache::cached_response(cached));
+            }
+        }
         let resp = if let Some(replay) = replay {
             let live_req = if let Some(model) = live_model_override.as_deref() {
                 req.with_model(model)
@@ -356,6 +408,24 @@ impl Runtime {
         } else {
             self.llms.call(&req).await?
         };
+        if let Some(fingerprint) = cache_fingerprint.as_deref() {
+            self.prompt_cache
+                .insert(fingerprint.to_string(), resp.clone());
+            if self.tracer.is_enabled() {
+                self.tracer.emit(TraceEvent::PromptCache {
+                    ts_ms: now_ms(),
+                    run_id: self.tracer.run_id().to_string(),
+                    prompt: req.prompt.to_string(),
+                    model: if trace_model.is_empty() {
+                        None
+                    } else {
+                        Some(trace_model.to_string())
+                    },
+                    fingerprint: fingerprint.to_string(),
+                    hit: false,
+                });
+            }
+        }
         let actual_model = live_model_override.as_deref().unwrap_or(req.model);
         let cost_usd = if actual_model.is_empty() {
             0.0
@@ -657,6 +727,7 @@ impl RuntimeBuilder {
             model_catalog_error,
             rollout_state: Arc::new(AtomicU64::new(rollout_seed)),
             calibration: CalibrationStore::default(),
+            prompt_cache: PromptCache::default(),
         }
     }
 }

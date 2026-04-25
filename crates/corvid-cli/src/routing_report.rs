@@ -572,6 +572,7 @@ fn event_ts_ms(event: &TraceEvent) -> u64 {
         | TraceEvent::ToolResult { ts_ms, .. }
         | TraceEvent::LlmCall { ts_ms, .. }
         | TraceEvent::LlmResult { ts_ms, .. }
+        | TraceEvent::PromptCache { ts_ms, .. }
         | TraceEvent::ApprovalRequest { ts_ms, .. }
         | TraceEvent::ApprovalDecision { ts_ms, .. }
         | TraceEvent::ApprovalResponse { ts_ms, .. }

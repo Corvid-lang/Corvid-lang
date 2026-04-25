@@ -3,6 +3,46 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 struct BoundaryHook;
 
+#[derive(Clone)]
+struct CountingAdapter {
+    model: String,
+    calls: Arc<AtomicUsize>,
+    response: serde_json::Value,
+}
+
+impl corvid_runtime::LlmAdapter for CountingAdapter {
+    fn name(&self) -> &str {
+        &self.model
+    }
+
+    fn handles(&self, model: &str) -> bool {
+        model == self.model
+    }
+
+    fn call<'a>(
+        &'a self,
+        _req: &'a corvid_runtime::llm::LlmRequestRef<'a>,
+    ) -> std::pin::Pin<
+        Box<
+            dyn std::future::Future<Output = Result<corvid_runtime::LlmResponse, RuntimeError>>
+                + Send
+                + 'a,
+        >,
+    > {
+        Box::pin(async move {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            Ok(corvid_runtime::LlmResponse::new(
+                self.response.clone(),
+                TokenUsage {
+                    prompt_tokens: 3,
+                    completion_tokens: 2,
+                    total_tokens: 5,
+                },
+            ))
+        })
+    }
+}
+
 #[async_trait::async_trait]
 impl StepHook for BoundaryHook {
     async fn on_step(&self, _event: &StepEvent) -> StepAction {
@@ -425,6 +465,41 @@ agent run(input: String) -> String:
     assert_eq!(stats.correct, 0);
     assert!((stats.mean_confidence - 0.90).abs() < 1e-9);
     assert!(stats.miscalibrated);
+}
+
+#[tokio::test]
+async fn cacheable_prompt_reuses_response() {
+    let src = "\
+prompt classify(ctx: String) -> String:
+    cacheable: true
+    \"Classify {ctx}.\"
+
+agent run(ctx: String) -> String:
+    first = classify(ctx)
+    second = classify(ctx)
+    return second
+";
+    let ir = ir_of(src);
+    let calls = Arc::new(AtomicUsize::new(0));
+    let adapter = CountingAdapter {
+        model: "mock".into(),
+        calls: calls.clone(),
+        response: json!("refund"),
+    };
+    let rt = Runtime::builder()
+        .default_model("mock")
+        .llm(Arc::new(adapter))
+        .build();
+
+    let value = run_agent(&ir, "run", vec![Value::String(Arc::from("ticket"))], &rt)
+        .await
+        .expect("run");
+    assert_eq!(value, Value::String(Arc::from("refund")));
+    assert_eq!(
+        calls.load(Ordering::SeqCst),
+        1,
+        "second identical cacheable prompt call must not hit the adapter"
+    );
 }
 
 #[tokio::test]

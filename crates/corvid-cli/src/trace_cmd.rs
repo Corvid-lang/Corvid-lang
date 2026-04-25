@@ -212,6 +212,7 @@ fn event_run_id(event: &TraceEvent) -> Option<&str> {
         | TraceEvent::ToolResult { run_id, .. }
         | TraceEvent::LlmCall { run_id, .. }
         | TraceEvent::LlmResult { run_id, .. }
+        | TraceEvent::PromptCache { run_id, .. }
         | TraceEvent::ApprovalRequest { run_id, .. }
         | TraceEvent::ApprovalDecision { run_id, .. }
         | TraceEvent::ApprovalResponse { run_id, .. }
@@ -239,6 +240,7 @@ fn event_ts_ms(event: &TraceEvent) -> u64 {
         | TraceEvent::ToolResult { ts_ms, .. }
         | TraceEvent::LlmCall { ts_ms, .. }
         | TraceEvent::LlmResult { ts_ms, .. }
+        | TraceEvent::PromptCache { ts_ms, .. }
         | TraceEvent::ApprovalRequest { ts_ms, .. }
         | TraceEvent::ApprovalDecision { ts_ms, .. }
         | TraceEvent::ApprovalResponse { ts_ms, .. }

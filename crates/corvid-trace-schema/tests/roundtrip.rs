@@ -59,6 +59,15 @@ fn sample_trace() -> Vec<TraceEvent> {
             rendered: Some("Classify: ticket-42".into()),
             args: vec![],
         },
+        TraceEvent::PromptCache {
+            ts_ms: 6,
+            run_id: "r-roundtrip".into(),
+            prompt: "classify".into(),
+            model: Some("claude-opus-4-7".into()),
+            fingerprint: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+                .into(),
+            hit: true,
+        },
         TraceEvent::LlmResult {
             ts_ms: 7,
             run_id: "r-roundtrip".into(),

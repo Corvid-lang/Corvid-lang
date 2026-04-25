@@ -98,6 +98,18 @@ pub enum TraceEvent {
         model: Option<String>,
         result: serde_json::Value,
     },
+    /// Metadata for a cacheable prompt call. A cache hit is still recorded
+    /// as a normal `LlmCall` / `LlmResult` pair so replay consumes the same
+    /// semantic events whether the response was live or cached.
+    PromptCache {
+        ts_ms: u64,
+        run_id: String,
+        prompt: String,
+        #[serde(default)]
+        model: Option<String>,
+        fingerprint: String,
+        hit: bool,
+    },
     ApprovalRequest {
         ts_ms: u64,
         run_id: String,

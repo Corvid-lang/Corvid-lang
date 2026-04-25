@@ -382,7 +382,7 @@ impl<'ir> Interpreter<'ir> {
         let start = std::time::Instant::now();
         let resp = self
             .runtime
-            .call_llm(req)
+            .call_llm_cacheable(req, prompt.cacheable)
             .await
             .map_err(|e| InterpError::new(InterpErrorKind::Runtime(e), span))?;
         let elapsed_ms = start.elapsed().as_millis() as u64;
@@ -674,8 +674,9 @@ impl<'ir> Interpreter<'ir> {
             let mut join_set = JoinSet::new();
             for (index, (model_name, req)) in requests.into_iter().enumerate() {
                 let runtime = self.runtime.clone();
+                let cacheable = prompt.cacheable;
                 join_set.spawn(async move {
-                    let response = runtime.call_llm(req).await;
+                    let response = runtime.call_llm_cacheable(req, cacheable).await;
                     (index, model_name, response)
                 });
             }

@@ -317,6 +317,10 @@ impl ReplaySession {
                     run_id: event_run_id,
                     ..
                 }
+                | TraceEvent::PromptCache {
+                    run_id: event_run_id,
+                    ..
+                }
                 | TraceEvent::ProvenanceEdge {
                     run_id: event_run_id,
                     ..
@@ -549,6 +553,7 @@ fn first_run_id(events: &[TraceEvent]) -> Result<&str, ReplayLoadError> {
         | Some(TraceEvent::ToolResult { run_id, .. })
         | Some(TraceEvent::LlmCall { run_id, .. })
         | Some(TraceEvent::LlmResult { run_id, .. })
+        | Some(TraceEvent::PromptCache { run_id, .. })
         | Some(TraceEvent::ApprovalRequest { run_id, .. })
         | Some(TraceEvent::ApprovalDecision { run_id, .. })
         | Some(TraceEvent::ApprovalResponse { run_id, .. })
@@ -588,6 +593,7 @@ fn first_ts(events: &[TraceEvent]) -> u64 {
         | Some(TraceEvent::ToolResult { ts_ms, .. })
         | Some(TraceEvent::LlmCall { ts_ms, .. })
         | Some(TraceEvent::LlmResult { ts_ms, .. })
+        | Some(TraceEvent::PromptCache { ts_ms, .. })
         | Some(TraceEvent::ApprovalRequest { ts_ms, .. })
         | Some(TraceEvent::ApprovalDecision { ts_ms, .. })
         | Some(TraceEvent::ApprovalResponse { ts_ms, .. })
@@ -616,6 +622,7 @@ fn last_ts(events: &[TraceEvent]) -> u64 {
         | Some(TraceEvent::ToolResult { ts_ms, .. })
         | Some(TraceEvent::LlmCall { ts_ms, .. })
         | Some(TraceEvent::LlmResult { ts_ms, .. })
+        | Some(TraceEvent::PromptCache { ts_ms, .. })
         | Some(TraceEvent::ApprovalRequest { ts_ms, .. })
         | Some(TraceEvent::ApprovalDecision { ts_ms, .. })
         | Some(TraceEvent::ApprovalResponse { ts_ms, .. })

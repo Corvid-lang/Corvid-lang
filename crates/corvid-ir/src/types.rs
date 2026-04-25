@@ -90,6 +90,9 @@ pub struct IrPrompt {
     /// confidence-vs-accuracy observations if the adapter supplies
     /// correctness metadata.
     pub calibrated: bool,
+    /// Runtime prompt-response cache opt-in. Cache identity includes
+    /// selected model, rendered prompt, JSON arguments, and output schema.
+    pub cacheable: bool,
     /// Phase 20h: minimum model capability this prompt requires
     /// (`basic` | `standard` | `expert` | custom). The runtime
     /// uses this to pick the cheapest declared model whose own
