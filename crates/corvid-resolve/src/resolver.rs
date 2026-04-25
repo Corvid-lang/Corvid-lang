@@ -143,7 +143,34 @@ impl Resolver {
                         .as_ref()
                         .map(|a| a.name.clone())
                         .unwrap_or_else(|| i.module.clone());
-                    (name, DeclKind::Import, i.span)
+                    if let Err(first_span) = self.symbols.declare(&name, DeclKind::Import, i.span) {
+                        self.errors.push(ResolveError {
+                            kind: ResolveErrorKind::DuplicateDecl {
+                                name,
+                                first_span,
+                            },
+                            span: i.span,
+                        });
+                    }
+                    for item in &i.use_items {
+                        let lifted = item
+                            .alias
+                            .as_ref()
+                            .map(|a| a.name.clone())
+                            .unwrap_or_else(|| item.name.name.clone());
+                        if let Err(first_span) =
+                            self.symbols.declare(&lifted, DeclKind::ImportedUse, item.span)
+                        {
+                            self.errors.push(ResolveError {
+                                kind: ResolveErrorKind::DuplicateDecl {
+                                    name: lifted,
+                                    first_span,
+                                },
+                                span: item.span,
+                            });
+                        }
+                    }
+                    continue;
                 }
                 Decl::Type(t) => (t.name.name.clone(), DeclKind::Type, t.span),
                 Decl::Tool(t) => (t.name.name.clone(), DeclKind::Tool, t.span),
@@ -852,6 +879,7 @@ impl Resolver {
 fn decl_kind_label(kind: DeclKind) -> &'static str {
     match kind {
         DeclKind::Import => "import",
+        DeclKind::ImportedUse => "imported use",
         DeclKind::Type => "type",
         DeclKind::Tool => "tool",
         DeclKind::Prompt => "prompt",

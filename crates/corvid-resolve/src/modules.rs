@@ -80,6 +80,14 @@ pub struct ResolvedModule {
     pub exports: HashMap<String, DeclExport>,
 }
 
+/// A public declaration lifted into the importing file's unqualified
+/// namespace by `import "./path" use Name, Other as Alias`.
+#[derive(Debug, Clone)]
+pub struct ImportedUseTarget {
+    pub module_path: PathBuf,
+    pub export: DeclExport,
+}
+
 /// The module graph for a single root compilation. Maps each
 /// `import ... as alias` in the root file to its `ResolvedModule`.
 /// Aliases are unique within a file (enforced by the resolver's
@@ -91,6 +99,7 @@ pub struct ResolvedModule {
 #[derive(Debug, Clone, Default)]
 pub struct ModuleResolution {
     pub modules: HashMap<String, ResolvedModule>,
+    pub imported_uses: HashMap<String, ImportedUseTarget>,
     /// Every loaded module keyed by canonical-ish path, including
     /// transitive imports. The root alias map above controls what
     /// names the root file may use; this path map lets the checker
@@ -138,6 +147,10 @@ impl ModuleResolution {
                 }
             },
         }
+    }
+
+    pub fn lookup_imported_use(&self, name: &str) -> Option<&ImportedUseTarget> {
+        self.imported_uses.get(name)
     }
 }
 

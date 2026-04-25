@@ -37,8 +37,8 @@ use std::sync::Arc;
 
 use corvid_ast::{Decl, File, ImportSource};
 use corvid_resolve::{
-    collect_public_exports, resolve, resolve_import_path, ModuleResolution, Resolved,
-    ResolvedModule,
+    collect_public_exports, resolve, resolve_import_path, ImportedUseTarget, ModuleResolution,
+    Resolved, ResolvedModule,
 };
 use corvid_syntax::{lex, parse_file, LexError, ParseError};
 
@@ -135,15 +135,8 @@ pub fn build_module_resolution(
     }
 
     let mut modules = HashMap::new();
+    let mut imported_uses = HashMap::new();
     for import in corvid_imports(root_file) {
-        let Some(alias) = import.alias.as_ref() else {
-            // Aliased imports are required for `alias.Name` access.
-            // A Corvid import without an alias is a no-op today;
-            // the resolver's duplicate-check will still catch
-            // collisions since it synthesises the module path as
-            // a name. Skipping here keeps the `modules` map clean.
-            continue;
-        };
         let import_path = resolve_import_path(&root_canonical, &import.module);
         let loaded_path = loaded
             .keys()
@@ -157,15 +150,31 @@ pub fn build_module_resolution(
         let Some(module) = all_modules.get(&loaded_path).cloned() else {
             continue;
         };
-        modules.insert(
-            alias.name.clone(),
-            module,
-        );
+        if let Some(alias) = import.alias.as_ref() {
+            modules.insert(alias.name.clone(), module.clone());
+        }
+        for item in &import.use_items {
+            let lifted = item
+                .alias
+                .as_ref()
+                .map(|alias| alias.name.clone())
+                .unwrap_or_else(|| item.name.name.clone());
+            if let Some(export) = module.exports.get(&item.name.name) {
+                imported_uses.insert(
+                    lifted,
+                    ImportedUseTarget {
+                        module_path: module.path.clone(),
+                        export: export.clone(),
+                    },
+                );
+            }
+        }
     }
 
     (
         ModuleResolution {
             modules,
+            imported_uses,
             all_modules,
         },
         errors,

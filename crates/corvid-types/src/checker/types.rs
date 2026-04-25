@@ -14,7 +14,7 @@ use corvid_ast::{TypeRef, WeakEffectRow};
 impl<'a> Checker<'a> {
     pub(super) fn type_ref_to_type(&mut self, tr: &TypeRef) -> Type {
         match tr {
-            TypeRef::Named { name, .. } => self.named_type_to_type(&name.name),
+            TypeRef::Named { name, .. } => self.named_type_to_type(&name.name, name.span),
             TypeRef::Qualified { alias, name, span } => {
                 self.qualified_type_ref_to_type(&alias.name, &name.name, *span)
             }
@@ -95,7 +95,7 @@ impl<'a> Checker<'a> {
         }
     }
 
-    pub(super) fn named_type_to_type(&self, name: &str) -> Type {
+    pub(super) fn named_type_to_type(&mut self, name: &str, span: corvid_ast::Span) -> Type {
         match name {
             "Int" => Type::Int,
             "Float" => Type::Float,
@@ -103,10 +103,45 @@ impl<'a> Checker<'a> {
             "Bool" => Type::Bool,
             "Nothing" => Type::Nothing,
             _ => match self.symbols.lookup_def(name) {
-                Some(id) => Type::Struct(id),
+                Some(id) => {
+                    let entry = self.symbols.get(id);
+                    if entry.kind == corvid_resolve::DeclKind::ImportedUse {
+                        return self.imported_use_type_to_type(name, span);
+                    }
+                    Type::Struct(id)
+                }
                 None => Type::Unknown,
             },
         }
+    }
+
+    fn imported_use_type_to_type(&mut self, name: &str, span: corvid_ast::Span) -> Type {
+        let Some(modules) = self.module_resolution else {
+            return Type::Unknown;
+        };
+        let Some(target) = modules.lookup_imported_use(name) else {
+            self.errors.push(TypeError::new(
+                TypeErrorKind::UnknownImportMember {
+                    alias: "<import use>".to_string(),
+                    name: name.to_string(),
+                },
+                span,
+            ));
+            return Type::Unknown;
+        };
+        let Some(module) = modules.lookup_by_path(&target.module_path) else {
+            return Type::Unknown;
+        };
+        if !matches!(target.export.kind, corvid_resolve::DeclKind::Type) {
+            self.errors.push(TypeError::new(
+                TypeErrorKind::TypeAsValue {
+                    name: name.to_string(),
+                },
+                span,
+            ));
+            return Type::Unknown;
+        }
+        imported_struct_type(module, target.export.def_id, &target.export.name)
     }
 
     fn qualified_type_ref_to_type(&mut self, alias: &str, name: &str, span: corvid_ast::Span) -> Type {

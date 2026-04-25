@@ -13,6 +13,104 @@ use corvid_ast::{Decl, Effect, Expr, Ident, Param, Span, WeakEffect};
 use corvid_resolve::{Binding, DeclKind, DefId, ModuleLookup, ResolvedModule};
 
 impl<'a> Checker<'a> {
+    pub(super) fn validate_import_use_items(&mut self, file: &corvid_ast::File) {
+        let Some(modules) = self.module_resolution else {
+            return;
+        };
+        for decl in &file.decls {
+            let Decl::Import(import) = decl else { continue };
+            if !matches!(import.source, corvid_ast::ImportSource::Corvid) {
+                continue;
+            }
+            let module_label = import
+                .alias
+                .as_ref()
+                .map(|alias| alias.name.clone())
+                .unwrap_or_else(|| import.module.clone());
+            for item in &import.use_items {
+                let lifted = item
+                    .alias
+                    .as_ref()
+                    .map(|alias| alias.name.clone())
+                    .unwrap_or_else(|| item.name.name.clone());
+                if modules.lookup_imported_use(&lifted).is_none() {
+                    self.errors.push(TypeError::new(
+                        TypeErrorKind::UnknownImportMember {
+                            alias: module_label.clone(),
+                            name: item.name.name.clone(),
+                        },
+                        item.span,
+                    ));
+                }
+            }
+        }
+    }
+
+    pub(super) fn check_imported_use_call(
+        &mut self,
+        def_id: DefId,
+        name: &str,
+        args: &[Expr],
+        callee_span: Span,
+        call_span: Span,
+    ) -> Type {
+        let Some(modules) = self.module_resolution else {
+            for arg in args {
+                let _ = self.check_expr(arg);
+            }
+            return Type::Unknown;
+        };
+        let Some(target) = modules.lookup_imported_use(name) else {
+            for arg in args {
+                let _ = self.check_expr(arg);
+            }
+            self.errors.push(TypeError::new(
+                TypeErrorKind::UnknownImportMember {
+                    alias: "<import use>".to_string(),
+                    name: name.to_string(),
+                },
+                callee_span,
+            ));
+            return Type::Unknown;
+        };
+        let Some(module) = modules.lookup_by_path(&target.module_path) else {
+            for arg in args {
+                let _ = self.check_expr(arg);
+            }
+            return Type::Unknown;
+        };
+        let kind = match target.export.kind {
+            DeclKind::Type => ImportedCallKind::Type,
+            DeclKind::Tool => ImportedCallKind::Tool,
+            DeclKind::Prompt => ImportedCallKind::Prompt,
+            DeclKind::Agent => ImportedCallKind::Agent,
+            _ => {
+                for arg in args {
+                    let _ = self.check_expr(arg);
+                }
+                return Type::Unknown;
+            }
+        };
+        self.imported_calls.insert(
+            callee_span,
+            ImportedCallTarget {
+                module_path: target.module_path.to_string_lossy().into_owned(),
+                def_id: target.export.def_id,
+                name: target.export.name.clone(),
+                kind,
+            },
+        );
+        let _ = def_id;
+        self.check_imported_decl_call(
+            module,
+            target.export.def_id,
+            target.export.kind,
+            &target.export.name,
+            args,
+            call_span,
+        )
+    }
+
     pub(super) fn check_imported_call(
         &mut self,
         target: &Expr,

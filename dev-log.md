@@ -5081,3 +5081,16 @@ named `corvid.eval.result` / `eval_result` carrying `{prompt, model,
 passed|correct|score}`. If traces only contain cost data, the command reports
 missing quality evidence and exits non-zero instead of inventing a quality
 number from usage frequency.
+
+## 2026-04-25 - selective Corvid imports
+
+Closed `lang-cor-imports-use`. Corvid files can now write
+`import "./policy" use Review, Receipt as ReviewReceipt` to lift explicit
+public exports into the current file without wildcard merging.
+
+The implementation keeps the import boundary typed: lifted names get their own
+`ImportedUse` resolver kind, module resolution maps each lifted name back to
+the source module export, the checker typechecks calls and type references in
+the imported module's context, and IR lowering still calls the appended
+imported declaration by stable synthetic DefId. Local shadowing is rejected by
+the resolver's duplicate-declaration rule.

@@ -197,7 +197,11 @@ impl<'a> Checker<'a> {
                 ));
                 Type::Unknown
             }
-            DeclKind::Import | DeclKind::Eval | DeclKind::Effect | DeclKind::Model => {
+            DeclKind::Import
+            | DeclKind::ImportedUse
+            | DeclKind::Eval
+            | DeclKind::Effect
+            | DeclKind::Model => {
                 Type::Unknown
             }
         }

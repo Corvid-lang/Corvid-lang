@@ -72,6 +72,21 @@ pub(crate) fn resolve_root_imported_type_ref(
     }))
 }
 
+pub(crate) fn resolve_root_lifted_type_ref(
+    modules: &ModuleResolution,
+    name: &str,
+) -> Option<Type> {
+    let target = modules.lookup_imported_use(name)?;
+    if target.export.kind != DeclKind::Type {
+        return None;
+    }
+    Some(Type::ImportedStruct(ImportedStructType {
+        module_path: target.module_path.to_string_lossy().to_string(),
+        def_id: target.export.def_id,
+        name: target.export.name.clone(),
+    }))
+}
+
 pub(crate) fn resolve_module_qualified_type_ref(
     modules: &ModuleResolution,
     module: &ResolvedModule,

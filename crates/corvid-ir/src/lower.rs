@@ -7,7 +7,7 @@ mod stream;
 
 use crate::imports::{
     build_imported_def_ids, resolve_module_qualified_type_ref, resolve_root_imported_type_ref,
-    ImportedDefKey,
+    resolve_root_lifted_type_ref, ImportedDefKey,
 };
 use crate::types::*;
 use corvid_ast::{
@@ -993,6 +993,11 @@ impl<'a> Lowerer<'a> {
                 }
                 Some(Binding::Decl(def_id)) => {
                     let entry = self.symbols.get(*def_id);
+                    if entry.kind == DeclKind::ImportedUse {
+                        if let Some(rewrite) = self.try_imported_lifted_call(name, args) {
+                            return rewrite;
+                        }
+                    }
                     let lowered_def_id = self.remap_def_id(*def_id);
                     let kind = match entry.kind {
                         DeclKind::Tool => {
@@ -1116,6 +1121,25 @@ impl<'a> Lowerer<'a> {
         })
     }
 
+    fn try_imported_lifted_call(&self, name: &Ident, args: &[Expr]) -> Option<IrExprKind> {
+        let target = self.imported_calls.get(&name.span)?;
+        let def_id = self.remap_imported_target(target);
+        let kind = match target.kind {
+            ImportedCallKind::Type => IrCallKind::StructConstructor { def_id },
+            ImportedCallKind::Tool => IrCallKind::Tool {
+                def_id,
+                effect: Effect::Safe,
+            },
+            ImportedCallKind::Prompt => IrCallKind::Prompt { def_id },
+            ImportedCallKind::Agent => IrCallKind::Agent { def_id },
+        };
+        Some(IrExprKind::Call {
+            kind,
+            callee_name: target.name.clone(),
+            args: args.iter().map(|arg| self.lower_expr(arg)).collect(),
+        })
+    }
+
     fn type_ref_to_type(&self, tr: &TypeRef) -> Type {
         match tr {
             TypeRef::Named { name, .. } => match name.name.as_str() {
@@ -1125,7 +1149,17 @@ impl<'a> Lowerer<'a> {
                 "Bool" => Type::Bool,
                 "Nothing" => Type::Nothing,
                 _ => match self.symbols.lookup_def(&name.name) {
-                    Some(id) => Type::Struct(self.remap_def_id(id)),
+                    Some(id) => {
+                        if self.symbols.get(id).kind == DeclKind::ImportedUse {
+                            return self
+                                .module_resolution
+                                .and_then(|resolution| {
+                                    resolve_root_lifted_type_ref(resolution, &name.name)
+                                })
+                                .unwrap_or(Type::Unknown);
+                        }
+                        Type::Struct(self.remap_def_id(id))
+                    }
                     None => Type::Unknown,
                 },
             },

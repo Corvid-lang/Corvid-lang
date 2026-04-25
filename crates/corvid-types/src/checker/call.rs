@@ -67,6 +67,9 @@ impl<'a> Checker<'a> {
                     DeclKind::Tool => self.check_tool_call(def_id, &name.name, args, span),
                     DeclKind::Prompt => self.check_prompt_call(def_id, &name.name, args),
                     DeclKind::Agent => self.check_agent_call(def_id, &name.name, args),
+                    DeclKind::ImportedUse => {
+                        self.check_imported_use_call(def_id, &name.name, args, name.span, span)
+                    }
                     DeclKind::Import
                     | DeclKind::Eval
                     | DeclKind::Effect

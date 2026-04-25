@@ -158,6 +158,7 @@ pub enum ImportSource {
 /// ```text
 /// import python "anthropic" as anthropic    # external Python module
 /// import "./default_policy" as p            # local Corvid file
+/// import "./policy" use Review, Receipt as ReviewReceipt
 /// ```
 ///
 /// `module` holds either the external module identifier (Python imports)
@@ -167,6 +168,20 @@ pub enum ImportSource {
 pub struct ImportDecl {
     pub source: ImportSource,
     pub module: String,
+    pub alias: Option<Ident>,
+    #[serde(default)]
+    pub use_items: Vec<ImportUseItem>,
+    pub span: Span,
+}
+
+/// One explicitly lifted public symbol from a Corvid import:
+///
+/// ```text
+/// import "./policy" use Review, Receipt as ReviewReceipt
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ImportUseItem {
+    pub name: Ident,
     pub alias: Option<Ident>,
     pub span: Span,
 }

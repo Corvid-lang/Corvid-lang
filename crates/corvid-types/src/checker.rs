@@ -110,6 +110,7 @@ fn typecheck_with_everything(
     modules: Option<&corvid_resolve::ModuleResolution>,
 ) -> Checked {
     let mut c = Checker::new(file, resolved, modules);
+    c.validate_import_use_items(file);
     c.check_file(file);
 
     let effect_decls: Vec<&corvid_ast::EffectDecl> = file.decls.iter().filter_map(|d| {

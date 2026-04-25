@@ -15,7 +15,7 @@ use corvid_ast::{
     AgentDecl, BinaryOp, Block, Decl, DimensionDecl, DimensionValue, Effect, EffectDecl,
     ExternAbi, OwnershipAnnotation, OwnershipMode,
     EvalAssert, EvalDecl, ExtendDecl, ExtendMethod, ExtendMethodKind, Field, Ident, ImportDecl,
-    ImportSource, ModelDecl, ModelField, Param, ToolDecl, TypeDecl, Visibility,
+    ImportSource, ImportUseItem, ModelDecl, ModelField, Param, ToolDecl, TypeDecl, Visibility,
 };
 
 impl<'a> Parser<'a> {
@@ -182,14 +182,51 @@ impl<'a> Parser<'a> {
             None
         };
 
+        let use_items = if matches!(self.peek(), TokKind::Ident(word) if word == "use") {
+            self.bump();
+            self.parse_import_use_items()?
+        } else {
+            Vec::new()
+        };
+
         let end = self.peek_span();
         self.expect_newline()?;
         Ok(ImportDecl {
             source,
             module,
             alias,
+            use_items,
             span: start.merge(end),
         })
+    }
+
+    fn parse_import_use_items(&mut self) -> Result<Vec<ImportUseItem>, ParseError> {
+        let mut items = Vec::new();
+        loop {
+            let (name, name_span) = self.expect_ident()?;
+            let name_ident = Ident::new(name, name_span);
+            let alias = if matches!(self.peek(), TokKind::KwAs) {
+                self.bump();
+                let (alias, alias_span) = self.expect_ident()?;
+                Some(Ident::new(alias, alias_span))
+            } else {
+                None
+            };
+            let span = alias
+                .as_ref()
+                .map(|alias| name_span.merge(alias.span))
+                .unwrap_or(name_span);
+            items.push(ImportUseItem {
+                name: name_ident,
+                alias,
+                span,
+            });
+            if !matches!(self.peek(), TokKind::Comma) {
+                break;
+            }
+            self.bump();
+        }
+        Ok(items)
     }
 
     // -- type ----------------------------------------------------

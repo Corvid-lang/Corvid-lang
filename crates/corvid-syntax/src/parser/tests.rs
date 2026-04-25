@@ -1715,6 +1715,26 @@ agent good(x: String) -> String:
     }
 
     #[test]
+    fn parses_corvid_file_import_use_list_with_alias() {
+        let file = parse_file_src(r#"import "./policy" use Review, Receipt as ReviewReceipt"#);
+        match &file.decls[0] {
+            Decl::Import(i) => {
+                assert!(matches!(i.source, ImportSource::Corvid));
+                assert_eq!(i.module, "./policy");
+                assert_eq!(i.use_items.len(), 2);
+                assert_eq!(i.use_items[0].name.name, "Review");
+                assert!(i.use_items[0].alias.is_none());
+                assert_eq!(i.use_items[1].name.name, "Receipt");
+                assert_eq!(
+                    i.use_items[1].alias.as_ref().map(|alias| alias.name.as_str()),
+                    Some("ReviewReceipt")
+                );
+            }
+            other => panic!("expected import, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn parses_prompt_with_output_format_clause() {
         let file = parse_file_src(
             "prompt classify(t: String) -> String:\n    output_format: strict_json\n    \"Classify {t}\"\n",

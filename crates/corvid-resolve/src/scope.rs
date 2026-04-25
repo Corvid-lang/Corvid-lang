@@ -59,6 +59,7 @@ pub enum BuiltIn {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum DeclKind {
     Import,
+    ImportedUse,
     Type,
     Tool,
     Prompt,

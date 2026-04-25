@@ -818,6 +818,152 @@ agent main() -> Bool:
         ));
     }
 
+    #[test]
+    fn compile_to_ir_at_path_lowers_import_use_agent_call() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            tmp.path().join("policy.cor"),
+            "\
+public agent apply_policy_default() -> Bool:
+    return true
+",
+        )
+        .unwrap();
+        let main_src = "\
+import \"./policy\" use apply_policy_default as apply_policy
+
+agent main() -> Bool:
+    return apply_policy()
+";
+        let main_path = tmp.path().join("main.cor");
+        std::fs::write(&main_path, main_src).unwrap();
+
+        let ir = compile_to_ir_with_config_at_path(main_src, &main_path, None)
+            .expect("import-use agent call should compile");
+        let imported = ir
+            .agents
+            .iter()
+            .find(|agent| agent.name == "apply_policy_default")
+            .expect("imported agent should be appended to IR");
+        let main = ir.agents.iter().find(|agent| agent.name == "main").unwrap();
+        let corvid_ir::IrStmt::Return {
+            value: Some(value), ..
+        } = &main.body.stmts[0]
+        else {
+            panic!("expected return call");
+        };
+        let corvid_ir::IrExprKind::Call {
+            kind,
+            callee_name,
+            ..
+        } = &value.kind
+        else {
+            panic!("expected call expression");
+        };
+        assert_eq!(callee_name, "apply_policy_default");
+        assert!(matches!(
+            kind,
+            corvid_ir::IrCallKind::Agent { def_id } if *def_id == imported.id
+        ));
+    }
+
+    #[test]
+    fn compile_to_ir_at_path_resolves_import_use_type_alias() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            tmp.path().join("types.cor"),
+            "\
+public type Receipt:
+    id: String
+",
+        )
+        .unwrap();
+        let main_src = "\
+import \"./types\" use Receipt as ReviewReceipt
+
+agent read(r: ReviewReceipt) -> String:
+    return r.id
+";
+        let main_path = tmp.path().join("main.cor");
+        std::fs::write(&main_path, main_src).unwrap();
+
+        let ir = compile_to_ir_with_config_at_path(main_src, &main_path, None)
+            .expect("import-use type alias should compile");
+        let read = ir.agents.iter().find(|agent| agent.name == "read").unwrap();
+        match &read.params[0].ty {
+            corvid_types::Type::ImportedStruct(imported) => {
+                assert_eq!(imported.name, "Receipt");
+                assert!(imported.module_path.ends_with("types.cor"));
+            }
+            other => panic!("expected imported struct param, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn compile_to_ir_at_path_rejects_unknown_import_use_member() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            tmp.path().join("policy.cor"),
+            "\
+public agent apply_policy_default() -> Bool:
+    return true
+",
+        )
+        .unwrap();
+        let main_src = "\
+import \"./policy\" use missing_policy
+
+agent main() -> Bool:
+    return true
+";
+        let main_path = tmp.path().join("main.cor");
+        std::fs::write(&main_path, main_src).unwrap();
+
+        let diagnostics = compile_to_ir_with_config_at_path(main_src, &main_path, None)
+            .expect_err("unknown import-use member should fail");
+        assert!(
+            diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic
+                    .message
+                    .contains("has no declaration named `missing_policy`")),
+            "diagnostics: {diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn compile_to_ir_at_path_rejects_import_use_shadowing_local_decl() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            tmp.path().join("types.cor"),
+            "\
+public type Receipt:
+    id: String
+",
+        )
+        .unwrap();
+        let main_src = "\
+import \"./types\" use Receipt
+
+type Receipt:
+    local_id: String
+
+agent main(r: Receipt) -> String:
+    return r.local_id
+";
+        let main_path = tmp.path().join("main.cor");
+        std::fs::write(&main_path, main_src).unwrap();
+
+        let diagnostics = compile_to_ir_with_config_at_path(main_src, &main_path, None)
+            .expect_err("import-use names must not silently shadow local declarations");
+        assert!(
+            diagnostics.iter().any(|diagnostic| diagnostic
+                .message
+                .contains("duplicate declaration `Receipt`")),
+            "diagnostics: {diagnostics:?}"
+        );
+    }
+
     #[tokio::test]
     async fn run_with_runtime_executes_qualified_imported_agent_call() {
         let tmp = tempfile::tempdir().unwrap();
@@ -845,6 +991,36 @@ agent main() -> Bool:
         let value = run_with_runtime(&main_path, Some("main"), vec![], &rt)
             .await
             .expect("imported agent call should run");
+        assert_eq!(value, Value::Bool(true));
+    }
+
+    #[tokio::test]
+    async fn run_with_runtime_executes_import_use_agent_call() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            tmp.path().join("policy.cor"),
+            "\
+public agent apply_policy_default() -> Bool:
+    return true
+",
+        )
+        .unwrap();
+        let main_path = tmp.path().join("main.cor");
+        std::fs::write(
+            &main_path,
+            "\
+import \"./policy\" use apply_policy_default as apply_policy
+
+agent main() -> Bool:
+    return apply_policy()
+",
+        )
+        .unwrap();
+
+        let rt = Runtime::builder().build();
+        let value = run_with_runtime(&main_path, Some("main"), vec![], &rt)
+            .await
+            .expect("import-use agent call should run");
         assert_eq!(value, Value::Bool(true));
     }
 
