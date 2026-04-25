@@ -19,7 +19,14 @@ pub fn run_eval(
     source: Option<&Path>,
     swap_model: Option<&str>,
     max_spend: Option<f64>,
+    golden_traces: Option<&Path>,
 ) -> Result<u8> {
+    if golden_traces.is_some() && swap_model.is_some() {
+        anyhow::bail!("`corvid eval --golden-traces` and `--swap-model` are separate modes");
+    }
+    if let Some(trace_dir) = golden_traces {
+        return run_golden_trace_evals(inputs, source, trace_dir);
+    }
     let Some(model) = swap_model else {
         return run_source_evals(inputs, max_spend);
     };
@@ -53,6 +60,52 @@ pub fn run_eval(
         exit_code = exit_code.max(code);
     }
 
+    Ok(exit_code)
+}
+
+fn run_golden_trace_evals(
+    inputs: &[PathBuf],
+    source: Option<&Path>,
+    trace_dir: &Path,
+) -> Result<u8> {
+    let mut sources = inputs.to_vec();
+    if sources.is_empty() {
+        if let Some(source) = source {
+            sources.push(source.to_path_buf());
+        }
+    }
+    if sources.is_empty() {
+        eprintln!("usage: `corvid eval --golden-traces <DIR> <source.cor>`");
+        return Ok(1);
+    }
+
+    let mut exit_code = 0_u8;
+    for source in &sources {
+        eprintln!(
+            "golden-trace eval: source `{}` against `{}`",
+            source.display(),
+            trace_dir.display()
+        );
+        let code = test_from_traces::run_test_from_traces(test_from_traces::TestFromTracesArgs {
+            trace_dir,
+            source: Some(source.as_path()),
+            replay_model: None,
+            only_dangerous: false,
+            only_prompt: None,
+            only_tool: None,
+            since: None,
+            promote: false,
+            flake_detect: None,
+        })
+        .with_context(|| {
+            format!(
+                "failed golden-trace eval for `{}` against `{}`",
+                source.display(),
+                trace_dir.display()
+            )
+        })?;
+        exit_code = exit_code.max(code);
+    }
     Ok(exit_code)
 }
 
@@ -231,7 +284,15 @@ struct StoredTraceSummary {
     #[serde(default)]
     prompts: Vec<String>,
     #[serde(default)]
+    prompt_renders: Vec<StoredPromptRender>,
+    #[serde(default)]
     model_routes: Vec<String>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+struct StoredPromptRender {
+    prompt: String,
+    rendered: String,
 }
 
 fn load_compare_summaries(spec: &str) -> Result<Vec<StoredEvalSummary>> {
@@ -320,7 +381,20 @@ struct CompareReport {
     prompt_removed: Vec<String>,
     route_added: Vec<String>,
     route_removed: Vec<String>,
+    prompt_changes: Vec<PromptChange>,
+    regression_clusters: Vec<RegressionCluster>,
     assertion_changes: Vec<AssertionChange>,
+}
+
+struct PromptChange {
+    prompt: String,
+    before: String,
+    after: String,
+}
+
+struct RegressionCluster {
+    cause: String,
+    count: usize,
 }
 
 struct AssertionChange {
@@ -372,6 +446,27 @@ impl CompareReport {
             join_or_none(&self.route_added),
             join_or_none(&self.route_removed)
         ));
+        if self.prompt_changes.is_empty() {
+            out.push_str("prompt diffs: none\n");
+        } else {
+            out.push_str("prompt diffs:\n");
+            for change in &self.prompt_changes {
+                out.push_str(&format!(
+                    "  {}:\n    before: {}\n    after: {}\n",
+                    change.prompt,
+                    compact_text(&change.before),
+                    compact_text(&change.after)
+                ));
+            }
+        }
+        if self.regression_clusters.is_empty() {
+            out.push_str("regression clusters: none\n");
+        } else {
+            out.push_str("regression clusters:\n");
+            for cluster in &self.regression_clusters {
+                out.push_str(&format!("  {}: {}\n", cluster.cause, cluster.count));
+            }
+        }
         if self.assertion_changes.is_empty() {
             out.push_str("assertion changes: none\n");
         } else {
@@ -408,6 +503,8 @@ fn build_compare_report(
     let mut route_base = BTreeSet::new();
     let mut route_head = BTreeSet::new();
     let mut assertion_changes = Vec::new();
+    let base_prompts = prompt_render_index(base_summaries);
+    let head_prompts = prompt_render_index(head_summaries);
 
     for summary in base_summaries {
         prompt_base.extend(summary.trace.prompts.iter().cloned());
@@ -431,6 +528,20 @@ fn build_compare_report(
             }
         }
     }
+    let prompt_changes = prompt_render_changes(&base_prompts, &head_prompts);
+    let regression_clusters = cluster_regressions(
+        &assertion_changes,
+        !prompt_changes.is_empty(),
+        !route_base.is_empty() && route_base != route_head,
+        head_summaries
+            .iter()
+            .map(|summary| summary.trace.total_cost_usd)
+            .sum::<f64>()
+            > base_summaries
+                .iter()
+                .map(|summary| summary.trace.total_cost_usd)
+                .sum::<f64>(),
+    );
 
     Ok(CompareReport {
         base: base.into(),
@@ -453,8 +564,78 @@ fn build_compare_report(
         prompt_removed: set_diff(&prompt_base, &prompt_head),
         route_added: set_diff(&route_head, &route_base),
         route_removed: set_diff(&route_base, &route_head),
+        prompt_changes,
+        regression_clusters,
         assertion_changes,
     })
+}
+
+fn prompt_render_index(summaries: &[StoredEvalSummary]) -> BTreeMap<String, String> {
+    let mut index = BTreeMap::new();
+    for summary in summaries {
+        for render in &summary.trace.prompt_renders {
+            index
+                .entry(render.prompt.clone())
+                .or_insert_with(|| render.rendered.clone());
+        }
+    }
+    index
+}
+
+fn prompt_render_changes(
+    base: &BTreeMap<String, String>,
+    head: &BTreeMap<String, String>,
+) -> Vec<PromptChange> {
+    head.iter()
+        .filter_map(|(prompt, after)| {
+            let before = base.get(prompt)?;
+            (before != after).then(|| PromptChange {
+                prompt: prompt.clone(),
+                before: before.clone(),
+                after: after.clone(),
+            })
+        })
+        .collect()
+}
+
+fn cluster_regressions(
+    changes: &[AssertionChange],
+    prompt_changed: bool,
+    route_changed: bool,
+    cost_increased: bool,
+) -> Vec<RegressionCluster> {
+    let mut clusters: BTreeMap<String, usize> = BTreeMap::new();
+    for change in changes {
+        if !(change.before == "Passed" && change.after != "Passed") {
+            continue;
+        }
+        let cause = if prompt_changed {
+            "prompt change"
+        } else if route_changed {
+            "route change"
+        } else if cost_increased {
+            "budget regression"
+        } else if change
+            .assertion
+            .as_deref()
+            .is_some_and(|label| label.starts_with("assert approved "))
+        {
+            "approval-path change"
+        } else if change
+            .assertion
+            .as_deref()
+            .is_some_and(|label| label.starts_with("assert called "))
+        {
+            "tool-output/process change"
+        } else {
+            "assertion regression"
+        };
+        *clusters.entry(cause.into()).or_default() += 1;
+    }
+    clusters
+        .into_iter()
+        .map(|(cause, count)| RegressionCluster { cause, count })
+        .collect()
 }
 
 fn index_summaries(
@@ -510,19 +691,29 @@ fn join_or_none(values: &[String]) -> String {
     }
 }
 
+fn compact_text(value: &str) -> String {
+    const LIMIT: usize = 120;
+    let flattened = value.split_whitespace().collect::<Vec<_>>().join(" ");
+    if flattened.len() <= LIMIT {
+        flattened
+    } else {
+        format!("{}...", &flattened[..LIMIT])
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn eval_without_inputs_prints_usage() {
-        let code = run_eval(&[], None, None, None).expect("usage returns an exit code");
+        let code = run_eval(&[], None, None, None, None).expect("usage returns an exit code");
         assert_eq!(code, 1);
     }
 
     #[test]
     fn eval_swap_model_requires_inputs() {
-        let err = run_eval(&[], None, Some("candidate"), None).unwrap_err();
+        let err = run_eval(&[], None, Some("candidate"), None, None).unwrap_err();
         assert!(
             err.to_string().contains("requires at least one trace"),
             "{err:#}"
@@ -547,8 +738,24 @@ mod tests {
         )
         .expect("summary");
 
-        let code = run_eval(&[source], None, None, Some(0.10)).expect("budget result");
+        let code = run_eval(&[source], None, None, Some(0.10), None).expect("budget result");
         assert_eq!(code, 1);
+    }
+
+    #[test]
+    fn eval_golden_traces_and_swap_model_are_exclusive() {
+        let err = run_eval(
+            &[],
+            None,
+            Some("candidate"),
+            None,
+            Some(Path::new("traces")),
+        )
+        .unwrap_err();
+        assert!(
+            err.to_string().contains("separate modes"),
+            "unexpected error: {err:#}"
+        );
     }
 
     #[test]
@@ -567,6 +774,10 @@ mod tests {
                 total_cost_usd: 0.01,
                 total_latency_ms: 10,
                 prompts: vec!["draft".into()],
+                prompt_renders: vec![StoredPromptRender {
+                    prompt: "draft".into(),
+                    rendered: "old prompt body".into(),
+                }],
                 model_routes: vec!["draft:cheap".into()],
                 ..StoredTraceSummary::default()
             },
@@ -585,6 +796,10 @@ mod tests {
                 total_cost_usd: 0.03,
                 total_latency_ms: 25,
                 prompts: vec!["draft".into(), "review".into()],
+                prompt_renders: vec![StoredPromptRender {
+                    prompt: "draft".into(),
+                    rendered: "new prompt body".into(),
+                }],
                 model_routes: vec!["draft:strong".into()],
                 ..StoredTraceSummary::default()
             },
@@ -598,6 +813,9 @@ mod tests {
         assert!(rendered.contains("latency: 10 ms -> 25 ms"), "{rendered}");
         assert!(rendered.contains("prompts: +review -none"), "{rendered}");
         assert!(rendered.contains("model routes: +draft:strong -draft:cheap"), "{rendered}");
+        assert!(rendered.contains("prompt diffs:"), "{rendered}");
+        assert!(rendered.contains("regression clusters:"), "{rendered}");
+        assert!(rendered.contains("prompt change: 2"), "{rendered}");
         assert!(rendered.contains("suite.cor :: quality :: assert <expr>: Passed -> Failed"), "{rendered}");
     }
 }

@@ -70,7 +70,14 @@ pub struct EvalTraceReport {
     pub total_cost_usd: f64,
     pub total_latency_ms: u64,
     pub prompts: Vec<String>,
+    pub prompt_renders: Vec<EvalPromptRender>,
     pub model_routes: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EvalPromptRender {
+    pub prompt: String,
+    pub rendered: String,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -538,6 +545,7 @@ fn collect_trace_report(path: &Path, evals: &[TestExecution]) -> EvalTraceReport
     }
 
     let mut prompts = BTreeSet::new();
+    let mut prompt_renders = BTreeSet::new();
     let mut routes = BTreeSet::new();
     for trace_path in find_trace_artifacts(&eval_output_dir(path)) {
         report.trace_count += 1;
@@ -552,7 +560,13 @@ fn collect_trace_report(path: &Path, evals: &[TestExecution]) -> EvalTraceReport
                 if is_replay_compatible_trace(&events) {
                     report.replay_compatible_count += 1;
                 }
-                summarize_trace_events(&events, &mut report, &mut prompts, &mut routes);
+                summarize_trace_events(
+                    &events,
+                    &mut report,
+                    &mut prompts,
+                    &mut prompt_renders,
+                    &mut routes,
+                );
             }
             Err(error) => report
                 .invalid_traces
@@ -560,6 +574,10 @@ fn collect_trace_report(path: &Path, evals: &[TestExecution]) -> EvalTraceReport
         }
     }
     report.prompts = prompts.into_iter().collect();
+    report.prompt_renders = prompt_renders
+        .into_iter()
+        .map(|(prompt, rendered)| EvalPromptRender { prompt, rendered })
+        .collect();
     report.model_routes = routes.into_iter().collect();
     report
 }
@@ -602,6 +620,7 @@ fn summarize_trace_events(
     events: &[TraceEvent],
     report: &mut EvalTraceReport,
     prompts: &mut BTreeSet<String>,
+    prompt_renders: &mut BTreeSet<(String, String)>,
     routes: &mut BTreeSet<String>,
 ) {
     let mut started_at = None;
@@ -615,10 +634,14 @@ fn summarize_trace_events(
                 prompt,
                 model,
                 model_version,
+                rendered,
                 ..
             } => {
                 report.prompt_calls += 1;
                 prompts.insert(prompt.clone());
+                if let Some(rendered) = rendered {
+                    prompt_renders.insert((prompt.clone(), rendered.clone()));
+                }
                 if let Some(model) = model {
                     routes.insert(model_route_label(prompt, model, model_version.as_deref()));
                 }
@@ -702,7 +725,14 @@ struct EvalTraceSummary {
     total_cost_usd: f64,
     total_latency_ms: u64,
     prompts: Vec<String>,
+    prompt_renders: Vec<EvalPromptRenderSummary>,
     model_routes: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct EvalPromptRenderSummary {
+    prompt: String,
+    rendered: String,
 }
 
 impl EvalSummary {
@@ -757,6 +787,14 @@ impl From<&EvalTraceReport> for EvalTraceSummary {
             total_cost_usd: trace.total_cost_usd,
             total_latency_ms: trace.total_latency_ms,
             prompts: trace.prompts.clone(),
+            prompt_renders: trace
+                .prompt_renders
+                .iter()
+                .map(|render| EvalPromptRenderSummary {
+                    prompt: render.prompt.clone(),
+                    rendered: render.rendered.clone(),
+                })
+                .collect(),
             model_routes: trace.model_routes.clone(),
         }
     }
@@ -990,7 +1028,7 @@ eval math:
                     prompt: "draft".into(),
                     model: Some("fast".into()),
                     model_version: Some("1".into()),
-                    rendered: None,
+                    rendered: Some("draft body".into()),
                     args: vec![],
                 },
                 TraceEvent::ToolCall {
@@ -1035,6 +1073,11 @@ eval math:
         assert_eq!(report.trace.grounded_edges, 1);
         assert_eq!(report.trace.total_latency_ms, 45);
         assert!(report.trace.prompts.contains(&"draft".into()));
+        assert!(report
+            .trace
+            .prompt_renders
+            .iter()
+            .any(|render| render.prompt == "draft"));
         assert!(report.trace.model_routes.contains(&"draft:fast@1".into()));
         let rendered = render_eval_report(&report, None);
         assert!(rendered.contains("Trace report: 1 trace"), "{rendered}");

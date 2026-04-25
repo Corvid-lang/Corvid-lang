@@ -352,6 +352,9 @@ enum Command {
         /// Maximum planned source-eval spend in USD.
         #[arg(long, value_name = "USD")]
         max_spend: Option<f64>,
+        /// Replay a production trace directory as golden eval evidence.
+        #[arg(long, value_name = "DIR")]
+        golden_traces: Option<PathBuf>,
     },
     /// Re-execute a recorded trace deterministically.
     ///
@@ -891,7 +894,14 @@ fn main() -> ExitCode {
             source,
             swap_model,
             max_spend,
-        }) => eval_cmd::run_eval(&inputs, source.as_deref(), swap_model.as_deref(), max_spend),
+            golden_traces,
+        }) => eval_cmd::run_eval(
+            &inputs,
+            source.as_deref(),
+            swap_model.as_deref(),
+            max_spend,
+            golden_traces.as_deref(),
+        ),
         Some(Command::Replay {
             trace,
             source,

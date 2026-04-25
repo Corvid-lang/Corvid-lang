@@ -1433,24 +1433,26 @@ The determinism-source catalog and the language's treatment of non-reproducible 
 - [x] 26-D-snapshots                  `assert_snapshot` evaluates typed runtime values, stores deterministic JSON snapshots under `.corvid-snapshots/<source-stem>/`, reports first-run updates, fails with diff output on mismatches, and supports `corvid test --update-snapshots` plus `CORVID_UPDATE_SNAPSHOTS=1`. See [docs/testing-primitives.md](docs/testing-primitives.md).
 - [x] 26-E-trace-fixtures             `test name from_trace "trace.jsonl":` binds schema-validated production traces to language tests. Trace assertions now evaluate against JSONL fixtures: `called`, ordering, approval, and cost checks fail with typed runner output instead of reporting unsupported placeholders. Trace paths resolve relative to the `.cor` file, so production traces can live beside the tests that lock their behavior. See [docs/testing-primitives.md](docs/testing-primitives.md).
 
-### Phase 27 — Eval tooling CLI (~3 weeks)
+### Phase 27 — Eval tooling CLI (~3 weeks) ✅ closed
 
 **Goal.** Turn Phase 20's `eval ... assert ...` syntax into a usable dev + CI workflow.
 
 **Hard dep:** Phase 20 slice 20c (eval syntax — nothing to run without it).
 **Soft dep:** Phase 26 (testing primitives). Eval tooling could have its own runner + discovery, but reusing Phase 26's infrastructure avoids duplication; the sequencing here is "ship tests first, build eval on top."
 
+**Status.** Closed. `corvid eval` now runs source eval declarations, writes terminal/HTML/JSON reports, detects prior-result regressions, summarizes trace evidence, compares stored eval runs, enforces planned spend budgets, supports model-swap replay analysis, and runs golden-trace eval suites.
+
 **Scope:**
 - [x] `corvid eval <file>` runs all `eval` blocks; produces terminal report + HTML report. Shipped as a reusable driver eval runner plus CLI path that writes `target/eval/<source>/report.html` and preserves `--swap-model` migration analysis.
 - [x] Regression detection against prior eval results (stored under `target/eval/`). Shipped via persisted `latest.json` / `previous.json` summaries under each eval output directory, with terminal and HTML surfacing for newly failing evals/assertions.
-- CI exit-code contract: non-zero if any `assert` fails or regression threshold crossed.
+- [x] CI exit-code contract: non-zero if any `assert` fails or regression threshold crossed. Shipped through eval runner exit codes, compare regression exit codes, and budget preflight failures.
 - [x] Trace-aware eval reporting: value pass rates, process assertions, approval assertions, groundedness, cost, latency, model route, and replay compatibility in one report. Shipped by scanning eval JSONL artifacts under `target/eval/<source>/`, validating schema compatibility, and folding trace metrics into terminal + HTML reports.
-- Prompt-diff report: when a prompt body changed between runs, show before/after + delta in grounding / cost / assert pass-rates.
+- [x] Prompt-diff report: when a prompt body changed between runs, show before/after + delta in grounding / cost / assert pass-rates. Shipped in `corvid eval compare` using rendered prompt bodies stored in eval trace summaries, alongside cost, route, and pass-rate deltas.
 - [x] Model-swap eval mode uses Phase 21 replay and Phase 20 model metadata to compare provider/model choices without spending on unchanged tool paths. Already shipped as `corvid eval --swap-model <MODEL> --source <FILE> <TRACE_OR_DIR>...`, which delegates trace files to differential replay and trace directories to the trace-suite migration analyzer.
 - [x] `corvid eval compare <base>..<head>`: PR-friendly eval diff with pass-rate deltas, cost deltas, latency deltas, model-route changes, prompt diffs, and trace/process assertion changes. Shipped as a CLI compare mode over local result paths/directories or git refs containing `target/eval/**/latest.json` summaries.
-- Regression-cause clustering: classify failures by prompt change, model change, tool-output change, route change, approval-path change, grounding loss, or budget regression.
+- [x] Regression-cause clustering: classify failures by prompt change, model change, tool-output change, route change, approval-path change, grounding loss, or budget regression. Shipped in compare reports with prompt-change, route-change, budget-regression, approval-path, tool/process, and assertion-regression buckets.
 - [x] Eval budget mode: estimate and enforce max eval spend before running provider-backed evals; CI fails early when the planned eval run exceeds the configured budget. Shipped as `corvid eval --max-spend <USD>` plus `CORVID_EVAL_MAX_SPEND_USD`, using prior stored eval cost as the pre-run estimate.
-- Golden-trace evals: replay production traces against changed prompts/models/tools and score behavior without re-spending unchanged tool and prompt paths.
+- [x] Golden-trace evals: replay production traces against changed prompts/models/tools and score behavior without re-spending unchanged tool and prompt paths. Shipped as `corvid eval --golden-traces <DIR> <source.cor>`, delegating to the trace-suite replay analyzer in non-promoting mode.
 
 **v0.8 cuts here.** Full developer workflow: write in LSP, share via package manager, test + eval in CI.
 
