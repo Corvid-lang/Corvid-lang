@@ -1473,7 +1473,7 @@ The determinism-source catalog and the language's treatment of non-reproducible 
 - CLI + web-UI implementations; approval tokens same regardless of UI.
 - Approval scopes: one-time, session-scoped, amount-limited, time-limited, and argument-bound tokens. Scope violations fail closed and are replay-visible.
 - Typed tool contract recorder: tools can declare domain effects such as `money(amount)`, `external(stripe)`, `irreversible`, and `requires approve "charge-card"`. The compiler/runtime turns those contracts into approval cards, trace events, PR behavior diffs, package metadata, and CI failures when a change introduces a new money-moving or irreversible path.
-- Human-readable approval cards generated from typed tool arguments, with schema validation and redaction rules inherited from the effect/privacy profile.
+- [x] Human-readable approval cards generated from typed tool arguments, with schema validation and redaction rules inherited from the effect/privacy profile. First runtime slice shipped as `ApprovalCard` generation from approval labels and JSON argument types, risk inference, sensitive-value redaction, and richer stdin approval rendering.
 
 ### Phase 29 — Memory primitives (~4–5 weeks)
 

@@ -81,7 +81,8 @@ pub mod c_runtime {
 }
 
 pub use approvals::{
-    ApprovalDecision, ApprovalRequest, Approver, ProgrammaticApprover, StdinApprover,
+    ApprovalCard, ApprovalCardArgument, ApprovalDecision, ApprovalRequest, ApprovalRisk, Approver,
+    ProgrammaticApprover, StdinApprover,
 };
 pub use calibration::{CalibrationObservation, CalibrationStats};
 pub use catalog::{
