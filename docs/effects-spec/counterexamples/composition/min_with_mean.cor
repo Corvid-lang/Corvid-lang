@@ -1,3 +1,10 @@
+# Counterexample: min_with_mean
+# Bug exposed: confidence composed with Mean/Sum averages a low-confidence
+# edge upward and makes unsafe autonomy look safe.
+# Fix/proof: confidence uses Min composition; `corvid test spec --meta`
+# verifies this fixture distinguishes Min from Sum/Mean on every CI run.
+# Credit: Corvid core team seed corpus.
+#
 # Attack: if confidence composed via Mean instead of Min, one low-confidence edge is averaged upward and looks safer than it is.
 # Expected: compile error mentioning the `confidence` dimension.
 

@@ -2858,6 +2858,16 @@ and differential-verification gate that prove it.
 not an optional local ritual. If an AST rewrite causes profile drift, CI fails
 with the rewrite rule, semantic law, first changed line, and shrunk reproducer.
 
+## 20g-counterexample-metadata
+
+The counterexample museum now has explicit metadata in each seed fixture:
+counterexample name, bug exposed, fix/proof mechanism, and credit.
+
+This is intentionally small but important. A counterexample without provenance
+is just a test file; a counterexample with bug/fix/credit metadata becomes an
+auditable safety record. The seed corpus is credited to the Corvid core team
+until the public bounty process can attach reporter names to future fixtures.
+
 ## Contributing / feedback
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). The rules of the road are: design chat before code, per-scope commits at every boundary, dev-log entry for every session, no shortcuts. The `learnings.md` file you're reading gets updated when each user-visible feature ships.

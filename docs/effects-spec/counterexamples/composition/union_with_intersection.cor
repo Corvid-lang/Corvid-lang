@@ -1,3 +1,11 @@
+# Counterexample: union_with_intersection
+# Bug exposed: data composed with Intersection hides categories unless
+# every edge shares them.
+# Fix/proof: data uses Union composition; `corvid test spec --meta`
+# verifies this fixture distinguishes Union from Intersection/Min on
+# every CI run.
+# Credit: Corvid core team seed corpus.
+#
 # Attack: if data composed via Intersection instead of Union, mixed data classes disappear unless every edge shares them.
 # Expected: compile error or composed profile showing both categories remain visible.
 

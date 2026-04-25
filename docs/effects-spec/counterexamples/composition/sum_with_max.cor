@@ -1,3 +1,10 @@
+# Counterexample: sum_with_max
+# Bug exposed: cost composed with Max undercounts sequential spend and
+# lets a @budget agent overspend.
+# Fix/proof: cost uses Sum composition; `corvid test spec --meta`
+# verifies this fixture distinguishes Sum from Max on every CI run.
+# Credit: Corvid core team seed corpus.
+#
 # Attack: if cost composed via Max instead of Sum, two independent
 # costly calls report only the larger one, not their sum — letting a
 # @budget-annotated agent silently overspend.

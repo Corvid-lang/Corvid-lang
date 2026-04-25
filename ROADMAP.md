@@ -674,7 +674,7 @@ Phase 20g ships with a **standing bounty surface**:
 Every accepted bypass becomes a permanent entry in the counterexample museum. Future Corvid versions must reject every historical bypass. The spec's credibility compounds over time — each release is tested against every historical attack.
 
 - [x] `docs/effects-spec/counterexamples/` directory with five composition-attack fixtures (commit `f4e802e`)
-- [ ] Each counterexample has: the bypass program, the bug it exposed, the fix commit, the contributor credit — partial (header comments present; contributor credit pending bounty program)
+- [x] Each counterexample has: the bypass program, the bug it exposed, the fix/proof mechanism, and contributor credit — seed corpus fixtures name the Corvid core team until the public bounty credit process exists.
 - [x] CI rejects any change that causes a historical counterexample to compile again — meta-verifier (commit `e368ebb`) runs on every push via `.github/workflows/ci.yml`
 - [ ] Public bounty page with submission guidelines and disclosed fixes — **parked as post-20g follow-up** — social infrastructure (disclosure policy, credit mechanism, GitHub issue template) better sequenced after public launch
 

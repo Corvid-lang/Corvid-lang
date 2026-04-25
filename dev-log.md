@@ -4971,3 +4971,14 @@ The CI workflow now runs `corvid test rewrites` alongside dimensions, spec,
 spec-meta, and cross-tier corpus verification. That makes preserved-semantics
 drift a real CI failure with law/rule attribution, not only a crate-level test
 developers might forget to invoke.
+
+## 2026-04-25 - counterexample corpus metadata
+
+Closed the seed counterexample metadata follow-up. Each composition attack
+fixture now starts with a structured comment naming the counterexample, the bug
+it exposes, the fix/proof mechanism that keeps it closed, and contributor
+credit.
+
+The seed corpus is credited to the Corvid core team. Future public bounty
+entries can replace that line with reporter attribution once the disclosure and
+credit process exists, without changing the meta-verifier contract.

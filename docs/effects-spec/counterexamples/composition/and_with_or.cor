@@ -1,3 +1,11 @@
+# Counterexample: and_with_or
+# Bug exposed: reversibility composed with OR lets a reversible step hide
+# an irreversible action.
+# Fix/proof: reversible uses LeastReversible composition; `corvid test
+# spec --meta` verifies this fixture distinguishes LeastReversible from
+# Union/OR on every CI run.
+# Credit: Corvid core team seed corpus.
+#
 # Attack: if reversibility composed via OR instead of AND/least-reversible, one reversible edge hides an irreversible action.
 # Expected: compile error mentioning the `reversible` dimension.
 

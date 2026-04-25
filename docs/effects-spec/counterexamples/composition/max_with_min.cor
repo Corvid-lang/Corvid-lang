@@ -1,3 +1,10 @@
+# Counterexample: max_with_min
+# Bug exposed: trust composed with Min lets an autonomous edge launder a
+# human-required edge.
+# Fix/proof: trust uses Max composition; `corvid test spec --meta`
+# verifies this fixture distinguishes Max from Min on every CI run.
+# Credit: Corvid core team seed corpus.
+#
 # Attack: if trust composed via Min instead of Max, one autonomous edge launders a human-required edge.
 # Expected: compile error mentioning the `trust` dimension.
 

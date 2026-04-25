@@ -47,7 +47,7 @@ Five independent techniques run on every build. A regression in any one fails CI
 
 **Why it matters.** Soundness claims compound: the more attacks a verifier has survived, the more credible future claims become. Bounty-fed corpora have delivered for SAT solvers, cryptographic libraries, and fuzzers; no prior effect system has one.
 
-**Implementation status.** [`docs/effects-spec/counterexamples/composition/`](./counterexamples/composition/) holds the seed corpus (five composition attacks). The meta-verification harness (see §5) uses this corpus today. The public bounty *process* — issue template, credit mechanism, disclosure protocol — is parked as follow-up; it needs social infrastructure that belongs post-launch.
+**Implementation status.** [`docs/effects-spec/counterexamples/composition/`](./counterexamples/composition/) holds the seed corpus (five composition attacks). Each fixture names the bypass, bug exposed, fix/proof mechanism, and seed-corpus credit. The meta-verification harness (see §5) uses this corpus today. The public bounty *process* — issue template, credit mechanism, disclosure protocol — is parked as follow-up; it needs social infrastructure that belongs post-launch.
 
 **What's live today.** The corpus directory, the meta-verification harness consuming it, the CI gate that keeps the harness passing.
 
