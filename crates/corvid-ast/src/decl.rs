@@ -344,6 +344,12 @@ pub struct EnsembleSpec {
     /// Vote strategy. Currently only `Majority` is supported — see
     /// `VoteStrategy` for future extensions.
     pub vote: VoteStrategy,
+    /// Optional vote weighting policy. `accuracy_history` weights each
+    /// member by observed calibration accuracy for this prompt/model pair.
+    pub weighting: Option<EnsembleWeighting>,
+    /// Optional disagreement fallback. If ensemble members disagree,
+    /// dispatch the same prompt to this model and return its answer.
+    pub disagreement_escalation: Option<Ident>,
     pub span: Span,
 }
 
@@ -364,6 +370,19 @@ impl VoteStrategy {
 
 /// `rollout N% <variant>, else <baseline>` — probabilistic A/B
 /// variant dispatch.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum EnsembleWeighting {
+    AccuracyHistory,
+}
+
+impl EnsembleWeighting {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::AccuracyHistory => "accuracy_history",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RolloutSpec {
     /// Percentage of calls routed to the variant. Stored as the

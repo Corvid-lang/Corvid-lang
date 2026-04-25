@@ -461,6 +461,16 @@ impl Resolver {
                     });
                 }
             }
+            if let Some(model) = &spec.disagreement_escalation {
+                if let Some(def_id) = self.symbols.lookup_def(&model.name) {
+                    self.bindings.insert(model.span, Binding::Decl(def_id));
+                } else {
+                    self.errors.push(ResolveError {
+                        kind: ResolveErrorKind::UndefinedName(model.name.clone()),
+                        span: model.span,
+                    });
+                }
+            }
         }
         // Phase 20h slice G: resolve the three `adversarial:` stages.
         if let Some(spec) = &p.adversarial {

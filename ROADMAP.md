@@ -1096,7 +1096,7 @@ Users register local models (Ollama, vLLM, llama.cpp) with declared capabilities
 - [x] `classifier` routing prerequisite satisfied by ordinary typed tool/prompt calls in `route:` guards; no separate classifier prompt kind is needed.
 - [x] Progressive refinement chains shipped as `progressive:` model stages with confidence thresholds and runtime escalation. The original `try ... else ... else` spelling was replaced by the dedicated prompt dispatch block.
 - [x] `ensemble [...] vote majority` syntax + runtime concurrent voting. `ensemble N of [...] agree_at P` remains a richer policy extension.
-- [ ] `weighted_by accuracy_history` + `on disagreement escalate_to X`
+- [x] `weighted_by accuracy_history` + `on disagreement escalate_to X`
 - [x] Adversarial validation shipped as `adversarial:` prompt-stage pipeline (`propose`, `challenge`, `adjudicate`) with typed chaining contract and runtime contradiction traces. The original `generator: X validator: Y acts_as critic` spelling was replaced by the stricter three-stage prompt contract.
 - [x] `@jurisdiction`, `@compliance`, `privacy_tier` as dimensions
 - [x] `cacheable: true` + fingerprint cache in interpreter + replay integration
@@ -1128,6 +1128,7 @@ Users register local models (Ollama, vLLM, llama.cpp) with declared capabilities
 | E | `6accbc2` | `progressive:` chain + stage-terminal-fallback grammar + threshold range check |
 | I (syntax) | `e1476c3` | `rollout N%` one-liner + mutual-exclusion rejection with route/progressive |
 | F (syntax) | `171b68f` | `ensemble [...] vote majority` + duplicate-model rejection |
+| F-weighted | `this commit` | `weighted_by accuracy_history` vote weighting + disagreement escalation |
 | G (syntax) | `6047e00` | `adversarial:` propose / challenge / adjudicate block + order / arity parse checks |
 | B-rt | `a2b9160` | Runtime: capability-based model dispatch |
 | C-rt | `cf301d7` | Runtime: route-based model dispatch |

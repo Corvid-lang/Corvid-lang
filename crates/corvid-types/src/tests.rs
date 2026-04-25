@@ -2484,6 +2484,32 @@ prompt answer(q: String) -> String:
         );
     }
 
+    #[test]
+    fn ensemble_disagreement_escalation_target_must_be_model() {
+        let src = "\
+model a:
+    capability: basic
+
+model b:
+    capability: expert
+
+tool judge(q: String) -> String
+
+prompt answer(q: String) -> String:
+    ensemble [a, b] vote majority on disagreement escalate_to judge
+    \"Answer\"
+";
+        let c = check(src);
+        assert!(
+            c.errors.iter().any(|e| matches!(
+                &e.kind,
+                TypeErrorKind::RouteTargetNotModel { target, .. } if target == "judge"
+            )),
+            "expected RouteTargetNotModel for escalation target, got {:?}",
+            c.errors
+        );
+    }
+
     // --- Phase 20h slice G: adversarial validation (Option B) ---
     //
     // Stages are `prompt` decls, not `model` decls. The runtime

@@ -93,7 +93,7 @@ pub use catalog::{
 };
 pub use effect_filter::CorvidFindAgentsStatus;
 pub use adversarial::{contradiction_flag, trace_text};
-pub use ensemble::{majority_vote, EnsembleVoteOutcome};
+pub use ensemble::{majority_vote, weighted_vote, EnsembleVoteOutcome};
 pub use env::{find_dotenv_walking, load_dotenv, load_dotenv_walking};
 pub use errors::RuntimeError;
 pub use redact::RedactionSet;

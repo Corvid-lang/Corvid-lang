@@ -14,8 +14,8 @@ use super::{describe_token, Parser};
 use crate::errors::{ParseError, ParseErrorKind};
 use crate::token::TokKind;
 use corvid_ast::{
-    AdversarialSpec, EnsembleSpec, Ident, ProgressiveChain, ProgressiveStage, PromptDecl,
-    RolloutSpec, RouteArm, RoutePattern, RouteTable, Visibility, VoteStrategy,
+    AdversarialSpec, EnsembleSpec, EnsembleWeighting, Ident, ProgressiveChain, ProgressiveStage,
+    PromptDecl, RolloutSpec, RouteArm, RoutePattern, RouteTable, Visibility, VoteStrategy,
 };
 
 impl<'a> Parser<'a> {
@@ -392,12 +392,45 @@ impl<'a> Parser<'a> {
             }
         };
 
+        let weighting = if self.peek_ident_is("weighted_by") {
+            self.bump(); // weighted_by
+            match self.peek().clone() {
+                TokKind::Ident(name) if name == "accuracy_history" => {
+                    self.bump();
+                    Some(EnsembleWeighting::AccuracyHistory)
+                }
+                other => {
+                    return Err(ParseError {
+                        kind: ParseErrorKind::UnexpectedToken {
+                            got: describe_token(&other),
+                            expected: "`accuracy_history` after `weighted_by`".into(),
+                        },
+                        span: self.peek_span(),
+                    });
+                }
+            }
+        } else {
+            None
+        };
+
+        let disagreement_escalation = if matches!(self.peek(), TokKind::KwOn) {
+            self.bump(); // on
+            self.expect_contextual_ident("disagreement")?;
+            self.expect_contextual_ident("escalate_to")?;
+            let (name, span) = self.expect_ident()?;
+            Some(Ident::new(name, span))
+        } else {
+            None
+        };
+
         let end = self.prev_span();
         self.expect_newline()?;
 
         Ok(EnsembleSpec {
             models,
             vote,
+            weighting,
+            disagreement_escalation,
             span: start.merge(end),
         })
     }

@@ -237,6 +237,10 @@ pub enum TraceEvent {
         winner: String,
         agreement_rate: f64,
         strategy: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        weights: Option<Vec<f64>>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        escalated_to: Option<String>,
     },
     AdversarialPipelineCompleted {
         ts_ms: u64,

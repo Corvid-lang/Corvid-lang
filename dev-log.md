@@ -5044,3 +5044,16 @@ capability and output format, named dispatch errors on mismatches, and
 `ModelSelected` trace events record the required and picked formats. This
 turns structured-output compatibility into a language-visible routing
 constraint instead of an adapter convention.
+
+## 2026-04-25 - weighted ensemble routing
+
+Closed the Phase 20h weighted ensemble item. `ensemble [...] vote majority`
+now accepts `weighted_by accuracy_history`, which weights each member's answer
+by the runtime calibration accuracy for the prompt/model pair instead of raw
+vote count alone.
+
+The same clause can declare `on disagreement escalate_to <model>`. When
+ensemble answers disagree, the VM dispatches the same prompt to the configured
+fallback model and returns that result. The compiler resolves and validates the
+fallback as a real model, output-format checks still apply, and `EnsembleVote`
+trace events record the strategy, weights, agreement, and escalation target.

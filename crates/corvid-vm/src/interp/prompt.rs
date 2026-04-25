@@ -6,10 +6,11 @@ use crate::value::{value_confidence, ResumeTokenValue, StreamChunk, StreamResume
 use crate::value_to_json;
 use async_recursion::async_recursion;
 use corvid_ast::Span;
-use corvid_ir::{IrPrompt, IrRoutePattern};
+use corvid_ir::{IrEnsembleWeighting, IrPrompt, IrRoutePattern};
 use corvid_resolve::DefId;
 use corvid_runtime::{
-    contradiction_flag, majority_vote, trace_text, LlmRequest, TokenUsage, TraceEvent,
+    contradiction_flag, majority_vote, trace_text, weighted_vote, LlmRequest, TokenUsage,
+    TraceEvent,
 };
 use corvid_types::Type;
 use tokio::task::JoinSet;
@@ -755,22 +756,103 @@ impl<'ir> Interpreter<'ir> {
                 .iter()
                 .map(|(_, result)| super::effect_compose::vote_text(&result.value))
                 .collect();
-            let vote = majority_vote(&results);
-            let winner_index = results
-                .iter()
-                .position(|result| result == &vote.winner)
-                .expect("winner must be one of the results");
-            let total_cost: f64 = member_results.iter().map(|(_, result)| result.cost).sum();
-            let total_tokens: u64 = member_results.iter().map(|(_, result)| result.tokens).sum();
+            let weights = match spec.weighting {
+                Some(IrEnsembleWeighting::AccuracyHistory) => Some(
+                    members
+                        .iter()
+                        .map(|model| {
+                            self.runtime
+                                .calibration_stats(callee_name, model)
+                                .map(|stats| stats.accuracy)
+                                .unwrap_or(1.0)
+                        })
+                        .collect::<Vec<_>>(),
+                ),
+                None => None,
+            };
+            let vote = if let Some(weights) = &weights {
+                weighted_vote(&results, weights)
+            } else {
+                majority_vote(&results)
+            };
+            let mut total_cost: f64 = member_results.iter().map(|(_, result)| result.cost).sum();
+            let mut total_tokens: u64 = member_results.iter().map(|(_, result)| result.tokens).sum();
             let min_confidence = member_results
                 .iter()
                 .map(|(_, result)| result.confidence)
                 .fold(1.0_f64, f64::min);
             let combined_confidence = min_confidence * vote.agreement_rate;
-            let winner_value = super::effect_compose::with_value_confidence(
-                member_results[winner_index].1.value.clone(),
-                combined_confidence,
-            );
+            let disagreed = vote.agreement_rate < 1.0 - f64::EPSILON;
+            let mut escalated_to = None;
+            let (winner_value, final_confidence) =
+                if disagreed {
+                    if let Some(escalation) = &spec.disagreement_escalation {
+                        let selected_model = self.select_named_prompt_model(
+                            callee_name,
+                            &escalation.name,
+                            prompt.output_format_required.as_deref(),
+                            prompt_tokens,
+                            completion_tokens,
+                            None,
+                            None,
+                            span,
+                        )?;
+                        let response = self
+                            .runtime
+                            .call_llm_cacheable(
+                                LlmRequest {
+                                    prompt: callee_name.to_string(),
+                                    model: selected_model.clone(),
+                                    rendered: rendered.clone(),
+                                    args: json_args.clone(),
+                                    output_schema: output_schema.clone(),
+                                },
+                                prompt.cacheable,
+                            )
+                            .await
+                            .map_err(|e| InterpError::new(InterpErrorKind::Runtime(e), span))?;
+                        let result = self.decode_prompt_response(
+                            prompt,
+                            callee_name,
+                            arg_values,
+                            &rendered,
+                            &selected_model,
+                            response.value,
+                            response.usage,
+                            response.confidence,
+                            response.calibration.map(|c| c.actual_correct),
+                            span,
+                        )?;
+                        total_cost += result.cost;
+                        total_tokens += result.tokens;
+                        escalated_to = Some(selected_model);
+                        (result.value, result.confidence)
+                    } else {
+                        let winner_index = results
+                            .iter()
+                            .position(|result| result == &vote.winner)
+                            .expect("winner must be one of the results");
+                        (
+                            super::effect_compose::with_value_confidence(
+                                member_results[winner_index].1.value.clone(),
+                                combined_confidence,
+                            ),
+                            combined_confidence,
+                        )
+                    }
+                } else {
+                    let winner_index = results
+                        .iter()
+                        .position(|result| result == &vote.winner)
+                        .expect("winner must be one of the results");
+                    (
+                        super::effect_compose::with_value_confidence(
+                            member_results[winner_index].1.value.clone(),
+                            combined_confidence,
+                        ),
+                        combined_confidence,
+                    )
+                };
 
             self.runtime.tracer().emit(TraceEvent::EnsembleVote {
                 ts_ms: corvid_runtime::now_ms(),
@@ -780,7 +862,14 @@ impl<'ir> Interpreter<'ir> {
                 results: results.clone(),
                 winner: vote.winner.clone(),
                 agreement_rate: vote.agreement_rate,
-                strategy: "majority".to_string(),
+                strategy: match spec.weighting {
+                    Some(IrEnsembleWeighting::AccuracyHistory) => {
+                        "majority weighted_by accuracy_history".to_string()
+                    }
+                    None => "majority".to_string(),
+                },
+                weights,
+                escalated_to: escalated_to.clone(),
             });
 
             if self.should_yield_boundary() {
@@ -788,7 +877,7 @@ impl<'ir> Interpreter<'ir> {
                     .maybe_yield(StepEvent::AfterPromptCall {
                         prompt_name: callee_name.to_string(),
                         result: value_to_json(&winner_value),
-                        result_confidence: combined_confidence,
+                        result_confidence: final_confidence,
                         elapsed_ms: ensemble_start.elapsed().as_millis() as u64,
                         span,
                     })
@@ -819,7 +908,7 @@ impl<'ir> Interpreter<'ir> {
             Ok(PromptCallResult {
                 value: winner_value,
                 cost: total_cost,
-                confidence: combined_confidence,
+                confidence: final_confidence,
                 tokens: total_tokens,
                 cost_charged: false,
             })

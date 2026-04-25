@@ -184,6 +184,8 @@ pub struct IrEnsembleSpec {
     /// `tokio::join!` and applies the vote strategy to the results.
     pub models: Vec<IrEnsembleMember>,
     pub vote: IrVoteStrategy,
+    pub weighting: Option<IrEnsembleWeighting>,
+    pub disagreement_escalation: Option<IrEnsembleMember>,
     pub span: Span,
 }
 
@@ -197,6 +199,11 @@ pub struct IrEnsembleMember {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IrVoteStrategy {
     Majority,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IrEnsembleWeighting {
+    AccuracyHistory,
 }
 
 /// Lowered adversarial pipeline. Runtime runs proposer →

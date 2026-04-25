@@ -2126,6 +2126,42 @@ prompt answer(q: String) -> String:
     }
 
     #[test]
+    fn parses_weighted_ensemble_with_disagreement_escalation() {
+        let src = "\
+model a:
+    capability: basic
+
+model b:
+    capability: standard
+
+model judge:
+    capability: expert
+
+prompt answer(q: String) -> String:
+    ensemble [a, b] vote majority weighted_by accuracy_history on disagreement escalate_to judge
+    \"Answer\"
+";
+        let file = parse_file_src(src);
+        let p = file
+            .decls
+            .iter()
+            .find_map(|d| match d {
+                Decl::Prompt(p) => Some(p),
+                _ => None,
+            })
+            .unwrap();
+        let spec = p.ensemble.as_ref().expect("ensemble");
+        assert_eq!(
+            spec.weighting,
+            Some(corvid_ast::EnsembleWeighting::AccuracyHistory)
+        );
+        assert_eq!(
+            spec.disagreement_escalation.as_ref().unwrap().name,
+            "judge"
+        );
+    }
+
+    #[test]
     fn rejects_ensemble_with_single_model() {
         let src = "\
 model only:

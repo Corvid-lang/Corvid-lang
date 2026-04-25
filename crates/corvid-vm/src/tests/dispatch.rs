@@ -1577,6 +1577,145 @@ agent run(q: String) -> String:
 }
 
 #[tokio::test]
+async fn ensemble_weighted_by_accuracy_history_can_override_raw_majority() {
+    let src = r#"
+model a:
+    capability: basic
+
+model b:
+    capability: standard
+
+model c:
+    capability: expert
+
+prompt answer(q: String) -> String:
+    ensemble [a, b, c] vote majority weighted_by accuracy_history
+    "Answer {q}."
+
+agent run(q: String) -> String:
+    return answer(q)
+"#;
+    let ir = ir_of(src);
+    let trace_dir = std::env::temp_dir().join(format!(
+        "corvid-vm-ensemble-weighted-{}",
+        corvid_runtime::now_ms()
+    ));
+    std::fs::create_dir_all(&trace_dir).unwrap();
+    let rt = Runtime::builder()
+        .tracer(corvid_runtime::Tracer::open(&trace_dir, "run-ensemble-weighted"))
+        .llm(Arc::new(MockAdapter::new("a").reply("answer", json!("alpha"))))
+        .llm(Arc::new(MockAdapter::new("b").reply("answer", json!("beta"))))
+        .llm(Arc::new(MockAdapter::new("c").reply("answer", json!("beta"))))
+        .model(RegisteredModel::new("a").capability("basic"))
+        .model(RegisteredModel::new("b").capability("standard"))
+        .model(RegisteredModel::new("c").capability("expert"))
+        .default_model("a")
+        .build();
+    rt.record_calibration("answer", "a", 1.0, true);
+    rt.record_calibration("answer", "b", 1.0, false);
+    rt.record_calibration("answer", "c", 1.0, false);
+
+    let value = run_agent(&ir, "run", vec![Value::String(Arc::from("x"))], &rt)
+        .await
+        .expect("run");
+    assert_eq!(value, Value::String(Arc::from("alpha")));
+    drop(rt);
+
+    let body = std::fs::read_to_string(trace_dir.join("run-ensemble-weighted.jsonl"))
+        .expect("trace file");
+    let events: Vec<TraceEvent> = body
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| serde_json::from_str(line).expect("valid trace event"))
+        .collect();
+    assert!(events.iter().any(|event| matches!(
+        event,
+        TraceEvent::EnsembleVote {
+            prompt,
+            winner,
+            strategy,
+            weights,
+            escalated_to,
+            ..
+        } if prompt == "answer"
+            && winner == "alpha"
+            && strategy == "majority weighted_by accuracy_history"
+            && weights.as_ref() == Some(&vec![1.0, 0.0, 0.0])
+            && escalated_to.is_none()
+    )));
+}
+
+#[tokio::test]
+async fn ensemble_disagreement_escalates_to_configured_model() {
+    let src = r#"
+model a:
+    capability: basic
+
+model b:
+    capability: standard
+
+model judge:
+    capability: expert
+
+prompt answer(q: String) -> String:
+    ensemble [a, b] vote majority on disagreement escalate_to judge
+    "Answer {q}."
+
+agent run(q: String) -> String:
+    return answer(q)
+"#;
+    let ir = ir_of(src);
+    let trace_dir = std::env::temp_dir().join(format!(
+        "corvid-vm-ensemble-escalation-{}",
+        corvid_runtime::now_ms()
+    ));
+    std::fs::create_dir_all(&trace_dir).unwrap();
+    let rt = Runtime::builder()
+        .tracer(corvid_runtime::Tracer::open(
+            &trace_dir,
+            "run-ensemble-escalation",
+        ))
+        .llm(Arc::new(MockAdapter::new("a").reply("answer", json!("alpha"))))
+        .llm(Arc::new(MockAdapter::new("b").reply("answer", json!("beta"))))
+        .llm(Arc::new(MockAdapter::new("judge").reply("answer", json!("final"))))
+        .model(RegisteredModel::new("a").capability("basic"))
+        .model(RegisteredModel::new("b").capability("standard"))
+        .model(RegisteredModel::new("judge").capability("expert"))
+        .default_model("a")
+        .build();
+
+    let value = run_agent(&ir, "run", vec![Value::String(Arc::from("x"))], &rt)
+        .await
+        .expect("run");
+    assert_eq!(value, Value::String(Arc::from("final")));
+    drop(rt);
+
+    let body = std::fs::read_to_string(trace_dir.join("run-ensemble-escalation.jsonl"))
+        .expect("trace file");
+    let events: Vec<TraceEvent> = body
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| serde_json::from_str(line).expect("valid trace event"))
+        .collect();
+    assert!(events.iter().any(|event| matches!(
+        event,
+        TraceEvent::EnsembleVote {
+            prompt,
+            agreement_rate,
+            escalated_to,
+            ..
+        } if prompt == "answer"
+            && (*agreement_rate - 0.5).abs() < 1e-9
+            && escalated_to.as_deref() == Some("judge")
+    )));
+    assert!(events.iter().any(|event| matches!(
+        event,
+        TraceEvent::LlmCall { prompt, model, .. }
+            if prompt == "answer" && model.as_deref() == Some("judge")
+    )));
+}
+
+#[tokio::test]
 async fn ensemble_dispatch_charges_sum_of_member_costs() {
     let src = r#"
 model a:

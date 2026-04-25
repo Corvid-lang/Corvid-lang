@@ -434,9 +434,25 @@ impl<'a> Lowerer<'a> {
             let vote = match spec.vote {
                 corvid_ast::VoteStrategy::Majority => IrVoteStrategy::Majority,
             };
+            let weighting = spec.weighting.map(|weighting| match weighting {
+                corvid_ast::EnsembleWeighting::AccuracyHistory => {
+                    IrEnsembleWeighting::AccuracyHistory
+                }
+            });
+            let disagreement_escalation =
+                spec.disagreement_escalation.as_ref().and_then(|model| {
+                    let def_id = self.symbols.lookup_def(&model.name)?;
+                    Some(IrEnsembleMember {
+                        def_id: self.remap_def_id(def_id),
+                        name: model.name.clone(),
+                        span: model.span,
+                    })
+                });
             IrEnsembleSpec {
                 models: members,
                 vote,
+                weighting,
+                disagreement_escalation,
                 span: spec.span,
             }
         });

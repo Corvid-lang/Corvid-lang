@@ -238,6 +238,25 @@ impl<'a> Checker<'a> {
                     }
                 }
             }
+            if let Some(model) = &spec.disagreement_escalation {
+                if let Some(Binding::Decl(def_id)) = self.bindings.get(&model.span) {
+                    let def_id = *def_id;
+                    let entry = self.symbols.get(def_id);
+                    if entry.kind != corvid_resolve::DeclKind::Model {
+                        let got = format!("{:?}", entry.kind).to_lowercase();
+                        self.errors.push(TypeError::new(
+                            TypeErrorKind::RouteTargetNotModel {
+                                prompt: p.name.name.clone(),
+                                target: model.name.clone(),
+                                got_kind: got,
+                            },
+                            model.span,
+                        ));
+                    } else {
+                        self.check_model_output_format(p, def_id, model);
+                    }
+                }
+            }
         }
 
         // Phase 20h slice G (compiler follow-up): each adversarial

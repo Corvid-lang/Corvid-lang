@@ -2920,6 +2920,19 @@ and trace evidence. That matters because AI-native programs need to prove
 compatibility at the boundary where free-form generation becomes typed program
 data.
 
+## 20h-weighted-ensemble-routing
+
+Majority vote is a useful baseline, but AI-native routing should learn from
+observed behavior. `weighted_by accuracy_history` turns calibration history
+into a first-class dispatch signal: a historically reliable minority model can
+beat an unreliable raw majority.
+
+Disagreement escalation is the safety valve. When ensemble members disagree,
+Corvid can route the same prompt to a declared stronger model instead of
+pretending a split vote is decisive. The important design point is that both
+the weighting and fallback are visible in syntax, typechecked as model
+references, and recorded in traces.
+
 ## Contributing / feedback
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). The rules of the road are: design chat before code, per-scope commits at every boundary, dev-log entry for every session, no shortcuts. The `learnings.md` file you're reading gets updated when each user-visible feature ships.
