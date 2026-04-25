@@ -1444,7 +1444,7 @@ The determinism-source catalog and the language's treatment of non-reproducible 
 - [x] `corvid eval <file>` runs all `eval` blocks; produces terminal report + HTML report. Shipped as a reusable driver eval runner plus CLI path that writes `target/eval/<source>/report.html` and preserves `--swap-model` migration analysis.
 - [x] Regression detection against prior eval results (stored under `target/eval/`). Shipped via persisted `latest.json` / `previous.json` summaries under each eval output directory, with terminal and HTML surfacing for newly failing evals/assertions.
 - CI exit-code contract: non-zero if any `assert` fails or regression threshold crossed.
-- Trace-aware eval reporting: value pass rates, process assertions, approval assertions, groundedness, cost, latency, model route, and replay compatibility in one report.
+- [x] Trace-aware eval reporting: value pass rates, process assertions, approval assertions, groundedness, cost, latency, model route, and replay compatibility in one report. Shipped by scanning eval JSONL artifacts under `target/eval/<source>/`, validating schema compatibility, and folding trace metrics into terminal + HTML reports.
 - Prompt-diff report: when a prompt body changed between runs, show before/after + delta in grounding / cost / assert pass-rates.
 - Model-swap eval mode uses Phase 21 replay and Phase 20 model metadata to compare provider/model choices without spending on unchanged tool paths.
 - `corvid eval compare <base>..<head>`: PR-friendly eval diff with pass-rate deltas, cost deltas, latency deltas, model-route changes, prompt diffs, and trace/process assertion changes.

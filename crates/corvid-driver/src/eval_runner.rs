@@ -3,10 +3,12 @@ use crate::{
 };
 use corvid_ir::{IrFile, IrTest};
 use corvid_runtime::Runtime;
+use corvid_trace_schema::{read_events_from_path, validate_supported_schema, TraceEvent};
 use corvid_vm::{
     run_all_tests_with_options, SnapshotOptions, TestAssertionStatus, TestExecution,
     TestRunOptions, TraceFixtureOptions,
 };
+use std::collections::BTreeSet;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::path::{Path, PathBuf};
@@ -35,6 +37,7 @@ pub struct CorvidEvalReport {
     pub evals: Vec<TestExecution>,
     pub html_report_path: PathBuf,
     pub regression: EvalRegressionReport,
+    pub trace: EvalTraceReport,
 }
 
 impl CorvidEvalReport {
@@ -47,6 +50,26 @@ impl CorvidEvalReport {
     pub fn exit_code(&self) -> u8 {
         if self.passed() { 0 } else { 1 }
     }
+}
+
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct EvalTraceReport {
+    pub trace_count: usize,
+    pub replay_compatible_count: usize,
+    pub invalid_traces: Vec<String>,
+    pub value_assertions_passed: usize,
+    pub value_assertions_total: usize,
+    pub process_assertions_passed: usize,
+    pub process_assertions_total: usize,
+    pub approval_assertions_passed: usize,
+    pub approval_assertions_total: usize,
+    pub tool_calls: usize,
+    pub prompt_calls: usize,
+    pub approval_events: usize,
+    pub grounded_edges: usize,
+    pub total_cost_usd: f64,
+    pub total_latency_ms: u64,
+    pub model_routes: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -99,6 +122,7 @@ pub async fn run_evals_at_path_with_options(
                 evals: Vec::new(),
                 html_report_path,
                 regression,
+                trace: collect_trace_report(path, &[]),
             };
             write_eval_html_report(&report).map_err(|error| EvalRunnerError::Io {
                 path: report.html_report_path.clone(),
@@ -119,6 +143,7 @@ pub async fn run_evals_at_path_with_options(
     let report = CorvidEvalReport {
         source_path: path.to_path_buf(),
         compile_diagnostics: Vec::new(),
+        trace: collect_trace_report(path, &evals),
         evals,
         html_report_path,
         regression,
@@ -210,12 +235,53 @@ pub fn render_eval_report(report: &CorvidEvalReport, source: Option<&str>) -> St
         }
     }
     out.push_str(&format!("\n{passed} passed, {failed} failed\n"));
+    render_trace_summary(report, &mut out);
     render_regression_summary(report, &mut out);
     out.push_str(&format!(
         "HTML report: {}\n",
         report.html_report_path.display()
     ));
     out
+}
+
+fn render_trace_summary(report: &CorvidEvalReport, out: &mut String) {
+    let trace = &report.trace;
+    out.push_str(&format!(
+        "Trace report: {} trace{}, {} replay-compatible",
+        trace.trace_count,
+        if trace.trace_count == 1 { "" } else { "s" },
+        trace.replay_compatible_count
+    ));
+    if !trace.invalid_traces.is_empty() {
+        out.push_str(&format!(", {} invalid", trace.invalid_traces.len()));
+    }
+    out.push('\n');
+    out.push_str(&format!(
+        "  values: {}/{} passed; process: {}/{} passed; approvals: {}/{} passed\n",
+        trace.value_assertions_passed,
+        trace.value_assertions_total,
+        trace.process_assertions_passed,
+        trace.process_assertions_total,
+        trace.approval_assertions_passed,
+        trace.approval_assertions_total
+    ));
+    out.push_str(&format!(
+        "  calls: {} tool, {} prompt, {} approval; grounded edges: {}; cost: ${:.6}; latency: {} ms\n",
+        trace.tool_calls,
+        trace.prompt_calls,
+        trace.approval_events,
+        trace.grounded_edges,
+        trace.total_cost_usd,
+        trace.total_latency_ms
+    ));
+    if trace.model_routes.is_empty() {
+        out.push_str("  model routes: none recorded\n");
+    } else {
+        out.push_str(&format!(
+            "  model routes: {}\n",
+            trace.model_routes.join(", ")
+        ));
+    }
 }
 
 fn render_regression_summary(report: &CorvidEvalReport, out: &mut String) {
@@ -313,6 +379,47 @@ fn render_eval_html_report(report: &CorvidEvalReport) -> String {
         }
         out.push_str("</ul>");
     }
+    out.push_str("<h2>Trace report</h2>");
+    out.push_str(&format!(
+        "<p>{} trace(s), {} replay-compatible, {} invalid.</p>",
+        report.trace.trace_count,
+        report.trace.replay_compatible_count,
+        report.trace.invalid_traces.len()
+    ));
+    out.push_str("<ul>");
+    out.push_str(&format!(
+        "<li>Value assertions: {}/{}</li>",
+        report.trace.value_assertions_passed, report.trace.value_assertions_total
+    ));
+    out.push_str(&format!(
+        "<li>Process assertions: {}/{}</li>",
+        report.trace.process_assertions_passed, report.trace.process_assertions_total
+    ));
+    out.push_str(&format!(
+        "<li>Approval assertions: {}/{}</li>",
+        report.trace.approval_assertions_passed, report.trace.approval_assertions_total
+    ));
+    out.push_str(&format!(
+        "<li>Calls: {} tool, {} prompt, {} approval</li>",
+        report.trace.tool_calls, report.trace.prompt_calls, report.trace.approval_events
+    ));
+    out.push_str(&format!(
+        "<li>Groundedness: {} provenance edge(s)</li>",
+        report.trace.grounded_edges
+    ));
+    out.push_str(&format!(
+        "<li>Cost: ${:.6}; latency: {} ms</li>",
+        report.trace.total_cost_usd, report.trace.total_latency_ms
+    ));
+    out.push_str(&format!(
+        "<li>Model routes: {}</li>",
+        escape_html(&if report.trace.model_routes.is_empty() {
+            "none recorded".into()
+        } else {
+            report.trace.model_routes.join(", ")
+        })
+    ));
+    out.push_str("</ul>");
     out.push_str("<table><thead><tr><th>Eval</th><th>Status</th><th>Assertions</th></tr></thead><tbody>");
     for eval in &report.evals {
         let class = if eval.passed() { "pass" } else { "fail" };
@@ -399,6 +506,154 @@ fn escape_html(raw: &str) -> String {
             other => vec![other],
         })
         .collect()
+}
+
+fn collect_trace_report(path: &Path, evals: &[TestExecution]) -> EvalTraceReport {
+    let mut report = EvalTraceReport::default();
+    for eval in evals {
+        for assertion in &eval.assertions {
+            let passed = assertion.status == TestAssertionStatus::Passed;
+            if assertion.label == "assert <expr>" {
+                report.value_assertions_total += 1;
+                if passed {
+                    report.value_assertions_passed += 1;
+                }
+            }
+            if is_process_assertion(&assertion.label) {
+                report.process_assertions_total += 1;
+                if passed {
+                    report.process_assertions_passed += 1;
+                }
+            }
+            if assertion.label.starts_with("assert approved ") {
+                report.approval_assertions_total += 1;
+                if passed {
+                    report.approval_assertions_passed += 1;
+                }
+            }
+        }
+    }
+
+    let mut routes = BTreeSet::new();
+    for trace_path in find_trace_artifacts(&eval_output_dir(path)) {
+        report.trace_count += 1;
+        match read_events_from_path(&trace_path)
+            .map_err(|error| error.to_string())
+            .and_then(|events| {
+                validate_supported_schema(&events)
+                    .map_err(|error| error.to_string())
+                    .map(|()| events)
+            }) {
+            Ok(events) => {
+                if is_replay_compatible_trace(&events) {
+                    report.replay_compatible_count += 1;
+                }
+                summarize_trace_events(&events, &mut report, &mut routes);
+            }
+            Err(error) => report
+                .invalid_traces
+                .push(format!("{}: {error}", trace_path.display())),
+        }
+    }
+    report.model_routes = routes.into_iter().collect();
+    report
+}
+
+fn is_process_assertion(label: &str) -> bool {
+    label.starts_with("assert called ") || label.starts_with("assert cost < ")
+}
+
+fn find_trace_artifacts(root: &Path) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    collect_trace_artifacts(root, &mut out);
+    out.sort();
+    out
+}
+
+fn collect_trace_artifacts(dir: &Path, out: &mut Vec<PathBuf>) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            collect_trace_artifacts(&path, out);
+        } else if path.extension().and_then(|ext| ext.to_str()) == Some("jsonl") {
+            out.push(path);
+        }
+    }
+}
+
+fn is_replay_compatible_trace(events: &[TraceEvent]) -> bool {
+    events
+        .iter()
+        .any(|event| matches!(event, TraceEvent::RunStarted { .. }))
+        && events
+            .iter()
+            .any(|event| matches!(event, TraceEvent::RunCompleted { .. }))
+}
+
+fn summarize_trace_events(
+    events: &[TraceEvent],
+    report: &mut EvalTraceReport,
+    routes: &mut BTreeSet<String>,
+) {
+    let mut started_at = None;
+    let mut completed_at = None;
+    for event in events {
+        match event {
+            TraceEvent::RunStarted { ts_ms, .. } => started_at = Some(*ts_ms),
+            TraceEvent::RunCompleted { ts_ms, .. } => completed_at = Some(*ts_ms),
+            TraceEvent::ToolCall { .. } => report.tool_calls += 1,
+            TraceEvent::LlmCall {
+                prompt,
+                model,
+                model_version,
+                ..
+            } => {
+                report.prompt_calls += 1;
+                if let Some(model) = model {
+                    routes.insert(model_route_label(prompt, model, model_version.as_deref()));
+                }
+            }
+            TraceEvent::ApprovalRequest { .. }
+            | TraceEvent::ApprovalDecision { .. }
+            | TraceEvent::ApprovalResponse { .. } => report.approval_events += 1,
+            TraceEvent::ModelSelected {
+                prompt,
+                model,
+                model_version,
+                cost_estimate,
+                ..
+            } => {
+                if cost_estimate.is_finite() && *cost_estimate > 0.0 {
+                    report.total_cost_usd += *cost_estimate;
+                }
+                routes.insert(model_route_label(prompt, model, model_version.as_deref()));
+            }
+            TraceEvent::HostEvent { payload, .. } => {
+                if let Some(cost) = payload
+                    .get("cost_usd")
+                    .and_then(|value| value.as_f64())
+                    .filter(|value| value.is_finite() && *value > 0.0)
+                {
+                    report.total_cost_usd += cost;
+                }
+            }
+            TraceEvent::ProvenanceEdge { .. } => report.grounded_edges += 1,
+            _ => {}
+        }
+    }
+    if let (Some(start), Some(end)) = (started_at, completed_at) {
+        report.total_latency_ms += end.saturating_sub(start);
+    }
+}
+
+fn model_route_label(prompt: &str, model: &str, version: Option<&str>) -> String {
+    match version {
+        Some(version) if !version.is_empty() => format!("{prompt}:{model}@{version}"),
+        _ => format!("{prompt}:{model}"),
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -539,6 +794,7 @@ fn compare_eval_summaries(prior: &EvalSummary, current: &EvalSummary) -> Vec<Eva
 mod tests {
     use super::*;
     use corvid_runtime::Runtime;
+    use corvid_trace_schema::{write_events_to_path, SCHEMA_VERSION, WRITER_INTERPRETER};
 
     #[tokio::test]
     async fn run_evals_at_path_reports_pass_and_fail_and_writes_html() {
@@ -626,5 +882,107 @@ eval math:
         assert!(second.regression.prior_path.exists());
         let rendered = render_eval_report(&second, None);
         assert!(rendered.contains("Regressions: 2"), "{rendered}");
+    }
+
+    #[tokio::test]
+    async fn run_evals_at_path_summarizes_trace_artifacts() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("suite.cor");
+        std::fs::write(
+            &path,
+            r#"
+eval math:
+    x = 42
+    assert x == 42
+"#,
+        )
+        .expect("write");
+        let trace_dir = eval_output_dir(&path).join("traces");
+        std::fs::create_dir_all(&trace_dir).expect("trace dir");
+        write_events_to_path(
+            &trace_dir.join("run.jsonl"),
+            &[
+                TraceEvent::SchemaHeader {
+                    version: SCHEMA_VERSION,
+                    writer: WRITER_INTERPRETER.into(),
+                    commit_sha: None,
+                    source_path: Some("suite.cor".into()),
+                    ts_ms: 0,
+                    run_id: "r".into(),
+                },
+                TraceEvent::RunStarted {
+                    ts_ms: 10,
+                    run_id: "r".into(),
+                    agent: "answer".into(),
+                    args: vec![],
+                },
+                TraceEvent::ModelSelected {
+                    ts_ms: 20,
+                    run_id: "r".into(),
+                    prompt: "draft".into(),
+                    model: "fast".into(),
+                    model_version: Some("1".into()),
+                    capability_required: None,
+                    capability_picked: None,
+                    output_format_required: None,
+                    output_format_picked: None,
+                    cost_estimate: 0.01,
+                    arm_index: None,
+                    stage_index: None,
+                },
+                TraceEvent::LlmCall {
+                    ts_ms: 21,
+                    run_id: "r".into(),
+                    prompt: "draft".into(),
+                    model: Some("fast".into()),
+                    model_version: Some("1".into()),
+                    rendered: None,
+                    args: vec![],
+                },
+                TraceEvent::ToolCall {
+                    ts_ms: 30,
+                    run_id: "r".into(),
+                    tool: "lookup".into(),
+                    args: vec![],
+                },
+                TraceEvent::ApprovalRequest {
+                    ts_ms: 40,
+                    run_id: "r".into(),
+                    label: "Ship".into(),
+                    args: vec![],
+                },
+                TraceEvent::ProvenanceEdge {
+                    ts_ms: 45,
+                    run_id: "r".into(),
+                    node_id: "tool:1".into(),
+                    parents: vec![],
+                    op: "tool_call:lookup".into(),
+                    label: None,
+                },
+                TraceEvent::RunCompleted {
+                    ts_ms: 55,
+                    run_id: "r".into(),
+                    ok: true,
+                    result: Some(serde_json::json!(42)),
+                    error: None,
+                },
+            ],
+        )
+        .expect("write trace");
+
+        let runtime = Runtime::builder().build();
+        let report = run_evals_at_path(&path, &runtime).await.expect("run");
+
+        assert_eq!(report.trace.trace_count, 1);
+        assert_eq!(report.trace.replay_compatible_count, 1);
+        assert_eq!(report.trace.tool_calls, 1);
+        assert_eq!(report.trace.prompt_calls, 1);
+        assert_eq!(report.trace.approval_events, 1);
+        assert_eq!(report.trace.grounded_edges, 1);
+        assert_eq!(report.trace.total_latency_ms, 45);
+        assert!(report.trace.model_routes.contains(&"draft:fast@1".into()));
+        let rendered = render_eval_report(&report, None);
+        assert!(rendered.contains("Trace report: 1 trace"), "{rendered}");
+        assert!(rendered.contains("model routes: draft:fast@1"), "{rendered}");
     }
 }
