@@ -2502,6 +2502,33 @@ negation; division and modulo by zero still trap. That keeps hash-mixing and
 low-level arithmetic possible without turning the annotation into a blanket
 "unsafe arithmetic" mode.
 
+## 20e-confidence-gated-trust
+
+`autonomous_if_confident(T)` only matters if it is a runtime boundary, not just
+a pretty trust value in the static effect algebra. The checker can treat the
+gate's `above` tier as autonomous for compile-time composition, but the
+interpreter must still inspect the actual confidence flowing through the call.
+
+The right behavior is conditional approval activation:
+
+```corvid
+effect gated_refund:
+    trust: autonomous_if_confident(0.90)
+
+tool issue_refund(decision: String) -> Receipt uses gated_refund
+```
+
+If the input confidence is `0.95`, the tool runs autonomously. If it is `0.70`,
+the interpreter calls the normal approval gate before dispatching the tool.
+That preserves the safety model without requiring programmers to write two
+manual branches for every uncertainty boundary.
+
+Prompt confidence has to travel with the value. Measuring a prompt result's
+confidence but returning a plain `String` loses the exact metadata downstream
+confidence gates need. Wrapping low-confidence prompt outputs as `Grounded<T>`
+keeps the runtime value carrying its statistical provenance while preserving
+ordinary source-level ergonomics.
+
 ## Contributing / feedback
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). The rules of the road are: design chat before code, per-scope commits at every boundary, dev-log entry for every session, no shortcuts. The `learnings.md` file you're reading gets updated when each user-visible feature ships.

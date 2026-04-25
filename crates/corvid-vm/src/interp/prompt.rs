@@ -473,7 +473,9 @@ impl<'ir> Interpreter<'ir> {
                     .await?,
             ))
         } else {
-            Ok(ExprFlow::Value(result.value))
+            Ok(ExprFlow::Value(
+                super::effect_compose::with_value_confidence(result.value, result.confidence),
+            ))
         }
     }
 

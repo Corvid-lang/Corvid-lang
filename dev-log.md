@@ -4699,3 +4699,24 @@ Validation covered parser recognition, IR node selection, VM overflow behavior,
 Python helper emission, and native parity for addition overflow and unary
 negation. `cargo fmt --check` remains blocked locally because rustfmt is not
 installed for the active stable toolchain.
+
+## 2026-04-25 - Phase 20e confidence-gated trust runtime
+
+Closed the static/runtime core of confidence-gated trust. Effect declarations
+now reject out-of-range `confidence` values and
+`autonomous_if_confident(T)` thresholds before they reach the registry or IR.
+
+The interpreter now treats a low-confidence `autonomous_if_confident(T)` tool
+call as a dynamic approval boundary instead of a hard denial. It computes the
+composed input confidence, and when the value is below the tool threshold it
+routes through the same `Runtime::approval_gate` path used by explicit
+`approve` statements. If the approver accepts, the tool dispatch continues; if
+the approver denies, the ordinary `ApprovalDenied` runtime error surfaces.
+
+Prompt confidence now propagates into ordinary non-stream prompt return values
+by wrapping low-confidence results as `Grounded<T>` with confidence metadata.
+That makes downstream confidence gates observe prompt-derived uncertainty
+instead of defaulting every plain prompt result to confidence `1.0`.
+
+Remaining Phase 20e work is intentionally separate: calibrated prompt
+statistics and REPL step-through confidence display.

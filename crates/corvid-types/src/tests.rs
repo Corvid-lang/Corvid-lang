@@ -1580,6 +1580,44 @@ agent bot(q: String) -> String:
     }
 
     #[test]
+    fn effect_confidence_out_of_range_is_rejected() {
+        let src = "\
+effect impossible_confidence:
+    confidence: 1.50
+
+tool classify(q: String) -> String uses impossible_confidence
+";
+        let c = check(src);
+        assert!(
+            c.errors.iter().any(|e| matches!(
+                e.kind,
+                TypeErrorKind::InvalidConfidence { value } if (value - 1.50).abs() < 1e-9
+            )),
+            "expected InvalidConfidence for effect confidence, got {:?}",
+            c.errors
+        );
+    }
+
+    #[test]
+    fn confidence_gated_trust_threshold_out_of_range_is_rejected() {
+        let src = "\
+effect unsafe_gate:
+    trust: autonomous_if_confident(1.50)
+
+tool act(q: String) -> String uses unsafe_gate
+";
+        let c = check(src);
+        assert!(
+            c.errors.iter().any(|e| matches!(
+                e.kind,
+                TypeErrorKind::InvalidConfidence { value } if (value - 1.50).abs() < 1e-9
+            )),
+            "expected InvalidConfidence for confidence gate threshold, got {:?}",
+            c.errors
+        );
+    }
+
+    #[test]
     fn yield_requires_stream_return() {
         let src = "\
 agent writer() -> String:

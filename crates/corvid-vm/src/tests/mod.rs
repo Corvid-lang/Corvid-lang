@@ -5,7 +5,7 @@ use corvid_ir::lower;
 use corvid_resolve::resolve;
 use corvid_runtime::{
     llm::{mock::MockAdapter, TokenUsage},
-    ProgrammaticApprover, RegisteredModel, Runtime, RuntimeError, TraceEvent,
+    ApprovalDecision, ProgrammaticApprover, RegisteredModel, Runtime, RuntimeError, TraceEvent,
 };
 use corvid_syntax::{lex, parse_file};
 use corvid_types::typecheck;

@@ -734,30 +734,25 @@ impl<'ir> Interpreter<'ir> {
                     )
                 })?;
 
+                let json_args: Vec<serde_json::Value> =
+                    arg_values.iter().map(value_to_json).collect();
+
                 // Runtime confidence gate: if the tool has
                 // `trust: autonomous_if_confident(T)` in its declared
                 // effects, check that composed input confidence >= T.
-                // If below, raise an approval-required error — the
-                // autonomous path is not safe for this specific call.
+                // If below, activate the same approval path used by
+                // explicit `approve` statements before dispatching the
+                // tool.
                 if let Some(threshold) = tool.confidence_gate {
                     let actual = composed_confidence(&arg_values);
                     if actual < threshold {
-                        return Err(InterpError::new(
-                            InterpErrorKind::Runtime(
-                                corvid_runtime::RuntimeError::ApprovalDenied {
-                                    action: format!(
-                                        "{callee_name}: confidence gate failed — composed input confidence {:.3} < required {:.3}. This tool declared `autonomous_if_confident({:.3})` but the runtime-observed confidence falls below threshold; human approval required.",
-                                        actual, threshold, threshold,
-                                    ),
-                                },
-                            ),
-                            span,
-                        ));
+                        let label = format!("ConfidenceGate:{callee_name}");
+                        self.runtime
+                            .approval_gate(&label, json_args.clone())
+                            .await
+                            .map_err(|e| InterpError::new(InterpErrorKind::Runtime(e), span))?;
                     }
                 }
-
-                let json_args: Vec<serde_json::Value> =
-                    arg_values.iter().map(value_to_json).collect();
                 let is_grounded = tool.effect_names.iter().any(|e| e == "retrieval");
                 let result_decode_ty = match (&tool.return_ty, is_grounded) {
                     (Type::Grounded(inner), true) => inner.as_ref(),

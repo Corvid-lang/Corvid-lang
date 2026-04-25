@@ -547,10 +547,10 @@ Confidence is a dimension in the effect system. The `Min` composition rule means
 
 The invention: confidence isn't a number — it's a dynamic authorization gate. The compiler couples confidence to trust, so a confident agent can act autonomously and an uncertain agent is forced to get human approval. No other system does this.
 
-- [ ] `autonomous_if_confident(threshold)` trust variant: couples trust level to composed confidence. Above threshold → autonomous. Below → human approval activates at runtime.
-- [ ] Confidence propagation: deterministic tools produce confidence 1.0, prompts carry LLM-reported confidence, `Min` composition through the call graph.
-- [ ] Confidence gate in the interpreter: at tool dispatch, if trust is `autonomous_if_confident(T)`, compute composed confidence of inputs. Below T → dynamically activate the approval prompt.
-- [ ] `@min_confidence(P)` compile-time constraint: compiler proves all paths to irreversible actions meet the confidence floor.
+- [x] `autonomous_if_confident(threshold)` trust variant: couples trust level to composed confidence. Above threshold → autonomous. Below → human approval activates at runtime.
+- [x] Confidence propagation: deterministic tools produce confidence 1.0, prompts carry LLM-reported confidence, `Min` composition through the call graph.
+- [x] Confidence gate in the interpreter: at tool dispatch, if trust is `autonomous_if_confident(T)`, compute composed confidence of inputs. Below T → dynamically activate the approval prompt.
+- [x] `@min_confidence(P)` compile-time constraint: compiler proves all paths to irreversible actions meet the confidence floor.
 - [ ] `calibrated` modifier on prompts: runtime accumulates accuracy statistics, flags miscalibrated models when self-reported confidence drifts from actual accuracy.
 - [ ] REPL integration: step-through shows confidence at each step. Confidence gates show threshold vs. actual when they fire.
 

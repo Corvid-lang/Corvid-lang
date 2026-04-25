@@ -1,4 +1,5 @@
 use super::*;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 // ---------------------------- Runtime integration ----------------------
 
@@ -137,6 +138,162 @@ agent run(id: String, amount: Float) -> Receipt:
         }
         other => panic!("expected Runtime(ApprovalDenied), got {other:?}"),
     }
+}
+
+#[tokio::test]
+async fn confidence_gate_below_threshold_asks_approver_and_continues_when_approved() {
+    let src = r#"
+effect gated_action:
+    trust: autonomous_if_confident(0.90)
+
+tool act(label: String) -> String uses gated_action
+
+@trust(autonomous)
+agent run(label: Grounded<String>) -> String:
+    return act(label)
+"#;
+    let ir = ir_of(src);
+    let approvals = Arc::new(AtomicUsize::new(0));
+    let approvals_for_closure = Arc::clone(&approvals);
+    let rt = Runtime::builder()
+        .tool("act", |args| async move {
+            Ok(json!(format!("acted:{}", args[0]["value"].as_str().unwrap())))
+        })
+        .approver(Arc::new(ProgrammaticApprover::new(move |req| {
+            approvals_for_closure.fetch_add(1, Ordering::SeqCst);
+            assert_eq!(req.label, "ConfidenceGate:act");
+            ApprovalDecision::Approve
+        })))
+        .build();
+
+    let input = Value::Grounded(GroundedValue::with_confidence(
+        Value::String(Arc::from("refund")),
+        ProvenanceChain::new(),
+        0.70,
+    ));
+    let value = run_agent(&ir, "run", vec![input], &rt)
+        .await
+        .expect("run");
+
+    assert_eq!(value, Value::String(Arc::from("acted:refund")));
+    assert_eq!(approvals.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn confidence_gate_below_threshold_denies_when_approver_denies() {
+    let src = r#"
+effect gated_action:
+    trust: autonomous_if_confident(0.90)
+
+tool act(label: String) -> String uses gated_action
+
+@trust(autonomous)
+agent run(label: Grounded<String>) -> String:
+    return act(label)
+"#;
+    let ir = ir_of(src);
+    let rt = Runtime::builder()
+        .tool("act", |_| async move {
+            Ok(json!("should_not_run"))
+        })
+        .approver(Arc::new(ProgrammaticApprover::always_no()))
+        .build();
+
+    let input = Value::Grounded(GroundedValue::with_confidence(
+        Value::String(Arc::from("refund")),
+        ProvenanceChain::new(),
+        0.70,
+    ));
+    let err = run_agent(&ir, "run", vec![input], &rt)
+        .await
+        .unwrap_err();
+    match err.kind {
+        InterpErrorKind::Runtime(RuntimeError::ApprovalDenied { ref action }) => {
+            assert_eq!(action, "ConfidenceGate:act");
+        }
+        other => panic!("expected Runtime(ApprovalDenied), got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn confidence_gate_above_threshold_skips_approver() {
+    let src = r#"
+effect gated_action:
+    trust: autonomous_if_confident(0.90)
+
+tool act(label: String) -> String uses gated_action
+
+@trust(autonomous)
+agent run(label: Grounded<String>) -> String:
+    return act(label)
+"#;
+    let ir = ir_of(src);
+    let approvals = Arc::new(AtomicUsize::new(0));
+    let approvals_for_closure = Arc::clone(&approvals);
+    let rt = Runtime::builder()
+        .tool("act", |args| async move {
+            Ok(json!(format!("acted:{}", args[0]["value"].as_str().unwrap())))
+        })
+        .approver(Arc::new(ProgrammaticApprover::new(move |_| {
+            approvals_for_closure.fetch_add(1, Ordering::SeqCst);
+            ApprovalDecision::Deny
+        })))
+        .build();
+
+    let input = Value::Grounded(GroundedValue::with_confidence(
+        Value::String(Arc::from("safe")),
+        ProvenanceChain::new(),
+        0.95,
+    ));
+    let value = run_agent(&ir, "run", vec![input], &rt)
+        .await
+        .expect("run");
+
+    assert_eq!(value, Value::String(Arc::from("acted:safe")));
+    assert_eq!(approvals.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn prompt_confidence_flows_into_downstream_confidence_gate() {
+    let src = r#"
+effect low_confidence:
+    confidence: 0.70
+
+effect gated_action:
+    trust: autonomous_if_confident(0.90)
+
+prompt classify(input: String) -> String uses low_confidence:
+    "Classify {input}."
+
+tool act(label: String) -> String uses gated_action
+
+@trust(autonomous)
+agent run(input: String) -> String:
+    label = classify(input)
+    return act(label)
+"#;
+    let ir = ir_of(src);
+    let approvals = Arc::new(AtomicUsize::new(0));
+    let approvals_for_closure = Arc::clone(&approvals);
+    let rt = Runtime::builder()
+        .llm(Arc::new(MockAdapter::new("mock").reply("classify", json!("refund"))))
+        .default_model("mock")
+        .tool("act", |args| async move {
+            Ok(json!(format!("acted:{}", args[0]["value"].as_str().unwrap())))
+        })
+        .approver(Arc::new(ProgrammaticApprover::new(move |req| {
+            approvals_for_closure.fetch_add(1, Ordering::SeqCst);
+            assert_eq!(req.label, "ConfidenceGate:act");
+            ApprovalDecision::Approve
+        })))
+        .build();
+
+    let value = run_agent(&ir, "run", vec![Value::String(Arc::from("ticket"))], &rt)
+        .await
+        .expect("run");
+
+    assert_eq!(value, Value::String(Arc::from("acted:refund")));
+    assert_eq!(approvals.load(Ordering::SeqCst), 1);
 }
 
 #[tokio::test]

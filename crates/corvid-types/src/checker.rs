@@ -115,6 +115,9 @@ fn typecheck_with_everything(
     let effect_decls: Vec<&corvid_ast::EffectDecl> = file.decls.iter().filter_map(|d| {
         if let Decl::Effect(e) = d { Some(e) } else { None }
     }).collect();
+    for effect in &effect_decls {
+        c.check_effect_decl_confidence(effect);
+    }
     let owned_decls: Vec<corvid_ast::EffectDecl> = effect_decls.iter().cloned().cloned().collect();
 
     // Validate config-declared dimensions up-front so malformed entries
@@ -546,6 +549,7 @@ impl<'a> Checker<'a> {
 mod call;
 mod case;
 mod decl;
+mod effect_decl;
 mod expr;
 mod import_call;
 mod ops;
