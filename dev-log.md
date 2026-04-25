@@ -5549,3 +5549,15 @@ The catalog is not prose-only: every topic source is compiled by a unit test via
 the normal driver pipeline. The REPL preloader reuses the regular REPL turn
 processor, so tour examples exercise the same parser, resolver, checker, and
 lowering path users get interactively.
+
+## 2026-04-25 - README invention catalog
+
+Rewrote the repository front door around the shipped invention catalog instead
+of generic language positioning. The README now opens with the AI-native thesis,
+then groups the shipped inventions by moat category: compile-time safety,
+AI-native ergonomics, adaptive routing, streaming, and verification.
+
+Every README catalog entry carries the same accountability shape as the tour:
+two-line technical pitch, source example, spec link, tour command, roadmap
+pointer, test pointer, and explicit non-scope. This makes the README a
+developer-facing proof index rather than a claims page.

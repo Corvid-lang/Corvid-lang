@@ -3387,6 +3387,16 @@ anchor, test reference, explicit non-scope, and a REPL-loaded snippet. That give
 developers a fast entry point and gives maintainers a concrete checklist for
 future inventions.
 
+## README as proof index
+
+The README should not be a looser version of the roadmap. For an AI-native
+language, it has to behave like a proof index: every invention claim points to a
+spec, a runnable demo, a roadmap slice, a test, and a non-scope.
+
+This is the difference between bold positioning and shortcut marketing. Strong
+claims are acceptable when the reader can immediately follow them to code and a
+validation path.
+
 ## Contributing / feedback
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). The rules of the road are: design chat before code, per-scope commits at every boundary, dev-log entry for every session, no shortcuts. The `learnings.md` file you're reading gets updated when each user-visible feature ships.
