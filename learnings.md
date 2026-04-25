@@ -3397,6 +3397,16 @@ This is the difference between bold positioning and shortcut marketing. Strong
 claims are acceptable when the reader can immediately follow them to code and a
 validation path.
 
+## landing page claim discipline
+
+A landing page can be visually bold without becoming less honest. The safe
+pattern is to make the playground command the hero interaction: every invention
+card should show how to run the example locally, not just describe it.
+
+Comparative claims are a separate artifact. If a site says "faster" or "safer",
+the same card needs a command that reproduces the comparison. Until that
+command exists, the stronger product move is to omit the claim.
+
 ## Contributing / feedback
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). The rules of the road are: design chat before code, per-scope commits at every boundary, dev-log entry for every session, no shortcuts. The `learnings.md` file you're reading gets updated when each user-visible feature ships.

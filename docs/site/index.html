@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Corvid - AI-native general programming language</title>
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <header class="hero">
+    <nav class="nav" aria-label="Main">
+      <a class="brand" href="../../README.md">Corvid</a>
+      <a href="../../ROADMAP.md">Roadmap</a>
+      <a href="../effects-spec/README.md">Spec</a>
+      <a href="../../README.md#invention-catalog">Inventions</a>
+    </nav>
+    <section class="hero-grid">
+      <div>
+        <p class="eyebrow">General-purpose. AI-native. Compiler-enforced.</p>
+        <h1>The language where AI behavior is part of the program.</h1>
+        <p class="lede">
+          Corvid is not a RAG framework and not another SDK wrapper. It is a
+          general programming language where agents, tools, prompts, approvals,
+          grounding, budgets, confidence, routing, streaming, replay, and
+          verification are visible to the compiler.
+        </p>
+        <div class="hero-actions">
+          <button class="primary" data-copy="cargo run -q -p corvid-cli -- tour --list">Copy tour command</button>
+          <a class="secondary" href="../../README.md">Read the catalog</a>
+        </div>
+      </div>
+      <div class="terminal" aria-label="Runnable Corvid example">
+        <div class="terminal-bar">
+          <span></span><span></span><span></span>
+          <strong>refund.cor</strong>
+        </div>
+        <pre><code>effect transfer_money:
+    cost: $0.50
+    trust: human_required
+    reversible: false
+
+tool refund(id: String) -> Receipt dangerous uses transfer_money
+
+@budget($1.00)
+@trust(human_required)
+agent safe_refund(id: String) -> Receipt:
+    approve Refund(id)
+    return refund(id)</code></pre>
+      </div>
+    </section>
+  </header>
+
+  <main>
+    <section class="proof-strip" aria-label="What Corvid makes first-class">
+      <article>
+        <strong>Safety</strong>
+        <span>approval, grounding, budgets, confidence, effects</span>
+      </article>
+      <article>
+        <strong>AI workflows</strong>
+        <span>agents, tools, prompts, evals, replay, receipts</span>
+      </article>
+      <article>
+        <strong>Adaptive execution</strong>
+        <span>model routing, progressive escalation, ensembles, privacy tiers</span>
+      </article>
+      <article>
+        <strong>Streaming</strong>
+        <span>partial structs, resumption, fan-out/fan-in, backpressure</span>
+      </article>
+    </section>
+
+    <section class="section-head">
+      <p class="eyebrow">Runnable invention playground</p>
+      <h2>Every card maps to a compiler-checked tour demo.</h2>
+      <p>
+        Pick an invention. The page shows the exact command to load a runnable
+        demo into the Corvid REPL. Claims that require benchmarks or
+        side-by-side comparisons are intentionally absent until they have a
+        reproducible command.
+      </p>
+    </section>
+
+    <section class="playground" aria-label="Invention playground">
+      <aside class="topic-list" id="topic-list"></aside>
+      <article class="topic-card">
+        <p class="eyebrow" id="topic-category"></p>
+        <h3 id="topic-title"></h3>
+        <p id="topic-pitch"></p>
+        <pre class="command"><code id="topic-command"></code></pre>
+        <pre class="source"><code id="topic-source"></code></pre>
+        <div class="topic-actions">
+          <button class="primary" id="copy-command">Copy run command</button>
+          <a id="topic-spec" class="secondary" href="#">Open spec</a>
+        </div>
+        <dl class="proof-list">
+          <dt>Test</dt>
+          <dd id="topic-test"></dd>
+          <dt>Non-scope</dt>
+          <dd id="topic-nonscope"></dd>
+        </dl>
+      </article>
+    </section>
+
+    <section class="claim-policy">
+      <div>
+        <p class="eyebrow">Claim discipline</p>
+        <h2>No shortcut marketing.</h2>
+      </div>
+      <p>
+        This page does not say Corvid is faster than Python, safer than
+        TypeScript, or formally verified unless the claim links to a command
+        that runs. Corvid's advantage is not a slogan; it is the set of language
+        features above, each tied to a source file, spec, and test.
+      </p>
+    </section>
+  </main>
+
+  <footer>
+    <span>Corvid is pre-v1.0 and under active development.</span>
+    <a href="../../README.md#status">Current status</a>
+  </footer>
+
+  <script src="./site.js"></script>
+</body>
+</html>

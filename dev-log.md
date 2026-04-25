@@ -5561,3 +5561,14 @@ Every README catalog entry carries the same accountability shape as the tour:
 two-line technical pitch, source example, spec link, tour command, roadmap
 pointer, test pointer, and explicit non-scope. This makes the README a
 developer-facing proof index rather than a claims page.
+
+## 2026-04-25 - Static landing page invention playground
+
+Added `docs/site/` as a static landing page for the shipped invention catalog.
+The page opens with Corvid's general-purpose AI-native thesis, then provides a
+playground panel where every invention maps to a runnable
+`corvid tour --topic <name>` command plus the source shown on the page.
+
+The page deliberately avoids unsupported benchmark or safety superiority
+claims. The claim policy section states that speed/safety comparisons only
+belong on the site when backed by a reproducible command.
