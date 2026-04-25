@@ -1106,7 +1106,7 @@ Users register local models (Ollama, vLLM, llama.cpp) with declared capabilities
 - [x] Runtime adaptive selection + confidence-driven auto-escalation (capability dispatch, route dispatch, progressive confidence escalation, rollout, ensemble, and adversarial runtime paths shipped)
 - [x] `corvid eval --swap-model` retrospective migration tooling
 - [x] `corvid routing-report` quality reports from routing trace data
-- [ ] `corvid cost-frontier` Pareto visualization
+- [x] `corvid cost-frontier` Pareto visualization
 - [x] Bring-your-own-model adapter pattern: `OllamaAdapter` plus `openai-compat:<base-url>:<model>` covers Ollama, llama.cpp server, vLLM, LM Studio, OpenRouter/Together/Groq/Fireworks-style providers. Sandboxing policy remains a future hardening layer.
 
 **Non-scope for this slice:** training/fine-tuning infrastructure (separate phase). Multi-modal generation (image/audio output — future). Agent-to-agent protocols (future). Model marketplace / sharing (ecosystem concern, not language).
@@ -1140,6 +1140,7 @@ Users register local models (Ollama, vLLM, llama.cpp) with declared capabilities
 | H | `24c56fa` | `corvid routing-report` CLI + routing trace aggregation |
 | Output-format | `this commit` | Prompt `output_format:` requirements + compile/runtime routing to compatible models |
 | Eval-swap | `this commit` | `corvid eval --swap-model` retrospective model migration analysis over trace files and trace suites |
+| Cost-frontier | `this commit` | `corvid cost-frontier <prompt>` Pareto analysis from model cost traces plus explicit eval-quality host events |
 
 **Phase 20 closed.** Dimensional effects, grounding, evals, cost analysis, confidence gates, streaming effects, bypass verification, and the typed model substrate are all shipped. The moat phase is complete.
 

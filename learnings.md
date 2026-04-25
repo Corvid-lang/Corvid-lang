@@ -2946,6 +2946,18 @@ prod-as-test-suite replay for trace directories, then reports semantic drift
 against the candidate model. The full source-level eval runner remains Phase
 27, but model migration is useful now.
 
+## 20h-cost-frontier
+
+Cost-quality frontiers are only meaningful when both axes are real. Corvid
+already records model-selection cost estimates, but quality must come from eval
+evidence rather than routing frequency or confidence folklore.
+
+The command therefore treats missing quality as data absence, not as zero or
+average quality. `corvid cost-frontier` computes Pareto status only for models
+with explicit eval-quality host events and leaves the rest unscored. That keeps
+the operator tooling honest while still making model selection a visible
+design-space exploration problem.
+
 ## Contributing / feedback
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). The rules of the road are: design chat before code, per-scope commits at every boundary, dev-log entry for every session, no shortcuts. The `learnings.md` file you're reading gets updated when each user-visible feature ships.

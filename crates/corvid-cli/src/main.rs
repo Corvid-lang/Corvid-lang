@@ -11,6 +11,7 @@
 //!   corvid effect-diff        diff composed effect profiles between two revisions
 //!   corvid add-dimension      install a dimension from the effect registry
 //!   corvid routing-report     aggregate dispatch traces into routing guidance
+//!   corvid cost-frontier      compute prompt cost/quality Pareto frontier
 //!   corvid eval --swap-model <id> <trace>  retrospective model migration analysis
 //!   corvid replay <trace>     re-execute a recorded trace deterministically
 //!   corvid replay --model <id> <trace>  differential replay against a different model
@@ -24,6 +25,7 @@ mod approver_cmd;
 mod bind_cmd;
 mod bundle_cmd;
 mod capsule_cmd;
+mod cost_frontier;
 mod eval_cmd;
 mod receipt_cache;
 mod receipt_cmd;
@@ -41,6 +43,9 @@ use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use corvid_differential_verify::{
     render_corpus_grid, render_report, shrink_program, verify_corpus,
+};
+use cost_frontier::{
+    build_frontier, render_frontier as render_cost_frontier, CostFrontierOptions,
 };
 use routing_report::{build_report, render_report as render_routing_report, RoutingReportOptions};
 
@@ -231,6 +236,27 @@ enum Command {
     },
     /// Aggregate routing and dispatch traces into an optimization report.
     RoutingReport {
+        /// Only include events at or after this RFC3339 timestamp.
+        #[arg(long)]
+        since: Option<String>,
+        /// Only include events at or after this git commit timestamp.
+        #[arg(long)]
+        since_commit: Option<String>,
+        /// Emit the structured report as JSON.
+        #[arg(long)]
+        json: bool,
+        /// Trace directory. Defaults to `target/trace`.
+        #[arg(long, value_name = "PATH")]
+        trace_dir: Option<PathBuf>,
+    },
+    /// Compute the cost / quality Pareto frontier for one prompt.
+    ///
+    /// Cost comes from `model_selected.cost_estimate` trace events. Quality
+    /// comes from explicit eval host events named `corvid.eval.result`, so the
+    /// command reports missing quality evidence instead of guessing.
+    CostFrontier {
+        /// Prompt to analyze.
+        prompt: String,
         /// Only include events at or after this RFC3339 timestamp.
         #[arg(long)]
         since: Option<String>,
@@ -703,6 +729,19 @@ fn main() -> ExitCode {
             since_commit.as_deref(),
             json,
         ),
+        Some(Command::CostFrontier {
+            prompt,
+            since,
+            since_commit,
+            json,
+            trace_dir,
+        }) => cmd_cost_frontier(
+            &prompt,
+            trace_dir.as_deref(),
+            since.as_deref(),
+            since_commit.as_deref(),
+            json,
+        ),
         Some(Command::Eval {
             inputs,
             source,
@@ -1103,6 +1142,28 @@ fn cmd_test(
             )
         }
     }
+}
+
+fn cmd_cost_frontier(
+    prompt: &str,
+    trace_dir: Option<&Path>,
+    since: Option<&str>,
+    since_commit: Option<&str>,
+    json: bool,
+) -> Result<u8> {
+    let trace_dir = trace_dir.unwrap_or_else(|| Path::new("target/trace"));
+    let report = build_frontier(CostFrontierOptions {
+        prompt,
+        trace_dir,
+        since,
+        since_commit,
+    })?;
+    if json {
+        println!("{}", serde_json::to_string_pretty(&report)?);
+    } else {
+        print!("{}", render_cost_frontier(&report));
+    }
+    Ok(if report.has_quality_evidence { 0 } else { 1 })
 }
 
 fn cmd_test_dimensions() -> Result<u8> {

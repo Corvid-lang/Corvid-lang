@@ -5069,3 +5069,15 @@ Single trace files route through `replay --model`; trace directories route
 through the prod-as-test-suite runner with `replay_model` set. The command is
 therefore useful today for model migration decisions while keeping the broader
 eval language/runtime contract scoped to Phase 27.
+
+## 2026-04-25 - cost frontier analysis
+
+Closed the Phase 20h cost-frontier item. `corvid cost-frontier <prompt>` reads
+model-selection trace costs and explicit eval-quality host events, then renders
+the Pareto-optimal, dominated, and unscored model candidates for that prompt.
+
+The quality contract is deliberately explicit: quality comes from host events
+named `corvid.eval.result` / `eval_result` carrying `{prompt, model,
+passed|correct|score}`. If traces only contain cost data, the command reports
+missing quality evidence and exits non-zero instead of inventing a quality
+number from usage frequency.
