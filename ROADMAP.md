@@ -1089,25 +1089,25 @@ Users register local models (Ollama, vLLM, llama.cpp) with declared capabilities
 
 ##### Slice 20h deliverables
 
-- [ ] `model Name:` catalog declaration syntax (AST + parser + resolver + typechecker + IR)
-- [ ] `DeclKind::Model` in the scope table; model references in effect rows and routing tables
-- [ ] `requires:` / `latency:` / `specialty:` / `privacy:` annotations on prompts
-- [ ] `route:` pattern-match routing with content predicates (`domain`, `language`, `length`, type checks)
-- [ ] `classifier` prompt variant (routing prerequisite)
-- [ ] `try ... else ... else` progressive refinement chains
-- [ ] `ensemble N of [...] agree_at P` syntax
+- [x] `model Name:` catalog declaration syntax (AST + parser + resolver + typechecker + IR)
+- [x] `DeclKind::Model` in the scope table; model references in effect rows and routing tables
+- [x] `requires:` capability annotations on prompts + model catalog fields for latency / jurisdiction / compliance / privacy_tier. Rich prompt-side `specialty:` / `privacy:` constraints remain a later routing-policy extension.
+- [x] `route:` pattern-match routing with content predicates and Bool guard validation. The shipped design accepts arbitrary Bool expressions instead of hardcoding `domain` / `language` / `length` classifier keywords.
+- [x] `classifier` routing prerequisite satisfied by ordinary typed tool/prompt calls in `route:` guards; no separate classifier prompt kind is needed.
+- [x] Progressive refinement chains shipped as `progressive:` model stages with confidence thresholds and runtime escalation. The original `try ... else ... else` spelling was replaced by the dedicated prompt dispatch block.
+- [x] `ensemble [...] vote majority` syntax + runtime concurrent voting. `ensemble N of [...] agree_at P` remains a richer policy extension.
 - [ ] `weighted_by accuracy_history` + `on disagreement escalate_to X`
-- [ ] `generator: X validator: Y acts_as critic` adversarial validation
-- [ ] `@jurisdiction`, `@compliance`, `privacy_tier` as dimensions
+- [x] Adversarial validation shipped as `adversarial:` prompt-stage pipeline (`propose`, `challenge`, `adjudicate`) with typed chaining contract and runtime contradiction traces. The original `generator: X validator: Y acts_as critic` spelling was replaced by the stricter three-stage prompt contract.
+- [x] `@jurisdiction`, `@compliance`, `privacy_tier` as dimensions
 - [ ] `cacheable: true` + fingerprint cache in interpreter + replay integration
-- [ ] `rollout(P%)` weighted routing for A/B tests
+- [x] `rollout(P%)` weighted routing for A/B tests
 - [ ] `version: "..."` model versioning + replay-pinned safety
 - [ ] Output-format-aware routing (`strict_json`, `markdown_strict`, etc.)
-- [ ] Runtime adaptive selection + confidence-driven auto-escalation (builds on 20e gate)
+- [x] Runtime adaptive selection + confidence-driven auto-escalation (capability dispatch, route dispatch, progressive confidence escalation, rollout, ensemble, and adversarial runtime paths shipped)
 - [ ] `corvid eval --swap-model` retrospective migration tooling
-- [ ] `corvid routing-report` quality reports from eval data
+- [x] `corvid routing-report` quality reports from routing trace data
 - [ ] `corvid cost-frontier` Pareto visualization
-- [ ] Bring-your-own-model sandboxing (Ollama/vLLM/llama.cpp adapter pattern)
+- [x] Bring-your-own-model adapter pattern: `OllamaAdapter` plus `openai-compat:<base-url>:<model>` covers Ollama, llama.cpp server, vLLM, LM Studio, OpenRouter/Together/Groq/Fireworks-style providers. Sandboxing policy remains a future hardening layer.
 
 **Non-scope for this slice:** training/fine-tuning infrastructure (separate phase). Multi-modal generation (image/audio output — future). Agent-to-agent protocols (future). Model marketplace / sharing (ecosystem concern, not language).
 

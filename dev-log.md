@@ -4982,3 +4982,20 @@ credit.
 The seed corpus is credited to the Corvid core team. Future public bounty
 entries can replace that line with reporter attribution once the disclosure and
 credit process exists, without changing the meta-verifier contract.
+
+## 2026-04-25 - Phase 20h roadmap reconciliation
+
+Reconciled the stale Phase 20h checklist against the shipped implementation and
+the `docs/effects-spec/13-model-substrate-shipped.md` trail. Marked complete:
+model declarations, model scope registration, capability `requires:`,
+content-aware `route:`, classifier-via-Bool-guard design, progressive runtime
+escalation, majority ensembles, adversarial prompt pipelines, jurisdiction /
+compliance / privacy dimensions, rollout dispatch, runtime adaptive selection,
+`corvid routing-report`, and the BYOM adapter pattern through Ollama plus
+OpenAI-compatible endpoints.
+
+Left open items that are not actually shipped: prompt-side specialty/privacy
+constraints, weighted ensembles with disagreement escalation, prompt
+fingerprint cache, model version pinning, output-format-aware routing,
+`corvid eval --swap-model`, `corvid cost-frontier`, and hard sandboxing policy.
+This keeps the roadmap marketable without overclaiming.

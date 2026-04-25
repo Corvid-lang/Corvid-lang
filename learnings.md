@@ -2868,6 +2868,22 @@ is just a test file; a counterexample with bug/fix/credit metadata becomes an
 auditable safety record. The seed corpus is credited to the Corvid core team
 until the public bounty process can attach reporter names to future fixtures.
 
+## 20h-roadmap-reconciliation
+
+The typed model substrate was more complete than the checklist showed. The
+spec already has a shipped-section with commit trail, so the roadmap now marks
+the real shipped surface complete: `model` declarations, model references,
+capability `requires:`, route guards, progressive escalation, rollout,
+majority ensembles, adversarial prompt pipelines, jurisdiction/compliance/
+privacy dimensions, routing reports, and BYOM adapters.
+
+The important discipline is precision. Some original design bullets changed
+shape before shipping: classifier prompts became arbitrary Bool route guards,
+`try ... else` became `progressive:`, and generator/validator critic syntax
+became a typed three-stage adversarial prompt contract. Those are not
+shortcuts; they are stricter language designs. Items that truly did not ship
+remain open.
+
 ## Contributing / feedback
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). The rules of the road are: design chat before code, per-scope commits at every boundary, dev-log entry for every session, no shortcuts. The `learnings.md` file you're reading gets updated when each user-visible feature ships.
