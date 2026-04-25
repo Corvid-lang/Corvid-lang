@@ -8,6 +8,7 @@
 mod analysis;
 mod completion;
 mod hover;
+mod navigation;
 mod position;
 mod server;
 mod transport;
@@ -15,6 +16,9 @@ mod transport;
 pub use analysis::{analyze_document, AnalysisResult, DocumentSnapshot};
 pub use completion::completion_at;
 pub use hover::hover_at;
+pub use navigation::{
+    definition_range_at, references_at, rename_ranges_at, workspace_symbols_for_document,
+};
 pub use position::{byte_span_to_lsp_range, byte_to_lsp_position, lsp_position_to_byte};
 pub use server::{LanguageServerState, ServerMessage};
 pub use transport::{run_stdio_server, LspTransportError};

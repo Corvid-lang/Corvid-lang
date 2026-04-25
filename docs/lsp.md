@@ -18,6 +18,10 @@ The stdio server is now wired as the `corvid-lsp` binary. It supports:
 - `textDocument/didSave`.
 - `textDocument/hover`.
 - `textDocument/completion`.
+- `textDocument/definition`.
+- `textDocument/references`.
+- `textDocument/rename`.
+- `workspace/symbol`.
 - `textDocument/publishDiagnostics` notifications backed by the same compiler
   diagnostic path as the CLI.
 
@@ -44,6 +48,15 @@ keeps AI-native contexts specific:
 - PascalCase approval labels derived from dangerous tools after `approve`;
 - declared effect names after `uses`;
 - model catalog names in prompt-routing and escalation contexts.
+
+Navigation support is resolver-backed. `navigation.rs` resolves the current
+document and uses `DefId` / `LocalId` identity for:
+
+- go-to-definition for declarations and locals;
+- find-references for declaration and local bindings;
+- rename edits that only touch the selected binding identity;
+- workspace symbol results for open documents, including agents, tools,
+  prompts, types, effects, models, and evals.
 
 Current validation:
 

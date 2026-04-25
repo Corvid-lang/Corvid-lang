@@ -5326,3 +5326,16 @@ dangerous tools, `uses` suggests declared effects, and prompt routing/escalation
 positions suggest model catalog entries. General completions still include the
 ordinary language surface so Corvid remains a general language, not an
 AI-framework DSL.
+
+## 2026-04-25 - LSP resolver-backed navigation
+
+Closed `24-E-navigation` for the single-file/open-document foundation.
+`navigation.rs` owns go-to-definition, find-references, rename ranges, and
+workspace symbol extraction. The server only translates those results into LSP
+responses for `textDocument/definition`, `textDocument/references`,
+`textDocument/rename`, and `workspace/symbol`.
+
+The important implementation choice is identity-based navigation. Declaration
+references use resolver `DefId`s and local references use `LocalId`s, so rename
+does not do text replacement and does not accidentally edit a tool named the
+same as a parameter.

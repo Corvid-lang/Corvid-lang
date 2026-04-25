@@ -1377,7 +1377,7 @@ The determinism-source catalog and the language's treatment of non-reproducible 
 - [x] 24-B-lsp-server        JSON-RPC/stdin-stdout language server with `initialize`, `shutdown`, `exit`, `textDocument/didOpen`, `textDocument/didChange`, and `textDocument/didSave`; publishes compiler-backed diagnostics through `textDocument/publishDiagnostics` using full-document sync.
 - [x] 24-C-hover-types       Hover with compiler-backed inferred expression types plus declaration summaries for agents, tools, prompts, types, and effects. Prompt hovers surface AI-native metadata such as effect rows, calibration, cacheability, strict citations, and model routing mode; tool hovers show dangerous/approval boundaries.
 - [x] 24-D-completion        Context-aware completion for keywords, declarations, tools, prompts, approval labels, effect names, and model names. The completion engine is compiler/parser-backed, uses partial source while the user is typing, and keeps approval/effect/model contexts narrow instead of dumping every symbol everywhere.
-- [ ] 24-E-navigation        go-to-definition, find-references, rename, and workspace symbol index.
+- [x] 24-E-navigation        Single-file navigation over resolver identity: go-to-definition, find-references, rename edits, and workspace symbol search across open documents. Navigation uses DefId/LocalId bindings, not text search, so local rename does not touch unrelated declarations with the same spelling.
 - [ ] 24-F-vscode-client     Reference VS Code extension wiring the server, diagnostics, hover, completion, and semantic visibility.
 
 ### Phase 25 — Package manager (~6–8 weeks)

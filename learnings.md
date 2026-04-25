@@ -3185,6 +3185,17 @@ completion while code is incomplete, so `completion.rs` uses the parser's best
 available file and narrows by local text context instead of requiring a clean
 typecheck.
 
+## lsp navigation
+
+Navigation and rename must use compiler identity, not spelling. A Corvid file
+can contain a tool `id` and a parameter `id`; renaming the parameter must not
+touch the tool. The resolver already knows this through `DefId` and `LocalId`,
+so the LSP should build on that side table.
+
+Single-file navigation is the correct first layer. It gives users definition,
+references, rename, and workspace symbols for open documents now, while leaving
+cross-file package indexing as a separate package-manager/workspace problem.
+
 ## Contributing / feedback
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). The rules of the road are: design chat before code, per-scope commits at every boundary, dev-log entry for every session, no shortcuts. The `learnings.md` file you're reading gets updated when each user-visible feature ships.

@@ -1,8 +1,13 @@
-use crate::{analyze_document, completion_at, hover_at, DocumentSnapshot};
+use crate::{
+    analyze_document, completion_at, definition_range_at, hover_at, references_at,
+    rename_ranges_at, workspace_symbols_for_document, DocumentSnapshot,
+};
 use lsp_types::{
     CompletionOptions, CompletionParams, DidChangeTextDocumentParams, DidOpenTextDocumentParams,
-    HoverParams, InitializeResult, PublishDiagnosticsParams, ServerCapabilities,
-    TextDocumentSyncCapability, TextDocumentSyncKind, Url,
+    GotoDefinitionParams, GotoDefinitionResponse, HoverParams, InitializeResult, Location,
+    OneOf, PublishDiagnosticsParams, ReferenceParams, RenameOptions, RenameParams,
+    ServerCapabilities, TextDocumentSyncCapability, TextDocumentSyncKind, TextEdit, Url,
+    WorkspaceEdit, WorkspaceSymbolParams, WorkspaceSymbolResponse,
 };
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -47,6 +52,10 @@ impl LanguageServerState {
             "textDocument/didSave" => self.did_save(request.get("params").cloned()),
             "textDocument/hover" => self.hover(id, request.get("params").cloned()),
             "textDocument/completion" => self.completion(id, request.get("params").cloned()),
+            "textDocument/definition" => self.definition(id, request.get("params").cloned()),
+            "textDocument/references" => self.references(id, request.get("params").cloned()),
+            "textDocument/rename" => self.rename(id, request.get("params").cloned()),
+            "workspace/symbol" => self.workspace_symbol(id, request.get("params").cloned()),
             _ if id.is_some() => vec![ServerMessage::Error {
                 id,
                 code: -32601,
@@ -76,6 +85,13 @@ impl LanguageServerState {
                     ]),
                     ..CompletionOptions::default()
                 }),
+                definition_provider: Some(OneOf::Left(true)),
+                references_provider: Some(OneOf::Left(true)),
+                rename_provider: Some(OneOf::Right(RenameOptions {
+                    prepare_provider: Some(false),
+                    work_done_progress_options: Default::default(),
+                })),
+                workspace_symbol_provider: Some(OneOf::Left(true)),
                 ..ServerCapabilities::default()
             },
             server_info: Some(lsp_types::ServerInfo {
@@ -171,6 +187,113 @@ impl LanguageServerState {
         }]
     }
 
+    fn definition(&self, id: Option<Value>, params: Option<Value>) -> Vec<ServerMessage> {
+        let params = match parse_params::<GotoDefinitionParams>(params) {
+            Ok(params) => params,
+            Err(error) => return vec![error],
+        };
+        let uri = params.text_document_position_params.text_document.uri;
+        let position = params.text_document_position_params.position;
+        let result = self
+            .documents
+            .get(&uri)
+            .and_then(|text| definition_range_at(text, position))
+            .map(|range| GotoDefinitionResponse::Scalar(Location { uri, range }))
+            .map(serde_json::to_value)
+            .transpose()
+            .expect("definition serializes")
+            .unwrap_or(Value::Null);
+        vec![ServerMessage::Response {
+            id: id.unwrap_or(Value::Null),
+            result,
+        }]
+    }
+
+    fn references(&self, id: Option<Value>, params: Option<Value>) -> Vec<ServerMessage> {
+        let params = match parse_params::<ReferenceParams>(params) {
+            Ok(params) => params,
+            Err(error) => return vec![error],
+        };
+        let uri = params.text_document_position.text_document.uri;
+        let position = params.text_document_position.position;
+        let result = self
+            .documents
+            .get(&uri)
+            .map(|text| {
+                references_at(text, position)
+                    .into_iter()
+                    .map(|range| Location {
+                        uri: uri.clone(),
+                        range,
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .map(serde_json::to_value)
+            .transpose()
+            .expect("references serialize")
+            .unwrap_or(Value::Null);
+        vec![ServerMessage::Response {
+            id: id.unwrap_or(Value::Null),
+            result,
+        }]
+    }
+
+    fn rename(&self, id: Option<Value>, params: Option<Value>) -> Vec<ServerMessage> {
+        let params = match parse_params::<RenameParams>(params) {
+            Ok(params) => params,
+            Err(error) => return vec![error],
+        };
+        let uri = params.text_document_position.text_document.uri;
+        let position = params.text_document_position.position;
+        let result = self
+            .documents
+            .get(&uri)
+            .and_then(|text| rename_ranges_at(text, position, &params.new_name))
+            .map(|ranges| {
+                let edits = ranges
+                    .into_iter()
+                    .map(|range| TextEdit {
+                        range,
+                        new_text: params.new_name.clone(),
+                    })
+                    .collect::<Vec<_>>();
+                let mut changes = HashMap::new();
+                changes.insert(uri, edits);
+                WorkspaceEdit {
+                    changes: Some(changes),
+                    ..WorkspaceEdit::default()
+                }
+            })
+            .map(serde_json::to_value)
+            .transpose()
+            .expect("rename edit serializes")
+            .unwrap_or(Value::Null);
+        vec![ServerMessage::Response {
+            id: id.unwrap_or(Value::Null),
+            result,
+        }]
+    }
+
+    fn workspace_symbol(&self, id: Option<Value>, params: Option<Value>) -> Vec<ServerMessage> {
+        let params = match parse_params::<WorkspaceSymbolParams>(params) {
+            Ok(params) => params,
+            Err(error) => return vec![error],
+        };
+        let symbols = self
+            .documents
+            .iter()
+            .flat_map(|(uri, text)| {
+                workspace_symbols_for_document(uri.clone(), text, params.query.as_str())
+            })
+            .collect::<Vec<_>>();
+        let result = serde_json::to_value(WorkspaceSymbolResponse::Flat(symbols))
+            .expect("workspace symbols serialize");
+        vec![ServerMessage::Response {
+            id: id.unwrap_or(Value::Null),
+            result,
+        }]
+    }
+
     fn publish_diagnostics(&self, uri: Url) -> Vec<ServerMessage> {
         let Some(text) = self.documents.get(&uri) else {
             return Vec::new();
@@ -259,6 +382,9 @@ mod tests {
         );
         assert_eq!(json["result"]["capabilities"]["hoverProvider"], true);
         assert!(json["result"]["capabilities"]["completionProvider"].is_object());
+        assert_eq!(json["result"]["capabilities"]["definitionProvider"], true);
+        assert_eq!(json["result"]["capabilities"]["referencesProvider"], true);
+        assert_eq!(json["result"]["capabilities"]["workspaceSymbolProvider"], true);
     }
 
     #[test]
@@ -350,5 +476,68 @@ mod tests {
             .map(|item| item["label"].as_str().unwrap().to_string())
             .collect::<Vec<_>>();
         assert_eq!(labels, vec!["IssueRefund".to_string()]);
+    }
+
+    #[test]
+    fn definition_returns_tool_location() {
+        let mut server = LanguageServerState::new();
+        server.handle(did_open(
+            "file:///workspace/main.cor",
+            "tool get_order(id: String) -> String\n\nagent run(id: String) -> String:\n    return get_order(id)\n",
+        ));
+        let messages = server.handle(json!({
+            "jsonrpc": "2.0",
+            "id": 4,
+            "method": "textDocument/definition",
+            "params": {
+                "textDocument": { "uri": "file:///workspace/main.cor" },
+                "position": { "line": 3, "character": 13 }
+            }
+        }));
+        let json = messages.into_iter().next().unwrap().into_json();
+        assert_eq!(json["id"], 4);
+        assert_eq!(json["result"]["range"]["start"]["line"], 0);
+    }
+
+    #[test]
+    fn rename_returns_workspace_edit_for_local_identity() {
+        let mut server = LanguageServerState::new();
+        server.handle(did_open(
+            "file:///workspace/main.cor",
+            "agent run(id: String) -> String:\n    return id\n",
+        ));
+        let messages = server.handle(json!({
+            "jsonrpc": "2.0",
+            "id": 5,
+            "method": "textDocument/rename",
+            "params": {
+                "textDocument": { "uri": "file:///workspace/main.cor" },
+                "position": { "line": 0, "character": 11 },
+                "newName": "ticket_id"
+            }
+        }));
+        let json = messages.into_iter().next().unwrap().into_json();
+        let edits = json["result"]["changes"]["file:///workspace/main.cor"]
+            .as_array()
+            .unwrap();
+        assert_eq!(edits.len(), 2);
+    }
+
+    #[test]
+    fn workspace_symbol_returns_open_document_symbols() {
+        let mut server = LanguageServerState::new();
+        server.handle(did_open(
+            "file:///workspace/main.cor",
+            "effect retrieval:\n    data: grounded\n\nagent search() -> String:\n    return \"ok\"\n",
+        ));
+        let messages = server.handle(json!({
+            "jsonrpc": "2.0",
+            "id": 6,
+            "method": "workspace/symbol",
+            "params": { "query": "retr" }
+        }));
+        let json = messages.into_iter().next().unwrap().into_json();
+        let symbols = json["result"].as_array().unwrap();
+        assert_eq!(symbols[0]["name"], "retrieval");
     }
 }
