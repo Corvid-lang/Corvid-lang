@@ -11,6 +11,7 @@
 //!   corvid effect-diff        diff composed effect profiles between two revisions
 //!   corvid add-dimension      install a dimension from the effect registry
 //!   corvid routing-report     aggregate dispatch traces into routing guidance
+//!   corvid eval --swap-model <id> <trace>  retrospective model migration analysis
 //!   corvid replay <trace>     re-execute a recorded trace deterministically
 //!   corvid replay --model <id> <trace>  differential replay against a different model
 //!   corvid abi dump <lib>     inspect the embedded ABI/capability catalog
@@ -23,6 +24,7 @@ mod approver_cmd;
 mod bind_cmd;
 mod bundle_cmd;
 mod capsule_cmd;
+mod eval_cmd;
 mod receipt_cache;
 mod receipt_cmd;
 mod replay;
@@ -241,6 +243,24 @@ enum Command {
         /// Trace directory. Defaults to `target/trace`.
         #[arg(long, value_name = "PATH")]
         trace_dir: Option<PathBuf>,
+    },
+    /// Evaluate model migrations against existing traces.
+    ///
+    /// Full source-level `eval` execution is Phase 27. The shipped
+    /// Phase 20h mode is retrospective model migration:
+    /// `corvid eval --swap-model <ID> --source <FILE> <TRACE_OR_DIR>...`.
+    /// It replays recorded traces against the candidate model and reports
+    /// semantic divergence without re-running unchanged tools.
+    Eval {
+        /// Trace file(s) or trace directories to replay against the candidate model.
+        #[arg(value_name = "TRACE_OR_DIR")]
+        inputs: Vec<PathBuf>,
+        /// Corvid source the traces were recorded against.
+        #[arg(long, value_name = "FILE")]
+        source: Option<PathBuf>,
+        /// Candidate model for retrospective migration analysis.
+        #[arg(long, value_name = "ID")]
+        swap_model: Option<String>,
     },
     /// Re-execute a recorded trace deterministically.
     ///
@@ -683,6 +703,11 @@ fn main() -> ExitCode {
             since_commit.as_deref(),
             json,
         ),
+        Some(Command::Eval {
+            inputs,
+            source,
+            swap_model,
+        }) => eval_cmd::run_eval(&inputs, source.as_deref(), swap_model.as_deref()),
         Some(Command::Replay {
             trace,
             source,

@@ -5057,3 +5057,15 @@ ensemble answers disagree, the VM dispatches the same prompt to the configured
 fallback model and returns that result. The compiler resolves and validates the
 fallback as a real model, output-format checks still apply, and `EnsembleVote`
 trace events record the strategy, weights, agreement, and escalation target.
+
+## 2026-04-25 - eval swap-model migration analysis
+
+Closed the Phase 20h retrospective migration item without pretending the Phase
+27 source-level eval runner exists. `corvid eval --swap-model <MODEL>` now
+reuses the deterministic replay engines to compare existing traces against a
+candidate model.
+
+Single trace files route through `replay --model`; trace directories route
+through the prod-as-test-suite runner with `replay_model` set. The command is
+therefore useful today for model migration decisions while keeping the broader
+eval language/runtime contract scoped to Phase 27.

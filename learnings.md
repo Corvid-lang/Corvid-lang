@@ -2933,6 +2933,19 @@ pretending a split vote is decisive. The important design point is that both
 the weighting and fallback are visible in syntax, typechecked as model
 references, and recorded in traces.
 
+## 20h-eval-swap-model
+
+Retrospective model migration should be trace-based before it is source-eval
+based. Production traces already contain the prompts, tools, approvals, costs,
+and recorded outcomes needed to answer "what changes if this model changes?"
+without re-running unrelated workflow steps.
+
+The implementation discipline matters: `corvid eval --swap-model` is not a
+fake eval runner. It delegates to deterministic replay for single traces and to
+prod-as-test-suite replay for trace directories, then reports semantic drift
+against the candidate model. The full source-level eval runner remains Phase
+27, but model migration is useful now.
+
 ## Contributing / feedback
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). The rules of the road are: design chat before code, per-scope commits at every boundary, dev-log entry for every session, no shortcuts. The `learnings.md` file you're reading gets updated when each user-visible feature ships.
