@@ -37,6 +37,25 @@ fn write_file(path: &Path, contents: &str) {
     std::fs::write(path, contents).unwrap();
 }
 
+fn make_two_commit_repo(base_source: &str, head_source: &str) -> (tempfile::TempDir, String, String) {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = tmp.path();
+    run_git(repo, &["init", "--quiet", "-b", "main"]);
+
+    let src = repo.join("agent.cor");
+    write_file(&src, base_source);
+    run_git(repo, &["add", "agent.cor"]);
+    run_git(repo, &["commit", "--quiet", "-m", "base"]);
+    let base_sha = run_git(repo, &["rev-parse", "HEAD"]);
+
+    write_file(&src, head_source);
+    run_git(repo, &["add", "agent.cor"]);
+    run_git(repo, &["commit", "--quiet", "-m", "head"]);
+    let head_sha = run_git(repo, &["rev-parse", "HEAD"]);
+
+    (tmp, base_sha, head_sha)
+}
+
 fn corvid_bin() -> PathBuf {
     // `target/debug/corvid[.exe]` assembled by cargo for the binary
     // crate. `env!("CARGO_BIN_EXE_corvid")` resolves to the right
@@ -113,6 +132,25 @@ fn trace_diff_end_to_end_reports_added_agent() {
     );
 }
 
+const ALLOW_ALL_POLICY: &str = r#"
+@deterministic
+agent apply_policy(receipt: PolicyReceipt) -> Verdict:
+    return Verdict(true, [])
+"#;
+
+const FLAG_ANY_AGENT_ADDITION_POLICY: &str = r#"
+@deterministic
+agent apply_policy(receipt: PolicyReceipt) -> Verdict:
+    flags = []
+    has_flags = false
+    for d in receipt.deltas:
+        if d.category == "agent":
+            if d.operation == "added":
+                flags = flags + ["custom policy rejected added agent: " + d.subject]
+                has_flags = true
+    return Verdict(not has_flags, flags)
+"#;
+
 #[test]
 fn trace_diff_reports_ownership_loosening_and_trips_policy() {
     let tmp = tempfile::tempdir().unwrap();
@@ -153,6 +191,82 @@ fn trace_diff_reports_ownership_loosening_and_trips_policy() {
         stderr.contains("regression policy tripped"),
         "policy stderr missing. stderr:\n{stderr}"
     );
+}
+
+#[test]
+fn trace_diff_custom_policy_can_allow_default_regression() {
+    let (tmp, base_sha, head_sha) =
+        make_two_commit_repo(OWNERSHIP_BASE_SOURCE, OWNERSHIP_HEAD_SOURCE);
+    let repo = tmp.path();
+    let policy = repo.join("allow_all.cor");
+    write_file(&policy, ALLOW_ALL_POLICY);
+
+    let output = Command::new(corvid_bin())
+        .args([
+            "trace-diff",
+            &base_sha,
+            &head_sha,
+            "agent.cor",
+            "--format=json",
+            "--policy",
+            policy.to_str().unwrap(),
+        ])
+        .current_dir(repo)
+        .output()
+        .expect("run corvid trace-diff with custom allow policy");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "custom allow policy should pass. stdout=\n{stdout}\nstderr=\n{stderr}"
+    );
+    let parsed: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(parsed["verdict"]["ok"], true);
+    assert!(
+        parsed["receipt"]["deltas"][0]["key"]
+            .as_str()
+            .unwrap()
+            .contains("ownership_changed"),
+        "receipt should still archive the regression delta"
+    );
+}
+
+#[test]
+fn trace_diff_custom_policy_receives_structured_delta_facts() {
+    let (tmp, base_sha, head_sha) =
+        make_two_commit_repo(BASE_SOURCE, HEAD_SOURCE_WITH_ADDED_AGENT);
+    let repo = tmp.path();
+    let policy = repo.join("reject_added_agents.cor");
+    write_file(&policy, FLAG_ANY_AGENT_ADDITION_POLICY);
+
+    let output = Command::new(corvid_bin())
+        .args([
+            "trace-diff",
+            &base_sha,
+            &head_sha,
+            "agent.cor",
+            "--format=json",
+            "--policy",
+            policy.to_str().unwrap(),
+        ])
+        .current_dir(repo)
+        .output()
+        .expect("run corvid trace-diff with custom reject policy");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "custom policy should fail added-agent receipt. stdout=\n{stdout}\nstderr=\n{stderr}"
+    );
+    assert!(
+        stderr.contains("custom policy rejected added agent: summarize"),
+        "custom structured-fact flag missing. stderr=\n{stderr}"
+    );
+    let parsed: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(parsed["verdict"]["ok"], false);
 }
 
 /// `--narrative=off` must produce a byte-deterministic receipt

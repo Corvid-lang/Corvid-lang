@@ -4849,6 +4849,20 @@ first-class functions or typed lambdas.
 Closed the backpressure propagation item with a first-class
 `pulls_from(name)` policy alongside `bounded(N)` and `unbounded`.
 
+Prompt stream modifiers and dimensional latency effects can now write
+`with backpressure pulls_from(producer_rate)` and
+`latency: streaming(backpressure: pulls_from(producer_rate))`.
+
+The effect algebra is source-sensitive: a stream that pulls from
+`producer_rate` satisfies a matching `pulls_from(producer_rate)` constraint
+and any bounded-buffer constraint, but it does not satisfy
+`pulls_from(consumer_rate)`. Runtime channels map `pulls_from(...)` to a
+capacity-1 bounded channel so producers cannot run ahead of demand.
+
+Fan-in now preserves composed upstream backpressure rather than dropping to
+unbounded output. Split groups retain the source policy; sorted merge keeps the
+input policy after materialization.
+
 ## 2026-04-25 - 21-inv-H-4-follow grounded receipt narratives
 
 Closed the deferred receipt-narrative provenance upgrade. The embedded
@@ -4870,16 +4884,29 @@ test harness stack and stayed green, but the released binary's main thread was
 smaller. The embedded reviewer now runs on an explicit 8 MiB worker thread so
 the Corvid reviewer remains the rendering implementation without depending on
 platform default stack sizes.
-Prompt stream modifiers and dimensional latency effects can now write
-`with backpressure pulls_from(producer_rate)` and
-`latency: streaming(backpressure: pulls_from(producer_rate))`.
 
-The effect algebra is source-sensitive: a stream that pulls from
-`producer_rate` satisfies a matching `pulls_from(producer_rate)` constraint
-and any bounded-buffer constraint, but it does not satisfy
-`pulls_from(consumer_rate)`. Runtime channels map `pulls_from(...)` to a
-capacity-1 bounded channel so producers cannot run ahead of demand.
+## 2026-04-25 - 21-inv-H-5 custom trace-diff policy
 
-Fan-in now preserves composed upstream backpressure rather than dropping to
-unbounded output. Split groups retain the source policy; sorted merge keeps the
-input policy after materialization.
+Closed the user-replaceable trace-diff policy slice without reducing it to
+string parsing. The CLI now ships a baked Corvid policy prelude plus
+`default_policy.cor`, and `--policy=<path>` replaces only the governance agent
+body:
+
+```corvid
+@deterministic
+agent apply_policy(receipt: PolicyReceipt) -> Verdict:
+    ...
+```
+
+Rust still owns extraction of the raw algebraic receipt, but converts each
+delta into a typed `PolicyDelta` fact with category, operation, subject,
+direction, safety_class, and transition values. Corvid policy code decides the
+gate from those facts instead of parsing canonical delta keys.
+
+The default Corvid policy matches the previous conservative Rust policy:
+safety regressions and newly-diverged counterfactual traces trip the gate;
+improvements and informational deltas do not. Custom policies can loosen or
+tighten that rule while keeping the archived receipt unchanged.
+
+This slice also added List<T> + List<T> concatenation so policy programs can
+build verdict flag lists directly in the language.

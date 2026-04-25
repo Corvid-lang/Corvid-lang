@@ -402,6 +402,14 @@ enum Command {
         /// verifying key. Defaults to `corvid-default`.
         #[arg(long, value_name = "ID")]
         sign_key_id: Option<String>,
+        /// Replace the baked trace-diff regression policy with a
+        /// user-supplied Corvid policy body. The file must define
+        /// `@deterministic agent apply_policy(receipt:
+        /// PolicyReceipt) -> Verdict`; the CLI prepends the
+        /// typed policy prelude so policy code reasons over
+        /// structured safety facts, not raw delta-key strings.
+        #[arg(long, value_name = "POLICY_COR")]
+        policy: Option<PathBuf>,
         /// Enter stack mode: compose per-commit trace-diff
         /// receipts across a commit range into one algebraic
         /// `StackReceipt` with normal-form (cancelled) + history
@@ -753,6 +761,7 @@ fn main() -> ExitCode {
             format,
             sign,
             sign_key_id,
+            policy,
             stack,
             no_replay_skip,
         }) => {
@@ -783,6 +792,7 @@ fn main() -> ExitCode {
                         format,
                         sign_key_path: sign.as_deref(),
                         sign_key_id: sign_key_id.as_deref(),
+                        policy_path: policy.as_deref(),
                         stack_spec,
                         no_replay_skip,
                     })

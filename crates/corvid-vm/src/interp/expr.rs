@@ -54,9 +54,14 @@ fn eval_arithmetic(
             out.push_str(&b);
             Ok(Value::String(Arc::from(out)))
         }
+        (Value::List(a), Value::List(b)) if matches!(op, BinaryOp::Add) => {
+            let mut items = a.iter_cloned();
+            items.extend(b.iter_cloned());
+            Ok(Value::List(crate::value::ListValue::new(items)))
+        }
         (a, b) => Err(InterpError::new(
             InterpErrorKind::TypeMismatch {
-                expected: "Int or Float".into(),
+                expected: "Int, Float, String, or List".into(),
                 got: format!("{} and {}", a.type_name(), b.type_name()),
             },
             span,

@@ -27,11 +27,17 @@ impl<'a> Checker<'a> {
                 | (Type::Int, Type::Float)
                 | (Type::Float, Type::Int) => Type::Float,
                 (Type::String, Type::String) => Type::String,
+                (Type::List(a), Type::List(b)) if a.is_assignable_to(b) => {
+                    Type::List(b.clone())
+                }
+                (Type::List(a), Type::List(b)) if b.is_assignable_to(a) => {
+                    Type::List(a.clone())
+                }
                 (Type::Unknown, _) | (_, Type::Unknown) => Type::Unknown,
                 (a, b) => {
                     self.errors.push(TypeError::new(
                         TypeErrorKind::TypeMismatch {
-                            expected: "Int, Float, or two Strings".into(),
+                            expected: "Int, Float, two Strings, or two compatible Lists".into(),
                             got: format!("{} and {}", a.display_name(), b.display_name()),
                             context: "`+` operator".into(),
                         },

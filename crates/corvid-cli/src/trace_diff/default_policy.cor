@@ -1,0 +1,21 @@
+# Baked default governance policy for `corvid trace-diff`.
+#
+# This is intentionally ordinary Corvid code. The host provides
+# typed `PolicyDelta` facts; the policy decides which facts trip the
+# gate. Users can replace this file's agent with `--policy=<path>`.
+
+@deterministic
+agent apply_policy(receipt: PolicyReceipt) -> Verdict:
+    flags = []
+    has_flags = false
+
+    for d in receipt.deltas:
+        if d.safety_class == "regression":
+            flags = flags + [d.summary]
+            has_flags = true
+
+    if receipt.impact.any_newly_diverged:
+        flags = flags + ["counterfactual replay: " + receipt.impact.summary_line]
+        has_flags = true
+
+    return Verdict(not has_flags, flags)

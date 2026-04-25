@@ -50,6 +50,7 @@ mod grounded_narrative;
 mod impact;
 mod in_toto;
 mod narrative;
+mod policy;
 mod receipt;
 mod reviewer_invocation;
 mod stack_attribution;
@@ -70,7 +71,7 @@ use narrative::{
 };
 pub(crate) use narrative::compute_diff_summary as compute_bundle_diff_summary;
 pub use receipt::OutputFormat;
-use receipt::{apply_default_policy, render_github_check, render_json, Receipt};
+use receipt::{render_github_check, render_json, Receipt};
 use reviewer_invocation::{detect_adapter, invoke_narrative_prompt, invoke_reviewer, NoAdapter};
 pub(crate) use delta_isolation::{
     apply_splices as apply_splices_for_bundle_query,
@@ -123,6 +124,10 @@ pub struct TraceDiffArgs<'a> {
     /// `"corvid-default"` when signing is active but no label
     /// is supplied.
     pub sign_key_id: Option<&'a str>,
+    /// Optional user-supplied Corvid policy body. The CLI prepends
+    /// the baked policy prelude and invokes
+    /// `apply_policy(receipt: PolicyReceipt) -> Verdict`.
+    pub policy_path: Option<&'a Path>,
     /// When `Some`, enter stack mode: walk a commit range,
     /// compose per-commit receipts into a [`StackReceipt`] via
     /// the algebra in [`stacked`], emit the result (currently
@@ -186,7 +191,7 @@ pub fn run_trace_diff(args: TraceDiffArgs<'_>) -> Result<u8> {
         narrative_rejected,
     );
 
-    let verdict = apply_default_policy(&receipt);
+    let verdict = policy::apply_policy(&receipt, args.policy_path)?;
 
     // Markdown stays Corvid-side — the reviewer agent owns the
     // human-readable layout. Other formats are Rust renderers

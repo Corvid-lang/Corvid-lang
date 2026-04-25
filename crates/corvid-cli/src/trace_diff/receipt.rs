@@ -1,6 +1,6 @@
 //! The canonical structured receipt plus everything downstream of
-//! it: output-format selection + rendering, the default regression
-//! policy, and the verdict an exit code reads from.
+//! it: output-format selection + rendering, and the verdict an
+//! exit code reads from.
 //!
 //! `Receipt` is the one source of truth. Each format (`markdown`,
 //! `github-check`, `json`) is a view over the same struct. Markdown
@@ -12,15 +12,10 @@
 //! without payoff until the language has better string / JSON
 //! support.
 //!
-//! The default policy lives here too for the same pragmatic reason.
-//! Follow-up slice `21-inv-H-5-custom-policy` promotes it into a
-//! user-replaceable `.cor` agent; at that point the default policy
-//! becomes a `default_policy.cor` baked into the CLI.
-
 use std::io::IsTerminal;
 
 use corvid_abi::CorvidAbi;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use super::impact::TraceImpact;
 use super::narrative::{compute_diff_summary, DeltaRecord, DiffSummary, ReceiptNarrative};
@@ -154,7 +149,7 @@ impl Receipt {
 /// human-readable line per failed gate; callers emit them to
 /// stderr on non-`ok` verdicts and the JSON renderer folds them
 /// into `regression_flags`.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub(super) struct Verdict {
     pub ok: bool,
     pub flags: Vec<String>,
@@ -171,6 +166,7 @@ pub(super) struct Verdict {
 /// "flag regressions, celebrate improvements" asymmetry. Custom
 /// policies (in `21-inv-H-5-custom-policy`) replace this via
 /// user-supplied `.cor` programs.
+#[cfg(test)]
 pub(super) fn apply_default_policy(receipt: &Receipt) -> Verdict {
     let mut flags = Vec::new();
 
@@ -199,7 +195,7 @@ pub(super) fn apply_default_policy(receipt: &Receipt) -> Verdict {
 /// keys encode the transition as `...:<from>-><to>` so we can
 /// check direction without parsing ordinals on the Rust side —
 /// the record carries the comparison.
-fn regression_flag_for(delta: &DeltaRecord) -> Option<String> {
+pub(super) fn regression_flag_for(delta: &DeltaRecord) -> Option<String> {
     let key = delta.key.as_str();
     if key.starts_with("agent.dangerous_gained:") {
         return Some(delta.summary.clone());
@@ -251,7 +247,7 @@ fn regression_flag_for(delta: &DeltaRecord) -> Option<String> {
 /// = more permissive / less safe. An `a->b` transition is a
 /// lowering when `b`'s ordinal is less than `a`'s. Unknown tiers
 /// compare as middle-of-the-road and don't flip the gate.
-fn is_trust_lowering(transition: &str) -> bool {
+pub(super) fn is_trust_lowering(transition: &str) -> bool {
     let Some((from, to)) = transition.split_once("->") else {
         return false;
     };
@@ -280,7 +276,7 @@ fn tier_ordinal(tier: &str) -> Option<u8> {
     }
 }
 
-fn is_ownership_loosening(transition: &str) -> bool {
+pub(super) fn is_ownership_loosening(transition: &str) -> bool {
     let Some((from, to)) = transition.split_once("->") else {
         return false;
     };

@@ -31,6 +31,36 @@
         (file, resolved, checked)
     }
 
+    #[test]
+    fn list_concat_typechecks_for_compatible_lists() {
+        let src = r#"
+agent flags() -> List<String>:
+    base = ["a"]
+    extra = ["b"]
+    return base + extra
+"#;
+        let c = check(src);
+        assert!(c.errors.is_empty(), "errors: {:?}", c.errors);
+    }
+
+    #[test]
+    fn list_concat_rejects_incompatible_lists() {
+        let src = r#"
+agent flags() -> List<String>:
+    names = ["a"]
+    ids = [1]
+    return names + ids
+"#;
+        let c = check(src);
+        assert!(
+            c.errors
+                .iter()
+                .any(|e| matches!(e.kind, TypeErrorKind::TypeMismatch { .. })),
+            "expected list concat mismatch, got {:?}",
+            c.errors
+        );
+    }
+
     fn mutate_once(base: &str, from: &str, to: &str) -> String {
         assert!(base.contains(from), "mutation source missing `{from}`");
         base.replacen(from, to, 1)

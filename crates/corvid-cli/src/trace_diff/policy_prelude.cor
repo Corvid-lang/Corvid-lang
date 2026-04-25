@@ -1,0 +1,37 @@
+# Type surface for `corvid trace-diff --policy`.
+#
+# Rust converts the raw algebraic receipt into these policy facts
+# before invoking `apply_policy`. Policy authors should not parse
+# delta keys; the safety-relevant classification is carried in
+# `safety_class`, `category`, `operation`, and `direction`.
+
+type PolicyDelta:
+    key: String
+    summary: String
+    category: String
+    operation: String
+    subject: String
+    direction: String
+    safety_class: String
+    from_value: String
+    to_value: String
+
+type PolicyImpact:
+    has_traces: Bool
+    any_newly_diverged: Bool
+    summary_line: String
+    impact_percentage: String
+    newly_diverged_paths: List<String>
+
+type PolicyReceipt:
+    schema_version: Int
+    base_sha: String
+    head_sha: String
+    source_path: String
+    deltas: List<PolicyDelta>
+    impact: PolicyImpact
+    narrative_rejected: Bool
+
+type Verdict:
+    ok: Bool
+    flags: List<String>

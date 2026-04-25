@@ -36,6 +36,23 @@ async fn arithmetic_follows_precedence() {
 }
 
 #[tokio::test]
+async fn list_concat_appends_items_in_order() {
+    let ir = ir_of("agent flags() -> List<String>:\n    return [\"a\"] + [\"b\"]\n");
+    let rt = empty_runtime();
+    let v = run_agent(&ir, "flags", vec![], &rt).await.expect("run");
+    let Value::List(items) = v else {
+        panic!("expected list");
+    };
+    assert_eq!(
+        items.iter_cloned(),
+        vec![
+            Value::String(Arc::from("a")),
+            Value::String(Arc::from("b")),
+        ]
+    );
+}
+
+#[tokio::test]
 async fn division_by_zero_is_a_runtime_error() {
     let ir = ir_of("agent bad() -> Int:\n    x = 0\n    return 10 / x\n");
     let rt = empty_runtime();

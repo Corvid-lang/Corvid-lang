@@ -2760,6 +2760,29 @@ That is product behavior, not a test hack: Windows release binaries can have a
 smaller main-thread stack than Rust test threads, and complex receipts should
 not depend on that platform default.
 
+## 21-inv-H-custom-policy
+
+Trace-diff policy is now governance-as-code in Corvid:
+
+```corvid
+@deterministic
+agent apply_policy(receipt: PolicyReceipt) -> Verdict:
+    ...
+```
+
+The key design choice is typed policy facts. Rust converts each canonical
+delta key into a `PolicyDelta` with `category`, `operation`, `subject`,
+`direction`, `safety_class`, `from_value`, and `to_value`. Policy authors
+therefore reason over safety metadata directly instead of parsing strings.
+
+The baked `default_policy.cor` preserves the old conservative gate, but
+`--policy=<path>` lets a project replace the gate with its own Corvid program.
+The receipt stays archival: custom policies change the verdict, not the
+underlying delta record.
+
+`List<T> + List<T>` is now supported so deterministic policy code can build
+verdict flag lists naturally.
+
 ## Contributing / feedback
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). The rules of the road are: design chat before code, per-scope commits at every boundary, dev-log entry for every session, no shortcuts. The `learnings.md` file you're reading gets updated when each user-visible feature ships.
