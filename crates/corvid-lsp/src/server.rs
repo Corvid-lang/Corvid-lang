@@ -1,8 +1,8 @@
-use crate::{analyze_document, hover_at, DocumentSnapshot};
+use crate::{analyze_document, completion_at, hover_at, DocumentSnapshot};
 use lsp_types::{
-    DidChangeTextDocumentParams, DidOpenTextDocumentParams, HoverParams, InitializeResult,
-    PublishDiagnosticsParams, ServerCapabilities, TextDocumentSyncCapability,
-    TextDocumentSyncKind, Url,
+    CompletionOptions, CompletionParams, DidChangeTextDocumentParams, DidOpenTextDocumentParams,
+    HoverParams, InitializeResult, PublishDiagnosticsParams, ServerCapabilities,
+    TextDocumentSyncCapability, TextDocumentSyncKind, Url,
 };
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -46,6 +46,7 @@ impl LanguageServerState {
             "textDocument/didChange" => self.did_change(request.get("params").cloned()),
             "textDocument/didSave" => self.did_save(request.get("params").cloned()),
             "textDocument/hover" => self.hover(id, request.get("params").cloned()),
+            "textDocument/completion" => self.completion(id, request.get("params").cloned()),
             _ if id.is_some() => vec![ServerMessage::Error {
                 id,
                 code: -32601,
@@ -66,6 +67,15 @@ impl LanguageServerState {
                     TextDocumentSyncKind::FULL,
                 )),
                 hover_provider: Some(lsp_types::HoverProviderCapability::Simple(true)),
+                completion_provider: Some(CompletionOptions {
+                    trigger_characters: Some(vec![
+                        " ".to_string(),
+                        ".".to_string(),
+                        ":".to_string(),
+                        ">".to_string(),
+                    ]),
+                    ..CompletionOptions::default()
+                }),
                 ..ServerCapabilities::default()
             },
             server_info: Some(lsp_types::ServerInfo {
@@ -133,6 +143,27 @@ impl LanguageServerState {
             .map(serde_json::to_value)
             .transpose()
             .expect("hover serializes")
+            .unwrap_or(Value::Null);
+        vec![ServerMessage::Response {
+            id: id.unwrap_or(Value::Null),
+            result,
+        }]
+    }
+
+    fn completion(&self, id: Option<Value>, params: Option<Value>) -> Vec<ServerMessage> {
+        let params = match parse_params::<CompletionParams>(params) {
+            Ok(params) => params,
+            Err(error) => return vec![error],
+        };
+        let uri = params.text_document_position.text_document.uri;
+        let position = params.text_document_position.position;
+        let result = self
+            .documents
+            .get(&uri)
+            .map(|text| completion_at(text, position))
+            .map(serde_json::to_value)
+            .transpose()
+            .expect("completion serializes")
             .unwrap_or(Value::Null);
         vec![ServerMessage::Response {
             id: id.unwrap_or(Value::Null),
@@ -227,6 +258,7 @@ mod tests {
             Some(1)
         );
         assert_eq!(json["result"]["capabilities"]["hoverProvider"], true);
+        assert!(json["result"]["capabilities"]["completionProvider"].is_object());
     }
 
     #[test]
@@ -291,5 +323,32 @@ mod tests {
             .as_str()
             .unwrap()
             .contains("agent answer(x: Int) -> Int"));
+    }
+
+    #[test]
+    fn completion_returns_contextual_approval_label() {
+        let mut server = LanguageServerState::new();
+        server.handle(did_open(
+            "file:///workspace/main.cor",
+            "tool issue_refund(id: String) -> String dangerous\n\nagent run(id: String) -> String:\n    approve \n",
+        ));
+        let messages = server.handle(json!({
+            "jsonrpc": "2.0",
+            "id": 3,
+            "method": "textDocument/completion",
+            "params": {
+                "textDocument": { "uri": "file:///workspace/main.cor" },
+                "position": { "line": 3, "character": 12 }
+            }
+        }));
+        let json = messages.into_iter().next().unwrap().into_json();
+        assert_eq!(json["id"], 3);
+        let labels = json["result"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|item| item["label"].as_str().unwrap().to_string())
+            .collect::<Vec<_>>();
+        assert_eq!(labels, vec!["IssueRefund".to_string()]);
     }
 }

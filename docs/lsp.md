@@ -17,6 +17,7 @@ The stdio server is now wired as the `corvid-lsp` binary. It supports:
 - `textDocument/didChange`.
 - `textDocument/didSave`.
 - `textDocument/hover`.
+- `textDocument/completion`.
 - `textDocument/publishDiagnostics` notifications backed by the same compiler
   diagnostic path as the CLI.
 
@@ -33,6 +34,16 @@ and typechecks the current document, then returns Markdown summaries for:
 - prompt signatures, effect rows, calibration/cache flags, strict citations,
   and model-routing mode;
 - type and effect declarations.
+
+Completion support is context-aware and parser-backed. `completion.rs` uses the
+current partial document so suggestions still work while the user is typing, and
+keeps AI-native contexts specific:
+
+- declaration, statement, and AI-native keywords;
+- declared agents, tools, prompts, types, effects, models, and evals;
+- PascalCase approval labels derived from dangerous tools after `approve`;
+- declared effect names after `uses`;
+- model catalog names in prompt-routing and escalation contexts.
 
 Current validation:
 

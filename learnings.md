@@ -3173,6 +3173,18 @@ The initial hover implementation deliberately separates source facts from
 protocol transport. `hover.rs` owns semantic summaries; `server.rs` only
 serializes the hover response.
 
+## lsp completion
+
+Completion should be context-aware without becoming magical. Approval labels,
+effect names, and model names are semantic completions tied to Corvid's
+AI-native safety model, while ordinary declarations and keywords keep the
+language usable for general programming.
+
+The completion engine should tolerate partial source. Editors ask for
+completion while code is incomplete, so `completion.rs` uses the parser's best
+available file and narrows by local text context instead of requiring a clean
+typecheck.
+
 ## Contributing / feedback
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). The rules of the road are: design chat before code, per-scope commits at every boundary, dev-log entry for every session, no shortcuts. The `learnings.md` file you're reading gets updated when each user-visible feature ships.

@@ -5312,3 +5312,17 @@ Hovers currently cover inferred expression types plus declaration summaries for
 agents, tools, prompts, types, and effects. Prompt hovers expose AI-native
 metadata including effect rows, calibration/cache flags, strict citations, and
 model-routing mode; tool hovers show dangerous/approval boundaries.
+
+## 2026-04-25 - LSP context-aware completion
+
+Closed `24-D-completion`. `corvid-lsp` now advertises and handles
+`textDocument/completion`, with completion logic isolated in `completion.rs`.
+The engine parses the current partial source and returns keyword, declaration,
+effect, model, and approval-label suggestions without putting completion rules
+inside protocol transport.
+
+The AI-native contexts are explicit: `approve` suggests PascalCase labels for
+dangerous tools, `uses` suggests declared effects, and prompt routing/escalation
+positions suggest model catalog entries. General completions still include the
+ordinary language surface so Corvid remains a general language, not an
+AI-framework DSL.
