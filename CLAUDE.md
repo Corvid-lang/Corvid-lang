@@ -32,6 +32,20 @@ A 3,000-line file that does one thing cleanly is fine. A 400-line grab bag is no
 
 The hardest rule. No shortcuts anywhere. If a shipped surface conflicts with the spec, fix the surface rather than softening the spec (see `memory/project_phase_20_closed.md` for the canonical example).
 
+## Invention shipping contract
+
+Every new invention ships with public proof at the same time as the code. A feature counts as an invention when it is a Corvid-specific language/runtime capability that we would name in the README, site, launch material, or HN discussion.
+
+Before an invention slice is complete, it must include:
+
+- A README catalog entry or an explicit update explaining why the existing entry already covers it.
+- A `corvid tour --topic <name>` demo whose source compiles through the normal driver pipeline.
+- A `docs/inventions.md` proof-matrix row with shipped status, runnable command, test coverage, spec link, and explicit non-scope.
+- A spec or reference-doc link that defines the behavior.
+- Tests that validate the behavior named in the catalog entry.
+
+Do not ship hidden inventions. If the feature is important enough to make Corvid extraordinary, it is important enough to be discoverable, runnable, and test-backed.
+
 ## Pre-phase chat mandatory
 
 Never start code on a phase or slice until we've chatted and both sides understand the scope. This applies to refactor slices too — a decomposition plan gets agreed before any file moves.

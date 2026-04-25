@@ -3418,6 +3418,16 @@ This structure is stronger than a traditional feature grid. It treats
 non-scope as first-class, which prevents the project from accidentally turning
 future inventions into present-tense claims.
 
+## invention shipping contract
+
+The invention catalog only stays true if it becomes a contribution rule. The
+right default is not "remember to update docs later"; it is "the invention is
+not shipped until README, tour, proof matrix, spec, tests, and non-scope all
+land together."
+
+This turns marketing discipline into engineering discipline. Future launch
+claims become a byproduct of shipped proof instead of a separate cleanup pass.
+
 ## Contributing / feedback
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). The rules of the road are: design chat before code, per-scope commits at every boundary, dev-log entry for every session, no shortcuts. The `learnings.md` file you're reading gets updated when each user-visible feature ships.

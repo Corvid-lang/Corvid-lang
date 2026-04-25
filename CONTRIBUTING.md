@@ -144,6 +144,27 @@ See `corvid-types/src/errors.rs` for the pattern. If you add a new error kind, g
 
 Before you run `cargo commit` or equivalent: `cargo test --workspace` must be green. No exceptions.
 
+### Invention shipping contract
+
+Corvid-specific inventions must be public, runnable, and test-backed when they
+ship. If a feature is important enough to make Corvid different from ordinary
+languages and libraries, it is important enough to appear in the project front
+door.
+
+Every new invention ships with:
+
+- A README catalog entry, or an explicit update explaining why an existing entry
+  already covers it.
+- A `corvid tour --topic <name>` demo whose source compiles through the normal
+  driver pipeline.
+- A `docs/inventions.md` proof-matrix row with shipped status, runnable command,
+  test coverage, spec link, and explicit non-scope.
+- A spec or reference-doc link that defines the behavior.
+- Tests that validate the behavior named in the catalog entry.
+
+No hidden inventions. No prose-only inventions. No launch claims without a
+runnable command and a test path.
+
 ### Scope
 
 The feature roadmap lives in [`FEATURES.md`](./FEATURES.md). Before adding a new feature:

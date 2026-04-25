@@ -5583,3 +5583,13 @@ The page ends with an invention proof matrix covering every catalog entry:
 shipped status, runnable tour command, test coverage, spec link, and explicit
 non-scope. The README and static landing page now link to this standalone
 artifact.
+
+## 2026-04-25 - Invention shipping contributor contract
+
+Updated `CLAUDE.md` and `CONTRIBUTING.md` with the invention shipping contract:
+new Corvid-specific inventions must ship with README/catalog coverage, a
+compiler-checked `corvid tour --topic <name>` demo, a `docs/inventions.md`
+proof-matrix row, spec/reference docs, tests, and explicit non-scope.
+
+This closes the Phase 34 maintenance loop so future inventions cannot remain
+hidden in code or appear only as launch prose.
