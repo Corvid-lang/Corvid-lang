@@ -69,6 +69,7 @@ pub struct EvalTraceReport {
     pub grounded_edges: usize,
     pub total_cost_usd: f64,
     pub total_latency_ms: u64,
+    pub prompts: Vec<String>,
     pub model_routes: Vec<String>,
 }
 
@@ -110,7 +111,8 @@ pub async fn run_evals_at_path_with_options(
     let ir = match compile_to_ir_with_config_at_path(&source, path, config.as_ref()) {
         Ok(ir) => ir,
         Err(diagnostics) => {
-            let summary = EvalSummary::from_compile_error(path);
+            let trace = collect_trace_report(path, &[]);
+            let summary = EvalSummary::from_compile_error(path, &trace);
             let regression = persist_and_compare_summary(path, prior_summary.as_ref(), &summary)
                 .map_err(|error| EvalRunnerError::Io {
                     path: latest_path.clone(),
@@ -122,7 +124,7 @@ pub async fn run_evals_at_path_with_options(
                 evals: Vec::new(),
                 html_report_path,
                 regression,
-                trace: collect_trace_report(path, &[]),
+                trace,
             };
             write_eval_html_report(&report).map_err(|error| EvalRunnerError::Io {
                 path: report.html_report_path.clone(),
@@ -133,7 +135,8 @@ pub async fn run_evals_at_path_with_options(
     };
     let eval_ir = evals_as_tests(&ir);
     let evals = run_all_tests_with_options(&eval_ir, runtime, options).await;
-    let summary = EvalSummary::from_evals(path, &evals);
+    let trace = collect_trace_report(path, &evals);
+    let summary = EvalSummary::from_evals(path, &evals, &trace);
     let regression = persist_and_compare_summary(path, prior_summary.as_ref(), &summary).map_err(
         |error| EvalRunnerError::Io {
             path: latest_path,
@@ -143,7 +146,7 @@ pub async fn run_evals_at_path_with_options(
     let report = CorvidEvalReport {
         source_path: path.to_path_buf(),
         compile_diagnostics: Vec::new(),
-        trace: collect_trace_report(path, &evals),
+        trace,
         evals,
         html_report_path,
         regression,
@@ -534,6 +537,7 @@ fn collect_trace_report(path: &Path, evals: &[TestExecution]) -> EvalTraceReport
         }
     }
 
+    let mut prompts = BTreeSet::new();
     let mut routes = BTreeSet::new();
     for trace_path in find_trace_artifacts(&eval_output_dir(path)) {
         report.trace_count += 1;
@@ -548,13 +552,14 @@ fn collect_trace_report(path: &Path, evals: &[TestExecution]) -> EvalTraceReport
                 if is_replay_compatible_trace(&events) {
                     report.replay_compatible_count += 1;
                 }
-                summarize_trace_events(&events, &mut report, &mut routes);
+                summarize_trace_events(&events, &mut report, &mut prompts, &mut routes);
             }
             Err(error) => report
                 .invalid_traces
                 .push(format!("{}: {error}", trace_path.display())),
         }
     }
+    report.prompts = prompts.into_iter().collect();
     report.model_routes = routes.into_iter().collect();
     report
 }
@@ -596,6 +601,7 @@ fn is_replay_compatible_trace(events: &[TraceEvent]) -> bool {
 fn summarize_trace_events(
     events: &[TraceEvent],
     report: &mut EvalTraceReport,
+    prompts: &mut BTreeSet<String>,
     routes: &mut BTreeSet<String>,
 ) {
     let mut started_at = None;
@@ -612,6 +618,7 @@ fn summarize_trace_events(
                 ..
             } => {
                 report.prompt_calls += 1;
+                prompts.insert(prompt.clone());
                 if let Some(model) = model {
                     routes.insert(model_route_label(prompt, model, model_version.as_deref()));
                 }
@@ -626,6 +633,7 @@ fn summarize_trace_events(
                 cost_estimate,
                 ..
             } => {
+                prompts.insert(prompt.clone());
                 if cost_estimate.is_finite() && *cost_estimate > 0.0 {
                     report.total_cost_usd += *cost_estimate;
                 }
@@ -661,6 +669,7 @@ struct EvalSummary {
     source_path: String,
     evals: Vec<EvalSummaryEntry>,
     compile_ok: bool,
+    trace: EvalTraceSummary,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -676,16 +685,37 @@ struct EvalAssertionSummary {
     status: String,
 }
 
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+struct EvalTraceSummary {
+    trace_count: usize,
+    replay_compatible_count: usize,
+    value_assertions_passed: usize,
+    value_assertions_total: usize,
+    process_assertions_passed: usize,
+    process_assertions_total: usize,
+    approval_assertions_passed: usize,
+    approval_assertions_total: usize,
+    tool_calls: usize,
+    prompt_calls: usize,
+    approval_events: usize,
+    grounded_edges: usize,
+    total_cost_usd: f64,
+    total_latency_ms: u64,
+    prompts: Vec<String>,
+    model_routes: Vec<String>,
+}
+
 impl EvalSummary {
-    fn from_compile_error(path: &Path) -> Self {
+    fn from_compile_error(path: &Path, trace: &EvalTraceReport) -> Self {
         Self {
             source_path: path.display().to_string(),
             evals: Vec::new(),
             compile_ok: false,
+            trace: EvalTraceSummary::from(trace),
         }
     }
 
-    fn from_evals(path: &Path, evals: &[TestExecution]) -> Self {
+    fn from_evals(path: &Path, evals: &[TestExecution], trace: &EvalTraceReport) -> Self {
         Self {
             source_path: path.display().to_string(),
             evals: evals
@@ -704,6 +734,30 @@ impl EvalSummary {
                 })
                 .collect(),
             compile_ok: true,
+            trace: EvalTraceSummary::from(trace),
+        }
+    }
+}
+
+impl From<&EvalTraceReport> for EvalTraceSummary {
+    fn from(trace: &EvalTraceReport) -> Self {
+        Self {
+            trace_count: trace.trace_count,
+            replay_compatible_count: trace.replay_compatible_count,
+            value_assertions_passed: trace.value_assertions_passed,
+            value_assertions_total: trace.value_assertions_total,
+            process_assertions_passed: trace.process_assertions_passed,
+            process_assertions_total: trace.process_assertions_total,
+            approval_assertions_passed: trace.approval_assertions_passed,
+            approval_assertions_total: trace.approval_assertions_total,
+            tool_calls: trace.tool_calls,
+            prompt_calls: trace.prompt_calls,
+            approval_events: trace.approval_events,
+            grounded_edges: trace.grounded_edges,
+            total_cost_usd: trace.total_cost_usd,
+            total_latency_ms: trace.total_latency_ms,
+            prompts: trace.prompts.clone(),
+            model_routes: trace.model_routes.clone(),
         }
     }
 }
@@ -980,6 +1034,7 @@ eval math:
         assert_eq!(report.trace.approval_events, 1);
         assert_eq!(report.trace.grounded_edges, 1);
         assert_eq!(report.trace.total_latency_ms, 45);
+        assert!(report.trace.prompts.contains(&"draft".into()));
         assert!(report.trace.model_routes.contains(&"draft:fast@1".into()));
         let rendered = render_eval_report(&report, None);
         assert!(rendered.contains("Trace report: 1 trace"), "{rendered}");
