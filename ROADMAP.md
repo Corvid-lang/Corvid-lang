@@ -720,7 +720,7 @@ Every `effect` declaration, `uses` clause, and constraint example in [docs/effec
 Other languages have package registries for code. Corvid has one for effect *dimensions*. `corvid add-dimension fairness@1.2` resolves a registered dimension, verifies its signature, replays its proofs against the current toolchain, and adds it to `corvid.toml`. Companion tool `corvid effect-diff <before> <after>` reports exactly which agents' composed profiles changed and which constraints newly fire or release — effect refactoring becomes safe because the diff tool surfaces every consequence.
 
 - [x] `corvid add-dimension` CLI command — local-path form wired with pre-install law-check (commit `119cc9c`)
-- [ ] Signed dimension artifacts (declaration + proof + regression corpus) — follow-up once registry hosts
+- [x] Signed dimension artifacts (declaration + proof + regression corpus) — local artifact verifier accepts `[artifact]` Ed25519 signatures, one dimension declaration, optional proof, and regression programs before `add-dimension` installs
 - [ ] Registry host at `effect.corvid-lang.org` (placeholder — registry form returns actionable error, local-path form works today)
 - [x] `corvid effect-diff` CLI command (commit `d021e91`)
 - [x] Diff engine compares per-agent composed profiles, reports firing/released constraints

@@ -5510,3 +5510,15 @@ disclosure expectations, reporter credit format, and the required permanent
 regression artifacts. The issue template forces a complete `.cor` reproducer,
 command, actual result, expected result, invariant category, and safety
 checklist.
+
+## 2026-04-25 - Signed dimension artifacts
+
+Closed the signed-dimension-artifact follow-up without waiting for a hosted
+registry. `corvid add-dimension ./file.toml` now detects an `[artifact]` header
+and verifies the Ed25519 signature, semver version, single-dimension contract,
+normal dimension validation, archetype law checks, optional proof replay, and
+artifact regression programs before installing the declaration.
+
+The artifact format is documented in `docs/effects-spec/dimension-artifacts.md`.
+The hosted registry can now distribute the same files later; the local verifier
+is already the source of truth.

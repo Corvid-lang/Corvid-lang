@@ -25,6 +25,7 @@ This directory is the normative specification of Corvid's dimensional effect sys
 | [14 — Replay, prod-as-test-suite, and behavior-diff: what shipped](./14-replay.md) | Phase 21 thesis — every run writes a trace; prod traces are the regression suite; PRs carry a signed behavior receipt. `@replayable` / `@deterministic`, the `replay` language primitive, `corvid test --from-traces` + `--promote`, `corvid trace-diff`, shadow daemon, determinism axes. |
 | [counterexamples/](./counterexamples/) | Every historical bypass attempt as a permanent regression test |
 | [bounty.md](./bounty.md) | Public submission process for effect-system bypasses and false positives |
+| [dimension-artifacts.md](./dimension-artifacts.md) | Signed custom-dimension artifact format: declaration, proof, and regression corpus |
 
 ## How to read this spec
 
@@ -58,6 +59,7 @@ The effect system ships with a set of CLI commands that make the dimensional alg
 | `corvid test adversarial` | Run the LLM-driven bypass generator against the effect checker |
 | `corvid effect-diff <before> <after>` | Diff the composed effect profile between two revisions and report constraint firings |
 | `corvid add-dimension <name>@<version>` | Install a dimension from the Corvid effect registry, verify its proofs |
+| `corvid add-dimension ./dimension.dim.toml` | Install a local custom dimension or signed dimension artifact after law/proof/regression verification |
 
 See [01-dimensional-syntax.md](./01-dimensional-syntax.md) §5 and [02-composition-algebra.md](./02-composition-algebra.md) §9–§11 for how each command fits into the dimensional model.
 

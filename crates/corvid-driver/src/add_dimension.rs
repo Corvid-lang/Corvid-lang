@@ -5,8 +5,9 @@
 //!   * **Local path**: `corvid add-dimension ./freshness.dim.toml`
 //!     Reads a TOML file whose shape matches the `[effect-system.dimensions.*]`
 //!     section of `corvid.toml`, validates it, then appends the
-//!     declaration to the project's `corvid.toml`. The local form
-//!     is the MVP — it doesn't require any registry infrastructure.
+//!     declaration to the project's `corvid.toml`. If the file also
+//!     carries an `[artifact]` header, Ed25519 signature, and regression
+//!     corpus, the artifact is verified before installation.
 //!
 //!   * **Registry**: `corvid add-dimension fairness@1.0`
 //!     Not yet implemented — the Corvid effect registry isn't hosted
@@ -31,6 +32,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{anyhow, Context, Result};
 use corvid_types::{check_dimension, CorvidConfig, DimensionUnderTest};
 
+use crate::dimension_artifact::verify_dimension_artifact;
 use crate::proof_replay::replay_dimension_proof;
 
 /// Outcome of `add_dimension`. `Added` is the happy path; `Rejected`
@@ -92,6 +94,8 @@ fn is_registry_form(spec: &str) -> bool {
 fn install_from_path(source: &Path, project_dir: &Path) -> Result<AddDimensionOutcome> {
     let bytes = fs::read_to_string(source)
         .with_context(|| format!("cannot read dimension file `{}`", source.display()))?;
+    let artifact = verify_dimension_artifact(&bytes)
+        .with_context(|| format!("failed to verify dimension artifact `{}`", source.display()))?;
     let fragment: CorvidConfig = toml::from_str(&bytes)
         .with_context(|| format!("failed to parse `{}` as TOML", source.display()))?;
 
@@ -120,6 +124,16 @@ fn install_from_path(source: &Path, project_dir: &Path) -> Result<AddDimensionOu
 
     let (schema, meta) = schemas.into_iter().next().unwrap();
     let dim_name = schema.name.clone();
+    if let Some(artifact) = &artifact {
+        if artifact.name != dim_name {
+            return Ok(AddDimensionOutcome::Rejected {
+                reason: format!(
+                    "artifact declares `{}` but dimension section installs `{dim_name}`",
+                    artifact.name
+                ),
+            });
+        }
+    }
 
     // Reject if the project's existing corvid.toml already declares
     // this dimension — overwriting would silently change semantics.
@@ -284,6 +298,8 @@ fn format_default(value: &corvid_ast::DimensionValue) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::dimension_artifact::canonical_payload_for_artifact;
+    use ed25519_dalek::{Signer, SigningKey};
     use tempfile::TempDir;
 
     fn write(root: &Path, name: &str, body: &str) -> PathBuf {
@@ -509,5 +525,63 @@ type = "number"
             }
             other => panic!("unexpected outcome: {other:?}"),
         }
+    }
+
+    #[test]
+    fn installs_signed_dimension_artifact_after_verification() {
+        let tmp = TempDir::new().unwrap();
+        let signing_key = SigningKey::from_bytes(&[11u8; 32]);
+        let verifying_key = signing_key.verifying_key();
+        let unsigned = signed_artifact(&hex(verifying_key.as_bytes()), "");
+        let payload = canonical_payload_for_artifact(&unsigned).unwrap();
+        let signature = signing_key.sign(payload.as_bytes());
+        let signed = signed_artifact(&hex(verifying_key.as_bytes()), &hex(&signature.to_bytes()));
+        let source = write(tmp.path(), "freshness.dim.toml", &signed);
+        let project = tmp.path().join("project");
+        let outcome = add_dimension(source.to_str().unwrap(), &project).unwrap();
+        match outcome {
+            AddDimensionOutcome::Added { name, target } => {
+                assert_eq!(name, "freshness");
+                let installed = fs::read_to_string(target).unwrap();
+                assert!(installed.contains("[effect-system.dimensions.freshness]"));
+                assert!(!installed.contains("[artifact]"));
+            }
+            other => panic!("unexpected outcome: {other:?}"),
+        }
+    }
+
+    fn signed_artifact(signing_key: &str, signature: &str) -> String {
+        format!(
+            r#"
+[artifact]
+name = "freshness"
+version = "1.0.0"
+signing_key = "{signing_key}"
+signature = "{signature}"
+
+[effect-system.dimensions.freshness]
+composition = "Max"
+type = "timestamp"
+default = "0"
+semantics = "maximum data age"
+
+[[regression]]
+name = "freshness_compiles"
+expect = "compile"
+source = '''
+effect stale:
+    freshness: 2
+
+tool read_cache() -> String uses stale
+
+agent main() -> String:
+    return read_cache()
+'''
+"#
+        )
+    }
+
+    fn hex(bytes: &[u8]) -> String {
+        bytes.iter().map(|b| format!("{b:02x}")).collect()
     }
 }

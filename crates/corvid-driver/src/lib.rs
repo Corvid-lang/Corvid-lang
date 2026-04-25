@@ -12,6 +12,7 @@ pub mod adversarial;
 pub mod approver;
 pub mod effect_diff;
 pub mod meta_verify;
+mod dimension_artifact;
 pub mod modules;
 pub mod proof_replay;
 mod import_integrity;
@@ -63,6 +64,10 @@ pub use render::{render_all_pretty, render_pretty};
 pub use spec_check::{
     extract_spec_examples, render_spec_report, verify_spec_examples, Expectation, SpecExample,
     SpecVerdict, VerdictKind,
+};
+pub use dimension_artifact::{
+    canonical_payload_for_artifact as dimension_artifact_payload,
+    verify_dimension_artifact, DimensionArtifactReport,
 };
 pub use spec_site::{
     build_spec_site, render_spec_site_report, SpecSitePage, SpecSiteReport,

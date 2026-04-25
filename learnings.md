@@ -3353,6 +3353,17 @@ first try. Requiring a full program, command, actual result, expected result,
 and invariant category makes reports actionable and keeps the corpus from
 turning into prose-only bug reports.
 
+## signed dimension artifacts
+
+Custom dimensions are type-system extensions, not ordinary packages. Installing
+one must verify authorship and semantics before it enters `corvid.toml`.
+
+The artifact contract is: one declaration, semver version, Ed25519 signature,
+optional formal proof, and regression programs. The registry can host these
+files later, but trust belongs in the local verifier. A hosted registry should
+never be required for the compiler to know whether a dimension artifact is
+valid.
+
 ## Contributing / feedback
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). The rules of the road are: design chat before code, per-scope commits at every boundary, dev-log entry for every session, no shortcuts. The `learnings.md` file you're reading gets updated when each user-visible feature ships.
