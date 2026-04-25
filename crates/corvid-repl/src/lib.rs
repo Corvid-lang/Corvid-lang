@@ -420,6 +420,11 @@ impl Repl {
                 self.cmd_why(output)?;
                 Ok(true)
             }
+            ":scratch" => {
+                let rest = trimmed[command.len()..].trim();
+                self.cmd_scratch(rest, output)?;
+                Ok(true)
+            }
             ":help" | ":h" => {
                 self.cmd_help(output)?;
                 Ok(true)
@@ -891,6 +896,7 @@ impl Repl {
         writeln!(output, "  :stepoff         normal execution")?;
         writeln!(output, "  :trace           show last execution trace")?;
         writeln!(output, "  :why             explain last run's gates, routes, and AI boundaries")?;
+        writeln!(output, "  :scratch [agent] AI scratchpad summary for effects, cost, and trace")?;
         writeln!(output, "  :whatif <name> returns <json>")?;
         writeln!(output, "                   re-run with a counterfactual result")?;
         writeln!(output)?;
@@ -1084,6 +1090,202 @@ impl Repl {
             }
         }
         output.flush()
+    }
+
+    fn cmd_scratch<W: Write>(&self, agent_name: &str, output: &mut W) -> io::Result<()> {
+        let turn = self.resolver.resolve_current();
+        if self.write_resolve_errors(&turn, output)? {
+            return Ok(());
+        }
+
+        let agents: Vec<_> = turn
+            .file
+            .decls
+            .iter()
+            .filter_map(|decl| match decl {
+                Decl::Agent(agent) => Some(agent.name.name.as_str()),
+                _ => None,
+            })
+            .collect();
+        let tools: Vec<_> = turn
+            .file
+            .decls
+            .iter()
+            .filter_map(|decl| match decl {
+                Decl::Tool(tool) => Some(tool.name.name.as_str()),
+                _ => None,
+            })
+            .collect();
+        let prompts: Vec<_> = turn
+            .file
+            .decls
+            .iter()
+            .filter_map(|decl| match decl {
+                Decl::Prompt(prompt) => Some(prompt.name.name.as_str()),
+                _ => None,
+            })
+            .collect();
+
+        writeln!(output, "\x1b[1mAI scratchpad\x1b[0m")?;
+        writeln!(
+            output,
+            "  session: {} agent(s), {} tool(s), {} prompt(s), {} local(s)",
+            agents.len(),
+            tools.len(),
+            prompts.len(),
+            self.locals.len()
+        )?;
+        if !tools.is_empty() {
+            writeln!(output, "  tools: {}", tools.join(", "))?;
+        }
+        if !prompts.is_empty() {
+            writeln!(output, "  prompts: {}", prompts.join(", "))?;
+        }
+
+        let selected_agent = if !agent_name.is_empty() {
+            Some(agent_name)
+        } else if agents.len() == 1 {
+            agents.first().copied()
+        } else {
+            None
+        };
+
+        if let Some(name) = selected_agent {
+            self.render_scratch_agent(name, &turn, output)?;
+        } else if agents.len() > 1 {
+            writeln!(
+                output,
+                "  agent: choose one with `:scratch <agent>` ({})",
+                agents.join(", ")
+            )?;
+        } else {
+            writeln!(output, "  agent: none defined yet")?;
+        }
+
+        self.render_scratch_trace(output)?;
+        output.flush()
+    }
+
+    fn render_scratch_agent<W: Write>(
+        &self,
+        name: &str,
+        turn: &ResolvedTurn,
+        output: &mut W,
+    ) -> io::Result<()> {
+        let Some(Decl::Agent(agent)) = turn
+            .file
+            .decls
+            .iter()
+            .find(|decl| corvid_resolve::decl_name(decl) == Some(name))
+        else {
+            writeln!(output, "  agent `{name}`: not found")?;
+            return Ok(());
+        };
+
+        let params: Vec<String> = agent
+            .params
+            .iter()
+            .map(|param| format!("{}: {}", param.name.name, format_typeref(&param.ty)))
+            .collect();
+        writeln!(
+            output,
+            "  agent: {name}({}) -> {}",
+            params.join(", "),
+            format_typeref(&agent.return_ty)
+        )?;
+
+        let effect_decls: Vec<_> = turn
+            .file
+            .decls
+            .iter()
+            .filter_map(|decl| match decl {
+                Decl::Effect(effect) => Some(effect.clone()),
+                _ => None,
+            })
+            .collect();
+        let registry = corvid_types::EffectRegistry::from_decls(&effect_decls);
+        let summaries = corvid_types::analyze_effects(&turn.file, &turn.resolved, &registry);
+        if let Some(summary) = summaries.iter().find(|summary| summary.agent_name == name) {
+            if summary.composed.dimensions.is_empty() {
+                writeln!(output, "  effects: none")?;
+            } else {
+                let mut dims: Vec<_> = summary.composed.dimensions.iter().collect();
+                dims.sort_by(|(left, _), (right, _)| left.cmp(right));
+                let rendered = dims
+                    .into_iter()
+                    .map(|(dim, value)| format!("{dim}={}", format_dimension_value(value)))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                writeln!(output, "  effects: {rendered}")?;
+            }
+        }
+
+        if let Some(estimate) =
+            corvid_types::compute_worst_case_cost(&turn.file, &turn.resolved, &registry, name)
+        {
+            let cost = estimate.dimensions.get("cost").copied().unwrap_or(0.0);
+            let tokens = estimate.dimensions.get("tokens").copied().unwrap_or(0.0);
+            let latency = estimate
+                .dimensions
+                .get("latency_ms")
+                .copied()
+                .unwrap_or(0.0);
+            writeln!(
+                output,
+                "  cost: ${cost:.4}, tokens: {tokens:.0}, latency_ms: {latency:.0}"
+            )?;
+            if !estimate.warnings.is_empty() {
+                writeln!(output, "  cost warnings: {}", estimate.warnings.len())?;
+            }
+        }
+        Ok(())
+    }
+
+    fn render_scratch_trace<W: Write>(&self, output: &mut W) -> io::Result<()> {
+        let Some(trace) = &self.last_trace else {
+            writeln!(output, "  last run: none")?;
+            return Ok(());
+        };
+
+        let boundaries = trace.boundaries();
+        if boundaries.is_empty() {
+            writeln!(output, "  last run: deterministic local computation")?;
+            return Ok(());
+        }
+
+        writeln!(
+            output,
+            "  last run: {} checkpoint(s), {} boundary event(s)",
+            trace.len(),
+            boundaries.len()
+        )?;
+        for checkpoint in boundaries.iter().take(6) {
+            match &checkpoint.event {
+                corvid_vm::StepEvent::BeforeToolCall { tool_name, .. } => {
+                    writeln!(output, "    - tool call: {tool_name}")?;
+                }
+                corvid_vm::StepEvent::BeforePromptCall {
+                    prompt_name, model, ..
+                } => {
+                    writeln!(
+                        output,
+                        "    - prompt call: {prompt_name} via {}",
+                        model.as_deref().unwrap_or("<default>")
+                    )?;
+                }
+                corvid_vm::StepEvent::BeforeApproval { label, .. } => {
+                    writeln!(output, "    - approval: {label}")?;
+                }
+                corvid_vm::StepEvent::BeforeAgentCall { agent_name, .. } => {
+                    writeln!(output, "    - agent call: {agent_name}")?;
+                }
+                _ => {}
+            }
+        }
+        if boundaries.len() > 6 {
+            writeln!(output, "    - ... {} more", boundaries.len() - 6)?;
+        }
+        Ok(())
     }
 
     fn cmd_type<W: Write>(&mut self, expr_src: &str, output: &mut W) -> io::Result<()> {
@@ -1787,6 +1989,25 @@ fn append_confidence_gate_reason(line: &mut String, gate: &corvid_vm::Confidence
     }
 }
 
+fn format_dimension_value(value: &corvid_ast::DimensionValue) -> String {
+    match value {
+        corvid_ast::DimensionValue::Bool(value) => value.to_string(),
+        corvid_ast::DimensionValue::Name(value) => value.clone(),
+        corvid_ast::DimensionValue::Cost(value) => format!("${value:.4}"),
+        corvid_ast::DimensionValue::Number(value) => format!("{value}"),
+        corvid_ast::DimensionValue::Streaming { backpressure } => {
+            format!("streaming({})", backpressure.label())
+        }
+        corvid_ast::DimensionValue::ConfidenceGated {
+            threshold,
+            above,
+            below,
+        } => {
+            format!("autonomous_if_confident({threshold:.3}, above={above}, below={below})")
+        }
+    }
+}
+
 fn format_typeref(ty: &corvid_ast::TypeRef) -> String {
     match ty {
         corvid_ast::TypeRef::Named { name, .. } => name.name.clone(),
@@ -2087,5 +2308,37 @@ p.x\n",
         assert!(text.contains("run start: inc"), "unexpected output: {text}");
         assert!(text.contains("run complete"), "unexpected output: {text}");
         assert!(text.contains("left replay mode"), "unexpected output: {text}");
+    }
+
+    #[test]
+    fn scratch_summarizes_ai_session_surface() {
+        let mut repl = Repl::new().expect("repl init");
+        let mut output = Vec::new();
+        repl.process_source(
+            "effect search_effect:\n    cost: $0.001\n    tokens: 12\n    latency_ms: 100\n",
+            &mut output,
+            false,
+        )
+        .expect("effect decl");
+        repl.process_source(
+            "tool search(query: String) -> String uses search_effect",
+            &mut output,
+            false,
+        )
+        .expect("tool decl");
+        repl.process_source(
+            "agent lookup(query: String) -> String:\n    return search(query)\n",
+            &mut output,
+            false,
+        )
+        .expect("agent decl");
+        repl.process_source(":scratch lookup", &mut output, false)
+            .expect("scratch command");
+        let text = String::from_utf8(output).expect("valid utf8");
+        assert!(text.contains("AI scratchpad"), "unexpected output: {text}");
+        assert!(text.contains("tools: search"), "unexpected output: {text}");
+        assert!(text.contains("agent: lookup"), "unexpected output: {text}");
+        assert!(text.contains("effects:"), "unexpected output: {text}");
+        assert!(text.contains("cost:"), "unexpected output: {text}");
     }
 }

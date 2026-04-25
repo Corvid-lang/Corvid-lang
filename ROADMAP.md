@@ -486,7 +486,7 @@ Pre-phase chat caught two limiting shortcuts in my brief and reshaped the phase 
 - Pretty-printing of return values, including structs (field-by-field) and lists (with length).
 - readline-class editing (history, ctrl-r search, multiline input with indent-aware continuation).
 - `:help`, `:type <expr>`, `:reset`, `:quit` meta-commands.
-- AI run scratchpad mode: run agents with mocked tools/prompts, inspect the composed effect profile, cost estimate, model route, confidence, and provenance without leaving the shell.
+- [x] AI run scratchpad mode: run agents with mocked tools/prompts, inspect the composed effect profile, cost estimate, model route, confidence, and provenance without leaving the shell. Shipped as `:scratch [agent]`, a single REPL report over session declarations, imported mocks, composed effect dimensions, cost estimates, and last-run boundary trace signals.
 - [x] `:why` explains the compiler/runtime reason for an approval gate, model route, confidence downgrade, budget warning, or grounding failure. Shipped as a REPL trace explanation command that records silent boundary traces for normal evaluation and reports agent, prompt, tool, approval, route, and confidence-gate reasons from the last run.
 - [x] `:replay last` reruns the last interaction through the recorded trace so users can debug behavior without spending on another model call. Shipped as an in-memory replay session over the REPL's last boundary trace, reusing the same `:step` / `:run` / `:show` / `:where` replay UI as JSONL traces.
 
