@@ -7,6 +7,7 @@ use corvid_vm::{
     run_all_tests_with_options, SnapshotOptions, TestAssertionStatus, TestExecution,
     TestRunOptions, TraceFixtureOptions,
 };
+use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::path::{Path, PathBuf};
 
@@ -33,6 +34,7 @@ pub struct CorvidEvalReport {
     pub compile_diagnostics: Vec<Diagnostic>,
     pub evals: Vec<TestExecution>,
     pub html_report_path: PathBuf,
+    pub regression: EvalRegressionReport,
 }
 
 impl CorvidEvalReport {
@@ -45,6 +47,21 @@ impl CorvidEvalReport {
     pub fn exit_code(&self) -> u8 {
         if self.passed() { 0 } else { 1 }
     }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct EvalRegressionReport {
+    pub prior_path: PathBuf,
+    pub current_path: PathBuf,
+    pub regressions: Vec<EvalRegression>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EvalRegression {
+    pub eval: String,
+    pub assertion: Option<String>,
+    pub before: String,
+    pub after: String,
 }
 
 pub async fn run_evals_at_path(
@@ -64,15 +81,24 @@ pub async fn run_evals_at_path_with_options(
         error,
     })?;
     let html_report_path = html_report_path(path);
+    let latest_path = latest_results_path(path);
+    let prior_summary = read_eval_summary(&latest_path);
     let config = load_corvid_config_for(path);
     let ir = match compile_to_ir_with_config_at_path(&source, path, config.as_ref()) {
         Ok(ir) => ir,
         Err(diagnostics) => {
+            let summary = EvalSummary::from_compile_error(path);
+            let regression = persist_and_compare_summary(path, prior_summary.as_ref(), &summary)
+                .map_err(|error| EvalRunnerError::Io {
+                    path: latest_path.clone(),
+                    error,
+                })?;
             let report = CorvidEvalReport {
                 source_path: path.to_path_buf(),
                 compile_diagnostics: diagnostics,
                 evals: Vec::new(),
                 html_report_path,
+                regression,
             };
             write_eval_html_report(&report).map_err(|error| EvalRunnerError::Io {
                 path: report.html_report_path.clone(),
@@ -83,11 +109,19 @@ pub async fn run_evals_at_path_with_options(
     };
     let eval_ir = evals_as_tests(&ir);
     let evals = run_all_tests_with_options(&eval_ir, runtime, options).await;
+    let summary = EvalSummary::from_evals(path, &evals);
+    let regression = persist_and_compare_summary(path, prior_summary.as_ref(), &summary).map_err(
+        |error| EvalRunnerError::Io {
+            path: latest_path,
+            error,
+        },
+    )?;
     let report = CorvidEvalReport {
         source_path: path.to_path_buf(),
         compile_diagnostics: Vec::new(),
         evals,
         html_report_path,
+        regression,
     };
     write_eval_html_report(&report).map_err(|error| EvalRunnerError::Io {
         path: report.html_report_path.clone(),
@@ -176,11 +210,42 @@ pub fn render_eval_report(report: &CorvidEvalReport, source: Option<&str>) -> St
         }
     }
     out.push_str(&format!("\n{passed} passed, {failed} failed\n"));
+    render_regression_summary(report, &mut out);
     out.push_str(&format!(
         "HTML report: {}\n",
         report.html_report_path.display()
     ));
     out
+}
+
+fn render_regression_summary(report: &CorvidEvalReport, out: &mut String) {
+    if report.regression.current_path.as_os_str().is_empty() {
+        return;
+    }
+    if report.regression.regressions.is_empty() {
+        out.push_str("Regressions: 0\n");
+        return;
+    }
+    out.push_str(&format!(
+        "Regressions: {} new failure{}\n",
+        report.regression.regressions.len(),
+        if report.regression.regressions.len() == 1 {
+            ""
+        } else {
+            "s"
+        }
+    ));
+    for regression in &report.regression.regressions {
+        let target = regression
+            .assertion
+            .as_deref()
+            .map(|assertion| format!("{} :: {assertion}", regression.eval))
+            .unwrap_or_else(|| regression.eval.clone());
+        out.push_str(&format!(
+            "  {target}: {} -> {}\n",
+            regression.before, regression.after
+        ));
+    }
 }
 
 fn evals_as_tests(ir: &IrFile) -> IrFile {
@@ -229,6 +294,25 @@ fn render_eval_html_report(report: &CorvidEvalReport) -> String {
         out.push_str("<p class=\"fail\">No eval declarations found.</p></body></html>");
         return out;
     }
+    if report.regression.regressions.is_empty() {
+        out.push_str("<p class=\"meta\">Regressions: 0</p>");
+    } else {
+        out.push_str("<h2>Regressions</h2><ul>");
+        for regression in &report.regression.regressions {
+            let target = regression
+                .assertion
+                .as_deref()
+                .map(|assertion| format!("{} :: {assertion}", regression.eval))
+                .unwrap_or_else(|| regression.eval.clone());
+            out.push_str(&format!(
+                "<li><strong>{}</strong>: {} -&gt; {}</li>",
+                escape_html(&target),
+                escape_html(&regression.before),
+                escape_html(&regression.after)
+            ));
+        }
+        out.push_str("</ul>");
+    }
     out.push_str("<table><thead><tr><th>Eval</th><th>Status</th><th>Assertions</th></tr></thead><tbody>");
     for eval in &report.evals {
         let class = if eval.passed() { "pass" } else { "fail" };
@@ -265,6 +349,14 @@ fn render_eval_html_report(report: &CorvidEvalReport) -> String {
 
 fn html_report_path(path: &Path) -> PathBuf {
     eval_output_dir(path).join("report.html")
+}
+
+fn latest_results_path(path: &Path) -> PathBuf {
+    eval_output_dir(path).join("latest.json")
+}
+
+fn previous_results_path(path: &Path) -> PathBuf {
+    eval_output_dir(path).join("previous.json")
 }
 
 fn eval_output_dir(path: &Path) -> PathBuf {
@@ -307,6 +399,140 @@ fn escape_html(raw: &str) -> String {
             other => vec![other],
         })
         .collect()
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct EvalSummary {
+    source_path: String,
+    evals: Vec<EvalSummaryEntry>,
+    compile_ok: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct EvalSummaryEntry {
+    name: String,
+    status: String,
+    assertions: Vec<EvalAssertionSummary>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct EvalAssertionSummary {
+    label: String,
+    status: String,
+}
+
+impl EvalSummary {
+    fn from_compile_error(path: &Path) -> Self {
+        Self {
+            source_path: path.display().to_string(),
+            evals: Vec::new(),
+            compile_ok: false,
+        }
+    }
+
+    fn from_evals(path: &Path, evals: &[TestExecution]) -> Self {
+        Self {
+            source_path: path.display().to_string(),
+            evals: evals
+                .iter()
+                .map(|eval| EvalSummaryEntry {
+                    name: eval.name.clone(),
+                    status: eval_status(eval).into(),
+                    assertions: eval
+                        .assertions
+                        .iter()
+                        .map(|assertion| EvalAssertionSummary {
+                            label: assertion.label.clone(),
+                            status: format!("{:?}", assertion.status),
+                        })
+                        .collect(),
+                })
+                .collect(),
+            compile_ok: true,
+        }
+    }
+}
+
+fn eval_status(eval: &TestExecution) -> &'static str {
+    if eval.passed() {
+        "Passed"
+    } else if eval.setup_error.is_some() {
+        "Error"
+    } else {
+        "Failed"
+    }
+}
+
+fn read_eval_summary(path: &Path) -> Option<EvalSummary> {
+    let text = std::fs::read_to_string(path).ok()?;
+    serde_json::from_str(&text).ok()
+}
+
+fn persist_and_compare_summary(
+    source_path: &Path,
+    prior: Option<&EvalSummary>,
+    current: &EvalSummary,
+) -> std::io::Result<EvalRegressionReport> {
+    let current_path = latest_results_path(source_path);
+    let prior_path = previous_results_path(source_path);
+    if let Some(parent) = current_path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    if current_path.exists() {
+        std::fs::copy(&current_path, &prior_path)?;
+    }
+    let bytes = serde_json::to_vec_pretty(current)
+        .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;
+    std::fs::write(&current_path, bytes)?;
+    Ok(EvalRegressionReport {
+        prior_path,
+        current_path,
+        regressions: prior
+            .map(|prior| compare_eval_summaries(prior, current))
+            .unwrap_or_default(),
+    })
+}
+
+fn compare_eval_summaries(prior: &EvalSummary, current: &EvalSummary) -> Vec<EvalRegression> {
+    if !prior.compile_ok || !current.compile_ok {
+        return Vec::new();
+    }
+    let mut regressions = Vec::new();
+    for current_eval in &current.evals {
+        let Some(prior_eval) = prior
+            .evals
+            .iter()
+            .find(|candidate| candidate.name == current_eval.name)
+        else {
+            continue;
+        };
+        if prior_eval.status == "Passed" && current_eval.status != "Passed" {
+            regressions.push(EvalRegression {
+                eval: current_eval.name.clone(),
+                assertion: None,
+                before: prior_eval.status.clone(),
+                after: current_eval.status.clone(),
+            });
+        }
+        for current_assertion in &current_eval.assertions {
+            let Some(prior_assertion) = prior_eval
+                .assertions
+                .iter()
+                .find(|candidate| candidate.label == current_assertion.label)
+            else {
+                continue;
+            };
+            if prior_assertion.status == "Passed" && current_assertion.status != "Passed" {
+                regressions.push(EvalRegression {
+                    eval: current_eval.name.clone(),
+                    assertion: Some(current_assertion.label.clone()),
+                    before: prior_assertion.status.clone(),
+                    after: current_assertion.status.clone(),
+                });
+            }
+        }
+    }
+    regressions
 }
 
 #[cfg(test)]
@@ -364,5 +590,41 @@ agent answer() -> Int:
         assert!(report.evals.is_empty());
         assert_eq!(report.exit_code(), 1);
         assert!(report.html_report_path.exists());
+    }
+
+    #[tokio::test]
+    async fn run_evals_at_path_detects_regressions_against_latest_result() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("suite.cor");
+        std::fs::write(
+            &path,
+            r#"
+eval math:
+    x = 42
+    assert x == 42
+"#,
+        )
+        .expect("write");
+
+        let runtime = Runtime::builder().build();
+        let first = run_evals_at_path(&path, &runtime).await.expect("first run");
+        assert!(first.regression.regressions.is_empty());
+        assert!(first.regression.current_path.exists());
+
+        std::fs::write(
+            &path,
+            r#"
+eval math:
+    x = 41
+    assert x == 42
+"#,
+        )
+        .expect("rewrite");
+
+        let second = run_evals_at_path(&path, &runtime).await.expect("second run");
+        assert_eq!(second.regression.regressions.len(), 2);
+        assert!(second.regression.prior_path.exists());
+        let rendered = render_eval_report(&second, None);
+        assert!(rendered.contains("Regressions: 2"), "{rendered}");
     }
 }
