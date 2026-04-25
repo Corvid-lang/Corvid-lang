@@ -2783,6 +2783,28 @@ underlying delta record.
 `List<T> + List<T>` is now supported so deterministic policy code can build
 verdict flag lists naturally.
 
+## 21-inv-H-stacked-aggregate-policy
+
+Stacked PR receipts now gate on history, not just normal form. This matters
+because algebraic cancellation can hide a transient safety regression:
+
+```text
+commit 1: agent.dangerous_gained:refund_bot
+commit 2: agent.dangerous_lost:refund_bot
+normal_form: []
+history: [dangerous_gained, dangerous_lost]
+verdict: failed by default policy
+```
+
+That is the right behavior for governance. The final diff may be clean, but the
+reviewer still needs to see that the stack carried a dangerous state at an
+intermediate waypoint.
+
+The same Corvid policy engine now evaluates both single-commit receipts and
+stack receipts. Stack mode passes history-derived `PolicyDelta` facts into
+`apply_policy`, and custom `--policy` files can override the verdict without
+mutating the archived stack history.
+
 ## Contributing / feedback
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). The rules of the road are: design chat before code, per-scope commits at every boundary, dev-log entry for every session, no shortcuts. The `learnings.md` file you're reading gets updated when each user-visible feature ships.

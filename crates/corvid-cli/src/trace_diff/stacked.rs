@@ -35,13 +35,14 @@ use serde::Serialize;
 use sha2::{Digest, Sha256};
 
 use super::narrative::DeltaRecord;
+use super::receipt::Verdict;
 use super::stack_attribution::Attribution;
 
 /// Schema version for `StackReceipt`. Independent counter from
 /// the per-commit `RECEIPT_SCHEMA_VERSION` — stack receipts are a
 /// structurally different kind of artifact and version
 /// independently.
-pub(super) const STACK_RECEIPT_SCHEMA_VERSION: u32 = 1;
+pub(super) const STACK_RECEIPT_SCHEMA_VERSION: u32 = 2;
 
 // ---------------------------------------------------------------
 // Public types
@@ -62,6 +63,10 @@ pub(super) struct StackReceipt {
     pub source_path: String,
     pub range_spec: String,
     pub components: Vec<StackComponent>,
+    /// Aggregate policy verdict over stack history. Normal form may
+    /// cancel a regression later in the stack; the verdict remains
+    /// history-sensitive so transient safety regressions surface.
+    pub verdict: Verdict,
     /// Net base→head delta set after composition. Canonically
     /// ordered by delta key for byte-stable serialization.
     pub normal_form: Vec<StackDelta>,
@@ -311,6 +316,10 @@ pub(super) fn compose_stack(
         source_path: source_path.to_string(),
         range_spec: range_spec.to_string(),
         components,
+        verdict: Verdict {
+            ok: true,
+            flags: Vec::new(),
+        },
         normal_form,
         history,
         anomalies,
@@ -1055,7 +1064,8 @@ mod tests {
         );
         let json = serde_json::to_string_pretty(&r).expect("serialize");
         let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
-        assert_eq!(parsed["schema_version"], 1);
+        assert_eq!(parsed["schema_version"], 2);
+        assert!(parsed["verdict"].is_object());
         assert!(parsed["normal_form"].is_array());
         assert!(parsed["history"].is_array());
         assert!(parsed["components"].is_array());

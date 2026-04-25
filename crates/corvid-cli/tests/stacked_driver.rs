@@ -88,6 +88,12 @@ pub extern "c" agent foo() -> Int:
     return issue_refund("t1")
 "#;
 
+const ALLOW_ALL_POLICY: &str = r#"
+@deterministic
+agent apply_policy(receipt: PolicyReceipt) -> Verdict:
+    return Verdict(true, [])
+"#;
+
 #[test]
 fn stacked_json_composes_over_commit_range() {
     // Three commits: base → adds foo → makes foo dangerous.
@@ -113,18 +119,28 @@ fn stacked_json_composes_over_commit_range() {
         .output()
         .expect("run corvid trace-diff --stack");
 
-    assert!(
-        output.status.success(),
-        "exit={:?} stderr={}",
+    assert_eq!(
         output.status.code(),
+        Some(1),
+        "dangerous regression in stack history should trip aggregate policy; stderr={}",
         String::from_utf8_lossy(&output.stderr),
     );
 
     let parsed: serde_json::Value = serde_json::from_slice(&output.stdout)
         .expect("output is valid JSON");
+    assert_eq!(parsed["verdict"]["ok"], false);
+    assert!(
+        parsed["verdict"]["flags"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|flag| flag.as_str().unwrap().contains("@dangerous")),
+        "stack verdict should include the dangerous regression flag: {}",
+        serde_json::to_string_pretty(&parsed["verdict"]).unwrap()
+    );
 
     // StackReceipt top-level shape.
-    assert_eq!(parsed["schema_version"], 1);
+    assert_eq!(parsed["schema_version"], 2);
     assert_eq!(parsed["base_sha"], base.as_str());
     assert_eq!(parsed["head_sha"], head.as_str());
     assert_eq!(parsed["source_path"], "agent.cor");
@@ -325,10 +341,10 @@ fn stacked_explicit_list_spec_uses_provided_shas() {
         .output()
         .expect("run corvid trace-diff --stack=<list>");
 
-    assert!(
-        output.status.success(),
-        "exit={:?} stderr={}",
+    assert_eq!(
         output.status.code(),
+        Some(1),
+        "explicit stack contains a dangerous regression and should trip policy; stderr={}",
         String::from_utf8_lossy(&output.stderr),
     );
 
@@ -345,6 +361,49 @@ fn stacked_explicit_list_spec_uses_provided_shas() {
             .as_str()
             .unwrap()
             .contains(&shas[2]));
+}
+
+#[test]
+fn stacked_custom_policy_can_allow_history_regression() {
+    let (repo_tmp, shas) = setup_stack(&[BASE_SOURCE, ADD_FOO_SOURCE, DANGEROUS_TOOL_SOURCE]);
+    let repo = repo_tmp.path();
+    let policy = repo.join("allow_stack.cor");
+    write_file(&policy, ALLOW_ALL_POLICY);
+
+    let output = Command::new(corvid_bin())
+        .args([
+            "trace-diff",
+            &shas[0],
+            &shas[2],
+            "agent.cor",
+            "--narrative=off",
+            "--format=json",
+            "--stack",
+            "--policy",
+            policy.to_str().unwrap(),
+        ])
+        .current_dir(repo)
+        .output()
+        .expect("run corvid trace-diff --stack --policy");
+
+    assert!(
+        output.status.success(),
+        "custom allow policy should pass stack receipt; stderr={}",
+        String::from_utf8_lossy(&output.stderr),
+    );
+    let parsed: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(parsed["verdict"]["ok"], true);
+    assert!(
+        parsed["history"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|delta| delta["key"]
+                .as_str()
+                .unwrap()
+                .contains("dangerous_gained")),
+        "custom policy must not erase archived regression history"
+    );
 }
 
 #[test]

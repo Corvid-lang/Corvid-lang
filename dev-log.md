@@ -4910,3 +4910,20 @@ tighten that rule while keeping the archived receipt unchanged.
 
 This slice also added List<T> + List<T> concatenation so policy programs can
 build verdict flag lists directly in the language.
+
+## 2026-04-25 - 21-inv-H-5 stacked aggregate policy
+
+Closed the stacked-PR aggregate receipt follow-up. Stack mode already composed
+per-commit deltas into normal-form and history views; this slice makes the
+artifact policy-complete.
+
+`StackReceipt` now carries a serialized `verdict`, and stack mode evaluates the
+same Corvid policy engine over the stack history. That is deliberate: normal
+form may cancel a transient regression, but governance still needs to know that
+the stack temporarily gained `@dangerous`, lost provenance, weakened approval,
+or introduced another safety regression.
+
+`--policy=<path>` works in stack mode as well. A custom Corvid policy can loosen
+or tighten the aggregate gate, but it cannot erase the archived history or
+normal-form deltas from the receipt. The stack receipt schema version moved to
+2 because the verdict is now part of the public artifact shape.

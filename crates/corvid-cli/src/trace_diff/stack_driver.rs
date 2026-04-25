@@ -38,9 +38,10 @@ use corvid_types::config::CorvidConfig;
 use rayon::prelude::*;
 use sha2::{Digest, Sha256};
 
-use super::impact::{collect_trace_files, run_harness_against_source};
-use super::narrative::{compute_diff_summary, DiffSummary};
-use super::receipt::OutputFormat;
+use super::impact::{collect_trace_files, run_harness_against_source, TraceImpact};
+use super::narrative::{compute_diff_summary, DeltaRecord, DiffSummary, ReceiptNarrative};
+use super::policy;
+use super::receipt::{OutputFormat, Receipt, RECEIPT_SCHEMA_VERSION};
 use super::stack_attribution::{
     can_skip_replay, commit_affected_agents, compute_stack_attributions,
     trace_exercised_agents, WaypointData,
@@ -601,6 +602,7 @@ pub(super) fn run_trace_diff_stack(
         )
         .context("counterfactual replay across stack waypoints failed")?;
     }
+    receipt.verdict = policy::apply_policy(&stack_policy_receipt(&receipt), args.policy_path)?;
 
     let json = serde_json::to_string_pretty(&receipt)
         .expect("StackReceipt is trivially serializable");
@@ -625,8 +627,35 @@ pub(super) fn run_trace_diff_stack(
         }
         return Ok(1);
     }
+    if !receipt.verdict.ok {
+        eprintln!("regression policy tripped:");
+        for flag in &receipt.verdict.flags {
+            eprintln!("  - {flag}");
+        }
+        return Ok(1);
+    }
 
     Ok(0)
+}
+
+fn stack_policy_receipt(receipt: &stacked::StackReceipt) -> Receipt {
+    Receipt {
+        schema_version: RECEIPT_SCHEMA_VERSION,
+        base_sha: receipt.base_sha.clone(),
+        head_sha: receipt.head_sha.clone(),
+        source_path: receipt.source_path.clone(),
+        deltas: receipt
+            .history
+            .iter()
+            .map(|delta| DeltaRecord {
+                key: delta.key.clone(),
+                summary: delta.summary.clone(),
+            })
+            .collect(),
+        impact: TraceImpact::empty(),
+        narrative: ReceiptNarrative::empty(),
+        narrative_rejected: false,
+    }
 }
 
 #[cfg(test)]
