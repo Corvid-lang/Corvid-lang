@@ -18,9 +18,10 @@ pub fn run_eval(
     inputs: &[PathBuf],
     source: Option<&Path>,
     swap_model: Option<&str>,
+    max_spend: Option<f64>,
 ) -> Result<u8> {
     let Some(model) = swap_model else {
-        return run_source_evals(inputs);
+        return run_source_evals(inputs, max_spend);
     };
 
     if inputs.is_empty() {
@@ -55,7 +56,7 @@ pub fn run_eval(
     Ok(exit_code)
 }
 
-fn run_source_evals(inputs: &[PathBuf]) -> Result<u8> {
+fn run_source_evals(inputs: &[PathBuf], max_spend: Option<f64>) -> Result<u8> {
     if inputs
         .first()
         .and_then(|input| input.to_str())
@@ -71,6 +72,20 @@ fn run_source_evals(inputs: &[PathBuf]) -> Result<u8> {
             "For model migration analysis, use `corvid eval --swap-model <MODEL> --source <FILE> <TRACE_OR_DIR>...`."
         );
         return Ok(1);
+    }
+
+    if let Some(max_spend) = configured_max_spend(max_spend)? {
+        if !max_spend.is_finite() || max_spend < 0.0 {
+            anyhow::bail!("eval budget must be a finite non-negative USD amount");
+        }
+        let planned = planned_eval_spend(inputs)?;
+        if planned > max_spend {
+            eprintln!(
+                "eval budget exceeded before running: planned ${planned:.6} > max ${max_spend:.6}"
+            );
+            return Ok(1);
+        }
+        eprintln!("eval budget: planned ${planned:.6} <= max ${max_spend:.6}");
     }
 
     let mut exit_code = 0_u8;
@@ -94,6 +109,67 @@ fn run_source_evals(inputs: &[PathBuf]) -> Result<u8> {
         exit_code = exit_code.max(report.exit_code());
     }
     Ok(exit_code)
+}
+
+fn configured_max_spend(cli: Option<f64>) -> Result<Option<f64>> {
+    if cli.is_some() {
+        return Ok(cli);
+    }
+    match std::env::var("CORVID_EVAL_MAX_SPEND_USD") {
+        Ok(raw) => raw
+            .parse::<f64>()
+            .map(Some)
+            .with_context(|| "CORVID_EVAL_MAX_SPEND_USD must be a number"),
+        Err(std::env::VarError::NotPresent) => Ok(None),
+        Err(error) => Err(error).context("failed to read CORVID_EVAL_MAX_SPEND_USD"),
+    }
+}
+
+fn planned_eval_spend(inputs: &[PathBuf]) -> Result<f64> {
+    inputs.iter().try_fold(0.0, |total, input| {
+        Ok(total + prior_eval_cost(input).with_context(|| {
+            format!("failed to estimate eval spend for `{}`", input.display())
+        })?)
+    })
+}
+
+fn prior_eval_cost(source: &Path) -> Result<f64> {
+    let summary_path = latest_summary_path_for_source(source);
+    if !summary_path.exists() {
+        return Ok(0.0);
+    }
+    let summary = read_summary_file(&summary_path)?;
+    Ok(summary.trace.total_cost_usd)
+}
+
+fn latest_summary_path_for_source(source: &Path) -> PathBuf {
+    let base = source.parent().unwrap_or_else(|| Path::new("."));
+    let stem = source
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .unwrap_or("suite");
+    base.join("target")
+        .join("eval")
+        .join(sanitize_path_segment(stem))
+        .join("latest.json")
+}
+
+fn sanitize_path_segment(raw: &str) -> String {
+    let sanitized: String = raw
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || ch == '_' || ch == '-' {
+                ch
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    if sanitized.is_empty() {
+        "suite".into()
+    } else {
+        sanitized
+    }
 }
 
 fn run_compare(args: &[PathBuf]) -> Result<u8> {
@@ -440,17 +516,39 @@ mod tests {
 
     #[test]
     fn eval_without_inputs_prints_usage() {
-        let code = run_eval(&[], None, None).expect("usage returns an exit code");
+        let code = run_eval(&[], None, None, None).expect("usage returns an exit code");
         assert_eq!(code, 1);
     }
 
     #[test]
     fn eval_swap_model_requires_inputs() {
-        let err = run_eval(&[], None, Some("candidate")).unwrap_err();
+        let err = run_eval(&[], None, Some("candidate"), None).unwrap_err();
         assert!(
             err.to_string().contains("requires at least one trace"),
             "{err:#}"
         );
+    }
+
+    #[test]
+    fn eval_budget_fails_before_running_when_prior_cost_exceeds_max() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let source = dir.path().join("suite.cor");
+        std::fs::write(&source, "eval math:\n    assert true\n").expect("source");
+        let summary_path = latest_summary_path_for_source(&source);
+        std::fs::create_dir_all(summary_path.parent().unwrap()).expect("summary dir");
+        std::fs::write(
+            &summary_path,
+            r#"{
+  "source_path": "suite.cor",
+  "evals": [],
+  "compile_ok": true,
+  "trace": { "total_cost_usd": 0.25, "total_latency_ms": 0, "prompts": [], "model_routes": [] }
+}"#,
+        )
+        .expect("summary");
+
+        let code = run_eval(&[source], None, None, Some(0.10)).expect("budget result");
+        assert_eq!(code, 1);
     }
 
     #[test]

@@ -1449,7 +1449,7 @@ The determinism-source catalog and the language's treatment of non-reproducible 
 - [x] Model-swap eval mode uses Phase 21 replay and Phase 20 model metadata to compare provider/model choices without spending on unchanged tool paths. Already shipped as `corvid eval --swap-model <MODEL> --source <FILE> <TRACE_OR_DIR>...`, which delegates trace files to differential replay and trace directories to the trace-suite migration analyzer.
 - [x] `corvid eval compare <base>..<head>`: PR-friendly eval diff with pass-rate deltas, cost deltas, latency deltas, model-route changes, prompt diffs, and trace/process assertion changes. Shipped as a CLI compare mode over local result paths/directories or git refs containing `target/eval/**/latest.json` summaries.
 - Regression-cause clustering: classify failures by prompt change, model change, tool-output change, route change, approval-path change, grounding loss, or budget regression.
-- Eval budget mode: estimate and enforce max eval spend before running provider-backed evals; CI fails early when the planned eval run exceeds the configured budget.
+- [x] Eval budget mode: estimate and enforce max eval spend before running provider-backed evals; CI fails early when the planned eval run exceeds the configured budget. Shipped as `corvid eval --max-spend <USD>` plus `CORVID_EVAL_MAX_SPEND_USD`, using prior stored eval cost as the pre-run estimate.
 - Golden-trace evals: replay production traces against changed prompts/models/tools and score behavior without re-spending unchanged tool and prompt paths.
 
 **v0.8 cuts here.** Full developer workflow: write in LSP, share via package manager, test + eval in CI.

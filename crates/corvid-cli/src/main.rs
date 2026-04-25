@@ -349,6 +349,9 @@ enum Command {
         /// Candidate model for retrospective migration analysis.
         #[arg(long, value_name = "ID")]
         swap_model: Option<String>,
+        /// Maximum planned source-eval spend in USD.
+        #[arg(long, value_name = "USD")]
+        max_spend: Option<f64>,
     },
     /// Re-execute a recorded trace deterministically.
     ///
@@ -887,7 +890,8 @@ fn main() -> ExitCode {
             inputs,
             source,
             swap_model,
-        }) => eval_cmd::run_eval(&inputs, source.as_deref(), swap_model.as_deref()),
+            max_spend,
+        }) => eval_cmd::run_eval(&inputs, source.as_deref(), swap_model.as_deref(), max_spend),
         Some(Command::Replay {
             trace,
             source,
