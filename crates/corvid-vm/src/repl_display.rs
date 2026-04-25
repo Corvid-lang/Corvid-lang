@@ -114,14 +114,26 @@ fn render_value_inner(
                 format!("Grounded({inner}, sources: [{}])", sources.join(", "))
             }
         }
-        Value::Stream(stream) => match stream.backpressure() {
-            BackpressurePolicy::Bounded(size) => {
-                format!("Stream(backpressure: bounded({size}))")
+        Value::Stream(stream) => {
+            let backpressure = match stream.backpressure() {
+                BackpressurePolicy::Bounded(size) => format!("bounded({size})"),
+                BackpressurePolicy::Unbounded => "unbounded".to_string(),
+            };
+            let provenance = stream.provenance();
+            let sources: Vec<String> = provenance
+                .entries
+                .iter()
+                .map(|e| format!("{}:{}", e.kind.label(), e.name))
+                .collect();
+            if sources.is_empty() {
+                format!("Stream(backpressure: {backpressure})")
+            } else {
+                format!(
+                    "Stream(backpressure: {backpressure}, sources: [{}])",
+                    sources.join(", ")
+                )
             }
-            BackpressurePolicy::Unbounded => {
-                "Stream(backpressure: unbounded)".to_string()
-            }
-        },
+        }
     }
 }
 

@@ -23,6 +23,65 @@ agent chunks(text: String) -> Stream<String>:
 }
 
 #[tokio::test]
+async fn stream_grounded_elements_update_aggregate_provenance_as_consumed() {
+    let src = "\
+effect retrieval:
+    data: grounded
+
+tool fetch_a() -> Grounded<String> uses retrieval
+tool fetch_b() -> Grounded<String> uses retrieval
+
+agent docs() -> Stream<Grounded<String>>:
+    yield fetch_a()
+    yield fetch_b()
+";
+    let ir = ir_of(src);
+    let rt = Runtime::builder()
+        .tool("fetch_a", |_| async move { Ok(json!("a")) })
+        .tool("fetch_b", |_| async move { Ok(json!("b")) })
+        .build();
+    let value = run_agent(&ir, "docs", vec![], &rt).await.expect("run");
+    let Value::Stream(stream) = value else {
+        panic!("expected stream");
+    };
+
+    assert!(stream.provenance().entries.is_empty());
+
+    let first = stream
+        .next()
+        .await
+        .expect("first")
+        .expect("first ok");
+    match first {
+        Value::Grounded(g) => {
+            assert_eq!(g.inner.get(), Value::String(Arc::from("a")));
+            assert!(g.provenance.has_source("fetch_a"));
+        }
+        other => panic!("expected grounded first element, got {other:?}"),
+    }
+    let first_sources = stream.provenance();
+    assert!(first_sources.has_source("fetch_a"));
+    assert!(!first_sources.has_source("fetch_b"));
+    assert!(render_value(&Value::Stream(stream.clone())).contains("retrieval:fetch_a"));
+
+    let second = stream
+        .next()
+        .await
+        .expect("second")
+        .expect("second ok");
+    match second {
+        Value::Grounded(g) => {
+            assert_eq!(g.inner.get(), Value::String(Arc::from("b")));
+            assert!(g.provenance.has_source("fetch_b"));
+        }
+        other => panic!("expected grounded second element, got {other:?}"),
+    }
+    let all_sources = stream.provenance();
+    assert!(all_sources.has_source("fetch_a"));
+    assert!(all_sources.has_source("fetch_b"));
+}
+
+#[tokio::test]
 async fn for_loop_consumes_stream_values() {
     let src = "\
 agent source() -> Stream<Int>:

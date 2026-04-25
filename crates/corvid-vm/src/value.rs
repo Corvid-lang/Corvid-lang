@@ -203,6 +203,7 @@ pub struct StreamValue(Arc<StreamInner>);
 struct StreamInner {
     receiver: AsyncMutex<StreamReceiver>,
     backpressure: BackpressurePolicy,
+    provenance: Mutex<ProvenanceChain>,
     pending: AtomicUsize,
     warned_unbounded: AtomicBool,
 }
@@ -801,6 +802,7 @@ impl StreamValue {
                 let inner = Arc::new(StreamInner {
                     receiver: AsyncMutex::new(StreamReceiver::Bounded(receiver)),
                     backpressure: BackpressurePolicy::Bounded(size),
+                    provenance: Mutex::new(ProvenanceChain::new()),
                     pending: AtomicUsize::new(0),
                     warned_unbounded: AtomicBool::new(false),
                 });
@@ -816,6 +818,7 @@ impl StreamValue {
                 let inner = Arc::new(StreamInner {
                     receiver: AsyncMutex::new(StreamReceiver::Unbounded(receiver)),
                     backpressure: BackpressurePolicy::Unbounded,
+                    provenance: Mutex::new(ProvenanceChain::new()),
                     pending: AtomicUsize::new(0),
                     warned_unbounded: AtomicBool::new(false),
                 });
@@ -844,7 +847,24 @@ impl StreamValue {
         if item.is_some() {
             self.0.pending.fetch_sub(1, Ordering::AcqRel);
         }
+        if let Some(Ok(chunk)) = &item {
+            if let Some(chain) = chunk.provenance() {
+                self.0
+                    .provenance
+                    .lock()
+                    .expect("stream provenance poisoned")
+                    .merge(chain);
+            }
+        }
         item
+    }
+
+    pub fn provenance(&self) -> ProvenanceChain {
+        self.0
+            .provenance
+            .lock()
+            .expect("stream provenance poisoned")
+            .clone()
     }
 
     pub fn backpressure(&self) -> &BackpressurePolicy {
@@ -928,6 +948,13 @@ impl StreamChunk {
             cost,
             confidence,
             tokens,
+        }
+    }
+
+    pub fn provenance(&self) -> Option<&ProvenanceChain> {
+        match &self.value {
+            Value::Grounded(grounded) => Some(&grounded.provenance),
+            _ => None,
         }
     }
 }

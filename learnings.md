@@ -2577,6 +2577,33 @@ hiding it behind a generic approval prompt.
 `:trace` includes the same metadata, so the confidence story is visible both
 during live step-through and after the run when reviewing the last execution.
 
+## 20f-stream-grounded-provenance
+
+`Stream<Grounded<T>>` preserves provenance per element. Each yielded item is an
+ordinary `Grounded<T>` value, so consumers can inspect the source chain of the
+specific chunk they received:
+
+```corvid
+effect retrieval:
+    data: grounded
+
+tool fetch_a() -> Grounded<String> uses retrieval
+tool fetch_b() -> Grounded<String> uses retrieval
+
+agent docs() -> Stream<Grounded<String>>:
+    yield fetch_a()
+    yield fetch_b()
+```
+
+The stream itself also exposes an aggregate provenance union. That union grows
+as elements are consumed, not when a producer buffers ahead. In REPL
+step-through this means a stream local starts with no sources, then shows
+`retrieval:fetch_a`, then `retrieval:fetch_a, retrieval:fetch_b` as those
+elements are actually delivered.
+
+This keeps streaming provenance honest: the aggregate describes observed
+stream content, while each element keeps its precise source chain.
+
 ## Contributing / feedback
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). The rules of the road are: design chat before code, per-scope commits at every boundary, dev-log entry for every session, no shortcuts. The `learnings.md` file you're reading gets updated when each user-visible feature ships.

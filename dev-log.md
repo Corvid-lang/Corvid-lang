@@ -4755,3 +4755,20 @@ boundary appeared instead of guessing from the tool label.
 The trace summary shown by `:trace` includes the same confidence and gate
 metadata. This keeps step-through output and recorded execution traces aligned
 instead of creating a REPL-only display path.
+
+## 2026-04-25 - Phase 20f per-element stream provenance
+
+Closed the first open streaming integration item. `Stream<Grounded<T>>`
+already carried provenance on each yielded element through the ordinary
+`Grounded<T>` value; the missing piece was stream-level aggregation.
+
+`StreamValue` now maintains an aggregate provenance union that updates as
+chunks are consumed. This is deliberate: the displayed stream provenance grows
+with delivered elements, so step-through and REPL display reflect what the
+consumer has actually observed instead of what an eager producer may have
+buffered ahead.
+
+REPL value rendering now includes stream provenance sources once they are
+observed. VM coverage uses two retrieval tools feeding a
+`Stream<Grounded<String>>` and proves the aggregate stream provenance grows from
+empty, to `fetch_a`, then to `fetch_a + fetch_b` as elements are consumed.
