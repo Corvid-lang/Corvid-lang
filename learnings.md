@@ -3092,6 +3092,19 @@ or replay semantics would make Corvid less safe than the glue libraries it is
 meant to replace. The foundation proves deployment mechanics first and leaves
 AI-native host capabilities as the next explicit slice.
 
+## wasm host capability imports
+
+Prompt, tool, and approval calls in WASM are now imports, not erased runtime
+magic. The browser host has to provide `prompt.*`, `tool.*`, and
+`approve.*` functions, and the generated TypeScript file names the expected
+surface.
+
+That design keeps Corvid general-purpose while preserving its AI-native
+contracts. A scalar pricing function can compile to standalone WASM; an agent
+that calls an LLM compiles to WASM plus a visible host capability requirement.
+The next hard part is making those host calls write the same replay traces as
+native and interpreter runs.
+
 ## Contributing / feedback
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). The rules of the road are: design chat before code, per-scope commits at every boundary, dev-log entry for every session, no shortcuts. The `learnings.md` file you're reading gets updated when each user-visible feature ships.

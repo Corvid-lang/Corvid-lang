@@ -11,14 +11,23 @@ Phase 23 begins with a real deployable foundation rather than a placeholder.
 ## Current Boundary
 
 The first slice supports agents whose parameters and return values are
-`Int`, `Float`, `Bool`, or `Nothing`, and whose body does not call prompts,
-tools, approvals, or other runtime host capabilities. Agent-to-agent calls and
-scalar arithmetic lower into the module directly.
+`Int`, `Float`, `Bool`, or `Nothing`. Agent-to-agent calls and scalar arithmetic
+lower into the module directly.
 
-Unsupported AI-native features fail loudly. A prompt call reports that the
-Phase 23 host LLM ABI is required; a tool call reports that the host tool ABI is
-required; an approval reports that the host approval ABI is required. This is
-intentional. Browser and edge deployment must preserve Corvid's effect,
+Scalar prompts, tools, and approvals lower to typed imports from the
+`corvid:host` module:
+
+- `prompt.<name>` for prompt calls.
+- `tool.<name>` for tool calls.
+- `approve.<Label>` for approval gates.
+
+The generated JS loader exposes `adaptImports(host)` so browser and edge hosts
+can provide `{ prompts, tools, approvals }` maps without writing raw
+`WebAssembly.Imports` objects by hand.
+
+Unsupported AI-native features still fail loudly. Strings, structs,
+provenance handles, stream callbacks, and replay trace recording require the
+next host ABI slices. Browser and edge deployment must preserve Corvid's effect,
 approval, provenance, budget, and replay contracts instead of compiling those
 features away.
 
@@ -46,6 +55,6 @@ export function instantiate(imports?: WebAssembly.Imports): Promise<CorvidWasmMo
 
 ## Next Slice
 
-The next Phase 23 slice is the host-capability ABI. That is where prompts,
-tools, approvals, replay recording, and provenance handles become browser/edge
-imports with the same contracts that native and FFI targets already expose.
+The next Phase 23 slice is replay-compatible host tracing: JS-side prompt,
+tool, and approval imports must write Phase 21 trace events so native-captured
+and WASM-captured runs share one replay format.

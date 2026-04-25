@@ -65,7 +65,7 @@ agent add_one(x: Int) -> Int:
 }
 
 #[test]
-fn cli_build_wasm_rejects_prompt_until_host_abi_lands() {
+fn cli_build_wasm_emits_prompt_host_imports() {
     let (dir, source_path) = write_project(
         r#"
 prompt answer() -> Int:
@@ -81,7 +81,20 @@ agent main() -> Int:
         &["build", source_path.to_str().unwrap(), "--target=wasm"],
         dir.path(),
     );
-    assert!(!output.status.success());
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("host LLM ABI"), "stderr={stderr}");
+    assert!(
+        output.status.success(),
+        "stdout={}\nstderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let out_dir = dir.path().join("target").join("wasm");
+    let wasm = std::fs::read(out_dir.join("prompted.wasm")).expect("wasm");
+    wasmparser::Validator::new()
+        .validate_all(&wasm)
+        .expect("valid wasm");
+    let manifest =
+        std::fs::read_to_string(out_dir.join("prompted.corvid-wasm.json")).expect("manifest");
+    assert!(manifest.contains("\"import_name\": \"prompt.answer\""));
+    let types = std::fs::read_to_string(out_dir.join("prompted.d.ts")).expect("types");
+    assert!(types.contains("'answer': () => bigint"));
 }

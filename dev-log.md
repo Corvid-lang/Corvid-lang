@@ -5224,3 +5224,17 @@ prompt/tool/approval calls fail with host-ABI diagnostics until the browser/edge
 host-capability ABI lands. This keeps the WASM target deployable for pure logic
 without pretending AI-native runtime contracts survive in the browser before
 they have a real import surface.
+
+## 2026-04-25 - WASM scalar host-capability ABI
+
+Closed `23-B-host-abi` for the scalar boundary. Scalar prompt, tool, and
+approval calls now lower to typed imports from the `corvid:host` module:
+`prompt.<name>`, `tool.<name>`, and `approve.<Label>`. The generated ES loader
+includes `adaptImports(host)` so browser/edge hosts can provide structured
+`{ prompts, tools, approvals }` maps, and the `.d.ts` file exposes both the
+Corvid module exports and the expected host functions.
+
+The implementation is intentionally scoped to scalar values. Strings, structs,
+provenance handles, stream callbacks, and JS-side trace recording remain
+separate Phase 23 slices so the browser ABI preserves Corvid's safety contracts
+instead of flattening them into untyped glue.

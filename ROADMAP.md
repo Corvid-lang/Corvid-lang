@@ -1346,7 +1346,7 @@ The determinism-source catalog and the language's treatment of non-reproducible 
 **Slice checklist:**
 
 - [x] 23-A-scalar-wasm       `corvid build --target=wasm` emits a valid standalone `.wasm` module plus ES loader, TypeScript declarations, and a manifest for scalar runtime-free agents. Unsupported prompts/tools/approvals fail loudly until the host-capability ABI exists.
-- [ ] 23-B-host-abi          Browser/edge host-capability ABI for LLM prompts, tools, approvals, replay recording, and provenance handles.
+- [x] 23-B-host-abi          Browser/edge scalar host-capability ABI: scalar prompts/tools/approvals lower to typed `corvid:host` imports (`prompt.*`, `tool.*`, `approve.*`), with generated JS `adaptImports(host)`, TypeScript host interfaces, and manifest import entries. Replay recording, strings/structs, and provenance handles remain follow-up slices.
 - [ ] 23-C-wasm-replay       JS-side trace store compatible with Phase 21 replay; native-captured and WASM-captured traces share schema.
 - [ ] 23-D-browser-demo      Browser smoke page loading a Corvid `.wasm` module with typed approval UI and replay recording.
 - [ ] 23-E-wasmtime-harness  Wasmtime/Wasmer parity harness against the native parity corpus.
