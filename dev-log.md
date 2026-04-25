@@ -5264,3 +5264,16 @@ and renders the generated replay-compatible trace events.
 The demo includes PowerShell and POSIX verification scripts plus a CLI
 integration test. The important constraint is that the page imports the real
 generated loader and artifact names; it is not a hand-written WASM mock.
+
+## 2026-04-25 - Wasmtime parity harness
+
+Closed `23-E-wasmtime-harness` for the current WASM boundary. The new
+`corvid-codegen-wasm` integration test compiles Corvid source to IR, emits WASM,
+validates the bytes, instantiates the module under Wasmtime, and compares
+scalar arithmetic/branching/agent-call fixtures against the interpreter.
+
+The same harness also exercises scalar prompt, approval, and dangerous-tool
+imports through typed Wasmtime host functions. The scope is deliberately
+honest: strings, structs, lists, provenance handles, and streaming callbacks are
+still unsupported by the WASM ABI and stay out of the parity matrix until those
+features are implemented.

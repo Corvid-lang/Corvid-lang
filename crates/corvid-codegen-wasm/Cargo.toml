@@ -15,5 +15,12 @@ serde_json = { workspace = true }
 wasm-encoder = "0.244.0"
 
 [dev-dependencies]
+corvid-ir = { workspace = true }
+corvid-resolve = { workspace = true }
+corvid-runtime = { workspace = true }
 corvid-syntax = { workspace = true }
+corvid-types = { workspace = true }
+corvid-vm = { workspace = true }
+tokio = { workspace = true }
 wasmparser = "0.244.0"
+wasmtime = "18.0.4"

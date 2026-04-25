@@ -3129,6 +3129,18 @@ prompt, approval, dangerous tool, and trace recording. Strings, structs,
 provenance handles, and streaming callbacks are still compiler/runtime work, not
 demo-only shortcuts.
 
+## wasm wasmtime parity
+
+WASM parity needs a real runtime in the loop. The Wasmtime harness catches
+problems that byte validation cannot: export signatures, host import names,
+integer results, branch behavior, and dangerous-action approval flow all have to
+work after instantiation.
+
+The harness should follow the WASM ABI boundary, not overclaim beyond it. Today
+that means interpreter parity for scalar arithmetic/branching/agent calls and
+typed host execution for scalar prompt/approval/tool imports. Full native-corpus
+coverage waits for the remaining WASM ABI work.
+
 ## Contributing / feedback
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). The rules of the road are: design chat before code, per-scope commits at every boundary, dev-log entry for every session, no shortcuts. The `learnings.md` file you're reading gets updated when each user-visible feature ships.

@@ -84,8 +84,22 @@ python -m http.server 8000 -d examples/wasm_browser_demo
 
 Open `http://localhost:8000/web/` after the build finishes.
 
+## Wasmtime Parity Harness
+
+`cargo test -p corvid-codegen-wasm --test wasmtime_parity` runs generated WASM
+under Wasmtime. The harness compares the current WASM-supported scalar parity
+subset against the interpreter, then separately exercises typed scalar
+prompt/approval/tool imports through a Wasmtime host.
+
+The harness is intentionally fail-loud about the current boundary. Native parity
+families that require strings, structs, lists, provenance handles, or streaming
+callbacks cannot enter the WASM parity matrix until those ABI slices exist.
+That keeps the deployment story honest: Phase 23 proves the browser/edge target
+for scalar AI-native host capabilities without pretending the whole native
+surface has already crossed the WASM boundary.
+
 ## Next Slice
 
-The next Phase 23 slice is a Wasmtime/Wasmer parity harness against the native
-parity corpus. Full `corvid replay` execution against WASM modules belongs
-there, not in the browser smoke page.
+Phase 24 starts the LSP and diagnostics track. WASM-side expansion continues
+through the later ABI slices for strings, structs, provenance handles, and
+streaming host callbacks.
