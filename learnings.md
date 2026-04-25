@@ -3364,6 +3364,17 @@ files later, but trust belongs in the local verifier. A hosted registry should
 never be required for the compiler to know whether a dimension artifact is
 valid.
 
+## effect dimension registry
+
+A dimension registry should be a distribution convenience, not a trust anchor.
+The useful security boundary is local verification: index hash first, artifact
+signature second, then law/proof/regression validation before installation.
+
+The registry index should stay boring on purpose. A small TOML table with name,
+version, immutable URL, SHA-256, and optional proof URL/hash is enough to support
+HTTP/CDN hosting, private local registries, and CI fixtures without creating a
+second package manager inside the effect system.
+
 ## Contributing / feedback
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). The rules of the road are: design chat before code, per-scope commits at every boundary, dev-log entry for every session, no shortcuts. The `learnings.md` file you're reading gets updated when each user-visible feature ships.

@@ -5522,3 +5522,17 @@ artifact regression programs before installing the declaration.
 The artifact format is documented in `docs/effects-spec/dimension-artifacts.md`.
 The hosted registry can now distribute the same files later; the local verifier
 is already the source of truth.
+
+## 2026-04-25 - Effect dimension registry contract
+
+Closed the registry-form follow-up for custom dimensions. `corvid add-dimension
+name@version` now resolves through an effect-registry index instead of returning
+the old placeholder rejection. The client defaults to
+`https://effect.corvid-lang.org/index.toml`, with `CORVID_EFFECT_REGISTRY` and
+`--registry` overrides for local/private registries.
+
+Registry entries carry artifact URLs and SHA-256 digests; optional proof URLs
+carry their own SHA-256. The installer fetches the artifact, verifies the index
+digest, verifies the artifact's Ed25519 signature, checks the artifact contract,
+then reuses the existing dimension validation, law-check, proof replay, and
+regression corpus gates before writing to `corvid.toml`.

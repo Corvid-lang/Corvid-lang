@@ -10,9 +10,9 @@
 //!     corpus, the artifact is verified before installation.
 //!
 //!   * **Registry**: `corvid add-dimension fairness@1.0`
-//!     Not yet implemented — the Corvid effect registry isn't hosted
-//!     yet. Surfaces a clear error pointing users at the local form
-//!     and tracking this as follow-up work in ROADMAP Phase 20g #9.
+//!     Resolves a signed artifact from the effect registry index, verifies
+//!     the artifact hash and signature, then runs the same local validation
+//!     gates as the path form.
 //!
 //! Validation mirrors `CorvidConfig::into_dimension_schemas`:
 //!   * composition must be one of the five archetypes
@@ -33,6 +33,7 @@ use anyhow::{anyhow, Context, Result};
 use corvid_types::{check_dimension, CorvidConfig, DimensionUnderTest};
 
 use crate::dimension_artifact::verify_dimension_artifact;
+use crate::dimension_registry::resolve_dimension_artifact;
 use crate::proof_replay::replay_dimension_proof;
 
 /// Outcome of `add_dimension`. `Added` is the happy path; `Rejected`
@@ -59,16 +60,21 @@ pub enum AddDimensionOutcome {
 /// `project_dir` is the directory that contains (or will contain)
 /// `corvid.toml`. If no file exists, one is created.
 pub fn add_dimension(spec: &str, project_dir: &Path) -> Result<AddDimensionOutcome> {
+    add_dimension_with_registry(spec, project_dir, None)
+}
+
+/// Install a dimension with an optional registry override.
+///
+/// `registry` may be an HTTP(S) index URL, a local `index.toml`, or a local
+/// registry directory containing `index.toml`.
+pub fn add_dimension_with_registry(
+    spec: &str,
+    project_dir: &Path,
+    registry: Option<&str>,
+) -> Result<AddDimensionOutcome> {
     if is_registry_form(spec) {
-        return Ok(AddDimensionOutcome::Rejected {
-            reason: format!(
-                "registry form `{spec}` is not yet implemented — the Corvid effect \
-                 registry isn't hosted yet. Use the local form instead: save the \
-                 dimension declaration to a local `.toml` file and run \
-                 `corvid add-dimension ./that-file.toml`. Tracked in ROADMAP \
-                 Phase 20g #9."
-            ),
-        });
+        let resolved = resolve_dimension_artifact(spec, registry)?;
+        return install_from_path(&resolved.artifact_path, project_dir);
     }
 
     let source_path = PathBuf::from(spec);
@@ -299,6 +305,7 @@ fn format_default(value: &corvid_ast::DimensionValue) -> String {
 mod tests {
     use super::*;
     use crate::dimension_artifact::canonical_payload_for_artifact;
+    use crate::import_integrity::sha256_hex;
     use ed25519_dalek::{Signer, SigningKey};
     use tempfile::TempDir;
 
@@ -309,13 +316,47 @@ mod tests {
     }
 
     #[test]
-    fn registry_form_is_surfaced_as_rejected_with_clear_message() {
+    fn registry_form_installs_signed_dimension_artifact() {
         let tmp = TempDir::new().unwrap();
-        let outcome = add_dimension("fairness@1.0", tmp.path()).unwrap();
+        let registry = tmp.path().join("registry");
+        let artifact_dir = registry.join("artifacts");
+        fs::create_dir_all(&artifact_dir).unwrap();
+
+        let signing_key = SigningKey::from_bytes(&[13u8; 32]);
+        let verifying_key = signing_key.verifying_key();
+        let unsigned = signed_artifact(&hex(verifying_key.as_bytes()), "");
+        let payload = canonical_payload_for_artifact(&unsigned).unwrap();
+        let signature = signing_key.sign(payload.as_bytes());
+        let signed = signed_artifact(&hex(verifying_key.as_bytes()), &hex(&signature.to_bytes()));
+        let digest = sha256_hex(signed.as_bytes());
+        let artifact_path = artifact_dir.join("freshness-1.0.0.dim.toml");
+        fs::write(&artifact_path, signed).unwrap();
+        fs::write(
+            registry.join("index.toml"),
+            format!(
+                r#"
+[[dimension]]
+name = "freshness"
+version = "1.0.0"
+url = "artifacts/freshness-1.0.0.dim.toml"
+sha256 = "{digest}"
+"#
+            ),
+        )
+        .unwrap();
+
+        let project = tmp.path().join("project");
+        let outcome = add_dimension_with_registry(
+            "freshness@1.0.0",
+            &project,
+            Some(registry.to_str().unwrap()),
+        )
+        .unwrap();
         match outcome {
-            AddDimensionOutcome::Rejected { reason } => {
-                assert!(reason.contains("registry"), "{reason}");
-                assert!(reason.contains("local form"), "{reason}");
+            AddDimensionOutcome::Added { name, target } => {
+                assert_eq!(name, "freshness");
+                let installed = fs::read_to_string(target).unwrap();
+                assert!(installed.contains("[effect-system.dimensions.freshness]"));
             }
             other => panic!("unexpected outcome: {other:?}"),
         }

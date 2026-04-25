@@ -13,6 +13,7 @@ pub mod approver;
 pub mod effect_diff;
 pub mod meta_verify;
 mod dimension_artifact;
+mod dimension_registry;
 pub mod modules;
 pub mod proof_replay;
 mod import_integrity;
@@ -29,7 +30,10 @@ mod render;
 pub mod spec_check;
 pub mod spec_site;
 
-pub use add_dimension::{add_dimension as install_dimension, AddDimensionOutcome};
+pub use add_dimension::{
+    add_dimension as install_dimension, add_dimension_with_registry as install_dimension_with_registry,
+    AddDimensionOutcome,
+};
 pub use adversarial::{
     file_github_issues_for_escapes, render_adversarial_prompt, render_adversarial_report,
     run_adversarial_suite, AdversarialAttempt, AdversarialCategory, AdversarialIssueOutcome,

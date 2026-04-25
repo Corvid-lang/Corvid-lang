@@ -58,7 +58,7 @@ The effect system ships with a set of CLI commands that make the dimensional alg
 | `corvid test rewrites` | Run preserved-semantics rewrite verification; drift reports name the rewrite rule and law |
 | `corvid test adversarial` | Run the LLM-driven bypass generator against the effect checker |
 | `corvid effect-diff <before> <after>` | Diff the composed effect profile between two revisions and report constraint firings |
-| `corvid add-dimension <name>@<version>` | Install a dimension from the Corvid effect registry, verify its proofs |
+| `corvid add-dimension <name>@<version> [--registry <index>]` | Install a signed dimension from the Corvid effect registry, verify hash/signature/laws/proofs/regressions |
 | `corvid add-dimension ./dimension.dim.toml` | Install a local custom dimension or signed dimension artifact after law/proof/regression verification |
 
 See [01-dimensional-syntax.md](./01-dimensional-syntax.md) §5 and [02-composition-algebra.md](./02-composition-algebra.md) §9–§11 for how each command fits into the dimensional model.

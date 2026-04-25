@@ -250,6 +250,9 @@ enum Command {
     AddDimension {
         /// Dimension spec in `name@version` form (e.g. `fairness@1.2`).
         spec: String,
+        /// Effect registry index URL, local `index.toml` path, or registry directory.
+        #[arg(long)]
+        registry: Option<String>,
     },
     /// Add a Corvid package dependency and write/update Corvid.lock.
     Add {
@@ -835,7 +838,9 @@ fn main() -> ExitCode {
             cmd_verify(corpus.as_deref(), shrink.as_deref(), json)
         }
         Some(Command::EffectDiff { before, after }) => cmd_effect_diff(&before, &after),
-        Some(Command::AddDimension { spec }) => cmd_add_dimension(&spec),
+        Some(Command::AddDimension { spec, registry }) => {
+            cmd_add_dimension(&spec, registry.as_deref())
+        }
         Some(Command::Add { spec, registry }) => cmd_add_package(&spec, registry.as_deref()),
         Some(Command::Remove { name }) => cmd_remove_package(&name),
         Some(Command::Update { spec, registry }) => cmd_update_package(&spec, registry.as_deref()),
@@ -1525,11 +1530,11 @@ fn cmd_effect_diff(before: &str, after: &str) -> Result<u8> {
 // Dimension registry client
 // ------------------------------------------------------------
 
-fn cmd_add_dimension(spec: &str) -> Result<u8> {
+fn cmd_add_dimension(spec: &str, registry: Option<&str>) -> Result<u8> {
     let project_dir =
         std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     println!("corvid add-dimension {spec}\n");
-    let outcome = corvid_driver::install_dimension(spec, &project_dir)?;
+    let outcome = corvid_driver::install_dimension_with_registry(spec, &project_dir, registry)?;
     match outcome {
         corvid_driver::AddDimensionOutcome::Added { name, target } => {
             println!(

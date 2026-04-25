@@ -13,6 +13,30 @@ semantics honest.
 Registry-hosted dimensions will use the same artifact format. The host is not
 special; it only distributes artifacts that the local toolchain can verify.
 
+## Registry Index
+
+`corvid add-dimension freshness@1.0.0` resolves through an effect-registry index.
+By default the client reads `https://effect.corvid-lang.org/index.toml`. During
+development or private distribution, set `CORVID_EFFECT_REGISTRY` or pass
+`corvid add-dimension freshness@1.0.0 --registry ./registry`.
+
+The registry index is intentionally small:
+
+```toml
+[[dimension]]
+name = "freshness"
+version = "1.0.0"
+url = "artifacts/freshness-1.0.0.dim.toml"
+sha256 = "<artifact sha256 hex>"
+proof_url = "proofs/freshness_max.lean"
+proof_sha256 = "<proof sha256 hex>"
+```
+
+`proof_url` and `proof_sha256` are optional, but if either is present both must
+be present. Local registry directories, local `index.toml` files, and HTTP(S)
+indexes use the same shape. Relative artifact and proof paths resolve from the
+index location.
+
 ## Artifact Shape
 
 ```toml
@@ -59,6 +83,11 @@ Installation fails closed unless all of these pass:
 If a signed artifact passes, only the dimension declaration is appended to the
 project's `corvid.toml`. The artifact metadata remains a distribution contract,
 not runtime project configuration.
+
+Registry resolution adds one earlier gate: the fetched artifact bytes must match
+the index's SHA-256 digest before signature verification runs. A compromised CDN
+therefore cannot silently swap the artifact even before the Ed25519 signature
+check catches the tampering.
 
 ## Why This Matters
 

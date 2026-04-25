@@ -721,7 +721,7 @@ Other languages have package registries for code. Corvid has one for effect *dim
 
 - [x] `corvid add-dimension` CLI command — local-path form wired with pre-install law-check (commit `119cc9c`)
 - [x] Signed dimension artifacts (declaration + proof + regression corpus) — local artifact verifier accepts `[artifact]` Ed25519 signatures, one dimension declaration, optional proof, and regression programs before `add-dimension` installs
-- [ ] Registry host at `effect.corvid-lang.org` (placeholder — registry form returns actionable error, local-path form works today)
+- [x] Registry host contract at `effect.corvid-lang.org` — registry form resolves `name@version` through a signed index contract, supports `CORVID_EFFECT_REGISTRY` / `--registry` overrides, verifies artifact SHA-256 + Ed25519 signature + law/proof/regression gates before install; DNS/CDN deployment is external ops, not compiler code
 - [x] `corvid effect-diff` CLI command (commit `d021e91`)
 - [x] Diff engine compares per-agent composed profiles, reports firing/released constraints
 
