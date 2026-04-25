@@ -3044,6 +3044,17 @@ determinism/replayability requirements before the dependency enters the project.
 That makes package resolution part of Corvid's safety model instead of an
 external supply-chain step.
 
+## lang-cor-imports-versioned-signed-publish
+
+Signing package bytes is not enough for Corvid. The thing downstream users trust
+is bytes plus the AI-safety contract those bytes export. The package signature
+therefore covers both the source digest and the computed semantic summary.
+
+That makes signed publish a compiler-facing workflow rather than a registry
+decoration. If a package source, URL, version, or exported effect/provenance
+surface changes without the publisher re-signing it, `corvid add` rejects it
+before the dependency enters `Corvid.lock`.
+
 ## Contributing / feedback
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). The rules of the road are: design chat before code, per-scope commits at every boundary, dev-log entry for every session, no shortcuts. The `learnings.md` file you're reading gets updated when each user-visible feature ships.

@@ -21,7 +21,9 @@ mod render;
 pub mod spec_check;
 
 pub use add_dimension::{add_dimension as install_dimension, AddDimensionOutcome};
-pub use package_registry::{add_package, AddPackageOutcome};
+pub use package_registry::{
+    add_package, publish_package, AddPackageOutcome, PublishPackageOptions, PublishPackageOutcome,
+};
 pub use approver::{simulate_approver, verify_approver_source};
 pub use modules::{
     build_module_resolution, inspect_import_semantics, render_import_semantic_summaries,

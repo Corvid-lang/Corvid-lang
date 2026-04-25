@@ -46,6 +46,8 @@ pub struct PackagePolicyConfig {
     pub require_deterministic: bool,
     /// When true, every exported agent must be marked `@replayable`.
     pub require_replayable: bool,
+    /// When true, `corvid add` rejects unsigned package index entries.
+    pub require_package_signatures: bool,
 }
 
 impl Default for PackagePolicyConfig {
@@ -55,6 +57,7 @@ impl Default for PackagePolicyConfig {
             allow_effect_violations: true,
             require_deterministic: false,
             require_replayable: false,
+            require_package_signatures: false,
         }
     }
 }

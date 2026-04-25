@@ -29,6 +29,7 @@ sha2 = "0.10"
 ureq = "2"
 url = "2"
 semver = "1"
+ed25519-dalek = { version = "2", features = ["std"] }
 
 [dev-dependencies]
 tempfile = "3"

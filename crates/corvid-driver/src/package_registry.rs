@@ -10,8 +10,9 @@ use std::path::{Path, PathBuf};
 use anyhow::{anyhow, Context, Result};
 use corvid_resolve::ModuleSemanticSummary;
 use corvid_types::{CorvidConfig, PackagePolicyConfig};
+use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
 use semver::{Version, VersionReq};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::import_integrity::sha256_hex;
 use crate::modules::summarize_module_source;
@@ -34,13 +35,32 @@ pub enum AddPackageOutcome {
     },
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone)]
+pub struct PublishPackageOptions<'a> {
+    pub source: &'a Path,
+    pub name: &'a str,
+    pub version: &'a str,
+    pub out_dir: &'a Path,
+    pub url_base: &'a str,
+    pub signing_seed_hex: &'a str,
+    pub key_id: &'a str,
+}
+
+#[derive(Debug, Clone)]
+pub struct PublishPackageOutcome {
+    pub uri: String,
+    pub index: PathBuf,
+    pub artifact: PathBuf,
+    pub sha256: String,
+}
+
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
 struct RegistryIndex {
     #[serde(default)]
     package: Vec<RegistryPackage>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 struct RegistryPackage {
     name: String,
     version: String,
@@ -51,6 +71,8 @@ struct RegistryPackage {
     registry: Option<String>,
     #[serde(default)]
     signature: Option<String>,
+    #[serde(default)]
+    semantic_summary: Option<ModuleSemanticSummary>,
 }
 
 #[derive(Debug, Clone)]
@@ -114,8 +136,13 @@ pub fn add_package(
     let summary = summarize_module_source(&source)
         .map_err(|message| anyhow!("package `{}`@{} failed semantic summary build: {message}", selected.name, selected.version))?;
     let policy = load_package_policy(project_dir)?;
-    if let Some(reason) = package_policy_violation(&summary, &policy) {
+    if let Some(reason) = package_policy_violation(&summary, &policy, selected.signature.as_deref()) {
         return Ok(AddPackageOutcome::Rejected { reason });
+    }
+    if let Some(signature) = &selected.signature {
+        if let Err(message) = verify_package_signature(selected, &summary, signature) {
+            return Ok(AddPackageOutcome::Rejected { reason: message });
+        }
     }
 
     let lockfile = lock_path_for_project(project_dir);
@@ -145,6 +172,67 @@ pub fn add_package(
         version: selected.version.clone(),
         lockfile,
         exports: summary.exports.len(),
+    })
+}
+
+pub fn publish_package(options: PublishPackageOptions<'_>) -> Result<PublishPackageOutcome> {
+    validate_package_name(options.name)?;
+    let version = Version::parse(&normalize_version(options.version))
+        .with_context(|| format!("invalid package version `{}`", options.version))?;
+    std::fs::create_dir_all(options.out_dir)
+        .with_context(|| format!("create registry output dir `{}`", options.out_dir.display()))?;
+    let source = std::fs::read_to_string(options.source)
+        .with_context(|| format!("read package source `{}`", options.source.display()))?;
+    let summary = summarize_module_source(&source)
+        .map_err(|message| anyhow!("package source failed semantic summary build: {message}"))?;
+    let artifact_name = format!(
+        "{}-{}.cor",
+        options
+            .name
+            .trim_start_matches('@')
+            .replace(['/', '\\'], "-"),
+        version
+    );
+    let artifact = options.out_dir.join(&artifact_name);
+    std::fs::write(&artifact, source.as_bytes())
+        .with_context(|| format!("write package artifact `{}`", artifact.display()))?;
+    let sha256 = sha256_hex(source.as_bytes());
+    let uri = format!("corvid://{}/v{}", options.name, version);
+    let url = format!(
+        "{}/{}",
+        options.url_base.trim_end_matches('/'),
+        artifact_name
+    );
+    let mut package = RegistryPackage {
+        name: options.name.to_string(),
+        version: version.to_string(),
+        uri: Some(uri.clone()),
+        url,
+        sha256: sha256.clone(),
+        registry: None,
+        signature: None,
+        semantic_summary: Some(summary),
+    };
+    package.signature = Some(sign_package(&package, options.signing_seed_hex, options.key_id)?);
+
+    let index_path = options.out_dir.join("index.toml");
+    let mut index = match std::fs::read_to_string(&index_path) {
+        Ok(source) => toml::from_str::<RegistryIndex>(&source)
+            .with_context(|| format!("parse existing registry index `{}`", index_path.display()))?,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => RegistryIndex::default(),
+        Err(err) => return Err(anyhow!("read `{}`: {err}", index_path.display())),
+    };
+    upsert_registry_package(&mut index, package);
+    let index_source = toml::to_string_pretty(&index)
+        .with_context(|| format!("serialize registry index `{}`", index_path.display()))?;
+    std::fs::write(&index_path, index_source)
+        .with_context(|| format!("write registry index `{}`", index_path.display()))?;
+
+    Ok(PublishPackageOutcome {
+        uri,
+        index: index_path,
+        artifact,
+        sha256,
     })
 }
 
@@ -267,7 +355,13 @@ fn load_package_policy(project_dir: &Path) -> Result<PackagePolicyConfig> {
 fn package_policy_violation(
     summary: &ModuleSemanticSummary,
     policy: &PackagePolicyConfig,
+    signature: Option<&str>,
 ) -> Option<String> {
+    if policy.require_package_signatures && signature.is_none() {
+        return Some(
+            "package is unsigned, but package-policy.require-package-signatures=true".to_string(),
+        );
+    }
     if !policy.allow_approval_required {
         if let Some(export) = summary
             .exports
@@ -305,6 +399,142 @@ fn package_policy_violation(
         }
     }
     None
+}
+
+fn upsert_registry_package(index: &mut RegistryIndex, package: RegistryPackage) {
+    if let Some(existing) = index
+        .package
+        .iter_mut()
+        .find(|entry| entry.name == package.name && entry.version == package.version)
+    {
+        *existing = package;
+    } else {
+        index.package.push(package);
+        index.package.sort_by(|a, b| {
+            a.name
+                .cmp(&b.name)
+                .then_with(|| normalize_version(&a.version).cmp(&normalize_version(&b.version)))
+        });
+    }
+}
+
+fn validate_package_name(name: &str) -> Result<()> {
+    if name.starts_with('@') && name.contains('/') && !name.ends_with('/') {
+        Ok(())
+    } else {
+        Err(anyhow!("package name must be scoped, e.g. `@scope/name`"))
+    }
+}
+
+fn sign_package(package: &RegistryPackage, seed_hex: &str, key_id: &str) -> Result<String> {
+    let seed = decode_hex_32(seed_hex).context("signing seed must be 32 bytes of hex")?;
+    let signing_key = SigningKey::from_bytes(&seed);
+    let verifying_key = signing_key.verifying_key();
+    let subject = package_signature_subject(package)?;
+    let signature = signing_key.sign(&subject);
+    Ok(format!(
+        "ed25519:{}:{}:{}",
+        key_id,
+        encode_hex(verifying_key.as_bytes()),
+        encode_hex(&signature.to_bytes())
+    ))
+}
+
+fn verify_package_signature(
+    package: &RegistryPackage,
+    summary: &ModuleSemanticSummary,
+    signature: &str,
+) -> Result<(), String> {
+    let mut signed_package = package.clone();
+    signed_package.semantic_summary = Some(summary.clone());
+    let parts = signature.split(':').collect::<Vec<_>>();
+    if parts.len() != 4 || parts[0] != "ed25519" {
+        return Err(format!(
+            "package `{}`@{} has unsupported signature format",
+            package.name, package.version
+        ));
+    }
+    let key = decode_hex_32(parts[2])
+        .map_err(|err| format!("package `{}`@{} has invalid verifying key: {err}", package.name, package.version))?;
+    let verifying_key = VerifyingKey::from_bytes(&key)
+        .map_err(|err| format!("package `{}`@{} has invalid verifying key: {err}", package.name, package.version))?;
+    let sig_bytes = decode_hex_64(parts[3])
+        .map_err(|err| format!("package `{}`@{} has invalid signature: {err}", package.name, package.version))?;
+    let sig = Signature::from_bytes(&sig_bytes);
+    let subject = package_signature_subject(&signed_package)
+        .map_err(|err| format!("package `{}`@{} signature subject failed: {err}", package.name, package.version))?;
+    verifying_key
+        .verify(&subject, &sig)
+        .map_err(|err| format!("package `{}`@{} signature verification failed: {err}", package.name, package.version))
+}
+
+fn package_signature_subject(package: &RegistryPackage) -> Result<Vec<u8>> {
+    let summary = package
+        .semantic_summary
+        .as_ref()
+        .ok_or_else(|| anyhow!("package signature requires semantic_summary"))?;
+    let summary_json = serde_json::to_string(summary).context("serialize semantic summary")?;
+    Ok(format!(
+        "corvid-package-v1\nname:{}\nversion:{}\nuri:{}\nurl:{}\nsha256:{}\nsummary:{}\n",
+        package.name,
+        package.version,
+        package
+            .uri
+            .as_deref()
+            .unwrap_or("<none>"),
+        package.url,
+        package.sha256.to_ascii_lowercase(),
+        summary_json
+    )
+    .into_bytes())
+}
+
+fn decode_hex_32(input: &str) -> Result<[u8; 32]> {
+    let bytes = decode_hex(input)?;
+    let len = bytes.len();
+    bytes
+        .try_into()
+        .map_err(|_| anyhow!("expected 32 bytes, got {len}"))
+}
+
+fn decode_hex_64(input: &str) -> Result<[u8; 64]> {
+    let bytes = decode_hex(input)?;
+    let len = bytes.len();
+    bytes
+        .try_into()
+        .map_err(|_| anyhow!("expected 64 bytes, got {len}"))
+}
+
+fn decode_hex(input: &str) -> Result<Vec<u8>> {
+    if input.len() % 2 != 0 {
+        return Err(anyhow!("hex string has odd length"));
+    }
+    let mut out = Vec::with_capacity(input.len() / 2);
+    for pair in input.as_bytes().chunks(2) {
+        let hi = hex_value(pair[0])?;
+        let lo = hex_value(pair[1])?;
+        out.push((hi << 4) | lo);
+    }
+    Ok(out)
+}
+
+fn hex_value(byte: u8) -> Result<u8> {
+    match byte {
+        b'0'..=b'9' => Ok(byte - b'0'),
+        b'a'..=b'f' => Ok(byte - b'a' + 10),
+        b'A'..=b'F' => Ok(byte - b'A' + 10),
+        _ => Err(anyhow!("non-hex byte `{}`", byte as char)),
+    }
+}
+
+fn encode_hex(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        out.push(HEX[(byte >> 4) as usize] as char);
+        out.push(HEX[(byte & 0x0f) as usize] as char);
+    }
+    out
 }
 
 #[cfg(test)]
@@ -349,6 +579,7 @@ mod tests {
                 .to_string(),
             registry: None,
             signature: None,
+            semantic_summary: None,
         }
     }
 
@@ -369,7 +600,6 @@ version = \"2.3.4\"
 uri = \"corvid://@anthropic/safety-baseline/v2.3.4\"
 url = \"{url}\"
 sha256 = \"{digest}\"
-signature = \"unsigned:test-fixture\"
 "
             ),
         )
@@ -382,11 +612,12 @@ signature = \"unsigned:test-fixture\"
         )
         .unwrap();
 
-        assert!(matches!(
-            outcome,
-            AddPackageOutcome::Added { ref uri, exports: 1, .. }
-                if uri == "corvid://@anthropic/safety-baseline/v2.3.4"
-        ));
+        match &outcome {
+            AddPackageOutcome::Added { uri, .. } => {
+                assert_eq!(uri, "corvid://@anthropic/safety-baseline/v2.3.4");
+            }
+            other => panic!("expected added package, got {other:?}"),
+        }
         let lock = fs::read_to_string(tmp.path().join("Corvid.lock")).unwrap();
         assert!(lock.contains("semantic_summary"));
         assert!(lock.contains("SafetyReceipt"));
@@ -430,6 +661,78 @@ sha256 = \"{digest}\"
             !tmp.path().join("Corvid.lock").exists(),
             "rejected packages must not write a lockfile"
         );
+    }
+
+    #[test]
+    fn publish_package_signs_index_and_add_verifies_signature() {
+        let tmp = tempfile::tempdir().unwrap();
+        let package_src = "public type SafetyReceipt:\n    id: String\n";
+        let source = tmp.path().join("policy.cor");
+        fs::write(&source, package_src).unwrap();
+        let url = serve_once("/scope-name-1.0.0.cor", package_src);
+        let url_base = url.trim_end_matches("/scope-name-1.0.0.cor");
+        let seed = "0000000000000000000000000000000000000000000000000000000000000000";
+
+        let published = publish_package(PublishPackageOptions {
+            source: &source,
+            name: "@scope/name",
+            version: "1.0.0",
+            out_dir: tmp.path(),
+            url_base,
+            signing_seed_hex: seed,
+            key_id: "test-key",
+        })
+        .unwrap();
+        let outcome = add_package("@scope/name@1", tmp.path(), Some(published.index.to_str().unwrap()))
+            .unwrap();
+
+        assert!(matches!(outcome, AddPackageOutcome::Added { .. }));
+        let lock = fs::read_to_string(tmp.path().join("Corvid.lock")).unwrap();
+        assert!(lock.contains("ed25519:test-key"));
+    }
+
+    #[test]
+    fn add_package_rejects_tampered_signature_when_policy_requires_signatures() {
+        let tmp = tempfile::tempdir().unwrap();
+        fs::write(
+            tmp.path().join("corvid.toml"),
+            "[package-policy]\nrequire-package-signatures = true\n",
+        )
+        .unwrap();
+        let package_src = "public type SafetyReceipt:\n    id: String\n";
+        let source = tmp.path().join("policy.cor");
+        fs::write(&source, package_src).unwrap();
+        let url = serve_once("/scope-name-1.0.0.cor", package_src);
+        let url_base = url.trim_end_matches("/scope-name-1.0.0.cor");
+        let seed = "0000000000000000000000000000000000000000000000000000000000000000";
+        let published = publish_package(PublishPackageOptions {
+            source: &source,
+            name: "@scope/name",
+            version: "1.0.0",
+            out_dir: tmp.path(),
+            url_base,
+            signing_seed_hex: seed,
+            key_id: "test-key",
+        })
+        .unwrap();
+        let mut index = fs::read_to_string(&published.index).unwrap();
+        let sig_start = index.find("signature = \"").unwrap() + "signature = \"".len();
+        let sig_end = index[sig_start..].find('"').unwrap() + sig_start;
+        let sig_last = sig_end - 1;
+        index.replace_range(
+            sig_last..sig_end,
+            if &index[sig_last..sig_end] == "0" { "1" } else { "0" },
+        );
+        fs::write(&published.index, index).unwrap();
+
+        let outcome = add_package("@scope/name@1", tmp.path(), Some(published.index.to_str().unwrap()))
+            .unwrap();
+
+        assert!(matches!(
+            outcome,
+            AddPackageOutcome::Rejected { ref reason }
+                if reason.contains("signature verification failed")
+        ));
     }
 
     fn serve_once(path: &'static str, body: impl Into<String>) -> String {

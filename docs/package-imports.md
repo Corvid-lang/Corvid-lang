@@ -70,8 +70,37 @@ allow-approval-required = false
 allow-effect-violations = false
 require-deterministic = true
 require-replayable = true
+require-package-signatures = true
 ```
 
 Rejected packages do not write or modify the lockfile. Accepted packages store
 their semantic summary in `Corvid.lock` so code review can see both the bytes
 and the AI-safety contract that those bytes export.
+
+## Publishing Signed Packages
+
+`corvid package publish` creates the source artifact, computes its hash and
+semantic summary, signs the package subject with Ed25519, and updates the
+registry index:
+
+```text
+corvid package publish policy.cor \
+  --name @anthropic/safety-baseline \
+  --version 2.3.4 \
+  --out ./registry \
+  --url-base https://registry.corvid.dev/@anthropic/safety-baseline \
+  --key 0000000000000000000000000000000000000000000000000000000000000000 \
+  --key-id anthropic-release
+```
+
+The signature covers:
+
+- package name and semantic version
+- `corvid://...` package URI
+- artifact URL
+- SHA-256 digest
+- exported semantic summary
+
+`corvid add` verifies any `ed25519:<key-id>:<public-key>:<signature>` entry it
+finds in the index. If `require-package-signatures = true`, unsigned entries are
+rejected before the lockfile changes.

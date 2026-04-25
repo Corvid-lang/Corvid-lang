@@ -517,6 +517,11 @@ enum Command {
         #[command(subcommand)]
         command: ReceiptCommand,
     },
+    /// Publish and verify source packages for Corvid registries.
+    Package {
+        #[command(subcommand)]
+        command: PackageCommand,
+    },
     /// Start the interactive Corvid REPL.
     Repl,
     /// Check the local environment for required tools.
@@ -593,6 +598,33 @@ enum BundleCommand {
         path: PathBuf,
         #[arg(long)]
         json: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum PackageCommand {
+    /// Publish a signed source package into a registry directory.
+    Publish {
+        /// Source `.cor` file to publish.
+        source: PathBuf,
+        /// Scoped package name, e.g. `@scope/name`.
+        #[arg(long)]
+        name: String,
+        /// Semantic version, e.g. `1.2.3`.
+        #[arg(long)]
+        version: String,
+        /// Registry output directory. `index.toml` is created/updated here.
+        #[arg(long, value_name = "DIR")]
+        out: PathBuf,
+        /// Public URL prefix where copied package artifacts will be served.
+        #[arg(long, value_name = "URL")]
+        url_base: String,
+        /// 32-byte Ed25519 signing seed as 64 hex chars.
+        #[arg(long, value_name = "HEX")]
+        key: String,
+        /// Key identifier embedded in the package signature.
+        #[arg(long, default_value = "corvid-package")]
+        key_id: String,
     },
 }
 
@@ -894,6 +926,17 @@ fn main() -> ExitCode {
             ReceiptCommand::Verify { envelope, key } => {
                 receipt_cmd::run_verify(&envelope, &key)
             }
+        },
+        Some(Command::Package { command }) => match command {
+            PackageCommand::Publish {
+                source,
+                name,
+                version,
+                out,
+                url_base,
+                key,
+                key_id,
+            } => cmd_package_publish(&source, &name, &version, &out, &url_base, &key, &key_id),
         },
         Some(Command::Repl) => cmd_repl(),
         Some(Command::Doctor) => cmd_doctor(),
@@ -1370,6 +1413,34 @@ fn cmd_add_package(spec: &str, registry: Option<&str>) -> Result<u8> {
             Ok(1)
         }
     }
+}
+
+fn cmd_package_publish(
+    source: &Path,
+    name: &str,
+    version: &str,
+    out: &Path,
+    url_base: &str,
+    key: &str,
+    key_id: &str,
+) -> Result<u8> {
+    let outcome = corvid_driver::publish_package(corvid_driver::PublishPackageOptions {
+        source,
+        name,
+        version,
+        out_dir: out,
+        url_base,
+        signing_seed_hex: key,
+        key_id,
+    })?;
+    println!(
+        "published `{}` to {}\nartifact: {}\nsha256: {}",
+        outcome.uri,
+        outcome.index.display(),
+        outcome.artifact.display(),
+        outcome.sha256
+    );
+    Ok(0)
 }
 
 fn cmd_routing_report(

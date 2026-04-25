@@ -5170,3 +5170,16 @@ Package install is effect-aware. Projects can declare `[package-policy]` in
 `corvid.toml` to reject packages with approval-required exports, existing
 effect violations, non-deterministic exported agents, or non-replayable exported
 agents. Rejected packages do not mutate the lockfile.
+
+## 2026-04-25 - signed package publish workflow
+
+Closed `lang-cor-imports-versioned-signed-publish` and the versioned-imports
+roll-up. `corvid package publish` now copies a source `.cor` package into a
+registry directory, computes its SHA-256 and semantic summary, signs the
+canonical package subject with Ed25519, and updates `index.toml`.
+
+Install verifies signed registry entries during `corvid add`. The package
+policy now includes `require-package-signatures`; when enabled, unsigned
+packages are rejected before `Corvid.lock` changes. The signature covers the
+package URI, version, URL, digest, and semantic summary so summary drift is a
+signature failure, not a documentation mismatch.
