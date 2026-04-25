@@ -644,7 +644,7 @@ The spec becomes a **living proof obligation**. Change the composition algebra �
 
 - [x] `docs/effects-spec/` as a literate spec — `.md` files with embedded runnable corvid blocks + `# expect:` directives (commits `3f80585` through `b628068`, 13 sections total)
 - [x] Build pipeline: every code block compiles during spec publication — `corvid test spec` wired to CI (commit `4d4944b`). Current report: 5 compile / 38 skip / 0 fail across 43 blocks.
-- [ ] Static site generator that renders the spec with "Run in REPL" buttons — **parked as post-20g follow-up** — spec is fully readable as Markdown on GitHub today; interactive renderer is a launch-phase nice-to-have
+- [x] Static site generator that renders the spec with "Run in REPL" buttons — `corvid test spec --site-out <DIR>` reads the verified literate spec and emits static HTML, CSS, JS, and runnable snippets
 - [x] Cross-links from spec rules to proptest + differential-verify tests — `docs/effects-spec/12-verification.md` now carries a rule-to-test map linking composition, budgets, grounding, approval, confidence, rewrites, and cross-tier profile agreement to their production modules, property tests, and corpus gates.
 - [x] Comparison appendix: Koka, Eff, Frank, Haskell algebraic effects, Rust `unsafe`, capability systems — [section 11 — related work](../docs/effects-spec/11-related-work.md) covers each dimension-by-dimension
 

@@ -3329,6 +3329,18 @@ reversibility, and confidence. Live LLM generation can expand the corpus later,
 but it must feed the same classifier rather than becoming a separate testing
 path with weaker rules.
 
+## executable spec site
+
+The public spec site should be generated from the same source of truth as CI.
+If the website uses hand-written examples, it will drift from the compiler. If
+it uses `extract_spec_examples`, every "Run in REPL" block is also a block that
+`corvid test spec` can verify.
+
+Static output is enough for this slice. The site ships as plain HTML, CSS, and
+JavaScript, with snippets copied into the local REPL. A future browser
+playground can replace the copy button, but it should not replace the verified
+spec extraction pipeline.
+
 ## Contributing / feedback
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). The rules of the road are: design chat before code, per-scope commits at every boundary, dev-log entry for every session, no shortcuts. The `learnings.md` file you're reading gets updated when each user-visible feature ships.

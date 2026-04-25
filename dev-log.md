@@ -5487,3 +5487,14 @@ The taxonomy covers approval, trust, budget, provenance, reversibility, and
 confidence. Escaped bypasses can file GitHub issues automatically when
 `CORVID_ADVERSARIAL_FILE_ISSUES=1` and `GITHUB_TOKEN` are configured; otherwise
 the command stays offline and CI-safe while still failing on escapes.
+
+## 2026-04-25 - Executable spec site generator
+
+Closed the parked Phase 20g static-site follow-up. Added `corvid test spec
+--site-out <DIR>`, backed by `corvid-driver::spec_site`, to render the
+verified literate effects spec into static HTML, CSS, and JavaScript.
+
+The generator consumes the same fenced Corvid blocks as `corvid test spec`, so
+site examples are not separate marketing snippets. Every emitted example card
+contains the exact compiler-verified source plus a "Run in REPL" button that
+copies the snippet for local REPL execution.

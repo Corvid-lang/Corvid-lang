@@ -51,6 +51,7 @@ The effect system ships with a set of CLI commands that make the dimensional alg
 |---|---|
 | `corvid test dimensions` | Run algebraic-law proptest suites on every custom dimension declared in `corvid.toml` |
 | `corvid test spec` | Re-compile every `.cor` example block in this directory against the current toolchain |
+| `corvid test spec --site-out <DIR>` | Render this executable spec as static HTML with Run-in-REPL buttons for every Corvid fence |
 | `corvid test spec --meta` | Run meta-verification: mutate the verifier, confirm each counter-example is caught |
 | `corvid test rewrites` | Run preserved-semantics rewrite verification; drift reports name the rewrite rule and law |
 | `corvid test adversarial` | Run the LLM-driven bypass generator against the effect checker |

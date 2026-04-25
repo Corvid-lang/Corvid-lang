@@ -26,6 +26,7 @@ mod native_ability;
 mod native_cache;
 mod render;
 pub mod spec_check;
+pub mod spec_site;
 
 pub use add_dimension::{add_dimension as install_dimension, AddDimensionOutcome};
 pub use adversarial::{
@@ -62,6 +63,9 @@ pub use render::{render_all_pretty, render_pretty};
 pub use spec_check::{
     extract_spec_examples, render_spec_report, verify_spec_examples, Expectation, SpecExample,
     SpecVerdict, VerdictKind,
+};
+pub use spec_site::{
+    build_spec_site, render_spec_site_report, SpecSitePage, SpecSiteReport,
 };
 
 // Re-export the runtime + interpreter surface so consumers (CLI, demo
