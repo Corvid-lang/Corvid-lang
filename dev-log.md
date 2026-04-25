@@ -5183,3 +5183,15 @@ policy now includes `require-package-signatures`; when enabled, unsigned
 packages are rejected before `Corvid.lock` changes. The signature covers the
 package URI, version, URL, digest, and semantic summary so summary drift is a
 signature failure, not a documentation mismatch.
+
+## 2026-04-25 - Lean/Coq proof replay for dimensions
+
+Closed the optional proof replay hook for proof-carrying dimensions. Custom
+dimension law checks remain the mandatory Corvid-native verifier; dimensions
+that additionally declare `proof = "...lean"` or `proof = "...v"` now replay
+through Lean or Coq during `corvid add-dimension` and `corvid test dimensions`.
+
+The hook is fail-closed: missing proof files, unsupported extensions, missing
+proof assistants, timeouts, and non-zero proof-assistant exits all reject the
+dimension or fail the test report with an actionable diagnostic. This keeps
+formal proofs as executable artifacts instead of marketing prose.

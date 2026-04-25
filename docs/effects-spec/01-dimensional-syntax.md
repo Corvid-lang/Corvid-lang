@@ -150,7 +150,7 @@ The compiler reads the TOML at build time and generates a new row in the dimensi
 - **`type`** is one of the six value kinds.
 - **`default`** is the identity element for the composition rule.
 - **`semantics`** is prose the compiler emits in error messages.
-- **`proof`** (optional) points at a machine-checkable proof of the composition rule's algebraic laws.
+- **`proof`** (optional) points at a machine-checkable proof of the composition rule's algebraic laws. `.lean` proofs are replayed with Lean and `.v` proofs are replayed with Coq by `corvid add-dimension` and `corvid test dimensions`.
 
 ### 4.1 Why this is powerful
 
@@ -162,7 +162,7 @@ Three properties no existing effect system has:
 
 ## 5. Proof-carrying dimensions
 
-A custom dimension's declared composition rule must be proven to hold the archetype's algebraic laws. `corvid test dimensions` runs these proof obligations in CI.
+A custom dimension's declared composition rule must be proven to hold the archetype's algebraic laws. `corvid test dimensions` runs the built-in property-law harness for every dimension and replays any declared Lean/Coq proof. A dimension without a `proof` field still has to pass the property-law harness; a dimension with a proof must pass both.
 
 ```
 >>> corvid test dimensions

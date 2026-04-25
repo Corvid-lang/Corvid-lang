@@ -54,9 +54,10 @@ use routing_report::{build_report, render_report as render_routing_report, Routi
 #[allow(unused_imports)]
 use corvid_driver::{
     build_native_to_disk, build_target_to_disk, build_to_disk, compile, compile_with_config, diff_snapshots,
-    inspect_import_semantics, load_corvid_config_for, load_dotenv_walking, render_all_pretty,
+    inspect_import_semantics, load_corvid_config_for, load_corvid_config_with_path_for,
+    load_dotenv_walking, render_all_pretty, render_dimension_verification_report,
     render_effect_diff, render_import_semantic_summaries, render_law_check_report,
-    render_spec_report, run_law_checks, run_native, run_with_target, scaffold_new,
+    render_spec_report, run_dimension_verification, run_law_checks, run_native, run_with_target, scaffold_new,
     snapshot_revision, verify_spec_examples, BuildTarget, RunTarget, VerdictKind,
     DEFAULT_SAMPLES,
 };
@@ -1254,8 +1255,9 @@ fn cmd_import_summary(file: &Path, json: bool) -> Result<u8> {
 fn cmd_test_dimensions() -> Result<u8> {
     println!("corvid test dimensions — archetype law-check suite");
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    let config = corvid_driver::load_corvid_config_for(&cwd.join("anywhere.cor"));
-    match config.as_ref() {
+    let config_with_path = load_corvid_config_with_path_for(&cwd.join("anywhere.cor"));
+    let config = config_with_path.as_ref().map(|(_, config)| config);
+    match config {
         Some(cfg) => {
             let n = cfg.effect_system.dimensions.len();
             println!(
@@ -1266,16 +1268,21 @@ fn cmd_test_dimensions() -> Result<u8> {
         None => println!("no corvid.toml found — running law checks on built-ins only"),
     }
     println!("running {DEFAULT_SAMPLES} cases per law…");
-    let results = run_law_checks(config.as_ref(), DEFAULT_SAMPLES);
-    print!("{}", render_law_check_report(&results));
-    let failures = results
+    let config_dir = config_with_path
+        .as_ref()
+        .and_then(|(path, _)| path.parent());
+    let report = run_dimension_verification(config, config_dir, DEFAULT_SAMPLES);
+    print!("{}", render_dimension_verification_report(&report));
+    let law_failures = report
+        .laws
         .iter()
         .filter(|r| matches!(
             r.verdict,
             corvid_driver::LawVerdict::CounterExample { .. }
         ))
         .count();
-    Ok(if failures == 0 { 0 } else { 1 })
+    let proof_failures = report.proofs.iter().filter(|p| p.failed()).count();
+    Ok(if law_failures == 0 && proof_failures == 0 { 0 } else { 1 })
 }
 
 fn cmd_test_spec() -> Result<u8> {

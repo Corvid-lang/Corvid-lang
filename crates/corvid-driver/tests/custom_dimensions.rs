@@ -5,8 +5,9 @@
 use std::fs;
 
 use corvid_driver::{
-    compile_with_config, load_corvid_config_for, render_law_check_report, run_law_checks,
-    LawVerdict, DEFAULT_SAMPLES,
+    compile_with_config, load_corvid_config_for, render_dimension_verification_report,
+    render_law_check_report, run_dimension_verification, run_law_checks, LawVerdict,
+    DEFAULT_SAMPLES,
 };
 use tempfile::TempDir;
 
@@ -190,6 +191,35 @@ default = "0"
     assert!(rendered.contains("freshness"));
     assert!(rendered.contains("carbon"));
     assert!(rendered.contains("cost"));
+}
+
+#[test]
+fn dimension_verification_reports_declared_proof_replay_failure() {
+    let tmp = TempDir::new().unwrap();
+    let root = tmp.path();
+    write_project(
+        root,
+        r#"
+[effect-system.dimensions.freshness]
+composition = "Max"
+type = "number"
+default = "0"
+proof = "proofs/missing.lean"
+"#,
+        "agent noop() -> String:\n    return \"x\"\n",
+    );
+
+    let src_path = root.join("src").join("main.cor");
+    let config = load_corvid_config_for(&src_path).expect("config loads");
+    let report = run_dimension_verification(Some(&config), Some(root), 100);
+    assert_eq!(report.proofs.len(), 1);
+    assert!(report.proofs[0].failed(), "{:?}", report.proofs[0]);
+    assert!(report.proofs[0].proof_path.ends_with("proofs/missing.lean"));
+
+    let rendered = render_dimension_verification_report(&report);
+    assert!(rendered.contains("proof replay"));
+    assert!(rendered.contains("FAIL"));
+    assert!(rendered.contains("missing.lean"));
 }
 
 #[test]

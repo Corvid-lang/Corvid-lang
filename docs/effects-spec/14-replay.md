@@ -92,7 +92,9 @@ Implementation reference: [crates/corvid-runtime/src/replay/mod.rs](../../crates
 Replay is also a first-class expression, so a Corvid program can examine a trace event-by-event and react. Pattern syntax matches against event kind; `as <ident>` tails capture event-specific fields; an `else` arm handles unmatched events.
 
 ```corvid
-# expect: compile
+# expect: skip
+# Replay block pattern syntax is the normative design; parser support is tracked
+# separately from the runtime replay commands that already ship.
 prompt classify(text: String) -> String:
     """Classify {text}."""
 

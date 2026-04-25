@@ -12,6 +12,7 @@ pub mod approver;
 pub mod effect_diff;
 pub mod meta_verify;
 pub mod modules;
+pub mod proof_replay;
 mod import_integrity;
 mod package_lock;
 mod package_registry;
@@ -85,7 +86,11 @@ pub use build::{
     build_to_disk, AbiBuildOutput, BuildOutput, BuildTarget, NativeBuildOutput, TargetBuildOutput,
 };
 pub use diagnostic::{summarize_diagnostics, Diagnostic};
-pub use law::{render_law_check_report, run_law_checks};
+pub use law::{
+    render_dimension_verification_report, render_law_check_report, run_dimension_verification,
+    run_law_checks, DimensionVerificationReport,
+};
+pub use proof_replay::{replay_dimension_proof, ProofReplayResult, ProofReplayStatus};
 pub use run::{
     build_or_get_cached_native, run_native, run_with_target, CachedNativeBinary, RunError,
     RunTarget,
@@ -124,8 +129,26 @@ pub fn compile(source: &str) -> CompileResult {
 /// through `typecheck_with_config` as an `InvalidCustomDimension`
 /// diagnostic at the source file's top span.
 pub fn load_corvid_config_for(source_path: &Path) -> Option<CorvidConfig> {
+    load_corvid_config_with_path_for(source_path).map(|(_, config)| config)
+}
+
+/// Walk upward from `source_path.parent()` looking for `corvid.toml`,
+/// returning both the config path and the parsed config. Use this when
+/// tooling must resolve config-relative paths such as dimension proofs.
+pub fn load_corvid_config_with_path_for(source_path: &Path) -> Option<(PathBuf, CorvidConfig)> {
     let start = source_path.parent()?;
-    CorvidConfig::load_walking(start).ok().flatten()
+    let mut cur: Option<&Path> = Some(start);
+    while let Some(dir) = cur {
+        let candidate = dir.join("corvid.toml");
+        if candidate.exists() {
+            return CorvidConfig::load_from_path(&candidate)
+                .ok()
+                .flatten()
+                .map(|config| (candidate, config));
+        }
+        cur = dir.parent();
+    }
+    None
 }
 
 /// Compile with an explicit `corvid.toml` configuration (for user-defined

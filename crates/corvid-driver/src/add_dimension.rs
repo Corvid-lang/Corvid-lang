@@ -31,6 +31,8 @@ use std::path::{Path, PathBuf};
 use anyhow::{anyhow, Context, Result};
 use corvid_types::{check_dimension, CorvidConfig, DimensionUnderTest};
 
+use crate::proof_replay::replay_dimension_proof;
+
 /// Outcome of `add_dimension`. `Added` is the happy path; `Rejected`
 /// carries a human-readable reason when validation fails.
 #[derive(Debug, Clone)]
@@ -157,6 +159,20 @@ fn install_from_path(source: &Path, project_dir: &Path) -> Result<AddDimensionOu
         });
     }
 
+    if let Some(proof) = &meta.proof_path {
+        let proof_path = resolve_relative_to(source, proof);
+        let replay = replay_dimension_proof(&dim_name, &proof_path);
+        if replay.failed() {
+            return Ok(AddDimensionOutcome::Rejected {
+                reason: format!(
+                    "dimension `{dim_name}` proof replay failed for `{}`: {}",
+                    replay.proof_path.display(),
+                    replay.message
+                ),
+            });
+        }
+    }
+
     // Serialize the new section and append to corvid.toml. If the
     // file doesn't exist, create it with only the new section.
     let section = render_dimension_section(&dim_name, &meta, &schema);
@@ -181,6 +197,18 @@ fn install_from_path(source: &Path, project_dir: &Path) -> Result<AddDimensionOu
         name: dim_name,
         target,
     })
+}
+
+fn resolve_relative_to(source: &Path, path: &str) -> PathBuf {
+    let candidate = PathBuf::from(path);
+    if candidate.is_absolute() {
+        candidate
+    } else {
+        source
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .join(candidate)
+    }
 }
 
 fn append_section(existing: &str, section: &str) -> String {
@@ -412,6 +440,31 @@ default = "5"
             other => panic!("unexpected outcome: {other:?}"),
         }
         // corvid.toml must NOT have been touched.
+        assert!(!tmp.path().join("corvid.toml").exists());
+    }
+
+    #[test]
+    fn rejects_dimension_when_declared_proof_cannot_replay() {
+        let tmp = TempDir::new().unwrap();
+        let source = write(
+            tmp.path(),
+            "freshness.dim.toml",
+            r#"
+[effect-system.dimensions.freshness]
+composition = "Max"
+type = "number"
+default = "0"
+proof = "proofs/missing.lean"
+"#,
+        );
+        let outcome = add_dimension(source.to_str().unwrap(), tmp.path()).unwrap();
+        match outcome {
+            AddDimensionOutcome::Rejected { reason } => {
+                assert!(reason.contains("proof replay failed"), "{reason}");
+                assert!(reason.contains("missing.lean"), "{reason}");
+            }
+            other => panic!("unexpected outcome: {other:?}"),
+        }
         assert!(!tmp.path().join("corvid.toml").exists());
     }
 

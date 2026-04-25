@@ -211,7 +211,7 @@ When a user declares a custom dimension in `corvid.toml` (see [01-dimensional-sy
 
 1. **Generates proptest cases** for the archetype's laws (§3.2).
 2. **Runs the cases** on every CI build via `corvid test dimensions`.
-3. **Optionally consumes a formal proof** (Lean/Coq) if the dimension declares one.
+3. **Optionally replays a formal proof** (`.lean` via Lean, `.v` via Coq) if the dimension declares one; declared proofs fail closed when the proof assistant is unavailable or the proof does not check.
 4. **Registers the dimension** in the project's dimension table only if every law passes.
 
 A dimension that claims `Sum` composition but fails associativity cannot ship. The registry refuses to publish it. The compiler refuses to load it. Soundness is a compile-time property of the dimension's declaration.

@@ -16,6 +16,15 @@ use corvid_ast::{
 use corvid_types::{
     check_dimension, CorvidConfig, DimensionUnderTest, LawCheckResult, Verdict,
 };
+use std::path::{Path, PathBuf};
+
+use crate::proof_replay::{replay_dimension_proof, ProofReplayResult};
+
+#[derive(Debug, Clone)]
+pub struct DimensionVerificationReport {
+    pub laws: Vec<LawCheckResult>,
+    pub proofs: Vec<ProofReplayResult>,
+}
 
 /// Run the archetype law-check suite against every built-in dimension
 /// and every custom dimension declared in `corvid.toml`.
@@ -45,6 +54,37 @@ pub fn run_law_checks(
         }
     }
     results
+}
+
+/// Run both mandatory property-law checks and optional Lean/Coq proof
+/// replay for custom dimensions that declare a proof path.
+pub fn run_dimension_verification(
+    config: Option<&CorvidConfig>,
+    config_dir: Option<&Path>,
+    samples: usize,
+) -> DimensionVerificationReport {
+    let laws = run_law_checks(config, samples);
+    let mut proofs = Vec::new();
+    if let Some(cfg) = config {
+        if let Ok(schemas) = cfg.into_dimension_schemas() {
+            for (schema, meta) in schemas {
+                if let Some(proof) = meta.proof_path {
+                    let proof_path = resolve_proof_path(config_dir, &proof);
+                    proofs.push(replay_dimension_proof(&schema.name, &proof_path));
+                }
+            }
+        }
+    }
+    DimensionVerificationReport { laws, proofs }
+}
+
+fn resolve_proof_path(config_dir: Option<&Path>, proof: &str) -> PathBuf {
+    let path = PathBuf::from(proof);
+    if path.is_absolute() {
+        path
+    } else {
+        config_dir.unwrap_or_else(|| Path::new(".")).join(path)
+    }
 }
 
 /// Render a law-check report as human-readable text.
@@ -82,6 +122,27 @@ pub fn render_law_check_report(results: &[LawCheckResult]) -> String {
         out.push_str(&format!(
             "\nall {} dimensions satisfy their archetype's laws.\n",
             by_dim.len()
+        ));
+    }
+    out
+}
+
+pub fn render_dimension_verification_report(report: &DimensionVerificationReport) -> String {
+    let mut out = render_law_check_report(&report.laws);
+    if report.proofs.is_empty() {
+        out.push_str("no custom dimension proofs declared; proof replay skipped.\n");
+        return out;
+    }
+    out.push_str("\nproof replay\n");
+    for proof in &report.proofs {
+        let status = if proof.failed() { "FAIL" } else { "ok" };
+        out.push_str(&format!(
+            "  {:<20} {:<4} {} ({}) — {}\n",
+            proof.dimension,
+            status,
+            proof.proof_path.display(),
+            proof.assistant,
+            proof.message
         ));
     }
     out

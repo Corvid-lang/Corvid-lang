@@ -703,7 +703,7 @@ Every custom dimension must declare the archetype's algebraic laws — associati
 
 - [x] `corvid test dimensions` CLI command wired to real harness (commit `66b3075`)
 - [x] Law-check proptest suites per archetype, driven by the archetype tag — 290k property cases per run
-- [ ] Optional Lean/Coq proof replay hook for dimensions that ship one
+- [x] Optional Lean/Coq proof replay hook for dimensions that ship one — `.lean` proofs replay through Lean and `.v` proofs replay through Coq when declared; `corvid add-dimension` and `corvid test dimensions` fail closed with actionable diagnostics if the proof cannot be checked.
 - [x] CI gate: any custom dimension whose laws fail blocks publication — `corvid add-dimension` runs the harness before writing
 
 ##### 8. Spec↔compiler bidirectional sync

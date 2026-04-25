@@ -3055,6 +3055,18 @@ decoration. If a package source, URL, version, or exported effect/provenance
 surface changes without the publisher re-signing it, `corvid add` rejects it
 before the dependency enters `Corvid.lock`.
 
+## proof-carrying custom dimensions
+
+Custom dimensions now have two verification layers. Every dimension still runs
+through Corvid's archetype law-check harness, and any dimension that declares a
+machine-checkable proof also replays that proof through the relevant assistant:
+`.lean` via Lean, `.v` via Coq.
+
+This matters because domain teams can extend Corvid's effect system without
+asking the compiler team to hard-code their dimension. The compiler accepts the
+extension only if the algebra is executable: property tests pass, and declared
+formal proofs actually replay on the local toolchain.
+
 ## Contributing / feedback
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). The rules of the road are: design chat before code, per-scope commits at every boundary, dev-log entry for every session, no shortcuts. The `learnings.md` file you're reading gets updated when each user-visible feature ships.
