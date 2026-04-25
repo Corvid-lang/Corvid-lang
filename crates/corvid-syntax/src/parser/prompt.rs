@@ -136,6 +136,14 @@ impl<'a> Parser<'a> {
             None
         };
 
+        let calibrated = if self.peek_ident_is("calibrated") {
+            self.bump();
+            self.expect_newline()?;
+            true
+        } else {
+            false
+        };
+
         let stream = self.parse_prompt_stream_settings()?;
 
         // Expect a single string literal as the template.
@@ -170,6 +178,7 @@ impl<'a> Parser<'a> {
             effect_row,
             cites_strictly,
             stream,
+            calibrated,
             capability_required,
             route,
             progressive,

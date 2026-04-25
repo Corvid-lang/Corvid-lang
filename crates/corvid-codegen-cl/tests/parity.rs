@@ -166,10 +166,7 @@ impl LlmAdapter for QueuedMockAdapter {
                 adapter: self.name.clone(),
                 message: format!("no queued reply registered for prompt `{}`", req.prompt),
             })?;
-            Ok(LlmResponse {
-                value,
-                usage: TokenUsage::default(),
-            })
+            Ok(LlmResponse::new(value, TokenUsage::default()))
         })
     }
 }

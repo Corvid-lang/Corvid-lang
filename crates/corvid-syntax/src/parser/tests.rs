@@ -548,6 +548,21 @@ prompt generate(ctx: String) -> Stream<String>:
         );
     }
 
+    #[test]
+    fn parses_calibrated_prompt_modifier() {
+        let src = "\
+prompt classify(ctx: String) -> String:
+    calibrated
+    \"Classify {ctx}.\"
+";
+        let file = parse_file_src(src);
+        let prompt = match &file.decls[0] {
+            Decl::Prompt(prompt) => prompt,
+            other => panic!("expected Prompt, got {other:?}"),
+        };
+        assert!(prompt.calibrated);
+    }
+
     // -------------------- canonical refund_bot body --------------------
 
     #[test]

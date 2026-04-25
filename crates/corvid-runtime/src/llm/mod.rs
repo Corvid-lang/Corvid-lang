@@ -16,6 +16,7 @@ pub mod ollama;
 pub mod openai;
 pub mod openai_compat;
 
+use crate::calibration::CalibrationObservation;
 use crate::errors::RuntimeError;
 use futures::future::BoxFuture;
 use std::borrow::Cow;
@@ -98,6 +99,29 @@ impl<'a> LlmRequestRef<'a> {
 pub struct LlmResponse {
     pub value: serde_json::Value,
     pub usage: TokenUsage,
+    pub calibration: Option<CalibrationObservation>,
+}
+
+impl LlmResponse {
+    pub fn new(value: serde_json::Value, usage: TokenUsage) -> Self {
+        Self {
+            value,
+            usage,
+            calibration: None,
+        }
+    }
+
+    pub fn with_calibration(
+        value: serde_json::Value,
+        usage: TokenUsage,
+        actual_correct: bool,
+    ) -> Self {
+        Self {
+            value,
+            usage,
+            calibration: Some(CalibrationObservation { actual_correct }),
+        }
+    }
 }
 
 /// Token counts for a single LLM call. Filled in by adapters from the

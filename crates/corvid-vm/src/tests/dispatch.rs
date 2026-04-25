@@ -297,6 +297,52 @@ agent run(input: String) -> String:
 }
 
 #[tokio::test]
+async fn calibrated_prompt_records_miscalibration_stats() {
+    let src = r#"
+effect confident_model:
+    confidence: 0.90
+
+prompt classify(input: String) -> String uses confident_model:
+    calibrated
+    "Classify {input}."
+
+agent run(input: String) -> String:
+    return classify(input)
+"#;
+    let ir = ir_of(src);
+    let rt = Runtime::builder()
+        .llm(Arc::new(MockAdapter::new("mock").reply_with_calibration(
+            "classify",
+            json!("wrong"),
+            TokenUsage::default(),
+            false,
+        )))
+        .default_model("mock")
+        .build();
+
+    for _ in 0..3 {
+        let value = run_agent(&ir, "run", vec![Value::String(Arc::from("ticket"))], &rt)
+            .await
+            .expect("run");
+        match value {
+            Value::Grounded(g) => {
+                assert_eq!(g.inner.get(), Value::String(Arc::from("wrong")));
+                assert!((g.confidence - 0.90).abs() < 1e-9);
+            }
+            other => panic!("expected grounded confidence wrapper, got {other:?}"),
+        }
+    }
+
+    let stats = rt
+        .calibration_stats("classify", "mock")
+        .expect("calibration stats");
+    assert_eq!(stats.samples, 3);
+    assert_eq!(stats.correct, 0);
+    assert!((stats.mean_confidence - 0.90).abs() < 1e-9);
+    assert!(stats.miscalibrated);
+}
+
+#[tokio::test]
 async fn prompt_call_returns_struct_via_mock_adapter() {
     let src = r#"
 type Decision:

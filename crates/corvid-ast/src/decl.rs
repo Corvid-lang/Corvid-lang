@@ -258,6 +258,10 @@ pub struct PromptDecl {
     /// Stream-only prompt modifiers such as `with min_confidence 0.80`.
     #[serde(default)]
     pub stream: PromptStreamSettings,
+    /// `calibrated` — runtime records confidence-vs-accuracy samples
+    /// when an adapter/eval supplies correctness observations.
+    #[serde(default)]
+    pub calibrated: bool,
     /// `requires: <capability>` — minimum model capability this prompt
     /// needs to execute. Composed via Max through the call graph. The
     /// runtime uses this to pick the cheapest model whose `capability`

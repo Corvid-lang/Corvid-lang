@@ -153,10 +153,7 @@ fn extract_response(parsed: &Value, expect_structured: bool) -> Result<LlmRespon
         for block in content {
             if block.get("type").and_then(|t| t.as_str()) == Some("tool_use") {
                 if let Some(input) = block.get("input") {
-                    return Ok(LlmResponse {
-                        value: input.clone(),
-                        usage,
-                    });
+                    return Ok(LlmResponse::new(input.clone(), usage));
                 }
             }
         }
@@ -174,10 +171,7 @@ fn extract_response(parsed: &Value, expect_structured: bool) -> Result<LlmRespon
                 }
             }
         }
-        Ok(LlmResponse {
-            value: Value::String(buf),
-            usage,
-        })
+        Ok(LlmResponse::new(Value::String(buf), usage))
     }
 }
 

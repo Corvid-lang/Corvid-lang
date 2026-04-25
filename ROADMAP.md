@@ -551,7 +551,7 @@ The invention: confidence isn't a number — it's a dynamic authorization gate. 
 - [x] Confidence propagation: deterministic tools produce confidence 1.0, prompts carry LLM-reported confidence, `Min` composition through the call graph.
 - [x] Confidence gate in the interpreter: at tool dispatch, if trust is `autonomous_if_confident(T)`, compute composed confidence of inputs. Below T → dynamically activate the approval prompt.
 - [x] `@min_confidence(P)` compile-time constraint: compiler proves all paths to irreversible actions meet the confidence floor.
-- [ ] `calibrated` modifier on prompts: runtime accumulates accuracy statistics, flags miscalibrated models when self-reported confidence drifts from actual accuracy.
+- [x] `calibrated` modifier on prompts: runtime accumulates accuracy statistics, flags miscalibrated models when self-reported confidence drifts from actual accuracy.
 - [ ] REPL integration: step-through shows confidence at each step. Confidence gates show threshold vs. actual when they fire.
 
 #### Slice 20f — `Stream<T>` + latency dimension + streaming effect integration (~3 weeks)

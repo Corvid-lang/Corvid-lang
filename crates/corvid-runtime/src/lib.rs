@@ -32,6 +32,7 @@
 pub mod abi;
 pub mod adversarial;
 pub(crate) mod attestation_store;
+pub mod calibration;
 pub mod approvals;
 pub mod approver_bridge;
 pub mod catalog;
@@ -81,6 +82,7 @@ pub mod c_runtime {
 pub use approvals::{
     ApprovalDecision, ApprovalRequest, Approver, ProgrammaticApprover, StdinApprover,
 };
+pub use calibration::{CalibrationObservation, CalibrationStats};
 pub use catalog::{
     call_agent as catalog_call_agent, descriptor_hash as catalog_descriptor_hash,
     descriptor_json as catalog_descriptor_json, find_agents_where as catalog_find_agents_where,

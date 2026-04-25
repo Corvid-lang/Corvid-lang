@@ -6,6 +6,7 @@
 //! interpreter.
 
 use crate::approvals::{Approver, ApprovalDecision, ApprovalRequest, StdinApprover};
+use crate::calibration::{CalibrationStats, CalibrationStore};
 use crate::errors::RuntimeError;
 use crate::llm::{LlmAdapter, LlmRegistry, LlmRequest, LlmRequestRef, LlmResponse};
 use crate::models::{ModelCatalog, ModelSelection, RegisteredModel};
@@ -34,6 +35,7 @@ pub struct Runtime {
     model_catalog: ModelCatalog,
     model_catalog_error: Option<RuntimeError>,
     rollout_state: Arc<AtomicU64>,
+    calibration: CalibrationStore,
 }
 
 #[derive(Clone)]
@@ -71,6 +73,21 @@ impl Runtime {
 
     pub fn default_model(&self) -> &str {
         &self.default_model
+    }
+
+    pub fn record_calibration(
+        &self,
+        prompt: &str,
+        model: &str,
+        confidence: f64,
+        actual_correct: bool,
+    ) {
+        self.calibration
+            .record(prompt, model, confidence, actual_correct);
+    }
+
+    pub fn calibration_stats(&self, prompt: &str, model: &str) -> Option<CalibrationStats> {
+        self.calibration.stats(prompt, model)
     }
 
     pub fn replay_differential_report(&self) -> Option<ReplayDifferentialReport> {
@@ -639,6 +656,7 @@ impl RuntimeBuilder {
             model_catalog,
             model_catalog_error,
             rollout_state: Arc::new(AtomicU64::new(rollout_seed)),
+            calibration: CalibrationStore::default(),
         }
     }
 }

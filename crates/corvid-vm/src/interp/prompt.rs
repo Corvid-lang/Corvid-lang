@@ -208,6 +208,7 @@ impl<'ir> Interpreter<'ir> {
         actual_model: &str,
         response_value: serde_json::Value,
         usage: TokenUsage,
+        calibration_actual: Option<bool>,
         span: Span,
     ) -> Result<PromptCallResult, InterpError> {
         let declared_result_ty = match &prompt.return_ty {
@@ -265,6 +266,16 @@ impl<'ir> Interpreter<'ir> {
         };
 
         let confidence = super::effect_compose::prompt_effective_confidence(prompt, &value);
+        if prompt.calibrated {
+            if let Some(actual_correct) = calibration_actual {
+                self.runtime.record_calibration(
+                    callee_name,
+                    actual_model,
+                    confidence,
+                    actual_correct,
+                );
+            }
+        }
         let tokens = if usage.completion_tokens > 0 {
             usage.completion_tokens as u64
         } else if usage.total_tokens > 0 {
@@ -417,6 +428,7 @@ impl<'ir> Interpreter<'ir> {
             &actual_model,
             resp.value,
             resp.usage,
+            resp.calibration.map(|c| c.actual_correct),
             span,
         )
     }
@@ -603,6 +615,7 @@ impl<'ir> Interpreter<'ir> {
                     &model_name,
                     response.value,
                     response.usage,
+                    response.calibration.map(|c| c.actual_correct),
                     span,
                 )?;
                 member_results[index] = Some((model_name, result));

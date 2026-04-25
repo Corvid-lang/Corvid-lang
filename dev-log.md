@@ -4720,3 +4720,21 @@ instead of defaulting every plain prompt result to confidence `1.0`.
 
 Remaining Phase 20e work is intentionally separate: calibrated prompt
 statistics and REPL step-through confidence display.
+
+## 2026-04-25 - Phase 20e calibrated prompt statistics
+
+Closed the `calibrated` prompt modifier. Prompt declarations now carry a
+source-visible calibration flag through AST parsing and IR lowering, while the
+runtime keeps the actual confidence-vs-accuracy accumulator in its own
+calibration module.
+
+Adapters can attach correctness observations to `LlmResponse` values when an
+eval or test harness has ground truth. Calibrated prompts record those samples
+against `(prompt, model)` and expose aggregate stats: sample count, correct
+count, mean confidence, empirical accuracy, drift, and whether the model is
+currently flagged as miscalibrated. The first heuristic flags drift greater
+than `0.25` after at least three samples.
+
+The mock adapter gained calibrated replies so the behavior is testable without
+network calls. VM coverage proves repeated overconfident wrong prompt replies
+produce a miscalibration flag while preserving the normal prompt return path.

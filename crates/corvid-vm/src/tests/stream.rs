@@ -180,6 +180,7 @@ async fn stream_budget_termination_fires_before_over_budget_yield() {
             min_confidence: None,
             max_tokens: None,
             backpressure: Some(BackpressurePolicy::Bounded(1)),
+            calibrated: false,
             capability_required: None,
             route: Vec::new(),
             progressive: Vec::new(),

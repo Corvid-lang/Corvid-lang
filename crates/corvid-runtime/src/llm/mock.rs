@@ -177,7 +177,21 @@ impl MockAdapter {
         self.replies
             .lock()
             .unwrap()
-            .insert(prompt.into(), LlmResponse { value, usage });
+            .insert(prompt.into(), LlmResponse::new(value, usage));
+        self
+    }
+
+    pub fn reply_with_calibration(
+        self,
+        prompt: impl Into<String>,
+        value: serde_json::Value,
+        usage: TokenUsage,
+        actual_correct: bool,
+    ) -> Self {
+        self.replies.lock().unwrap().insert(
+            prompt.into(),
+            LlmResponse::with_calibration(value, usage, actual_correct),
+        );
         self
     }
 
@@ -195,7 +209,20 @@ impl MockAdapter {
         self.replies
             .lock()
             .unwrap()
-            .insert(prompt.into(), LlmResponse { value, usage });
+            .insert(prompt.into(), LlmResponse::new(value, usage));
+    }
+
+    pub fn add_reply_with_calibration(
+        &self,
+        prompt: impl Into<String>,
+        value: serde_json::Value,
+        usage: TokenUsage,
+        actual_correct: bool,
+    ) {
+        self.replies.lock().unwrap().insert(
+            prompt.into(),
+            LlmResponse::with_calibration(value, usage, actual_correct),
+        );
     }
 }
 
@@ -355,10 +382,7 @@ impl LlmAdapter for EnvVarMockAdapter {
                 response_wrap_start.elapsed().as_nanos() as u64,
                 Ordering::Relaxed,
             );
-            Ok(LlmResponse {
-                value,
-                usage: TokenUsage::default(),
-            })
+            Ok(LlmResponse::new(value, TokenUsage::default()))
         })
     }
 }

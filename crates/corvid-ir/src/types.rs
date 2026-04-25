@@ -85,6 +85,10 @@ pub struct IrPrompt {
     pub min_confidence: Option<f64>,
     pub max_tokens: Option<u64>,
     pub backpressure: Option<BackpressurePolicy>,
+    /// Runtime calibration flag. When true, prompt calls record
+    /// confidence-vs-accuracy observations if the adapter supplies
+    /// correctness metadata.
+    pub calibrated: bool,
     /// Phase 20h: minimum model capability this prompt requires
     /// (`basic` | `standard` | `expert` | custom). The runtime
     /// uses this to pick the cheapest declared model whose own

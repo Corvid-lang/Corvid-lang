@@ -595,10 +595,10 @@ impl ReplaySource {
         };
 
         match &self.mode {
-            ReplayMode::Substitute => Ok(LlmResponse {
-                value: recorded_result,
-                usage: TokenUsage::default(),
-            }),
+            ReplayMode::Substitute => Ok(LlmResponse::new(
+                recorded_result,
+                TokenUsage::default(),
+            )),
             ReplayMode::Differential { .. } => {
                 let live = llms.call(&live_req).await?;
                 if live.value != recorded_result {
@@ -611,10 +611,10 @@ impl ReplaySource {
                 }
                 Ok(live)
             }
-            ReplayMode::Mutation(_) => Ok(LlmResponse {
-                value: recorded_result,
-                usage: TokenUsage::default(),
-            }),
+            ReplayMode::Mutation(_) => Ok(LlmResponse::new(
+                recorded_result,
+                TokenUsage::default(),
+            )),
         }
     }
 
@@ -912,10 +912,10 @@ fn mutated_llm_result(
     recorded_call: &TraceEvent,
     recorded_result: TraceEvent,
 ) -> Result<LlmResponse, RuntimeError> {
-    Ok(LlmResponse {
-        value: mutated_json_result(mutation, recorded_call, recorded_result)?,
-        usage: TokenUsage::default(),
-    })
+    Ok(LlmResponse::new(
+        mutated_json_result(mutation, recorded_call, recorded_result)?,
+        TokenUsage::default(),
+    ))
 }
 
 fn mutated_approval_result(

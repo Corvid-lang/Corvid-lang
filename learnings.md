@@ -2529,6 +2529,32 @@ confidence gates need. Wrapping low-confidence prompt outputs as `Grounded<T>`
 keeps the runtime value carrying its statistical provenance while preserving
 ordinary source-level ergonomics.
 
+## 20e-calibrated-prompts
+
+Use `calibrated` inside a prompt declaration when prompt confidence should be
+audited against ground truth supplied by an eval runner or adapter:
+
+```corvid
+effect confident_model:
+    confidence: 0.90
+
+prompt classify(input: String) -> String uses confident_model:
+    calibrated
+    "Classify {input}."
+```
+
+The modifier does not invent correctness labels. It records samples only when
+the runtime receives a real correctness observation with the LLM response. That
+keeps calibration honest: production calls without labels keep running normally,
+while evals and harnesses can accumulate model-level reliability statistics.
+
+The runtime tracks calibration by `(prompt, model)` and reports sample count,
+accuracy, mean confidence, confidence/accuracy drift, and a miscalibration flag.
+The current flagging rule is intentionally simple: after at least three labeled
+samples, drift above `0.25` is considered miscalibrated. Future eval tooling can
+render these stats directly instead of treating self-reported confidence as
+truth.
+
 ## Contributing / feedback
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). The rules of the road are: design chat before code, per-scope commits at every boundary, dev-log entry for every session, no shortcuts. The `learnings.md` file you're reading gets updated when each user-visible feature ships.

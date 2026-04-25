@@ -157,12 +157,9 @@ fn extract_response(
                 ),
             }
         })?;
-        Ok(LlmResponse { value, usage })
+        Ok(LlmResponse::new(value, usage))
     } else {
-        Ok(LlmResponse {
-            value: Value::String(text.to_string()),
-            usage,
-        })
+        Ok(LlmResponse::new(Value::String(text.to_string()), usage))
     }
 }
 

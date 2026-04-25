@@ -385,6 +385,17 @@ prompt generate(ctx: String) -> Stream<String>:
     }
 
     #[test]
+    fn lowers_calibrated_prompt_modifier() {
+        let src = "\
+prompt classify(ctx: String) -> String:
+    calibrated
+    \"Classify {ctx}.\"
+";
+        let ir = lower_src(src);
+        assert!(ir.prompts[0].calibrated);
+    }
+
+    #[test]
     fn lowers_prompt_cites_strictly_param_index() {
         let src = "\
 prompt answer(question: String, ctx: Grounded<String>) -> Grounded<String>:

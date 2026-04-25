@@ -197,12 +197,9 @@ fn extract_response_compat(
                 ),
             }
         })?;
-        Ok(LlmResponse { value, usage })
+        Ok(LlmResponse::new(value, usage))
     } else {
-        Ok(LlmResponse {
-            value: Value::String(content.to_string()),
-            usage,
-        })
+        Ok(LlmResponse::new(Value::String(content.to_string()), usage))
     }
 }
 
