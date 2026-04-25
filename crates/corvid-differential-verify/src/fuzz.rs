@@ -1,5 +1,5 @@
 use anyhow::{anyhow, bail, Result};
-use corvid_ast::{BackpressurePolicy, Decl, DimensionValue};
+use corvid_ast::{Decl, DimensionValue};
 use corvid_resolve::resolve;
 use corvid_syntax::{lex, parse_file};
 use corvid_types::{analyze_effects, EffectRegistry};
@@ -377,8 +377,7 @@ fn render_dimension_value(value: &DimensionValue) -> String {
         DimensionValue::Cost(value) => format!("${value:.6}"),
         DimensionValue::Number(value) => format!("{value:.6}"),
         DimensionValue::Streaming { backpressure } => match backpressure {
-            BackpressurePolicy::Bounded(size) => format!("streaming(bounded({size}))"),
-            BackpressurePolicy::Unbounded => "streaming(unbounded)".into(),
+            policy => format!("streaming({})", policy.label()),
         },
         DimensionValue::ConfidenceGated {
             threshold,

@@ -573,7 +573,7 @@ Streaming in Corvid isn't just async iteration — streams are **first-class par
 - [x] **Progressive structured types: `Stream<Partial<T>>`.** Compiler-known `Partial<T>` where each field is `Complete(V)` or `Streaming`. Users access fields the moment they're complete without waiting for the full response. Type-level progressive structure.
 - [x] **Resumption tokens.** `resume_token(stream)` captures delivered elements plus prompt context in `ResumeToken<T>`. `resume(prompt, token)` reopens the prompt through the interpreter with accumulated delivered context; provider-native continuation state is represented for future adapters.
 - [x] **Declarative fan-out / fan-in.** `stream.split_by("field")` partitions a struct stream into typed sub-streams by field value. `merge(groups).ordered_by("fifo" | "sorted" | "fair_round_robin")` combines with explicit ordering guarantees. Compile-time type + field checking.
-- [ ] **Backpressure propagation.** A slow consumer pulls from a producer at its consumption rate. The effect system captures this: `backpressure: pulls_from(producer_rate)`. Cross-stream coordination when streams share a trace ID.
+- [x] **Backpressure propagation.** A slow consumer pulls from a producer at its consumption rate. The effect system captures this as `backpressure: pulls_from(producer_rate)`, parser/typechecker constraints are source-sensitive, and the VM maps pull-based streams to demand-gated bounded channels while fan-in preserves composed upstream policy.
 
 #### Slice 20g — Bypass tests + effect-system specification (~4 weeks)
 

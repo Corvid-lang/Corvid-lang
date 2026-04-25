@@ -39,16 +39,13 @@ pub(super) async fn merge(
     policy: StreamMergePolicy,
     span: Span,
 ) -> Result<Value, InterpError> {
-    let streams = streams_from_value(value, span)?;
+    let (streams, backpressure) = streams_from_value(value, span)?;
     let chunks = match policy {
         StreamMergePolicy::Fifo => collect_fifo(streams).await?,
         StreamMergePolicy::FairRoundRobin => collect_fair_round_robin(streams).await?,
         StreamMergePolicy::Sorted => collect_sorted(streams).await?,
     };
-    Ok(Value::Stream(stream_from_chunks(
-        chunks,
-        BackpressurePolicy::Unbounded,
-    ).await))
+    Ok(Value::Stream(stream_from_chunks(chunks, backpressure).await))
 }
 
 pub(super) async fn ordered_by(
@@ -62,12 +59,10 @@ pub(super) async fn ordered_by(
     match policy {
         StreamMergePolicy::Fifo | StreamMergePolicy::FairRoundRobin => Ok(Value::Stream(stream)),
         StreamMergePolicy::Sorted => {
+            let backpressure = stream.backpressure().clone();
             let mut chunks = collect_stream(stream).await?;
             sort_chunks(&mut chunks);
-            Ok(Value::Stream(stream_from_chunks(
-                chunks,
-                BackpressurePolicy::Unbounded,
-            ).await))
+            Ok(Value::Stream(stream_from_chunks(chunks, backpressure).await))
         }
     }
 }
@@ -131,18 +126,52 @@ async fn stream_from_chunks(
     stream
 }
 
-fn streams_from_value(value: Value, span: Span) -> Result<Vec<StreamValue>, InterpError> {
+fn streams_from_value(
+    value: Value,
+    span: Span,
+) -> Result<(Vec<StreamValue>, BackpressurePolicy), InterpError> {
     let Value::List(items) = value else {
         return Err(type_mismatch("List<Stream<T>>", value.type_name(), span));
     };
     let mut out = Vec::new();
+    let mut backpressure = None;
     for item in items.iter_cloned() {
         match item {
-            Value::Stream(stream) => out.push(stream),
+            Value::Stream(stream) => {
+                backpressure = Some(match backpressure {
+                    Some(policy) => compose_backpressure(&policy, stream.backpressure()),
+                    None => stream.backpressure().clone(),
+                });
+                out.push(stream);
+            }
             other => return Err(type_mismatch("Stream<T>", other.type_name(), span)),
         }
     }
-    Ok(out)
+    Ok((out, backpressure.unwrap_or(BackpressurePolicy::Bounded(1))))
+}
+
+fn compose_backpressure(
+    current: &BackpressurePolicy,
+    incoming: &BackpressurePolicy,
+) -> BackpressurePolicy {
+    match (current, incoming) {
+        (BackpressurePolicy::Unbounded, _) | (_, BackpressurePolicy::Unbounded) => {
+            BackpressurePolicy::Unbounded
+        }
+        (BackpressurePolicy::PullsFrom(a), BackpressurePolicy::PullsFrom(b)) if a == b => {
+            BackpressurePolicy::PullsFrom(a.clone())
+        }
+        (BackpressurePolicy::PullsFrom(_), BackpressurePolicy::PullsFrom(_)) => {
+            BackpressurePolicy::Bounded(1)
+        }
+        (BackpressurePolicy::PullsFrom(_), BackpressurePolicy::Bounded(size))
+        | (BackpressurePolicy::Bounded(size), BackpressurePolicy::PullsFrom(_)) => {
+            BackpressurePolicy::Bounded(*size)
+        }
+        (BackpressurePolicy::Bounded(a), BackpressurePolicy::Bounded(b)) => {
+            BackpressurePolicy::Bounded((*a).max(*b))
+        }
+    }
 }
 
 fn group_key(value: &Value, key: &str, span: Span) -> Result<String, InterpError> {

@@ -492,4 +492,35 @@ mod tests {
             "latency",
         ));
     }
+
+    #[test]
+    fn pull_backpressure_is_stricter_than_bounded_and_source_sensitive() {
+        assert!(dimension_satisfies(
+            &DimensionValue::Streaming {
+                backpressure: BackpressurePolicy::PullsFrom("producer_rate".into()),
+            },
+            &DimensionValue::Streaming {
+                backpressure: BackpressurePolicy::Bounded(8),
+            },
+            "latency",
+        ));
+        assert!(dimension_satisfies(
+            &DimensionValue::Streaming {
+                backpressure: BackpressurePolicy::PullsFrom("producer_rate".into()),
+            },
+            &DimensionValue::Streaming {
+                backpressure: BackpressurePolicy::PullsFrom("producer_rate".into()),
+            },
+            "latency",
+        ));
+        assert!(!dimension_satisfies(
+            &DimensionValue::Streaming {
+                backpressure: BackpressurePolicy::PullsFrom("consumer_rate".into()),
+            },
+            &DimensionValue::Streaming {
+                backpressure: BackpressurePolicy::PullsFrom("producer_rate".into()),
+            },
+            "latency",
+        ));
+    }
 }

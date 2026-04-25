@@ -1856,6 +1856,46 @@ agent fanout() -> Stream<Event>:
         )), "got: {:?}", c.errors);
     }
 
+    #[test]
+    fn pull_based_backpressure_constraint_typechecks() {
+        let src = "\
+effect pull_stream:
+    latency: streaming(backpressure: pulls_from(producer_rate))
+
+tool source() -> Stream<String> uses pull_stream
+
+@latency(streaming(backpressure: pulls_from(producer_rate)))
+agent consume() -> String:
+    for chunk in source():
+        return chunk
+    return \"\"
+";
+        let c = check(src);
+        assert!(c.errors.is_empty(), "got: {:?}", c.errors);
+    }
+
+    #[test]
+    fn pull_based_backpressure_constraint_is_source_sensitive() {
+        let src = "\
+effect pull_stream:
+    latency: streaming(backpressure: pulls_from(producer_rate))
+
+tool source() -> Stream<String> uses pull_stream
+
+@latency(streaming(backpressure: pulls_from(consumer_rate)))
+agent consume() -> String:
+    for chunk in source():
+        return chunk
+    return \"\"
+";
+        let c = check(src);
+        assert!(c.errors.iter().any(|e| matches!(
+            &e.kind,
+            TypeErrorKind::EffectConstraintViolation { dimension, .. }
+                if dimension == "latency"
+        )), "got: {:?}", c.errors);
+    }
+
     // --- Custom dimensions via corvid.toml (Phase 20g invention #6) ---
 
     fn check_with_config(src: &str, config: &crate::config::CorvidConfig) -> Checked {

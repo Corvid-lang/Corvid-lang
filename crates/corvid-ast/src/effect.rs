@@ -18,7 +18,18 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum BackpressurePolicy {
     Bounded(u64),
+    PullsFrom(String),
     Unbounded,
+}
+
+impl BackpressurePolicy {
+    pub fn label(&self) -> String {
+        match self {
+            Self::Bounded(size) => format!("bounded({size})"),
+            Self::PullsFrom(source) => format!("pulls_from({source})"),
+            Self::Unbounded => "unbounded".to_string(),
+        }
+    }
 }
 
 /// Legacy binary effect classification. Retained for backward

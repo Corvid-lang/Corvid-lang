@@ -1583,8 +1583,7 @@ fn render_effect_row_names(effects: &[corvid_ast::EffectRef]) -> String {
 
 fn render_backpressure(policy: &BackpressurePolicy) -> String {
     match policy {
-        BackpressurePolicy::Bounded(size) => format!("bounded({size})"),
-        BackpressurePolicy::Unbounded => "unbounded".into(),
+        policy => policy.label(),
     }
 }
 

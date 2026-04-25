@@ -2709,6 +2709,30 @@ extractors. That is less general than lambdas, but it is typechecked today and
 does not invent an unowned function-value model. Real function extractors belong
 with first-class functions.
 
+## 20f-backpressure-propagation
+
+Backpressure is now part of Corvid's language semantics, not just a runtime
+queue setting:
+
+```corvid
+effect live_feed:
+    latency: streaming(backpressure: pulls_from(producer_rate))
+
+prompt watch(topic: String) -> Stream<String> uses live_feed:
+    with backpressure pulls_from(producer_rate)
+    "Watch {topic}"
+```
+
+`pulls_from(name)` is stricter than any bounded buffer and is source-sensitive
+when used as a constraint. The VM implements it as a capacity-1 bounded channel,
+which forces producers to wait for downstream consumption instead of filling an
+unbounded queue.
+
+Fan-in composes upstream policies: any unbounded input makes the merged stream
+unbounded; matching pull sources stay pull-based; mixed pull and bounded
+sources degrade to the bounded policy because buffering exists somewhere in the
+path.
+
 ## Contributing / feedback
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). The rules of the road are: design chat before code, per-scope commits at every boundary, dev-log entry for every session, no shortcuts. The `learnings.md` file you're reading gets updated when each user-visible feature ships.

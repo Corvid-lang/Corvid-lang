@@ -913,6 +913,24 @@ impl StreamValue {
                 };
                 (sender, stream)
             }
+            BackpressurePolicy::PullsFrom(source) => {
+                let (sender, receiver) = mpsc::channel(1);
+                let inner = Arc::new(StreamInner {
+                    receiver: AsyncMutex::new(StreamReceiver::Bounded(receiver)),
+                    backpressure: BackpressurePolicy::PullsFrom(source),
+                    provenance: Mutex::new(ProvenanceChain::new()),
+                    history: Mutex::new(Vec::new()),
+                    resume_context: Mutex::new(None),
+                    pending: AtomicUsize::new(0),
+                    warned_unbounded: AtomicBool::new(false),
+                });
+                let stream = Self(Arc::clone(&inner));
+                let sender = StreamSender {
+                    inner,
+                    kind: StreamSenderKind::Bounded(sender),
+                };
+                (sender, stream)
+            }
             BackpressurePolicy::Unbounded => {
                 let (sender, receiver) = mpsc::unbounded_channel();
                 let inner = Arc::new(StreamInner {
@@ -1008,10 +1026,7 @@ impl StreamValue {
     }
 
     fn backpressure_label(&self) -> String {
-        match self.backpressure() {
-            BackpressurePolicy::Bounded(size) => format!("bounded({size})"),
-            BackpressurePolicy::Unbounded => "unbounded".into(),
-        }
+        self.backpressure().label()
     }
 }
 

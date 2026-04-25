@@ -1,7 +1,6 @@
 //! REPL-oriented value rendering with cycle and depth guards.
 
 use crate::value::{PartialFieldValue, Value};
-use corvid_ast::BackpressurePolicy;
 use std::collections::HashSet;
 
 const MAX_DEPTH: usize = 32;
@@ -138,10 +137,7 @@ fn render_value_inner(
             token.delivered.len()
         ),
         Value::Stream(stream) => {
-            let backpressure = match stream.backpressure() {
-                BackpressurePolicy::Bounded(size) => format!("bounded({size})"),
-                BackpressurePolicy::Unbounded => "unbounded".to_string(),
-            };
+            let backpressure = stream.backpressure().label();
             let provenance = stream.provenance();
             let sources: Vec<String> = provenance
                 .entries

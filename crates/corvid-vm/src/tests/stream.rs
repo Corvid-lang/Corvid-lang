@@ -602,6 +602,17 @@ async fn unbounded_stream_channel_round_trips_values() {
     assert_eq!(items, vec![Value::String(Arc::from("a"))]);
 }
 
+#[tokio::test]
+async fn pulls_from_stream_channel_round_trips_with_policy_label() {
+    let (sender, stream) =
+        crate::value::StreamValue::channel(BackpressurePolicy::PullsFrom("producer_rate".into()));
+    assert_eq!(stream.backpressure().label(), "pulls_from(producer_rate)");
+    assert!(sender.send(Ok(Value::String(Arc::from("a")))).await);
+    drop(sender);
+    let items = collect_stream(Value::Stream(stream)).await.expect("collect");
+    assert_eq!(items, vec![Value::String(Arc::from("a"))]);
+}
+
 fn struct_string_field(value: &Value, field: &str) -> String {
     let Value::Struct(value) = value else {
         panic!("expected struct, got {value:?}");

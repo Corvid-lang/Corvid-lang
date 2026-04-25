@@ -177,6 +177,16 @@ fn compose_backpressure(
         (BackpressurePolicy::Unbounded, _) | (_, BackpressurePolicy::Unbounded) => {
             BackpressurePolicy::Unbounded
         }
+        (BackpressurePolicy::PullsFrom(a), BackpressurePolicy::PullsFrom(b)) if a == b => {
+            BackpressurePolicy::PullsFrom(a.clone())
+        }
+        (BackpressurePolicy::PullsFrom(_), BackpressurePolicy::PullsFrom(_)) => {
+            BackpressurePolicy::Bounded(1)
+        }
+        (BackpressurePolicy::PullsFrom(_), BackpressurePolicy::Bounded(size))
+        | (BackpressurePolicy::Bounded(size), BackpressurePolicy::PullsFrom(_)) => {
+            BackpressurePolicy::Bounded(*size)
+        }
         (BackpressurePolicy::Bounded(a), BackpressurePolicy::Bounded(b)) => {
             BackpressurePolicy::Bounded((*a).max(*b))
         }
@@ -463,10 +473,7 @@ pub fn canonical_dimension_name(name: &str) -> String {
 }
 
 pub(super) fn format_backpressure(policy: &BackpressurePolicy) -> String {
-    match policy {
-        BackpressurePolicy::Bounded(size) => format!("bounded({size})"),
-        BackpressurePolicy::Unbounded => "unbounded".into(),
-    }
+    policy.label()
 }
 
 pub(super) fn latency_max<'a>(a: &'a str, b: &'a str) -> &'a str {
@@ -496,6 +503,12 @@ pub(super) fn backpressure_satisfies(actual: &BackpressurePolicy, required: &Bac
     match (actual, required) {
         (_, BackpressurePolicy::Unbounded) => true,
         (BackpressurePolicy::Unbounded, BackpressurePolicy::Bounded(_)) => false,
+        (BackpressurePolicy::Unbounded, BackpressurePolicy::PullsFrom(_)) => false,
+        (BackpressurePolicy::PullsFrom(actual), BackpressurePolicy::PullsFrom(required)) => {
+            actual == required
+        }
+        (BackpressurePolicy::PullsFrom(_), BackpressurePolicy::Bounded(_)) => true,
+        (BackpressurePolicy::Bounded(_), BackpressurePolicy::PullsFrom(_)) => false,
         (BackpressurePolicy::Bounded(actual), BackpressurePolicy::Bounded(required)) => {
             actual <= required
         }

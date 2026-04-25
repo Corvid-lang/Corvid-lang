@@ -91,10 +91,7 @@ pub fn value_to_json(v: &Value) -> serde_json::Value {
         }),
         Value::Stream(stream) => serde_json::json!({
             "tag": "stream",
-            "backpressure": match stream.backpressure() {
-                corvid_ast::BackpressurePolicy::Bounded(size) => format!("bounded({size})"),
-                corvid_ast::BackpressurePolicy::Unbounded => "unbounded".to_string(),
-            }
+            "backpressure": stream.backpressure().label()
         }),
     }
 }

@@ -95,10 +95,17 @@ impl<'a> Parser<'a> {
                 self.expect(TokKind::RParen, "`)` after bounded backpressure size")?;
                 Ok(BackpressurePolicy::Bounded(capacity))
             }
+            TokKind::Ident(name) if name == "pulls_from" => {
+                self.bump();
+                self.expect(TokKind::LParen, "`(` after `pulls_from`")?;
+                let (source, _) = self.expect_ident()?;
+                self.expect(TokKind::RParen, "`)` after pulls_from source")?;
+                Ok(BackpressurePolicy::PullsFrom(source))
+            }
             other => Err(ParseError {
                 kind: ParseErrorKind::UnexpectedToken {
                     got: describe_token(&other),
-                    expected: "`bounded(N)` or `unbounded`".into(),
+                    expected: "`bounded(N)`, `pulls_from(name)`, or `unbounded`".into(),
                 },
                 span,
             }),

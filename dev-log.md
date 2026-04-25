@@ -4843,3 +4843,21 @@ CL/Python codegen reject the stream combinators instead of pretending support.
 This slice avoids a fake lambda system. The key extractor is a string literal
 field name for now; true function extractors should wait until Corvid has
 first-class functions or typed lambdas.
+
+## 2026-04-25 - Phase 20f backpressure propagation
+
+Closed the backpressure propagation item with a first-class
+`pulls_from(name)` policy alongside `bounded(N)` and `unbounded`.
+Prompt stream modifiers and dimensional latency effects can now write
+`with backpressure pulls_from(producer_rate)` and
+`latency: streaming(backpressure: pulls_from(producer_rate))`.
+
+The effect algebra is source-sensitive: a stream that pulls from
+`producer_rate` satisfies a matching `pulls_from(producer_rate)` constraint
+and any bounded-buffer constraint, but it does not satisfy
+`pulls_from(consumer_rate)`. Runtime channels map `pulls_from(...)` to a
+capacity-1 bounded channel so producers cannot run ahead of demand.
+
+Fan-in now preserves composed upstream backpressure rather than dropping to
+unbounded output. Split groups retain the source policy; sorted merge keeps the
+input policy after materialization.

@@ -554,6 +554,24 @@ prompt generate(ctx: String) -> Stream<String>:
     }
 
     #[test]
+    fn parses_pull_based_backpressure_modifier() {
+        let src = "\
+prompt generate(ctx: String) -> Stream<String>:
+    with backpressure pulls_from(producer_rate)
+    \"Generate {ctx} in chunks.\"
+";
+        let file = parse_file_src(src);
+        let prompt = match &file.decls[0] {
+            Decl::Prompt(prompt) => prompt,
+            other => panic!("expected Prompt, got {other:?}"),
+        };
+        assert_eq!(
+            prompt.stream.backpressure,
+            Some(BackpressurePolicy::PullsFrom("producer_rate".into()))
+        );
+    }
+
+    #[test]
     fn parses_calibrated_prompt_modifier() {
         let src = "\
 prompt classify(ctx: String) -> String:

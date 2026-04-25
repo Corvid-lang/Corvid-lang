@@ -913,8 +913,7 @@ fn render_latency(latency: &LatencyLevel) -> String {
         LatencyLevel::Medium => "medium".into(),
         LatencyLevel::Slow => "slow".into(),
         LatencyLevel::Streaming { backpressure } => match backpressure {
-            BackpressurePolicy::Bounded(size) => format!("streaming(bounded({size}))"),
-            BackpressurePolicy::Unbounded => "streaming(unbounded)".into(),
+            policy => format!("streaming({})", policy.label()),
         },
         LatencyLevel::Custom(name) => name.clone(),
     }
