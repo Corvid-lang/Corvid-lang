@@ -313,13 +313,22 @@ fn imported_module_alias_target<'a>(
 ) -> Option<&'a corvid_resolve::ResolvedModule> {
     let import = module.file.decls.iter().find_map(|decl| match decl {
         corvid_ast::Decl::Import(import)
-            if matches!(import.source, corvid_ast::ImportSource::Corvid)
+            if matches!(
+                import.source,
+                corvid_ast::ImportSource::Corvid | corvid_ast::ImportSource::RemoteCorvid
+            )
                 && import.alias.as_ref().is_some_and(|a| a.name == alias) =>
         {
             Some(import)
         }
         _ => None,
     })?;
-    let child = corvid_resolve::resolve_import_path(&module.path, &import.module);
+    let child = match import.source {
+        corvid_ast::ImportSource::Corvid => {
+            corvid_resolve::resolve_import_path(&module.path, &import.module)
+        }
+        corvid_ast::ImportSource::RemoteCorvid => corvid_resolve::remote_import_path(&import.module),
+        corvid_ast::ImportSource::Python => return None,
+    };
     modules.lookup_by_path(&child)
 }

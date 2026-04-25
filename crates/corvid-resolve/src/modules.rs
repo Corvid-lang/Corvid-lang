@@ -281,6 +281,20 @@ pub fn resolve_import_path(importing_file: &Path, module: &str) -> PathBuf {
     candidate
 }
 
+/// Stable synthetic key for remote Corvid modules. Remote modules do not
+/// live on the local filesystem, but downstream passes already use
+/// `PathBuf` as the module identity key. Hex-encoding the URL bytes keeps
+/// exact URLs collision-free without adding hashing dependencies here.
+pub fn remote_import_path(url: &str) -> PathBuf {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut encoded = String::with_capacity(url.len() * 2);
+    for byte in url.as_bytes() {
+        encoded.push(HEX[(byte >> 4) as usize] as char);
+        encoded.push(HEX[(byte & 0x0f) as usize] as char);
+    }
+    PathBuf::from(format!("<remote:{encoded}>"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -307,6 +321,15 @@ mod tests {
             resolved,
             PathBuf::from("/proj/src/policies/../shared/types.cor")
         );
+    }
+
+    #[test]
+    fn remote_import_path_is_stable_and_url_specific() {
+        let first = remote_import_path("https://example.com/policy.cor");
+        let second = remote_import_path("https://example.com/policy.cor");
+        let other = remote_import_path("https://example.com/other.cor");
+        assert_eq!(first, second);
+        assert_ne!(first, other);
     }
 
     #[test]

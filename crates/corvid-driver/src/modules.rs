@@ -32,6 +32,7 @@
 //! problem in a single pass.
 
 use std::collections::HashMap;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -42,12 +43,13 @@ use corvid_ast::{
     ImportSource, TypeRef,
 };
 use corvid_resolve::{
-    collect_public_exports, resolve, resolve_import_path, AgentSemanticSummary,
+    collect_public_exports, remote_import_path, resolve, resolve_import_path, AgentSemanticSummary,
     ExportSemanticSummary, ImportedUseTarget, ModuleResolution, ModuleSemanticSummary, Resolved,
     ResolvedModule,
 };
 use corvid_syntax::{lex, parse_file, LexError, ParseError};
 use corvid_types::{analyze_effects, EffectRegistry};
+use url::Url;
 
 /// Error surfaced while loading / parsing / resolving a module
 /// imported from another `.cor` file. Collected rather than
@@ -86,6 +88,21 @@ pub enum ModuleLoadError {
         expected: String,
         actual: String,
     },
+    /// A remote import was presented to the loader without a content
+    /// hash. The parser rejects this in normal source files; the
+    /// loader keeps the invariant for programmatically constructed ASTs.
+    RemoteImportMissingHash {
+        importing_file: PathBuf,
+        requested: String,
+        url: String,
+    },
+    /// Fetching a remote Corvid import failed before hash verification.
+    RemoteFetchError {
+        importing_file: PathBuf,
+        requested: String,
+        url: String,
+        message: String,
+    },
     /// A cycle was detected in the import graph. `cycle` carries
     /// the sequence of paths from the root of the cycle back to
     /// itself (so `A -> B -> C -> A` is three entries).
@@ -98,6 +115,39 @@ pub struct NamedModuleSemanticSummary {
     pub path: PathBuf,
     pub content_hash: Option<ImportContentHash>,
     pub summary: ModuleSemanticSummary,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+enum ImportTarget {
+    Local(PathBuf),
+    Remote { url: String, key: PathBuf },
+}
+
+impl ImportTarget {
+    fn local(path: PathBuf) -> Self {
+        Self::Local(path)
+    }
+
+    fn remote(url: String) -> Self {
+        Self::Remote {
+            key: remote_import_path(&url),
+            url,
+        }
+    }
+
+    fn key(&self) -> PathBuf {
+        match self {
+            Self::Local(path) => path.clone(),
+            Self::Remote { key, .. } => key.clone(),
+        }
+    }
+
+    fn display(&self) -> String {
+        match self {
+            Self::Local(path) => path.display().to_string(),
+            Self::Remote { url, .. } => url.clone(),
+        }
+    }
 }
 
 pub fn inspect_import_semantics(root_path: &Path) -> Result<Vec<NamedModuleSemanticSummary>> {
@@ -201,18 +251,21 @@ pub fn build_module_resolution(
     // Pass 1: DFS over the import graph. The root file is already
     // parsed; we DFS into its children.
     let root_canonical = canonicalize_or_input(root_path);
-    in_progress.push(root_canonical.clone());
+    let root_target = ImportTarget::local(root_canonical.clone());
+    in_progress.push(root_target.key());
     for import in corvid_imports(root_file) {
-        let child = resolve_import_path(&root_canonical, &import.module);
-        dfs_collect(
-            &root_canonical,
-            &child,
-            &import.module,
-            import.content_hash.as_ref(),
-            &mut loaded,
-            &mut in_progress,
-            &mut errors,
-        );
+        match resolve_child_target(&root_target, import) {
+            Ok(child) => dfs_collect(
+                &root_target,
+                child,
+                &import.module,
+                import.content_hash.as_ref(),
+                &mut loaded,
+                &mut in_progress,
+                &mut errors,
+            ),
+            Err(error) => errors.push(error),
+        }
     }
     in_progress.pop();
 
@@ -252,11 +305,15 @@ pub fn build_module_resolution(
     let mut imported_uses = HashMap::new();
     let mut root_imports = HashMap::new();
     for import in corvid_imports(root_file) {
-        let import_path = resolve_import_path(&root_canonical, &import.module);
-        let loaded_path = loaded
-            .keys()
-            .find(|p| paths_equivalent(p, &import_path))
-            .cloned();
+        let loaded_path = resolve_child_target(&root_target, import)
+            .ok()
+            .map(|target| target.key())
+            .and_then(|import_path| {
+                loaded
+                    .keys()
+                    .find(|p| paths_equivalent(p, &import_path))
+                    .cloned()
+            });
         let Some(loaded_path) = loaded_path else {
             // Loading failed earlier and errors already carry the
             // reason; skip silently here.
@@ -469,6 +526,101 @@ fn format_dimension_value(value: &DimensionValue) -> String {
     }
 }
 
+fn resolve_child_target(
+    parent: &ImportTarget,
+    import: &corvid_ast::ImportDecl,
+) -> Result<ImportTarget, ModuleLoadError> {
+    match import.source {
+        ImportSource::Corvid => match parent {
+            ImportTarget::Local(path) => {
+                Ok(ImportTarget::local(resolve_import_path(path, &import.module)))
+            }
+            ImportTarget::Remote { url, .. } => {
+                let resolved = resolve_remote_url(url, &import.module).map_err(|message| {
+                    ModuleLoadError::RemoteFetchError {
+                        importing_file: parent.key(),
+                        requested: import.module.clone(),
+                        url: url.clone(),
+                        message,
+                    }
+                })?;
+                Ok(ImportTarget::remote(resolved))
+            }
+        },
+        ImportSource::RemoteCorvid => Ok(ImportTarget::remote(import.module.clone())),
+        ImportSource::Python => unreachable!("python imports are filtered before module loading"),
+    }
+}
+
+fn load_target_bytes(
+    importing_target: &ImportTarget,
+    target: &ImportTarget,
+    requested_module: &str,
+    expected_hash: Option<&ImportContentHash>,
+) -> Result<Vec<u8>, ModuleLoadError> {
+    match target {
+        ImportTarget::Local(path) => match std::fs::read(path) {
+            Ok(bytes) => Ok(bytes),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                Err(ModuleLoadError::FileNotFound {
+                    importing_file: importing_target.key(),
+                    requested: requested_module.to_string(),
+                    resolved: path.clone(),
+                })
+            }
+            Err(e) => Err(ModuleLoadError::ReadError {
+                path: path.clone(),
+                message: e.to_string(),
+            }),
+        },
+        ImportTarget::Remote { url, .. } => {
+            if expected_hash.is_none() {
+                return Err(ModuleLoadError::RemoteImportMissingHash {
+                    importing_file: importing_target.key(),
+                    requested: requested_module.to_string(),
+                    url: url.clone(),
+                });
+            }
+            fetch_remote_bytes(url).map_err(|message| ModuleLoadError::RemoteFetchError {
+                importing_file: importing_target.key(),
+                requested: requested_module.to_string(),
+                url: url.clone(),
+                message,
+            })
+        }
+    }
+}
+
+fn fetch_remote_bytes(url: &str) -> Result<Vec<u8>, String> {
+    let response = ureq::get(url)
+        .call()
+        .map_err(|err| err.to_string())?;
+    if !(200..=299).contains(&response.status()) {
+        return Err(format!("HTTP status {}", response.status()));
+    }
+    let mut bytes = Vec::new();
+    response
+        .into_reader()
+        .read_to_end(&mut bytes)
+        .map_err(|err| err.to_string())?;
+    Ok(bytes)
+}
+
+fn resolve_remote_url(base: &str, module: &str) -> Result<String, String> {
+    if module.starts_with("https://") || module.starts_with("http://") {
+        return Ok(module.to_string());
+    }
+    let base = Url::parse(base).map_err(|err| err.to_string())?;
+    let module = if module.ends_with(".cor") {
+        module.to_string()
+    } else {
+        format!("{module}.cor")
+    };
+    base.join(&module)
+        .map(|url| url.to_string())
+        .map_err(|err| err.to_string())
+}
+
 /// Recursive DFS that loads the file at `target`, appends any
 /// errors to `errors`, and recurses into its own Corvid imports.
 /// Three-color cycle detection:
@@ -478,15 +630,15 @@ fn format_dimension_value(value: &DimensionValue) -> String {
 /// - `loaded` carries fully-processed files. A target there is a
 ///   repeated visit and is skipped (not a cycle).
 fn dfs_collect(
-    importing_path: &Path,
-    target: &Path,
+    importing_target: &ImportTarget,
+    target: ImportTarget,
     requested_module: &str,
     expected_hash: Option<&ImportContentHash>,
     loaded: &mut HashMap<PathBuf, File>,
     in_progress: &mut Vec<PathBuf>,
     errors: &mut Vec<ModuleLoadError>,
 ) {
-    let canonical = canonicalize_or_input(target);
+    let canonical = target.key();
 
     // Cycle? The DFS stack contains an earlier occurrence of this
     // path. Emit a cycle error listing the path from the earlier
@@ -505,24 +657,13 @@ fn dfs_collect(
         return;
     }
 
-    // Load and verify the file from disk. Hash verification runs on
+    // Load and verify the module source. Hash verification runs on
     // the exact bytes before parsing, so a pinned import cannot drift
     // into the compiler under a stale trust boundary.
-    let bytes = match std::fs::read(&canonical) {
+    let bytes = match load_target_bytes(importing_target, &target, requested_module, expected_hash) {
         Ok(bytes) => bytes,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            errors.push(ModuleLoadError::FileNotFound {
-                importing_file: importing_path.to_path_buf(),
-                requested: requested_module.to_string(),
-                resolved: canonical,
-            });
-            return;
-        }
-        Err(e) => {
-            errors.push(ModuleLoadError::ReadError {
-                path: canonical,
-                message: e.to_string(),
-            });
+        Err(error) => {
+            errors.push(error);
             return;
         }
     };
@@ -530,7 +671,7 @@ fn dfs_collect(
         let actual = sha256_hex(&bytes);
         if actual != expected_hash.hex {
             errors.push(ModuleLoadError::HashMismatch {
-                importing_file: importing_path.to_path_buf(),
+                importing_file: importing_target.key(),
                 requested: requested_module.to_string(),
                 resolved: canonical,
                 expected: expected_hash.hex.clone(),
@@ -574,16 +715,18 @@ fn dfs_collect(
     // Push, recurse into our own Corvid imports, pop.
     in_progress.push(canonical.clone());
     for import in corvid_imports(&file) {
-        let child = resolve_import_path(&canonical, &import.module);
-        dfs_collect(
-            &canonical,
-            &child,
-            &import.module,
-            import.content_hash.as_ref(),
-            loaded,
-            in_progress,
-            errors,
-        );
+        match resolve_child_target(&target, import) {
+            Ok(child) => dfs_collect(
+                &target,
+                child,
+                &import.module,
+                import.content_hash.as_ref(),
+                loaded,
+                in_progress,
+                errors,
+            ),
+            Err(error) => errors.push(error),
+        }
     }
     in_progress.pop();
 
@@ -594,7 +737,14 @@ fn dfs_collect(
 /// Iterator over a file's Corvid imports (skipping Python imports).
 fn corvid_imports(file: &File) -> impl Iterator<Item = &corvid_ast::ImportDecl> {
     file.decls.iter().filter_map(|d| match d {
-        Decl::Import(i) if matches!(i.source, ImportSource::Corvid) => Some(i),
+        Decl::Import(i)
+            if matches!(
+                i.source,
+                ImportSource::Corvid | ImportSource::RemoteCorvid
+            ) =>
+        {
+            Some(i)
+        }
         _ => None,
     })
 }
@@ -625,6 +775,9 @@ mod tests {
     use super::*;
     use corvid_ast::Decl;
     use std::fs;
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+    use std::thread;
 
     /// Write `contents` to `<dir>/<name>.cor`. Returns the written
     /// path.
@@ -641,6 +794,36 @@ mod tests {
         let (file, errs) = parse_file(&tokens);
         assert!(errs.is_empty(), "parse errs: {errs:?}");
         file
+    }
+
+    fn serve_once(path: &'static str, body: impl Into<String>) -> String {
+        let body = body.into();
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = [0u8; 1024];
+            let n = stream.read(&mut request).unwrap_or(0);
+            let request = String::from_utf8_lossy(&request[..n]);
+            let status = if request.starts_with(&format!("GET {path} ")) {
+                "HTTP/1.1 200 OK"
+            } else {
+                "HTTP/1.1 404 Not Found"
+            };
+            let body = if status.contains("200") {
+                body.as_str()
+            } else {
+                "not found"
+            };
+            write!(
+                stream,
+                "{status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.as_bytes().len(),
+                body
+            )
+            .unwrap();
+        });
+        format!("http://{addr}{path}")
     }
 
     #[test]
@@ -1036,5 +1219,56 @@ agent check() -> Bool:
             res.lookup("p").is_none(),
             "mismatched module must not enter alias map"
         );
+    }
+
+    #[test]
+    fn remote_hash_pinned_import_loads_when_digest_matches() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root_dir = tmp.path();
+        let module_src = "public type RemotePolicy:\n    ok: Bool\n";
+        let digest = crate::import_integrity::sha256_hex(module_src.as_bytes());
+        let url = serve_once("/policy.cor", module_src);
+        let main_src = format!(
+            "\
+import \"{url}\" hash:sha256:{digest} as p
+
+agent check(x: p.RemotePolicy) -> Bool:
+    return true
+"
+        );
+        let main_path = write_cor(root_dir, "main", &main_src);
+        let main_file = parse_src(&main_src);
+
+        let (res, errs) = build_module_resolution(&main_file, &main_path);
+
+        assert!(errs.is_empty(), "unexpected errs: {errs:?}");
+        assert!(res.lookup("p").is_some());
+    }
+
+    #[test]
+    fn remote_hash_pinned_import_fails_closed_when_digest_mismatches() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root_dir = tmp.path();
+        let url = serve_once("/policy.cor", "public type RemotePolicy:\n    ok: Bool\n");
+        let wrong = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        let main_src = format!(
+            "\
+import \"{url}\" hash:sha256:{wrong} as p
+
+agent check() -> Bool:
+    return true
+"
+        );
+        let main_path = write_cor(root_dir, "main", &main_src);
+        let main_file = parse_src(&main_src);
+
+        let (res, errs) = build_module_resolution(&main_file, &main_path);
+
+        assert!(
+            errs.iter()
+                .any(|err| matches!(err, ModuleLoadError::HashMismatch { .. })),
+            "expected HashMismatch, got {errs:?}"
+        );
+        assert!(res.lookup("p").is_none());
     }
 }

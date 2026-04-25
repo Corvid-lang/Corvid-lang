@@ -339,7 +339,11 @@ fn has_corvid_imports(file: &File) -> bool {
     file.decls.iter().any(|decl| {
         matches!(
             decl,
-            Decl::Import(import) if matches!(import.source, ImportSource::Corvid)
+            Decl::Import(import)
+                if matches!(
+                    import.source,
+                    ImportSource::Corvid | ImportSource::RemoteCorvid
+                )
         )
     })
 }
@@ -405,6 +409,33 @@ fn module_load_error_diagnostics(error: ModuleLoadError) -> Vec<Diagnostic> {
             hint: Some(format!(
                 "expected sha256:{expected}, actual sha256:{actual}; review the imported source before updating the pin"
             )),
+        }],
+        ModuleLoadError::RemoteImportMissingHash {
+            importing_file,
+            requested,
+            url,
+        } => vec![Diagnostic {
+            span: top,
+            message: format!(
+                "remote import `{requested}` from `{}` is missing a content hash",
+                importing_file.display()
+            ),
+            hint: Some(format!(
+                "remote Corvid imports must use `hash:sha256:<digest>`; refusing to fetch `{url}` without a pin"
+            )),
+        }],
+        ModuleLoadError::RemoteFetchError {
+            importing_file,
+            requested,
+            url,
+            message,
+        } => vec![Diagnostic {
+            span: top,
+            message: format!(
+                "failed to fetch remote import `{requested}` from `{}`",
+                importing_file.display()
+            ),
+            hint: Some(format!("remote `{url}` failed before verification: {message}")),
         }],
         ModuleLoadError::Cycle { cycle } => {
             let path = cycle
@@ -635,6 +666,9 @@ pub async fn run_ir_with_runtime(
 mod tests {
     use super::*;
     use crate::diagnostic::line_col_of;
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+    use std::thread;
 
     const OK_SRC: &str = r#"
 tool get_order(id: String) -> Order
@@ -653,6 +687,36 @@ type Receipt:
 agent bad(id: String, amount: Float) -> Receipt:
     return issue_refund(id, amount)
 "#;
+
+    fn serve_once(path: &'static str, body: impl Into<String>) -> String {
+        let body = body.into();
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = [0u8; 1024];
+            let n = stream.read(&mut request).unwrap_or(0);
+            let request = String::from_utf8_lossy(&request[..n]);
+            let status = if request.starts_with(&format!("GET {path} ")) {
+                "HTTP/1.1 200 OK"
+            } else {
+                "HTTP/1.1 404 Not Found"
+            };
+            let body = if status.contains("200") {
+                body.as_str()
+            } else {
+                "not found"
+            };
+            write!(
+                stream,
+                "{status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.as_bytes().len(),
+                body
+            )
+            .unwrap();
+        });
+        format!("http://{addr}{path}")
+    }
 
     #[test]
     fn clean_source_produces_python() {
@@ -1257,6 +1321,35 @@ agent main() -> Bool:
                 .is_some_and(|hint| hint.contains("review the imported source before updating the pin"))),
             "diagnostics: {diagnostics:?}"
         );
+    }
+
+    #[test]
+    fn compile_to_ir_at_path_lowers_remote_hash_pinned_import() {
+        let tmp = tempfile::tempdir().unwrap();
+        let policy_src = "\
+public type RemoteReceipt:
+    id: String
+";
+        let digest = crate::import_integrity::sha256_hex(policy_src.as_bytes());
+        let url = serve_once("/policy.cor", policy_src);
+        let main_src = format!(
+            "\
+import \"{url}\" hash:sha256:{digest} as p
+
+agent main(r: p.RemoteReceipt) -> String:
+    return r.id
+"
+        );
+        let main_path = tmp.path().join("main.cor");
+        std::fs::write(&main_path, &main_src).unwrap();
+
+        let ir = compile_to_ir_with_config_at_path(&main_src, &main_path, None)
+            .expect("remote pinned import should compile after hash verification");
+        assert!(ir.types.iter().any(|ty| ty.name == "RemoteReceipt"));
+        assert!(matches!(
+            ir.imports[0].source,
+            corvid_ir::IrImportSource::RemoteCorvid
+        ));
     }
 
     #[test]

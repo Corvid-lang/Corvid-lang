@@ -7,7 +7,8 @@
 
 use corvid_ast::{Decl, ImportSource};
 use corvid_resolve::{
-    resolve_import_path, DeclKind, DefId, ModuleResolution, Resolved, ResolvedModule,
+    remote_import_path, resolve_import_path, DeclKind, DefId, ModuleResolution, Resolved,
+    ResolvedModule,
 };
 use corvid_types::types::ImportedStructType;
 use corvid_types::Type;
@@ -116,13 +117,20 @@ fn imported_module_alias_target<'a>(
 ) -> Option<&'a ResolvedModule> {
     let import = module.file.decls.iter().find_map(|decl| match decl {
         Decl::Import(import)
-            if matches!(import.source, ImportSource::Corvid)
+            if matches!(
+                import.source,
+                ImportSource::Corvid | ImportSource::RemoteCorvid
+            )
                 && import.alias.as_ref().is_some_and(|a| a.name == alias) =>
         {
             Some(import)
         }
         _ => None,
     })?;
-    let child = resolve_import_path(&module.path, &import.module);
+    let child = match import.source {
+        ImportSource::Corvid => resolve_import_path(&module.path, &import.module),
+        ImportSource::RemoteCorvid => remote_import_path(&import.module),
+        ImportSource::Python => return None,
+    };
     modules.lookup_by_path(&child)
 }

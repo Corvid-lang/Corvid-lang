@@ -121,7 +121,12 @@ impl<'a> Parser<'a> {
         let (source, module) = match self.peek().clone() {
             TokKind::StringLit(path) => {
                 self.bump();
-                (ImportSource::Corvid, path)
+                let source = if is_remote_corvid_url(&path) {
+                    ImportSource::RemoteCorvid
+                } else {
+                    ImportSource::Corvid
+                };
+                (source, path)
             }
             TokKind::Ident(_) => {
                 let (source_name, source_span) = self.expect_ident()?;
@@ -196,7 +201,16 @@ impl<'a> Parser<'a> {
             }
             break;
         }
-        if !matches!(source, ImportSource::Corvid) {
+        if matches!(source, ImportSource::RemoteCorvid) && content_hash.is_none() {
+            return Err(ParseError {
+                kind: ParseErrorKind::UnexpectedToken {
+                    got: "remote Corvid import without `hash`".into(),
+                    expected: "remote imports must declare `hash:sha256:<digest>`".into(),
+                },
+                span: start,
+            });
+        }
+        if !matches!(source, ImportSource::Corvid | ImportSource::RemoteCorvid) {
             if let Some(hash) = &content_hash {
                 return Err(ParseError {
                     kind: ParseErrorKind::UnexpectedToken {
@@ -1032,4 +1046,8 @@ impl<'a> Parser<'a> {
             span: start.merge(end),
         }))
     }
+}
+
+fn is_remote_corvid_url(path: &str) -> bool {
+    path.starts_with("https://") || path.starts_with("http://")
 }

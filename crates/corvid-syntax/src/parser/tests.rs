@@ -1816,6 +1816,29 @@ agent good(x: String) -> String:
     }
 
     #[test]
+    fn parses_remote_corvid_import_only_with_hash_pin() {
+        let digest = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        let file = parse_file_src(&format!(
+            r#"import "https://example.com/policy.cor" hash:sha256:{digest} as policy"#
+        ));
+        match &file.decls[0] {
+            Decl::Import(i) => {
+                assert!(matches!(i.source, ImportSource::RemoteCorvid));
+                assert_eq!(i.module, "https://example.com/policy.cor");
+                assert_eq!(i.content_hash.as_ref().map(|pin| pin.hex.as_str()), Some(digest));
+            }
+            other => panic!("expected import, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn rejects_unpinned_remote_corvid_import() {
+        let (_file, errs) =
+            parse_file_errs(r#"import "https://example.com/policy.cor" as policy"#);
+        assert!(!errs.is_empty(), "remote imports must be hash-pinned");
+    }
+
+    #[test]
     fn parses_public_annotated_agent() {
         let file = parse_file_src(
             "\

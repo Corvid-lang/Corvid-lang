@@ -150,6 +150,10 @@ pub enum ImportSource {
     /// [`ImportDecl::module`] field is the relative path *without* the
     /// `.cor` extension (extension is implicit).
     Corvid,
+    /// `import "https://example.com/policy.cor" hash:sha256:... as p`
+    /// — remote Corvid source fetched over HTTP(S). A content hash is
+    /// mandatory; unhashed remote code is not a valid import boundary.
+    RemoteCorvid,
     // JavaScript, C, MCP — added in later versions.
 }
 

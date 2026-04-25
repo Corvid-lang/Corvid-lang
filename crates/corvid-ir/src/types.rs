@@ -39,6 +39,7 @@ pub struct IrImportContentHash {
 pub enum IrImportSource {
     Python,
     Corvid,
+    RemoteCorvid,
 }
 
 /// A user-declared struct.

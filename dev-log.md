@@ -5132,3 +5132,15 @@ The loader fails closed on drift: a mismatched digest produces a typed module
 load diagnostic with both expected and actual SHA-256 values, and the module is
 not inserted into the import alias map. This turns local policy imports into
 content-addressed trust boundaries instead of path-only file inclusion.
+
+## 2026-04-25 - remote hash-pinned Corvid imports
+
+Closed `lang-cor-imports-remote`. String-path imports beginning with
+`http://` or `https://` are now remote Corvid imports and must include a
+`hash:sha256:<digest>` pin; unpinned remote imports are parse errors.
+
+The driver resolves remote imports through a distinct module target, fetches
+HTTP(S) bytes with `ureq`, verifies the declared digest before parsing, and
+uses deterministic synthetic module keys so remote public exports typecheck and
+lower through the same module pipeline as local imports. Remote summaries show
+the pin, and mismatches fail closed.

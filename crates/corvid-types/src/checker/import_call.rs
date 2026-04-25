@@ -21,7 +21,10 @@ impl<'a> Checker<'a> {
         };
         for decl in &file.decls {
             let Decl::Import(import) = decl else { continue };
-            if !matches!(import.source, corvid_ast::ImportSource::Corvid) {
+            if !matches!(
+                import.source,
+                corvid_ast::ImportSource::Corvid | corvid_ast::ImportSource::RemoteCorvid
+            ) {
                 continue;
             }
             if let Some(module) = modules.lookup_root_import(&import.module) {

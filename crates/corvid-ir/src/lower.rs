@@ -232,6 +232,7 @@ impl<'a> Lowerer<'a> {
         let source = match i.source {
             ImportSource::Python => IrImportSource::Python,
             ImportSource::Corvid => IrImportSource::Corvid,
+            ImportSource::RemoteCorvid => IrImportSource::RemoteCorvid,
         };
         IrImport {
             id,

@@ -3008,6 +3008,18 @@ module. If the digest changed, the module never enters the compiler's alias map.
 That keeps hash pins as a real language trust boundary rather than a comment the
 tooling happens to check later.
 
+## lang-cor-imports-remote
+
+Remote imports are only safe if identity is content-addressed. Corvid therefore
+rejects `import "https://..." as p` unless the import also carries a SHA-256
+pin. The URL says where to fetch; the hash says what program is trusted.
+
+The implementation keeps remote modules in the same semantic pipeline as local
+modules instead of inventing a second "package" path. Remote bytes are fetched,
+verified, parsed, resolved, summarized, typechecked, and lowered through the
+same import machinery. The only special part is module identity: remote files
+use deterministic synthetic keys because they do not have filesystem paths.
+
 ## Contributing / feedback
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). The rules of the road are: design chat before code, per-scope commits at every boundary, dev-log entry for every session, no shortcuts. The `learnings.md` file you're reading gets updated when each user-visible feature ships.

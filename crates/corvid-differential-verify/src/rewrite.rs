@@ -1138,9 +1138,15 @@ fn render_decl(decl: &Decl, indent: usize, out: &mut String) {
             out.push_str("import ");
             out.push_str(match import.source {
                 ImportSource::Python => "python ",
-                ImportSource::Corvid => "",
+                ImportSource::Corvid | ImportSource::RemoteCorvid => "",
             });
             out.push_str(&render_string_literal(&import.module));
+            if let Some(hash) = &import.content_hash {
+                out.push_str(" hash:");
+                out.push_str(&hash.algorithm);
+                out.push(':');
+                out.push_str(&hash.hex);
+            }
             if let Some(alias) = &import.alias {
                 out.push_str(" as ");
                 out.push_str(&alias.name);
