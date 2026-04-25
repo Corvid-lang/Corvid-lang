@@ -2984,6 +2984,18 @@ important design choice is that this is not a separate trust system; it reuses
 the existing agent attributes and dimensional effect algebra, so module
 boundaries participate in the same safety model as local calls.
 
+## lang-cor-imports-semantic-summaries
+
+A module boundary is only useful if developers can inspect what crosses it.
+Corvid imports now carry a semantic summary with the public effects, approval
+requirements, groundedness, budget cost, and replayability facts that matter to
+AI-native code review.
+
+The compiler and CLI read the same summary object. That avoids a common
+tooling failure mode where enforcement says one thing but reports show another.
+It also sets up signed and remote imports: the thing to hash, sign, diff, and
+audit is not just bytes, but the exported semantic contract those bytes imply.
+
 ## Contributing / feedback
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). The rules of the road are: design chat before code, per-scope commits at every boundary, dev-log entry for every session, no shortcuts. The `learnings.md` file you're reading gets updated when each user-visible feature ships.

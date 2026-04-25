@@ -8,10 +8,11 @@
 
 use super::{pascal_case, snake_case, Checker, ImportedCallKind, ImportedCallTarget};
 use crate::errors::{TypeError, TypeErrorKind};
-use crate::effects::{analyze_effects, EffectRegistry};
+use crate::effects::{ComposedProfile, EffectRegistry};
 use crate::types::{ImportedStructType, Type};
 use corvid_ast::{AgentAttribute, Decl, Effect, Expr, Ident, Param, Span, WeakEffect};
 use corvid_resolve::{Binding, DeclKind, DefId, ModuleLookup, ResolvedModule};
+use std::collections::HashMap;
 
 impl<'a> Checker<'a> {
     pub(super) fn validate_import_use_items(&mut self, file: &corvid_ast::File) {
@@ -88,24 +89,24 @@ impl<'a> Checker<'a> {
             })
             .collect::<Vec<_>>();
         let registry = EffectRegistry::from_decls(&effect_decls);
-        let summaries = analyze_effects(&module.file, &module.resolved, &registry);
-        for summary in summaries {
-            let exported = module
-                .exports
-                .get(&summary.agent_name)
-                .is_some_and(|export| export.kind == DeclKind::Agent);
-            if !exported {
-                continue;
-            }
+        for summary in module.semantic_summary.agents.values() {
+            let profile = ComposedProfile {
+                dimensions: summary
+                    .composed_dimensions
+                    .iter()
+                    .map(|(name, value)| (name.clone(), value.clone()))
+                    .collect::<HashMap<_, _>>(),
+                effect_names: Vec::new(),
+            };
             for violation in
-                registry.check_constraints(&summary.composed, &import.required_constraints)
+                registry.check_constraints(&profile, &import.required_constraints)
             {
                 let message = violation.to_string();
                 self.errors.push(TypeError::new(
                     TypeErrorKind::EffectConstraintViolation {
                         agent: format!(
                             "import `{}` exported agent `{}`",
-                            import.module, summary.agent_name
+                            import.module, summary.name
                         ),
                         dimension: violation.dimension,
                         message,
@@ -142,14 +143,11 @@ impl<'a> Checker<'a> {
                     ));
                 }
                 DeclKind::Agent => {
-                    let deterministic = imported_decl(module, export.def_id)
-                        .and_then(|decl| match decl {
-                            Decl::Agent(agent) => {
-                                Some(AgentAttribute::is_deterministic(&agent.attributes))
-                            }
-                            _ => None,
-                        })
-                        .unwrap_or(false);
+                    let deterministic = module
+                        .semantic_summary
+                        .agents
+                        .get(&export.name)
+                        .is_some_and(|summary| summary.deterministic);
                     if !deterministic {
                         self.errors.push(TypeError::new(
                             TypeErrorKind::EffectConstraintViolation {
@@ -178,12 +176,11 @@ impl<'a> Checker<'a> {
             if export.kind != DeclKind::Agent {
                 continue;
             }
-            let replayable = imported_decl(module, export.def_id)
-                .and_then(|decl| match decl {
-                    Decl::Agent(agent) => Some(AgentAttribute::is_replayable(&agent.attributes)),
-                    _ => None,
-                })
-                .unwrap_or(false);
+            let replayable = module
+                .semantic_summary
+                .agents
+                .get(&export.name)
+                .is_some_and(|summary| summary.replayable);
             if !replayable {
                 self.errors.push(TypeError::new(
                     TypeErrorKind::EffectConstraintViolation {

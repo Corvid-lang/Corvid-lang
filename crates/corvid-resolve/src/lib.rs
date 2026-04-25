@@ -18,8 +18,9 @@ pub mod scope;
 pub use depgraph::{build_dep_graph, decl_name, DepGraph};
 pub use errors::{ResolveError, ResolveErrorKind};
 pub use modules::{
-    collect_public_exports, resolve_import_path, DeclExport, ImportedUseTarget, ModuleLookup,
-    ModuleResolution, ResolvedModule,
+    collect_public_exports, resolve_import_path, AgentSemanticSummary, DeclExport,
+    ExportSemanticSummary, ImportedUseTarget, ModuleLookup, ModuleResolution,
+    ModuleSemanticSummary, ResolvedModule,
 };
 pub use repl::{RedefinitionResult, ReplResolveSession, ResolvedTurn};
 pub use resolver::{resolve, ReplayPatternBinding, Resolved};

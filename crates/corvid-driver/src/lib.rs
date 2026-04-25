@@ -19,7 +19,10 @@ pub mod spec_check;
 
 pub use add_dimension::{add_dimension as install_dimension, AddDimensionOutcome};
 pub use approver::{simulate_approver, verify_approver_source};
-pub use modules::{build_module_resolution, ModuleLoadError};
+pub use modules::{
+    build_module_resolution, inspect_import_semantics, render_import_semantic_summaries,
+    ModuleLoadError, NamedModuleSemanticSummary,
+};
 pub use effect_diff::{
     diff_snapshots, render_effect_diff, snapshot_revision, AgentDiff, AgentSnapshot,
     DimensionChange, EffectDiff, RevisionSnapshot,
@@ -1196,6 +1199,88 @@ agent main() -> Bool:
                 .contains("`@wrapping` is an agent execution mode")),
             "diagnostics: {diagnostics:?}"
         );
+    }
+
+    #[test]
+    fn import_semantic_summary_reports_effect_approval_grounding_and_replayability() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            tmp.path().join("policy.cor"),
+            "\
+effect paid:
+    cost: $1.00
+    trust: human_required
+
+tool lookup() -> String uses retrieval
+public tool refund() -> String uses paid
+
+public @replayable
+agent summarize() -> Grounded<String>:
+    return lookup()
+",
+        )
+        .unwrap();
+        let main_path = tmp.path().join("main.cor");
+        std::fs::write(
+            &main_path,
+            "\
+import \"./policy\" as p
+
+agent main() -> String:
+    return p.refund()
+",
+        )
+        .unwrap();
+
+        let summaries = inspect_import_semantics(&main_path).expect("import summary");
+        assert_eq!(summaries.len(), 1);
+        let summary = &summaries[0].summary;
+        let refund = summary.exports.get("refund").expect("refund export");
+        assert!(refund.approval_required);
+        assert_eq!(refund.effect_names, vec!["paid".to_string()]);
+        let summarize = summary.exports.get("summarize").expect("agent export");
+        assert!(summarize.replayable);
+        assert!(summarize.grounded_return);
+        let agent = summary.agents.get("summarize").expect("agent summary");
+        assert!(agent.replayable);
+        assert!(agent.grounded_return);
+        assert!(agent
+            .composed_dimensions
+            .contains_key("data"));
+    }
+
+    #[test]
+    fn render_import_semantic_summaries_includes_developer_flags() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            tmp.path().join("policy.cor"),
+            "\
+effect paid:
+    cost: $0.25
+    trust: human_required
+
+public tool refund() -> String uses paid
+",
+        )
+        .unwrap();
+        let main_path = tmp.path().join("main.cor");
+        std::fs::write(
+            &main_path,
+            "\
+import \"./policy\" as p
+
+agent main() -> Bool:
+    return true
+",
+        )
+        .unwrap();
+
+        let summaries = inspect_import_semantics(&main_path).expect("import summary");
+        let rendered = render_import_semantic_summaries(&summaries);
+        assert!(rendered.contains("import ./policy ->"));
+        assert!(rendered.contains("refund (Tool)"));
+        assert!(rendered.contains("approval_required"));
+        assert!(rendered.contains("effects=[paid]"));
     }
 
     #[tokio::test]

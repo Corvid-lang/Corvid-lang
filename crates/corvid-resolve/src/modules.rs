@@ -28,8 +28,9 @@
 //! export-collection time: private declarations simply don't appear
 //! in [`ResolvedModule::exports`].
 
-use corvid_ast::{File, Field, Visibility};
-use std::collections::HashMap;
+use corvid_ast::{DimensionValue, File, Field, Visibility};
+use serde::{Deserialize, Serialize};
+use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -78,6 +79,44 @@ pub struct ResolvedModule {
     /// cannot accidentally leak a private binding by forgetting to
     /// check visibility on the consumer side.
     pub exports: HashMap<String, DeclExport>,
+    /// Stable semantic summary of the public boundary. This is
+    /// computed by the driver after parsing/resolution because it
+    /// needs type/effect analysis, but it lives here so every
+    /// downstream consumer sees the same module contract.
+    pub semantic_summary: ModuleSemanticSummary,
+}
+
+/// Public semantic contract for one imported module. The summary is
+/// intentionally export-keyed and serializable so CLI/reporting tools
+/// can show the same facts the checker uses for import requirements.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct ModuleSemanticSummary {
+    pub exports: BTreeMap<String, ExportSemanticSummary>,
+    pub agents: BTreeMap<String, AgentSemanticSummary>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ExportSemanticSummary {
+    pub name: String,
+    pub kind: DeclKind,
+    pub effect_names: Vec<String>,
+    pub deterministic: bool,
+    pub replayable: bool,
+    pub approval_required: bool,
+    pub grounded_source: bool,
+    pub grounded_return: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AgentSemanticSummary {
+    pub name: String,
+    pub deterministic: bool,
+    pub replayable: bool,
+    pub composed_dimensions: BTreeMap<String, DimensionValue>,
+    pub violations: Vec<String>,
+    pub cost: Option<DimensionValue>,
+    pub approval_required: bool,
+    pub grounded_return: bool,
 }
 
 /// A public declaration lifted into the importing file's unqualified

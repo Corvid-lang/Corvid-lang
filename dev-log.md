@@ -5108,3 +5108,15 @@ claim: deterministic imports require exported agents to be marked
 requirements reuse the effect registry/analyzer against exported imported
 agents. The parser also now accepts `public @deterministic agent ...`, which is
 needed for libraries to export explicit deterministic contracts.
+
+## 2026-04-25 - imported module semantic summaries
+
+Closed `lang-cor-imports-semantic-summaries`. `ResolvedModule` now carries a
+stable public semantic summary: exported names, effect names, composed agent
+dimensions, budget cost, approval-required flags, grounded source/return flags,
+and deterministic/replayable status.
+
+The checker consumes these summaries for import-boundary requirements instead
+of recomputing a separate view, and the CLI exposes the same contract via
+`corvid import-summary <file>` with text and JSON output. Imports are now
+inspectable semantic trust boundaries, not just file inclusion.

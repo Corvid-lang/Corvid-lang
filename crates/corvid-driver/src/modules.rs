@@ -35,12 +35,15 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use corvid_ast::{Decl, File, ImportSource};
+use corvid_ast::{AgentAttribute, Decl, DimensionValue, Effect, EffectRef, File, ImportSource, TypeRef};
 use corvid_resolve::{
-    collect_public_exports, resolve, resolve_import_path, ImportedUseTarget, ModuleResolution,
-    Resolved, ResolvedModule,
+    collect_public_exports, resolve, resolve_import_path, AgentSemanticSummary,
+    ExportSemanticSummary, ImportedUseTarget, ModuleResolution, ModuleSemanticSummary, Resolved,
+    ResolvedModule,
 };
 use corvid_syntax::{lex, parse_file, LexError, ParseError};
+use corvid_types::{analyze_effects, EffectRegistry};
+use anyhow::{anyhow, Context, Result};
 
 /// Error surfaced while loading / parsing / resolving a module
 /// imported from another `.cor` file. Collected rather than
@@ -74,6 +77,91 @@ pub enum ModuleLoadError {
     /// the sequence of paths from the root of the cycle back to
     /// itself (so `A -> B -> C -> A` is three entries).
     Cycle { cycle: Vec<PathBuf> },
+}
+
+#[derive(Debug, Clone)]
+pub struct NamedModuleSemanticSummary {
+    pub import: String,
+    pub path: PathBuf,
+    pub summary: ModuleSemanticSummary,
+}
+
+pub fn inspect_import_semantics(root_path: &Path) -> Result<Vec<NamedModuleSemanticSummary>> {
+    let source = std::fs::read_to_string(root_path)
+        .with_context(|| format!("cannot read `{}`", root_path.display()))?;
+    let tokens = lex(&source).map_err(|errors| anyhow!("lex errors: {errors:?}"))?;
+    let (root_file, parse_errors) = parse_file(&tokens);
+    if !parse_errors.is_empty() {
+        return Err(anyhow!("parse errors: {parse_errors:?}"));
+    }
+    let (resolution, errors) = build_module_resolution(&root_file, root_path);
+    if !errors.is_empty() {
+        return Err(anyhow!("module load errors: {errors:?}"));
+    }
+    let mut out = resolution
+        .root_imports
+        .iter()
+        .map(|(import, module)| NamedModuleSemanticSummary {
+            import: import.clone(),
+            path: module.path.clone(),
+            summary: module.semantic_summary.clone(),
+        })
+        .collect::<Vec<_>>();
+    out.sort_by(|a, b| a.import.cmp(&b.import));
+    Ok(out)
+}
+
+pub fn render_import_semantic_summaries(summaries: &[NamedModuleSemanticSummary]) -> String {
+    if summaries.is_empty() {
+        return "No Corvid imports found.\n".to_string();
+    }
+    let mut out = String::new();
+    for module in summaries {
+        out.push_str(&format!(
+            "import {} -> {}\n",
+            module.import,
+            module.path.display()
+        ));
+        if module.summary.exports.is_empty() {
+            out.push_str("  exports: none\n");
+            continue;
+        }
+        for export in module.summary.exports.values() {
+            out.push_str(&format!("  - {} ({:?})", export.name, export.kind));
+            let mut flags = Vec::new();
+            if export.deterministic {
+                flags.push("deterministic".to_string());
+            }
+            if export.replayable {
+                flags.push("replayable".to_string());
+            }
+            if export.approval_required {
+                flags.push("approval_required".to_string());
+            }
+            if export.grounded_source {
+                flags.push("grounded_source".to_string());
+            }
+            if export.grounded_return {
+                flags.push("grounded_return".to_string());
+            }
+            if !export.effect_names.is_empty() {
+                flags.push(format!("effects=[{}]", export.effect_names.join(", ")));
+            }
+            if let Some(agent) = module.summary.agents.get(&export.name) {
+                if let Some(cost) = &agent.cost {
+                    flags.push(format!("cost={}", format_dimension_value(cost)));
+                }
+                if !agent.violations.is_empty() {
+                    flags.push(format!("violations={}", agent.violations.len()));
+                }
+            }
+            if !flags.is_empty() {
+                out.push_str(&format!(" [{}]", flags.join(", ")));
+            }
+            out.push('\n');
+        }
+    }
+    out
 }
 
 /// Build a [`ModuleResolution`] for a root file located at
@@ -123,6 +211,7 @@ pub fn build_module_resolution(
             continue;
         };
         let exports = collect_public_exports(file, resolved);
+        let semantic_summary = build_semantic_summary(file, resolved, &exports);
         all_modules.insert(
             path.clone(),
             ResolvedModule {
@@ -130,6 +219,7 @@ pub fn build_module_resolution(
                 resolved: resolved.clone(),
                 file: Arc::new(file.clone()),
                 exports,
+                semantic_summary,
             },
         );
     }
@@ -182,6 +272,177 @@ pub fn build_module_resolution(
         },
         errors,
     )
+}
+
+fn build_semantic_summary(
+    file: &File,
+    resolved: &Resolved,
+    exports: &HashMap<String, corvid_resolve::DeclExport>,
+) -> ModuleSemanticSummary {
+    let effect_decls: Vec<_> = file
+        .decls
+        .iter()
+        .filter_map(|decl| match decl {
+            Decl::Effect(effect) => Some(effect.clone()),
+            _ => None,
+        })
+        .collect();
+    let registry = EffectRegistry::from_decls(&effect_decls);
+    let mut agent_summaries = std::collections::BTreeMap::new();
+    for summary in analyze_effects(file, resolved, &registry) {
+        if !exports.contains_key(&summary.agent_name) {
+            continue;
+        }
+        let mut dimensions = std::collections::BTreeMap::new();
+        for (name, value) in &summary.composed.dimensions {
+            dimensions.insert(name.clone(), value.clone());
+        }
+        let (deterministic, replayable, grounded_return) =
+            agent_flags(file, &summary.agent_name);
+        let approval_required = summary
+            .composed
+            .dimensions
+            .get("trust")
+            .is_some_and(requires_approval_trust);
+        let cost = summary.composed.dimensions.get("cost").cloned();
+        agent_summaries.insert(
+            summary.agent_name.clone(),
+            AgentSemanticSummary {
+                name: summary.agent_name,
+                deterministic,
+                replayable,
+                composed_dimensions: dimensions,
+                violations: summary
+                    .violations
+                    .iter()
+                    .map(|violation| violation.to_string())
+                    .collect(),
+                cost,
+                approval_required,
+                grounded_return,
+            },
+        );
+    }
+
+    let mut export_summaries = std::collections::BTreeMap::new();
+    for (name, export) in exports {
+        if let Some(decl) = public_decl(file, name) {
+            let effect_names = declared_effect_names(decl);
+            let (deterministic, replayable, grounded_return) = match decl {
+                Decl::Agent(agent) => (
+                    AgentAttribute::is_deterministic(&agent.attributes),
+                    AgentAttribute::is_replayable(&agent.attributes),
+                    is_grounded_type(&agent.return_ty),
+                ),
+                _ => (false, false, false),
+            };
+            let profile = registry.compose(
+                &effect_names
+                    .iter()
+                    .map(|effect| effect.as_str())
+                    .collect::<Vec<_>>(),
+            );
+            let approval_required = match decl {
+                Decl::Tool(tool) => {
+                    matches!(tool.effect, Effect::Dangerous)
+                        || profile
+                            .dimensions
+                            .get("trust")
+                            .is_some_and(requires_approval_trust)
+                }
+                Decl::Agent(_) => agent_summaries
+                    .get(name)
+                    .is_some_and(|summary| summary.approval_required),
+                _ => false,
+            };
+            let grounded_source = effect_names
+                .iter()
+                .any(|effect| effect == "retrieval")
+                || profile
+                    .dimensions
+                    .get("data")
+                    .is_some_and(|value| matches!(value, DimensionValue::Name(name) if name == "grounded"));
+            export_summaries.insert(
+                name.clone(),
+                ExportSemanticSummary {
+                    name: name.clone(),
+                    kind: export.kind,
+                    effect_names,
+                    deterministic,
+                    replayable,
+                    approval_required,
+                    grounded_source,
+                    grounded_return,
+                },
+            );
+        }
+    }
+
+    ModuleSemanticSummary {
+        exports: export_summaries,
+        agents: agent_summaries,
+    }
+}
+
+fn public_decl<'a>(file: &'a File, name: &str) -> Option<&'a Decl> {
+    file.decls.iter().find(|decl| match decl {
+        Decl::Type(decl) => decl.name.name == name,
+        Decl::Tool(decl) => decl.name.name == name,
+        Decl::Prompt(decl) => decl.name.name == name,
+        Decl::Agent(decl) => decl.name.name == name,
+        _ => false,
+    })
+}
+
+fn declared_effect_names(decl: &Decl) -> Vec<String> {
+    let effects: &[EffectRef] = match decl {
+        Decl::Tool(tool) => &tool.effect_row.effects,
+        Decl::Prompt(prompt) => &prompt.effect_row.effects,
+        Decl::Agent(agent) => &agent.effect_row.effects,
+        _ => &[],
+    };
+    let mut names: Vec<String> = effects
+        .iter()
+        .map(|effect| effect.name.name.clone())
+        .collect();
+    if matches!(decl, Decl::Tool(tool) if matches!(tool.effect, Effect::Dangerous)) {
+        names.push("dangerous".to_string());
+    }
+    names
+}
+
+fn agent_flags(file: &File, name: &str) -> (bool, bool, bool) {
+    let Some(Decl::Agent(agent)) = public_decl(file, name) else {
+        return (false, false, false);
+    };
+    (
+        AgentAttribute::is_deterministic(&agent.attributes),
+        AgentAttribute::is_replayable(&agent.attributes),
+        is_grounded_type(&agent.return_ty),
+    )
+}
+
+fn is_grounded_type(ty: &TypeRef) -> bool {
+    matches!(ty, TypeRef::Generic { name, .. } if name.name == "Grounded")
+}
+
+fn requires_approval_trust(value: &DimensionValue) -> bool {
+    matches!(value, DimensionValue::Name(name) if name == "human_required" || name == "supervisor_required")
+}
+
+fn format_dimension_value(value: &DimensionValue) -> String {
+    match value {
+        DimensionValue::Bool(value) => value.to_string(),
+        DimensionValue::Name(value) => value.clone(),
+        DimensionValue::Cost(value) => format!("${value:.4}"),
+        DimensionValue::Number(value) => value.to_string(),
+        DimensionValue::Streaming { backpressure } => format!("streaming({backpressure:?})"),
+        DimensionValue::ConfidenceGated {
+            threshold,
+            above,
+            below,
+        } => format!("{}_if_confident({threshold:.3})_else_{}", above, below),
+    }
 }
 
 /// Recursive DFS that loads the file at `target`, appends any

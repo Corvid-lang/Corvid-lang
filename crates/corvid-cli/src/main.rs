@@ -12,6 +12,7 @@
 //!   corvid add-dimension      install a dimension from the effect registry
 //!   corvid routing-report     aggregate dispatch traces into routing guidance
 //!   corvid cost-frontier      compute prompt cost/quality Pareto frontier
+//!   corvid import-summary     inspect imported module semantic contracts
 //!   corvid eval --swap-model <id> <trace>  retrospective model migration analysis
 //!   corvid replay <trace>     re-execute a recorded trace deterministically
 //!   corvid replay --model <id> <trace>  differential replay against a different model
@@ -52,9 +53,10 @@ use routing_report::{build_report, render_report as render_routing_report, Routi
 #[allow(unused_imports)]
 use corvid_driver::{
     build_native_to_disk, build_target_to_disk, build_to_disk, compile, compile_with_config, diff_snapshots,
-    load_corvid_config_for, load_dotenv_walking, render_all_pretty, render_effect_diff,
-    render_law_check_report, render_spec_report, run_law_checks, run_native, run_with_target,
-    scaffold_new, snapshot_revision, verify_spec_examples, BuildTarget, RunTarget, VerdictKind,
+    inspect_import_semantics, load_corvid_config_for, load_dotenv_walking, render_all_pretty,
+    render_effect_diff, render_import_semantic_summaries, render_law_check_report,
+    render_spec_report, run_law_checks, run_native, run_with_target, scaffold_new,
+    snapshot_revision, verify_spec_examples, BuildTarget, RunTarget, VerdictKind,
     DEFAULT_SAMPLES,
 };
 
@@ -269,6 +271,14 @@ enum Command {
         /// Trace directory. Defaults to `target/trace`.
         #[arg(long, value_name = "PATH")]
         trace_dir: Option<PathBuf>,
+    },
+    /// Inspect semantic summaries for every Corvid import in a root file.
+    ImportSummary {
+        /// Root Corvid source file.
+        file: PathBuf,
+        /// Emit structured JSON.
+        #[arg(long)]
+        json: bool,
     },
     /// Evaluate model migrations against existing traces.
     ///
@@ -742,6 +752,7 @@ fn main() -> ExitCode {
             since_commit.as_deref(),
             json,
         ),
+        Some(Command::ImportSummary { file, json }) => cmd_import_summary(&file, json),
         Some(Command::Eval {
             inputs,
             source,
@@ -1164,6 +1175,26 @@ fn cmd_cost_frontier(
         print!("{}", render_cost_frontier(&report));
     }
     Ok(if report.has_quality_evidence { 0 } else { 1 })
+}
+
+fn cmd_import_summary(file: &Path, json: bool) -> Result<u8> {
+    let summaries = inspect_import_semantics(file)?;
+    if json {
+        let payload = summaries
+            .iter()
+            .map(|summary| {
+                serde_json::json!({
+                    "import": summary.import,
+                    "path": summary.path.display().to_string(),
+                    "summary": summary.summary,
+                })
+            })
+            .collect::<Vec<_>>();
+        println!("{}", serde_json::to_string_pretty(&payload)?);
+    } else {
+        print!("{}", render_import_semantic_summaries(&summaries));
+    }
+    Ok(0)
 }
 
 fn cmd_test_dimensions() -> Result<u8> {

@@ -3400,6 +3400,7 @@ agent run(x: String) -> Decision:
             resolved: Arc::new(resolved),
             file: Arc::new(file),
             exports,
+            semantic_summary: corvid_resolve::ModuleSemanticSummary::default(),
         };
         let mut modules = HashMap::new();
         modules.insert(alias.to_string(), module.clone());
