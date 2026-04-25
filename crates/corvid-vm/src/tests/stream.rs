@@ -247,6 +247,44 @@ agent relay(ctx: String) -> Stream<String>:
 }
 
 #[tokio::test]
+async fn stream_partial_struct_fields_are_available_as_they_complete() {
+    let src = "\
+type Plan:
+    title: String
+    body: String
+
+prompt plan(topic: String) -> Stream<Partial<Plan>>:
+    \"Plan {topic}\"
+
+agent first_title(topic: String) -> Option<String>:
+    for snapshot in plan(topic):
+        return snapshot.title
+    return None
+";
+    let ir = ir_of(src);
+    let rt = Runtime::builder()
+        .approver(Arc::new(ProgrammaticApprover::always_yes()))
+        .llm(Arc::new(MockAdapter::new("mock-1").reply(
+            "plan",
+            json!({
+                "title": { "tag": "complete", "value": "Ship Corvid" },
+                "body": { "tag": "streaming" }
+            }),
+        )))
+        .default_model("mock-1")
+        .build();
+    let value = run_agent(&ir, "first_title", vec![Value::String(Arc::from("launch"))], &rt)
+        .await
+        .expect("run");
+    assert_eq!(
+        value,
+        Value::OptionSome(crate::value::BoxedValue::new(Value::String(Arc::from(
+            "Ship Corvid"
+        ))))
+    );
+}
+
+#[tokio::test]
 async fn stream_prompt_token_limit_breaches_mid_stream() {
     let src = "\
 prompt generate(ctx: String) -> Stream<String>:

@@ -406,7 +406,8 @@ fn check_entry_boundary_type(
     match ty {
         Type::Int | Type::Bool | Type::Float | Type::String => Ok(()),
         Type::Struct(_) | Type::ImportedStruct(_) | Type::List(_) | Type::Nothing
-        | Type::Result(_, _) | Type::Option(_) | Type::Weak(_, _) | Type::Stream(_) => {
+        | Type::Result(_, _) | Type::Option(_) | Type::Weak(_, _) | Type::Stream(_)
+        | Type::Partial(_) => {
             Err(CodegenError::not_supported(
                 format!(
                     "entry agent {role} of type `{}` ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â the native command-line boundary currently supports only `Int` / `Bool` / `Float` / `String`; structured types (including Result, Option, and Weak) need a dedicated serialization layer (use a wrapper agent that converts internally)",

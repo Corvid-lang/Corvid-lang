@@ -310,6 +310,10 @@ pub(super) fn cl_type_for(ty: &Type, span: Span) -> Result<clir::Type, CodegenEr
         Type::Option(inner) if is_refcounted_type(inner) => Ok(I64),
         Type::Option(_) if is_native_wide_option_type(ty) => Ok(I64),
         Type::Grounded(inner) => cl_type_for(inner, span),
+        Type::Partial(_) => Err(CodegenError::not_supported(
+            "`Partial<T>` - progressive structured lowering is interpreter-only until native tagged field-state layout lands",
+            span,
+        )),
         Type::Stream(_) => Err(CodegenError::not_supported(
             "`Stream<T>` - Stream lowering is not yet implemented",
             span,

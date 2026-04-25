@@ -162,6 +162,9 @@ fn type_to_type_ref(ty: &Type, symbols: &SymbolTable) -> TypeRef {
         Type::Grounded(inner) => {
             generic_type("Grounded", vec![type_to_type_ref(inner, symbols)], span)
         }
+        Type::Partial(inner) => {
+            generic_type("Partial", vec![type_to_type_ref(inner, symbols)], span)
+        }
         Type::TraceId => named_type("TraceId", span),
         Type::Function { .. } | Type::Unknown => named_type("Nothing", span),
     }

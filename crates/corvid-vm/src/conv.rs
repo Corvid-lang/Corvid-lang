@@ -9,7 +9,7 @@
 //! struct results can recover their `type_id` and `type_name`. The
 //! interpreter passes the called tool's / prompt's declared return type.
 
-use crate::value::{BoxedValue, ListValue, StructValue, Value};
+use crate::value::{BoxedValue, ListValue, PartialFieldValue, PartialValue, StructValue, Value};
 use corvid_ir::IrType;
 use corvid_resolve::DefId;
 use corvid_types::Type;
@@ -56,6 +56,21 @@ pub fn value_to_json(v: &Value) -> serde_json::Value {
                 })
             }).collect();
             serde_json::json!({ "tag": "grounded", "value": inner, "sources": sources })
+        }
+        Value::Partial(p) => {
+            let mut fields = serde_json::Map::new();
+            p.with_fields(|partial_fields| {
+                for (name, field) in partial_fields {
+                    let value = match field {
+                        PartialFieldValue::Complete(value) => {
+                            serde_json::json!({ "tag": "complete", "value": value_to_json(value) })
+                        }
+                        PartialFieldValue::Streaming => serde_json::json!({ "tag": "streaming" }),
+                    };
+                    fields.insert(name.clone(), value);
+                }
+            });
+            serde_json::json!({ "tag": "partial", "type": p.type_name(), "fields": fields })
         }
         Value::Stream(stream) => serde_json::json!({
             "tag": "stream",
@@ -114,6 +129,7 @@ pub fn json_to_value(
             expected: "Stream".into(),
             got: json_kind(&got).into(),
         }),
+        (Type::Partial(inner_ty), J::Object(map)) => partial_from_json(map, inner_ty, types_by_id),
         (Type::Option(inner_ty), J::Object(map)) => match map.get("tag").and_then(|v| v.as_str()) {
             Some("some") => {
                 let raw = map.get("value").cloned().ok_or_else(|| ConvError::TypeMismatch {
@@ -239,9 +255,93 @@ fn type_label(t: &Type) -> String {
             }
         }
         Type::Grounded(inner) => format!("Grounded<{}>", type_label(inner)),
+        Type::Partial(inner) => format!("Partial<{}>", type_label(inner)),
         Type::TraceId => "TraceId".into(),
         Type::Function { .. } => "function".into(),
         Type::Unknown => "<unknown>".into(),
+    }
+}
+
+fn partial_from_json(
+    map: serde_json::Map<String, serde_json::Value>,
+    inner_ty: &Type,
+    types_by_id: &HashMap<DefId, &IrType>,
+) -> Result<Value, ConvError> {
+    let (type_id, type_name, fields) = match inner_ty {
+        Type::Struct(def_id) => {
+            let ir_type = types_by_id
+                .get(def_id)
+                .copied()
+                .ok_or(ConvError::UnknownStructType(*def_id))?;
+            (ir_type.id, ir_type.name.clone(), ir_type.fields.as_slice())
+        }
+        other => {
+            return Err(ConvError::TypeMismatch {
+                expected: "Partial<struct>".into(),
+                got: type_label(other),
+            })
+        }
+    };
+
+    let field_map = if map.get("tag").and_then(|v| v.as_str()) == Some("partial") {
+        match map.get("fields") {
+            Some(serde_json::Value::Object(fields)) => fields,
+            _ => {
+                return Err(ConvError::TypeMismatch {
+                    expected: "Partial fields object".into(),
+                    got: "missing `fields` field".into(),
+                })
+            }
+        }
+    } else {
+        &map
+    };
+
+    let mut out = HashMap::new();
+    for field in fields {
+        let Some(raw) = field_map.get(&field.name) else {
+            out.insert(field.name.clone(), PartialFieldValue::Streaming);
+            continue;
+        };
+        let value = partial_field_from_json(raw.clone(), &field.ty, types_by_id)?;
+        out.insert(field.name.clone(), value);
+    }
+    Ok(Value::Partial(PartialValue::new(type_id, type_name, out)))
+}
+
+fn partial_field_from_json(
+    raw: serde_json::Value,
+    field_ty: &Type,
+    types_by_id: &HashMap<DefId, &IrType>,
+) -> Result<PartialFieldValue, ConvError> {
+    match raw {
+        serde_json::Value::Object(map) => match map.get("tag").and_then(|v| v.as_str()) {
+            Some("streaming") => Ok(PartialFieldValue::Streaming),
+            Some("complete") => {
+                let value = map
+                    .get("value")
+                    .cloned()
+                    .ok_or_else(|| ConvError::TypeMismatch {
+                        expected: "Partial complete value".into(),
+                        got: "missing `value` field".into(),
+                    })?;
+                Ok(PartialFieldValue::Complete(json_to_value(
+                    value,
+                    field_ty,
+                    types_by_id,
+                )?))
+            }
+            _ => Ok(PartialFieldValue::Complete(json_to_value(
+                serde_json::Value::Object(map),
+                field_ty,
+                types_by_id,
+            )?)),
+        },
+        other => Ok(PartialFieldValue::Complete(json_to_value(
+            other,
+            field_ty,
+            types_by_id,
+        )?)),
     }
 }
 

@@ -4790,3 +4790,20 @@ The surface stays split by responsibility: syntax parses the stream modifier,
 resolver/typechecker validate that the escalation target is a `model`, IR carries
 the target name, runtime adapters can report response confidence, and the VM owns
 the actual continuation behavior.
+
+## 2026-04-25 - Phase 20f progressive structured partial streams
+
+Closed `Stream<Partial<T>>` for interpreter-backed streaming prompts. `Partial<T>`
+is now a compiler-known type constructor, typechecking preserves it through
+signatures, IR lowering carries it as `Type::Partial`, and the VM decodes partial
+struct snapshots from JSON field-state markers.
+
+Field access on `Partial<Struct>` returns `Option<FieldType>`: `Some(value)` when
+the field is complete and `None` while the field is still streaming. Prompt output
+schemas expose every struct field as either `{ tag: "complete", value: ... }` or
+`{ tag: "streaming" }`, with raw field values accepted as complete for adapter
+ergonomics.
+
+The native boundary is explicit rather than implicit: CL codegen and native entry
+points reject `Partial<T>` until a native tagged field-state layout is designed.
+That keeps the interpreter feature real without pretending native lowering exists.

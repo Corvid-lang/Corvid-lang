@@ -224,6 +224,9 @@ pub(crate) fn rust_public_type(ty: &TypeDescription) -> String {
         TypeDescription::Grounded { grounded } => {
             format!("Grounded<{}>", rust_public_type(grounded.inner.as_ref()))
         }
+        TypeDescription::Partial { partial } => {
+            format!("Partial<{}>", rust_public_type(partial.inner.as_ref()))
+        }
         TypeDescription::Weak { weak } => {
             format!("Weak<{}>", rust_public_type(weak.inner.as_ref()))
         }
@@ -327,6 +330,9 @@ pub(crate) fn python_public_type(ty: &TypeDescription) -> String {
         }
         TypeDescription::Grounded { grounded } => {
             format!("Grounded[{}]", python_public_type(grounded.inner.as_ref()))
+        }
+        TypeDescription::Partial { partial } => {
+            format!("Partial[{}]", python_public_type(partial.inner.as_ref()))
         }
         TypeDescription::Weak { weak } => {
             format!("Weak[{}]", python_public_type(weak.inner.as_ref()))

@@ -2629,6 +2629,34 @@ The escalation target is checked like other model-routing features. An
 undefined target is a resolver error, and a target that resolves to a non-model
 declaration is a type error.
 
+## 20f-progressive-structured-partial-streams
+
+`Stream<Partial<T>>` lets a prompt expose structured output before the full
+object is finished:
+
+```corvid
+type Plan:
+    title: String
+    body: String
+
+prompt plan(topic: String) -> Stream<Partial<Plan>>:
+    "Plan {topic}"
+
+agent first_title(topic: String) -> Option<String>:
+    for snapshot in plan(topic):
+        return snapshot.title
+    return None
+```
+
+For a `Partial<Plan>`, `snapshot.title` has type `Option<String>`. It is `Some`
+when the model has completed that field and `None` while the field is still
+streaming. The VM schema asks adapters for explicit field states:
+`{ "tag": "complete", "value": ... }` or `{ "tag": "streaming" }`.
+
+This is intentionally interpreter-first. Native CL lowering rejects `Partial<T>`
+for now, because shipping a real native version needs a dedicated tagged
+field-state layout rather than a generic object shortcut.
+
 ## Contributing / feedback
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). The rules of the road are: design chat before code, per-scope commits at every boundary, dev-log entry for every session, no shortcuts. The `learnings.md` file you're reading gets updated when each user-visible feature ships.

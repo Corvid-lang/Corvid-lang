@@ -35,6 +35,9 @@ agent grounded_bot(ticket_id: String) -> Grounded<Decision>:
 prompt decide(ticket_id: String, order: Grounded<String>) -> Grounded<Decision>:
     "decide {ticket_id} using {order}"
 
+prompt preview(ticket_id: String) -> Partial<Decision>:
+    "preview {ticket_id}"
+
 agent weak_bot(ticket_id: String) -> Weak<Decision, {tool_call, llm}>:
     return cached(ticket_id)
 
@@ -113,6 +116,18 @@ fn weak_type_descriptor_has_effects_list() {
             assert_eq!(weak.effects, vec!["tool_call".to_string(), "llm_call".to_string()]);
         }
         other => panic!("expected weak type, got {other:?}"),
+    }
+}
+
+#[test]
+fn partial_type_descriptor_has_inner_field() {
+    let abi = emit_descriptor(NON_SCALAR_SRC);
+    let preview = find_prompt(&abi, "preview");
+    match &preview.return_type {
+        TypeDescription::Partial { partial } => {
+            assert!(matches!(partial.inner.as_ref(), TypeDescription::Struct { .. }));
+        }
+        other => panic!("expected partial type, got {other:?}"),
     }
 }
 

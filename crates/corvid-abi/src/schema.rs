@@ -187,6 +187,7 @@ pub enum TypeDescription {
     Result { result: AbiResultType },
     Option { option: AbiOptionType },
     Grounded { grounded: AbiGroundedType },
+    Partial { partial: AbiPartialType },
     Weak { weak: AbiWeakType },
 }
 
@@ -218,6 +219,11 @@ pub struct AbiOptionType {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AbiGroundedType {
+    pub inner: Box<TypeDescription>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AbiPartialType {
     pub inner: Box<TypeDescription>,
 }
 

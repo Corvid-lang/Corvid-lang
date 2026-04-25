@@ -1,6 +1,6 @@
 //! REPL-oriented value rendering with cycle and depth guards.
 
-use crate::value::Value;
+use crate::value::{PartialFieldValue, Value};
 use corvid_ast::BackpressurePolicy;
 use std::collections::HashSet;
 
@@ -113,6 +113,24 @@ fn render_value_inner(
             } else {
                 format!("Grounded({inner}, sources: [{}])", sources.join(", "))
             }
+        }
+        Value::Partial(p) => {
+            let rendered = p.with_fields(|fields| {
+                let mut fields: Vec<_> = fields.iter().collect();
+                fields.sort_by(|(a, _), (b, _)| a.cmp(b));
+                fields
+                    .into_iter()
+                    .map(|(name, field)| match field {
+                        PartialFieldValue::Complete(value) => format!(
+                            "{name}: Complete({})",
+                            render_value_inner(value, depth + 1, visited)
+                        ),
+                        PartialFieldValue::Streaming => format!("{name}: Streaming"),
+                    })
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            });
+            format!("Partial<{}>({rendered})", p.type_name())
         }
         Value::Stream(stream) => {
             let backpressure = match stream.backpressure() {

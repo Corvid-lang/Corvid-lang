@@ -72,7 +72,8 @@ fn is_refcounted_type(ty: &Type) -> bool {
         | Type::ImportedStruct(_)
         | Type::List(_)
         | Type::Weak(_, _)
-        | Type::Result(_, _) => true,
+        | Type::Result(_, _)
+        | Type::Partial(_) => true,
         Type::Option(inner) => is_native_wide_option_type(ty) || is_refcounted_type(inner),
         _ => false,
     }
@@ -89,7 +90,7 @@ fn is_native_value_type(ty: &Type) -> bool {
         // tier (Phase 21 slice 21-inv-E-4 + E-runtime). Until then,
         // a program using replay routes to the interpreter tier.
         Type::TraceId => false,
-        Type::Nothing | Type::Function { .. } | Type::Stream(_) | Type::Unknown => false,
+        Type::Nothing | Type::Function { .. } | Type::Stream(_) | Type::Partial(_) | Type::Unknown => false,
     }
 }
 

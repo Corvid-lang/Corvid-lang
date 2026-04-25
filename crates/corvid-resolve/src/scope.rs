@@ -37,6 +37,7 @@ pub enum BuiltIn {
     Result,
     Option,
     Weak,
+    Partial,
     Ok,
     Err,
     Some,
@@ -99,6 +100,7 @@ impl SymbolTable {
         self.builtins.insert("Result".into(), BuiltIn::Result);
         self.builtins.insert("Option".into(), BuiltIn::Option);
         self.builtins.insert("Weak".into(), BuiltIn::Weak);
+        self.builtins.insert("Partial".into(), BuiltIn::Partial);
         self.builtins.insert("Grounded".into(), BuiltIn::Grounded);
         self.builtins.insert("Ok".into(), BuiltIn::Ok);
         self.builtins.insert("Err".into(), BuiltIn::Err);

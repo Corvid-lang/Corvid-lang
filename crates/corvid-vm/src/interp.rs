@@ -403,6 +403,15 @@ impl<'ir> Interpreter<'ir> {
                             expr.span,
                         )
                     }),
+                    Value::Partial(p) => p.get_field(field).map(ExprFlow::Value).ok_or_else(|| {
+                        InterpError::new(
+                            InterpErrorKind::UnknownField {
+                                struct_name: p.type_name().to_string(),
+                                field: field.clone(),
+                            },
+                            expr.span,
+                        )
+                    }),
                     other => Err(InterpError::new(
                         InterpErrorKind::TypeMismatch {
                             expected: "struct".into(),

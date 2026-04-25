@@ -459,6 +459,7 @@ fn python_type_hint_of(ty: &corvid_types::Type) -> String {
         | T::Function { .. }
         | T::List(_)
         | T::Stream(_)
+        | T::Partial(_)
         | T::Unknown => "object".into(),
         // Emitting "object" here is a safe approximation until the
         // Python backend decides on its representation

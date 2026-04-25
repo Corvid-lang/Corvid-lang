@@ -4,7 +4,7 @@
 //! structural `Type` the rest of the checker works with. Handles
 //! primitives, user-declared structs, imported structs, and the
 //! compiler-known generics (`List`, `Stream`, `Option`, `Result`,
-//! `Grounded`, `Weak`), plus arity validation on each generic.
+//! `Grounded`, `Partial`, `Weak`), plus arity validation on each generic.
 
 use super::{is_weakable_type, Checker};
 use crate::errors::{TypeError, TypeErrorKind};
@@ -204,7 +204,7 @@ impl<'a> Checker<'a> {
         };
 
         match name {
-            "List" | "Stream" | "Option" | "Grounded" => {
+            "List" | "Stream" | "Option" | "Grounded" | "Partial" => {
                 if args.len() != 1 {
                     if matches!(context, TypeContext::Root) {
                         self.errors.push(TypeError::new(
@@ -224,6 +224,7 @@ impl<'a> Checker<'a> {
                     "Stream" => Type::Stream(inner),
                     "Option" => Type::Option(inner),
                     "Grounded" => Type::Grounded(inner),
+                    "Partial" => Type::Partial(inner),
                     _ => unreachable!(),
                 }
             }

@@ -390,6 +390,29 @@ prompt generate(ctx: String) -> Stream<String>:
     }
 
     #[test]
+    fn lowers_stream_partial_prompt_return_type() {
+        let src = "\
+type Plan:
+    title: String
+    body: String
+
+prompt plan(topic: String) -> Stream<Partial<Plan>>:
+    \"Plan {topic}\"
+";
+        let ir = lower_src(src);
+        let prompt = &ir.prompts[0];
+        match &prompt.return_ty {
+            corvid_types::Type::Stream(inner) => match &**inner {
+                corvid_types::Type::Partial(partial_inner) => {
+                    assert!(matches!(&**partial_inner, corvid_types::Type::Struct(_)));
+                }
+                other => panic!("expected Partial<T>, got {other:?}"),
+            },
+            other => panic!("expected Stream<T>, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn lowers_calibrated_prompt_modifier() {
         let src = "\
 prompt classify(ctx: String) -> String:

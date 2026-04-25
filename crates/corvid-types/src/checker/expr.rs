@@ -140,6 +140,7 @@ impl<'a> Checker<'a> {
                 | BuiltIn::Result
                 | BuiltIn::Option
                 | BuiltIn::Weak
+                | BuiltIn::Partial
                 | BuiltIn::Grounded => {
                     self.errors.push(TypeError::new(
                         TypeErrorKind::TypeAsValue {
@@ -248,6 +249,7 @@ impl<'a> Checker<'a> {
                     Type::Unknown
                 }
             }
+            Type::Partial(inner) => self.check_partial_field(inner, field, span),
             Type::Unknown => Type::Unknown,
             other => {
                 self.errors.push(TypeError::new(
@@ -255,6 +257,63 @@ impl<'a> Checker<'a> {
                         got: other.display_name(),
                     },
                     target.span(),
+                ));
+                Type::Unknown
+            }
+        }
+    }
+
+    fn check_partial_field(&mut self, inner: &Type, field: &Ident, span: Span) -> Type {
+        match inner {
+            Type::Struct(def_id) => {
+                let type_decl = *self
+                    .types_by_id
+                    .get(def_id)
+                    .expect("struct DefId not indexed");
+                if let Some(f) = type_decl.fields.iter().find(|f| f.name.name == field.name) {
+                    Type::Option(Box::new(self.type_ref_to_type(&f.ty)))
+                } else {
+                    self.errors.push(TypeError::new(
+                        TypeErrorKind::UnknownField {
+                            struct_name: type_decl.name.name.clone(),
+                            field: field.name.clone(),
+                        },
+                        span,
+                    ));
+                    Type::Unknown
+                }
+            }
+            Type::ImportedStruct(imported) => {
+                let Some(module) = self
+                    .module_resolution
+                    .and_then(|modules| modules.lookup_by_path(Path::new(&imported.module_path)))
+                else {
+                    return Type::Unknown;
+                };
+                let Some((struct_name, fields)) = imported_type_fields(module, imported.def_id)
+                else {
+                    return Type::Unknown;
+                };
+                if let Some(f) = fields.iter().find(|f| f.name.name == field.name) {
+                    Type::Option(Box::new(self.imported_type_ref_to_type(&f.ty, module)))
+                } else {
+                    self.errors.push(TypeError::new(
+                        TypeErrorKind::UnknownField {
+                            struct_name: struct_name.to_string(),
+                            field: field.name.clone(),
+                        },
+                        span,
+                    ));
+                    Type::Unknown
+                }
+            }
+            Type::Unknown => Type::Unknown,
+            other => {
+                self.errors.push(TypeError::new(
+                    TypeErrorKind::NotAStruct {
+                        got: format!("Partial<{}>", other.display_name()),
+                    },
+                    span,
                 ));
                 Type::Unknown
             }

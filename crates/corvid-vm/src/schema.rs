@@ -93,6 +93,7 @@ fn schema_for_inner(
             "additionalProperties": false,
         }),
         Type::Grounded(inner) => schema_for_inner(inner, types_by_id, visiting),
+        Type::Partial(inner) => partial_schema(inner, types_by_id, visiting),
         Type::Struct(def_id) => {
             // Cycle guard: if we're already building this struct's schema
             // higher up the stack, emit an empty object placeholder. The
@@ -133,6 +134,54 @@ fn schema_for_inner(
         Type::TraceId => json!({ "type": "string" }),
         Type::Unknown => json!({}),
     }
+}
+
+fn partial_schema(
+    inner: &Type,
+    types_by_id: &HashMap<DefId, &IrType>,
+    visiting: &mut Vec<DefId>,
+) -> Value {
+    let Type::Struct(def_id) = inner else {
+        return json!({ "type": "object" });
+    };
+    let Some(ir_type) = types_by_id.get(def_id).copied() else {
+        return json!({ "type": "object" });
+    };
+
+    let mut properties = serde_json::Map::new();
+    for field in &ir_type.fields {
+        let field_schema = schema_for_inner(&field.ty, types_by_id, visiting);
+        properties.insert(
+            field.name.clone(),
+            json!({
+                "oneOf": [
+                    {
+                        "type": "object",
+                        "properties": {
+                            "tag": { "const": "complete" },
+                            "value": field_schema,
+                        },
+                        "required": ["tag", "value"],
+                        "additionalProperties": false,
+                    },
+                    {
+                        "type": "object",
+                        "properties": {
+                            "tag": { "const": "streaming" },
+                        },
+                        "required": ["tag"],
+                        "additionalProperties": false,
+                    }
+                ]
+            }),
+        );
+    }
+
+    json!({
+        "type": "object",
+        "properties": properties,
+        "additionalProperties": false,
+    })
 }
 
 #[cfg(test)]
@@ -232,5 +281,42 @@ mod tests {
         let order_schema = &s["properties"]["order"];
         assert_eq!(order_schema["type"], "object");
         assert_eq!(order_schema["properties"]["id"], json!({"type": "string"}));
+    }
+
+    #[test]
+    fn partial_struct_schema_marks_each_field_complete_or_streaming() {
+        let id = DefId(30);
+        let ir_type: &'static IrT = Box::leak(Box::new(IrT {
+            id,
+            name: "Plan".into(),
+            fields: vec![
+                IrField {
+                    name: "title".into(),
+                    ty: Type::String,
+                    span: Span::new(0, 0),
+                },
+                IrField {
+                    name: "ready".into(),
+                    ty: Type::Bool,
+                    span: Span::new(0, 0),
+                },
+            ],
+            span: Span::new(0, 0),
+        }));
+        let mut by_id: HashMap<DefId, &IrT> = HashMap::new();
+        by_id.insert(id, ir_type);
+
+        let s = schema_for(&Type::Partial(Box::new(Type::Struct(id))), &by_id);
+        assert_eq!(s["type"], "object");
+        assert_eq!(s["additionalProperties"], false);
+        assert!(s.get("required").is_none());
+
+        let title_states = s["properties"]["title"]["oneOf"].as_array().unwrap();
+        assert_eq!(title_states[0]["properties"]["tag"], json!({"const": "complete"}));
+        assert_eq!(title_states[0]["properties"]["value"], json!({"type": "string"}));
+        assert_eq!(title_states[1]["properties"]["tag"], json!({"const": "streaming"}));
+
+        let ready_states = s["properties"]["ready"]["oneOf"].as_array().unwrap();
+        assert_eq!(ready_states[0]["properties"]["value"], json!({"type": "boolean"}));
     }
 }

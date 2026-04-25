@@ -1730,6 +1730,20 @@ prompt generate(ctx: String) -> Stream<String>:
         )), "got: {:?}", resolve_errs);
     }
 
+    #[test]
+    fn partial_struct_field_access_returns_option_field_type() {
+        let src = "\
+type Plan:
+    title: String
+    body: String
+
+agent read(snapshot: Partial<Plan>) -> Option<String>:
+    return snapshot.title
+";
+        let c = check(src);
+        assert!(c.errors.is_empty(), "got: {:?}", c.errors);
+    }
+
     // --- Custom dimensions via corvid.toml (Phase 20g invention #6) ---
 
     fn check_with_config(src: &str, config: &crate::config::CorvidConfig) -> Checked {

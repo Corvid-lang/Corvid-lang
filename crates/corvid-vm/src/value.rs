@@ -38,6 +38,7 @@ pub enum Value {
     OptionSome(BoxedValue),
     OptionNone,
     Grounded(GroundedValue),
+    Partial(PartialValue),
     Stream(StreamValue),
 }
 
@@ -83,6 +84,50 @@ impl GroundedValue {
             timestamp_ms: 0,
         };
         (self.inner.get(), severed)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum PartialFieldValue {
+    Complete(Value),
+    Streaming,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct PartialValue {
+    type_id: DefId,
+    type_name: String,
+    fields: HashMap<String, PartialFieldValue>,
+}
+
+impl PartialValue {
+    pub fn new(
+        type_id: DefId,
+        type_name: impl Into<String>,
+        fields: impl IntoIterator<Item = (String, PartialFieldValue)>,
+    ) -> Self {
+        Self {
+            type_id,
+            type_name: type_name.into(),
+            fields: fields.into_iter().collect(),
+        }
+    }
+
+    pub fn type_name(&self) -> &str {
+        &self.type_name
+    }
+
+    pub fn get_field(&self, field: &str) -> Option<Value> {
+        match self.fields.get(field)? {
+            PartialFieldValue::Complete(value) => {
+                Some(Value::OptionSome(BoxedValue::new(value.clone())))
+            }
+            PartialFieldValue::Streaming => Some(Value::OptionNone),
+        }
+    }
+
+    pub fn with_fields<R>(&self, f: impl FnOnce(&HashMap<String, PartialFieldValue>) -> R) -> R {
+        f(&self.fields)
     }
 }
 
@@ -648,6 +693,7 @@ impl Clone for Value {
             Value::OptionSome(v) => Value::OptionSome(v.clone()),
             Value::OptionNone => Value::OptionNone,
             Value::Grounded(g) => Value::Grounded(g.clone()),
+            Value::Partial(p) => Value::Partial(p.clone()),
             Value::Stream(stream) => Value::Stream(stream.clone()),
         }
     }
@@ -667,6 +713,7 @@ impl Value {
             Value::ResultOk(_) | Value::ResultErr(_) => "Result".into(),
             Value::OptionSome(_) | Value::OptionNone => "Option".into(),
             Value::Grounded(g) => format!("Grounded<{}>", g.inner.get().type_name()),
+            Value::Partial(p) => format!("Partial<{}>", p.type_name()),
             Value::Stream(stream) => {
                 format!("Stream<{}>", stream.backpressure_label())
             }
@@ -698,6 +745,7 @@ impl Value {
                 Some(ObjectRef::Boxed(v.0.clone()))
             }
             Value::Grounded(g) => Some(ObjectRef::Boxed(g.inner.0.clone())),
+            Value::Partial(_) => None,
             _ => None,
         }
     }
@@ -751,6 +799,27 @@ impl fmt::Display for Value {
                 }
                 write!(f, "])")
             }
+            Value::Partial(p) => {
+                write!(f, "Partial<{}>(", p.type_name())?;
+                let mut first = true;
+                p.with_fields(|fields| {
+                    for (k, v) in fields {
+                        if !first {
+                            let _ = write!(f, ", ");
+                        }
+                        first = false;
+                        match v {
+                            PartialFieldValue::Complete(value) => {
+                                let _ = write!(f, "{k}: Complete({value})");
+                            }
+                            PartialFieldValue::Streaming => {
+                                let _ = write!(f, "{k}: Streaming");
+                            }
+                        }
+                    }
+                });
+                write!(f, ")")
+            }
             Value::Stream(stream) => write!(f, "Stream({})", stream.backpressure_label()),
         }
     }
@@ -788,6 +857,7 @@ impl PartialEq for Value {
             (Value::OptionSome(a), Value::OptionSome(b)) => a == b,
             (Value::OptionNone, Value::OptionNone) => true,
             (Value::Grounded(a), Value::Grounded(b)) => a.inner == b.inner,
+            (Value::Partial(a), Value::Partial(b)) => a == b,
             (Value::Stream(a), Value::Stream(b)) => a == b,
             _ => false,
         }

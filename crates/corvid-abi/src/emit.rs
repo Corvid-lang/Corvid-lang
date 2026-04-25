@@ -138,6 +138,7 @@ pub(crate) fn resolve_typeref_to_type(ty: &TypeRef, resolved: &Resolved) -> Type
             "List" | "Stream" if args.len() == 1 => Type::List(Box::new(resolve_typeref_to_type(&args[0], resolved))),
             "Option" if args.len() == 1 => Type::Option(Box::new(resolve_typeref_to_type(&args[0], resolved))),
             "Grounded" if args.len() == 1 => Type::Grounded(Box::new(resolve_typeref_to_type(&args[0], resolved))),
+            "Partial" if args.len() == 1 => Type::Partial(Box::new(resolve_typeref_to_type(&args[0], resolved))),
             "Result" if args.len() == 2 => Type::Result(
                 Box::new(resolve_typeref_to_type(&args[0], resolved)),
                 Box::new(resolve_typeref_to_type(&args[1], resolved)),

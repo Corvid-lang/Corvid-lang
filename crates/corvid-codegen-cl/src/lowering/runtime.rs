@@ -1892,6 +1892,7 @@ pub(super) fn mangle_type_name(ty: &Type) -> String {
         ),
         Type::Option(inner) => format!("Option_{}", mangle_type_name(inner)),
         Type::Grounded(inner) => format!("Grounded_{}", mangle_type_name(inner)),
+        Type::Partial(inner) => format!("Partial_{}", mangle_type_name(inner)),
         Type::Weak(inner, effects) => {
             if effects.is_any() {
                 format!("Weak_{}", mangle_type_name(inner))
@@ -1942,7 +1943,9 @@ pub(super) fn collect_list_element_types(ir: &IrFile) -> Vec<Type> {
                 visit(ok, seen, order);
                 visit(err, seen, order);
             }
-            Type::Option(inner) | Type::Weak(inner, _) => visit(inner, seen, order),
+            Type::Option(inner) | Type::Partial(inner) | Type::Weak(inner, _) => {
+                visit(inner, seen, order)
+            }
             Type::Function { params, ret, .. } => {
                 for param in params {
                     visit(param, seen, order);
@@ -1995,7 +1998,7 @@ pub(super) fn collect_result_types(ir: &IrFile) -> Vec<Type> {
                     order.push(ty.clone());
                 }
             }
-            Type::List(inner) | Type::Option(inner) | Type::Weak(inner, _) => {
+            Type::List(inner) | Type::Option(inner) | Type::Partial(inner) | Type::Weak(inner, _) => {
                 visit(inner, seen, order);
             }
             Type::Function { params, ret, .. } => {
@@ -2053,7 +2056,9 @@ pub(super) fn collect_option_types(ir: &IrFile) -> Vec<Type> {
                 visit(ok, seen, order);
                 visit(err, seen, order);
             }
-            Type::List(inner) | Type::Weak(inner, _) => visit(inner, seen, order),
+            Type::List(inner) | Type::Partial(inner) | Type::Weak(inner, _) => {
+                visit(inner, seen, order)
+            }
             Type::Function { params, ret, .. } => {
                 for param in params {
                     visit(param, seen, order);
@@ -2236,7 +2241,8 @@ pub(super) fn is_refcounted_type(ty: &Type) -> bool {
         | Type::ImportedStruct(_)
         | Type::List(_)
         | Type::Weak(_, _)
-        | Type::Result(_, _) => true,
+        | Type::Result(_, _)
+        | Type::Partial(_) => true,
         Type::Option(inner) => is_native_wide_option_type(ty) || is_refcounted_type(inner),
         Type::Grounded(inner) => is_refcounted_type(inner),
         _ => false,
@@ -2253,7 +2259,7 @@ pub(super) fn is_native_value_type(ty: &Type) -> bool {
         // TraceId is a string-backed opaque handle at runtime;
         // treat it as a value type for native emission purposes.
         Type::TraceId => true,
-        Type::Nothing | Type::Function { .. } | Type::Stream(_) | Type::Unknown => false,
+        Type::Nothing | Type::Function { .. } | Type::Stream(_) | Type::Partial(_) | Type::Unknown => false,
     }
 }
 
