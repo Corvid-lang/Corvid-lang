@@ -5352,3 +5352,16 @@ configuration, snippets for agents/prompts/effects/models/dangerous tools, a
 restart command, a log command, configurable server path, and a verification
 script. This makes Phase 24 a usable developer workflow, not only a backend LSP
 crate.
+
+## 2026-04-25 - Package manifest remove update
+
+Started the next Phase 25 package-manager slice by making package dependency
+state two-sided: `corvid add` now writes both `corvid.toml [dependencies]` and
+`Corvid.lock`, while `corvid remove` and `corvid update` are real CLI commands
+instead of roadmap placeholders.
+
+The implementation keeps responsibilities split. `package_manifest.rs` owns
+manifest editing, `package_lock.rs` owns lockfile removal, and
+`package_registry.rs` owns registry resolution plus the hash/signature/policy
+checks. Update reuses the same add path, so refreshed packages cannot bypass
+semantic-summary or package-policy validation.

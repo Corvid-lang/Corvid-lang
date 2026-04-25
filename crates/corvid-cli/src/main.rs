@@ -11,6 +11,8 @@
 //!   corvid verify             cross-tier effect-profile verification
 //!   corvid effect-diff        diff composed effect profiles between two revisions
 //!   corvid add                add a package dependency to Corvid.lock
+//!   corvid remove             remove a package dependency from corvid.toml and Corvid.lock
+//!   corvid update             refresh a package dependency through its registry
 //!   corvid add-dimension      install a dimension from the effect registry
 //!   corvid routing-report     aggregate dispatch traces into routing guidance
 //!   corvid cost-frontier      compute prompt cost/quality Pareto frontier
@@ -246,6 +248,19 @@ enum Command {
         /// Package spec in `@scope/name@version` form.
         spec: String,
         /// Registry index URL or local `index.toml` path.
+        #[arg(long)]
+        registry: Option<String>,
+    },
+    /// Remove a Corvid package dependency from corvid.toml and Corvid.lock.
+    Remove {
+        /// Package name in `@scope/name` form.
+        name: String,
+    },
+    /// Refresh a Corvid package dependency through its registry.
+    Update {
+        /// Package name in `@scope/name` form, or a full `@scope/name@version` spec.
+        spec: String,
+        /// Registry index URL or local `index.toml` path. Overrides the manifest registry.
         #[arg(long)]
         registry: Option<String>,
     },
@@ -774,6 +789,8 @@ fn main() -> ExitCode {
         Some(Command::EffectDiff { before, after }) => cmd_effect_diff(&before, &after),
         Some(Command::AddDimension { spec }) => cmd_add_dimension(&spec),
         Some(Command::Add { spec, registry }) => cmd_add_package(&spec, registry.as_deref()),
+        Some(Command::Remove { name }) => cmd_remove_package(&name),
+        Some(Command::Update { spec, registry }) => cmd_update_package(&spec, registry.as_deref()),
         Some(Command::RoutingReport {
             since,
             since_commit,
@@ -1452,6 +1469,59 @@ fn cmd_add_package(spec: &str, registry: Option<&str>) -> Result<u8> {
             eprintln!("package rejected: {reason}");
             Ok(1)
         }
+    }
+}
+
+fn cmd_remove_package(name: &str) -> Result<u8> {
+    let project_dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    println!("corvid remove {name}\n");
+    let outcome = corvid_driver::remove_package(name, &project_dir)?;
+    match outcome {
+        corvid_driver::PackageMutationOutcome::Removed {
+            name,
+            manifest_updated,
+            lock_entries_removed,
+            lockfile,
+        } => {
+            println!(
+                "removed `{name}` (manifest: {}, lock entries: {})",
+                if manifest_updated { "updated" } else { "unchanged" },
+                lock_entries_removed
+            );
+            println!("lockfile: {}", lockfile.display());
+            Ok(0)
+        }
+        corvid_driver::PackageMutationOutcome::Rejected { reason } => {
+            eprintln!("package rejected: {reason}");
+            Ok(1)
+        }
+        corvid_driver::PackageMutationOutcome::Updated { .. } => unreachable!(),
+    }
+}
+
+fn cmd_update_package(spec: &str, registry: Option<&str>) -> Result<u8> {
+    let project_dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    println!("corvid update {spec}\n");
+    let outcome = corvid_driver::update_package(spec, &project_dir, registry)?;
+    match outcome {
+        corvid_driver::PackageMutationOutcome::Updated {
+            uri,
+            version,
+            lockfile,
+            exports,
+        } => {
+            println!(
+                "updated `{uri}` ({version}) in {} with {exports} exported contract item{}",
+                lockfile.display(),
+                if exports == 1 { "" } else { "s" }
+            );
+            Ok(0)
+        }
+        corvid_driver::PackageMutationOutcome::Rejected { reason } => {
+            eprintln!("package rejected: {reason}");
+            Ok(1)
+        }
+        corvid_driver::PackageMutationOutcome::Removed { .. } => unreachable!(),
     }
 }
 

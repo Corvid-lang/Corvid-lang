@@ -17,14 +17,35 @@ use serde::{Deserialize, Serialize};
 use crate::import_integrity::sha256_hex;
 use crate::modules::summarize_module_source;
 use crate::package_lock::{
-    load_or_empty_at, lock_path_for_project, upsert_package, write_package_lock, LockedPackage,
+    load_or_empty_at, lock_path_for_project, remove_packages_by_name, upsert_package,
+    write_package_lock, LockedPackage,
 };
+use crate::package_manifest::{dependency, remove_dependency, upsert_dependency};
 
 const DEFAULT_REGISTRY: &str = "https://registry.corvid.dev/index.toml";
 
 #[derive(Debug, Clone)]
 pub enum AddPackageOutcome {
     Added {
+        uri: String,
+        version: String,
+        lockfile: PathBuf,
+        exports: usize,
+    },
+    Rejected {
+        reason: String,
+    },
+}
+
+#[derive(Debug, Clone)]
+pub enum PackageMutationOutcome {
+    Removed {
+        name: String,
+        manifest_updated: bool,
+        lock_entries_removed: usize,
+        lockfile: PathBuf,
+    },
+    Updated {
         uri: String,
         version: String,
         lockfile: PathBuf,
@@ -78,6 +99,7 @@ struct RegistryPackage {
 #[derive(Debug, Clone)]
 struct PackageSpec {
     name: String,
+    raw_requirement: String,
     requirement: VersionRequirement,
 }
 
@@ -166,6 +188,12 @@ pub fn add_package(
         },
     );
     write_package_lock(&lockfile, &lock).map_err(|message| anyhow!(message))?;
+    upsert_dependency(
+        project_dir,
+        &spec.name,
+        &spec.raw_requirement,
+        Some(registry_location.as_str()),
+    )?;
 
     Ok(AddPackageOutcome::Added {
         uri,
@@ -173,6 +201,71 @@ pub fn add_package(
         lockfile,
         exports: summary.exports.len(),
     })
+}
+
+pub fn remove_package(spec: &str, project_dir: &Path) -> Result<PackageMutationOutcome> {
+    validate_package_name(spec)?;
+    let manifest_updated = remove_dependency(project_dir, spec)?.is_some();
+    let lockfile = lock_path_for_project(project_dir);
+    let mut lock = load_or_empty_at(&lockfile).map_err(|message| anyhow!(message))?;
+    let lock_entries_removed = remove_packages_by_name(&mut lock, spec);
+    if !manifest_updated && lock_entries_removed == 0 {
+        return Ok(PackageMutationOutcome::Rejected {
+            reason: format!("package `{spec}` is not present in corvid.toml or Corvid.lock"),
+        });
+    }
+    write_package_lock(&lockfile, &lock).map_err(|message| anyhow!(message))?;
+    Ok(PackageMutationOutcome::Removed {
+        name: spec.to_string(),
+        manifest_updated,
+        lock_entries_removed,
+        lockfile,
+    })
+}
+
+pub fn update_package(
+    spec: &str,
+    project_dir: &Path,
+    registry: Option<&str>,
+) -> Result<PackageMutationOutcome> {
+    if parse_package_spec(spec).is_ok() {
+        return match add_package(spec, project_dir, registry)? {
+            AddPackageOutcome::Added {
+                uri,
+                version,
+                lockfile,
+                exports,
+            } => Ok(PackageMutationOutcome::Updated {
+                uri,
+                version,
+                lockfile,
+                exports,
+            }),
+            AddPackageOutcome::Rejected { reason } => Ok(PackageMutationOutcome::Rejected { reason }),
+        };
+    }
+    validate_package_name(spec)?;
+    let Some(dep) = dependency(project_dir, spec)? else {
+        return Ok(PackageMutationOutcome::Rejected {
+            reason: format!("package `{spec}` is not declared in corvid.toml [dependencies]"),
+        });
+    };
+    let registry = registry.or(dep.registry.as_deref());
+    let add_spec = format!("{}@{}", dep.name, dep.version);
+    match add_package(&add_spec, project_dir, registry)? {
+        AddPackageOutcome::Added {
+            uri,
+            version,
+            lockfile,
+            exports,
+        } => Ok(PackageMutationOutcome::Updated {
+            uri,
+            version,
+            lockfile,
+            exports,
+        }),
+        AddPackageOutcome::Rejected { reason } => Ok(PackageMutationOutcome::Rejected { reason }),
+    }
 }
 
 pub fn publish_package(options: PublishPackageOptions<'_>) -> Result<PublishPackageOutcome> {
@@ -256,6 +349,7 @@ fn parse_package_spec(spec: &str) -> Result<PackageSpec> {
     }
     Ok(PackageSpec {
         name: name.to_string(),
+        raw_requirement: version.to_string(),
         requirement: parse_version_requirement(version)?,
     })
 }
@@ -621,6 +715,9 @@ sha256 = \"{digest}\"
         let lock = fs::read_to_string(tmp.path().join("Corvid.lock")).unwrap();
         assert!(lock.contains("semantic_summary"));
         assert!(lock.contains("SafetyReceipt"));
+        let manifest = fs::read_to_string(tmp.path().join("corvid.toml")).unwrap();
+        assert!(manifest.contains("[dependencies.\"@anthropic/safety-baseline\"]"), "{manifest}");
+        assert!(manifest.contains("version = \"2.3\""), "{manifest}");
     }
 
     #[test]
@@ -733,6 +830,102 @@ sha256 = \"{digest}\"
             AddPackageOutcome::Rejected { ref reason }
                 if reason.contains("signature verification failed")
         ));
+    }
+
+    #[test]
+    fn remove_package_updates_manifest_and_lock() {
+        let tmp = tempfile::tempdir().unwrap();
+        fs::write(
+            tmp.path().join("corvid.toml"),
+            "[dependencies]\n\"@scope/name\" = \"1\"\n",
+        )
+        .unwrap();
+        fs::write(
+            tmp.path().join("Corvid.lock"),
+            "\
+[[package]]
+uri = \"corvid://@scope/name/v1.0.0\"
+url = \"https://example.com/name.cor\"
+sha256 = \"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\"
+
+[[package]]
+uri = \"corvid://@scope/other/v1.0.0\"
+url = \"https://example.com/other.cor\"
+sha256 = \"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\"
+",
+        )
+        .unwrap();
+
+        let outcome = remove_package("@scope/name", tmp.path()).unwrap();
+
+        assert!(matches!(
+            outcome,
+            PackageMutationOutcome::Removed {
+                manifest_updated: true,
+                lock_entries_removed: 1,
+                ..
+            }
+        ));
+        let manifest = fs::read_to_string(tmp.path().join("corvid.toml")).unwrap();
+        let lock = fs::read_to_string(tmp.path().join("Corvid.lock")).unwrap();
+        assert!(!manifest.contains("@scope/name"), "{manifest}");
+        assert!(!lock.contains("corvid://@scope/name/"), "{lock}");
+        assert!(lock.contains("corvid://@scope/other/"), "{lock}");
+    }
+
+    #[test]
+    fn update_package_uses_manifest_requirement_and_selects_newest_match() {
+        let tmp = tempfile::tempdir().unwrap();
+        let old_src = "public type OldReceipt:\n    id: String\n";
+        let new_src = "public type NewReceipt:\n    id: String\n";
+        let old_url = serve_once("/helper-1.0.0.cor", old_src);
+        let new_url = serve_once("/helper-1.2.0.cor", new_src);
+        fs::write(
+            tmp.path().join("corvid.toml"),
+            format!(
+                "\
+[dependencies.\"@scope/helper\"]
+version = \"1\"
+registry = \"{}\"
+",
+                tmp.path()
+                    .join("index.toml")
+                    .to_string_lossy()
+                    .replace('\\', "/")
+            ),
+        )
+        .unwrap();
+        fs::write(
+            tmp.path().join("index.toml"),
+            format!(
+                "\
+[[package]]
+name = \"@scope/helper\"
+version = \"1.0.0\"
+url = \"{old_url}\"
+sha256 = \"{}\"
+
+[[package]]
+name = \"@scope/helper\"
+version = \"1.2.0\"
+url = \"{new_url}\"
+sha256 = \"{}\"
+",
+                sha256_hex(old_src.as_bytes()),
+                sha256_hex(new_src.as_bytes()),
+            ),
+        )
+        .unwrap();
+
+        let outcome = update_package("@scope/helper", tmp.path(), None).unwrap();
+
+        assert!(matches!(
+            outcome,
+            PackageMutationOutcome::Updated { ref version, .. } if version == "1.2.0"
+        ));
+        let lock = fs::read_to_string(tmp.path().join("Corvid.lock")).unwrap();
+        assert!(lock.contains("corvid://@scope/helper/v1.2.0"), "{lock}");
+        assert!(lock.contains("NewReceipt"), "{lock}");
     }
 
     fn serve_once(path: &'static str, body: impl Into<String>) -> String {

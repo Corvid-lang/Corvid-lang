@@ -38,7 +38,7 @@ it.
 ## Adding Packages
 
 `corvid add` resolves a semantic package request through a registry index and
-writes the concrete lock entry:
+writes both the project manifest dependency and the concrete lock entry:
 
 ```text
 corvid add @anthropic/safety-baseline@2.3 --registry ./registry/index.toml
@@ -76,6 +76,27 @@ require-package-signatures = true
 Rejected packages do not write or modify the lockfile. Accepted packages store
 their semantic summary in `Corvid.lock` so code review can see both the bytes
 and the AI-safety contract that those bytes export.
+
+The project manifest is updated under `[dependencies]`. When a registry is
+explicitly selected, the entry is table-shaped so the source of future updates
+is reproducible:
+
+```toml
+[dependencies."@anthropic/safety-baseline"]
+version = "2.3"
+registry = "./registry/index.toml"
+```
+
+## Removing and Updating Packages
+
+`corvid remove @scope/name` removes the dependency from `corvid.toml` and every
+matching `corvid://@scope/name/...` entry from `Corvid.lock`.
+
+`corvid update @scope/name` reads the existing `[dependencies]` version
+requirement and registry, resolves the newest matching package, re-verifies the
+source hash/signature/semantic policy, and rewrites the lock entry. Passing a
+full spec such as `corvid update @scope/name@^2.0.0 --registry ./index.toml`
+also updates the manifest requirement.
 
 ## Publishing Signed Packages
 

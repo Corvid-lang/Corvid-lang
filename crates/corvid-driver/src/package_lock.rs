@@ -74,6 +74,14 @@ pub(crate) fn upsert_package(lock: &mut PackageLock, package: LockedPackage) {
     }
 }
 
+pub(crate) fn remove_packages_by_name(lock: &mut PackageLock, name: &str) -> usize {
+    let prefix = format!("corvid://{name}/");
+    let before = lock.package.len();
+    lock.package
+        .retain(|entry| !entry.uri.starts_with(prefix.as_str()));
+    before - lock.package.len()
+}
+
 pub(crate) fn load_package_lock_for(root_path: &Path) -> Result<Option<PackageLockFile>, String> {
     let Some(path) = find_package_lock_path(root_path) else {
         return Ok(None);
@@ -163,5 +171,34 @@ mod tests {
             semantic_summary: None,
         };
         assert!(validate_entry(&entry, Path::new("Corvid.lock")).is_err());
+    }
+
+    #[test]
+    fn remove_packages_by_name_removes_all_locked_versions() {
+        let mut lock = PackageLock {
+            package: vec![
+                LockedPackage {
+                    uri: "corvid://@scope/name/v1.0.0".to_string(),
+                    url: "https://example.com/name-1.cor".to_string(),
+                    sha256: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+                        .to_string(),
+                    registry: None,
+                    signature: None,
+                    semantic_summary: None,
+                },
+                LockedPackage {
+                    uri: "corvid://@scope/other/v1.0.0".to_string(),
+                    url: "https://example.com/other-1.cor".to_string(),
+                    sha256: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+                        .to_string(),
+                    registry: None,
+                    signature: None,
+                    semantic_summary: None,
+                },
+            ],
+        };
+        assert_eq!(remove_packages_by_name(&mut lock, "@scope/name"), 1);
+        assert_eq!(lock.package.len(), 1);
+        assert_eq!(lock.package[0].uri, "corvid://@scope/other/v1.0.0");
     }
 }

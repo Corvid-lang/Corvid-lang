@@ -3208,6 +3208,18 @@ environment variable, repository-local debug/release binaries, and PATH lets the
 same extension work in development, installed-tool, and packaged workflows
 without hardcoding one layout.
 
+## package manifest lifecycle
+
+Package management has to keep the semantic manifest and immutable lockfile in
+sync. `corvid.toml [dependencies]` records the human intent and version
+requirement; `Corvid.lock` records the concrete bytes, digest, signature, and
+semantic summary. Treating either file as optional creates drift.
+
+Update must reuse add's validation path. A package refresh is still a supply
+chain event, so it must re-run source hash verification, signature verification,
+semantic-summary extraction, and project policy checks before changing the
+lockfile.
+
 ## Contributing / feedback
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). The rules of the road are: design chat before code, per-scope commits at every boundary, dev-log entry for every session, no shortcuts. The `learnings.md` file you're reading gets updated when each user-visible feature ships.

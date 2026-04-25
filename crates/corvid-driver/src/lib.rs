@@ -15,6 +15,7 @@ pub mod modules;
 pub mod proof_replay;
 mod import_integrity;
 mod package_lock;
+mod package_manifest;
 mod package_registry;
 mod native_ability;
 mod native_cache;
@@ -23,7 +24,8 @@ pub mod spec_check;
 
 pub use add_dimension::{add_dimension as install_dimension, AddDimensionOutcome};
 pub use package_registry::{
-    add_package, publish_package, AddPackageOutcome, PublishPackageOptions, PublishPackageOutcome,
+    add_package, publish_package, remove_package, update_package, AddPackageOutcome,
+    PackageMutationOutcome, PublishPackageOptions, PublishPackageOutcome,
 };
 pub use approver::{simulate_approver, verify_approver_source};
 pub use modules::{
