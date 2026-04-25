@@ -455,6 +455,38 @@ agent continue_it(token: ResumeToken<String>) -> Stream<String>:
     }
 
     #[test]
+    fn lowers_stream_split_merge_with_order_policy() {
+        let src = "\
+type Event:
+    kind: String
+    body: String
+
+agent source() -> Stream<Event>:
+    yield Event(\"b\", \"two\")
+    yield Event(\"a\", \"one\")
+
+agent fanout() -> Stream<Event>:
+    return merge(source().split_by(\"kind\")).ordered_by(\"sorted\")
+";
+        let ir = lower_src(src);
+        let fanout = ir
+            .agents
+            .iter()
+            .find(|agent| agent.name == "fanout")
+            .expect("fanout agent");
+        match &fanout.body.stmts[0] {
+            IrStmt::Return { value: Some(value), .. } => match &value.kind {
+                IrExprKind::StreamMerge { groups, policy } => {
+                    assert_eq!(*policy, StreamMergePolicy::Sorted);
+                    assert!(matches!(groups.kind, IrExprKind::StreamSplitBy { .. }));
+                }
+                other => panic!("expected stream merge, got {other:?}"),
+            },
+            other => panic!("expected fanout return, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn lowers_calibrated_prompt_modifier() {
         let src = "\
 prompt classify(ctx: String) -> String:
@@ -595,6 +627,9 @@ agent hash_step(n: Int) -> Int:
             | IrExprKind::UnwrapGrounded { value: target }
             | IrExprKind::WeakNew { strong: target }
             | IrExprKind::WeakUpgrade { weak: target }
+            | IrExprKind::StreamSplitBy { stream: target, .. }
+            | IrExprKind::StreamMerge { groups: target, .. }
+            | IrExprKind::StreamOrderedBy { stream: target, .. }
             | IrExprKind::StreamResumeToken { stream: target }
             | IrExprKind::ResumeStream { token: target, .. }
             | IrExprKind::ResultOk { inner: target }
@@ -776,6 +811,9 @@ agent run(x: String) -> Order:
             IrExprKind::List { items } => items.iter().any(|i| expr_mentions_local_id(i, target)),
             IrExprKind::WeakNew { strong }
             | IrExprKind::WeakUpgrade { weak: strong }
+            | IrExprKind::StreamSplitBy { stream: strong, .. }
+            | IrExprKind::StreamMerge { groups: strong, .. }
+            | IrExprKind::StreamOrderedBy { stream: strong, .. }
             | IrExprKind::StreamResumeToken { stream: strong }
             | IrExprKind::ResumeStream { token: strong, .. } => {
                 expr_mentions_local_id(strong, target)

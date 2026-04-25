@@ -156,6 +156,7 @@ impl<'a> Checker<'a> {
                 | BuiltIn::Some
                 | BuiltIn::WeakNew
                 | BuiltIn::WeakUpgrade
+                | BuiltIn::StreamMerge
                 | BuiltIn::Resume
                 | BuiltIn::StreamResumeToken => {
                     self.errors.push(TypeError::new(

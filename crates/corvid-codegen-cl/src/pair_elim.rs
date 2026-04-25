@@ -204,6 +204,9 @@ fn count_local_mentions_expr(expr: &IrExpr, local_id: LocalId) -> usize {
         | IrExprKind::UnwrapGrounded { value: target }
         | IrExprKind::WeakNew { strong: target }
         | IrExprKind::WeakUpgrade { weak: target }
+        | IrExprKind::StreamSplitBy { stream: target, .. }
+        | IrExprKind::StreamMerge { groups: target, .. }
+        | IrExprKind::StreamOrderedBy { stream: target, .. }
         | IrExprKind::StreamResumeToken { stream: target }
         | IrExprKind::ResumeStream { token: target, .. }
         | IrExprKind::ResultOk { inner: target }
@@ -250,6 +253,9 @@ fn expr_observes_refcount(expr: &IrExpr, local_id: LocalId) -> bool {
         IrExprKind::FieldAccess { target, .. }
         | IrExprKind::UnwrapGrounded { value: target }
         | IrExprKind::WeakUpgrade { weak: target }
+        | IrExprKind::StreamSplitBy { stream: target, .. }
+        | IrExprKind::StreamMerge { groups: target, .. }
+        | IrExprKind::StreamOrderedBy { stream: target, .. }
         | IrExprKind::StreamResumeToken { stream: target }
         | IrExprKind::ResumeStream { token: target, .. }
         | IrExprKind::ResultOk { inner: target }

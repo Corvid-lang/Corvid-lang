@@ -453,6 +453,18 @@ pub enum IrExprKind {
 
     WeakNew { strong: Box<IrExpr> },
     WeakUpgrade { weak: Box<IrExpr> },
+    StreamSplitBy {
+        stream: Box<IrExpr>,
+        key: String,
+    },
+    StreamMerge {
+        groups: Box<IrExpr>,
+        policy: StreamMergePolicy,
+    },
+    StreamOrderedBy {
+        stream: Box<IrExpr>,
+        policy: StreamMergePolicy,
+    },
     StreamResumeToken { stream: Box<IrExpr> },
     ResumeStream {
         prompt_def_id: DefId,
@@ -488,6 +500,24 @@ pub enum IrExprKind {
         arms: Vec<IrReplayArm>,
         else_body: Box<IrExpr>,
     },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StreamMergePolicy {
+    Fifo,
+    FairRoundRobin,
+    Sorted,
+}
+
+impl StreamMergePolicy {
+    pub fn from_name(name: &str) -> Option<Self> {
+        match name {
+            "fifo" => Some(Self::Fifo),
+            "fair_round_robin" => Some(Self::FairRoundRobin),
+            "sorted" => Some(Self::Sorted),
+            _ => None,
+        }
+    }
 }
 
 /// One lowered arm of a replay block: pattern + optional

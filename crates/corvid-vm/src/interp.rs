@@ -17,6 +17,8 @@ mod prompt;
 mod replay;
 #[path = "interp/stmt.rs"]
 mod stmt;
+#[path = "interp/stream_ops.rs"]
+mod stream_ops;
 
 use crate::conv::{json_to_value, value_to_json};
 use crate::env::Env;
@@ -596,6 +598,36 @@ impl<'ir> Interpreter<'ir> {
                         expr.span,
                     )),
                 }
+            }
+
+            IrExprKind::StreamSplitBy { stream, key } => {
+                let stream = match self.eval_expr(stream).await?.into_value() {
+                    Ok(v) => v,
+                    Err(v) => return Ok(ExprFlow::Propagate(v)),
+                };
+                stream_ops::split_by(stream, key, expr.span)
+                    .await
+                    .map(ExprFlow::Value)
+            }
+
+            IrExprKind::StreamMerge { groups, policy } => {
+                let groups = match self.eval_expr(groups).await?.into_value() {
+                    Ok(v) => v,
+                    Err(v) => return Ok(ExprFlow::Propagate(v)),
+                };
+                stream_ops::merge(groups, *policy, expr.span)
+                    .await
+                    .map(ExprFlow::Value)
+            }
+
+            IrExprKind::StreamOrderedBy { stream, policy } => {
+                let stream = match self.eval_expr(stream).await?.into_value() {
+                    Ok(v) => v,
+                    Err(v) => return Ok(ExprFlow::Propagate(v)),
+                };
+                stream_ops::ordered_by(stream, *policy, expr.span)
+                    .await
+                    .map(ExprFlow::Value)
             }
 
             IrExprKind::StreamResumeToken { stream } => {

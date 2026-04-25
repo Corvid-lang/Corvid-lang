@@ -339,6 +339,9 @@ fn expr_consumes_target(
         // consumes the body's value on each iteration.
         IrExprKind::WeakNew { strong: inner }
         | IrExprKind::WeakUpgrade { weak: inner }
+        | IrExprKind::StreamSplitBy { stream: inner, .. }
+        | IrExprKind::StreamMerge { groups: inner, .. }
+        | IrExprKind::StreamOrderedBy { stream: inner, .. }
         | IrExprKind::StreamResumeToken { stream: inner }
         | IrExprKind::ResumeStream { token: inner, .. }
         | IrExprKind::ResultOk { inner }
@@ -381,6 +384,9 @@ fn expr_references(expr: &IrExpr, target: LocalId) -> bool {
         // Tagged-union/retry nodes recurse into sub-expressions.
         IrExprKind::WeakNew { strong: inner }
         | IrExprKind::WeakUpgrade { weak: inner }
+        | IrExprKind::StreamSplitBy { stream: inner, .. }
+        | IrExprKind::StreamMerge { groups: inner, .. }
+        | IrExprKind::StreamOrderedBy { stream: inner, .. }
         | IrExprKind::StreamResumeToken { stream: inner }
         | IrExprKind::ResumeStream { token: inner, .. }
         | IrExprKind::ResultOk { inner }

@@ -189,6 +189,34 @@ agent continue_it(token: ResumeToken<String>) -> String:
 }
 
 #[tokio::test]
+async fn split_by_partitions_stream_and_merge_fair_round_robins_groups() {
+    let src = "\
+type Event:
+    kind: String
+    body: String
+
+agent source() -> Stream<Event>:
+    yield Event(\"b\", \"two\")
+    yield Event(\"a\", \"one\")
+    yield Event(\"b\", \"three\")
+
+agent fanout() -> Stream<Event>:
+    groups = source().split_by(\"kind\")
+    for event in merge(groups).ordered_by(\"fair_round_robin\"):
+        yield event
+";
+    let ir = ir_of(src);
+    let rt = empty_runtime();
+    let stream = run_agent(&ir, "fanout", vec![], &rt).await.expect("run");
+    let items = collect_stream(stream).await.expect("collect");
+    let bodies = items
+        .iter()
+        .map(|item| struct_string_field(item, "body"))
+        .collect::<Vec<_>>();
+    assert_eq!(bodies, vec!["two", "one", "three"]);
+}
+
+#[tokio::test]
 async fn stream_prompt_confidence_floor_breaches_mid_stream() {
     let src = "\
 effect shaky:
@@ -572,4 +600,14 @@ async fn unbounded_stream_channel_round_trips_values() {
     drop(sender);
     let items = collect_stream(Value::Stream(stream)).await.expect("collect");
     assert_eq!(items, vec![Value::String(Arc::from("a"))]);
+}
+
+fn struct_string_field(value: &Value, field: &str) -> String {
+    let Value::Struct(value) = value else {
+        panic!("expected struct, got {value:?}");
+    };
+    match value.get_field(field).expect("field") {
+        Value::String(value) => value.to_string(),
+        other => panic!("expected string field, got {other:?}"),
+    }
 }

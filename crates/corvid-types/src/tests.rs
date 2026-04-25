@@ -1796,6 +1796,66 @@ agent continue_it(token: ResumeToken<Int>) -> Stream<String>:
         )), "got: {:?}", c.errors);
     }
 
+    #[test]
+    fn stream_split_merge_ordered_by_typechecks() {
+        let src = "\
+type Event:
+    kind: String
+    body: String
+
+agent source() -> Stream<Event>:
+    yield Event(\"b\", \"two\")
+    yield Event(\"a\", \"one\")
+
+agent fanout() -> Stream<Event>:
+    groups = source().split_by(\"kind\")
+    return merge(groups).ordered_by(\"fair_round_robin\")
+";
+        let c = check(src);
+        assert!(c.errors.is_empty(), "got: {:?}", c.errors);
+    }
+
+    #[test]
+    fn stream_split_by_unknown_field_errors() {
+        let src = "\
+type Event:
+    kind: String
+
+agent source() -> Stream<Event>:
+    yield Event(\"a\")
+
+agent fanout() -> Stream<Event>:
+    return merge(source().split_by(\"missing\"))
+";
+        let c = check(src);
+        assert!(c.errors.iter().any(|e| matches!(
+            &e.kind,
+            TypeErrorKind::UnknownField { field, .. } if field == "missing"
+        )), "got: {:?}", c.errors);
+    }
+
+    #[test]
+    fn stream_ordered_by_rejects_unknown_policy() {
+        let src = "\
+type Event:
+    kind: String
+
+agent source() -> Stream<Event>:
+    yield Event(\"a\")
+
+agent fanout() -> Stream<Event>:
+    return merge(source().split_by(\"kind\")).ordered_by(\"random\")
+";
+        let c = check(src);
+        assert!(c.errors.iter().any(|e| matches!(
+            &e.kind,
+            TypeErrorKind::TypeMismatch { context, expected, got }
+                if context == "ordered_by policy"
+                    && expected == "fifo, fair_round_robin, or sorted"
+                    && got == "random"
+        )), "got: {:?}", c.errors);
+    }
+
     // --- Custom dimensions via corvid.toml (Phase 20g invention #6) ---
 
     fn check_with_config(src: &str, config: &crate::config::CorvidConfig) -> Checked {

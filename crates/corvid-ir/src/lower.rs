@@ -3,6 +3,8 @@
 //! Every AST construct maps to an IR construct. References are resolved
 //! via the resolver's side-table; types come from the checker's side-table.
 
+mod stream;
+
 use crate::imports::{
     build_imported_def_ids, resolve_module_qualified_type_ref, resolve_root_imported_type_ref,
     ImportedDefKey,
@@ -854,6 +856,9 @@ impl<'a> Lowerer<'a> {
             if let Some(rewrite) = self.try_grounded_builtin_call(target, field, args) {
                 return rewrite;
             }
+            if let Some(rewrite) = stream::try_stream_builtin_call(self, target, field, args) {
+                return rewrite;
+            }
             if let Some(rewrite) = self.try_method_call(target, field, args) {
                 return rewrite;
             }
@@ -926,6 +931,9 @@ impl<'a> Lowerer<'a> {
                     return IrExprKind::WeakUpgrade {
                         weak: Box::new(weak),
                     };
+                }
+                Some(Binding::BuiltIn(BuiltIn::StreamMerge)) => {
+                    return stream::lower_merge_call(self, name.span, args);
                 }
                 Some(Binding::BuiltIn(BuiltIn::StreamResumeToken)) => {
                     let stream = args

@@ -2685,6 +2685,30 @@ continuation handles are represented but not fabricated. Until adapters expose
 real session state, resume reopens the prompt locally with delivered elements
 included as continuation context.
 
+## 20f-stream-fanout-fanin
+
+Corvid stream partitioning is now expressed in the language rather than as
+library glue:
+
+```corvid
+type Event:
+    kind: String
+    body: String
+
+agent fanout() -> Stream<Event>:
+    groups = source().split_by("kind")
+    return merge(groups).ordered_by("fair_round_robin")
+```
+
+`split_by` returns `List<Stream<Event>>`, with group order based on the first
+time each key appears. `merge(...).ordered_by(...)` supports `fifo`, `sorted`,
+and `fair_round_robin`.
+
+The first version deliberately uses string-literal struct fields as key
+extractors. That is less general than lambdas, but it is typechecked today and
+does not invent an unowned function-value model. Real function extractors belong
+with first-class functions.
+
 ## Contributing / feedback
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). The rules of the road are: design chat before code, per-scope commits at every boundary, dev-log entry for every session, no shortcuts. The `learnings.md` file you're reading gets updated when each user-visible feature ships.

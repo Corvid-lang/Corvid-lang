@@ -668,6 +668,9 @@ fn walk_expr(expr: &IrExpr, consumed: bool, out: &mut Vec<LocalRead>) {
         }
         IrExprKind::WeakNew { strong } => walk_expr(strong, true, out),
         IrExprKind::WeakUpgrade { weak } => walk_expr(weak, false, out),
+        IrExprKind::StreamSplitBy { stream, .. } => walk_expr(stream, false, out),
+        IrExprKind::StreamMerge { groups, .. } => walk_expr(groups, false, out),
+        IrExprKind::StreamOrderedBy { stream, .. } => walk_expr(stream, false, out),
         IrExprKind::StreamResumeToken { stream } => walk_expr(stream, false, out),
         IrExprKind::ResumeStream { token, .. } => walk_expr(token, false, out),
         IrExprKind::ResultOk { inner }

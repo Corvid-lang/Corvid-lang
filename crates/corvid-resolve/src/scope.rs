@@ -46,6 +46,7 @@ pub enum BuiltIn {
     Grounded,
     WeakNew,
     WeakUpgrade,
+    StreamMerge,
     Resume,
     StreamResumeToken,
     // Structural sentinels (surface as Idents today; real variants later).
@@ -113,6 +114,7 @@ impl SymbolTable {
         self.builtins.insert("Weak::new".into(), BuiltIn::WeakNew);
         self.builtins
             .insert("Weak::upgrade".into(), BuiltIn::WeakUpgrade);
+        self.builtins.insert("merge".into(), BuiltIn::StreamMerge);
         self.builtins.insert("resume".into(), BuiltIn::Resume);
         self.builtins
             .insert("resume_token".into(), BuiltIn::StreamResumeToken);

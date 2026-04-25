@@ -2192,6 +2192,9 @@ fn visit_expr_types(
         // List<T> *nested* inside them is still seen.
         IrExprKind::WeakNew { strong: inner }
         | IrExprKind::WeakUpgrade { weak: inner }
+        | IrExprKind::StreamSplitBy { stream: inner, .. }
+        | IrExprKind::StreamMerge { groups: inner, .. }
+        | IrExprKind::StreamOrderedBy { stream: inner, .. }
         | IrExprKind::StreamResumeToken { stream: inner }
         | IrExprKind::ResumeStream { token: inner, .. }
         | IrExprKind::ResultOk { inner }

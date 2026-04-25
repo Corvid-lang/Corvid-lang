@@ -350,6 +350,7 @@ impl<'a> Checker<'a> {
                     }
                 }
             }
+            BuiltIn::StreamMerge => self.check_stream_merge_call(name, args),
             BuiltIn::Resume => self.check_resume_call(name, args),
             BuiltIn::None => {
                 self.errors.push(TypeError::new(
@@ -491,6 +492,12 @@ impl<'a> Checker<'a> {
     ) -> Type {
         // 1. Typecheck the receiver and require a struct type.
         let recv_ty = self.check_expr(target);
+        if method_name.name == "split_by" {
+            return self.check_stream_split_by_method(target, &recv_ty, method_name, args);
+        }
+        if method_name.name == "ordered_by" {
+            return self.check_stream_ordered_by_method(target, recv_ty, method_name, args);
+        }
         if let Type::Grounded(inner) = &recv_ty {
             if method_name.name == "unwrap_discarding_sources" {
                 if args.len() != 0 {

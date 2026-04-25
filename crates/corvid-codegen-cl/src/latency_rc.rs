@@ -158,6 +158,9 @@ fn collect_prompt_pins_in_expr(
         | IrExprKind::UnwrapGrounded { value: target }
         | IrExprKind::WeakNew { strong: target }
         | IrExprKind::WeakUpgrade { weak: target }
+        | IrExprKind::StreamSplitBy { stream: target, .. }
+        | IrExprKind::StreamMerge { groups: target, .. }
+        | IrExprKind::StreamOrderedBy { stream: target, .. }
         | IrExprKind::StreamResumeToken { stream: target }
         | IrExprKind::ResumeStream { token: target, .. }
         | IrExprKind::ResultOk { inner: target }

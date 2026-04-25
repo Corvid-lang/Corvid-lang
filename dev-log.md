@@ -4826,3 +4826,20 @@ The responsibility split stays explicit: types own `ResumeToken<T>` and builtin
 checking, IR owns `StreamResumeToken` / `ResumeStream`, the VM owns token capture
 and continuation behavior, ABI/schema/bindings expose the type shape, and native
 CL lowering rejects resumption until a native stream runtime exists.
+
+## 2026-04-25 - Phase 20f declarative stream fan-out/fan-in
+
+Closed the declarative fan-out/fan-in item with field-keyed stream partitioning.
+`stream.split_by("field")` now typechecks only on `Stream<Struct>` receivers,
+verifies the field name for local structs, and returns `List<Stream<T>>`.
+`merge(groups).ordered_by("fifo" | "sorted" | "fair_round_robin")` lowers to a
+dedicated stream merge IR node with an explicit policy.
+
+The VM implementation is interpreter-backed and intentionally visible at the IR
+boundary: split consumes the source stream into first-seen field groups, merge
+combines sub-streams with FIFO, sorted, or fair-round-robin ordering, and native
+CL/Python codegen reject the stream combinators instead of pretending support.
+
+This slice avoids a fake lambda system. The key extractor is a string literal
+field name for now; true function extractors should wait until Corvid has
+first-class functions or typed lambdas.

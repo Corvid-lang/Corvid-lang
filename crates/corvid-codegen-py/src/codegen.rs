@@ -321,9 +321,13 @@ impl Codegen {
                     "(_ for _ in ()).throw(NotImplementedError(\"Weak codegen lands in 17g-py\"))",
                 );
             }
-            IrExprKind::StreamResumeToken { .. } | IrExprKind::ResumeStream { .. } => {
+            IrExprKind::StreamSplitBy { .. }
+            | IrExprKind::StreamMerge { .. }
+            | IrExprKind::StreamOrderedBy { .. }
+            | IrExprKind::StreamResumeToken { .. }
+            | IrExprKind::ResumeStream { .. } => {
                 self.out.write(
-                    "(_ for _ in ()).throw(NotImplementedError(\"stream resumption codegen is interpreter-only\"))",
+                    "(_ for _ in ()).throw(NotImplementedError(\"stream combinator codegen is interpreter-only\"))",
                 );
             }
             // Result/Option construction and `?` / `try-retry`

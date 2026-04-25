@@ -555,6 +555,7 @@ mod import_call;
 mod ops;
 mod prompt;
 mod stmt;
+mod stream;
 mod types;
 
 use case::{pascal_case, snake_case};

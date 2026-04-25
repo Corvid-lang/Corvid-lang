@@ -243,6 +243,18 @@ fn scan_expr(expr: &IrExpr, current_return_ty: &Type) -> Result<(), NotNativeRea
         }
         IrExprKind::WeakNew { strong } => scan_expr(strong, current_return_ty),
         IrExprKind::WeakUpgrade { weak } => scan_expr(weak, current_return_ty),
+        IrExprKind::StreamSplitBy { stream, .. } => {
+            scan_expr(stream, current_return_ty)?;
+            Err(NotNativeReason::StreamLoweringNotImplemented)
+        }
+        IrExprKind::StreamMerge { groups, .. } => {
+            scan_expr(groups, current_return_ty)?;
+            Err(NotNativeReason::StreamLoweringNotImplemented)
+        }
+        IrExprKind::StreamOrderedBy { stream, .. } => {
+            scan_expr(stream, current_return_ty)?;
+            Err(NotNativeReason::StreamLoweringNotImplemented)
+        }
         IrExprKind::StreamResumeToken { stream } => {
             scan_expr(stream, current_return_ty)?;
             Err(NotNativeReason::StreamLoweringNotImplemented)

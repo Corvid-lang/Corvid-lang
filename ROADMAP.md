@@ -572,7 +572,7 @@ Streaming in Corvid isn't just async iteration — streams are **first-class par
 - [x] **Mid-stream model escalation** (paired with 20h). On confidence drop, the runtime opens a continuation stream on a stronger model, feeding the partial output as continuation context. Consumer sees seamless tokens with a `StreamUpgradeEvent` in the trace. No framework has this.
 - [x] **Progressive structured types: `Stream<Partial<T>>`.** Compiler-known `Partial<T>` where each field is `Complete(V)` or `Streaming`. Users access fields the moment they're complete without waiting for the full response. Type-level progressive structure.
 - [x] **Resumption tokens.** `resume_token(stream)` captures delivered elements plus prompt context in `ResumeToken<T>`. `resume(prompt, token)` reopens the prompt through the interpreter with accumulated delivered context; provider-native continuation state is represented for future adapters.
-- [ ] **Declarative fan-out / fan-in.** `stream.split_by(key)` partitions a stream into sub-streams by key extractor. `merge(streams) ordered_by(policy)` combines with ordering guarantees (FIFO, sorted, fair round-robin). Compile-time type + effect checking.
+- [x] **Declarative fan-out / fan-in.** `stream.split_by("field")` partitions a struct stream into typed sub-streams by field value. `merge(groups).ordered_by("fifo" | "sorted" | "fair_round_robin")` combines with explicit ordering guarantees. Compile-time type + field checking.
 - [ ] **Backpressure propagation.** A slow consumer pulls from a producer at its consumption rate. The effect system captures this: `backpressure: pulls_from(producer_rate)`. Cross-stream coordination when streams share a trace ID.
 
 #### Slice 20g — Bypass tests + effect-system specification (~4 weeks)
