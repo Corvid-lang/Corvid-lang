@@ -378,7 +378,9 @@ enum Command {
         /// bot-consumable), `in-toto` (SLSA/Sigstore-compatible
         /// Statement v1 with the Corvid receipt as predicate),
         /// `gitlab` (CodeClimate-compatible codequality JSON for
-        /// GitLab MR widget via `artifacts.reports.codequality`).
+        /// GitLab MR widget via `artifacts.reports.codequality`),
+        /// `watch` (local reactive mode comparing base SHA against
+        /// the working-tree file and rerendering on change).
         /// `auto` (default) detects the environment: GitHub
         /// Actions → `github-check`, GitLab CI → `gitlab`, piped
         /// stdout → `json`, tty → `markdown`. Non-zero exit on

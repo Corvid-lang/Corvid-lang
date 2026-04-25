@@ -2805,6 +2805,28 @@ stack receipts. Stack mode passes history-derived `PolicyDelta` facts into
 `apply_policy`, and custom `--policy` files can override the verdict without
 mutating the archived stack history.
 
+## 21-inv-H-watch-mode
+
+`--format=watch` turns trace-diff into a local development loop:
+
+```text
+corvid trace-diff <base-sha> <base-sha> agent.cor --format=watch
+```
+
+The first SHA is the stable base. The watched file on disk becomes the live head
+on each render. That keeps the mental model simple: CI emits durable receipts;
+watch mode gives immediate safety feedback while editing.
+
+The important design constraint is that watch mode reuses the real receipt
+pipeline instead of inventing a looser preview path. It still compiles both
+versions, computes the same semantic delta, applies the same Corvid policy
+engine, and shows the policy verdict. Custom `--policy` files therefore behave
+the same locally and in automation.
+
+Watch mode intentionally does not sign receipts or compose stacked reviews.
+Those are artifact concerns. The local loop is optimized for speed and clarity;
+durable governance still belongs to JSON / in-toto / signed receipt modes.
+
 ## Contributing / feedback
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). The rules of the road are: design chat before code, per-scope commits at every boundary, dev-log entry for every session, no shortcuts. The `learnings.md` file you're reading gets updated when each user-visible feature ships.

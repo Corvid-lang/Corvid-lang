@@ -4927,3 +4927,20 @@ or introduced another safety regression.
 or tighten the aggregate gate, but it cannot erase the archived history or
 normal-form deltas from the receipt. The stack receipt schema version moved to
 2 because the verdict is now part of the public artifact shape.
+
+## 2026-04-25 - 21-inv-H-5 watch mode
+
+Closed the reactive local trace-diff loop. `corvid trace-diff ... --format=watch`
+now renders once against the current working-tree file, then rerenders whenever
+that file changes. The base side remains the supplied commit SHA; the head side
+is deliberately the live file on disk, which gives developers a fast safety
+receipt while they edit.
+
+Watch mode uses the same compiler diff, narrative selector, counterfactual
+impact path, and Corvid policy engine as the normal receipt path. Custom
+`--policy=<path>` files work, so local feedback and CI governance evaluate the
+same policy program.
+
+The mode rejects stack review and signing. That is intentional: watch is an
+interactive terminal feedback loop, not a durable audit artifact. Durable
+artifacts still use `--format=json`, `--format=in-toto`, or `--sign`.

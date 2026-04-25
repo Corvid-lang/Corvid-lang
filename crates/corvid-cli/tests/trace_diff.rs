@@ -9,7 +9,9 @@
 //! integration path.
 
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Child, Command, Output, Stdio};
+use std::thread;
+use std::time::{Duration, Instant};
 
 fn run_git(repo: &Path, args: &[&str]) -> String {
     let output = Command::new("git")
@@ -130,6 +132,25 @@ fn trace_diff_end_to_end_reports_added_agent() {
         stdout.contains("Added") && stdout.contains("summarize"),
         "added-agent section missing. stdout:\n{stdout}"
     );
+}
+
+fn wait_with_timeout(mut child: Child, timeout: Duration) -> Output {
+    let deadline = Instant::now() + timeout;
+    loop {
+        if child.try_wait().expect("poll child").is_some() {
+            return child.wait_with_output().expect("collect child output");
+        }
+        if Instant::now() >= deadline {
+            let _ = child.kill();
+            let output = child.wait_with_output().expect("collect killed child output");
+            panic!(
+                "child timed out. stdout=\n{}\nstderr=\n{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+        thread::sleep(Duration::from_millis(50));
+    }
 }
 
 const ALLOW_ALL_POLICY: &str = r#"
@@ -267,6 +288,56 @@ fn trace_diff_custom_policy_receives_structured_delta_facts() {
     );
     let parsed: serde_json::Value = serde_json::from_str(&stdout).unwrap();
     assert_eq!(parsed["verdict"]["ok"], false);
+}
+
+#[test]
+fn trace_diff_watch_rerenders_when_working_tree_changes() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = tmp.path();
+    run_git(repo, &["init", "--quiet", "-b", "main"]);
+
+    let src = repo.join("agent.cor");
+    write_file(&src, BASE_SOURCE);
+    run_git(repo, &["add", "agent.cor"]);
+    run_git(repo, &["commit", "--quiet", "-m", "base"]);
+    let base_sha = run_git(repo, &["rev-parse", "HEAD"]);
+
+    let child = Command::new(corvid_bin())
+        .args([
+            "trace-diff",
+            &base_sha,
+            &base_sha,
+            "agent.cor",
+            "--narrative=off",
+            "--format=watch",
+        ])
+        .current_dir(repo)
+        .env("CORVID_TRACE_DIFF_WATCH_LIMIT", "2")
+        .env("CORVID_TRACE_DIFF_WATCH_POLL_MS", "100")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn corvid trace-diff --format=watch");
+
+    thread::sleep(Duration::from_millis(350));
+    write_file(&src, HEAD_SOURCE_WITH_ADDED_AGENT);
+
+    let output = wait_with_timeout(child, Duration::from_secs(10));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "watch mode should exit cleanly under test render limit. stdout=\n{stdout}\nstderr=\n{stderr}"
+    );
+    assert_eq!(
+        stdout.matches("corvid trace-diff watch render #").count(),
+        2,
+        "watch should render initial state and changed state. stdout=\n{stdout}"
+    );
+    assert!(
+        stdout.contains("Added") && stdout.contains("summarize"),
+        "second watch render should show working-tree addition. stdout=\n{stdout}"
+    );
 }
 
 /// `--narrative=off` must produce a byte-deterministic receipt

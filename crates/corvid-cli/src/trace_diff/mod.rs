@@ -57,6 +57,7 @@ mod stack_attribution;
 mod stack_driver;
 mod stacked;
 pub(crate) mod signing;
+mod watch;
 
 use std::path::Path;
 use std::process::Command;
@@ -154,6 +155,9 @@ pub struct TraceDiffArgs<'a> {
 /// were found — the receipt itself carries the verdict. Downstream
 /// CI policy-gating slices can non-zero-exit based on receipt content.
 pub fn run_trace_diff(args: TraceDiffArgs<'_>) -> Result<u8> {
+    if matches!(args.format, OutputFormat::Watch) {
+        return watch::run_watch(&args);
+    }
     if let Some(spec) = args.stack_spec.clone() {
         return stack_driver::run_trace_diff_stack(&spec, &args);
     }
@@ -208,6 +212,7 @@ pub fn run_trace_diff(args: TraceDiffArgs<'_>) -> Result<u8> {
             &source_path_str,
         ),
         OutputFormat::Gitlab => gitlab::render_gitlab(&receipt, &verdict),
+        OutputFormat::Watch => unreachable!("watch mode returns before single-shot rendering"),
     };
 
     // Signing path: when a key source is available, wrap the

@@ -64,13 +64,17 @@ pub enum OutputFormat {
     /// in the receipt becomes one issue; severity follows the
     /// policy (regressions = `major`, informational = `info`).
     Gitlab,
+    /// Local reactive terminal mode. Compares base SHA against
+    /// the current working-tree file and rerenders when it changes.
+    Watch,
 }
 
 impl OutputFormat {
-    /// Parse `--format=<mode>` accepting the five user-facing
+    /// Parse `--format=<mode>` accepting the user-facing
     /// spellings: `auto` (environment-driven), `markdown`,
-    /// `github-check`, `json`, `in-toto`. Rejects other values
-    /// with a typed error so the caller can surface guidance.
+    /// `github-check`, `json`, `in-toto`, `gitlab`, `watch`.
+    /// Rejects other values with a typed error so the caller can
+    /// surface guidance.
     pub fn parse(s: &str) -> Result<Self, String> {
         match s {
             "auto" => Ok(Self::detect_from_environment()),
@@ -79,8 +83,9 @@ impl OutputFormat {
             "json" => Ok(Self::Json),
             "in-toto" => Ok(Self::InToto),
             "gitlab" => Ok(Self::Gitlab),
+            "watch" => Ok(Self::Watch),
             other => Err(format!(
-                "unknown format `{other}`; expected `auto`, `markdown`, `github-check`, `json`, `in-toto`, or `gitlab`"
+                "unknown format `{other}`; expected `auto`, `markdown`, `github-check`, `json`, `in-toto`, `gitlab`, or `watch`"
             )),
         }
     }
@@ -455,6 +460,7 @@ mod tests {
         assert_eq!(OutputFormat::parse("json").unwrap(), OutputFormat::Json);
         assert_eq!(OutputFormat::parse("in-toto").unwrap(), OutputFormat::InToto);
         assert_eq!(OutputFormat::parse("gitlab").unwrap(), OutputFormat::Gitlab);
+        assert_eq!(OutputFormat::parse("watch").unwrap(), OutputFormat::Watch);
         assert!(OutputFormat::parse("wat").is_err());
     }
 
