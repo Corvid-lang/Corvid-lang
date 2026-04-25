@@ -5498,3 +5498,15 @@ The generator consumes the same fenced Corvid blocks as `corvid test spec`, so
 site examples are not separate marketing snippets. Every emitted example card
 contains the exact compiler-verified source plus a "Run in REPL" button that
 copies the snippet for local REPL execution.
+
+## 2026-04-25 - Effect-system bounty process
+
+Closed the parked Phase 20g public bounty follow-up. Added
+`docs/effects-spec/bounty.md` and `.github/ISSUE_TEMPLATE/effect-bypass.yml` so
+effect-system bypass reports have a public submission path before launch.
+
+The process defines accepted bypasses, false positives, spec ambiguities,
+disclosure expectations, reporter credit format, and the required permanent
+regression artifacts. The issue template forces a complete `.cor` reproducer,
+command, actual result, expected result, invariant category, and safety
+checklist.

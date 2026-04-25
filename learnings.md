@@ -3341,6 +3341,18 @@ JavaScript, with snippets copied into the local REPL. A future browser
 playground can replace the copy button, but it should not replace the verified
 spec extraction pipeline.
 
+## effect-system bounty process
+
+A bounty without a regression rule is just feedback. Corvid's process requires
+accepted bypasses to become permanent `.cor` fixtures, with reporter credit,
+the invariant they broke, and a test path that fails before the fix and passes
+after it.
+
+The issue template matters because most bypass reports are incomplete on the
+first try. Requiring a full program, command, actual result, expected result,
+and invariant category makes reports actionable and keeps the corpus from
+turning into prose-only bug reports.
+
 ## Contributing / feedback
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). The rules of the road are: design chat before code, per-scope commits at every boundary, dev-log entry for every session, no shortcuts. The `learnings.md` file you're reading gets updated when each user-visible feature ships.

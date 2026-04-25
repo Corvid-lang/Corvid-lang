@@ -49,9 +49,9 @@ Five independent techniques run on every build. A regression in any one fails CI
 
 **Why it matters.** Soundness claims compound: the more attacks a verifier has survived, the more credible future claims become. Bounty-fed corpora have delivered for SAT solvers, cryptographic libraries, and fuzzers; no prior effect system has one.
 
-**Implementation status.** [`docs/effects-spec/counterexamples/composition/`](./counterexamples/composition/) holds the seed corpus (five composition attacks). Each fixture names the bypass, bug exposed, fix/proof mechanism, and seed-corpus credit. The meta-verification harness (see §5) uses this corpus today. The public bounty *process* — issue template, credit mechanism, disclosure protocol — is parked as follow-up; it needs social infrastructure that belongs post-launch.
+**Implementation status.** [`docs/effects-spec/counterexamples/composition/`](./counterexamples/composition/) holds the seed corpus (five composition attacks). Each fixture names the bypass, bug exposed, fix/proof mechanism, and seed-corpus credit. The meta-verification harness (see §5) uses this corpus today. The public process is live in [`bounty.md`](./bounty.md), with a structured GitHub issue template at [`.github/ISSUE_TEMPLATE/effect-bypass.yml`](../../.github/ISSUE_TEMPLATE/effect-bypass.yml).
 
-**What's live today.** The corpus directory, the meta-verification harness consuming it, the CI gate that keeps the harness passing.
+**What's live today.** The corpus directory, the meta-verification harness consuming it, the CI gate that keeps the harness passing, the submission guidelines, disclosure rules, credit format, and issue template.
 
 ## 5. Self-verifying verification (meta-verification)
 
@@ -118,12 +118,12 @@ Any failure blocks the build. Shipped in commit `4d4944b`.
 |---|---|---|
 | Cross-tier differential verification (§1) | ✅ live, corpus + shrinker + blame | ✅ |
 | Preserved-semantics fuzzing (§3) | 🔨 slice A shipped, slices B/C in progress | partial |
-| Adversarial LLM generation (§2) | 📋 scaffold + stub, full impl parked | — |
-| Bounty-fed regression corpus (§4) | ✅ seed corpus, meta-gate live; bounty process parked | ✅ |
+| Adversarial LLM generation (§2) | ✅ deterministic taxonomy + compiler classifier live; provider sampling can feed same harness later | partial |
+| Bounty-fed regression corpus (§4) | ✅ seed corpus, meta-gate, bounty page, and issue template live | ✅ |
 | Self-verifying verification (§5) | ✅ live | ✅ |
 | Algebraic-law proptest (§6) | ✅ live, 10k cases per law | ✅ |
 | Spec↔compiler sync (§7) | ✅ live | ✅ |
 
-Six of seven techniques are production-grade and gated in CI. The seventh (adversarial generation) has design + stub and ships post-20g when prompt-engineering infrastructure lands.
+Six of seven techniques are production-grade and gated in CI. Adversarial generation now has a deterministic seed harness and classifier; live provider-backed sampling remains a follow-up because it depends on API budget and nondeterministic model output.
 
 No other language's effect system has any of these. Corvid is the first.

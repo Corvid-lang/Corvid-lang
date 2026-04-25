@@ -1,0 +1,93 @@
+name: Effect-system bypass report
+description: Report a Corvid compiler safety bypass or false positive.
+title: "[effect-bypass]: "
+labels:
+  - compiler-safety
+  - effect-system
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this for programs that compile when the spec says they should fail,
+        or fail when the spec says they should compile. Do not include secrets,
+        provider keys, customer data, or private production traces.
+  - type: dropdown
+    id: report_kind
+    attributes:
+      label: Report kind
+      options:
+        - Compiler accepted an unsafe program
+        - Compiler rejected a safe program
+        - Spec ambiguity
+        - Cross-tier disagreement
+    validations:
+      required: true
+  - type: dropdown
+    id: invariant
+    attributes:
+      label: Safety invariant
+      options:
+        - approve-before-dangerous
+        - budget
+        - trust
+        - reversible
+        - confidence
+        - grounded provenance
+        - trace/replay
+        - custom dimension
+        - cross-tier differential verification
+        - other
+    validations:
+      required: true
+  - type: textarea
+    id: program
+    attributes:
+      label: Minimal Corvid program
+      description: Paste a complete .cor program that reproduces the behavior.
+      render: corvid
+    validations:
+      required: true
+  - type: input
+    id: command
+    attributes:
+      label: Command
+      placeholder: cargo run -q -p corvid-cli -- check repro.cor
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual result
+      description: Include compiler output or the relevant trace/verification report.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected result
+      description: Explain why the compiler should accept or reject the program.
+    validations:
+      required: true
+  - type: textarea
+    id: spec_links
+    attributes:
+      label: Relevant spec links
+      description: Link to docs/effects-spec sections if you know the rule.
+      placeholder: docs/effects-spec/04-builtin-dimensions.md#cost
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: OS, commit SHA, target tier, corvid.toml if relevant.
+      placeholder: Windows 11, commit abc123, checker/interpreter/native/replay
+  - type: checkboxes
+    id: safety
+    attributes:
+      label: Safety checklist
+      options:
+        - label: I reduced this to a minimal synthetic reproduction.
+          required: true
+        - label: I removed secrets, provider keys, customer data, and private traces.
+          required: true
+        - label: I understand accepted bypasses become permanent public regression fixtures with reporter credit.
+          required: true

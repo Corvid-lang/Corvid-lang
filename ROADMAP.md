@@ -676,7 +676,7 @@ Every accepted bypass becomes a permanent entry in the counterexample museum. Fu
 - [x] `docs/effects-spec/counterexamples/` directory with five composition-attack fixtures (commit `f4e802e`)
 - [x] Each counterexample has: the bypass program, the bug it exposed, the fix/proof mechanism, and contributor credit — seed corpus fixtures name the Corvid core team until the public bounty credit process exists.
 - [x] CI rejects any change that causes a historical counterexample to compile again — meta-verifier (commit `e368ebb`) runs on every push via `.github/workflows/ci.yml`
-- [ ] Public bounty page with submission guidelines and disclosed fixes — **parked as post-20g follow-up** — social infrastructure (disclosure policy, credit mechanism, GitHub issue template) better sequenced after public launch
+- [x] Public bounty page with submission guidelines and disclosed fixes — `docs/effects-spec/bounty.md` plus `.github/ISSUE_TEMPLATE/effect-bypass.yml` define disclosure, triage, credit, and permanent-regression rules
 
 ##### 6. Custom dimension authoring
 
@@ -760,10 +760,10 @@ Alongside the ten inventions, the core written specification (20–40 pages, emb
 | Invention | Status |
 |---|---|
 | #1 Cross-tier differential verify | ✅ shipped, CI gated, native-tier trace emission complete |
-| #2 Adversarial LLM generation | ◐ CLI stub + harness design; full generator parked (needs prompt-engineering framework + API budget — better sequenced post-launch) |
-| #3 Literate executable spec | ◐ Markdown spec + `corvid test spec` CI gate shipped; "Run in REPL" static-site renderer parked (Markdown is readable on GitHub today) |
+| #2 Adversarial LLM generation | ✅ deterministic taxonomy + compiler classifier + optional issue filing shipped; live provider sampling can feed the same harness later |
+| #3 Literate executable spec | ✅ Markdown spec + `corvid test spec` CI gate + `corvid test spec --site-out` static renderer shipped |
 | #4 Preserved-semantics fuzzing | ◐ Scaffold + slice A (α-conv, let-extract/inline) shipped; slices B + C on Dev B's track |
-| #5 Bounty corpus | ◐ Seed corpus + meta-verifier + CI gate shipped; public bounty page + credit mechanism parked (social infra — sequenced after public launch) |
+| #5 Bounty corpus | ✅ seed corpus + meta-verifier + CI gate + public bounty page + issue template shipped |
 | #6 Custom dimensions via corvid.toml | ✅ shipped, CI gated |
 | #7 Archetype law-check harness | ✅ shipped, CI gated (caught a real Union associativity bug during development) |
 | #8 Spec↔compiler sync | ✅ shipped, CI gated |
@@ -772,9 +772,7 @@ Alongside the ten inventions, the core written specification (20–40 pages, emb
 | #10 Self-verifying meta-test | ✅ shipped, CI gated |
 
 **Parked post-20g follow-ups** (none block downstream phases):
-- Full adversarial-generation pipeline (needs prompt engineering + budget).
-- Static-site spec renderer with "Run in REPL" buttons.
-- Public bounty surface (issue template, disclosure protocol, credit mechanism).
+- Live provider-backed adversarial sampling (deterministic seed harness is shipped; provider sampling needs API budget).
 - Registry host at `effect.corvid-lang.org` + signed dimension artifacts.
 - Cross-reference named links from spec rules → specific proptest property files.
 

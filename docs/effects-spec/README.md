@@ -24,6 +24,7 @@ This directory is the normative specification of Corvid's dimensional effect sys
 | [13 — Typed model substrate: what shipped](./13-model-substrate-shipped.md) | Phase 20h compiler track — `model` decls, `requires:` capability, `route:`, `progressive:`, `rollout`, jurisdiction/compliance/privacy dims. Real compiling examples, implementation references, shipping trail. |
 | [14 — Replay, prod-as-test-suite, and behavior-diff: what shipped](./14-replay.md) | Phase 21 thesis — every run writes a trace; prod traces are the regression suite; PRs carry a signed behavior receipt. `@replayable` / `@deterministic`, the `replay` language primitive, `corvid test --from-traces` + `--promote`, `corvid trace-diff`, shadow daemon, determinism axes. |
 | [counterexamples/](./counterexamples/) | Every historical bypass attempt as a permanent regression test |
+| [bounty.md](./bounty.md) | Public submission process for effect-system bypasses and false positives |
 
 ## How to read this spec
 
@@ -74,4 +75,4 @@ Details of each in [12-verification.md](./12-verification.md).
 
 ## Contributing
 
-If you find a program that should be rejected but compiles clean — or accepted but is rejected incorrectly — open an issue with the program. Accepted bypasses are credited to the reporter and added to [counterexamples/](./counterexamples/) as a permanent regression test.
+If you find a program that should be rejected but compiles clean — or accepted but is rejected incorrectly — use the [effect-system bounty process](./bounty.md). Accepted bypasses are credited to the reporter and added to [counterexamples/](./counterexamples/) as a permanent regression test.
