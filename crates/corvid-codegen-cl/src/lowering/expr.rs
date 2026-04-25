@@ -550,6 +550,24 @@ pub(super) fn lower_binop_strict(
     }
 }
 
+pub(super) fn lower_binop_wrapping(
+    builder: &mut FunctionBuilder,
+    op: BinaryOp,
+    l: ClValue,
+    r: ClValue,
+    span: Span,
+) -> Result<ClValue, CodegenError> {
+    match op {
+        BinaryOp::Add => Ok(builder.ins().iadd(l, r)),
+        BinaryOp::Sub => Ok(builder.ins().isub(l, r)),
+        BinaryOp::Mul => Ok(builder.ins().imul(l, r)),
+        _ => Err(CodegenError::cranelift(
+            format!("unsupported wrapping binary op `{op:?}`"),
+            span,
+        )),
+    }
+}
+
 /// Which arithmetic family this binop operates in after operand
 /// promotion. `Bool == Bool` lands in `Int` because `I8` is integer
 /// from Cranelift's perspective.
@@ -693,6 +711,24 @@ pub(super) fn lower_unop(
         }
         UnaryOp::Neg => Err(CodegenError::cranelift(
             format!("unary `-` applied to value of width {vt:?} ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â typecheck should have caught this"),
+            span,
+        )),
+    }
+}
+
+pub(super) fn lower_unop_wrapping(
+    builder: &mut FunctionBuilder,
+    op: UnaryOp,
+    v: ClValue,
+    span: Span,
+) -> Result<ClValue, CodegenError> {
+    match op {
+        UnaryOp::Neg => {
+            let zero = builder.ins().iconst(I64, 0);
+            Ok(builder.ins().isub(zero, v))
+        }
+        UnaryOp::Not => Err(CodegenError::cranelift(
+            "`not` has no wrapping arithmetic form",
             span,
         )),
     }
@@ -930,9 +966,18 @@ pub(super) fn lower_expr(
             }
             Ok(result)
         }
+        IrExprKind::WrappingBinOp { op, left, right } => {
+            let l = lower_expr(builder, left, current_return_ty, env, scope_stack, func_ids_by_def, module, runtime)?;
+            let r = lower_expr(builder, right, current_return_ty, env, scope_stack, func_ids_by_def, module, runtime)?;
+            lower_binop_wrapping(builder, *op, l, r, expr.span)
+        }
         IrExprKind::UnOp { op, operand } => {
             let v = lower_expr(builder, operand, current_return_ty, env, scope_stack, func_ids_by_def, module, runtime)?;
             lower_unop(builder, *op, v, expr.span, module, runtime)
+        }
+        IrExprKind::WrappingUnOp { op, operand } => {
+            let v = lower_expr(builder, operand, current_return_ty, env, scope_stack, func_ids_by_def, module, runtime)?;
+            lower_unop_wrapping(builder, *op, v, expr.span)
         }
         IrExprKind::UnwrapGrounded { value } => {
             lower_expr(

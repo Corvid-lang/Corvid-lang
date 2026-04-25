@@ -211,9 +211,17 @@ fn expr_mentions_local(expr: &IrExpr, local_id: LocalId) -> bool {
         | IrExprKind::OptionSome { inner: target }
         | IrExprKind::TryPropagate { inner: target }
         | IrExprKind::TryRetry { body: target, .. }
-        | IrExprKind::UnOp { operand: target, .. } => expr_mentions_local(target, local_id),
+        | IrExprKind::UnOp { operand: target, .. }
+        | IrExprKind::WrappingUnOp { operand: target, .. } => {
+            expr_mentions_local(target, local_id)
+        }
         IrExprKind::Index { target, index }
         | IrExprKind::BinOp {
+            left: target,
+            right: index,
+            ..
+        }
+        | IrExprKind::WrappingBinOp {
             left: target,
             right: index,
             ..
@@ -246,8 +254,10 @@ fn stmt_is_effect_barrier(stmt: &IrStmt) -> bool {
 fn expr_is_effect_free(expr: &IrExpr) -> bool {
     match &expr.kind {
         IrExprKind::Literal(_) | IrExprKind::Local { .. } | IrExprKind::Decl { .. } => true,
-        IrExprKind::UnOp { operand, .. } => expr_is_effect_free(operand),
-        IrExprKind::BinOp { left, right, .. } => {
+        IrExprKind::UnOp { operand, .. }
+        | IrExprKind::WrappingUnOp { operand, .. } => expr_is_effect_free(operand),
+        IrExprKind::BinOp { left, right, .. }
+        | IrExprKind::WrappingBinOp { left, right, .. } => {
             expr_is_effect_free(left) && expr_is_effect_free(right)
         }
         IrExprKind::Call { .. }

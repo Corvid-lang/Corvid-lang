@@ -507,7 +507,19 @@ impl<'ir> Interpreter<'ir> {
                     Ok(v) => v,
                     Err(v) => return Ok(ExprFlow::Propagate(v)),
                 };
-                Ok(ExprFlow::Value(eval_binop(*op, l, r, expr.span)?))
+                Ok(ExprFlow::Value(eval_binop(*op, l, r, expr.span, false)?))
+            }
+
+            IrExprKind::WrappingBinOp { op, left, right } => {
+                let l = match self.eval_expr(left).await?.into_value() {
+                    Ok(v) => v,
+                    Err(v) => return Ok(ExprFlow::Propagate(v)),
+                };
+                let r = match self.eval_expr(right).await?.into_value() {
+                    Ok(v) => v,
+                    Err(v) => return Ok(ExprFlow::Propagate(v)),
+                };
+                Ok(ExprFlow::Value(eval_binop(*op, l, r, expr.span, true)?))
             }
 
             IrExprKind::UnOp { op, operand } => {
@@ -515,7 +527,15 @@ impl<'ir> Interpreter<'ir> {
                     Ok(v) => v,
                     Err(v) => return Ok(ExprFlow::Propagate(v)),
                 };
-                Ok(ExprFlow::Value(eval_unop(*op, v, expr.span)?))
+                Ok(ExprFlow::Value(eval_unop(*op, v, expr.span, false)?))
+            }
+
+            IrExprKind::WrappingUnOp { op, operand } => {
+                let v = match self.eval_expr(operand).await?.into_value() {
+                    Ok(v) => v,
+                    Err(v) => return Ok(ExprFlow::Propagate(v)),
+                };
+                Ok(ExprFlow::Value(eval_unop(*op, v, expr.span, true)?))
             }
 
             IrExprKind::List { items } => {
@@ -915,4 +935,3 @@ fn maybe_ground_tool_result(tool: &IrTool, callee_name: &str, value: Value) -> V
     let chain = crate::ProvenanceChain::with_retrieval(callee_name, corvid_runtime::now_ms());
     Value::Grounded(crate::value::GroundedValue::new(value, chain))
 }
-

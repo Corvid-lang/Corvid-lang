@@ -9,10 +9,10 @@ use crate::imports::{
 };
 use crate::types::*;
 use corvid_ast::{
-    AgentDecl, Block, Decl, Effect, EvalAssert, EvalDecl, Expr, ExtendMethodKind, ExternAbi,
-    File, Ident,
+    AgentAttribute, AgentDecl, BinaryOp, Block, Decl, Effect, EvalAssert, EvalDecl, Expr,
+    ExtendMethodKind, ExternAbi, File, Ident,
     ImportDecl, ImportSource, Literal, Param, PromptDecl, ReplayArm, ReplayPattern, Span, Stmt,
-    ToolArgPattern, ToolDecl, TypeDecl, TypeRef,
+    ToolArgPattern, ToolDecl, TypeDecl, TypeRef, UnaryOp,
 };
 use corvid_resolve::{
     resolver::MethodEntry, Binding, BuiltIn, DeclKind, DefId, LocalId, ModuleResolution, Resolved,
@@ -86,6 +86,7 @@ struct Lowerer<'a> {
     current_module: Option<&'a ResolvedModule>,
     imported_def_ids: &'a HashMap<ImportedDefKey, DefId>,
     imported_calls: &'a HashMap<Span, ImportedCallTarget>,
+    wrapping_arithmetic: bool,
 }
 
 impl<'a> Lowerer<'a> {
@@ -107,6 +108,7 @@ impl<'a> Lowerer<'a> {
             current_module,
             imported_def_ids,
             imported_calls: &checked.imported_calls,
+            wrapping_arithmetic: false,
         }
     }
 
@@ -517,7 +519,7 @@ impl<'a> Lowerer<'a> {
         out
     }
 
-    fn lower_agent(&self, a: &AgentDecl) -> IrAgent {
+    fn lower_agent(&mut self, a: &AgentDecl) -> IrAgent {
         let id = self
             .symbols
             .lookup_def(&a.name.name)
@@ -525,7 +527,11 @@ impl<'a> Lowerer<'a> {
         self.lower_agent_with_id(a, id)
     }
 
-    fn lower_agent_with_id(&self, a: &AgentDecl, id: DefId) -> IrAgent {
+    fn lower_agent_with_id(&mut self, a: &AgentDecl, id: DefId) -> IrAgent {
+        let previous_wrapping = self.wrapping_arithmetic;
+        self.wrapping_arithmetic = AgentAttribute::is_wrapping(&a.attributes);
+        let body = self.lower_block(&a.body);
+        self.wrapping_arithmetic = previous_wrapping;
         IrAgent {
             id: self.remap_def_id(id),
             name: a.name.name.clone(),
@@ -535,7 +541,8 @@ impl<'a> Lowerer<'a> {
             params: self.lower_params(&a.params),
             return_ty: self.type_ref_to_type(&a.return_ty),
             cost_budget: agent_cost_budget(a),
-            body: self.lower_block(&a.body),
+            wrapping_arithmetic: AgentAttribute::is_wrapping(&a.attributes),
+            body,
             span: a.span,
             // Populated by corvid-codegen-cl's ownership pass. `None`
             // at lowering time means "every parameter is
@@ -683,15 +690,23 @@ impl<'a> Lowerer<'a> {
                 target: Box::new(self.lower_expr(target)),
                 index: Box::new(self.lower_expr(index)),
             },
-            Expr::BinOp { op, left, right, .. } => IrExprKind::BinOp {
-                op: *op,
-                left: Box::new(self.lower_expr(left)),
-                right: Box::new(self.lower_expr(right)),
-            },
-            Expr::UnOp { op, operand, .. } => IrExprKind::UnOp {
-                op: *op,
-                operand: Box::new(self.lower_expr(operand)),
-            },
+            Expr::BinOp { op, left, right, span } => {
+                let left = Box::new(self.lower_expr(left));
+                let right = Box::new(self.lower_expr(right));
+                if self.wrapping_arithmetic && is_wrapping_int_binop(*op, self.types.get(span)) {
+                    IrExprKind::WrappingBinOp { op: *op, left, right }
+                } else {
+                    IrExprKind::BinOp { op: *op, left, right }
+                }
+            }
+            Expr::UnOp { op, operand, span } => {
+                let operand = Box::new(self.lower_expr(operand));
+                if self.wrapping_arithmetic && is_wrapping_int_unop(*op, self.types.get(span)) {
+                    IrExprKind::WrappingUnOp { op: *op, operand }
+                } else {
+                    IrExprKind::UnOp { op: *op, operand }
+                }
+            }
             Expr::List { items, .. } => IrExprKind::List {
                 items: items.iter().map(|i| self.lower_expr(i)).collect(),
             },
@@ -1119,6 +1134,14 @@ fn agent_cost_budget(agent: &AgentDecl) -> Option<f64> {
         .filter(|constraint| canonical_dimension_name(&constraint.dimension.name) == "cost")
         .filter_map(numeric_constraint_value)
         .reduce(f64::min)
+}
+
+fn is_wrapping_int_binop(op: BinaryOp, ty: Option<&Type>) -> bool {
+    matches!(op, BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul) && matches!(ty, Some(Type::Int))
+}
+
+fn is_wrapping_int_unop(op: UnaryOp, ty: Option<&Type>) -> bool {
+    matches!(op, UnaryOp::Neg) && matches!(ty, Some(Type::Int))
 }
 
 /// Retrieve a tool's declared effect by its `DefId`.

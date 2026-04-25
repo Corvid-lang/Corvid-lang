@@ -206,10 +206,12 @@ impl<'a> Parser<'a> {
 
     /// Parse:
     ///
-    ///     adversarial:
-    ///         propose: <model>
-    ///         challenge: <model>
-    ///         adjudicate: <model>
+    /// ```text
+    /// adversarial:
+    ///     propose: <model>
+    ///     challenge: <model>
+    ///     adjudicate: <model>
+    /// ```
     ///
     /// Every stage is required. Caller has already positioned at
     /// the `adversarial` keyword.

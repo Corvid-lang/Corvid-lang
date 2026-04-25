@@ -50,10 +50,12 @@ fn expr_uses_runtime(expr: &IrExpr) -> bool {
         IrExprKind::Index { target, index } => {
             expr_uses_runtime(target) || expr_uses_runtime(index)
         }
-        IrExprKind::BinOp { left, right, .. } => {
+        IrExprKind::BinOp { left, right, .. }
+        | IrExprKind::WrappingBinOp { left, right, .. } => {
             expr_uses_runtime(left) || expr_uses_runtime(right)
         }
-        IrExprKind::UnOp { operand, .. } => expr_uses_runtime(operand),
+        IrExprKind::UnOp { operand, .. }
+        | IrExprKind::WrappingUnOp { operand, .. } => expr_uses_runtime(operand),
         IrExprKind::List { items } => items.iter().any(expr_uses_runtime),
         // Result/Option IR variants recurse into sub-expressions. The
         // wrappers themselves don't use the async runtime, but a

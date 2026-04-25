@@ -147,9 +147,9 @@ impl<'a> Parser<'a> {
     /// checker doesn't need to scan `constraints` for pretend-
     /// dimensions named "replayable".
     ///
-    /// Attribute names are a fixed catalog: `replayable` today;
-    /// `deterministic` arrives in Phase 21 slice F. Anything not
-    /// in the catalog is treated as an effect constraint.
+    /// Attribute names are a fixed catalog (`replayable`,
+    /// `deterministic`, `wrapping`). Anything not in the catalog
+    /// is treated as an effect constraint.
     pub(super) fn parse_agent_annotations(
         &mut self,
     ) -> Result<(Vec<AgentAttribute>, Vec<EffectConstraint>), ParseError> {
@@ -214,10 +214,12 @@ impl<'a> Parser<'a> {
         let attribute_kind: fn(Span) -> AgentAttribute = match name {
             "replayable" => |span| AgentAttribute::Replayable { span },
             "deterministic" => |span| AgentAttribute::Deterministic { span },
+            "wrapping" => |span| AgentAttribute::Wrapping { span },
             _ => return Ok(None),
         };
 
-        // Tolerate `@replayable` and `@replayable()` as synonyms;
+        // Tolerate `@name` and `@name()` as synonyms for marker
+        // attributes;
         // anything else after the name at the statement level
         // belongs to a following constraint or keyword.
         if matches!(self.peek(), TokKind::LParen) {

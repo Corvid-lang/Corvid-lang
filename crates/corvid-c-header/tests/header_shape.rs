@@ -31,6 +31,7 @@ fn scalar_ir() -> IrFile {
                 ],
                 return_ty: Type::Bool,
                 cost_budget: None,
+                wrapping_arithmetic: false,
                 body: corvid_ir::IrBlock {
                     stmts: vec![],
                     span: Span::new(0, 0),
@@ -50,6 +51,7 @@ fn scalar_ir() -> IrFile {
                 }],
                 return_ty: Type::String,
                 cost_budget: None,
+                wrapping_arithmetic: false,
                 body: corvid_ir::IrBlock {
                     stmts: vec![],
                     span: Span::new(0, 0),
@@ -64,6 +66,7 @@ fn scalar_ir() -> IrFile {
                 params: vec![],
                 return_ty: Type::Nothing,
                 cost_budget: None,
+                wrapping_arithmetic: false,
                 body: corvid_ir::IrBlock {
                     stmts: vec![],
                     span: Span::new(0, 0),
@@ -83,6 +86,7 @@ fn scalar_ir() -> IrFile {
                 }],
                 return_ty: Type::Grounded(Box::new(Type::String)),
                 cost_budget: None,
+                wrapping_arithmetic: false,
                 body: corvid_ir::IrBlock {
                     stmts: vec![],
                     span: Span::new(0, 0),

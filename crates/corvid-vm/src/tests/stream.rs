@@ -200,6 +200,7 @@ async fn stream_budget_termination_fires_before_over_budget_yield() {
             }],
             return_ty: Type::Stream(Box::new(Type::String)),
             cost_budget: Some(0.50),
+            wrapping_arithmetic: false,
             body: IrBlock {
                 stmts: vec![IrStmt::For {
                     var_local: loop_local,

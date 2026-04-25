@@ -209,6 +209,18 @@ agent calc() -> Int:
     }
 
     #[test]
+    fn emits_wrapping_integer_arithmetic() {
+        let src = "\
+@wrapping
+agent calc(x: Int) -> Int:
+    return x + 9223372036854775807
+";
+        let py = src_to_py(src);
+        assert!(py.contains("def __corvid_wrap_i64(value):"));
+        assert!(py.contains("return __corvid_wrap_i64(x + 9223372036854775807)"));
+    }
+
+    #[test]
     fn emits_full_refund_bot() {
         let src = r#"
 import python "anthropic" as anthropic

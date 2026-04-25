@@ -209,6 +209,7 @@ pub struct IrAgent {
     pub params: Vec<IrParam>,
     pub return_ty: Type,
     pub cost_budget: Option<f64>,
+    pub wrapping_arithmetic: bool,
     pub body: IrBlock,
     pub span: Span,
     /// Per-parameter ownership at the callee ABI.
@@ -419,7 +420,22 @@ pub enum IrExprKind {
         right: Box<IrExpr>,
     },
 
+    /// Integer arithmetic under an enclosing `@wrapping` agent.
+    /// Defaults remain checked; this node makes the opt-out explicit
+    /// for every runtime/codegen tier.
+    WrappingBinOp {
+        op: BinaryOp,
+        left: Box<IrExpr>,
+        right: Box<IrExpr>,
+    },
+
     UnOp {
+        op: UnaryOp,
+        operand: Box<IrExpr>,
+    },
+
+    /// Integer unary operations under an enclosing `@wrapping` agent.
+    WrappingUnOp {
         op: UnaryOp,
         operand: Box<IrExpr>,
     },

@@ -163,11 +163,17 @@ fn collect_prompt_pins_in_expr(
         | IrExprKind::OptionSome { inner: target }
         | IrExprKind::TryPropagate { inner: target }
         | IrExprKind::TryRetry { body: target, .. }
-        | IrExprKind::UnOp { operand: target, .. } => {
+        | IrExprKind::UnOp { operand: target, .. }
+        | IrExprKind::WrappingUnOp { operand: target, .. } => {
             collect_prompt_pins_in_expr(target, borrowed_reads, out)
         }
         IrExprKind::Index { target, index }
         | IrExprKind::BinOp {
+            left: target,
+            right: index,
+            ..
+        }
+        | IrExprKind::WrappingBinOp {
             left: target,
             right: index,
             ..
@@ -257,6 +263,7 @@ mod tests {
             }],
             return_ty: Type::Int,
             cost_budget: None,
+            wrapping_arithmetic: false,
             body: IrBlock { stmts: body, span: span() },
             span: span(),
             borrow_sig: None,

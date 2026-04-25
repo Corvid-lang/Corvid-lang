@@ -332,11 +332,13 @@ fn scan_expr(expr: &IrExpr, max_id: &mut u32) {
             scan_expr(target, max_id);
             scan_expr(index, max_id);
         }
-        IrExprKind::BinOp { left, right, .. } => {
+        IrExprKind::BinOp { left, right, .. }
+        | IrExprKind::WrappingBinOp { left, right, .. } => {
             scan_expr(left, max_id);
             scan_expr(right, max_id);
         }
-        IrExprKind::UnOp { operand, .. } => scan_expr(operand, max_id),
+        IrExprKind::UnOp { operand, .. }
+        | IrExprKind::WrappingUnOp { operand, .. } => scan_expr(operand, max_id),
         IrExprKind::Call { args, .. } => {
             for a in args { scan_expr(a, max_id); }
         }
@@ -381,10 +383,12 @@ fn expr_reads_local(expr: &IrExpr, target: LocalId) -> bool {
         IrExprKind::Index { target: t, index } => {
             expr_reads_local(t, target) || expr_reads_local(index, target)
         }
-        IrExprKind::BinOp { left, right, .. } => {
+        IrExprKind::BinOp { left, right, .. }
+        | IrExprKind::WrappingBinOp { left, right, .. } => {
             expr_reads_local(left, target) || expr_reads_local(right, target)
         }
-        IrExprKind::UnOp { operand, .. } => expr_reads_local(operand, target),
+        IrExprKind::UnOp { operand, .. }
+        | IrExprKind::WrappingUnOp { operand, .. } => expr_reads_local(operand, target),
         IrExprKind::Call { args, .. } => args.iter().any(|a| expr_reads_local(a, target)),
         IrExprKind::List { items } => items.iter().any(|it| expr_reads_local(it, target)),
         IrExprKind::WeakNew { strong } => expr_reads_local(strong, target),
@@ -654,6 +658,7 @@ mod tests {
                 .collect(),
             return_ty: ret,
             cost_budget: None,
+            wrapping_arithmetic: false,
             body: IrBlock { stmts: body, span: span() },
             span: span(),
             borrow_sig: None,

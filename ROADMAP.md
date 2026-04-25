@@ -539,7 +539,7 @@ Cost is a dimension in the effect system, not a standalone annotation. `@budget(
 - [x] Each tool/prompt carries `cost: $X.XX` in its effect declaration.
 - [x] Compile-time worst-case cost analysis sums the cost dimension over control-flow paths using the composition algebra, including multi-dimensional cost/tokens/latency estimates and `:cost` tree rendering.
 - [x] Stable diagnostic codes for budget diagnostics. The checker emits budget `EffectConstraintViolation` errors and `UnboundedCostAnalysis` warnings; the pretty renderer maps them to `E0250` / `W0251`.
-- [ ] Also ships the `@wrapping` annotation for opt-out overflow checks deferred from Phase 12.
+- [x] Also ships the `@wrapping` annotation for opt-out overflow checks deferred from Phase 12.
 
 #### Slice 20e — Confidence dimension (~2 weeks)
 

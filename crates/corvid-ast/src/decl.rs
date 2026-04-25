@@ -468,7 +468,7 @@ impl ExternAbi {
 /// `EffectConstraint` because attributes do not name dimensions
 /// or carry numeric bounds — they are pure declarative markers
 /// that the type checker consumes to enforce guarantees like
-/// replayability or pure determinism.
+/// replayability, pure determinism, or explicit wrapping arithmetic.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum AgentAttribute {
@@ -486,6 +486,10 @@ pub enum AgentAttribute {
     /// `@deterministic`. The agent is a pure function over
     /// its parameters. See Phase 21 slice `21-inv-F`.
     Deterministic { span: Span },
+    /// `@wrapping` — opt out of integer overflow traps inside this
+    /// agent. Integer add/sub/mul/neg wrap as i64 two's-complement;
+    /// division and modulo by zero still trap.
+    Wrapping { span: Span },
 }
 
 impl AgentAttribute {
@@ -494,6 +498,7 @@ impl AgentAttribute {
         match self {
             Self::Replayable { span } => *span,
             Self::Deterministic { span } => *span,
+            Self::Wrapping { span } => *span,
         }
     }
 
@@ -502,6 +507,7 @@ impl AgentAttribute {
         match self {
             Self::Replayable { .. } => "replayable",
             Self::Deterministic { .. } => "deterministic",
+            Self::Wrapping { .. } => "wrapping",
         }
     }
 
@@ -517,6 +523,10 @@ impl AgentAttribute {
 
     pub fn is_deterministic(attrs: &[AgentAttribute]) -> bool {
         attrs.iter().any(|a| matches!(a, Self::Deterministic { .. }))
+    }
+
+    pub fn is_wrapping(attrs: &[AgentAttribute]) -> bool {
+        attrs.iter().any(|a| matches!(a, Self::Wrapping { .. }))
     }
 }
 

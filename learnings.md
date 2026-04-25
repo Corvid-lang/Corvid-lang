@@ -2480,6 +2480,28 @@ keeps legacy `Grounded<T>`-to-`T` assignability for compatibility today, but
 new code should prefer the method so provenance erasure is visible in source,
 IR, reviews, and future policy tooling.
 
+## 20d-wrapping-arithmetic
+
+Overflow policy is part of the language contract, not a backend accident.
+Default Corvid integer arithmetic should trap because silent wraparound is the
+wrong default for safety-oriented agent code. The opt-out is explicit:
+
+```corvid
+@wrapping
+agent mix(x: Int) -> Int:
+    return x * 6364136223846793005 + 1
+```
+
+The useful implementation pattern is to preserve intent in IR. Lowering marked
+agents into `WrappingBinOp` / `WrappingUnOp` nodes makes interpreter, Python,
+native codegen, ABI walkers, and optimization passes handle the policy
+deliberately instead of rediscovering it from agent metadata later.
+
+`@wrapping` is deliberately narrow. It applies to integer add/sub/mul and unary
+negation; division and modulo by zero still trap. That keeps hash-mixing and
+low-level arithmetic possible without turning the annotation into a blanket
+"unsafe arithmetic" mode.
+
 ## Contributing / feedback
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). The rules of the road are: design chat before code, per-scope commits at every boundary, dev-log entry for every session, no shortcuts. The `learnings.md` file you're reading gets updated when each user-visible feature ships.

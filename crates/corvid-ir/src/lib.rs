@@ -427,6 +427,33 @@ agent load(id: String) -> String:
         assert_eq!(ret.ty, corvid_types::Type::String);
     }
 
+    #[test]
+    fn wrapping_agent_lowers_integer_arithmetic_to_explicit_nodes() {
+        let src = "\
+@wrapping
+agent hash_step(n: Int) -> Int:
+    return -(n * 1099511628211)
+";
+        let ir = lower_src(src);
+        let agent = ir.agents.iter().find(|a| a.name == "hash_step").unwrap();
+        assert!(agent.wrapping_arithmetic);
+        let ret = agent
+            .body
+            .stmts
+            .iter()
+            .find_map(|stmt| match stmt {
+                IrStmt::Return { value: Some(value), .. } => Some(value),
+                _ => None,
+            })
+            .expect("return value");
+        match &ret.kind {
+            IrExprKind::WrappingUnOp { operand, .. } => {
+                assert!(matches!(operand.kind, IrExprKind::WrappingBinOp { .. }));
+            }
+            other => panic!("expected WrappingUnOp, got {other:?}"),
+        }
+    }
+
     // ============================================================
     // Replay IR lowering (21-inv-E-4)
     // ============================================================
@@ -492,9 +519,11 @@ agent load(id: String) -> String:
             | IrExprKind::OptionSome { inner: target }
             | IrExprKind::TryPropagate { inner: target }
             | IrExprKind::TryRetry { body: target, .. }
-            | IrExprKind::UnOp { operand: target, .. } => find_replay_in_expr(target),
+            | IrExprKind::UnOp { operand: target, .. }
+            | IrExprKind::WrappingUnOp { operand: target, .. } => find_replay_in_expr(target),
             IrExprKind::Index { target, index }
-            | IrExprKind::BinOp { left: target, right: index, .. } => {
+            | IrExprKind::BinOp { left: target, right: index, .. }
+            | IrExprKind::WrappingBinOp { left: target, right: index, .. } => {
                 find_replay_in_expr(target).or_else(|| find_replay_in_expr(index))
             }
             IrExprKind::List { items } => items.iter().find_map(find_replay_in_expr),
@@ -656,7 +685,11 @@ agent run(x: String) -> Order:
             IrExprKind::BinOp { left, right, .. } => {
                 expr_mentions_local_id(left, target) || expr_mentions_local_id(right, target)
             }
-            IrExprKind::UnOp { operand, .. } => expr_mentions_local_id(operand, target),
+            IrExprKind::WrappingBinOp { left, right, .. } => {
+                expr_mentions_local_id(left, target) || expr_mentions_local_id(right, target)
+            }
+            IrExprKind::UnOp { operand, .. }
+            | IrExprKind::WrappingUnOp { operand, .. } => expr_mentions_local_id(operand, target),
             IrExprKind::List { items } => items.iter().any(|i| expr_mentions_local_id(i, target)),
             IrExprKind::WeakNew { strong }
             | IrExprKind::WeakUpgrade { weak: strong } => expr_mentions_local_id(strong, target),

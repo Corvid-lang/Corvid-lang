@@ -209,8 +209,13 @@ fn count_local_mentions_expr(expr: &IrExpr, local_id: LocalId) -> usize {
         | IrExprKind::OptionSome { inner: target }
         | IrExprKind::TryPropagate { inner: target }
         | IrExprKind::TryRetry { body: target, .. }
-        | IrExprKind::UnOp { operand: target, .. } => count_local_mentions_expr(target, local_id),
-        IrExprKind::Index { target, index } | IrExprKind::BinOp { left: target, right: index, .. } => {
+        | IrExprKind::UnOp { operand: target, .. }
+        | IrExprKind::WrappingUnOp { operand: target, .. } => {
+            count_local_mentions_expr(target, local_id)
+        }
+        IrExprKind::Index { target, index }
+        | IrExprKind::BinOp { left: target, right: index, .. }
+        | IrExprKind::WrappingBinOp { left: target, right: index, .. } => {
             count_local_mentions_expr(target, local_id)
                 + count_local_mentions_expr(index, local_id)
         }
@@ -248,11 +253,16 @@ fn expr_observes_refcount(expr: &IrExpr, local_id: LocalId) -> bool {
         | IrExprKind::OptionSome { inner: target }
         | IrExprKind::TryPropagate { inner: target }
         | IrExprKind::TryRetry { body: target, .. }
-        | IrExprKind::UnOp { operand: target, .. } => expr_observes_refcount(target, local_id),
+        | IrExprKind::UnOp { operand: target, .. }
+        | IrExprKind::WrappingUnOp { operand: target, .. } => {
+            expr_observes_refcount(target, local_id)
+        }
         IrExprKind::WeakNew { strong } => {
             expr_mentions_local(strong, local_id) || expr_observes_refcount(strong, local_id)
         }
-        IrExprKind::Index { target, index } | IrExprKind::BinOp { left: target, right: index, .. } => {
+        IrExprKind::Index { target, index }
+        | IrExprKind::BinOp { left: target, right: index, .. }
+        | IrExprKind::WrappingBinOp { left: target, right: index, .. } => {
             expr_observes_refcount(target, local_id) || expr_observes_refcount(index, local_id)
         }
         IrExprKind::List { items } => items.iter().any(|item| expr_observes_refcount(item, local_id)),
@@ -323,6 +333,7 @@ mod tests {
             }],
             return_ty: Type::Int,
             cost_budget: None,
+            wrapping_arithmetic: false,
             body: IrBlock { stmts: body, span: span() },
             span: span(),
             borrow_sig: None,

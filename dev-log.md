@@ -4681,3 +4681,21 @@ Shipped `Grounded<T>.unwrap_discarding_sources()` as an explicit source-level pr
 Lowering emits a dedicated `IrExprKind::UnwrapGrounded` node instead of leaving the operation as an unresolved method call. The interpreter unwraps `Value::Grounded` to its inner value, while native codegen lowers the wrapper erasure as the inner ABI value because `Grounded<T>` is represented as `T` on the native hot path. ABI and optimization walkers recurse through the node explicitly.
 
 One native ownership detail was fixed with the feature: `Grounded<T>` is now treated as refcounted whenever `T` is refcounted. That keeps string-backed grounded values under the same retain/release contract as their payloads.
+
+## 2026-04-25 - Phase 20d wrapping arithmetic annotation
+
+Closed the deferred `@wrapping` overflow opt-out. The parser now treats
+`@wrapping`/`@wrapping()` as marker agent attributes, the AST keeps it distinct
+from effect constraints, and IR lowering emits explicit wrapping arithmetic
+nodes only for integer add/sub/mul and unary negation inside marked agents.
+Default arithmetic remains trap-on-overflow.
+
+The interpreter, Python emitter, and native Cranelift tier now share the same
+behavioral split: normal integer arithmetic traps on overflow, while
+`@wrapping` arithmetic uses i64 two's-complement wraparound. Division and modulo
+by zero still trap; the annotation does not weaken that safety boundary.
+
+Validation covered parser recognition, IR node selection, VM overflow behavior,
+Python helper emission, and native parity for addition overflow and unary
+negation. `cargo fmt --check` remains blocked locally because rustfmt is not
+installed for the active stable toolchain.

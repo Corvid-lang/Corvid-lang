@@ -1226,6 +1226,26 @@ agent pure(q: String) -> String:
     }
 
     #[test]
+    fn parses_agent_with_wrapping_attribute() {
+        let src = "\
+@wrapping
+agent hash_step(n: Int) -> Int:
+    return n * 1099511628211
+";
+        let file = parse_file_src(src);
+        let agent = match &file.decls[0] {
+            Decl::Agent(a) => a,
+            other => panic!("expected Agent, got {other:?}"),
+        };
+        assert_eq!(agent.attributes.len(), 1);
+        assert!(matches!(
+            agent.attributes[0],
+            corvid_ast::AgentAttribute::Wrapping { .. }
+        ));
+        assert!(agent.constraints.is_empty());
+    }
+
+    #[test]
     fn parses_agent_with_both_attributes() {
         let src = "\
 @replayable

@@ -92,6 +92,30 @@ fn overflow_on_add_is_parity_error() {
 }
 
 #[test]
+fn wrapping_attribute_wraps_add_overflow() {
+    assert_parity(
+        "\
+@wrapping
+agent calc() -> Int:
+    return 9223372036854775807 + 1
+",
+        i64::MIN,
+    );
+}
+
+#[test]
+fn wrapping_attribute_wraps_unary_negation() {
+    assert_parity(
+        "\
+@wrapping
+agent calc() -> Int:
+    return -(-9223372036854775807 - 1)
+",
+        i64::MIN,
+    );
+}
+
+#[test]
 fn division_by_zero_is_parity_error() {
     assert_parity_overflow(
         "agent oops() -> Int:\n    return 10 / (3 - 3)\n",

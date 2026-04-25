@@ -615,14 +615,16 @@ fn walk_expr(expr: &IrExpr, consumed: bool, out: &mut Vec<LocalRead>) {
             walk_expr(target, false, out);
             walk_expr(index, true, out);
         }
-        IrExprKind::BinOp { left, right, .. } => {
+        IrExprKind::BinOp { left, right, .. }
+        | IrExprKind::WrappingBinOp { left, right, .. } => {
             // String concat consumes both operands (releases at
             // codegen line 3336–3340). Other BinOps on primitives
             // have no refcounted operands to track.
             walk_expr(left, true, out);
             walk_expr(right, true, out);
         }
-        IrExprKind::UnOp { operand, .. } => {
+        IrExprKind::UnOp { operand, .. }
+        | IrExprKind::WrappingUnOp { operand, .. } => {
             walk_expr(operand, true, out);
         }
         IrExprKind::Call { kind, args, .. } => {
@@ -986,6 +988,7 @@ mod tests {
                 .collect(),
             return_ty: ret,
             cost_budget: None,
+            wrapping_arithmetic: false,
             body: IrBlock { stmts: body, span: span() },
             span: span(),
             borrow_sig: None,

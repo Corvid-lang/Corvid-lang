@@ -221,11 +221,13 @@ fn scan_expr(expr: &IrExpr, current_return_ty: &Type) -> Result<(), NotNativeRea
             scan_expr(target, current_return_ty)?;
             scan_expr(index, current_return_ty)
         }
-        IrExprKind::BinOp { left, right, .. } => {
+        IrExprKind::BinOp { left, right, .. }
+        | IrExprKind::WrappingBinOp { left, right, .. } => {
             scan_expr(left, current_return_ty)?;
             scan_expr(right, current_return_ty)
         }
-        IrExprKind::UnOp { operand, .. } => scan_expr(operand, current_return_ty),
+        IrExprKind::UnOp { operand, .. }
+        | IrExprKind::WrappingUnOp { operand, .. } => scan_expr(operand, current_return_ty),
         IrExprKind::List { items } => {
             for it in items {
                 scan_expr(it, current_return_ty)?;
@@ -326,6 +328,7 @@ mod tests {
                 params: vec![],
                 return_ty: Type::Stream(Box::new(Type::String)),
                 cost_budget: None,
+                wrapping_arithmetic: false,
                 body: IrBlock {
                     stmts: vec![],
                     span,

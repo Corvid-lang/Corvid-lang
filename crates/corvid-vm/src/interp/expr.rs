@@ -15,10 +15,16 @@ pub(super) fn eval_literal(lit: &IrLiteral) -> Value {
     }
 }
 
-pub(super) fn eval_binop(op: BinaryOp, l: Value, r: Value, span: Span) -> Result<Value, InterpError> {
+pub(super) fn eval_binop(
+    op: BinaryOp,
+    l: Value,
+    r: Value,
+    span: Span,
+    wrapping: bool,
+) -> Result<Value, InterpError> {
     use BinaryOp::*;
     match op {
-        Add | Sub | Mul | Div | Mod => eval_arithmetic(op, l, r, span),
+        Add | Sub | Mul | Div | Mod => eval_arithmetic(op, l, r, span, wrapping),
         Eq => Ok(Value::Bool(l == r)),
         NotEq => Ok(Value::Bool(l != r)),
         Lt | LtEq | Gt | GtEq => eval_ordering(op, l, r, span),
@@ -26,9 +32,15 @@ pub(super) fn eval_binop(op: BinaryOp, l: Value, r: Value, span: Span) -> Result
     }
 }
 
-fn eval_arithmetic(op: BinaryOp, l: Value, r: Value, span: Span) -> Result<Value, InterpError> {
+fn eval_arithmetic(
+    op: BinaryOp,
+    l: Value,
+    r: Value,
+    span: Span,
+    wrapping: bool,
+) -> Result<Value, InterpError> {
     match (l, r) {
-        (Value::Int(a), Value::Int(b)) => Ok(Value::Int(int_arith(op, a, b, span)?)),
+        (Value::Int(a), Value::Int(b)) => Ok(Value::Int(int_arith(op, a, b, span, wrapping)?)),
         (Value::Float(a), Value::Float(b)) => Ok(Value::Float(float_arith(op, a, b, span)?)),
         (Value::Int(a), Value::Float(b)) => {
             Ok(Value::Float(float_arith(op, a as f64, b, span)?))
@@ -52,11 +64,20 @@ fn eval_arithmetic(op: BinaryOp, l: Value, r: Value, span: Span) -> Result<Value
     }
 }
 
-fn int_arith(op: BinaryOp, a: i64, b: i64, span: Span) -> Result<i64, InterpError> {
+fn int_arith(
+    op: BinaryOp,
+    a: i64,
+    b: i64,
+    span: Span,
+    wrapping: bool,
+) -> Result<i64, InterpError> {
     use BinaryOp::*;
     match op {
+        Add if wrapping => Ok(a.wrapping_add(b)),
         Add => a.checked_add(b).ok_or_else(|| overflow(span)),
+        Sub if wrapping => Ok(a.wrapping_sub(b)),
         Sub => a.checked_sub(b).ok_or_else(|| overflow(span)),
+        Mul if wrapping => Ok(a.wrapping_mul(b)),
         Mul => a.checked_mul(b).ok_or_else(|| overflow(span)),
         Div => {
             if b == 0 {
@@ -138,13 +159,16 @@ fn eval_ordering(op: BinaryOp, l: Value, r: Value, span: Span) -> Result<Value, 
     }
 }
 
-pub(super) fn eval_unop(op: UnaryOp, v: Value, span: Span) -> Result<Value, InterpError> {
+pub(super) fn eval_unop(
+    op: UnaryOp,
+    v: Value,
+    span: Span,
+    wrapping: bool,
+) -> Result<Value, InterpError> {
     match op {
         UnaryOp::Neg => match v {
-            Value::Int(n) => n
-                .checked_neg()
-                .map(Value::Int)
-                .ok_or_else(|| overflow(span)),
+            Value::Int(n) if wrapping => Ok(Value::Int(n.wrapping_neg())),
+            Value::Int(n) => n.checked_neg().map(Value::Int).ok_or_else(|| overflow(span)),
             Value::Float(f) => Ok(Value::Float(-f)),
             other => Err(InterpError::new(
                 InterpErrorKind::TypeMismatch {

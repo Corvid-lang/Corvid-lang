@@ -56,6 +56,12 @@ impl Codegen {
             "from corvid_runtime import tool_call, approve_gate, llm_call, register_tools, register_prompts",
         );
         self.out.blank_line();
+        self.out.writeln("def __corvid_wrap_i64(value):");
+        self.out.indent();
+        self.out.writeln("value &= (1 << 64) - 1");
+        self.out.writeln("return value - (1 << 64) if value >= (1 << 63) else value");
+        self.out.dedent();
+        self.out.blank_line();
     }
 
     fn emit_user_imports(&mut self, imports: &[IrImport]) {
@@ -285,9 +291,22 @@ impl Codegen {
                 self.emit_expr(right);
                 self.out.write(")");
             }
+            IrExprKind::WrappingBinOp { op, left, right } => {
+                self.out.write("__corvid_wrap_i64(");
+                self.emit_expr(left);
+                self.out.write(&format!(" {} ", binary_op_str(*op)));
+                self.emit_expr(right);
+                self.out.write(")");
+            }
             IrExprKind::UnOp { op, operand } => {
                 self.out.write(unary_op_str(*op));
                 self.emit_expr(operand);
+            }
+            IrExprKind::WrappingUnOp { op, operand } => {
+                self.out.write("__corvid_wrap_i64(");
+                self.out.write(unary_op_str(*op));
+                self.emit_expr(operand);
+                self.out.write(")");
             }
             IrExprKind::UnwrapGrounded { value } => {
                 self.emit_expr(value);

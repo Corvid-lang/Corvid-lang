@@ -53,6 +53,32 @@ async fn integer_overflow_is_a_runtime_error() {
 }
 
 #[tokio::test]
+async fn wrapping_attribute_wraps_integer_overflow() {
+    let src = "\
+@wrapping
+agent hash_step() -> Int:
+    return 9223372036854775807 + 1
+";
+    let ir = ir_of(src);
+    let rt = empty_runtime();
+    let v = run_agent(&ir, "hash_step", vec![], &rt).await.expect("run");
+    assert_eq!(v, Value::Int(i64::MIN));
+}
+
+#[tokio::test]
+async fn wrapping_attribute_wraps_unary_negation() {
+    let src = "\
+@wrapping
+agent neg_min() -> Int:
+    return -(-9223372036854775807 - 1)
+";
+    let ir = ir_of(src);
+    let rt = empty_runtime();
+    let v = run_agent(&ir, "neg_min", vec![], &rt).await.expect("run");
+    assert_eq!(v, Value::Int(i64::MIN));
+}
+
+#[tokio::test]
 async fn int_float_mixing_widens_to_float() {
     let ir = ir_of("agent mix() -> Float:\n    return 3 + 0.5\n");
     let rt = empty_runtime();
@@ -148,6 +174,7 @@ async fn if_non_bool_condition_is_defensive_runtime_error() {
         params: vec![],
         return_ty: Type::Int,
         cost_budget: None,
+        wrapping_arithmetic: false,
         body: IrBlock {
             stmts: vec![if_stmt, fallback],
             span: sp,

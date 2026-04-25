@@ -2142,11 +2142,13 @@ fn visit_expr_types(
     visit(&e.ty, seen, order);
     match &e.kind {
         IrExprKind::Literal(_) | IrExprKind::Local { .. } | IrExprKind::Decl { .. } => {}
-        IrExprKind::BinOp { left, right, .. } => {
+        IrExprKind::BinOp { left, right, .. }
+        | IrExprKind::WrappingBinOp { left, right, .. } => {
             visit_expr_types(left, seen, order, visit);
             visit_expr_types(right, seen, order, visit);
         }
-        IrExprKind::UnOp { operand, .. } => {
+        IrExprKind::UnOp { operand, .. }
+        | IrExprKind::WrappingUnOp { operand, .. } => {
             visit_expr_types(operand, seen, order, visit);
         }
         IrExprKind::Call { args, .. } => {

@@ -449,13 +449,16 @@ fn collect_called_agents_from_expr(
         IrExprKind::FieldAccess { target, .. }
         | IrExprKind::UnwrapGrounded { value: target }
         | IrExprKind::UnOp { operand: target, .. }
+        | IrExprKind::WrappingUnOp { operand: target, .. }
         | IrExprKind::WeakNew { strong: target }
         | IrExprKind::WeakUpgrade { weak: target }
         | IrExprKind::ResultOk { inner: target }
         | IrExprKind::ResultErr { inner: target }
         | IrExprKind::OptionSome { inner: target }
         | IrExprKind::TryPropagate { inner: target } => collect_called_agents_from_expr(target, stack),
-        IrExprKind::Index { target, index } | IrExprKind::BinOp { left: target, right: index, .. } => {
+        IrExprKind::Index { target, index }
+        | IrExprKind::BinOp { left: target, right: index, .. }
+        | IrExprKind::WrappingBinOp { left: target, right: index, .. } => {
             collect_called_agents_from_expr(target, stack);
             collect_called_agents_from_expr(index, stack);
         }
@@ -539,13 +542,16 @@ fn walk_ir_expr_for_prompt(
         IrExprKind::FieldAccess { target, .. }
         | IrExprKind::UnwrapGrounded { value: target }
         | IrExprKind::UnOp { operand: target, .. }
+        | IrExprKind::WrappingUnOp { operand: target, .. }
         | IrExprKind::WeakNew { strong: target }
         | IrExprKind::WeakUpgrade { weak: target }
         | IrExprKind::ResultOk { inner: target }
         | IrExprKind::ResultErr { inner: target }
         | IrExprKind::OptionSome { inner: target }
         | IrExprKind::TryPropagate { inner: target } => walk_ir_expr_for_prompt(target, prompt_map, found),
-        IrExprKind::Index { target, index } | IrExprKind::BinOp { left: target, right: index, .. } => {
+        IrExprKind::Index { target, index }
+        | IrExprKind::BinOp { left: target, right: index, .. }
+        | IrExprKind::WrappingBinOp { left: target, right: index, .. } => {
             walk_ir_expr_for_prompt(target, prompt_map, found);
             walk_ir_expr_for_prompt(index, prompt_map, found);
         }

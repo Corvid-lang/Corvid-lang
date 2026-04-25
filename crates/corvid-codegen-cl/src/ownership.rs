@@ -288,11 +288,15 @@ fn expr_consumes_target(
     match &expr.kind {
         IrExprKind::Local { local_id, .. } => *local_id == target,
         IrExprKind::Literal(_) | IrExprKind::Decl { .. } => false,
-        IrExprKind::BinOp { left, right, .. } => {
+        IrExprKind::BinOp { left, right, .. }
+        | IrExprKind::WrappingBinOp { left, right, .. } => {
             expr_consumes_target(left, target, sigs)
                 || expr_consumes_target(right, target, sigs)
         }
-        IrExprKind::UnOp { operand, .. } => expr_consumes_target(operand, target, sigs),
+        IrExprKind::UnOp { operand, .. }
+        | IrExprKind::WrappingUnOp { operand, .. } => {
+            expr_consumes_target(operand, target, sigs)
+        }
         IrExprKind::FieldAccess { target: t, .. } => expr_consumes_target(t, target, sigs),
         IrExprKind::UnwrapGrounded { value } => expr_consumes_target(value, target, sigs),
         IrExprKind::Index { target: t, index } => {
@@ -359,10 +363,12 @@ fn expr_references(expr: &IrExpr, target: LocalId) -> bool {
     match &expr.kind {
         IrExprKind::Local { local_id, .. } => *local_id == target,
         IrExprKind::Literal(_) | IrExprKind::Decl { .. } => false,
-        IrExprKind::BinOp { left, right, .. } => {
+        IrExprKind::BinOp { left, right, .. }
+        | IrExprKind::WrappingBinOp { left, right, .. } => {
             expr_references(left, target) || expr_references(right, target)
         }
-        IrExprKind::UnOp { operand, .. } => expr_references(operand, target),
+        IrExprKind::UnOp { operand, .. }
+        | IrExprKind::WrappingUnOp { operand, .. } => expr_references(operand, target),
         IrExprKind::FieldAccess { target: t, .. } => expr_references(t, target),
         IrExprKind::UnwrapGrounded { value } => expr_references(value, target),
         IrExprKind::Index { target: t, index } => {
@@ -450,6 +456,7 @@ fn transform_agent(
         params: agent.params.clone(),
         return_ty: agent.return_ty.clone(),
         cost_budget: agent.cost_budget,
+        wrapping_arithmetic: agent.wrapping_arithmetic,
         body,
         span: agent.span,
         borrow_sig: Some(borrow_sig),
