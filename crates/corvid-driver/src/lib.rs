@@ -13,6 +13,7 @@ pub mod effect_diff;
 pub mod meta_verify;
 pub mod modules;
 mod import_integrity;
+mod package_lock;
 mod native_ability;
 mod native_cache;
 mod render;
@@ -342,7 +343,7 @@ fn has_corvid_imports(file: &File) -> bool {
             Decl::Import(import)
                 if matches!(
                     import.source,
-                    ImportSource::Corvid | ImportSource::RemoteCorvid
+                    ImportSource::Corvid | ImportSource::RemoteCorvid | ImportSource::PackageCorvid
                 )
         )
     })
@@ -436,6 +437,49 @@ fn module_load_error_diagnostics(error: ModuleLoadError) -> Vec<Diagnostic> {
                 importing_file.display()
             ),
             hint: Some(format!("remote `{url}` failed before verification: {message}")),
+        }],
+        ModuleLoadError::PackageLockMissing {
+            importing_file,
+            requested,
+        } => vec![Diagnostic {
+            span: top,
+            message: format!(
+                "package import `{requested}` from `{}` is not locked",
+                importing_file.display()
+            ),
+            hint: Some(
+                "add a `Corvid.lock` entry with uri, url, and sha256 before importing packages"
+                    .into(),
+            ),
+        }],
+        ModuleLoadError::PackageLockError {
+            importing_file,
+            requested,
+            message,
+        } => vec![Diagnostic {
+            span: top,
+            message: format!(
+                "failed to read package lock `{requested}` for `{}`",
+                importing_file.display()
+            ),
+            hint: Some(message),
+        }],
+        ModuleLoadError::PackageNotLocked {
+            importing_file,
+            requested,
+            lockfile,
+        } => vec![Diagnostic {
+            span: top,
+            message: format!(
+                "package import `{requested}` from `{}` is missing from the lockfile",
+                importing_file.display()
+            ),
+            hint: Some(format!(
+                "add `[[package]] uri = \"{requested}\"` to `{}` with a reviewed URL and sha256",
+                lockfile
+                    .map(|path| path.display().to_string())
+                    .unwrap_or_else(|| "Corvid.lock".to_string())
+            )),
         }],
         ModuleLoadError::Cycle { cycle } => {
             let path = cycle
@@ -1349,6 +1393,47 @@ agent main(r: p.RemoteReceipt) -> String:
         assert!(matches!(
             ir.imports[0].source,
             corvid_ir::IrImportSource::RemoteCorvid
+        ));
+    }
+
+    #[test]
+    fn compile_to_ir_at_path_lowers_package_import_from_lockfile() {
+        let tmp = tempfile::tempdir().unwrap();
+        let policy_src = "\
+public type PackageReceipt:
+    id: String
+";
+        let digest = crate::import_integrity::sha256_hex(policy_src.as_bytes());
+        let url = serve_once("/safety-baseline-v2.3.cor", policy_src);
+        std::fs::write(
+            tmp.path().join("Corvid.lock"),
+            format!(
+                "\
+[[package]]
+uri = \"corvid://@anthropic/safety-baseline/v2.3\"
+url = \"{url}\"
+sha256 = \"{digest}\"
+registry = \"https://registry.corvid.dev\"
+signature = \"unsigned:test-fixture\"
+"
+            ),
+        )
+        .unwrap();
+        let main_src = "\
+import \"corvid://@anthropic/safety-baseline/v2.3\" as safety
+
+agent main(r: safety.PackageReceipt) -> String:
+    return r.id
+";
+        let main_path = tmp.path().join("main.cor");
+        std::fs::write(&main_path, main_src).unwrap();
+
+        let ir = compile_to_ir_with_config_at_path(main_src, &main_path, None)
+            .expect("locked package import should compile after hash verification");
+        assert!(ir.types.iter().any(|ty| ty.name == "PackageReceipt"));
+        assert!(matches!(
+            ir.imports[0].source,
+            corvid_ir::IrImportSource::PackageCorvid
         ));
     }
 

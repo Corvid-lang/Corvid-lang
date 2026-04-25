@@ -3020,6 +3020,17 @@ verified, parsed, resolved, summarized, typechecked, and lowered through the
 same import machinery. The only special part is module identity: remote files
 use deterministic synthetic keys because they do not have filesystem paths.
 
+## lang-cor-imports-versioned-lock
+
+Package imports need two identities, not one. The source identity is semantic:
+`corvid://@scope/name/v1.2` is what a developer means. The execution identity is
+content-addressed: URL plus SHA-256 is what the compiler can safely trust.
+
+Corvid now keeps those identities separate. Source imports stay stable and
+human-readable, while `Corvid.lock` supplies the reviewed URL and digest. This
+prevents both shortcut failure modes: source files do not become a pile of raw
+hashes, and package imports do not float on mutable registry state.
+
 ## Contributing / feedback
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). The rules of the road are: design chat before code, per-scope commits at every boundary, dev-log entry for every session, no shortcuts. The `learnings.md` file you're reading gets updated when each user-visible feature ships.

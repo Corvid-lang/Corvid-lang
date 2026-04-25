@@ -76,7 +76,9 @@ impl Codegen {
                             .writeln(&format!("import {} as {}", imp.module, alias));
                     }
                 }
-                IrImportSource::Corvid | IrImportSource::RemoteCorvid => {
+                IrImportSource::Corvid
+                | IrImportSource::RemoteCorvid
+                | IrImportSource::PackageCorvid => {
                     let alias = imp.alias.as_deref().unwrap_or(&imp.module);
                     if let Some(hash) = &imp.content_hash {
                         self.out.writeln(&format!(

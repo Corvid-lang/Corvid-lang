@@ -233,6 +233,7 @@ impl<'a> Lowerer<'a> {
             ImportSource::Python => IrImportSource::Python,
             ImportSource::Corvid => IrImportSource::Corvid,
             ImportSource::RemoteCorvid => IrImportSource::RemoteCorvid,
+            ImportSource::PackageCorvid => IrImportSource::PackageCorvid,
         };
         IrImport {
             id,

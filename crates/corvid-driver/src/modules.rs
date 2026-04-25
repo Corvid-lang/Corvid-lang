@@ -37,6 +37,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use crate::import_integrity::sha256_hex;
+use crate::package_lock::{load_package_lock_for, PackageLockFile};
 use anyhow::{anyhow, Context, Result};
 use corvid_ast::{
     AgentAttribute, Decl, DimensionValue, Effect, EffectRef, File, ImportContentHash,
@@ -103,6 +104,24 @@ pub enum ModuleLoadError {
         url: String,
         message: String,
     },
+    /// A package import needs `Corvid.lock`, but no lockfile was found
+    /// by walking up from the root source file.
+    PackageLockMissing {
+        importing_file: PathBuf,
+        requested: String,
+    },
+    /// The lockfile existed but could not be read or parsed.
+    PackageLockError {
+        importing_file: PathBuf,
+        requested: String,
+        message: String,
+    },
+    /// A `corvid://...` import was not present in `Corvid.lock`.
+    PackageNotLocked {
+        importing_file: PathBuf,
+        requested: String,
+        lockfile: Option<PathBuf>,
+    },
     /// A cycle was detected in the import graph. `cycle` carries
     /// the sequence of paths from the root of the cycle back to
     /// itself (so `A -> B -> C -> A` is three entries).
@@ -121,6 +140,12 @@ pub struct NamedModuleSemanticSummary {
 enum ImportTarget {
     Local(PathBuf),
     Remote { url: String, key: PathBuf },
+}
+
+#[derive(Debug, Clone)]
+struct ResolvedImportTarget {
+    target: ImportTarget,
+    content_hash: Option<ImportContentHash>,
 }
 
 impl ImportTarget {
@@ -252,14 +277,26 @@ pub fn build_module_resolution(
     // parsed; we DFS into its children.
     let root_canonical = canonicalize_or_input(root_path);
     let root_target = ImportTarget::local(root_canonical.clone());
+    let package_lock = match load_package_lock_for(root_path) {
+        Ok(lock) => lock,
+        Err(message) => {
+            errors.push(ModuleLoadError::PackageLockError {
+                importing_file: root_target.key(),
+                requested: "Corvid.lock".to_string(),
+                message,
+            });
+            None
+        }
+    };
     in_progress.push(root_target.key());
     for import in corvid_imports(root_file) {
-        match resolve_child_target(&root_target, import) {
+        match resolve_child_target(&root_target, import, package_lock.as_ref()) {
             Ok(child) => dfs_collect(
                 &root_target,
-                child,
+                child.target,
                 &import.module,
-                import.content_hash.as_ref(),
+                child.content_hash.as_ref(),
+                package_lock.as_ref(),
                 &mut loaded,
                 &mut in_progress,
                 &mut errors,
@@ -305,9 +342,9 @@ pub fn build_module_resolution(
     let mut imported_uses = HashMap::new();
     let mut root_imports = HashMap::new();
     for import in corvid_imports(root_file) {
-        let loaded_path = resolve_child_target(&root_target, import)
+        let loaded_path = resolve_child_target(&root_target, import, package_lock.as_ref())
             .ok()
-            .map(|target| target.key())
+            .map(|resolved| resolved.target.key())
             .and_then(|import_path| {
                 loaded
                     .keys()
@@ -529,11 +566,15 @@ fn format_dimension_value(value: &DimensionValue) -> String {
 fn resolve_child_target(
     parent: &ImportTarget,
     import: &corvid_ast::ImportDecl,
-) -> Result<ImportTarget, ModuleLoadError> {
+    package_lock: Option<&PackageLockFile>,
+) -> Result<ResolvedImportTarget, ModuleLoadError> {
     match import.source {
         ImportSource::Corvid => match parent {
             ImportTarget::Local(path) => {
-                Ok(ImportTarget::local(resolve_import_path(path, &import.module)))
+                Ok(ResolvedImportTarget {
+                    target: ImportTarget::local(resolve_import_path(path, &import.module)),
+                    content_hash: import.content_hash.clone(),
+                })
             }
             ImportTarget::Remote { url, .. } => {
                 let resolved = resolve_remote_url(url, &import.module).map_err(|message| {
@@ -544,10 +585,39 @@ fn resolve_child_target(
                         message,
                     }
                 })?;
-                Ok(ImportTarget::remote(resolved))
+                Ok(ResolvedImportTarget {
+                    target: ImportTarget::remote(resolved),
+                    content_hash: import.content_hash.clone(),
+                })
             }
         },
-        ImportSource::RemoteCorvid => Ok(ImportTarget::remote(import.module.clone())),
+        ImportSource::RemoteCorvid => Ok(ResolvedImportTarget {
+            target: ImportTarget::remote(import.module.clone()),
+            content_hash: import.content_hash.clone(),
+        }),
+        ImportSource::PackageCorvid => {
+            let Some(lockfile) = package_lock else {
+                return Err(ModuleLoadError::PackageLockMissing {
+                    importing_file: parent.key(),
+                    requested: import.module.clone(),
+                });
+            };
+            let Some(entry) = lockfile.lock.find(&import.module) else {
+                return Err(ModuleLoadError::PackageNotLocked {
+                    importing_file: parent.key(),
+                    requested: import.module.clone(),
+                    lockfile: Some(lockfile.path.clone()),
+                });
+            };
+            Ok(ResolvedImportTarget {
+                target: ImportTarget::remote(entry.url.clone()),
+                content_hash: Some(ImportContentHash {
+                    algorithm: "sha256".to_string(),
+                    hex: entry.sha256.to_ascii_lowercase(),
+                    span: import.span,
+                }),
+            })
+        }
         ImportSource::Python => unreachable!("python imports are filtered before module loading"),
     }
 }
@@ -634,6 +704,7 @@ fn dfs_collect(
     target: ImportTarget,
     requested_module: &str,
     expected_hash: Option<&ImportContentHash>,
+    package_lock: Option<&PackageLockFile>,
     loaded: &mut HashMap<PathBuf, File>,
     in_progress: &mut Vec<PathBuf>,
     errors: &mut Vec<ModuleLoadError>,
@@ -715,12 +786,13 @@ fn dfs_collect(
     // Push, recurse into our own Corvid imports, pop.
     in_progress.push(canonical.clone());
     for import in corvid_imports(&file) {
-        match resolve_child_target(&target, import) {
+        match resolve_child_target(&target, import, package_lock) {
             Ok(child) => dfs_collect(
                 &target,
-                child,
+                child.target,
                 &import.module,
-                import.content_hash.as_ref(),
+                child.content_hash.as_ref(),
+                package_lock,
                 loaded,
                 in_progress,
                 errors,
@@ -740,7 +812,7 @@ fn corvid_imports(file: &File) -> impl Iterator<Item = &corvid_ast::ImportDecl> 
         Decl::Import(i)
             if matches!(
                 i.source,
-                ImportSource::Corvid | ImportSource::RemoteCorvid
+                ImportSource::Corvid | ImportSource::RemoteCorvid | ImportSource::PackageCorvid
             ) =>
         {
             Some(i)
@@ -1270,5 +1342,93 @@ agent check() -> Bool:
             "expected HashMismatch, got {errs:?}"
         );
         assert!(res.lookup("p").is_none());
+    }
+
+    #[test]
+    fn package_import_resolves_through_lockfile_and_hash_verifies() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root_dir = tmp.path();
+        let package_src = "\
+public type SafetyReceipt:
+    id: String
+";
+        let digest = sha256_hex(package_src.as_bytes());
+        let url = serve_once("/safety-baseline-v2.3.cor", package_src);
+        fs::write(
+            root_dir.join("Corvid.lock"),
+            format!(
+                "\
+[[package]]
+uri = \"corvid://@anthropic/safety-baseline/v2.3\"
+url = \"{url}\"
+sha256 = \"{digest}\"
+registry = \"https://registry.corvid.dev\"
+signature = \"unsigned:test-fixture\"
+"
+            ),
+        )
+        .unwrap();
+        let main_src = "\
+import \"corvid://@anthropic/safety-baseline/v2.3\" as safety
+
+agent check(r: safety.SafetyReceipt) -> String:
+    return r.id
+";
+        let main_path = write_cor(root_dir, "main", main_src);
+        let main_file = parse_src(main_src);
+
+        let (res, errs) = build_module_resolution(&main_file, &main_path);
+
+        assert!(errs.is_empty(), "unexpected package-load errors: {errs:?}");
+        let module = res.lookup("safety").expect("package alias");
+        assert!(module.exports.contains_key("SafetyReceipt"));
+    }
+
+    #[test]
+    fn package_import_without_lockfile_fails_closed() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root_dir = tmp.path();
+        let main_src = r#"import "corvid://@anthropic/safety-baseline/v2.3" as safety"#;
+        let main_path = write_cor(root_dir, "main", main_src);
+        let main_file = parse_src(main_src);
+
+        let (_res, errs) = build_module_resolution(&main_file, &main_path);
+
+        assert!(errs.iter().any(|err| matches!(
+            err,
+            ModuleLoadError::PackageLockMissing { requested, .. }
+                if requested == "corvid://@anthropic/safety-baseline/v2.3"
+        )));
+    }
+
+    #[test]
+    fn package_import_lock_hash_mismatch_fails_closed() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root_dir = tmp.path();
+        let package_src = "public type SafetyReceipt:\n    id: String\n";
+        let url = serve_once("/safety-baseline-v2.3.cor", package_src);
+        fs::write(
+            root_dir.join("Corvid.lock"),
+            format!(
+                "\
+[[package]]
+uri = \"corvid://@anthropic/safety-baseline/v2.3\"
+url = \"{url}\"
+sha256 = \"0000000000000000000000000000000000000000000000000000000000000000\"
+"
+            ),
+        )
+        .unwrap();
+        let main_src = r#"import "corvid://@anthropic/safety-baseline/v2.3" as safety"#;
+        let main_path = write_cor(root_dir, "main", main_src);
+        let main_file = parse_src(main_src);
+
+        let (_res, errs) = build_module_resolution(&main_file, &main_path);
+
+        assert!(errs.iter().any(|err| matches!(
+            err,
+            ModuleLoadError::HashMismatch { requested, .. }
+                if requested == "corvid://@anthropic/safety-baseline/v2.3"
+        )));
     }
 }

@@ -1839,6 +1839,31 @@ agent good(x: String) -> String:
     }
 
     #[test]
+    fn parses_package_corvid_import_without_inline_hash() {
+        let file = parse_file_src(r#"import "corvid://@anthropic/safety-baseline/v2.3" as safety"#);
+        match &file.decls[0] {
+            Decl::Import(i) => {
+                assert!(matches!(i.source, ImportSource::PackageCorvid));
+                assert_eq!(i.module, "corvid://@anthropic/safety-baseline/v2.3");
+                assert!(i.content_hash.is_none());
+            }
+            other => panic!("expected import, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn rejects_inline_hash_on_package_corvid_import() {
+        let digest = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        let (_file, errs) = parse_file_errs(&format!(
+            r#"import "corvid://@anthropic/safety-baseline/v2.3" hash:sha256:{digest} as safety"#
+        ));
+        assert!(
+            !errs.is_empty(),
+            "package imports must get hashes from Corvid.lock"
+        );
+    }
+
+    #[test]
     fn parses_public_annotated_agent() {
         let file = parse_file_src(
             "\

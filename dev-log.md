@@ -5144,3 +5144,16 @@ HTTP(S) bytes with `ureq`, verifies the declared digest before parsing, and
 uses deterministic synthetic module keys so remote public exports typecheck and
 lower through the same module pipeline as local imports. Remote summaries show
 the pin, and mismatches fail closed.
+
+## 2026-04-25 - locked package Corvid imports
+
+Closed `lang-cor-imports-versioned-lock` and split the larger versioned-package
+roadmap item into honest sub-slices. Corvid now parses package imports such as
+`import "corvid://@anthropic/safety-baseline/v2.3" as safety`, but resolves
+them only through `Corvid.lock`.
+
+The lockfile maps the semantic package URI to an immutable HTTP(S) source URL
+and SHA-256 digest. The driver fetches that locked URL, verifies the exact
+bytes before parsing, and fails closed on missing lockfiles, missing package
+entries, and digest drift. Registry semver selection and signed publish remain
+open follow-ups rather than being implied by this foundation.

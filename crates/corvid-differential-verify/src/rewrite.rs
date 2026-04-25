@@ -1138,7 +1138,7 @@ fn render_decl(decl: &Decl, indent: usize, out: &mut String) {
             out.push_str("import ");
             out.push_str(match import.source {
                 ImportSource::Python => "python ",
-                ImportSource::Corvid | ImportSource::RemoteCorvid => "",
+                ImportSource::Corvid | ImportSource::RemoteCorvid | ImportSource::PackageCorvid => "",
             });
             out.push_str(&render_string_literal(&import.module));
             if let Some(hash) = &import.content_hash {

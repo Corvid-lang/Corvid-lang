@@ -23,7 +23,9 @@ impl<'a> Checker<'a> {
             let Decl::Import(import) = decl else { continue };
             if !matches!(
                 import.source,
-                corvid_ast::ImportSource::Corvid | corvid_ast::ImportSource::RemoteCorvid
+                corvid_ast::ImportSource::Corvid
+                    | corvid_ast::ImportSource::RemoteCorvid
+                    | corvid_ast::ImportSource::PackageCorvid
             ) {
                 continue;
             }

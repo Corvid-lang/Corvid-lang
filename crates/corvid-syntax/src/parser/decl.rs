@@ -121,7 +121,9 @@ impl<'a> Parser<'a> {
         let (source, module) = match self.peek().clone() {
             TokKind::StringLit(path) => {
                 self.bump();
-                let source = if is_remote_corvid_url(&path) {
+                let source = if is_package_corvid_uri(&path) {
+                    ImportSource::PackageCorvid
+                } else if is_remote_corvid_url(&path) {
                     ImportSource::RemoteCorvid
                 } else {
                     ImportSource::Corvid
@@ -210,7 +212,19 @@ impl<'a> Parser<'a> {
                 span: start,
             });
         }
-        if !matches!(source, ImportSource::Corvid | ImportSource::RemoteCorvid) {
+        if matches!(source, ImportSource::PackageCorvid) && content_hash.is_some() {
+            return Err(ParseError {
+                kind: ParseErrorKind::UnexpectedToken {
+                    got: "`hash` on package import".into(),
+                    expected: "package imports get their hash from `Corvid.lock`".into(),
+                },
+                span: content_hash.as_ref().unwrap().span,
+            });
+        }
+        if !matches!(
+            source,
+            ImportSource::Corvid | ImportSource::RemoteCorvid | ImportSource::PackageCorvid
+        ) {
             if let Some(hash) = &content_hash {
                 return Err(ParseError {
                     kind: ParseErrorKind::UnexpectedToken {
@@ -1050,4 +1064,8 @@ impl<'a> Parser<'a> {
 
 fn is_remote_corvid_url(path: &str) -> bool {
     path.starts_with("https://") || path.starts_with("http://")
+}
+
+fn is_package_corvid_uri(path: &str) -> bool {
+    path.starts_with("corvid://")
 }

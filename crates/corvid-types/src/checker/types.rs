@@ -315,7 +315,9 @@ fn imported_module_alias_target<'a>(
         corvid_ast::Decl::Import(import)
             if matches!(
                 import.source,
-                corvid_ast::ImportSource::Corvid | corvid_ast::ImportSource::RemoteCorvid
+                corvid_ast::ImportSource::Corvid
+                    | corvid_ast::ImportSource::RemoteCorvid
+                    | corvid_ast::ImportSource::PackageCorvid
             )
                 && import.alias.as_ref().is_some_and(|a| a.name == alias) =>
         {
@@ -328,6 +330,7 @@ fn imported_module_alias_target<'a>(
             corvid_resolve::resolve_import_path(&module.path, &import.module)
         }
         corvid_ast::ImportSource::RemoteCorvid => corvid_resolve::remote_import_path(&import.module),
+        corvid_ast::ImportSource::PackageCorvid => corvid_resolve::remote_import_path(&import.module),
         corvid_ast::ImportSource::Python => return None,
     };
     modules.lookup_by_path(&child)

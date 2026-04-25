@@ -40,6 +40,7 @@ pub enum IrImportSource {
     Python,
     Corvid,
     RemoteCorvid,
+    PackageCorvid,
 }
 
 /// A user-declared struct.

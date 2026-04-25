@@ -131,7 +131,7 @@ pub fn native_ability(ir: &IrFile) -> Result<(), NotNativeReason> {
                     module: import.module.clone(),
                 });
             }
-            IrImportSource::Corvid | IrImportSource::RemoteCorvid => {}
+            IrImportSource::Corvid | IrImportSource::RemoteCorvid | IrImportSource::PackageCorvid => {}
         }
     }
     for agent in &ir.agents {

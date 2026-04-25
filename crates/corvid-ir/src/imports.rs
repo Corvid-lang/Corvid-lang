@@ -119,7 +119,7 @@ fn imported_module_alias_target<'a>(
         Decl::Import(import)
             if matches!(
                 import.source,
-                ImportSource::Corvid | ImportSource::RemoteCorvid
+                ImportSource::Corvid | ImportSource::RemoteCorvid | ImportSource::PackageCorvid
             )
                 && import.alias.as_ref().is_some_and(|a| a.name == alias) =>
         {
@@ -130,6 +130,7 @@ fn imported_module_alias_target<'a>(
     let child = match import.source {
         ImportSource::Corvid => resolve_import_path(&module.path, &import.module),
         ImportSource::RemoteCorvid => remote_import_path(&import.module),
+        ImportSource::PackageCorvid => remote_import_path(&import.module),
         ImportSource::Python => return None,
     };
     modules.lookup_by_path(&child)

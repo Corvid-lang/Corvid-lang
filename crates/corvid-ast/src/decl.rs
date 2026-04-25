@@ -154,6 +154,10 @@ pub enum ImportSource {
     /// — remote Corvid source fetched over HTTP(S). A content hash is
     /// mandatory; unhashed remote code is not a valid import boundary.
     RemoteCorvid,
+    /// `import "corvid://@scope/name/v1.2" as p` — package import
+    /// resolved through `Corvid.lock`. The source does not carry an
+    /// inline hash; the lockfile supplies the immutable URL + digest.
+    PackageCorvid,
     // JavaScript, C, MCP — added in later versions.
 }
 
