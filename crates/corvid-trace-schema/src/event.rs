@@ -185,6 +185,10 @@ pub enum TraceEvent {
         capability_required: Option<String>,
         #[serde(default)]
         capability_picked: Option<String>,
+        #[serde(default)]
+        output_format_required: Option<String>,
+        #[serde(default)]
+        output_format_picked: Option<String>,
         cost_estimate: f64,
         #[serde(default)]
         arm_index: Option<usize>,

@@ -720,13 +720,95 @@ agent run(q: String) -> String:
     match err.kind {
         InterpErrorKind::Runtime(RuntimeError::NoEligibleModel {
             required_capability,
+            required_output_format,
             available_models,
         }) => {
             assert_eq!(required_capability, "expert");
+            assert_eq!(required_output_format, None);
             assert_eq!(available_models, vec!["haiku".to_string()]);
         }
         other => panic!("expected Runtime(NoEligibleModel), got {other:?}"),
     }
+}
+
+#[tokio::test]
+async fn output_format_dispatch_chooses_matching_model_and_traces_it() {
+    let src = r#"
+model loose:
+    capability: expert
+    output_format: markdown_strict
+
+model jsoner:
+    capability: basic
+    output_format: strict_json
+
+prompt answer(q: String) -> String:
+    output_format: strict_json
+    "Answer {q}."
+
+agent run(q: String) -> String:
+    return answer(q)
+"#;
+    let ir = ir_of(src);
+    let trace_dir = std::env::temp_dir().join(format!(
+        "corvid-vm-output-format-{}",
+        corvid_runtime::now_ms()
+    ));
+    std::fs::create_dir_all(&trace_dir).unwrap();
+    let rt = Runtime::builder()
+        .tracer(corvid_runtime::Tracer::open(&trace_dir, "run-output-format"))
+        .llm(Arc::new(
+            MockAdapter::new("loose").reply("answer", json!("markdown")),
+        ))
+        .llm(Arc::new(MockAdapter::new("jsoner").reply("answer", json!("json"))))
+        .model(
+            RegisteredModel::new("loose")
+                .capability("expert")
+                .output_format("markdown_strict")
+                .cost_per_token_in(0.00000025)
+                .cost_per_token_out(0.00000125),
+        )
+        .model(
+            RegisteredModel::new("jsoner")
+                .capability("basic")
+                .output_format("strict_json")
+                .cost_per_token_in(0.000015)
+                .cost_per_token_out(0.00002),
+        )
+        .default_model("loose")
+        .build();
+
+    let v = run_agent(&ir, "run", vec![Value::String(Arc::from("hard"))], &rt)
+        .await
+        .expect("run");
+    assert_eq!(v, Value::String(Arc::from("json")));
+    drop(rt);
+
+    let trace_path = trace_dir.join("run-output-format.jsonl");
+    let body = std::fs::read_to_string(trace_path).expect("trace file");
+    let events: Vec<TraceEvent> = body
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| serde_json::from_str(line).expect("valid trace event"))
+        .collect();
+    assert!(events.iter().any(|event| matches!(
+        event,
+        TraceEvent::ModelSelected {
+            prompt,
+            model,
+            output_format_required,
+            output_format_picked,
+            ..
+        } if prompt == "answer"
+            && model == "jsoner"
+            && output_format_required.as_deref() == Some("strict_json")
+            && output_format_picked.as_deref() == Some("strict_json")
+    )));
+    assert!(events.iter().any(|event| matches!(
+        event,
+        TraceEvent::LlmCall { prompt, model, .. }
+            if prompt == "answer" && model.as_deref() == Some("jsoner")
+    )));
 }
 
 #[tokio::test]

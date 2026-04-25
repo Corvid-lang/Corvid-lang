@@ -32,6 +32,8 @@ impl<'ir> Interpreter<'ir> {
         model_version: Option<String>,
         capability_required: Option<String>,
         capability_picked: Option<String>,
+        output_format_required: Option<String>,
+        output_format_picked: Option<String>,
         cost_estimate: f64,
         arm_index: Option<usize>,
         stage_index: Option<usize>,
@@ -44,6 +46,8 @@ impl<'ir> Interpreter<'ir> {
             model_version,
             capability_required,
             capability_picked,
+            output_format_required,
+            output_format_picked,
             cost_estimate,
             arm_index,
             stage_index,
@@ -54,6 +58,7 @@ impl<'ir> Interpreter<'ir> {
         &self,
         callee_name: &str,
         model_name: &str,
+        required_output_format: Option<&str>,
         prompt_tokens: u64,
         completion_tokens: u64,
         arm_index: Option<usize>,
@@ -64,12 +69,27 @@ impl<'ir> Interpreter<'ir> {
             .runtime
             .describe_named_model(model_name, prompt_tokens, completion_tokens)
             .map_err(|err| InterpError::new(InterpErrorKind::Runtime(err), span))?;
+        if let Some(required) = required_output_format {
+            if selection.output_format_picked.as_deref() != Some(required) {
+                return Err(InterpError::new(
+                    InterpErrorKind::Runtime(corvid_runtime::RuntimeError::ModelOutputFormatMismatch {
+                        prompt: callee_name.to_string(),
+                        model: selection.model.clone(),
+                        required_output_format: required.to_string(),
+                        model_output_format: selection.output_format_picked.clone(),
+                    }),
+                    span,
+                ));
+            }
+        }
         self.emit_model_selected(
             callee_name,
             selection.model.clone(),
             selection.version,
             selection.capability_required,
             selection.capability_picked,
+            required_output_format.map(ToString::to_string),
+            selection.output_format_picked,
             selection.cost_estimate,
             arm_index,
             stage_index,
@@ -111,12 +131,19 @@ impl<'ir> Interpreter<'ir> {
             return outcome;
         }
 
-        let Some(required) = prompt.capability_required.as_deref() else {
+        let required_capability = prompt.capability_required.as_deref();
+        let required_output_format = prompt.output_format_required.as_deref();
+        if required_capability.is_none() && required_output_format.is_none() {
             return Ok(None);
-        };
+        }
         let selection = self
             .runtime
-            .select_cheapest_model_for_capability(required, prompt_tokens, completion_tokens)
+            .select_cheapest_model_for_requirements(
+                required_capability,
+                required_output_format,
+                prompt_tokens,
+                completion_tokens,
+            )
             .map_err(|err| InterpError::new(InterpErrorKind::Runtime(err), span))?;
         self.emit_model_selected(
             callee_name,
@@ -124,6 +151,8 @@ impl<'ir> Interpreter<'ir> {
             selection.version,
             selection.capability_required,
             selection.capability_picked,
+            selection.output_format_required,
+            selection.output_format_picked,
             selection.cost_estimate,
             None,
             None,
@@ -156,6 +185,7 @@ impl<'ir> Interpreter<'ir> {
                 .select_named_prompt_model(
                     callee_name,
                     &arm.model_name,
+                    prompt.output_format_required.as_deref(),
                     prompt_tokens,
                     completion_tokens,
                     Some(arm_index),
@@ -550,6 +580,7 @@ impl<'ir> Interpreter<'ir> {
         let selected_model = self.select_named_prompt_model(
             callee_name,
             escalate_to,
+            prompt.output_format_required.as_deref(),
             prompt_tokens,
             completion_tokens,
             None,
@@ -656,6 +687,7 @@ impl<'ir> Interpreter<'ir> {
                 let selected_model = self.select_named_prompt_model(
                     callee_name,
                     &member.name,
+                    prompt.output_format_required.as_deref(),
                     prompt_tokens,
                     completion_tokens,
                     None,
@@ -950,6 +982,7 @@ impl<'ir> Interpreter<'ir> {
             let selected_model = self.select_named_prompt_model(
                 callee_name,
                 &chosen_model,
+                prompt.output_format_required.as_deref(),
                 prompt_tokens,
                 completion_tokens,
                 None,
@@ -979,6 +1012,7 @@ impl<'ir> Interpreter<'ir> {
                 let selected_model = self.select_named_prompt_model(
                     callee_name,
                     &stage.model_name,
+                    prompt.output_format_required.as_deref(),
                     prompt_tokens,
                     completion_tokens,
                     None,

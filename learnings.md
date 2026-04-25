@@ -2908,6 +2908,18 @@ fail fast when the runtime catalog points the same name at a different
 version. Reports also use `model@version` labels so operators can see which
 revision produced which cost and latency behavior.
 
+## 20h-output-format-routing
+
+Structured output is a model capability, not prompt prose. A prompt requiring
+`output_format: strict_json` should not silently route to a model that only
+declares markdown-style output, even if that model is cheaper or the default.
+
+The language now carries this constraint through the full stack: source model
+catalogs, compile-time validation of named routes, runtime catalog selection,
+and trace evidence. That matters because AI-native programs need to prove
+compatibility at the boundary where free-form generation becomes typed program
+data.
+
 ## Contributing / feedback
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). The rules of the road are: design chat before code, per-scope commits at every boundary, dev-log entry for every session, no shortcuts. The `learnings.md` file you're reading gets updated when each user-visible feature ships.

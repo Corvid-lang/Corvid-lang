@@ -49,7 +49,15 @@ pub enum RuntimeError {
     /// strong enough for the prompt's requirement.
     NoEligibleModel {
         required_capability: String,
+        required_output_format: Option<String>,
         available_models: Vec<String>,
+    },
+
+    ModelOutputFormatMismatch {
+        prompt: String,
+        model: String,
+        required_output_format: String,
+        model_output_format: Option<String>,
     },
 
     /// A `route:` prompt evaluated every arm and found no match.
@@ -115,15 +123,33 @@ impl fmt::Display for RuntimeError {
             ),
             Self::NoEligibleModel {
                 required_capability,
+                required_output_format,
                 available_models,
             } => write!(
                 f,
-                "no eligible model for capability `{required_capability}`; available models: {}",
+                "no eligible model for capability `{required_capability}`{}; available models: {}",
+                required_output_format
+                    .as_deref()
+                    .map(|format| format!(" and output format `{format}`"))
+                    .unwrap_or_default(),
                 if available_models.is_empty() {
                     "none".to_string()
                 } else {
                     available_models.join(", ")
                 }
+            ),
+            Self::ModelOutputFormatMismatch {
+                prompt,
+                model,
+                required_output_format,
+                model_output_format,
+            } => write!(
+                f,
+                "prompt `{prompt}` requires output format `{required_output_format}`, but model `{model}` advertises {}",
+                model_output_format
+                    .as_deref()
+                    .map(|format| format!("`{format}`"))
+                    .unwrap_or_else(|| "no output format".to_string())
             ),
             Self::NoMatchingRoute { prompt } => {
                 write!(f, "no matching route arm for prompt `{prompt}`")

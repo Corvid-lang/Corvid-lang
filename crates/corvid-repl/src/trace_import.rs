@@ -185,6 +185,7 @@ pub fn build_import(mocks: &TraceMocks) -> TraceImportResult {
             calibrated: false,
             cacheable: false,
             capability_required: None,
+            output_format_required: None,
             route: None,
             progressive: None,
             rollout: None,

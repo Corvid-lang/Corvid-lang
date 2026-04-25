@@ -11,7 +11,7 @@ use crate::errors::{TypeError, TypeErrorKind, TypeWarning, TypeWarningKind};
 use crate::types::Type;
 use corvid_ast::{
     AgentDecl, BinaryOp, Block, Decl, Effect, EvalAssert, EvalDecl, Expr, ExtendMethodKind, File,
-    Ident, Literal, Param, PromptDecl, Span, Stmt, ToolDecl, TypeDecl, TypeRef, UnaryOp,
+    Ident, Literal, ModelDecl, Param, PromptDecl, Span, Stmt, ToolDecl, TypeDecl, TypeRef, UnaryOp,
     WeakEffect, WeakEffectRow,
 };
 use corvid_resolve::{
@@ -274,6 +274,7 @@ struct Checker<'a> {
     prompts_by_id: HashMap<DefId, &'a PromptDecl>,
     agents_by_id: HashMap<DefId, &'a AgentDecl>,
     types_by_id: HashMap<DefId, &'a TypeDecl>,
+    models_by_id: HashMap<DefId, &'a ModelDecl>,
 
     /// Per-receiver-type method side-table from the
     /// resolver. Method calls (`x.foo(args)`) look up `x`'s declared
@@ -388,6 +389,7 @@ impl<'a> Checker<'a> {
         let mut prompts = HashMap::new();
         let mut agents = HashMap::new();
         let mut types = HashMap::new();
+        let mut models = HashMap::new();
 
         for decl in &file.decls {
             match decl {
@@ -414,11 +416,10 @@ impl<'a> Checker<'a> {
                 }
                 Decl::Import(_) => {}
                 Decl::Effect(_) => {}
-                Decl::Model(_) => {
-                    // Phase 20h slice A: models are catalog entries
-                    // without a body; they contribute no typed
-                    // values yet. Slice B wires them into prompt
-                    // dispatch.
+                Decl::Model(m) => {
+                    if let Some(id) = resolved.symbols.lookup_def(&m.name.name) {
+                        models.insert(id, m);
+                    }
                 }
                 Decl::Extend(ext) => {
                     // Index method decls by their allocated DefIds
@@ -466,6 +467,7 @@ impl<'a> Checker<'a> {
             prompts_by_id: prompts,
             agents_by_id: agents,
             types_by_id: types,
+            models_by_id: models,
             methods: &resolved.methods,
             replay_pattern_bindings: &resolved.replay_pattern_bindings,
             module_resolution,

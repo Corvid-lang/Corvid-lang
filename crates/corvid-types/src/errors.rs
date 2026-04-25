@@ -269,6 +269,13 @@ pub enum TypeErrorKind {
         got: String,
     },
 
+    ModelOutputFormatMismatch {
+        prompt: String,
+        model: String,
+        required: String,
+        got: Option<String>,
+    },
+
     /// A `rollout N%` clause's percentage is outside `[0.0, 100.0]`.
     RolloutPercentOutOfRange {
         prompt: String,
@@ -548,6 +555,14 @@ impl TypeErrorKind {
             Self::RouteGuardNotBool { prompt, got } => {
                 format!("route arm guard in prompt `{prompt}` must evaluate to `Bool`, got `{got}`")
             }
+            Self::ModelOutputFormatMismatch { prompt, model, required, got } => {
+                format!(
+                    "prompt `{prompt}` requires output format `{required}`, but model `{model}` declares {}",
+                    got.as_deref()
+                        .map(|format| format!("`{format}`"))
+                        .unwrap_or_else(|| "no `output_format`".to_string())
+                )
+            }
             Self::RolloutPercentOutOfRange { prompt, got } => {
                 format!("rollout percentage on prompt `{prompt}` must be in [0.0, 100.0], got `{got}`")
             }
@@ -755,6 +770,9 @@ impl TypeErrorKind {
                 "use a comparison or boolean expression for the guard, e.g. `length(q) > 1000`"
                     .into(),
             ),
+            Self::ModelOutputFormatMismatch { required, .. } => Some(format!(
+                "add `output_format: {required}` to the target `model` declaration, or route this prompt to a model that supports that response format"
+            )),
             Self::RolloutPercentOutOfRange { .. } => Some(
                 "use a percentage between 0 and 100, e.g. `rollout 10% new_v2, else old_v1`"
                     .into(),

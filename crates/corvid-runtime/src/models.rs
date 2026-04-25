@@ -7,6 +7,7 @@ pub struct RegisteredModel {
     pub name: String,
     pub capability: Option<String>,
     pub version: Option<String>,
+    pub output_format: Option<String>,
     pub cost_per_token_in: f64,
     pub cost_per_token_out: f64,
 }
@@ -17,6 +18,7 @@ impl RegisteredModel {
             name: name.into(),
             capability: None,
             version: None,
+            output_format: None,
             cost_per_token_in: 0.0,
             cost_per_token_out: 0.0,
         }
@@ -29,6 +31,11 @@ impl RegisteredModel {
 
     pub fn version(mut self, version: impl Into<String>) -> Self {
         self.version = Some(version.into());
+        self
+    }
+
+    pub fn output_format(mut self, output_format: impl Into<String>) -> Self {
+        self.output_format = Some(output_format.into());
         self
     }
 
@@ -59,6 +66,8 @@ pub struct ModelSelection {
     pub capability_required: Option<String>,
     pub capability_picked: Option<String>,
     pub version: Option<String>,
+    pub output_format_required: Option<String>,
+    pub output_format_picked: Option<String>,
     pub cost_estimate: f64,
 }
 
@@ -125,11 +134,35 @@ impl ModelCatalog {
         prompt_tokens: u64,
         completion_tokens: u64,
     ) -> Result<ModelSelection, RuntimeError> {
+        self.select_cheapest_by_requirements(
+            Some(required_capability),
+            None,
+            prompt_tokens,
+            completion_tokens,
+        )
+    }
+
+    pub fn select_cheapest_by_requirements(
+        &self,
+        required_capability: Option<&str>,
+        required_output_format: Option<&str>,
+        prompt_tokens: u64,
+        completion_tokens: u64,
+    ) -> Result<ModelSelection, RuntimeError> {
         let available_models = self.names();
         let selected = self
             .models
             .values()
-            .filter(|model| capability_satisfies(model.capability.as_deref(), required_capability))
+            .filter(|model| {
+                required_capability
+                    .map(|required| capability_satisfies(model.capability.as_deref(), required))
+                    .unwrap_or(true)
+            })
+            .filter(|model| {
+                required_output_format
+                    .map(|required| model.output_format.as_deref() == Some(required))
+                    .unwrap_or(true)
+            })
             .min_by(|left, right| {
                 let left_cost = left.estimated_cost(prompt_tokens, completion_tokens);
                 let right_cost = right.estimated_cost(prompt_tokens, completion_tokens);
@@ -139,15 +172,18 @@ impl ModelCatalog {
                     .then_with(|| left.name.cmp(&right.name))
             })
             .ok_or_else(|| RuntimeError::NoEligibleModel {
-                required_capability: required_capability.to_string(),
+                required_capability: required_capability.unwrap_or("any").to_string(),
+                required_output_format: required_output_format.map(ToString::to_string),
                 available_models,
             })?;
 
         Ok(ModelSelection {
             model: selected.name.clone(),
-            capability_required: Some(required_capability.to_string()),
+            capability_required: required_capability.map(ToString::to_string),
             capability_picked: selected.capability.clone(),
             version: selected.version.clone(),
+            output_format_required: required_output_format.map(ToString::to_string),
+            output_format_picked: selected.output_format.clone(),
             cost_estimate: selected.estimated_cost(prompt_tokens, completion_tokens),
         })
     }
@@ -164,6 +200,8 @@ impl ModelCatalog {
                 capability_required: None,
                 capability_picked: model.capability.clone(),
                 version: model.version.clone(),
+                output_format_required: None,
+                output_format_picked: model.output_format.clone(),
                 cost_estimate: model.estimated_cost(prompt_tokens, completion_tokens),
             },
             None => ModelSelection {
@@ -171,6 +209,8 @@ impl ModelCatalog {
                 capability_required: None,
                 capability_picked: None,
                 version: None,
+                output_format_required: None,
+                output_format_picked: None,
                 cost_estimate: 0.0,
             },
         }
@@ -204,12 +244,17 @@ fn parse_catalog_toml(path: &Path, value: toml::Value) -> Result<ModelCatalog, R
             .get("version")
             .and_then(toml::Value::as_str)
             .map(ToString::to_string);
+        let output_format = spec
+            .get("output_format")
+            .and_then(toml::Value::as_str)
+            .map(ToString::to_string);
         let cost_per_token_in = parse_cost_field(path, name, spec.get("cost_per_token_in"))?;
         let cost_per_token_out = parse_cost_field(path, name, spec.get("cost_per_token_out"))?;
         catalog.register(RegisteredModel {
             name: name.clone(),
             capability,
             version,
+            output_format,
             cost_per_token_in,
             cost_per_token_out,
         });
@@ -282,6 +327,7 @@ mod tests {
 [llm.models.haiku]
 capability = "basic"
 version = "2024-10-22"
+output_format = "strict_json"
 cost_per_token_in = "$0.00000025"
 cost_per_token_out = 0.00000125
 
@@ -299,6 +345,10 @@ cost_per_token_in = 0.000015
         assert_eq!(
             catalog.get("haiku").unwrap().version.as_deref(),
             Some("2024-10-22")
+        );
+        assert_eq!(
+            catalog.get("haiku").unwrap().output_format.as_deref(),
+            Some("strict_json")
         );
         assert!((catalog.get("haiku").unwrap().cost_per_token_in - 0.00000025).abs() < 1e-12);
         assert!((catalog.get("opus").unwrap().cost_per_token_in - 0.000015).abs() < 1e-12);
@@ -334,6 +384,35 @@ cost_per_token_in = 0.000015
     }
 
     #[test]
+    fn chooses_cheapest_model_satisfying_output_format() {
+        let mut catalog = ModelCatalog::new();
+        catalog.register(
+            RegisteredModel::new("markdown")
+                .capability("expert")
+                .output_format("markdown_strict")
+                .cost_per_token_in(0.000001),
+        );
+        catalog.register(
+            RegisteredModel::new("json-expensive")
+                .capability("expert")
+                .output_format("strict_json")
+                .cost_per_token_in(0.000010),
+        );
+        catalog.register(
+            RegisteredModel::new("json-cheap")
+                .capability("standard")
+                .output_format("strict_json")
+                .cost_per_token_in(0.000002),
+        );
+
+        let selected = catalog
+            .select_cheapest_by_requirements(None, Some("strict_json"), 100, 0)
+            .unwrap();
+        assert_eq!(selected.model, "json-cheap");
+        assert_eq!(selected.output_format_picked.as_deref(), Some("strict_json"));
+    }
+
+    #[test]
     fn no_eligible_model_reports_requirement_and_available_models() {
         let mut catalog = ModelCatalog::new();
         catalog.register(RegisteredModel::new("cheap").capability("basic"));
@@ -344,9 +423,11 @@ cost_per_token_in = 0.000015
         match err {
             RuntimeError::NoEligibleModel {
                 required_capability,
+                required_output_format,
                 available_models,
             } => {
                 assert_eq!(required_capability, "expert");
+                assert_eq!(required_output_format, None);
                 assert_eq!(available_models, vec!["cheap".to_string()]);
             }
             other => panic!("expected NoEligibleModel, got {other:?}"),
@@ -367,6 +448,7 @@ cost_per_token_in = 0.000015
         assert_eq!(selection.model, "opus");
         assert_eq!(selection.capability_picked.as_deref(), Some("expert"));
         assert_eq!(selection.version, None);
+        assert_eq!(selection.output_format_picked, None);
         assert!((selection.cost_estimate - 0.8).abs() < 1e-12);
     }
 

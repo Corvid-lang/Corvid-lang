@@ -13,7 +13,7 @@
 use super::Checker;
 use crate::errors::{TypeError, TypeErrorKind};
 use crate::types::Type;
-use corvid_ast::{Ident, PromptDecl, TypeRef};
+use corvid_ast::{DimensionValue, Ident, PromptDecl, TypeRef};
 use corvid_resolve::Binding;
 
 impl<'a> Checker<'a> {
@@ -57,6 +57,8 @@ impl<'a> Checker<'a> {
                             },
                             model.span,
                         ));
+                    } else {
+                        self.check_model_output_format(p, *def_id, model);
                     }
                 }
                 _ => {}
@@ -125,6 +127,8 @@ impl<'a> Checker<'a> {
                             },
                             arm.model.span,
                         ));
+                    } else {
+                        self.check_model_output_format(p, def_id, &arm.model);
                     }
                 }
             }
@@ -151,6 +155,8 @@ impl<'a> Checker<'a> {
                             },
                             stage.model.span,
                         ));
+                    } else {
+                        self.check_model_output_format(p, def_id, &stage.model);
                     }
                 }
                 if let Some(t) = stage.threshold {
@@ -190,6 +196,8 @@ impl<'a> Checker<'a> {
                             },
                             ident.span,
                         ));
+                    } else {
+                        self.check_model_output_format(p, def_id, ident);
                     }
                 }
             }
@@ -225,6 +233,8 @@ impl<'a> Checker<'a> {
                             },
                             model.span,
                         ));
+                    } else {
+                        self.check_model_output_format(p, def_id, model);
                     }
                 }
             }
@@ -473,5 +483,42 @@ impl<'a> Checker<'a> {
                 }
             }
         }
+    }
+
+    fn check_model_output_format(
+        &mut self,
+        prompt: &PromptDecl,
+        model_def_id: corvid_resolve::DefId,
+        model_ident: &Ident,
+    ) {
+        let Some(required) = prompt.output_format_required.as_ref() else {
+            return;
+        };
+        let got = self.model_output_format(model_def_id);
+        if got.as_deref() != Some(required.name.as_str()) {
+            self.errors.push(TypeError::new(
+                TypeErrorKind::ModelOutputFormatMismatch {
+                    prompt: prompt.name.name.clone(),
+                    model: model_ident.name.clone(),
+                    required: required.name.clone(),
+                    got,
+                },
+                model_ident.span,
+            ));
+        }
+    }
+
+    fn model_output_format(&self, model_def_id: corvid_resolve::DefId) -> Option<String> {
+        self.models_by_id.get(&model_def_id).and_then(|model| {
+            model.fields.iter().find_map(|field| {
+                if field.name.name != "output_format" {
+                    return None;
+                }
+                match &field.value {
+                    DimensionValue::Name(value) => Some(value.clone()),
+                    _ => None,
+                }
+            })
+        })
     }
 }

@@ -2258,11 +2258,14 @@ prompt answer(q: String) -> String:
         let src = "\
 model fast:
     capability: basic
+    output_format: strict_json
 
 model slow:
     capability: expert
+    output_format: strict_json
 
 prompt answer(q: String) -> String:
+    output_format: strict_json
     route:
         q == \"hard\" -> slow
         _ -> fast
@@ -2270,6 +2273,39 @@ prompt answer(q: String) -> String:
 ";
         let c = check(src);
         assert!(c.errors.is_empty(), "errors: {:?}", c.errors);
+    }
+
+    #[test]
+    fn output_format_mismatch_on_named_route_is_rejected() {
+        let src = "\
+model json:
+    capability: expert
+    output_format: strict_json
+
+model markdown:
+    capability: expert
+    output_format: markdown_strict
+
+prompt answer(q: String) -> String:
+    output_format: strict_json
+    route:
+        q == \"md\" -> markdown
+        _ -> json
+    \"Answer\"
+";
+        let c = check(src);
+        assert!(
+            c.errors.iter().any(|e| matches!(
+                &e.kind,
+                TypeErrorKind::ModelOutputFormatMismatch { prompt, model, required, got }
+                    if prompt == "answer"
+                        && model == "markdown"
+                        && required == "strict_json"
+                        && got.as_deref() == Some("markdown_strict")
+            )),
+            "expected ModelOutputFormatMismatch, got {:?}",
+            c.errors
+        );
     }
 
     #[test]

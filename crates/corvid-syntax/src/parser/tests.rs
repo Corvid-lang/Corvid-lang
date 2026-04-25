@@ -1715,6 +1715,22 @@ agent good(x: String) -> String:
     }
 
     #[test]
+    fn parses_prompt_with_output_format_clause() {
+        let file = parse_file_src(
+            "prompt classify(t: String) -> String:\n    output_format: strict_json\n    \"Classify {t}\"\n",
+        );
+        match &file.decls[0] {
+            Decl::Prompt(p) => {
+                assert_eq!(
+                    p.output_format_required.as_ref().unwrap().name,
+                    "strict_json"
+                );
+            }
+            other => panic!("expected Prompt, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn parses_prompt_with_cites_strictly_clause() {
         let file = parse_file_src(
             "prompt answer(ctx: Grounded<String>) -> Grounded<String>:\n    cites ctx strictly\n    \"Answer from {ctx}\"\n",

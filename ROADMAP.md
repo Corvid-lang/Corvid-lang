@@ -1102,7 +1102,7 @@ Users register local models (Ollama, vLLM, llama.cpp) with declared capabilities
 - [x] `cacheable: true` + fingerprint cache in interpreter + replay integration
 - [x] `rollout(P%)` weighted routing for A/B tests
 - [x] `version: "..."` model versioning + replay-pinned safety
-- [ ] Output-format-aware routing (`strict_json`, `markdown_strict`, etc.)
+- [x] Output-format-aware routing (`strict_json`, `markdown_strict`, etc.)
 - [x] Runtime adaptive selection + confidence-driven auto-escalation (capability dispatch, route dispatch, progressive confidence escalation, rollout, ensemble, and adversarial runtime paths shipped)
 - [ ] `corvid eval --swap-model` retrospective migration tooling
 - [x] `corvid routing-report` quality reports from routing trace data
@@ -1137,6 +1137,7 @@ Users register local models (Ollama, vLLM, llama.cpp) with declared capabilities
 | G-contract | `a0345e7` | Adversarial stages typecheck as prompts with chaining contract |
 | G-rt | `a610894` | Runtime: adversarial sequential pipeline + contradiction traces |
 | H | `24c56fa` | `corvid routing-report` CLI + routing trace aggregation |
+| Output-format | `this commit` | Prompt `output_format:` requirements + compile/runtime routing to compatible models |
 
 **Phase 20 closed.** Dimensional effects, grounding, evals, cost analysis, confidence gates, streaming effects, bypass verification, and the typed model substrate are all shipped. The moat phase is complete.
 

@@ -101,6 +101,10 @@ pub struct IrPrompt {
     /// catalog, or the `default_model`-backed pipeline that shipped
     /// before the model substrate existed).
     pub capability_required: Option<String>,
+    /// Required model output format (`strict_json`,
+    /// `markdown_strict`, etc.). Runtime selection uses this as a
+    /// hard eligibility filter.
+    pub output_format_required: Option<String>,
     /// Phase 20h slice C: pattern-dispatched per-call model
     /// selection. Empty `arms` means the prompt uses the standard
     /// capability-based dispatch (slice B). Non-empty means the

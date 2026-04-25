@@ -274,6 +274,12 @@ pub struct PromptDecl {
     /// field satisfies the requirement. See Phase 20h slice B.
     #[serde(default)]
     pub capability_required: Option<Ident>,
+    /// `output_format: strict_json` declares the required response
+    /// shape for model routing. Named dispatch targets must advertise
+    /// the same `output_format`; capability dispatch filters runtime
+    /// catalog models by this value.
+    #[serde(default)]
+    pub output_format_required: Option<Ident>,
     /// `route:` clause — pattern-dispatched per-call model selection.
     /// Each arm pairs a guard expression (or the `_` wildcard) with
     /// a `model` reference. At runtime, arms are evaluated top-to-

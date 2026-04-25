@@ -471,6 +471,10 @@ impl<'a> Lowerer<'a> {
             calibrated: p.calibrated,
             cacheable: p.cacheable,
             capability_required: p.capability_required.as_ref().map(|c| c.name.clone()),
+            output_format_required: p
+                .output_format_required
+                .as_ref()
+                .map(|f| f.name.clone()),
             route,
             progressive,
             rollout,

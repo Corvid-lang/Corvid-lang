@@ -462,6 +462,7 @@ async fn stream_budget_termination_fires_before_over_budget_yield() {
             calibrated: false,
             cacheable: false,
             capability_required: None,
+            output_format_required: None,
             route: Vec::new(),
             progressive: Vec::new(),
             rollout: None,

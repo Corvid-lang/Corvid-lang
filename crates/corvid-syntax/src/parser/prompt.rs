@@ -53,6 +53,16 @@ impl<'a> Parser<'a> {
             None
         };
 
+        let output_format_required = if self.peek_ident_is("output_format") {
+            self.bump(); // output_format
+            self.expect(TokKind::Colon, "`:` after `output_format`")?;
+            let (ident, ident_span) = self.expect_ident()?;
+            self.expect_newline()?;
+            Some(Ident::new(ident, ident_span))
+        } else {
+            None
+        };
+
         let cites_strictly = self.parse_prompt_cites_strictly_clause()?;
 
         // Phase 20h slice C: optional `route:` block. Each arm is
@@ -175,6 +185,7 @@ impl<'a> Parser<'a> {
             calibrated,
             cacheable,
             capability_required,
+            output_format_required,
             route,
             progressive,
             rollout,

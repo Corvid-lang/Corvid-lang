@@ -5030,3 +5030,17 @@ as equivalent. Legacy traces remain compatible through `model_version: null`.
 
 Routing reports aggregate versioned models as `name@version`, so operational
 reports do not collapse two model revisions into one row.
+
+## 2026-04-25 - output-format-aware model routing
+
+Closed the Phase 20h output-format routing item. Prompts can now require an
+output format such as `strict_json`, source-level `model` declarations can
+advertise an `output_format`, and named routing targets are rejected at
+typecheck time if they cannot satisfy the prompt contract.
+
+Runtime model registrations and `corvid.toml` catalog entries carry the same
+format metadata. Default/capability dispatch filters eligible models by both
+capability and output format, named dispatch errors on mismatches, and
+`ModelSelected` trace events record the required and picked formats. This
+turns structured-output compatibility into a language-visible routing
+constraint instead of an adapter convention.

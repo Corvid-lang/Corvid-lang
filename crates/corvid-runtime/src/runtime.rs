@@ -164,6 +164,24 @@ impl Runtime {
         )
     }
 
+    pub fn select_cheapest_model_for_requirements(
+        &self,
+        required_capability: Option<&str>,
+        required_output_format: Option<&str>,
+        prompt_tokens: u64,
+        completion_tokens: u64,
+    ) -> Result<ModelSelection, RuntimeError> {
+        if let Some(err) = &self.model_catalog_error {
+            return Err(err.clone());
+        }
+        self.model_catalog.select_cheapest_by_requirements(
+            required_capability,
+            required_output_format,
+            prompt_tokens,
+            completion_tokens,
+        )
+    }
+
     pub fn describe_named_model(
         &self,
         model_name: &str,
