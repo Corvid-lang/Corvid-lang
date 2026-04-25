@@ -18,8 +18,8 @@ use corvid_runtime::Runtime;
 use corvid_syntax::{lex, parse_repl_input, ReplItem};
 use corvid_types::{Checked, ReplLocal, ReplSession, Type};
 use corvid_vm::{
-    render_value, run_agent_stepping, run_agent_with_env, Env, ExecutionTrace, InterpError,
-    InterpErrorKind, RecordingHook, ReplayForkHook, StepMode, Value,
+    render_value, run_agent_stepping, Env, ExecutionTrace, InterpError, InterpErrorKind,
+    RecordingHook, ReplayForkHook, StepAction, StepEvent, StepHook, StepMode, Value,
 };
 use replay::ReplaySession;
 use rustyline::error::ReadlineError;
@@ -66,6 +66,15 @@ struct ReplayState {
     session: ReplaySession,
     current: Option<usize>,
     next: usize,
+}
+
+struct RecordBoundaryHook;
+
+#[async_trait::async_trait]
+impl StepHook for RecordBoundaryHook {
+    async fn on_step(&self, _event: &StepEvent) -> StepAction {
+        StepAction::StepOver
+    }
 }
 
 impl Repl {
@@ -403,6 +412,10 @@ impl Repl {
                 output.flush()?;
                 Ok(true)
             }
+            ":why" => {
+                self.cmd_why(output)?;
+                Ok(true)
+            }
             ":help" | ":h" => {
                 self.cmd_help(output)?;
                 Ok(true)
@@ -635,21 +648,39 @@ impl Repl {
         self.last_ir = Some(ir.clone());
         let args: Vec<Value> = self.locals.iter().map(|local| local.value.clone()).collect();
         let step_mode = self.step_mode;
+        let trace_store = std::sync::Arc::new(std::sync::Mutex::new(ExecutionTrace::default()));
+        let trace_clone = std::sync::Arc::clone(&trace_store);
 
         let outcome = self.tokio.block_on(async {
             if step_mode != StepMode::Run {
                 let hook: std::sync::Arc<dyn corvid_vm::StepHook> =
                     std::sync::Arc::new(step_hook::ReplStepHook);
+                let recording = std::sync::Arc::new(RecordingHook::new(hook));
+                let trace_ref = recording.trace_ref();
                 match run_agent_stepping(
                     ir, REPL_AGENT_NAME, args, &self.runtime,
-                    hook, step_mode,
+                    recording, step_mode,
                 ).await {
-                    Ok((_, env)) => TurnEval::Completed(env),
-                    Err(error) => TurnEval::Error(error),
+                    Ok((_, env)) => {
+                        *trace_clone.lock().unwrap() = trace_ref.lock().unwrap().clone();
+                        TurnEval::Completed(env)
+                    }
+                    Err(error) => {
+                        *trace_clone.lock().unwrap() = trace_ref.lock().unwrap().clone();
+                        TurnEval::Error(error)
+                    }
                 }
             } else if allow_interrupt {
+                let recording = std::sync::Arc::new(RecordingHook::new(std::sync::Arc::new(
+                    RecordBoundaryHook,
+                )));
+                let trace_ref = recording.trace_ref();
                 tokio::select! {
-                    result = run_agent_with_env(ir, REPL_AGENT_NAME, args, &self.runtime) => {
+                    result = run_agent_stepping(
+                        ir, REPL_AGENT_NAME, args, &self.runtime,
+                        recording, StepMode::Boundary,
+                    ) => {
+                        *trace_clone.lock().unwrap() = trace_ref.lock().unwrap().clone();
                         match result {
                             Ok((_value, env)) => TurnEval::Completed(env),
                             Err(error) => TurnEval::Error(error),
@@ -666,12 +697,26 @@ impl Repl {
                     }
                 }
             } else {
-                match run_agent_with_env(ir, REPL_AGENT_NAME, args, &self.runtime).await {
-                    Ok((_value, env)) => TurnEval::Completed(env),
-                    Err(error) => TurnEval::Error(error),
+                let recording = std::sync::Arc::new(RecordingHook::new(std::sync::Arc::new(
+                    RecordBoundaryHook,
+                )));
+                let trace_ref = recording.trace_ref();
+                match run_agent_stepping(
+                    ir, REPL_AGENT_NAME, args, &self.runtime,
+                    recording, StepMode::Boundary,
+                ).await {
+                    Ok((_value, env)) => {
+                        *trace_clone.lock().unwrap() = trace_ref.lock().unwrap().clone();
+                        TurnEval::Completed(env)
+                    }
+                    Err(error) => {
+                        *trace_clone.lock().unwrap() = trace_ref.lock().unwrap().clone();
+                        TurnEval::Error(error)
+                    }
                 }
             }
         });
+        self.last_trace = Some(trace_store.lock().unwrap().clone());
 
         match outcome {
             TurnEval::Completed(env) => Ok(Some(env)),
@@ -841,6 +886,7 @@ impl Repl {
         writeln!(output, "  :stepinto        pause at every statement")?;
         writeln!(output, "  :stepoff         normal execution")?;
         writeln!(output, "  :trace           show last execution trace")?;
+        writeln!(output, "  :why             explain last run's gates, routes, and AI boundaries")?;
         writeln!(output, "  :whatif <name> returns <json>")?;
         writeln!(output, "                   re-run with a counterfactual result")?;
         writeln!(output)?;
@@ -907,6 +953,131 @@ impl Repl {
             writeln!(output, "  locals:  {}", self.locals.iter().map(|l| l.name.as_str()).collect::<Vec<_>>().join(", "))?;
         }
 
+        output.flush()
+    }
+
+    fn cmd_why<W: Write>(&self, output: &mut W) -> io::Result<()> {
+        let Some(trace) = &self.last_trace else {
+            writeln!(output, "no execution trace available (run an expression or command first)")?;
+            output.flush()?;
+            return Ok(());
+        };
+
+        if trace.is_empty() {
+            writeln!(output, "last run produced no trace checkpoints")?;
+            output.flush()?;
+            return Ok(());
+        }
+
+        let mut explanations = Vec::new();
+        for checkpoint in trace.boundaries() {
+            match &checkpoint.event {
+                corvid_vm::StepEvent::BeforeToolCall {
+                    tool_name,
+                    input_confidence,
+                    confidence_gate,
+                    ..
+                } => {
+                    let mut line = format!(
+                        "[{}] tool `{tool_name}` was called because execution reached that tool boundary with input confidence {:.3}",
+                        checkpoint.index,
+                        input_confidence.clamp(0.0, 1.0)
+                    );
+                    if let Some(gate) = confidence_gate {
+                        append_confidence_gate_reason(&mut line, gate);
+                    }
+                    explanations.push(line);
+                }
+                corvid_vm::StepEvent::AfterToolCall {
+                    tool_name,
+                    result_confidence,
+                    elapsed_ms,
+                    ..
+                } => explanations.push(format!(
+                    "[{}] tool `{tool_name}` returned in {elapsed_ms}ms with result confidence {:.3}",
+                    checkpoint.index,
+                    result_confidence.clamp(0.0, 1.0)
+                )),
+                corvid_vm::StepEvent::BeforePromptCall {
+                    prompt_name,
+                    model,
+                    input_confidence,
+                    ..
+                } => {
+                    let route = model
+                        .as_deref()
+                        .map(|model| format!(" routed to model `{model}`"))
+                        .unwrap_or_else(|| " used the runtime default model route".to_string());
+                    explanations.push(format!(
+                        "[{}] prompt `{prompt_name}`{route}; input confidence entering the LLM boundary was {:.3}",
+                        checkpoint.index,
+                        input_confidence.clamp(0.0, 1.0)
+                    ));
+                }
+                corvid_vm::StepEvent::AfterPromptCall {
+                    prompt_name,
+                    result_confidence,
+                    elapsed_ms,
+                    ..
+                } => explanations.push(format!(
+                    "[{}] prompt `{prompt_name}` returned in {elapsed_ms}ms with result confidence {:.3}",
+                    checkpoint.index,
+                    result_confidence.clamp(0.0, 1.0)
+                )),
+                corvid_vm::StepEvent::BeforeApproval {
+                    label,
+                    confidence_gate,
+                    ..
+                } => {
+                    let mut line = format!(
+                        "[{}] approval `{label}` was requested because execution reached a human boundary",
+                        checkpoint.index
+                    );
+                    if let Some(gate) = confidence_gate {
+                        append_confidence_gate_reason(&mut line, gate);
+                    }
+                    explanations.push(line);
+                }
+                corvid_vm::StepEvent::AfterApproval {
+                    label, approved, ..
+                } => explanations.push(format!(
+                    "[{}] approval `{label}` resolved to {}",
+                    checkpoint.index,
+                    if *approved { "approved" } else { "denied" }
+                )),
+                corvid_vm::StepEvent::BeforeAgentCall {
+                    agent_name,
+                    input_confidence,
+                    ..
+                } => explanations.push(format!(
+                    "[{}] agent `{agent_name}` was called with input confidence {:.3}",
+                    checkpoint.index,
+                    input_confidence.clamp(0.0, 1.0)
+                )),
+                corvid_vm::StepEvent::AfterAgentCall {
+                    agent_name,
+                    result_confidence,
+                    ..
+                } => explanations.push(format!(
+                    "[{}] agent `{agent_name}` returned with confidence {:.3}",
+                    checkpoint.index,
+                    result_confidence.clamp(0.0, 1.0)
+                )),
+                _ => {}
+            }
+        }
+
+        if explanations.is_empty() {
+            writeln!(
+                output,
+                "last run was deterministic local computation: no tool, prompt, approval, or agent-call boundary was reached"
+            )?;
+        } else {
+            writeln!(output, "why last run behaved that way:")?;
+            for explanation in explanations {
+                writeln!(output, "  - {explanation}")?;
+            }
+        }
         output.flush()
     }
 
@@ -1572,6 +1743,22 @@ fn format_confidence_gate(gate: &corvid_vm::ConfidenceGateStep) -> String {
     )
 }
 
+fn append_confidence_gate_reason(line: &mut String, gate: &corvid_vm::ConfidenceGateStep) {
+    if gate.triggered {
+        line.push_str(&format!(
+            "; confidence gate triggered because {:.3} < {:.3}",
+            gate.actual.clamp(0.0, 1.0),
+            gate.threshold.clamp(0.0, 1.0)
+        ));
+    } else {
+        line.push_str(&format!(
+            "; confidence gate stayed clear because {:.3} >= {:.3}",
+            gate.actual.clamp(0.0, 1.0),
+            gate.threshold.clamp(0.0, 1.0)
+        ));
+    }
+}
+
 fn format_typeref(ty: &corvid_ast::TypeRef) -> String {
     match ty {
         corvid_ast::TypeRef::Named { name, .. } => name.name.clone(),
@@ -1832,5 +2019,30 @@ p.x\n",
         assert!(text.contains("search"), "unexpected output: {text}");
         assert!(text.contains("generate_plan"), "unexpected output: {text}");
         assert!(text.contains("tokens"), "unexpected output: {text}");
+    }
+
+    #[test]
+    fn why_explains_deterministic_local_runs() {
+        let input = Cursor::new("1 + 1\n:why\n");
+        let mut output = Vec::new();
+        Repl::run(input, &mut output).expect("repl run succeeds");
+        let text = String::from_utf8(output).expect("valid utf8");
+        assert!(
+            text.contains("deterministic local computation"),
+            "unexpected output: {text}"
+        );
+    }
+
+    #[test]
+    fn why_reports_agent_boundaries_from_last_run() {
+        let input = Cursor::new(
+            "agent inc(x: Int) -> Int:\n    return x + 1\n\ninc(41)\n:why\n",
+        );
+        let mut output = Vec::new();
+        Repl::run(input, &mut output).expect("repl run succeeds");
+        let text = String::from_utf8(output).expect("valid utf8");
+        assert!(text.contains("42"), "unexpected output: {text}");
+        assert!(text.contains("agent `inc` was called"), "unexpected output: {text}");
+        assert!(text.contains("confidence"), "unexpected output: {text}");
     }
 }

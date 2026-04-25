@@ -486,6 +486,9 @@ Pre-phase chat caught two limiting shortcuts in my brief and reshaped the phase 
 - Pretty-printing of return values, including structs (field-by-field) and lists (with length).
 - readline-class editing (history, ctrl-r search, multiline input with indent-aware continuation).
 - `:help`, `:type <expr>`, `:reset`, `:quit` meta-commands.
+- AI run scratchpad mode: run agents with mocked tools/prompts, inspect the composed effect profile, cost estimate, model route, confidence, and provenance without leaving the shell.
+- [x] `:why` explains the compiler/runtime reason for an approval gate, model route, confidence downgrade, budget warning, or grounding failure. Shipped as a REPL trace explanation command that records silent boundary traces for normal evaluation and reports agent, prompt, tool, approval, route, and confidence-gate reasons from the last run.
+- `:replay last` reruns the last interaction through the recorded trace so users can debug behavior without spending on another model call.
 
 **Non-scope:** Native-tier REPL. LSP integration (Phase 24 owns that).
 
@@ -1442,6 +1445,10 @@ The determinism-source catalog and the language's treatment of non-reproducible 
 - Trace-aware eval reporting: value pass rates, process assertions, approval assertions, groundedness, cost, latency, model route, and replay compatibility in one report.
 - Prompt-diff report: when a prompt body changed between runs, show before/after + delta in grounding / cost / assert pass-rates.
 - Model-swap eval mode uses Phase 21 replay and Phase 20 model metadata to compare provider/model choices without spending on unchanged tool paths.
+- `corvid eval compare <base>..<head>`: PR-friendly eval diff with pass-rate deltas, cost deltas, latency deltas, model-route changes, prompt diffs, and trace/process assertion changes.
+- Regression-cause clustering: classify failures by prompt change, model change, tool-output change, route change, approval-path change, grounding loss, or budget regression.
+- Eval budget mode: estimate and enforce max eval spend before running provider-backed evals; CI fails early when the planned eval run exceeds the configured budget.
+- Golden-trace evals: replay production traces against changed prompts/models/tools and score behavior without re-spending unchanged tool and prompt paths.
 
 **v0.8 cuts here.** Full developer workflow: write in LSP, share via package manager, test + eval in CI.
 
@@ -1460,6 +1467,9 @@ The determinism-source catalog and the language's treatment of non-reproducible 
 - Scoped, replay-verifiable approval tokens: the trace records what the human approved, for which label, arguments, and time window.
 - Human-boundary effects: `ask`, `choose`, and `approve` compose into the same effect algebra as tools and prompts, so human interaction is visible to the compiler and host descriptors.
 - CLI + web-UI implementations; approval tokens same regardless of UI.
+- Approval scopes: one-time, session-scoped, amount-limited, time-limited, and argument-bound tokens. Scope violations fail closed and are replay-visible.
+- Typed tool contract recorder: tools can declare domain effects such as `money(amount)`, `external(stripe)`, `irreversible`, and `requires approve "charge-card"`. The compiler/runtime turns those contracts into approval cards, trace events, PR behavior diffs, package metadata, and CI failures when a change introduces a new money-moving or irreversible path.
+- Human-readable approval cards generated from typed tool arguments, with schema validation and redaction rules inherited from the effect/privacy profile.
 
 ### Phase 29 — Memory primitives (~4–5 weeks)
 
@@ -1474,6 +1484,9 @@ The determinism-source catalog and the language's treatment of non-reproducible 
 - Effect-tagged: `reads_session` / `writes_session` / `reads_memory` / `writes_memory`. Integrate with Phase 20's effect rows.
 - Provenance-aware memory: stored values may carry `Grounded<T>` lineage, and retrieval from memory can preserve or require provenance.
 - Policy hooks for privacy, retention, and approval-required writes, so agent memory is governed state rather than an untyped vector store.
+- Retention and deletion policy: declare TTL, user-delete, legal-hold, and privacy-tier rules at the `session` / `memory` block; runtime enforces them consistently across native and WASM storage.
+- Memory conflict resolution: typed handling for stale facts, contradictory facts, and source-priority rules, with conflicts surfaced as `Result`/diagnostics rather than silently overwriting state.
+- Memory write approvals for sensitive or irreversible state changes, recorded in replay and visible in effect summaries.
 
 ### Phase 30 — Python FFI via PyO3 (~5–6 weeks)
 
@@ -1489,6 +1502,9 @@ The determinism-source catalog and the language's treatment of non-reproducible 
 - Type marshalling: Python dicts ↔ Corvid structs (when schema known), lists ↔ lists, scalars ↔ scalars.
 - Python calls appear in traces, audit output, and effect summaries, so the Python ecosystem does not become an invisible safety hole inside AI workflows.
 - Interpreter tier gets the same FFI surface so both tiers behave identically.
+- Optional sandbox profiles for Python imports: network, filesystem, subprocess, environment, and native-extension access are denied unless declared in the import's effect profile.
+- Generated typed wrappers from Python signatures and docstring/schema metadata where available; unresolved dynamic shapes require explicit Corvid type annotations.
+- Python FFI contract tests: verify exception marshalling, type conversion, trace recording, and effect summaries for imported Python functions.
 
 ### Phase 31 — Multi-provider LLM adapters (~2 weeks)
 
@@ -1502,6 +1518,9 @@ The determinism-source catalog and the language's treatment of non-reproducible 
 - Provider/model metadata includes cost, latency, privacy tier, jurisdiction, structured-output support, context window, tool-calling support, embedding support, multimodal capability tags where available, and task capability tags.
 - Provider selection via `CORVID_MODEL` env var remains supported, but compiler/runtime model routing can use declared model capabilities from Phase 20h.
 - Eval data can compare providers and feed routing reports, so model choice becomes measurable infrastructure rather than string configuration.
+- Provider health checks and automatic failover: runtime records provider outage/degradation events and routes to compatible fallback models when policy allows.
+- Capability contract tests: verify whether each configured model actually respects JSON mode, tool calls, streaming, context-window claims, and structured-output constraints.
+- Cost normalization and usage accounting across providers, including local/openai-compatible servers, so budgets compare real prompt/model choices instead of raw provider strings.
 
 ### Phase 32 — Standard library (~8 weeks)
 
@@ -1517,6 +1536,10 @@ The determinism-source catalog and the language's treatment of non-reproducible 
 - `std.io` — structured file I/O, streaming, path manipulation, and explicit filesystem effects.
 - `std.agent` — common AI patterns: classification, extraction, summarization, ranking, adjudication, routing, planning, tool-use loops, approval-gated action, review/critique, and grounded answer generation.
 - Everything in `std.*` effect-tagged so users get the moat's benefits from day one.
+- `std.queue` — durable background jobs for long-running AI tasks, with retry, cancellation, replay hooks, budget accounting, and effect summaries.
+- `std.cache` — prompt/model/tool-result caching with replay-safe invalidation, provenance preservation, and effect-aware cache keys.
+- `std.secrets` — explicit secret access APIs whose reads compose into the effect system and are visible to audits without leaking secret values.
+- `std.observe` — metrics, trace counters, cost counters, latency histograms, routing decisions, and approval summaries exposed through one typed observability surface.
 
 **v0.9 cuts here.** Language feature-complete: HITL, memory, Python FFI, multi-provider LLMs, stdlib. Only polish remaining.
 
@@ -1536,6 +1559,9 @@ The determinism-source catalog and the language's treatment of non-reproducible 
 - Documentation rewrite: reference, tutorial, cookbook, migration-from-Python guide.
 - Claim audit: every launch claim about effects, approvals, grounding, budgets, replay, evals, packages, WASM, and benchmarks links to a runnable command, test, or committed example.
 - `corvid doctor` checks provider keys, local model availability, replay storage, approval UI configuration, wasm/native toolchains, registry access, and platform support.
+- `corvid bench compare python|js`: honest orchestration-overhead comparisons against representative Python/JS AI framework stacks. Claims distinguish model-provider latency from Corvid's compiled orchestration/runtime overhead.
+- `corvid audit`: project-level report for dangerous tools, approval boundaries, money-moving paths, budget exposure, ungrounded outputs, provider policy violations, secret access, and replay coverage.
+- One-command reference apps: RAG app, support bot, approval-gated refund bot, code-review agent, provider-routing demo, and local-model demo. Each ships with tests, evals, traces, and benchmark notes.
 - Reproducibility scripts for benchmark and bundle claims, including the Phase 17 performance baseline and Phase 22 public bundle verification.
 - Launch materials: 2-minute GIF/video showing the time-travel replay moment + effect-checker catching a bug + compile-time cost budget. HN + Reddit + ProductHunt announcement drafts reviewed with 3 external readers.
 - Beta round: 20 external developers build something real in Corvid; their feedback gates the final cut.
