@@ -83,9 +83,23 @@ Five independent techniques run on every build. A regression in any one fails CI
 
 **Implementation.** `corvid-driver::spec_check` module. CLI: `corvid test spec`. Shipped in commit `413b39e`.
 
-## 8. CI gates
+## 8. Rule-to-test cross-links
+
+| Spec rule family | Production rule implementation | Property / regression tests | Differential / corpus gate |
+|---|---|---|---|
+| Composition archetypes (§2, §6) | [`crates/corvid-types/src/effects/compose.rs`](../../crates/corvid-types/src/effects/compose.rs), [`crates/corvid-types/src/law_check.rs`](../../crates/corvid-types/src/law_check.rs) | `corvid test dimensions`; [`crates/corvid-driver/tests/custom_dimensions.rs`](../../crates/corvid-driver/tests/custom_dimensions.rs) | `corvid test spec --meta`; [`docs/effects-spec/counterexamples/composition/`](./counterexamples/composition/) |
+| Constraint satisfaction and budgets (§3, §7) | [`crates/corvid-types/src/checker.rs`](../../crates/corvid-types/src/checker.rs), [`crates/corvid-types/src/effects/cost.rs`](../../crates/corvid-types/src/effects/cost.rs) | [`crates/corvid-types/src/tests.rs`](../../crates/corvid-types/src/tests.rs) budget and mutation suites | [`tests/corpus/`](../../tests/corpus/) through `corvid verify --corpus tests/corpus` |
+| `Grounded<T>` provenance (§3, §5) | [`crates/corvid-types/src/effects/grounded.rs`](../../crates/corvid-types/src/effects/grounded.rs), [`crates/corvid-vm/src/value.rs`](../../crates/corvid-vm/src/value.rs) | [`crates/corvid-types/src/tests.rs`](../../crates/corvid-types/src/tests.rs) provenance mutations; [`crates/corvid-vm/src/tests/dispatch.rs`](../../crates/corvid-vm/src/tests/dispatch.rs) | `corvid verify --corpus tests/corpus` plus strict-citation VM/native parity tests |
+| Approve-before-dangerous (§3) | [`crates/corvid-types/src/checker/stmt.rs`](../../crates/corvid-types/src/checker/stmt.rs), [`crates/corvid-types/src/checker/call.rs`](../../crates/corvid-types/src/checker/call.rs) | [`crates/corvid-types/src/tests.rs`](../../crates/corvid-types/src/tests.rs) approval mutation suite | `corvid verify --corpus tests/corpus`; trace-diff approval deltas in [`crates/corvid-cli/src/trace_diff/`](../../crates/corvid-cli/src/trace_diff/) |
+| Confidence gates (§6) | [`crates/corvid-types/src/checker/prompt.rs`](../../crates/corvid-types/src/checker/prompt.rs), [`crates/corvid-vm/src/interp.rs`](../../crates/corvid-vm/src/interp.rs) | [`crates/corvid-types/src/tests.rs`](../../crates/corvid-types/src/tests.rs) confidence tests; [`crates/corvid-vm/src/tests/dispatch.rs`](../../crates/corvid-vm/src/tests/dispatch.rs) runtime gate tests | `corvid test dimensions` covers Min composition for confidence |
+| Preserved-semantics rewrites (§3) | [`crates/corvid-differential-verify/src/rewrite.rs`](../../crates/corvid-differential-verify/src/rewrite.rs), [`crates/corvid-differential-verify/src/fuzz.rs`](../../crates/corvid-differential-verify/src/fuzz.rs) | [`crates/corvid-differential-verify/tests/rewrite_ast.rs`](../../crates/corvid-differential-verify/tests/rewrite_ast.rs) | `corvid test rewrites` |
+| Cross-tier profile agreement (§1) | [`crates/corvid-differential-verify/src/lib.rs`](../../crates/corvid-differential-verify/src/lib.rs) | Deliberate fail fixtures [`tests/corpus/should_fail/`](../../tests/corpus/should_fail/) | `corvid verify --corpus tests/corpus` |
+
+## 9. CI gates
 
 Every one of the above runs on every push and every pull request. [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml) wires:
+
+The Phase 20g gate includes `corvid test rewrites`, so preserved-semantics drift is a CI failure with rule/law attribution rather than an optional local check.
 
 - `cargo check --workspace --all-targets`
 - `cargo test --workspace --lib --tests`
@@ -96,7 +110,7 @@ Every one of the above runs on every push and every pull request. [`.github/work
 
 Any failure blocks the build. Shipped in commit `4d4944b`.
 
-## 9. Summary
+## 10. Summary
 
 | Technique | Status | CI gate |
 |---|---|---|

@@ -2843,6 +2843,21 @@ Coverage gaps remain honest. Rows with no exercised corpus program are shown as
 unexercised, but they are not treated as profile drift. The command distinguishes
 "we need a better corpus" from "the checker is unsound under this rewrite."
 
+## 20g-rule-to-test-cross-links
+
+The effect-system spec now has a rule-to-test map. Each row starts from a
+language rule family, points at the production module that implements it, then
+points at the property/regression tests and corpus gate that keep it honest.
+
+This matters because "inventive" language features need auditability. A reader
+should not have to trust a prose claim that `Grounded<T>` or approve-before-
+dangerous is enforced; the spec links directly to the checker, VM/runtime test,
+and differential-verification gate that prove it.
+
+`corvid test rewrites` is also part of CI now, so preserved-semantics fuzzing is
+not an optional local ritual. If an AST rewrite causes profile drift, CI fails
+with the rewrite rule, semantic law, first changed line, and shrunk reproducer.
+
 ## Contributing / feedback
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). The rules of the road are: design chat before code, per-scope commits at every boundary, dev-log entry for every session, no shortcuts. The `learnings.md` file you're reading gets updated when each user-visible feature ships.

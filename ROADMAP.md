@@ -645,7 +645,7 @@ The spec becomes a **living proof obligation**. Change the composition algebra �
 - [x] `docs/effects-spec/` as a literate spec — `.md` files with embedded runnable corvid blocks + `# expect:` directives (commits `3f80585` through `b628068`, 13 sections total)
 - [x] Build pipeline: every code block compiles during spec publication — `corvid test spec` wired to CI (commit `4d4944b`). Current report: 5 compile / 38 skip / 0 fail across 43 blocks.
 - [ ] Static site generator that renders the spec with "Run in REPL" buttons — **parked as post-20g follow-up** — spec is fully readable as Markdown on GitHub today; interactive renderer is a launch-phase nice-to-have
-- [ ] Cross-links from spec rules to proptest + differential-verify tests — partial (spec references crate modules by path today; named-link cross-refs pending)
+- [x] Cross-links from spec rules to proptest + differential-verify tests — `docs/effects-spec/12-verification.md` now carries a rule-to-test map linking composition, budgets, grounding, approval, confidence, rewrites, and cross-tier profile agreement to their production modules, property tests, and corpus gates.
 - [x] Comparison appendix: Koka, Eff, Frank, Haskell algebraic effects, Rust `unsafe`, capability systems — [section 11 — related work](../docs/effects-spec/11-related-work.md) covers each dimension-by-dimension
 
 ##### 4. Preserved-semantics fuzzing
@@ -712,8 +712,8 @@ Every `effect` declaration, `uses` clause, and constraint example in [docs/effec
 
 - [x] Spec examples extracted from every `.md` file in `docs/effects-spec/` (commit `413b39e`) — examples stay inline under ```corvid fences with `# expect: compile|error|skip` directives rather than a separate `examples/` directory
 - [x] `corvid test spec` walks spec, compiles each block, compares outcome to the declared expectation
-- [ ] Cross-links from spec rules → proptest files → differential-verify tests
-- [ ] CI gate: any example whose behavior diverges from the spec fails the build — local enforcement is live, needs CI wiring
+- [x] Cross-links from spec rules → proptest files → differential-verify tests
+- [x] CI gate: any example whose behavior diverges from the spec fails the build — `.github/workflows/ci.yml` gates `corvid test spec`; preserved-semantics drift now also gates via `corvid test rewrites`.
 
 ##### 9. Community dimension registry + `corvid effect-diff`
 

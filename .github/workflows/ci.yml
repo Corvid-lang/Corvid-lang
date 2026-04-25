@@ -101,6 +101,12 @@ jobs:
       - name: corvid test spec --meta
         run: ./target/release/corvid test spec --meta
 
+      # Invention #4: semantic-preserving rewrites must not drift
+      # composed effect profiles. Failures name the rewrite rule,
+      # semantic law, first changed line, and shrunk reproducer.
+      - name: corvid test rewrites
+        run: ./target/release/corvid test rewrites
+
       # Invention #1 + #4: cross-tier differential verification over
       # the full corpus. `tests/corpus/should_fail/*` is expected to
       # exit 1 — that's the fail-safe that proves the harness catches

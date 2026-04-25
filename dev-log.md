@@ -4960,3 +4960,14 @@ a shrunk reproducer.
 Sparse coverage stays informational. Unexercised rewrite rows are visible in
 the matrix, but the command fails only on actual semantic drift. That keeps the
 tool useful today without pretending the corpus is broader than it is.
+
+## 2026-04-25 - effect spec rule-to-test links
+
+Closed the spec cross-link follow-up. The verification section now includes a
+rule-to-test map that ties each shipped safety rule family to its production
+module, property/regression tests, and corpus/CI gate.
+
+The CI workflow now runs `corvid test rewrites` alongside dimensions, spec,
+spec-meta, and cross-tier corpus verification. That makes preserved-semantics
+drift a real CI failure with law/rule attribution, not only a crate-level test
+developers might forget to invoke.
