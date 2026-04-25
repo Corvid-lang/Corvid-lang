@@ -124,6 +124,15 @@ pub struct TargetBuildOutput {
     pub diagnostics: Vec<Diagnostic>,
 }
 
+pub struct WasmBuildOutput {
+    pub source: String,
+    pub wasm_path: Option<PathBuf>,
+    pub js_loader_path: Option<PathBuf>,
+    pub ts_types_path: Option<PathBuf>,
+    pub manifest_path: Option<PathBuf>,
+    pub diagnostics: Vec<Diagnostic>,
+}
+
 pub struct AbiBuildOutput {
     pub source: String,
     pub descriptor_json: Option<String>,
@@ -240,6 +249,51 @@ pub fn build_target_to_disk(
                 output_path: Some(produced),
                 header_path,
                 abi_descriptor_path,
+                diagnostics: Vec::new(),
+            })
+        }
+    }
+}
+
+pub fn build_wasm_to_disk(source_path: &Path) -> anyhow::Result<WasmBuildOutput> {
+    let source = std::fs::read_to_string(source_path).map_err(|e| {
+        anyhow::anyhow!("cannot read `{}`: {}", source_path.display(), e)
+    })?;
+
+    let config = load_corvid_config_for(source_path);
+    match build_frontend_bundle(&source, source_path, config.as_ref()) {
+        Err(diagnostics) => Ok(WasmBuildOutput {
+            source,
+            wasm_path: None,
+            js_loader_path: None,
+            ts_types_path: None,
+            manifest_path: None,
+            diagnostics,
+        }),
+        Ok(frontend) => {
+            let out_dir = wasm_output_dir_for(source_path);
+            let stem = source_path
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("program")
+                .to_string();
+            let artifacts = corvid_codegen_wasm::emit_wasm_artifacts(&frontend.ir, &stem)
+                .map_err(|e| anyhow::anyhow!("wasm codegen failed: {e}"))?;
+            std::fs::create_dir_all(&out_dir)?;
+            let wasm_path = out_dir.join(format!("{stem}.wasm"));
+            let js_loader_path = out_dir.join(format!("{stem}.js"));
+            let ts_types_path = out_dir.join(format!("{stem}.d.ts"));
+            let manifest_path = out_dir.join(format!("{stem}.corvid-wasm.json"));
+            std::fs::write(&wasm_path, artifacts.wasm)?;
+            std::fs::write(&js_loader_path, artifacts.js_loader)?;
+            std::fs::write(&ts_types_path, artifacts.ts_types)?;
+            std::fs::write(&manifest_path, artifacts.manifest_json)?;
+            Ok(WasmBuildOutput {
+                source,
+                wasm_path: Some(wasm_path),
+                js_loader_path: Some(js_loader_path),
+                ts_types_path: Some(ts_types_path),
+                manifest_path: Some(manifest_path),
                 diagnostics: Vec::new(),
             })
         }
@@ -385,6 +439,20 @@ pub(super) fn target_output_dir_for(source_path: &Path, target: BuildTarget) -> 
             parent.join("target").join("release")
         }
     }
+}
+
+pub(super) fn wasm_output_dir_for(source_path: &Path) -> PathBuf {
+    let mut ancestor: Option<&Path> = source_path.parent();
+    while let Some(dir) = ancestor {
+        if dir.file_name().map(|n| n == "src").unwrap_or(false) {
+            if let Some(project_root) = dir.parent() {
+                return project_root.join("target").join("wasm");
+            }
+        }
+        ancestor = dir.parent();
+    }
+    let parent = source_path.parent().unwrap_or_else(|| Path::new("."));
+    parent.join("target").join("wasm")
 }
 
 pub(super) fn output_path_for(source_path: &Path) -> PathBuf {

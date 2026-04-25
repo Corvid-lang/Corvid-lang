@@ -35,6 +35,7 @@ sha2 = "0.10"
 tar = "0.4"
 ed25519-dalek = { version = "2", features = ["std", "rand_core"] }
 base64 = "0.22"
+wasmparser = "0.244.0"
 dirs = "5"
 hex = "0.4"
 

@@ -1333,7 +1333,7 @@ The determinism-source catalog and the language's treatment of non-reproducible 
 **Hard dep:** IR (✅). Parallel codegen backend to Cranelift-native; does not depend on it.
 
 **Scope:**
-- New `corvid-codegen-wasm` crate using `cranelift-wasm` (same Cranelift you've already shipped, different output target).
+- New `corvid-codegen-wasm` crate. The scalar foundation emits directly with `wasm-encoder`; host-capability lowering can move to a fuller Cranelift-backed pipeline when prompts/tools/approvals need shared runtime imports.
 - `corvid build --target=wasm` emits `.wasm` + an ES module loader + TypeScript types.
 - Runtime: the wasm module imports typed host capabilities for LLM calls + tool dispatch + approval UI + replay recording. Each host import carries the same effect/provenance/budget contract as the native runtime boundary.
 - **Replay in WASM**: host functions that record tool + prompt + approve calls write to a JS-side trace store compatible with Phase 21's format. `corvid replay <trace>` on a WASM module runs via the same host-function contract, substituting recorded responses. Shared recording format means a trace captured from native can be replayed under WASM and vice versa — a property worth preserving from the start.
@@ -1342,6 +1342,14 @@ The determinism-source catalog and the language's treatment of non-reproducible 
 - Browser smoke test: a small Corvid program compiled to wasm and loaded in a web page.
 
 **Non-scope:** Wasm-specific optimizations (post-v1.0). Wasm-side cycle collection (wasm's own GC proposal is stabilising; use it once available, fall back to host-delegated collection via exported functions in the interim).
+
+**Slice checklist:**
+
+- [x] 23-A-scalar-wasm       `corvid build --target=wasm` emits a valid standalone `.wasm` module plus ES loader, TypeScript declarations, and a manifest for scalar runtime-free agents. Unsupported prompts/tools/approvals fail loudly until the host-capability ABI exists.
+- [ ] 23-B-host-abi          Browser/edge host-capability ABI for LLM prompts, tools, approvals, replay recording, and provenance handles.
+- [ ] 23-C-wasm-replay       JS-side trace store compatible with Phase 21 replay; native-captured and WASM-captured traces share schema.
+- [ ] 23-D-browser-demo      Browser smoke page loading a Corvid `.wasm` module with typed approval UI and replay recording.
+- [ ] 23-E-wasmtime-harness  Wasmtime/Wasmer parity harness against the native parity corpus.
 
 **v0.7 cuts here.** Corvid ships as a library + a wasm module. Real deployment story.
 

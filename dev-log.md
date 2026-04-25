@@ -5211,3 +5211,16 @@ daemon returns the existing `CrossTierReplayUnsupported` error if a trace's
 recorded writer does not match the selected replay writer. The current native
 executor passes scalar CLI arguments only, matching the native command-line
 entry boundary.
+
+## 2026-04-25 - scalar WASM target foundation
+
+Started Phase 23 with a real `corvid build --target=wasm` path instead of the
+old stub crate. `corvid-codegen-wasm` now emits a valid standalone WebAssembly
+module for scalar runtime-free agents, plus an ES module loader, TypeScript
+declarations, and a JSON manifest under `target/wasm/`.
+
+The boundary is explicit. `Int`, `Float`, `Bool`, and `Nothing` agents compile;
+prompt/tool/approval calls fail with host-ABI diagnostics until the browser/edge
+host-capability ABI lands. This keeps the WASM target deployable for pure logic
+without pretending AI-native runtime contracts survive in the browser before
+they have a real import surface.

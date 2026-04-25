@@ -79,6 +79,7 @@ corvid-vm       = { path = "crates/corvid-vm" }
 corvid-repl     = { path = "crates/corvid-repl" }
 corvid-codegen-py = { path = "crates/corvid-codegen-py" }
 corvid-codegen-cl = { path = "crates/corvid-codegen-cl" }
+corvid-codegen-wasm = { path = "crates/corvid-codegen-wasm" }
 corvid-runtime  = { path = "crates/corvid-runtime" }
 corvid-macros   = { path = "crates/corvid-macros" }
 corvid-test-tools = { path = "crates/corvid-test-tools" }

@@ -4,6 +4,7 @@
 //!   corvid new <name>         scaffold a new project
 //!   corvid check <file>       type-check a source file
 //!   corvid build <file>       compile to target/py/<name>.py
+//!   corvid build --target=wasm <file> emits browser/edge artifacts
 //!   corvid run <file>         build + invoke python on the output
 //!   corvid repl               start the interactive REPL
 //!   corvid test <what>        run verification suites (dimensions, spec, rewrites, adversarial)
@@ -53,8 +54,9 @@ use routing_report::{build_report, render_report as render_routing_report, Routi
 
 #[allow(unused_imports)]
 use corvid_driver::{
-    build_native_to_disk, build_target_to_disk, build_to_disk, compile, compile_with_config, diff_snapshots,
-    inspect_import_semantics, load_corvid_config_for, load_corvid_config_with_path_for,
+    build_native_to_disk, build_target_to_disk, build_to_disk, build_wasm_to_disk, compile,
+    compile_with_config, diff_snapshots, inspect_import_semantics, load_corvid_config_for,
+    load_corvid_config_with_path_for,
     load_dotenv_walking, render_all_pretty, render_dimension_verification_report,
     render_effect_diff, render_import_semantic_summaries, render_law_check_report,
     render_spec_report, run_dimension_verification, run_law_checks, run_native, run_with_target, scaffold_new,
@@ -76,10 +78,11 @@ enum Command {
     /// Type-check a Corvid source file.
     Check { file: PathBuf },
     /// Compile a Corvid source file. Default target is Python (target/py/);
-    /// `--target=native` emits a machine-code binary under target/bin/.
+    /// `--target=native` emits target/bin/, and `--target=wasm`
+    /// emits target/wasm/ with `.wasm`, JS loader, and TypeScript types.
     Build {
         file: PathBuf,
-        /// Output target. `python` (default), `native`, `cdylib`, or `staticlib`.
+        /// Output target. `python` (default), `native`, `wasm`, `cdylib`, or `staticlib`.
         #[arg(long, default_value = "python")]
         target: String,
         /// Path to a compiled `#[tool]` staticlib. When provided,
@@ -1040,6 +1043,36 @@ fn cmd_build(
                 Ok(1)
             }
         }
+        "wasm" => {
+            if tools_lib.is_some() {
+                anyhow::bail!(
+                    "`--with-tools-lib` is not valid for `wasm` until the Phase 23 host-capability ABI lands"
+                );
+            }
+            if header || abi_descriptor {
+                anyhow::bail!(
+                    "`--header`, `--abi-descriptor`, and `--all-artifacts` are only valid for library targets"
+                );
+            }
+            let out = build_wasm_to_disk(file)
+                .with_context(|| format!("failed to build `{}` (wasm)", file.display()))?;
+            if let Some(path) = out.wasm_path {
+                println!("built: {} -> {}", file.display(), path.display());
+                if let Some(js) = out.js_loader_path {
+                    println!("loader: {}", js.display());
+                }
+                if let Some(types) = out.ts_types_path {
+                    println!("types: {}", types.display());
+                }
+                if let Some(manifest) = out.manifest_path {
+                    println!("manifest: {}", manifest.display());
+                }
+                Ok(0)
+            } else {
+                eprint!("{}", render_all_pretty(&out.diagnostics, file, &out.source));
+                Ok(1)
+            }
+        }
         "cdylib" => cmd_build_library(
             file,
             BuildTarget::Cdylib,
@@ -1061,7 +1094,7 @@ fn cmd_build(
         }
         other => {
             anyhow::bail!(
-                "unknown target `{other}`; valid: `python` (default), `native`, `cdylib`, `staticlib`"
+                "unknown target `{other}`; valid: `python` (default), `native`, `wasm`, `cdylib`, `staticlib`"
             )
         }
     }

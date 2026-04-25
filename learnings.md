@@ -3080,6 +3080,18 @@ compiled binary, records a native shadow trace, and rejects traces whose writer
 does not match the selected executor. That gives the daemon real deployment
 coverage without weakening replay determinism.
 
+## wasm scalar foundation
+
+The browser target has to start from an honest ABI boundary. Corvid can now emit
+valid WASM for scalar, runtime-free agents, with JS and TypeScript companions,
+but it refuses prompts, tools, and approvals until those capabilities are real
+host imports.
+
+That refusal is part of the feature. A WASM target that silently erases approval
+or replay semantics would make Corvid less safe than the glue libraries it is
+meant to replace. The foundation proves deployment mechanics first and leaves
+AI-native host capabilities as the next explicit slice.
+
 ## Contributing / feedback
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). The rules of the road are: design chat before code, per-scope commits at every boundary, dev-log entry for every session, no shortcuts. The `learnings.md` file you're reading gets updated when each user-visible feature ships.
