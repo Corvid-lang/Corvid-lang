@@ -160,6 +160,7 @@ fn benchmark_shaped_fixture_has_nonzero_dup_drop_reduction() {
     let agent = IrAgent {
         id: DefId(0),
         name: "bench_fixture".into(),
+        extern_abi: None,
         params: vec![IrParam {
             name: "s".into(),
             local_id: LocalId(0),

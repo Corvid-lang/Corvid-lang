@@ -4667,3 +4667,9 @@ Next:
 Shipped the language/interpreter half of `cites ctx strictly`. Prompt parsing now accepts the contextual `cites <param> strictly` clause, the typechecker proves the cited parameter exists and is `Grounded<T>`, IR lowering records the parameter index, and the VM verifies the model response cites content from the grounded payload before returning.
 
 Two runtime boundary issues surfaced during real VM tests and were fixed instead of hidden in fixtures: retrieval tools declared as `Grounded<T>` now decode host JSON as `T` before provenance wrapping, and prompts returning `Grounded<T>` decode the LLM payload as `T` before merging grounded input provenance. Native Cranelift emission remains open and is tracked separately in the roadmap.
+
+## 2026-04-25 — Phase 20b strict prompt citations, native path
+
+Closed the native half of `cites ctx strictly`. Citation phrase matching now lives in `corvid-runtime::citation`, shared by the VM and the FFI bridge. Codegen-cl imports `corvid_citation_verify_or_panic`, emits it after prompt bridge calls, stringifies scalar responses when needed, and treats `Grounded<T>` as the inner `T` for prompt interpolation and trace payload encoding.
+
+Native parity tests now cover both accepted and rejected strict-citation responses using the `grounded_echo` retrieval-backed test tool. Rebuilding `corvid-test-tools` release was required locally because the staticlib bundles runtime FFI symbols.

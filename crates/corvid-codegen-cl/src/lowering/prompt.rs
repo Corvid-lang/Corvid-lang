@@ -101,6 +101,9 @@ fn emit_stringify_arg(
     span: Span,
 ) -> Result<ClValue, CodegenError> {
     match arg_ty {
+        Type::Grounded(inner) => {
+            emit_stringify_arg(builder, module, runtime, arg_value, inner, span)
+        }
         Type::String => Ok(arg_value),
         Type::Int => {
             let f = module.declare_func_in_func(runtime.string_from_int, builder.func);
@@ -131,6 +134,55 @@ fn emit_stringify_arg(
             span,
         )),
     }
+}
+
+fn is_string_like_prompt_arg(ty: &Type) -> bool {
+    match ty {
+        Type::String => true,
+        Type::Grounded(inner) => is_string_like_prompt_arg(inner),
+        _ => false,
+    }
+}
+
+fn emit_citation_text(
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    runtime: &RuntimeFuncs,
+    value: ClValue,
+    value_ty: &Type,
+    span: Span,
+) -> Result<(ClValue, bool), CodegenError> {
+    match value_ty {
+        Type::Grounded(inner) => {
+            emit_citation_text(builder, module, runtime, value, inner, span)
+        }
+        Type::String => Ok((value, true)),
+        Type::Int | Type::Bool | Type::Float => {
+            let text = emit_stringify_arg(builder, module, runtime, value, value_ty, span)?;
+            Ok((text, false))
+        }
+        other => Err(CodegenError::not_supported(
+            format!(
+                "`cites ... strictly` for `{}` is not yet supported by native codegen; use Grounded<String> or a scalar grounded context",
+                other.display_name()
+            ),
+            span,
+        )),
+    }
+}
+
+fn emit_citation_check(
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    runtime: &RuntimeFuncs,
+    prompt_name: ClValue,
+    context: ClValue,
+    response: ClValue,
+) {
+    let verify_ref = module.declare_func_in_func(runtime.citation_verify_or_panic, builder.func);
+    builder
+        .ins()
+        .call(verify_ref, &[prompt_name, context, response]);
 }
 
 fn emit_concat_chain(
@@ -253,7 +305,7 @@ pub(super) fn lower_prompt_call(
             module,
             runtime,
         )?;
-        let pinned = matches!(&a.ty, Type::String)
+        let pinned = is_string_like_prompt_arg(&a.ty)
             && matches!(&a.kind, IrExprKind::Local { .. })
             && pinned_locals.is_some_and(|set| {
                 matches!(
@@ -283,7 +335,7 @@ pub(super) fn lower_prompt_call(
                     let aty = &args[*idx].ty;
                     (
                         emit_stringify_arg(builder, module, runtime, av, aty, span)?,
-                        arg_pinned[*idx] && matches!(aty, Type::String),
+                        arg_pinned[*idx] && is_string_like_prompt_arg(aty),
                     )
                 }
             };
@@ -341,6 +393,50 @@ pub(super) fn lower_prompt_call(
     let result_vals: Vec<ClValue> =
         builder.inst_results(call).iter().copied().collect();
 
+    if result_vals.len() != 1 {
+        return Err(CodegenError::cranelift(
+            format!(
+                "prompt bridge returned {} values; expected 1 for return type `{}`",
+                result_vals.len(),
+                return_ty.display_name()
+            ),
+            span,
+        ));
+    }
+
+    if let Some(param_idx) = prompt.cites_strictly_param {
+        let (context_text, context_borrowed) = emit_citation_text(
+            builder,
+            module,
+            runtime,
+            arg_vals[param_idx],
+            &args[param_idx].ty,
+            span,
+        )?;
+        let (response_text, response_borrowed) = emit_citation_text(
+            builder,
+            module,
+            runtime,
+            result_vals[0],
+            bridge_return_ty,
+            span,
+        )?;
+        emit_citation_check(
+            builder,
+            module,
+            runtime,
+            prompt_name_val,
+            context_text,
+            response_text,
+        );
+        if !context_borrowed {
+            emit_release(builder, module, runtime, context_text);
+        }
+        if !response_borrowed {
+            emit_release(builder, module, runtime, response_text);
+        }
+    }
+
     emit_release(builder, module, runtime, prompt_name_val);
     emit_release(builder, module, runtime, signature_val);
     if !rendered_borrowed {
@@ -357,16 +453,6 @@ pub(super) fn lower_prompt_call(
         }
     }
 
-    if result_vals.len() != 1 {
-        return Err(CodegenError::cranelift(
-            format!(
-                "prompt bridge returned {} values; expected 1 for return type `{}`",
-                result_vals.len(),
-                return_ty.display_name()
-            ),
-            span,
-        ));
-    }
     if matches!(return_ty, Type::Grounded(_)) {
         return emit_grounded_prompt_attestation(
             builder,

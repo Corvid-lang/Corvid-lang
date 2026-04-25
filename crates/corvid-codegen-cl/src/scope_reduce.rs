@@ -273,7 +273,7 @@ fn expr_is_effect_free(expr: &IrExpr) -> bool {
 mod tests {
     use super::*;
     use corvid_ast::{BinaryOp, Effect, Span};
-    use corvid_ir::{IrCallKind, IrLiteral, IrParam};
+    use corvid_ir::{IrCallKind, IrLiteral};
     use corvid_resolve::DefId;
     use corvid_types::Type;
 

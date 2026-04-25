@@ -2447,6 +2447,13 @@ prompts that return `Grounded<T>`: external JSON supplies the inner `T`; Corvid
 adds the provenance wrapper after the trusted retrieval or grounded transform
 has been established.
 
+Native parity forced the same rule into codegen. `Grounded<T>` is an evidence
+type, not a different runtime payload shape on the hot path. Codegen should
+lower it as the inner scalar for interpolation, trace payloads, and prompt
+bridge calls, then attach or verify provenance at explicit runtime boundaries.
+That keeps the native tier behaviorally identical to the interpreter without
+inventing a second citation checker in Cranelift.
+
 ## Contributing / feedback
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). The rules of the road are: design chat before code, per-scope commits at every boundary, dev-log entry for every session, no shortcuts. The `learnings.md` file you're reading gets updated when each user-visible feature ships.

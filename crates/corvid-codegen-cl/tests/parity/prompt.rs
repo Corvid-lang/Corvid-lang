@@ -76,6 +76,20 @@ fn assert_parity_with_mock_llm(
     assert_no_leaks(&stderr, src);
 }
 
+fn build_prompt_binary(src: &str) -> (tempfile::TempDir, std::path::PathBuf) {
+    let ir = ir_of(src);
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let bin_path = tmp.path().join("prog");
+    let produced = build_native_to_disk(
+        &ir,
+        "corvid_parity_test",
+        &bin_path,
+        &[test_tools_lib_path().as_path()],
+    )
+    .expect("compile + link");
+    (tmp, produced)
+}
+
 #[test]
 fn prompt_returns_int() {
     assert_parity_with_mock_llm(
@@ -117,5 +131,80 @@ fn prompt_with_local_string_arg_interpolation() {
         1,
         "mock-1",
         "classify",
+    );
+}
+
+#[test]
+fn prompt_cites_strictly_native_accepts_grounded_context_phrase() {
+    let src = r#"
+effect retrieval:
+    data: grounded
+
+tool grounded_echo(s: String) -> Grounded<String> uses retrieval
+
+prompt answer(ctx: Grounded<String>) -> Grounded<String>:
+    cites ctx strictly
+    "Answer from {ctx}"
+
+agent main() -> Grounded<String>:
+    ctx = grounded_echo("alpha beta gamma delta epsilon")
+    return answer(ctx)
+"#;
+    let (_tmp, produced) = build_prompt_binary(src);
+    let output = Command::new(&produced)
+        .env("CORVID_DEBUG_ALLOC", "1")
+        .env("CORVID_APPROVE_AUTO", "1")
+        .env("CORVID_TEST_MOCK_LLM", "1")
+        .env("CORVID_TEST_MOCK_LLM_RESPONSE", "beta gamma delta epsilon")
+        .env("CORVID_MODEL", "mock-1")
+        .output()
+        .expect("run compiled binary");
+    let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+    assert!(
+        output.status.success(),
+        "compiled binary exited non-zero: status={:?} stdout={stdout} stderr={stderr}",
+        output.status.code()
+    );
+    assert!(
+        stdout.contains("beta gamma delta epsilon"),
+        "stdout did not contain grounded response: {stdout}"
+    );
+    assert_no_leaks(&stderr, src);
+}
+
+#[test]
+fn prompt_cites_strictly_native_rejects_uncited_response() {
+    let src = r#"
+effect retrieval:
+    data: grounded
+
+tool grounded_echo(s: String) -> Grounded<String> uses retrieval
+
+prompt answer(ctx: Grounded<String>) -> Grounded<String>:
+    cites ctx strictly
+    "Answer from {ctx}"
+
+agent main() -> Grounded<String>:
+    ctx = grounded_echo("alpha beta gamma delta epsilon")
+    return answer(ctx)
+"#;
+    let (_tmp, produced) = build_prompt_binary(src);
+    let output = Command::new(&produced)
+        .env("CORVID_DEBUG_ALLOC", "1")
+        .env("CORVID_APPROVE_AUTO", "1")
+        .env("CORVID_TEST_MOCK_LLM", "1")
+        .env("CORVID_TEST_MOCK_LLM_RESPONSE", "unrelated answer")
+        .env("CORVID_MODEL", "mock-1")
+        .output()
+        .expect("run compiled binary");
+    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+    assert!(
+        !output.status.success(),
+        "compiled binary unexpectedly succeeded; stderr={stderr}"
+    );
+    assert!(
+        stderr.contains("citation verification failed"),
+        "stderr did not contain citation failure: {stderr}"
     );
 }

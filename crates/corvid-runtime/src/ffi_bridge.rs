@@ -1237,6 +1237,24 @@ pub unsafe extern "C" fn corvid_prompt_call_string(
 }
 
 #[no_mangle]
+pub unsafe extern "C" fn corvid_citation_verify_or_panic(
+    prompt_name: CorvidString,
+    context: CorvidString,
+    response: CorvidString,
+) -> bool {
+    let prompt_name_ref = unsafe { borrow_corvid_string(&prompt_name) };
+    let context_ref = unsafe { borrow_corvid_string(&context) };
+    let response_ref = unsafe { borrow_corvid_string(&response) };
+    if crate::citation::citation_verified(context_ref, response_ref) {
+        return true;
+    }
+
+    panic!(
+        "citation verification failed for prompt `{prompt_name_ref}`: response does not reference content from the cited context parameter"
+    );
+}
+
+#[no_mangle]
 pub unsafe extern "C" fn corvid_approve_sync(
     label: CorvidString,
     arg_types: CorvidString,

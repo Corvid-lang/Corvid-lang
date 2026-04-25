@@ -25,26 +25,6 @@ pub(super) fn composed_confidence(args: &[Value]) -> f64 {
     min_conf
 }
 
-pub(super) fn citation_verified(context: &str, response: &str) -> bool {
-    let ctx_lower = context.to_lowercase();
-    let resp_lower = response.to_lowercase();
-
-    let ctx_words: Vec<&str> = ctx_lower.split_whitespace().collect();
-    if ctx_words.len() < 4 {
-        return resp_lower.contains(&ctx_lower);
-    }
-
-    let window_size = 4;
-    for window in ctx_words.windows(window_size) {
-        let phrase = window.join(" ");
-        if resp_lower.contains(&phrase) {
-            return true;
-        }
-    }
-
-    false
-}
-
 #[allow(dead_code)]
 pub(super) fn force_use(i: &Interpreter<'_>) {
     let _ = &i.ir;

@@ -233,7 +233,7 @@ impl<'ir> Interpreter<'ir> {
                     other => value_to_json(other).to_string(),
                 };
                 let response_text = value_to_json(&value).to_string();
-                if !super::effect_compose::citation_verified(&ctx_text, &response_text) {
+                if !corvid_runtime::citation::citation_verified(&ctx_text, &response_text) {
                     return Err(InterpError::new(
                         InterpErrorKind::Other(format!(
                             "citation verification failed for prompt `{callee_name}`: \

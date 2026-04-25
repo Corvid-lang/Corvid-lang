@@ -626,6 +626,24 @@ pub(super) fn declare_runtime_funcs(
             CodegenError::cranelift(format!("declare prompt_call_string: {e}"), Span::new(0, 0))
         })?;
 
+    let mut citation_verify_sig = module.make_signature();
+    citation_verify_sig.params.push(AbiParam::new(I64));
+    citation_verify_sig.params.push(AbiParam::new(I64));
+    citation_verify_sig.params.push(AbiParam::new(I64));
+    citation_verify_sig.returns.push(AbiParam::new(I8));
+    let citation_verify_or_panic_id = module
+        .declare_function(
+            CITATION_VERIFY_OR_PANIC_SYMBOL,
+            Linkage::Import,
+            &citation_verify_sig,
+        )
+        .map_err(|e| {
+            CodegenError::cranelift(
+                format!("declare citation_verify_or_panic: {e}"),
+                Span::new(0, 0),
+            )
+        })?;
+
     let mut trace_run_started_sig = module.make_signature();
     trace_run_started_sig.params.push(AbiParam::new(I64));
     trace_run_started_sig.params.push(AbiParam::new(I64));
@@ -843,6 +861,7 @@ pub(super) fn declare_runtime_funcs(
         prompt_call_bool: prompt_call_bool_id,
         prompt_call_float: prompt_call_float_id,
         prompt_call_string: prompt_call_string_id,
+        citation_verify_or_panic: citation_verify_or_panic_id,
         trace_run_started: trace_run_started_id,
         trace_run_completed_int: trace_run_completed_int_id,
         trace_run_completed_bool: trace_run_completed_bool_id,
@@ -2356,6 +2375,8 @@ pub(super) const PROMPT_CALL_INT_SYMBOL: &str = "corvid_prompt_call_int";
 pub(super) const PROMPT_CALL_BOOL_SYMBOL: &str = "corvid_prompt_call_bool";
 pub(super) const PROMPT_CALL_FLOAT_SYMBOL: &str = "corvid_prompt_call_float";
 pub(super) const PROMPT_CALL_STRING_SYMBOL: &str = "corvid_prompt_call_string";
+pub(super) const CITATION_VERIFY_OR_PANIC_SYMBOL: &str =
+    "corvid_citation_verify_or_panic";
 pub(super) const APPROVE_SYNC_SYMBOL: &str = "corvid_approve_sync";
 pub(super) const TRACE_RUN_STARTED_SYMBOL: &str = "corvid_trace_run_started";
 pub(super) const TRACE_RUN_COMPLETED_INT_SYMBOL: &str = "corvid_trace_run_completed_int";
@@ -2476,6 +2497,7 @@ pub(super) struct RuntimeFuncs {
     pub prompt_call_bool: FuncId,
     pub prompt_call_float: FuncId,
     pub prompt_call_string: FuncId,
+    pub citation_verify_or_panic: FuncId,
     pub trace_run_started: FuncId,
     pub trace_run_completed_int: FuncId,
     pub trace_run_completed_bool: FuncId,
@@ -2617,6 +2639,27 @@ pub(super) fn emit_trace_payload(
         for (idx, (value, ty)) in values.iter().zip(tys.iter()).enumerate() {
             let offset = (idx as i32) * 8;
             match ty {
+                Type::Grounded(inner) => match inner.as_ref() {
+                    Type::Int | Type::String => {
+                        builder.ins().stack_store(*value, stack_slot, offset);
+                    }
+                    Type::Bool => {
+                        let widened = builder.ins().uextend(I64, *value);
+                        builder.ins().stack_store(widened, stack_slot, offset);
+                    }
+                    Type::Float => {
+                        builder.ins().stack_store(*value, stack_slot, offset);
+                    }
+                    other => {
+                        return Err(CodegenError::not_supported(
+                            format!(
+                                "native trace payload does not yet support values of type `{}`",
+                                other.display_name()
+                            ),
+                            span,
+                        ));
+                    }
+                },
                 Type::Int | Type::String => {
                     builder.ins().stack_store(*value, stack_slot, offset);
                 }
@@ -2649,6 +2692,7 @@ pub(super) fn emit_trace_payload(
 
 fn trace_tag_for_type(ty: &Type) -> Result<char, CodegenError> {
     match ty {
+        Type::Grounded(inner) => trace_tag_for_type(inner),
         Type::Int => Ok('i'),
         Type::Bool => Ok('b'),
         Type::Float => Ok('f'),

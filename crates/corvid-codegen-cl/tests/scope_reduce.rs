@@ -31,6 +31,7 @@ fn test_agent(body: Vec<IrStmt>) -> IrAgent {
     IrAgent {
         id: DefId(0),
         name: "f".into(),
+        extern_abi: None,
         params: vec![IrParam {
             name: "s".into(),
             local_id: LocalId(0),

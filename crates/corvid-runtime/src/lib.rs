@@ -36,6 +36,7 @@ pub mod approvals;
 pub mod approver_bridge;
 pub mod catalog;
 pub mod catalog_c_api;
+pub mod citation;
 pub mod effect_filter;
 pub mod grounded_handles;
 pub mod ensemble;
