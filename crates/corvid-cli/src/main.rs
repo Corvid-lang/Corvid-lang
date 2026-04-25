@@ -330,16 +330,18 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
-    /// Evaluate model migrations against existing traces.
+    /// Run eval declarations or evaluate model migrations against traces.
     ///
-    /// Full source-level `eval` execution is Phase 27. The shipped
-    /// Phase 20h mode is retrospective model migration:
+    /// Default mode executes source-level `eval` declarations and writes
+    /// a terminal report plus `target/eval/<file>/report.html`.
+    ///
+    /// `--swap-model` keeps the Phase 20h retrospective model migration mode:
     /// `corvid eval --swap-model <ID> --source <FILE> <TRACE_OR_DIR>...`.
     /// It replays recorded traces against the candidate model and reports
     /// semantic divergence without re-running unchanged tools.
     Eval {
-        /// Trace file(s) or trace directories to replay against the candidate model.
-        #[arg(value_name = "TRACE_OR_DIR")]
+        /// Corvid source file(s), or trace file(s)/directories with `--swap-model`.
+        #[arg(value_name = "FILE_OR_TRACE")]
         inputs: Vec<PathBuf>,
         /// Corvid source the traces were recorded against.
         #[arg(long, value_name = "FILE")]

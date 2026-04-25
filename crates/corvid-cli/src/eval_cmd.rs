@@ -1,11 +1,14 @@
-//! `corvid eval --swap-model` retrospective model migration tooling.
+//! `corvid eval` source-level evals and retrospective model migration tooling.
 //!
-//! Full source-level `eval` execution is Phase 27. This module ships the
-//! Phase 20h model-substrate piece: replay existing traces against a candidate
-//! model and report divergence using the same engine as `corvid replay --model`.
+//! Source eval execution is owned by `corvid-driver`; this module keeps CLI
+//! routing separate from the reusable runner. `--swap-model` remains the
+//! Phase 20h retrospective migration mode.
 
 use crate::{replay, test_from_traces};
 use anyhow::{Context, Result};
+use corvid_driver::{
+    default_eval_options, load_dotenv_walking, render_eval_report, run_evals_at_path_with_options,
+};
 use std::path::{Path, PathBuf};
 
 pub fn run_eval(
@@ -14,12 +17,7 @@ pub fn run_eval(
     swap_model: Option<&str>,
 ) -> Result<u8> {
     let Some(model) = swap_model else {
-        eprintln!(
-            "note: `corvid eval` source-level eval execution ships in Phase 27. \
-             Today this command supports retrospective migration via \
-             `corvid eval --swap-model <MODEL> --source <FILE> <TRACE_OR_DIR>...`."
-        );
-        return Ok(1);
+        return run_source_evals(inputs);
     };
 
     if inputs.is_empty() {
@@ -54,13 +52,45 @@ pub fn run_eval(
     Ok(exit_code)
 }
 
+fn run_source_evals(inputs: &[PathBuf]) -> Result<u8> {
+    if inputs.is_empty() {
+        eprintln!("usage: `corvid eval <file.cor> [more.cor ...]`");
+        eprintln!(
+            "For model migration analysis, use `corvid eval --swap-model <MODEL> --source <FILE> <TRACE_OR_DIR>...`."
+        );
+        return Ok(1);
+    }
+
+    let mut exit_code = 0_u8;
+    for input in inputs {
+        let dotenv_start = input.parent().unwrap_or_else(|| Path::new("."));
+        load_dotenv_walking(dotenv_start);
+        let runtime = corvid_driver::Runtime::builder().build();
+        let source = std::fs::read_to_string(input).ok();
+        let tokio = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .context("failed to initialize async eval runtime")?;
+        let report = tokio
+            .block_on(run_evals_at_path_with_options(
+                input,
+                &runtime,
+                default_eval_options(input),
+            ))
+            .map_err(anyhow::Error::new)?;
+        print!("{}", render_eval_report(&report, source.as_deref()));
+        exit_code = exit_code.max(report.exit_code());
+    }
+    Ok(exit_code)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn eval_without_swap_model_is_explicit_phase_27_stub() {
-        let code = run_eval(&[], None, None).expect("stub returns an exit code");
+    fn eval_without_inputs_prints_usage() {
+        let code = run_eval(&[], None, None).expect("usage returns an exit code");
         assert_eq!(code, 1);
     }
 

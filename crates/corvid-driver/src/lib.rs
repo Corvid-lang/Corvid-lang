@@ -108,6 +108,7 @@ mod law;
 mod replay;
 mod run;
 mod scaffold;
+mod eval_runner;
 mod test_runner;
 mod trace_fresh;
 pub use replay::{
@@ -131,6 +132,10 @@ pub use run::{
     RunTarget,
 };
 pub use scaffold::{scaffold_new, scaffold_new_in};
+pub use eval_runner::{
+    default_eval_options, render_eval_report, run_evals_at_path, run_evals_at_path_with_options,
+    CorvidEvalReport, EvalRunnerError,
+};
 pub use test_runner::{
     render_test_report, run_tests_at_path, run_tests_at_path_with_options, test_options,
     CorvidTestReport, TestRunnerError,

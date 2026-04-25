@@ -1441,7 +1441,7 @@ The determinism-source catalog and the language's treatment of non-reproducible 
 **Soft dep:** Phase 26 (testing primitives). Eval tooling could have its own runner + discovery, but reusing Phase 26's infrastructure avoids duplication; the sequencing here is "ship tests first, build eval on top."
 
 **Scope:**
-- `corvid eval <file>` runs all `eval` blocks; produces terminal report + HTML report.
+- [x] `corvid eval <file>` runs all `eval` blocks; produces terminal report + HTML report. Shipped as a reusable driver eval runner plus CLI path that writes `target/eval/<source>/report.html` and preserves `--swap-model` migration analysis.
 - Regression detection against prior eval results (stored under `target/eval/`).
 - CI exit-code contract: non-zero if any `assert` fails or regression threshold crossed.
 - Trace-aware eval reporting: value pass rates, process assertions, approval assertions, groundedness, cost, latency, model route, and replay compatibility in one report.
