@@ -403,6 +403,12 @@ impl Codegen {
                 self.emit_expr_list(args);
                 self.out.write(")");
             }
+            IrCallKind::Fixture { .. } => {
+                self.out.write(&format!(
+                    "(_ for _ in ()).throw(NotImplementedError(\"test fixture `{}` is interpreter-only\"))",
+                    escape_string(name)
+                ));
+            }
             IrCallKind::StructConstructor { .. } => {
                 // User-declared types are emitted as `@dataclass`es.
                 // `TypeName(args)` constructs an instance — exactly the

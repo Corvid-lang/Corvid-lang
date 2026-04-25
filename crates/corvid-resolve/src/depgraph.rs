@@ -80,7 +80,8 @@ pub fn decl_name(decl: &Decl) -> Option<&str> {
         Decl::Agent(d) => Some(&d.name.name),
         Decl::Eval(d) => Some(&d.name.name),
         Decl::Test(d) => Some(&d.name.name),
-        Decl::Extend(_) | Decl::Effect(_) | Decl::Model(_) => None,
+        Decl::Fixture(d) => Some(&d.name.name),
+        Decl::Mock(_) | Decl::Extend(_) | Decl::Effect(_) | Decl::Model(_) => None,
     }
 }
 
@@ -102,6 +103,16 @@ fn collect_decl_deps(decl: &Decl, resolved: &Resolved, deps: &mut HashSet<DefId>
             for assertion in &test.assertions {
                 collect_assert_deps(assertion, resolved, deps);
             }
+        }
+        Decl::Fixture(fixture) => {
+            collect_params_deps(&fixture.params, resolved, deps);
+            collect_typeref_dep(&fixture.return_ty, resolved, deps);
+            collect_block_deps(&fixture.body, resolved, deps);
+        }
+        Decl::Mock(mock) => {
+            collect_params_deps(&mock.params, resolved, deps);
+            collect_typeref_dep(&mock.return_ty, resolved, deps);
+            collect_block_deps(&mock.body, resolved, deps);
         }
         Decl::Tool(tool) => {
             collect_params_deps(&tool.params, resolved, deps);

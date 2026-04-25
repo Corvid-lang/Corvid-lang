@@ -1742,6 +1742,45 @@ test refund_contract:
     }
 
     #[test]
+    fn parses_fixture_decl() {
+        let file = parse_file_src(
+            r#"
+fixture sample_id(prefix: String) -> String:
+    return prefix
+"#,
+        );
+        match &file.decls[0] {
+            Decl::Fixture(fixture) => {
+                assert_eq!(fixture.name.name, "sample_id");
+                assert_eq!(fixture.params.len(), 1);
+                assert!(matches!(fixture.return_ty, TypeRef::Named { .. }));
+                assert_eq!(fixture.body.stmts.len(), 1);
+            }
+            other => panic!("expected Fixture, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_mock_decl_with_effect_row() {
+        let file = parse_file_src(
+            r#"
+mock lookup(id: String) -> String uses retrieval:
+    return id
+"#,
+        );
+        match &file.decls[0] {
+            Decl::Mock(mock) => {
+                assert_eq!(mock.target.name, "lookup");
+                assert_eq!(mock.params.len(), 1);
+                assert_eq!(mock.effect_row.effects.len(), 1);
+                assert_eq!(mock.effect_row.effects[0].name.name, "retrieval");
+                assert_eq!(mock.body.stmts.len(), 1);
+            }
+            other => panic!("expected Mock, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn parses_corvid_file_import_use_list_with_alias() {
         let file = parse_file_src(r#"import "./policy" use Review, Receipt as ReviewReceipt"#);
         match &file.decls[0] {

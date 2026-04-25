@@ -1426,7 +1426,7 @@ The determinism-source catalog and the language's treatment of non-reproducible 
 
 - [x] 26-A-test-declarations          `test name:` declarations parse, resolve, typecheck, and lower into `IrTest` nodes. Tests reuse eval assertion syntax so value, trace-called, approval, ordering, cost, and statistical assertion metadata share one compiler model. See [docs/testing-primitives.md](docs/testing-primitives.md).
 - [x] 26-B-test-runner                `corvid test <file>` discovers `test` declarations, executes setup bodies, evaluates value assertions, and reports typed pass/fail output with CI exit codes. Statistical value assertions rerun setup for the requested run count; trace/process assertions fail explicitly until 26-E implements trace fixtures.
-- [ ] 26-C-mocks-fixtures             `mock` and `fixture` declarations with scoped override semantics, effect-profile preservation, and reusable typed test data.
+- [x] 26-C-mocks-fixtures             `fixture` declarations are typed reusable test data callable only from tests/mocks; `mock` declarations are typed overrides for existing tools with exact signature matching. Test execution activates mocks through the VM after the normal approval/confidence gate, so mocked dangerous tools still preserve the target effect profile. See [docs/testing-primitives.md](docs/testing-primitives.md).
 - [ ] 26-D-snapshots                  `assert_snapshot` with deterministic snapshot storage, update flow, and diff output.
 - [ ] 26-E-trace-fixtures             Production trace fixtures for deterministic regression tests over approvals, costs, provenance, grounding, and replay compatibility.
 

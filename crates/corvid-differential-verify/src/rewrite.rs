@@ -1,8 +1,9 @@
 use anyhow::{anyhow, bail, Result};
 use corvid_ast::{
     AgentDecl, Backoff, BackpressurePolicy, BinaryOp, Block, Decl, DimensionValue, Effect,
-    EffectConstraint, EvalAssert, Expr, ExtendMethod, ExtendMethodKind, File, ImportSource, Ident,
-    Literal, Param, PromptDecl, Span, Stmt, ToolDecl, TypeRef, UnaryOp, Visibility,
+    EffectConstraint, EvalAssert, Expr, ExtendMethod, ExtendMethodKind, File, FixtureDecl,
+    ImportSource, Ident, Literal, MockDecl, Param, PromptDecl, Span, Stmt, ToolDecl, TypeRef,
+    UnaryOp, Visibility,
 };
 use corvid_resolve::{build_dep_graph, resolve, Binding, LocalId, Resolved};
 use corvid_syntax::{lex, parse_file};
@@ -1057,6 +1058,20 @@ fn collect_all_names(file: &File) -> BTreeSet<String> {
                 names.insert(test.name.name.clone());
                 collect_names_from_block(&test.body, &mut names);
             }
+            Decl::Fixture(fixture) => {
+                names.insert(fixture.name.name.clone());
+                for param in &fixture.params {
+                    names.insert(param.name.name.clone());
+                }
+                collect_names_from_block(&fixture.body, &mut names);
+            }
+            Decl::Mock(mock) => {
+                names.insert(mock.target.name.clone());
+                for param in &mock.params {
+                    names.insert(param.name.name.clone());
+                }
+                collect_names_from_block(&mock.body, &mut names);
+            }
             Decl::Import(import) => {
                 if let Some(alias) = &import.alias {
                     names.insert(alias.name.clone());
@@ -1208,6 +1223,8 @@ fn render_decl(decl: &Decl, indent: usize, out: &mut String) {
                 out.push_str(&render_eval_assert(assertion));
             }
         }
+        Decl::Fixture(fixture) => render_fixture(fixture, indent, out),
+        Decl::Mock(mock) => render_mock(mock, indent, out),
         Decl::Extend(extend) => {
             push_indent(indent, out);
             out.push_str("extend ");
@@ -1251,6 +1268,32 @@ fn render_decl(decl: &Decl, indent: usize, out: &mut String) {
             }
         }
     }
+}
+
+fn render_fixture(fixture: &FixtureDecl, indent: usize, out: &mut String) {
+    push_indent(indent, out);
+    out.push_str("fixture ");
+    out.push_str(&fixture.name.name);
+    out.push_str(&render_params(&fixture.params));
+    out.push_str(" -> ");
+    out.push_str(&render_type_ref(&fixture.return_ty));
+    out.push_str(":\n");
+    render_block(&fixture.body, indent + 1, out);
+}
+
+fn render_mock(mock: &MockDecl, indent: usize, out: &mut String) {
+    push_indent(indent, out);
+    out.push_str("mock ");
+    out.push_str(&mock.target.name);
+    out.push_str(&render_params(&mock.params));
+    out.push_str(" -> ");
+    out.push_str(&render_type_ref(&mock.return_ty));
+    if !mock.effect_row.effects.is_empty() {
+        out.push_str(" uses ");
+        out.push_str(&render_effect_row_names(&mock.effect_row.effects));
+    }
+    out.push_str(":\n");
+    render_block(&mock.body, indent + 1, out);
 }
 
 fn render_tool(tool: &ToolDecl, indent: usize, out: &mut String) {
@@ -1675,6 +1718,26 @@ mod tests {
 agent main() -> Int:
     total = 1 + 2
     return total
+"#;
+        let file = parse_source(source).expect("parse");
+        let rendered = render_file(&file);
+        parse_source(&rendered).expect("round-trip parse");
+    }
+
+    #[test]
+    fn renders_and_reparses_fixtures_and_mocks() {
+        let source = r#"
+tool lookup(id: String) -> Int
+
+fixture sample_id() -> String:
+    return "ord_42"
+
+mock lookup(id: String) -> Int:
+    return 42
+
+test mocked_lookup:
+    score = lookup(sample_id())
+    assert score == 42
 "#;
         let file = parse_source(source).expect("parse");
         let rendered = render_file(&file);

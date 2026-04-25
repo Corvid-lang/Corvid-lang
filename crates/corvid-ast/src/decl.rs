@@ -24,6 +24,8 @@ pub enum Decl {
     Agent(AgentDecl),
     Eval(EvalDecl),
     Test(TestDecl),
+    Fixture(FixtureDecl),
+    Mock(MockDecl),
     /// `extend T:` block attaching methods to a user type.
     Extend(ExtendDecl),
     /// `effect Name:` dimensional effect declaration.
@@ -43,6 +45,8 @@ impl Decl {
             Decl::Agent(d) => d.span,
             Decl::Eval(d) => d.span,
             Decl::Test(d) => d.span,
+            Decl::Fixture(d) => d.span,
+            Decl::Mock(d) => d.span,
             Decl::Extend(d) => d.span,
             Decl::Effect(d) => d.span,
             Decl::Model(d) => d.span,
@@ -630,6 +634,32 @@ pub struct TestDecl {
     pub name: Ident,
     pub body: Block,
     pub assertions: Vec<EvalAssert>,
+    pub span: Span,
+}
+
+/// A reusable test data factory. Fixtures are callable from `test` and `mock`
+/// bodies, but they are not production agents and are not exposed through
+/// normal package metadata as executable app entry points.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct FixtureDecl {
+    pub name: Ident,
+    pub params: Vec<Param>,
+    pub return_ty: TypeRef,
+    pub body: Block,
+    pub span: Span,
+}
+
+/// A test-only override for an external tool. Mocks must match the target
+/// tool's signature exactly, so tests cannot accidentally weaken the tool
+/// contract they are standing in for.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct MockDecl {
+    pub target: Ident,
+    pub params: Vec<Param>,
+    pub return_ty: TypeRef,
+    pub body: Block,
+    #[serde(default)]
+    pub effect_row: EffectRow,
     pub span: Span,
 }
 

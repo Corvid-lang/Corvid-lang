@@ -121,6 +121,8 @@ pub fn analyze(ir: IrFile) -> (IrFile, HashMap<DefId, AgentSummary>) {
         agents: transformed_agents,
         evals: ir.evals,
         tests: ir.tests,
+        fixtures: ir.fixtures,
+        mocks: ir.mocks,
     };
     (out, summaries)
 }

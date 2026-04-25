@@ -48,7 +48,7 @@ async fn run_test_decl(
     test: &IrTest,
     runtime: &Runtime,
 ) -> Result<TestExecution, InterpError> {
-    let mut interp = Interpreter::new(ir, runtime);
+    let mut interp = Interpreter::new(ir, runtime).with_mocks();
     run_test_setup(&mut interp, test).await?;
 
     let mut assertions = Vec::with_capacity(test.assertions.len());
@@ -130,7 +130,7 @@ async fn eval_statistical_value_assertion<'ir>(
     let confidence = confidence.unwrap_or(1.0);
     let mut passed = 0_u64;
     for _ in 0..runs {
-        let mut fresh = Interpreter::new(ir, runtime);
+        let mut fresh = Interpreter::new(ir, runtime).with_mocks();
         if let Err(error) = run_test_setup(&mut fresh, test).await {
             return TestAssertionExecution {
                 label: assertion_label(assertion),
@@ -257,4 +257,58 @@ pub enum TestAssertionStatus {
     Failed,
     Error,
     Unsupported,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use corvid_ir::{lower, IrFile};
+    use corvid_resolve::resolve;
+    use corvid_runtime::Runtime;
+    use corvid_syntax::{lex, parse_file};
+    use corvid_types::typecheck;
+
+    fn lower_src(src: &str) -> IrFile {
+        let tokens = lex(src).expect("lex");
+        let (file, parse_errors) = parse_file(&tokens);
+        assert!(parse_errors.is_empty(), "parse errors: {parse_errors:?}");
+        let resolved = resolve(&file);
+        assert!(
+            resolved.errors.is_empty(),
+            "resolve errors: {:?}",
+            resolved.errors
+        );
+        let checked = typecheck(&file, &resolved);
+        assert!(
+            checked.errors.is_empty(),
+            "type errors: {:?}",
+            checked.errors
+        );
+        lower(&file, &resolved, &checked)
+    }
+
+    #[tokio::test]
+    async fn fixtures_and_mocks_execute_inside_test_runner() {
+        let ir = lower_src(
+            r#"
+tool lookup_score(id: String) -> Int
+
+fixture order_id() -> String:
+    return "ord_42"
+
+mock lookup_score(id: String) -> Int:
+    if id == "ord_42":
+        return 42
+    return 0
+
+test mocked_tool_contract:
+    score = lookup_score(order_id())
+    assert score == 42
+"#,
+        );
+        let runtime = Runtime::builder().build();
+        let results = run_all_tests(&ir, &runtime).await;
+        assert_eq!(results.len(), 1);
+        assert!(results[0].passed(), "result: {:?}", results[0]);
+    }
 }

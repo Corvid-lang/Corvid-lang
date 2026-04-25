@@ -14,8 +14,8 @@ use crate::determinism::{classify_call_target, NondeterminismSource};
 use crate::errors::{TypeError, TypeErrorKind, TypeWarning, TypeWarningKind};
 use crate::types::Type;
 use corvid_ast::{
-    AgentAttribute, AgentDecl, Block, EvalAssert, EvalDecl, Expr, Ident, OwnershipAnnotation,
-    OwnershipMode, Span, Stmt, TestDecl,
+    AgentAttribute, AgentDecl, Block, EvalAssert, EvalDecl, Expr, FixtureDecl, Ident, MockDecl,
+    OwnershipAnnotation, OwnershipMode, Span, Stmt, TestDecl,
 };
 use corvid_resolve::{Binding, DeclKind};
 
@@ -389,7 +389,110 @@ impl<'a> Checker<'a> {
     }
 
     pub(super) fn check_test(&mut self, t: &TestDecl) {
+        let prev = std::mem::replace(&mut self.in_test_body, true);
         self.check_assertion_decl(&t.body, &t.assertions);
+        self.in_test_body = prev;
+    }
+
+    pub(super) fn check_fixture(&mut self, f: &FixtureDecl) {
+        self.bind_params(&f.params);
+        let declared_ret = self.type_ref_to_type(&f.return_ty);
+        let prev_ret = std::mem::replace(&mut self.current_return, Some(declared_ret));
+        let prev_in_agent = std::mem::replace(&mut self.in_agent_body, false);
+        let prev_in_test = std::mem::replace(&mut self.in_test_body, true);
+        let prev_saw_yield = std::mem::replace(&mut self.saw_yield, false);
+        self.check_block(&f.body);
+        self.current_return = prev_ret;
+        self.in_agent_body = prev_in_agent;
+        self.in_test_body = prev_in_test;
+        self.saw_yield = prev_saw_yield;
+    }
+
+    pub(super) fn check_mock(&mut self, m: &MockDecl) {
+        let target = match self.bindings.get(&m.target.span) {
+            Some(Binding::Decl(def_id)) if self.symbols.get(*def_id).kind == DeclKind::Tool => {
+                Some(*def_id)
+            }
+            _ => {
+                self.errors.push(TypeError::new(
+                    TypeErrorKind::NotCallable {
+                        got: format!("mock target `{}`", m.target.name),
+                    },
+                    m.target.span,
+                ));
+                None
+            }
+        };
+        if let Some(def_id) = target {
+            let tool = *self
+                .tools_by_id
+                .get(&def_id)
+                .expect("tool DefId not indexed");
+            if tool.params.len() != m.params.len() {
+                self.errors.push(TypeError::new(
+                    TypeErrorKind::ArityMismatch {
+                        callee: format!("mock {}", m.target.name),
+                        expected: tool.params.len(),
+                        got: m.params.len(),
+                    },
+                    m.span,
+                ));
+            }
+            for (tool_param, mock_param) in tool.params.iter().zip(&m.params) {
+                let expected = self.type_ref_to_type(&tool_param.ty);
+                let got = self.type_ref_to_type(&mock_param.ty);
+                if expected != got {
+                    self.errors.push(TypeError::new(
+                        TypeErrorKind::TypeMismatch {
+                            expected: expected.display_name(),
+                            got: got.display_name(),
+                            context: format!(
+                                "mock `{}` parameter `{}`",
+                                m.target.name, mock_param.name.name
+                            ),
+                        },
+                        mock_param.span,
+                    ));
+                }
+            }
+            let expected = self.type_ref_to_type(&tool.return_ty);
+            let got = self.type_ref_to_type(&m.return_ty);
+            if expected != got {
+                self.errors.push(TypeError::new(
+                    TypeErrorKind::TypeMismatch {
+                        expected: expected.display_name(),
+                        got: got.display_name(),
+                        context: format!("mock `{}` return type", m.target.name),
+                    },
+                    m.return_ty.span(),
+                ));
+            }
+        }
+        self.bind_params(&m.params);
+        let declared_ret = self.type_ref_to_type(&m.return_ty);
+        let prev_ret = std::mem::replace(&mut self.current_return, Some(declared_ret));
+        let prev_in_agent = std::mem::replace(&mut self.in_agent_body, false);
+        let prev_in_test = std::mem::replace(&mut self.in_test_body, true);
+        let prev_saw_yield = std::mem::replace(&mut self.saw_yield, false);
+        self.resolve_effect_row_in_mock(&m.effect_row);
+        self.check_block(&m.body);
+        self.current_return = prev_ret;
+        self.in_agent_body = prev_in_agent;
+        self.in_test_body = prev_in_test;
+        self.saw_yield = prev_saw_yield;
+    }
+
+    fn resolve_effect_row_in_mock(&mut self, row: &corvid_ast::EffectRow) {
+        for effect in &row.effects {
+            if !matches!(self.bindings.get(&effect.name.span), Some(Binding::Decl(_))) {
+                self.errors.push(TypeError::new(
+                    TypeErrorKind::EvalUnknownTool {
+                        name: effect.name.name.clone(),
+                    },
+                    effect.span,
+                ));
+            }
+        }
     }
 
     fn check_assertion_decl(&mut self, body: &Block, assertions: &[EvalAssert]) {

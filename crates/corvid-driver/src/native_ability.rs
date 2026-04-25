@@ -32,6 +32,7 @@ pub enum NotNativeReason {
     /// supported native forms today.
     TaggedUnionRetryNotNative,
     StreamLoweringNotImplemented,
+    TestFixtureNotNative { name: String },
     /// `replay <trace>: when ... else ...` expressions need the
     /// trace-dispatch runtime primitive (Phase 21 slice
     /// 21-inv-E-runtime) plus its native-tier lowering follow-up.
@@ -58,6 +59,10 @@ impl std::fmt::Display for NotNativeReason {
             Self::StreamLoweringNotImplemented => {
                 write!(f, "program uses `Stream<T>` - Stream lowering is not yet implemented")
             }
+            Self::TestFixtureNotNative { name } => write!(
+                f,
+                "program calls test fixture `{name}` - fixtures are interpreter-only test declarations and are not part of the native production tier"
+            ),
             Self::ReplayPrimitiveNotNative => {
                 write!(f, "program uses `replay <trace>: when ... else ...` - native lowering of the replay language primitive lands in a follow-up to Phase 21 slice 21-inv-E-runtime; until then the interpreter tier runs it")
             }
@@ -214,8 +219,14 @@ fn scan_expr(expr: &IrExpr, current_return_ty: &Type) -> Result<(), NotNativeRea
                     // surface if no provider is configured.
                 }
                 IrCallKind::Agent { .. }
+                | IrCallKind::Fixture { .. }
                 | IrCallKind::StructConstructor { .. }
                 | IrCallKind::Unknown => {}
+            }
+            if matches!(kind, IrCallKind::Fixture { .. }) {
+                return Err(NotNativeReason::TestFixtureNotNative {
+                    name: callee_name.clone(),
+                });
             }
             for a in args {
                 scan_expr(a, current_return_ty)?;
@@ -365,6 +376,8 @@ mod tests {
             }],
             evals: vec![],
             tests: vec![],
+            fixtures: vec![],
+            mocks: vec![],
         };
 
         assert!(matches!(

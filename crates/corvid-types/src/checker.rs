@@ -11,8 +11,8 @@ use crate::errors::{TypeError, TypeErrorKind, TypeWarning, TypeWarningKind};
 use crate::types::Type;
 use corvid_ast::{
     AgentDecl, BinaryOp, Block, Decl, Effect, EvalAssert, EvalDecl, Expr, ExtendMethodKind, File,
-    Ident, Literal, ModelDecl, Param, PromptDecl, Span, Stmt, TestDecl, ToolDecl, TypeDecl,
-    TypeRef, UnaryOp, WeakEffect, WeakEffectRow,
+    FixtureDecl, Ident, Literal, MockDecl, ModelDecl, Param, PromptDecl, Span, Stmt, TestDecl,
+    ToolDecl, TypeDecl, TypeRef, UnaryOp, WeakEffect, WeakEffectRow,
 };
 use corvid_resolve::{
     resolver::{MethodEntry, MethodKind},
@@ -274,6 +274,7 @@ struct Checker<'a> {
     tools_by_id: HashMap<DefId, &'a ToolDecl>,
     prompts_by_id: HashMap<DefId, &'a PromptDecl>,
     agents_by_id: HashMap<DefId, &'a AgentDecl>,
+    fixtures_by_id: HashMap<DefId, &'a FixtureDecl>,
     types_by_id: HashMap<DefId, &'a TypeDecl>,
     models_by_id: HashMap<DefId, &'a ModelDecl>,
 
@@ -305,6 +306,7 @@ struct Checker<'a> {
     /// Declared return type of the currently-checked function-like.
     current_return: Option<Type>,
     in_agent_body: bool,
+    in_test_body: bool,
     saw_yield: bool,
 
     /// Approvals visible at the current point. Represented as a flat
@@ -389,6 +391,7 @@ impl<'a> Checker<'a> {
         let mut tools = HashMap::new();
         let mut prompts = HashMap::new();
         let mut agents = HashMap::new();
+        let mut fixtures = HashMap::new();
         let mut types = HashMap::new();
         let mut models = HashMap::new();
 
@@ -409,7 +412,12 @@ impl<'a> Checker<'a> {
                         agents.insert(id, a);
                     }
                 }
-                Decl::Eval(_) | Decl::Test(_) => {}
+                Decl::Fixture(f) => {
+                    if let Some(id) = resolved.symbols.lookup_def(&f.name.name) {
+                        fixtures.insert(id, f);
+                    }
+                }
+                Decl::Eval(_) | Decl::Test(_) | Decl::Mock(_) => {}
                 Decl::Type(t) => {
                     if let Some(id) = resolved.symbols.lookup_def(&t.name.name) {
                         types.insert(id, t);
@@ -467,6 +475,7 @@ impl<'a> Checker<'a> {
             tools_by_id: tools,
             prompts_by_id: prompts,
             agents_by_id: agents,
+            fixtures_by_id: fixtures,
             types_by_id: types,
             models_by_id: models,
             methods: &resolved.methods,
@@ -475,6 +484,7 @@ impl<'a> Checker<'a> {
             local_types: HashMap::new(),
             current_return: None,
             in_agent_body: false,
+            in_test_body: false,
             saw_yield: false,
             approvals: Vec::new(),
             effect_frontier: EffectFrontier::default(),
@@ -492,6 +502,8 @@ impl<'a> Checker<'a> {
                 Decl::Agent(a) => self.check_agent(a),
                 Decl::Eval(e) => self.check_eval(e),
                 Decl::Test(t) => self.check_test(t),
+                Decl::Fixture(f) => self.check_fixture(f),
+                Decl::Mock(m) => self.check_mock(m),
                 Decl::Prompt(p) => self.check_prompt(p),
                 Decl::Tool(_)
                 | Decl::Type(_)

@@ -5432,3 +5432,16 @@ returns CI-grade exit codes.
 Trace/process assertions (`called`, `approved`, `cost`, ordering) are not
 silently accepted. They report as unsupported failures until the Phase 26-E
 trace-fixture slice wires recorded traces into the same assertion model.
+
+## 2026-04-25 - Test mocks and fixtures
+
+Closed `26-C-mocks-fixtures`. Added `fixture name(...) -> Type:` and
+`mock tool_name(...) -> Type:` as real language declarations across AST,
+syntax, resolver, typechecker, IR lowering, LSP/source rewrite surfaces, VM
+execution, and the `corvid test` runner.
+
+Fixtures are typed reusable test data and are rejected outside test/mock bodies.
+Mocks must match the target tool signature exactly. The VM activates mocks only
+inside test execution, and interception happens after the normal tool gate, so
+a mocked dangerous tool still requires approval instead of becoming a test-only
+escape hatch.

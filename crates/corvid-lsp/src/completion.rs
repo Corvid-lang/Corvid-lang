@@ -8,7 +8,8 @@ use lsp_types::{
 use std::collections::BTreeMap;
 
 const DECL_KEYWORDS: &[&str] = &[
-    "agent", "tool", "prompt", "effect", "type", "model", "eval", "import", "extend", "public",
+    "agent", "tool", "prompt", "effect", "type", "model", "eval", "test", "fixture", "mock",
+    "import", "extend", "public",
 ];
 
 const BODY_KEYWORDS: &[&str] = &[
@@ -205,6 +206,26 @@ fn add_declarations(items: &mut CompletionSet, file: &File) {
                 CompletionItemKind::METHOD,
                 "test",
                 format!("test {}", test.name.name),
+            )),
+            Decl::Fixture(fixture) => items.add(symbol_item(
+                &fixture.name.name,
+                CompletionItemKind::FUNCTION,
+                "fixture",
+                format!(
+                    "fixture {}(...) -> {}",
+                    fixture.name.name,
+                    type_name(&fixture.return_ty)
+                ),
+            )),
+            Decl::Mock(mock) => items.add(symbol_item(
+                &mock.target.name,
+                CompletionItemKind::FUNCTION,
+                "mock",
+                format!(
+                    "mock {}(...) -> {}",
+                    mock.target.name,
+                    type_name(&mock.return_ty)
+                ),
             )),
             Decl::Import(_) | Decl::Extend(_) => {}
         }

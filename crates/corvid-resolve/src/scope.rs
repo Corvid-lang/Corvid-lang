@@ -66,6 +66,8 @@ pub enum DeclKind {
     Agent,
     Eval,
     Test,
+    Fixture,
+    Mock,
     Effect,
     /// `model Name:` catalog entry (Phase 20h typed model substrate).
     Model,

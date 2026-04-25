@@ -177,7 +177,7 @@ impl<'a> Checker<'a> {
     pub(super) fn type_of_decl(&mut self, id: DefId, ident: &Ident) -> Type {
         let entry = self.symbols.get(id);
         match entry.kind {
-            DeclKind::Tool | DeclKind::Prompt | DeclKind::Agent => {
+            DeclKind::Tool | DeclKind::Prompt | DeclKind::Agent | DeclKind::Fixture => {
                 // Referencing without a call is currently an error.
                 // (Callers that need the function signature look it up by id.)
                 self.errors.push(TypeError::new(
@@ -201,6 +201,7 @@ impl<'a> Checker<'a> {
             | DeclKind::ImportedUse
             | DeclKind::Eval
             | DeclKind::Test
+            | DeclKind::Mock
             | DeclKind::Effect
             | DeclKind::Model => {
                 Type::Unknown

@@ -39,7 +39,10 @@ use effect_compose::{
 };
 use async_recursion::async_recursion;
 use corvid_ast::{BinaryOp, Span};
-use corvid_ir::{IrAgent, IrCallKind, IrExpr, IrExprKind, IrFile, IrPrompt, IrTool, IrType};
+use corvid_ir::{
+    IrAgent, IrCallKind, IrExpr, IrExprKind, IrFile, IrFixture, IrMock, IrParam, IrPrompt, IrTool,
+    IrType,
+};
 use corvid_resolve::{DefId, LocalId};
 use corvid_runtime::{Runtime, RuntimeError, TraceEvent};
 use corvid_types::Type;
@@ -279,6 +282,8 @@ struct Interpreter<'ir> {
     tools_by_id: HashMap<DefId, &'ir IrTool>,
     prompts_by_id: HashMap<DefId, &'ir IrPrompt>,
     agents_by_id: HashMap<DefId, &'ir IrAgent>,
+    fixtures_by_id: HashMap<DefId, &'ir IrFixture>,
+    mock_tools: HashMap<DefId, &'ir IrMock>,
     runtime: &'ir Runtime,
     local_names: HashMap<LocalId, String>,
     stepper: Option<StepController>,
@@ -300,6 +305,8 @@ impl<'ir> Interpreter<'ir> {
             ir.prompts.iter().map(|p| (p.id, p)).collect();
         let agents_by_id: HashMap<DefId, &IrAgent> =
             ir.agents.iter().map(|a| (a.id, a)).collect();
+        let fixtures_by_id: HashMap<DefId, &IrFixture> =
+            ir.fixtures.iter().map(|f| (f.id, f)).collect();
         Self {
             ir,
             env: Env::new(),
@@ -307,6 +314,8 @@ impl<'ir> Interpreter<'ir> {
             tools_by_id,
             prompts_by_id,
             agents_by_id,
+            fixtures_by_id,
+            mock_tools: HashMap::new(),
             runtime,
             local_names: HashMap::new(),
             stepper: None,
@@ -317,6 +326,11 @@ impl<'ir> Interpreter<'ir> {
             stream_cost_budget: None,
             stream_cost_used: 0.0,
         }
+    }
+
+    fn with_mocks(mut self) -> Self {
+        self.mock_tools = self.ir.mocks.iter().map(|m| (m.target_id, m)).collect();
+        self
     }
 
     fn bind_params(
@@ -336,6 +350,31 @@ impl<'ir> Interpreter<'ir> {
             ));
         }
         for (p, v) in agent.params.iter().zip(args) {
+            self.env.bind(p.local_id, v.clone());
+            self.local_names.insert(p.local_id, p.name.clone());
+            self.stream_locals.remove(&p.local_id);
+        }
+        Ok(())
+    }
+
+    fn bind_ir_params(
+        &mut self,
+        callable: &str,
+        params: &'ir [IrParam],
+        args: Vec<Value>,
+        span: Span,
+    ) -> Result<(), InterpError> {
+        if params.len() != args.len() {
+            return Err(InterpError::new(
+                InterpErrorKind::DispatchFailed(format!(
+                    "`{callable}` expects {} arg(s), got {}",
+                    params.len(),
+                    args.len()
+                )),
+                span,
+            ));
+        }
+        for (p, v) in params.iter().zip(args) {
             self.env.bind(p.local_id, v.clone());
             self.local_names.insert(p.local_id, p.name.clone());
             self.stream_locals.remove(&p.local_id);
@@ -940,12 +979,34 @@ impl<'ir> Interpreter<'ir> {
                 }
 
                 let start = std::time::Instant::now();
-                let result = self
-                    .runtime
-                    .call_tool(callee_name, json_args)
-                    .await
-                    .map_err(|e| InterpError::new(InterpErrorKind::Runtime(e), span))?;
+                let result_value = if let Some(mock) = self.mock_tools.get(def_id).copied() {
+                    let mut sub = Interpreter::new(self.ir, self.runtime).with_mocks();
+                    sub.bind_ir_params(callee_name, &mock.params, arg_values, span)?;
+                    sub.eval_block(&mock.body).await.and_then(|flow| match flow {
+                        Flow::Return(value) => Ok(value),
+                        Flow::Normal => Ok(Value::Nothing),
+                        Flow::Break | Flow::Continue => Err(InterpError::new(
+                            InterpErrorKind::Other(
+                                "loop control flow escaped mock body".into(),
+                            ),
+                            mock.span,
+                        )),
+                    })?
+                } else {
+                    let result = self
+                        .runtime
+                        .call_tool(callee_name, json_args)
+                        .await
+                        .map_err(|e| InterpError::new(InterpErrorKind::Runtime(e), span))?;
+                    json_to_value(result, result_decode_ty, &self.types_by_id).map_err(|e| {
+                        InterpError::new(
+                            InterpErrorKind::Marshal(format!("tool `{callee_name}`: {e}")),
+                            span,
+                        )
+                    })?
+                };
                 let elapsed_ms = start.elapsed().as_millis() as u64;
+                let result = value_to_json(&result_value);
 
                 if self.should_yield_boundary() {
                     let action = self.maybe_yield(StepEvent::AfterToolCall {
@@ -969,20 +1030,12 @@ impl<'ir> Interpreter<'ir> {
                     }
                 }
 
-                let value = json_to_value(result, result_decode_ty, &self.types_by_id)
-                    .map_err(|e| {
-                    InterpError::new(
-                        InterpErrorKind::Marshal(format!("tool `{callee_name}`: {e}")),
-                        span,
-                    )
-                })?;
-
                 // If the tool has a `retrieval` effect (data: grounded),
                 // wrap the result in Grounded with a provenance chain.
                 Ok(ExprFlow::Value(maybe_ground_tool_result(
                     tool,
                     callee_name,
-                    value,
+                    result_value,
                 )))
             }
             IrCallKind::Prompt { def_id } => {
@@ -1011,6 +1064,7 @@ impl<'ir> Interpreter<'ir> {
                 }
 
                 let mut sub = Interpreter::new(self.ir, self.runtime);
+                sub.mock_tools = self.mock_tools.clone();
                 // Propagate the step controller into sub-agent calls so
                 // step-through continues across agent boundaries.
                 if let Some(ref stepper) = self.stepper {
@@ -1043,6 +1097,26 @@ impl<'ir> Interpreter<'ir> {
                 }
 
                 result
+            }
+            IrCallKind::Fixture { def_id } => {
+                let fixture = self.fixtures_by_id.get(def_id).copied().ok_or_else(|| {
+                    InterpError::new(
+                        InterpErrorKind::DispatchFailed(format!(
+                            "fixture `{callee_name}` is missing from the IR"
+                        )),
+                        span,
+                    )
+                })?;
+                let mut sub = Interpreter::new(self.ir, self.runtime).with_mocks();
+                sub.bind_ir_params(callee_name, &fixture.params, arg_values, span)?;
+                sub.eval_block(&fixture.body).await.and_then(|flow| match flow {
+                    Flow::Return(value) => Ok(ExprFlow::Value(value)),
+                    Flow::Normal => Ok(ExprFlow::Value(Value::Nothing)),
+                    Flow::Break | Flow::Continue => Err(InterpError::new(
+                        InterpErrorKind::Other("loop control flow escaped fixture body".into()),
+                        fixture.span,
+                    )),
+                })
             }
             IrCallKind::StructConstructor { def_id } => {
                 // Build a `Value::Struct` from the constructor args, in

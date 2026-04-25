@@ -3281,6 +3281,17 @@ preserved by the compiler but the current runner cannot yet inspect traces, a
 passing result would be a false safety signal. Reporting an unsupported failure
 is less convenient, but it protects the guarantee.
 
+## test mocks and fixtures
+
+Mocks and fixtures should be language declarations, not runner-side text
+rewrites. Once they lower into IR, the same resolver, typechecker, LSP,
+differential rewrite, and VM paths can validate them.
+
+Mocking must not erase safety boundaries. A mocked dangerous tool still has the
+target tool's approval requirement because the interpreter checks the normal
+tool gate before substituting the mock body. This keeps tests convenient without
+creating a second, weaker execution model.
+
 ## Contributing / feedback
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). The rules of the road are: design chat before code, per-scope commits at every boundary, dev-log entry for every session, no shortcuts. The `learnings.md` file you're reading gets updated when each user-visible feature ships.

@@ -182,4 +182,34 @@ agent answer() -> Int:
         assert!(report.tests.is_empty());
         assert_eq!(report.exit_code(), 1);
     }
+
+    #[tokio::test]
+    async fn run_tests_at_path_uses_fixture_and_mock_declarations() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("mocked.cor");
+        std::fs::write(
+            &path,
+            r#"
+tool lookup_score(id: String) -> Int
+
+fixture order_id() -> String:
+    return "ord_42"
+
+mock lookup_score(id: String) -> Int:
+    if id == "ord_42":
+        return 42
+    return 0
+
+test mocked_tool_contract:
+    score = lookup_score(order_id())
+    assert score == 42
+"#,
+        )
+        .expect("write");
+
+        let report = run_tests_at_path(&path, &runtime()).await.expect("run");
+        assert_eq!(report.tests.len(), 1);
+        assert!(report.tests[0].passed(), "report: {report:?}");
+        assert_eq!(report.exit_code(), 0);
+    }
 }

@@ -143,6 +143,40 @@ agent a(id: String) -> Order:
     }
 
     #[test]
+    fn fixture_and_mock_lower_to_test_ir() {
+        let src = r#"
+tool lookup(id: String) -> Int
+
+fixture sample_id() -> String:
+    return "ord_42"
+
+mock lookup(id: String) -> Int:
+    return 42
+
+test mocked_lookup:
+    id = sample_id()
+    value = lookup(id)
+    assert value == 42
+"#;
+        let ir = lower_src(src);
+        assert_eq!(ir.fixtures.len(), 1);
+        assert_eq!(ir.mocks.len(), 1);
+        assert_eq!(ir.tests.len(), 1);
+        match &ir.tests[0].body.stmts[0] {
+            IrStmt::Let { value, .. } => match &value.kind {
+                IrExprKind::Call { kind, callee_name, .. } => {
+                    assert_eq!(callee_name, "sample_id");
+                    assert!(matches!(kind, IrCallKind::Fixture { .. }));
+                }
+                other => panic!("expected fixture call, got {other:?}"),
+            },
+            other => panic!("expected let, got {other:?}"),
+        }
+        assert_eq!(ir.mocks[0].target_name, "lookup");
+        assert_eq!(ir.mocks[0].return_ty, corvid_types::Type::Int);
+    }
+
+    #[test]
     fn refund_bot_lowers_to_expected_ir_shape() {
         let src = r#"
 import python "anthropic" as anthropic

@@ -259,6 +259,9 @@ fn collect_expr_imports(
             }
             match kind {
                 IrCallKind::Agent { .. } => Ok(()),
+                IrCallKind::Fixture { .. } => Err(WasmCodegenError::unsupported(format!(
+                    "wasm target cannot lower test fixture call `{callee_name}`"
+                ))),
                 IrCallKind::Tool { def_id, .. } => {
                     let tool = tools.get(def_id).ok_or_else(|| {
                         WasmCodegenError::unsupported(format!(
@@ -653,6 +656,11 @@ fn emit_expr(
                     ))
                 })?;
                 function.instruction(&Instruction::Call(index));
+            }
+            IrCallKind::Fixture { .. } => {
+                return Err(WasmCodegenError::unsupported(format!(
+                    "wasm target cannot lower test fixture call `{callee_name}`"
+                )));
             }
             IrCallKind::StructConstructor { .. } | IrCallKind::Unknown => {
                 return Err(WasmCodegenError::unsupported(format!(

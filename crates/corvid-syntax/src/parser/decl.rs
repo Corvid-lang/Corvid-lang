@@ -14,9 +14,9 @@ use crate::token::TokKind;
 use corvid_ast::{
     AgentDecl, BinaryOp, Block, Decl, DimensionDecl, DimensionValue, Effect, EffectDecl,
     ExternAbi, OwnershipAnnotation, OwnershipMode,
-    EvalAssert, EvalDecl, ExtendDecl, ExtendMethod, ExtendMethodKind, Field, Ident, ImportDecl,
-    ImportContentHash, ImportSource, ImportUseItem, ModelDecl, ModelField, Param, Span, ToolDecl,
-    TestDecl, TypeDecl, Visibility,
+    EvalAssert, EvalDecl, ExtendDecl, ExtendMethod, ExtendMethodKind, Field, FixtureDecl, Ident,
+    ImportDecl, ImportContentHash, ImportSource, ImportUseItem, MockDecl, ModelDecl, ModelField,
+    Param, Span, ToolDecl, TestDecl, TypeDecl, Visibility,
 };
 
 impl<'a> Parser<'a> {
@@ -55,6 +55,8 @@ impl<'a> Parser<'a> {
             TokKind::KwPrompt => self.parse_prompt_decl(visibility).map(Decl::Prompt),
             TokKind::KwEval => self.parse_eval_decl().map(Decl::Eval),
             TokKind::KwTest => self.parse_test_decl().map(Decl::Test),
+            TokKind::KwFixture => self.parse_fixture_decl().map(Decl::Fixture),
+            TokKind::KwMock => self.parse_mock_decl().map(Decl::Mock),
             TokKind::KwAgent => self.parse_agent_decl(visibility).map(Decl::Agent),
             TokKind::KwPub => self.parse_extern_agent_decl().map(Decl::Agent),
             TokKind::KwExtend => self.parse_extend_decl().map(Decl::Extend),
@@ -95,7 +97,7 @@ impl<'a> Parser<'a> {
             other => Err(ParseError {
                 kind: ParseErrorKind::UnexpectedToken {
                     got: describe_token(other),
-                    expected: "a top-level declaration (agent, tool, prompt, eval, type, import, extend, effect, @annotation)".into(),
+                    expected: "a top-level declaration (agent, tool, prompt, eval, test, fixture, mock, type, import, extend, effect, @annotation)".into(),
                 },
                 span: self.peek_span(),
             }),
@@ -755,6 +757,52 @@ impl<'a> Parser<'a> {
             name: Ident::new(name, name_span),
             body,
             assertions,
+            span: start.merge(end),
+        })
+    }
+
+    fn parse_fixture_decl(&mut self) -> Result<FixtureDecl, ParseError> {
+        let start = self.peek_span();
+        self.bump(); // fixture
+
+        let (name, name_span) = self.expect_ident()?;
+        let params = self.parse_params()?;
+        self.expect(TokKind::Arrow, "`->` before fixture return type")?;
+        let return_ty = self.parse_type_ref()?;
+        self.expect(TokKind::Colon, "`:` after fixture signature")?;
+        self.expect_newline()?;
+
+        let body = self.parse_indented_block()?;
+        let end = body.span;
+        Ok(FixtureDecl {
+            name: Ident::new(name, name_span),
+            params,
+            return_ty,
+            body,
+            span: start.merge(end),
+        })
+    }
+
+    fn parse_mock_decl(&mut self) -> Result<MockDecl, ParseError> {
+        let start = self.peek_span();
+        self.bump(); // mock
+
+        let (target, target_span) = self.expect_ident()?;
+        let params = self.parse_params()?;
+        self.expect(TokKind::Arrow, "`->` before mock return type")?;
+        let return_ty = self.parse_type_ref()?;
+        let effect_row = self.parse_uses_clause()?;
+        self.expect(TokKind::Colon, "`:` after mock signature")?;
+        self.expect_newline()?;
+
+        let body = self.parse_indented_block()?;
+        let end = body.span;
+        Ok(MockDecl {
+            target: Ident::new(target, target_span),
+            params,
+            return_ty,
+            body,
+            effect_row,
             span: start.merge(end),
         })
     }

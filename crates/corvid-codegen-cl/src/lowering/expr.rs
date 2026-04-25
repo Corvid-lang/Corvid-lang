@@ -1405,6 +1405,10 @@ pub(super) fn lower_expr(
                     expr.span,
                 )
             }
+            IrCallKind::Fixture { .. } => Err(CodegenError::cranelift(
+                format!("test fixture `{callee_name}` is interpreter-only and cannot be lowered natively"),
+                expr.span,
+            )),
             IrCallKind::Unknown => Err(CodegenError::cranelift(
                 format!("call to `{callee_name}` did not resolve ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â typecheck should have caught this"),
                 expr.span,

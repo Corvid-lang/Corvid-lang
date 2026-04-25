@@ -1398,6 +1398,104 @@ test bad_contract:
     }
 
     #[test]
+    fn fixture_can_be_called_from_test_body() {
+        let src = r#"
+fixture order_id() -> String:
+    return "ord_42"
+
+test fixture_contract:
+    id = order_id()
+    assert id == "ord_42"
+"#;
+        let c = check(src);
+        assert!(c.errors.is_empty(), "errors: {:?}", c.errors);
+    }
+
+    #[test]
+    fn fixture_call_outside_test_or_mock_is_rejected() {
+        let src = r#"
+fixture answer() -> Int:
+    return 42
+
+agent production() -> Int:
+    return answer()
+"#;
+        let c = check(src);
+        assert!(c.errors.iter().any(|e| matches!(
+            e.kind,
+            TypeErrorKind::NotCallable { .. }
+        )), "got: {:?}", c.errors);
+    }
+
+    #[test]
+    fn mock_matching_tool_signature_typechecks() {
+        let src = r#"
+tool lookup(id: String) -> Int
+
+fixture lookup_value() -> Int:
+    return 42
+
+mock lookup(id: String) -> Int:
+    return lookup_value()
+
+test mock_contract:
+    value = lookup("ord_42")
+    assert value == 42
+"#;
+        let c = check(src);
+        assert!(c.errors.is_empty(), "errors: {:?}", c.errors);
+    }
+
+    #[test]
+    fn mock_wrong_parameter_type_is_rejected() {
+        let src = r#"
+tool lookup(id: String) -> Int
+
+mock lookup(id: Int) -> Int:
+    return id
+"#;
+        let c = check(src);
+        assert!(c.errors.iter().any(|e| matches!(
+            e.kind,
+            TypeErrorKind::TypeMismatch { ref context, .. } if context.contains("mock `lookup` parameter")
+        )), "got: {:?}", c.errors);
+    }
+
+    #[test]
+    fn mock_wrong_return_type_is_rejected() {
+        let src = r#"
+tool lookup(id: String) -> Int
+
+mock lookup(id: String) -> String:
+    return id
+"#;
+        let c = check(src);
+        assert!(c.errors.iter().any(|e| matches!(
+            e.kind,
+            TypeErrorKind::TypeMismatch { ref context, .. } if context == "mock `lookup` return type"
+        )), "got: {:?}", c.errors);
+    }
+
+    #[test]
+    fn mock_preserves_dangerous_tool_approval_requirement() {
+        let src = r#"
+tool issue_refund(id: String) -> Int dangerous
+
+mock issue_refund(id: String) -> Int:
+    return 42
+
+test unsafe_mock_call:
+    value = issue_refund("ord_42")
+    assert value == 42
+"#;
+        let c = check(src);
+        assert!(c.errors.iter().any(|e| matches!(
+            e.kind,
+            TypeErrorKind::UnapprovedDangerousCall { ref tool, .. } if tool == "issue_refund"
+        )), "got: {:?}", c.errors);
+    }
+
+    #[test]
     fn eval_called_unknown_name_fails_in_resolution() {
         let src = "\
 eval bad_eval:

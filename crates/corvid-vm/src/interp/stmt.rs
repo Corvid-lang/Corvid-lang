@@ -40,7 +40,7 @@ impl<'ir> Interpreter<'ir> {
         let env = self.env.clone();
         let local_names = self.local_names.clone();
         tokio::spawn(async move {
-            let mut sub = Interpreter::new(&ir, &runtime);
+            let mut sub = Interpreter::new(&ir, &runtime).with_mocks();
             sub.env = env;
             sub.local_names = local_names;
             sub.stream_sender = Some(sender);

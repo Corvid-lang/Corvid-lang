@@ -17,6 +17,8 @@ pub struct IrFile {
     pub agents: Vec<IrAgent>,
     pub evals: Vec<IrEval>,
     pub tests: Vec<IrTest>,
+    pub fixtures: Vec<IrFixture>,
+    pub mocks: Vec<IrMock>,
 }
 
 /// `import python "..." as alias`.
@@ -277,6 +279,26 @@ pub struct IrTest {
     pub name: String,
     pub body: IrBlock,
     pub assertions: Vec<IrEvalAssert>,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone)]
+pub struct IrFixture {
+    pub id: DefId,
+    pub name: String,
+    pub params: Vec<IrParam>,
+    pub return_ty: Type,
+    pub body: IrBlock,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone)]
+pub struct IrMock {
+    pub target_id: DefId,
+    pub target_name: String,
+    pub params: Vec<IrParam>,
+    pub return_ty: Type,
+    pub body: IrBlock,
     pub span: Span,
 }
 
@@ -634,6 +656,7 @@ pub enum IrCallKind {
     Prompt { def_id: DefId },
     /// Agent call — recursion or composition.
     Agent { def_id: DefId },
+    Fixture { def_id: DefId },
     /// Struct constructor — `Order(id, amount)` builds an `Order`.
     /// Args are field values in declaration order. Codegen lowers as
     /// an allocation followed by per-field stores.

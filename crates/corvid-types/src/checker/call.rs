@@ -67,12 +67,14 @@ impl<'a> Checker<'a> {
                     DeclKind::Tool => self.check_tool_call(def_id, &name.name, args, span),
                     DeclKind::Prompt => self.check_prompt_call(def_id, &name.name, args),
                     DeclKind::Agent => self.check_agent_call(def_id, &name.name, args),
+                    DeclKind::Fixture => self.check_fixture_call(def_id, &name.name, args, span),
                     DeclKind::ImportedUse => {
                         self.check_imported_use_call(def_id, &name.name, args, name.span, span)
                     }
                     DeclKind::Import
                     | DeclKind::Eval
                     | DeclKind::Test
+                    | DeclKind::Mock
                     | DeclKind::Effect
                     | DeclKind::Model => {
                         for a in args {
@@ -135,6 +137,29 @@ impl<'a> Checker<'a> {
 
         self.bump_effect(WeakEffect::ToolCall);
         self.type_ref_to_type(&tool.return_ty)
+    }
+
+    fn check_fixture_call(
+        &mut self,
+        def_id: DefId,
+        fixture_name: &str,
+        args: &[Expr],
+        span: Span,
+    ) -> Type {
+        let fixture = *self
+            .fixtures_by_id
+            .get(&def_id)
+            .expect("fixture DefId not indexed");
+        self.check_args_against_params(fixture_name, &fixture.params, args);
+        if !self.in_test_body {
+            self.errors.push(TypeError::new(
+                TypeErrorKind::NotCallable {
+                    got: format!("test fixture `{fixture_name}` outside a test or mock"),
+                },
+                span,
+            ));
+        }
+        self.type_ref_to_type(&fixture.return_ty)
     }
 
     fn check_prompt_call(

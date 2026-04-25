@@ -1,7 +1,7 @@
 use crate::{byte_span_to_lsp_range, lsp_position_to_byte};
 use corvid_ast::{
-    AgentDecl, Decl, EffectDecl, EvalDecl, File, ModelDecl, PromptDecl, Span, TestDecl, ToolDecl,
-    TypeDecl,
+    AgentDecl, Decl, EffectDecl, EvalDecl, File, FixtureDecl, ModelDecl, MockDecl, PromptDecl,
+    Span, TestDecl, ToolDecl, TypeDecl,
 };
 use corvid_resolve::{resolve, Binding, DeclKind, DefId, LocalId, Resolved};
 use corvid_syntax::{lex, parse_file};
@@ -245,6 +245,22 @@ fn top_level_definitions(file: &File, resolved: &Resolved) -> Vec<Definition> {
                 DeclKind::Test,
                 name.span,
                 SymbolKind::METHOD,
+            ),
+            Decl::Fixture(FixtureDecl { name, .. }) => push_definition(
+                &mut out,
+                resolved,
+                &name.name,
+                DeclKind::Fixture,
+                name.span,
+                SymbolKind::FUNCTION,
+            ),
+            Decl::Mock(MockDecl { target, .. }) => push_definition(
+                &mut out,
+                resolved,
+                &target.name,
+                DeclKind::Tool,
+                target.span,
+                SymbolKind::FUNCTION,
             ),
             Decl::Effect(EffectDecl { name, .. }) => push_definition(
                 &mut out,

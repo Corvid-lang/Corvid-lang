@@ -12,9 +12,9 @@ use crate::imports::{
 use crate::types::*;
 use corvid_ast::{
     AgentAttribute, AgentDecl, BinaryOp, Block, Decl, Effect, EvalAssert, EvalDecl, Expr,
-    ExtendMethodKind, ExternAbi, File, Ident,
-    ImportDecl, ImportSource, Literal, Param, PromptDecl, ReplayArm, ReplayPattern, Span, Stmt,
-    TestDecl, ToolArgPattern, ToolDecl, TypeDecl, TypeRef, UnaryOp,
+    ExtendMethodKind, ExternAbi, File, FixtureDecl, Ident, ImportDecl, ImportSource, Literal,
+    MockDecl, Param, PromptDecl, ReplayArm, ReplayPattern, Span, Stmt, TestDecl, ToolArgPattern,
+    ToolDecl, TypeDecl, TypeRef, UnaryOp,
 };
 use corvid_resolve::{
     resolver::MethodEntry, Binding, BuiltIn, DeclKind, DefId, LocalId, ModuleResolution, Resolved,
@@ -162,6 +162,8 @@ impl<'a> Lowerer<'a> {
         let mut agents = Vec::new();
         let mut evals = Vec::new();
         let mut tests = Vec::new();
+        let mut fixtures = Vec::new();
+        let mut mocks = Vec::new();
 
         for decl in &file.decls {
             match decl {
@@ -172,6 +174,8 @@ impl<'a> Lowerer<'a> {
                 Decl::Agent(a) => agents.push(self.lower_agent(a)),
                 Decl::Eval(e) => evals.push(self.lower_eval(e)),
                 Decl::Test(t) => tests.push(self.lower_test(t)),
+                Decl::Fixture(f) => fixtures.push(self.lower_fixture(f)),
+                Decl::Mock(m) => mocks.push(self.lower_mock(m)),
                 Decl::Effect(_) => {}
                 Decl::Model(_) => {
                     // Phase 20h slice A: model declarations are a
@@ -222,6 +226,8 @@ impl<'a> Lowerer<'a> {
             agents,
             evals,
             tests,
+            fixtures,
+            mocks,
         }
     }
 
@@ -1025,6 +1031,9 @@ impl<'a> Lowerer<'a> {
                         DeclKind::Agent => IrCallKind::Agent {
                             def_id: lowered_def_id,
                         },
+                        DeclKind::Fixture => IrCallKind::Fixture {
+                            def_id: lowered_def_id,
+                        },
                         DeclKind::Type => IrCallKind::StructConstructor {
                             def_id: lowered_def_id,
                         },
@@ -1121,6 +1130,36 @@ impl<'a> Lowerer<'a> {
                 .map(|assertion| self.lower_eval_assert(assertion))
                 .collect(),
             span: t.span,
+        }
+    }
+
+    fn lower_fixture(&self, f: &FixtureDecl) -> IrFixture {
+        let id = self
+            .symbols
+            .lookup_def(&f.name.name)
+            .unwrap_or(DefId(u32::MAX));
+        IrFixture {
+            id,
+            name: f.name.name.clone(),
+            params: self.lower_params(&f.params),
+            return_ty: self.type_ref_to_type(&f.return_ty),
+            body: self.lower_block(&f.body),
+            span: f.span,
+        }
+    }
+
+    fn lower_mock(&self, m: &MockDecl) -> IrMock {
+        let target_id = match self.bindings.get(&m.target.span) {
+            Some(Binding::Decl(def_id)) => self.remap_def_id(*def_id),
+            _ => DefId(u32::MAX),
+        };
+        IrMock {
+            target_id,
+            target_name: m.target.name.clone(),
+            params: self.lower_params(&m.params),
+            return_ty: self.type_ref_to_type(&m.return_ty),
+            body: self.lower_block(&m.body),
+            span: m.span,
         }
     }
 

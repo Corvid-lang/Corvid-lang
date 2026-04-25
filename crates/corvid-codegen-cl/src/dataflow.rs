@@ -653,6 +653,7 @@ fn walk_expr(expr: &IrExpr, consumed: bool, out: &mut Vec<LocalRead>) {
             let args_consumed = match kind {
                 corvid_ir::IrCallKind::Tool { .. }
                 | corvid_ir::IrCallKind::Prompt { .. }
+                | corvid_ir::IrCallKind::Fixture { .. }
                 | corvid_ir::IrCallKind::Unknown => false,
                 corvid_ir::IrCallKind::Agent { .. }
                 | corvid_ir::IrCallKind::StructConstructor { .. } => true,

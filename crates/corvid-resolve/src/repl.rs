@@ -147,6 +147,8 @@ fn decl_kind_name(decl: &Decl) -> String {
         Decl::Agent(_) => "agent".into(),
         Decl::Eval(_) => "eval".into(),
         Decl::Test(_) => "test".into(),
+        Decl::Fixture(_) => "fixture".into(),
+        Decl::Mock(_) => "mock".into(),
         Decl::Extend(_) => "extend".into(),
         Decl::Effect(_) => "effect".into(),
         Decl::Model(_) => "model".into(),

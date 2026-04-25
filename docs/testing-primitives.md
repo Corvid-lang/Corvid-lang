@@ -48,3 +48,54 @@ This is intentional. Tests and evals should not have competing assertion
 languages. Tests are deterministic developer checks; evals add statistical LLM
 behavior and model-quality reporting on top of the same compiler assertion
 model.
+
+## Fixtures
+
+`fixture name(...) -> Type:` declares typed reusable test data:
+
+```corvid
+fixture order_id() -> String:
+    return "ord_42"
+
+test fixture_contract:
+    id = order_id()
+    assert id == "ord_42"
+```
+
+Fixtures are language declarations, not untyped runner macros. They parse,
+resolve, typecheck, lower to `IrFixture`, and execute through the same
+interpreter as test setup bodies. A fixture call is only callable from `test`
+and `mock` bodies; calling a fixture from a production `agent` is rejected by
+the typechecker.
+
+The native, Python, and WASM codegen tiers treat fixture calls as
+interpreter-only test infrastructure. They do not silently compile fixture
+calls into production artifacts.
+
+## Mocks
+
+`mock tool_name(...) -> Type:` declares a typed test-only override for an
+existing tool:
+
+```corvid
+tool lookup_score(id: String) -> Int
+
+mock lookup_score(id: String) -> Int:
+    if id == "ord_42":
+        return 42
+    return 0
+
+test mocked_tool_contract:
+    score = lookup_score("ord_42")
+    assert score == 42
+```
+
+The mock signature must match the target tool exactly: arity, parameter types,
+and return type. Mocks are active inside `corvid test` and are not registered as
+normal callable declarations, so production code still calls the real tool
+boundary.
+
+Mocks preserve the target tool's effect profile. A mocked dangerous tool still
+requires the same approval before it can be called. Runtime dispatch performs
+the normal approval/confidence/tool-call gate first, then executes the mock body
+instead of crossing the external host-tool boundary.

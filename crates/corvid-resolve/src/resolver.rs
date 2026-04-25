@@ -178,6 +178,13 @@ impl Resolver {
                 Decl::Agent(a) => (a.name.name.clone(), DeclKind::Agent, a.span),
                 Decl::Eval(e) => (e.name.name.clone(), DeclKind::Eval, e.span),
                 Decl::Test(t) => (t.name.name.clone(), DeclKind::Test, t.span),
+                Decl::Fixture(f) => (f.name.name.clone(), DeclKind::Fixture, f.span),
+                Decl::Mock(_) => {
+                    // Mocks override existing tool names during test execution.
+                    // They intentionally do not declare a top-level callable
+                    // with the same name as the tool they replace.
+                    continue;
+                }
                 Decl::Effect(e) => (e.name.name.clone(), DeclKind::Effect, e.span),
                 Decl::Model(m) => (m.name.name.clone(), DeclKind::Model, m.span),
                 Decl::Extend(_) => {
@@ -328,6 +335,8 @@ impl Resolver {
                 Decl::Agent(a) => self.resolve_agent_decl(a),
                 Decl::Eval(e) => self.resolve_eval_decl(e),
                 Decl::Test(t) => self.resolve_test_decl(t),
+                Decl::Fixture(f) => self.resolve_fixture_decl(f),
+                Decl::Mock(m) => self.resolve_mock_decl(m),
                 Decl::Effect(e) => self.resolve_effect_decl(e),
                 Decl::Model(_) => {
                     // Phase 20h slice A: model decls register a name
@@ -546,6 +555,34 @@ impl Resolver {
         for assertion in &t.assertions {
             self.resolve_eval_assert(assertion);
         }
+        self.pop_scope();
+    }
+
+    fn resolve_fixture_decl(&mut self, f: &corvid_ast::FixtureDecl) {
+        self.push_scope();
+        for param in &f.params {
+            self.resolve_type_ref(&param.ty);
+            let id = self.fresh_local();
+            self.current_scope_mut().insert(&param.name.name, id);
+            self.bindings.insert(param.name.span, Binding::Local(id));
+        }
+        self.resolve_type_ref(&f.return_ty);
+        self.resolve_block(&f.body);
+        self.pop_scope();
+    }
+
+    fn resolve_mock_decl(&mut self, m: &corvid_ast::MockDecl) {
+        self.resolve_ident(&m.target);
+        self.push_scope();
+        for param in &m.params {
+            self.resolve_type_ref(&param.ty);
+            let id = self.fresh_local();
+            self.current_scope_mut().insert(&param.name.name, id);
+            self.bindings.insert(param.name.span, Binding::Local(id));
+        }
+        self.resolve_type_ref(&m.return_ty);
+        self.resolve_effect_row(&m.effect_row);
+        self.resolve_block(&m.body);
         self.pop_scope();
     }
 
@@ -897,6 +934,8 @@ fn decl_kind_label(kind: DeclKind) -> &'static str {
         DeclKind::Agent => "agent",
         DeclKind::Eval => "eval",
         DeclKind::Test => "test",
+        DeclKind::Fixture => "fixture",
+        DeclKind::Mock => "mock",
         DeclKind::Effect => "effect",
         DeclKind::Model => "model",
     }
