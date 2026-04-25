@@ -1446,7 +1446,7 @@ The determinism-source catalog and the language's treatment of non-reproducible 
 - CI exit-code contract: non-zero if any `assert` fails or regression threshold crossed.
 - [x] Trace-aware eval reporting: value pass rates, process assertions, approval assertions, groundedness, cost, latency, model route, and replay compatibility in one report. Shipped by scanning eval JSONL artifacts under `target/eval/<source>/`, validating schema compatibility, and folding trace metrics into terminal + HTML reports.
 - Prompt-diff report: when a prompt body changed between runs, show before/after + delta in grounding / cost / assert pass-rates.
-- Model-swap eval mode uses Phase 21 replay and Phase 20 model metadata to compare provider/model choices without spending on unchanged tool paths.
+- [x] Model-swap eval mode uses Phase 21 replay and Phase 20 model metadata to compare provider/model choices without spending on unchanged tool paths. Already shipped as `corvid eval --swap-model <MODEL> --source <FILE> <TRACE_OR_DIR>...`, which delegates trace files to differential replay and trace directories to the trace-suite migration analyzer.
 - `corvid eval compare <base>..<head>`: PR-friendly eval diff with pass-rate deltas, cost deltas, latency deltas, model-route changes, prompt diffs, and trace/process assertion changes.
 - Regression-cause clustering: classify failures by prompt change, model change, tool-output change, route change, approval-path change, grounding loss, or budget regression.
 - Eval budget mode: estimate and enforce max eval spend before running provider-backed evals; CI fails early when the planned eval run exceeds the configured budget.
