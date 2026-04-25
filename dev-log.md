@@ -5392,3 +5392,17 @@ The important product decision is that package pages are generated from
 compiler facts, not registry marketing copy. The registry can display the page,
 but the package source determines the AI-native contract users are about to
 install.
+
+## 2026-04-25 - Package conflict resolution
+
+Closed `25-F-conflict-resolution` and Phase 25's package-manager checklist.
+Added `corvid package verify-lock`, backed by `package_conflicts.rs`, to validate
+the installed package graph rather than only individual package operations.
+
+The verifier checks manifest dependencies against `Corvid.lock`: missing lock
+entries, duplicate package URIs, multiple locked versions for the same
+dependency, stale undeclared lock entries, semver requirement mismatches,
+missing semantic summaries, and package-policy violations from locked semantic
+summaries. Version parsing now lives in `package_version.rs`, and package-policy
+loading/checking lives in `package_policy.rs`, so add/update and verify-lock use
+the same rules.

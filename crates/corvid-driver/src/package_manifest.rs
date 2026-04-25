@@ -88,6 +88,23 @@ pub(crate) fn dependency(project_dir: &Path, name: &str) -> Result<Option<Manife
     parse_dependency(name, value).map(Some)
 }
 
+pub(crate) fn dependencies(project_dir: &Path) -> Result<Vec<ManifestDependency>> {
+    let path = manifest_path_for_project(project_dir);
+    if !path.exists() {
+        return Ok(Vec::new());
+    }
+    let root = load_manifest_value(&path)?;
+    let Some(deps) = root.get("dependencies").and_then(Value::as_table) else {
+        return Ok(Vec::new());
+    };
+    let mut out = deps
+        .iter()
+        .map(|(name, value)| parse_dependency(name, value))
+        .collect::<Result<Vec<_>>>()?;
+    out.sort_by(|a, b| a.name.cmp(&b.name));
+    Ok(out)
+}
+
 fn parse_dependency(name: &str, value: &Value) -> Result<ManifestDependency> {
     match value {
         Value::String(version) => Ok(ManifestDependency {
@@ -174,6 +191,20 @@ mod tests {
         assert_eq!(one.registry, None);
         assert_eq!(two.version, "^2.0.0");
         assert_eq!(two.registry.as_deref(), Some("./registry"));
+    }
+
+    #[test]
+    fn dependencies_reads_all_entries_in_stable_order() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            tmp.path().join("corvid.toml"),
+            "[dependencies]\n\"@b/two\" = \"2\"\n\"@a/one\" = \"1\"\n",
+        )
+        .unwrap();
+        let deps = dependencies(tmp.path()).unwrap();
+        assert_eq!(deps.len(), 2);
+        assert_eq!(deps[0].name, "@a/one");
+        assert_eq!(deps[1].name, "@b/two");
     }
 
     #[test]

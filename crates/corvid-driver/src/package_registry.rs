@@ -9,9 +9,8 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{anyhow, Context, Result};
 use corvid_resolve::ModuleSemanticSummary;
-use corvid_types::{CorvidConfig, PackagePolicyConfig};
 use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
-use semver::{Version, VersionReq};
+use semver::Version;
 use serde::{Deserialize, Serialize};
 
 use crate::import_integrity::sha256_hex;
@@ -21,6 +20,10 @@ use crate::package_lock::{
     write_package_lock, LockedPackage,
 };
 use crate::package_manifest::{dependency, remove_dependency, upsert_dependency};
+use crate::package_policy::{load_package_policy, package_policy_violation};
+use crate::package_version::{
+    normalize_version, parse_package_spec, validate_package_name, PackageSpec,
+};
 
 const DEFAULT_REGISTRY: &str = "https://registry.corvid.dev/index.toml";
 
@@ -114,32 +117,6 @@ struct RegistryPackage {
     signature: Option<String>,
     #[serde(default)]
     semantic_summary: Option<ModuleSemanticSummary>,
-}
-
-#[derive(Debug, Clone)]
-struct PackageSpec {
-    name: String,
-    raw_requirement: String,
-    requirement: VersionRequirement,
-}
-
-#[derive(Debug, Clone)]
-enum VersionRequirement {
-    Prefix { parts: Vec<u64> },
-    Semver(VersionReq),
-}
-
-impl VersionRequirement {
-    fn matches(&self, version: &Version) -> bool {
-        match self {
-            Self::Prefix { parts } => {
-                parts.first().is_none_or(|major| version.major == *major)
-                    && parts.get(1).is_none_or(|minor| version.minor == *minor)
-                    && parts.get(2).is_none_or(|patch| version.patch == *patch)
-            }
-            Self::Semver(req) => req.matches(version),
-        }
-    }
 }
 
 pub fn add_package(
@@ -424,50 +401,6 @@ pub fn verify_registry_contract(location: &str) -> Result<RegistryVerificationRe
     Ok(report)
 }
 
-fn parse_package_spec(spec: &str) -> Result<PackageSpec> {
-    let Some(idx) = spec.rfind('@') else {
-        return Err(anyhow!(
-            "package spec must be `@scope/name@version`, got `{spec}`"
-        ));
-    };
-    if idx == 0 {
-        return Err(anyhow!(
-            "package spec must be `@scope/name@version`, got `{spec}`"
-        ));
-    }
-    let name = &spec[..idx];
-    let version = &spec[idx + 1..];
-    if !name.starts_with('@') || !name.contains('/') || version.is_empty() {
-        return Err(anyhow!(
-            "package spec must be `@scope/name@version`, got `{spec}`"
-        ));
-    }
-    Ok(PackageSpec {
-        name: name.to_string(),
-        raw_requirement: version.to_string(),
-        requirement: parse_version_requirement(version)?,
-    })
-}
-
-fn parse_version_requirement(raw: &str) -> Result<VersionRequirement> {
-    if raw.chars().next().is_some_and(|ch| matches!(ch, '^' | '~' | '>' | '<' | '=' | '*')) {
-        return VersionReq::parse(raw)
-            .map(VersionRequirement::Semver)
-            .map_err(|err| anyhow!("invalid semver requirement `{raw}`: {err}"));
-    }
-    let parts = raw
-        .split('.')
-        .map(|part| {
-            part.parse::<u64>()
-                .map_err(|err| anyhow!("invalid version component `{part}` in `{raw}`: {err}"))
-        })
-        .collect::<Result<Vec<_>>>()?;
-    if parts.is_empty() || parts.len() > 3 {
-        return Err(anyhow!("version `{raw}` must have one to three numeric components"));
-    }
-    Ok(VersionRequirement::Prefix { parts })
-}
-
 fn select_package<'a>(
     index: &'a RegistryIndex,
     spec: &PackageSpec,
@@ -485,15 +418,6 @@ fn select_package<'a>(
     }
     candidates.sort_by(|a, b| a.0.cmp(&b.0));
     Ok(candidates.pop().map(|(_, package)| package))
-}
-
-fn normalize_version(version: &str) -> String {
-    let count = version.split('.').count();
-    match count {
-        1 => format!("{version}.0.0"),
-        2 => format!("{version}.0"),
-        _ => version.to_string(),
-    }
 }
 
 fn load_registry_index(location: &str) -> Result<RegistryIndex> {
@@ -531,65 +455,6 @@ fn fetch_bytes(location: &str) -> Result<Vec<u8>> {
     }
 }
 
-fn load_package_policy(project_dir: &Path) -> Result<PackagePolicyConfig> {
-    let config_path = project_dir.join("corvid.toml");
-    let Some(config) = CorvidConfig::load_from_path(&config_path)
-        .map_err(|err| anyhow!("failed to load `{}`: {err}", config_path.display()))?
-    else {
-        return Ok(PackagePolicyConfig::default());
-    };
-    Ok(config.package_policy)
-}
-
-fn package_policy_violation(
-    summary: &ModuleSemanticSummary,
-    policy: &PackagePolicyConfig,
-    signature: Option<&str>,
-) -> Option<String> {
-    if policy.require_package_signatures && signature.is_none() {
-        return Some(
-            "package is unsigned, but package-policy.require-package-signatures=true".to_string(),
-        );
-    }
-    if !policy.allow_approval_required {
-        if let Some(export) = summary
-            .exports
-            .values()
-            .find(|export| export.approval_required)
-        {
-            return Some(format!(
-                "package export `{}` requires approval, but package-policy.allow-approval-required=false",
-                export.name
-            ));
-        }
-    }
-    if !policy.allow_effect_violations {
-        if let Some(agent) = summary.agents.values().find(|agent| !agent.violations.is_empty()) {
-            return Some(format!(
-                "package agent `{}` has effect violations, but package-policy.allow-effect-violations=false",
-                agent.name
-            ));
-        }
-    }
-    if policy.require_deterministic {
-        if let Some(agent) = summary.agents.values().find(|agent| !agent.deterministic) {
-            return Some(format!(
-                "package agent `{}` is not @deterministic, but package-policy.require-deterministic=true",
-                agent.name
-            ));
-        }
-    }
-    if policy.require_replayable {
-        if let Some(agent) = summary.agents.values().find(|agent| !agent.replayable) {
-            return Some(format!(
-                "package agent `{}` is not @replayable, but package-policy.require-replayable=true",
-                agent.name
-            ));
-        }
-    }
-    None
-}
-
 fn upsert_registry_package(index: &mut RegistryIndex, package: RegistryPackage) {
     if let Some(existing) = index
         .package
@@ -604,14 +469,6 @@ fn upsert_registry_package(index: &mut RegistryIndex, package: RegistryPackage) 
                 .cmp(&b.name)
                 .then_with(|| normalize_version(&a.version).cmp(&normalize_version(&b.version)))
         });
-    }
-}
-
-fn validate_package_name(name: &str) -> Result<()> {
-    if name.starts_with('@') && name.contains('/') && !name.ends_with('/') {
-        Ok(())
-    } else {
-        Err(anyhow!("package name must be scoped, e.g. `@scope/name`"))
     }
 }
 
@@ -806,6 +663,7 @@ fn encode_hex(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::package_version::VersionRequirement;
     use std::fs;
     use std::io::{Read, Write};
     use std::net::TcpListener;

@@ -647,6 +647,12 @@ enum PackageCommand {
         #[arg(long)]
         json: bool,
     },
+    /// Verify corvid.toml and Corvid.lock agree with package policy.
+    VerifyLock {
+        /// Emit structured JSON.
+        #[arg(long)]
+        json: bool,
+    },
     /// Publish a signed source package into a registry directory.
     Publish {
         /// Source `.cor` file to publish.
@@ -984,6 +990,7 @@ fn main() -> ExitCode {
             PackageCommand::VerifyRegistry { registry, json } => {
                 cmd_package_verify_registry(&registry, json)
             }
+            PackageCommand::VerifyLock { json } => cmd_package_verify_lock(json),
             PackageCommand::Publish {
                 source,
                 name,
@@ -1622,6 +1629,17 @@ fn cmd_package_verify_registry(registry: &str, json: bool) -> Result<u8> {
                 );
             }
         }
+    }
+    Ok(if report.is_clean() { 0 } else { 1 })
+}
+
+fn cmd_package_verify_lock(json: bool) -> Result<u8> {
+    let project_dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let report = corvid_driver::verify_package_lock(&project_dir)?;
+    if json {
+        println!("{}", serde_json::to_string_pretty(&report)?);
+    } else {
+        print!("{}", corvid_driver::render_package_conflict_report(&report));
     }
     Ok(if report.is_clean() { 0 } else { 1 })
 }

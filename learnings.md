@@ -3245,6 +3245,18 @@ prove its exported contract, but it cannot prove who published it unless the
 registry or publish path supplies a signature. The metadata command therefore
 accepts signature provenance explicitly instead of inventing it.
 
+## package conflict verification
+
+Package compatibility is not only semver. In Corvid, the effect contract is part
+of dependency compatibility. A package locked yesterday can become invalid today
+if the project tightens `[package-policy]` to require replayability,
+determinism, signatures, or no approval-required exports.
+
+The right place to enforce that is lockfile verification. `corvid add` prevents
+bad new packages from entering the graph; `corvid package verify-lock` proves
+the graph remains valid after policy edits, merge conflicts, manual lockfile
+changes, or dependency updates.
+
 ## Contributing / feedback
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). The rules of the road are: design chat before code, per-scope commits at every boundary, dev-log entry for every session, no shortcuts. The `learnings.md` file you're reading gets updated when each user-visible feature ships.

@@ -98,6 +98,32 @@ source hash/signature/semantic policy, and rewrites the lock entry. Passing a
 full spec such as `corvid update @scope/name@^2.0.0 --registry ./index.toml`
 also updates the manifest requirement.
 
+## Lockfile Conflict Verification
+
+`corvid package verify-lock` checks that the local package graph is still
+coherent:
+
+```text
+corvid package verify-lock
+corvid package verify-lock --json
+```
+
+The verifier checks:
+
+- every manifest dependency has a matching locked package;
+- locked versions satisfy the manifest version requirement;
+- one dependency is not locked to multiple versions at once;
+- duplicate package URIs and duplicate locked versions are reported;
+- stale lock entries without a matching manifest dependency are reported;
+- every locked package has a semantic summary;
+- the locked semantic summary still satisfies the current `[package-policy]`.
+
+That last check is important. If project policy changes from permissive to
+strict, the existing lockfile is re-evaluated without reinstalling packages.
+The package manager therefore treats effect profiles, approvals, replayability,
+determinism, grounded outputs, and signatures as compatibility constraints, not
+as comments.
+
 ## Publishing Signed Packages
 
 `corvid package publish` creates the source artifact, computes its hash and

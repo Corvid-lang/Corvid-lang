@@ -14,10 +14,13 @@ pub mod meta_verify;
 pub mod modules;
 pub mod proof_replay;
 mod import_integrity;
+mod package_conflicts;
 mod package_lock;
 mod package_manifest;
 mod package_metadata;
+mod package_policy;
 mod package_registry;
+mod package_version;
 mod native_ability;
 mod native_cache;
 mod render;
@@ -28,6 +31,10 @@ pub use package_registry::{
     add_package, publish_package, remove_package, update_package, AddPackageOutcome,
     PackageMutationOutcome, PublishPackageOptions, PublishPackageOutcome,
     RegistryVerificationFailure, RegistryVerificationReport, verify_registry_contract,
+};
+pub use package_conflicts::{
+    render_package_conflict_report, verify_package_lock, PackageConflictFailure,
+    PackageConflictKind, PackageConflictReport,
 };
 pub use package_metadata::{
     package_metadata_from_source, render_package_metadata_markdown, PackageMetadata,
