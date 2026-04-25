@@ -5572,3 +5572,14 @@ playground panel where every invention maps to a runnable
 The page deliberately avoids unsupported benchmark or safety superiority
 claims. The claim policy section states that speed/safety comparisons only
 belong on the site when backed by a reproducible command.
+
+## 2026-04-25 - Standalone inventions page and proof matrix
+
+Added `docs/inventions.md` as the shareable invention artifact. It removes
+install/build context and focuses on the language ideas themselves: syntax,
+why each one is unique, and the safety/product boundary each one covers.
+
+The page ends with an invention proof matrix covering every catalog entry:
+shipped status, runnable tour command, test coverage, spec link, and explicit
+non-scope. The README and static landing page now link to this standalone
+artifact.

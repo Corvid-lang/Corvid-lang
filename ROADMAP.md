@@ -1555,8 +1555,8 @@ The determinism-source catalog and the language's treatment of non-reproducible 
 - [x] Landing page rewrite (`docs/site/`): every invention gets a runnable playground example. "Corvid is faster than Python at X" / "safer than TypeScript at Y" claims are supported with side-by-side comparisons that actually run.
 - [x] Runnable invention index: `corvid tour --topic <name>` CLI command opens the REPL pre-loaded with compiler-checked demos; `corvid tour --list` shows the shipped catalog across safety, AI-native ergonomics, adaptive routing, streaming, and verification.
 - [x] Cross-references: each invention in the README links to (a) the roadmap slice that shipped it, (b) the spec section that formalizes it, (c) the example in the tour, (d) the test that validates it.
-- [ ] Headline inventions page (`docs/inventions.md`): the standalone artifact HN threads link to. No install prerequisite, no build system context — just the inventions, their syntax, and why each is unique.
-- [ ] Invention proof matrix: every catalog entry has columns for shipped status, runnable command, test coverage, docs/spec link, and explicit non-scope.
+- [x] Headline inventions page (`docs/inventions.md`): the standalone artifact HN threads link to. No install prerequisite, no build system context — just the inventions, their syntax, and why each is unique.
+- [x] Invention proof matrix: every catalog entry has columns for shipped status, runnable command, test coverage, docs/spec link, and explicit non-scope.
 - [ ] Update `CLAUDE.md` (or equivalent contributor doc) to require that every new invention ships with a README catalog entry + tour demo.
 
 **Non-scope:** marketing copy, video scripts, social-media assets — those belong to Phase 33's launch materials. Phase 34 is the authoritative technical catalog; Phase 33 is the launch campaign that points to it.

@@ -3407,6 +3407,17 @@ Comparative claims are a separate artifact. If a site says "faster" or "safer",
 the same card needs a command that reproduces the comparison. Until that
 command exists, the stronger product move is to omit the claim.
 
+## proof matrix as marketing infrastructure
+
+The standalone inventions page should end with a proof matrix because that is
+what lets bold technical positioning survive scrutiny. Readers can scan the
+idea first, then verify status, runnable command, test, spec, and non-scope
+without leaving the page.
+
+This structure is stronger than a traditional feature grid. It treats
+non-scope as first-class, which prevents the project from accidentally turning
+future inventions into present-tense claims.
+
 ## Contributing / feedback
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). The rules of the road are: design chat before code, per-scope commits at every boundary, dev-log entry for every session, no shortcuts. The `learnings.md` file you're reading gets updated when each user-visible feature ships.

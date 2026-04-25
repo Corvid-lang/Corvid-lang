@@ -492,6 +492,7 @@ If `cargo fmt --check` fails because `cargo-fmt` is not installed, install the R
 ## Documentation
 
 - [ROADMAP.md](./ROADMAP.md): build plan and shipped slices.
+- [docs/inventions.md](./docs/inventions.md): standalone invention catalog and proof matrix.
 - [docs/effects-spec/](./docs/effects-spec/): AI-native effect system, grounding, budgets, confidence, streaming, model substrate, replay, and verification specs.
 - [docs/bundle-format.md](./docs/bundle-format.md): signed bundle and receipt format.
 - [ARCHITECTURE.md](./ARCHITECTURE.md): compiler design and repo structure.
