@@ -56,6 +56,7 @@ pub enum TokKind {
     KwEffect,
     KwUses,
     KwAssert,
+    KwAssertSnapshot,
 
     // --- keywords: typed model substrate (Phase 20h) ---
     KwModel,
@@ -200,6 +201,7 @@ impl TokKind {
             "effect" => TokKind::KwEffect,
             "uses" => TokKind::KwUses,
             "assert" => TokKind::KwAssert,
+            "assert_snapshot" => TokKind::KwAssertSnapshot,
             "model" => TokKind::KwModel,
             "requires" => TokKind::KwRequires,
             "route" => TokKind::KwRoute,

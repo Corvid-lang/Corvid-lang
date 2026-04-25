@@ -1558,6 +1558,7 @@ fn render_eval_assert(assertion: &EvalAssert) -> String {
             }
             text
         }
+        EvalAssert::Snapshot { expr, .. } => format!("assert_snapshot {}", render_expr(expr)),
         EvalAssert::Called { tool, .. } => format!("assert called {}", tool.name),
         EvalAssert::Approved { label, .. } => format!("assert approved {}", label.name),
         EvalAssert::Cost { op, bound, .. } => {
@@ -1737,6 +1738,7 @@ mock lookup(id: String) -> Int:
 
 test mocked_lookup:
     score = lookup(sample_id())
+    assert_snapshot score
     assert score == 42
 "#;
         let file = parse_source(source).expect("parse");

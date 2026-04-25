@@ -99,3 +99,45 @@ Mocks preserve the target tool's effect profile. A mocked dangerous tool still
 requires the same approval before it can be called. Runtime dispatch performs
 the normal approval/confidence/tool-call gate first, then executes the mock body
 instead of crossing the external host-tool boundary.
+
+## Snapshot Assertions
+
+`assert_snapshot <expr>` captures the evaluated value of an expression as a
+deterministic JSON snapshot:
+
+```corvid
+test response_shape:
+    value = "stable contract"
+    assert_snapshot value
+```
+
+The first run writes the snapshot and reports the assertion as updated. Later
+runs compare against the stored value and fail with a small unified diff if the
+value changed.
+
+Snapshots are stored next to the source file under a deterministic path:
+
+```text
+.corvid-snapshots/<source-stem>/<test-name>__001.snap
+```
+
+Multiple snapshot assertions in one test use `__002.snap`, `__003.snap`, and so
+on. Path segments are sanitized so snapshot filenames are stable across shells
+and platforms.
+
+To intentionally accept changed output, run:
+
+```text
+corvid test --update-snapshots path/to/file.cor
+```
+
+The driver also honors `CORVID_UPDATE_SNAPSHOTS=1` for CI jobs that want an
+explicit update mode. Update mode rewrites existing snapshots and creates
+missing ones; normal mode only creates missing first-run snapshots and fails on
+mismatches.
+
+Snapshot assertions are value assertions over runtime data, not text rewrites.
+The VM evaluates the expression through the same interpreter path as ordinary
+tests, converts the value to JSON, and compares that JSON to the stored
+snapshot. This means typed fixtures and mocks compose with snapshots without a
+separate snapshot DSL.

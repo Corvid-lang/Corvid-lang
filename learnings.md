@@ -3292,6 +3292,19 @@ target tool's approval requirement because the interpreter checks the normal
 tool gate before substituting the mock body. This keeps tests convenient without
 creating a second, weaker execution model.
 
+## test snapshots
+
+Snapshot testing should capture typed runtime values, not rendered source text.
+If `assert_snapshot` evaluates through the VM and serializes through the same
+value-to-JSON path used elsewhere, snapshots become a stable contract over
+program behavior instead of a brittle runner convention.
+
+First-run creation is useful, but silent rewrite is dangerous. Missing
+snapshots can be created in normal mode because there is no prior contract to
+compare against. Existing mismatches require explicit update mode
+(`--update-snapshots` or `CORVID_UPDATE_SNAPSHOTS=1`) so CI failures cannot
+accidentally bless behavioral drift.
+
 ## Contributing / feedback
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). The rules of the road are: design chat before code, per-scope commits at every boundary, dev-log entry for every session, no shortcuts. The `learnings.md` file you're reading gets updated when each user-visible feature ships.

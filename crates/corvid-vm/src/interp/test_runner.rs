@@ -1,9 +1,11 @@
 use super::{Flow, Interpreter};
+use crate::conv::value_to_json;
 use crate::errors::{InterpError, InterpErrorKind};
 use crate::value::Value;
 use corvid_ast::Span;
 use corvid_ir::{IrEvalAssert, IrExpr, IrFile, IrTest};
 use corvid_runtime::Runtime;
+use std::path::{Path, PathBuf};
 
 /// Execute one lowered `test` declaration and evaluate its assertions.
 ///
@@ -25,13 +27,21 @@ pub async fn run_test(
                 Span::new(0, 0),
             )
         })?;
-    run_test_decl(ir, test, runtime).await
+    run_test_decl(ir, test, runtime, &TestRunOptions::default()).await
 }
 
 pub async fn run_all_tests(ir: &IrFile, runtime: &Runtime) -> Vec<TestExecution> {
+    run_all_tests_with_options(ir, runtime, TestRunOptions::default()).await
+}
+
+pub async fn run_all_tests_with_options(
+    ir: &IrFile,
+    runtime: &Runtime,
+    options: TestRunOptions,
+) -> Vec<TestExecution> {
     let mut results = Vec::with_capacity(ir.tests.len());
     for test in &ir.tests {
-        match run_test_decl(ir, test, runtime).await {
+        match run_test_decl(ir, test, runtime, &options).await {
             Ok(result) => results.push(result),
             Err(error) => results.push(TestExecution {
                 name: test.name.clone(),
@@ -47,13 +57,16 @@ async fn run_test_decl(
     ir: &IrFile,
     test: &IrTest,
     runtime: &Runtime,
+    options: &TestRunOptions,
 ) -> Result<TestExecution, InterpError> {
     let mut interp = Interpreter::new(ir, runtime).with_mocks();
     run_test_setup(&mut interp, test).await?;
 
     let mut assertions = Vec::with_capacity(test.assertions.len());
-    for assertion in &test.assertions {
-        assertions.push(eval_test_assertion(ir, test, runtime, &mut interp, assertion).await);
+    for (index, assertion) in test.assertions.iter().enumerate() {
+        assertions.push(
+            eval_test_assertion(ir, test, runtime, &mut interp, assertion, index, options).await,
+        );
     }
     Ok(TestExecution {
         name: test.name.clone(),
@@ -85,6 +98,8 @@ async fn eval_test_assertion<'ir>(
     runtime: &'ir Runtime,
     interp: &mut Interpreter<'ir>,
     assertion: &'ir IrEvalAssert,
+    assertion_index: usize,
+    options: &TestRunOptions,
 ) -> TestAssertionExecution {
     match assertion {
         IrEvalAssert::Value {
@@ -99,6 +114,9 @@ async fn eval_test_assertion<'ir>(
                 eval_value_assertion(interp, expr, assertion_label(assertion)).await
             }
         }
+        IrEvalAssert::Snapshot { expr, .. } => {
+            eval_snapshot_assertion(interp, expr, assertion_label(assertion), &test.name, assertion_index, options).await
+        }
         IrEvalAssert::Called { .. }
         | IrEvalAssert::Approved { .. }
         | IrEvalAssert::Cost { .. }
@@ -108,6 +126,94 @@ async fn eval_test_assertion<'ir>(
             message: Some(
                 "trace assertions are reserved for Phase 26-E trace fixtures; this runner does not silently pass them".into(),
             ),
+        },
+    }
+}
+
+async fn eval_snapshot_assertion<'ir>(
+    interp: &mut Interpreter<'ir>,
+    expr: &'ir IrExpr,
+    label: String,
+    test_name: &str,
+    assertion_index: usize,
+    options: &TestRunOptions,
+) -> TestAssertionExecution {
+    let Some(snapshot_options) = &options.snapshots else {
+        return TestAssertionExecution {
+            label,
+            status: TestAssertionStatus::Unsupported,
+            message: Some("snapshot assertions require file-backed test options".into()),
+        };
+    };
+    let value = match interp.eval_expr(expr).await {
+        Ok(flow) => match flow.into_value() {
+            Ok(value) | Err(value) => value,
+        },
+        Err(error) => {
+            return TestAssertionExecution {
+                label,
+                status: TestAssertionStatus::Error,
+                message: Some(error.to_string()),
+            };
+        }
+    };
+    let actual = snapshot_text(&value);
+    let path = snapshot_path(&snapshot_options.root, test_name, assertion_index);
+    if let Err(error) = std::fs::create_dir_all(&snapshot_options.root) {
+        return TestAssertionExecution {
+            label,
+            status: TestAssertionStatus::Error,
+            message: Some(format!(
+                "failed to create snapshot directory `{}`: {error}",
+                snapshot_options.root.display()
+            )),
+        };
+    }
+    match std::fs::read_to_string(&path) {
+        Ok(expected) if expected == actual => TestAssertionExecution {
+            label,
+            status: TestAssertionStatus::Passed,
+            message: Some(format!("matched `{}`", path.display())),
+        },
+        Ok(_) if snapshot_options.update => match std::fs::write(&path, actual.as_bytes()) {
+            Ok(()) => TestAssertionExecution {
+                label,
+                status: TestAssertionStatus::Updated,
+                message: Some(format!("updated `{}`", path.display())),
+            },
+            Err(error) => TestAssertionExecution {
+                label,
+                status: TestAssertionStatus::Error,
+                message: Some(format!("failed to update `{}`: {error}", path.display())),
+            },
+        },
+        Ok(expected) => TestAssertionExecution {
+            label,
+            status: TestAssertionStatus::Failed,
+            message: Some(format!(
+                "snapshot mismatch at `{}`\n{}",
+                path.display(),
+                snapshot_diff(&expected, &actual)
+            )),
+        },
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            match std::fs::write(&path, actual.as_bytes()) {
+                Ok(()) => TestAssertionExecution {
+                    label,
+                    status: TestAssertionStatus::Updated,
+                    message: Some(format!("created `{}`", path.display())),
+                },
+                Err(error) => TestAssertionExecution {
+                    label,
+                    status: TestAssertionStatus::Error,
+                    message: Some(format!("failed to write `{}`: {error}", path.display())),
+                },
+            }
+        }
+        Err(error) => TestAssertionExecution {
+            label,
+            status: TestAssertionStatus::Error,
+            message: Some(format!("failed to read `{}`: {error}", path.display())),
         },
     }
 }
@@ -216,6 +322,7 @@ async fn eval_bool_assertion<'ir>(
 fn assertion_label(assertion: &IrEvalAssert) -> String {
     match assertion {
         IrEvalAssert::Value { .. } => "assert <expr>".into(),
+        IrEvalAssert::Snapshot { .. } => "assert_snapshot <expr>".into(),
         IrEvalAssert::Called { name, .. } => format!("assert called {name}"),
         IrEvalAssert::Approved { label, .. } => format!("assert approved {label}"),
         IrEvalAssert::Cost { bound, .. } => format!("assert cost < {bound}"),
@@ -225,6 +332,63 @@ fn assertion_label(assertion: &IrEvalAssert) -> String {
             ..
         } => format!("assert called {before_name} before {after_name}"),
     }
+}
+
+fn snapshot_text(value: &Value) -> String {
+    let json = value_to_json(value);
+    let mut text = serde_json::to_string_pretty(&json).unwrap_or_else(|_| "null".into());
+    text.push('\n');
+    text
+}
+
+fn snapshot_path(root: &Path, test_name: &str, assertion_index: usize) -> PathBuf {
+    root.join(format!(
+        "{}__{:03}.snap",
+        sanitize_snapshot_segment(test_name),
+        assertion_index + 1
+    ))
+}
+
+fn sanitize_snapshot_segment(raw: &str) -> String {
+    let sanitized: String = raw
+        .chars()
+        .map(|ch| if ch.is_ascii_alphanumeric() || ch == '_' || ch == '-' { ch } else { '_' })
+        .collect();
+    if sanitized.is_empty() {
+        "snapshot".into()
+    } else {
+        sanitized
+    }
+}
+
+fn snapshot_diff(expected: &str, actual: &str) -> String {
+    let expected_lines: Vec<&str> = expected.lines().collect();
+    let actual_lines: Vec<&str> = actual.lines().collect();
+    let max = expected_lines.len().max(actual_lines.len());
+    let mut out = String::from("--- expected\n+++ actual\n");
+    for index in 0..max {
+        match (expected_lines.get(index), actual_lines.get(index)) {
+            (Some(left), Some(right)) if left == right => {}
+            (Some(left), Some(right)) => {
+                out.push_str(&format!("- {left}\n+ {right}\n"));
+            }
+            (Some(left), None) => out.push_str(&format!("- {left}\n")),
+            (None, Some(right)) => out.push_str(&format!("+ {right}\n")),
+            (None, None) => {}
+        }
+    }
+    out
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct TestRunOptions {
+    pub snapshots: Option<SnapshotOptions>,
+}
+
+#[derive(Debug, Clone)]
+pub struct SnapshotOptions {
+    pub root: PathBuf,
+    pub update: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -240,7 +404,19 @@ impl TestExecution {
             && self
                 .assertions
                 .iter()
-                .all(|assertion| assertion.status == TestAssertionStatus::Passed)
+                .all(|assertion| {
+                    matches!(
+                        assertion.status,
+                        TestAssertionStatus::Passed | TestAssertionStatus::Updated
+                    )
+                })
+    }
+
+    pub fn updated_snapshot_count(&self) -> usize {
+        self.assertions
+            .iter()
+            .filter(|assertion| assertion.status == TestAssertionStatus::Updated)
+            .count()
     }
 }
 
@@ -254,6 +430,7 @@ pub struct TestAssertionExecution {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TestAssertionStatus {
     Passed,
+    Updated,
     Failed,
     Error,
     Unsupported,

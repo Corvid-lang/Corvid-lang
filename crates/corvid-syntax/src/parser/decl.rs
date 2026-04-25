@@ -832,9 +832,9 @@ impl<'a> Parser<'a> {
             if matches!(self.peek(), TokKind::Dedent | TokKind::Eof) {
                 break;
             }
-            if matches!(self.peek(), TokKind::KwAssert) {
+            if matches!(self.peek(), TokKind::KwAssert | TokKind::KwAssertSnapshot) {
                 saw_assert = true;
-                assertions.push(self.parse_eval_assert()?);
+                assertions.push(self.parse_eval_assertion_line()?);
                 continue;
             }
             if saw_assert {
@@ -864,6 +864,25 @@ impl<'a> Parser<'a> {
             assertions,
             end,
         ))
+    }
+
+    fn parse_eval_assertion_line(&mut self) -> Result<EvalAssert, ParseError> {
+        if matches!(self.peek(), TokKind::KwAssertSnapshot) {
+            return self.parse_snapshot_assert();
+        }
+        self.parse_eval_assert()
+    }
+
+    fn parse_snapshot_assert(&mut self) -> Result<EvalAssert, ParseError> {
+        let start = self.peek_span();
+        self.bump(); // assert_snapshot
+        let expr = self.parse_expr()?;
+        let end = expr.span();
+        self.expect_newline()?;
+        Ok(EvalAssert::Snapshot {
+            expr,
+            span: start.merge(end),
+        })
     }
 
     fn parse_eval_assert(&mut self) -> Result<EvalAssert, ParseError> {

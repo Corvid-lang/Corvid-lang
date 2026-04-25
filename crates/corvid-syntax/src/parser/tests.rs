@@ -1722,6 +1722,7 @@ tool get_order(id: String) -> String
 test refund_contract:
     order = get_order(\"ord_42\")
     assert called get_order
+    assert_snapshot order
     assert order == \"ord_42\"
 ";
         let file = parse_file_src(src);
@@ -1730,13 +1731,17 @@ test refund_contract:
             other => panic!("expected Test decl, got {other:?}"),
         };
         assert_eq!(test.body.stmts.len(), 1);
-        assert_eq!(test.assertions.len(), 2);
+        assert_eq!(test.assertions.len(), 3);
         assert!(matches!(
             test.assertions[0],
             corvid_ast::EvalAssert::Called { .. }
         ));
         assert!(matches!(
             test.assertions[1],
+            corvid_ast::EvalAssert::Snapshot { .. }
+        ));
+        assert!(matches!(
+            test.assertions[2],
             corvid_ast::EvalAssert::Value { .. }
         ));
     }

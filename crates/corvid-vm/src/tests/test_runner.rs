@@ -1,5 +1,8 @@
 use super::{empty_runtime, ir_of};
-use crate::{run_test, run_all_tests, TestAssertionStatus};
+use crate::{
+    run_all_tests, run_all_tests_with_options, run_test, SnapshotOptions, TestAssertionStatus,
+    TestRunOptions,
+};
 
 #[tokio::test]
 async fn test_runner_executes_setup_and_value_assertion() {
@@ -72,4 +75,36 @@ test trace_later:
     assert_eq!(result.len(), 1);
     assert_eq!(result[0].assertions[0].status, TestAssertionStatus::Unsupported);
     assert!(!result[0].passed());
+}
+
+#[tokio::test]
+async fn test_runner_creates_and_compares_snapshots() {
+    let dir = std::env::temp_dir().join(format!(
+        "corvid-vm-snapshot-test-{}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("tempdir");
+    let ir = ir_of(
+        r#"
+test snapshot_value:
+    value = "stable"
+    assert_snapshot value
+"#,
+    );
+    let options = TestRunOptions {
+        snapshots: Some(SnapshotOptions {
+            root: dir.join(".corvid-snapshots").join("suite"),
+            update: false,
+        }),
+    };
+
+    let first = run_all_tests_with_options(&ir, &empty_runtime(), options.clone()).await;
+    assert!(first[0].passed());
+    assert_eq!(first[0].assertions[0].status, TestAssertionStatus::Updated);
+
+    let second = run_all_tests_with_options(&ir, &empty_runtime(), options).await;
+    assert!(second[0].passed());
+    assert_eq!(second[0].assertions[0].status, TestAssertionStatus::Passed);
+    let _ = std::fs::remove_dir_all(&dir);
 }

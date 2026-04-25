@@ -30,6 +30,15 @@ mod tests {
     }
 
     #[test]
+    fn lexes_utf8_bom_at_file_start() {
+        let toks = kinds("\u{feff}agent");
+        assert_eq!(
+            toks,
+            vec![TokKind::KwAgent, TokKind::Newline, TokKind::Eof]
+        );
+    }
+
+    #[test]
     fn lexes_single_keyword() {
         let toks = kinds("agent");
         assert_eq!(

@@ -402,6 +402,7 @@ tool get_order(id: String) -> String
 test refund_contract:
     order = get_order(\"ord_42\")
     assert called get_order
+    assert_snapshot order
     assert order == \"ord_42\"
 ";
         let ir = lower_src(src);
@@ -409,9 +410,10 @@ test refund_contract:
         let test = &ir.tests[0];
         assert_eq!(test.name, "refund_contract");
         assert_eq!(test.body.stmts.len(), 1);
-        assert_eq!(test.assertions.len(), 2);
+        assert_eq!(test.assertions.len(), 3);
         assert!(matches!(test.assertions[0], IrEvalAssert::Called { .. }));
-        assert!(matches!(test.assertions[1], IrEvalAssert::Value { .. }));
+        assert!(matches!(test.assertions[1], IrEvalAssert::Snapshot { .. }));
+        assert!(matches!(test.assertions[2], IrEvalAssert::Value { .. }));
     }
 
     #[test]

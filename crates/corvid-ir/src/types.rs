@@ -310,6 +310,10 @@ pub enum IrEvalAssert {
         runs: Option<u64>,
         span: Span,
     },
+    Snapshot {
+        expr: IrExpr,
+        span: Span,
+    },
     Called {
         def_id: DefId,
         name: String,

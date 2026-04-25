@@ -23,7 +23,8 @@ mod stream_ops;
 mod test_runner;
 
 pub use test_runner::{
-    run_all_tests, run_test, TestAssertionExecution, TestAssertionStatus, TestExecution,
+    run_all_tests, run_all_tests_with_options, run_test, SnapshotOptions, TestAssertionExecution,
+    TestAssertionStatus, TestExecution, TestRunOptions,
 };
 
 use crate::conv::{json_to_value, value_to_json};

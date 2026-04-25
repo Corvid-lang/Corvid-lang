@@ -34,7 +34,8 @@ pub use env::Env;
 pub use errors::{InterpError, InterpErrorKind};
 pub use interp::{
     bind_and_run_agent, build_struct, run_agent, run_agent_stepping, run_agent_with_env,
-    run_all_tests, run_test, TestAssertionExecution, TestAssertionStatus, TestExecution,
+    run_all_tests, run_all_tests_with_options, run_test, SnapshotOptions, TestAssertionExecution,
+    TestAssertionStatus, TestExecution, TestRunOptions,
 };
 pub use repl_display::render_value;
 pub use schema::schema_for;

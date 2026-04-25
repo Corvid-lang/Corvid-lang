@@ -137,7 +137,8 @@ fn collect_assert_deps(
     deps: &mut HashSet<DefId>,
 ) {
     match assertion {
-        corvid_ast::EvalAssert::Value { expr, .. } => {
+        corvid_ast::EvalAssert::Value { expr, .. }
+        | corvid_ast::EvalAssert::Snapshot { expr, .. } => {
             collect_expr_deps(expr, resolved, deps);
         }
         corvid_ast::EvalAssert::Called { tool, .. } => {

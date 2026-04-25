@@ -48,6 +48,10 @@ impl<'a> Lexer<'a> {
     }
 
     fn run(&mut self) {
+        if self.bytes.starts_with(&[0xEF, 0xBB, 0xBF]) {
+            self.pos = 3;
+        }
+
         // Handle indentation of the very first line.
         self.process_line_start();
 

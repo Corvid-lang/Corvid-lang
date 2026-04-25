@@ -62,10 +62,9 @@ use corvid_driver::{
     load_corvid_config_with_path_for,
     load_dotenv_walking, render_all_pretty, render_dimension_verification_report,
     render_effect_diff, render_import_semantic_summaries, render_law_check_report,
-    render_test_report,
-    render_spec_report, run_dimension_verification, run_law_checks, run_native, run_with_target, scaffold_new,
-    run_tests_at_path, snapshot_revision, verify_spec_examples, BuildTarget, RunTarget, VerdictKind,
-    DEFAULT_SAMPLES,
+    render_test_report, render_spec_report, run_dimension_verification, run_law_checks, run_native,
+    run_tests_at_path_with_options, run_with_target, scaffold_new, snapshot_revision, test_options,
+    verify_spec_examples, BuildTarget, RunTarget, VerdictKind, DEFAULT_SAMPLES,
 };
 
 #[derive(Parser)]
@@ -153,6 +152,9 @@ enum Command {
         /// For `adversarial`: model to drive the generator.
         #[arg(long, default_value = "opus")]
         model: String,
+        /// For `.cor` test files: rewrite existing snapshots when values change.
+        #[arg(long)]
+        update_snapshots: bool,
         /// Prod-as-test-suite mode (Phase 21 slice 21-inv-G-cli,
         /// wired live in 21-inv-G-cli-wire). Replay every `.jsonl`
         /// in `<DIR>` against the current code and report any
@@ -787,6 +789,7 @@ fn main() -> ExitCode {
             meta,
             count,
             model,
+            update_snapshots,
             from_traces,
             from_traces_source,
             replay_model,
@@ -812,7 +815,7 @@ fn main() -> ExitCode {
                     },
                 )
             } else {
-                cmd_test(target.as_deref(), meta, count, &model)
+                cmd_test(target.as_deref(), meta, count, &model, update_snapshots)
             }
         }
         Some(Command::Verify { corpus, shrink, json }) => {
@@ -1279,6 +1282,7 @@ fn cmd_test(
     meta: bool,
     count: u32,
     model: &str,
+    update_snapshots: bool,
 ) -> Result<u8> {
     match target {
         None => {
@@ -1296,7 +1300,7 @@ fn cmd_test(
         Some("rewrites") => cmd_test_rewrites(),
         Some("adversarial") => cmd_test_adversarial(count, model),
         Some(other) if other.ends_with(".cor") || Path::new(other).exists() => {
-            cmd_test_file(Path::new(other))
+            cmd_test_file(Path::new(other), update_snapshots)
         }
         Some(other) => {
             anyhow::bail!(
@@ -1306,7 +1310,7 @@ fn cmd_test(
     }
 }
 
-fn cmd_test_file(path: &Path) -> Result<u8> {
+fn cmd_test_file(path: &Path, update_snapshots: bool) -> Result<u8> {
     let dotenv_start = path.parent().unwrap_or_else(|| Path::new("."));
     load_dotenv_walking(dotenv_start);
     let runtime = corvid_driver::Runtime::builder().build();
@@ -1316,7 +1320,11 @@ fn cmd_test_file(path: &Path) -> Result<u8> {
         .build()
         .context("failed to initialize async test runtime")?;
     let report = tokio
-        .block_on(run_tests_at_path(path, &runtime))
+        .block_on(run_tests_at_path_with_options(
+            path,
+            &runtime,
+            test_options(path, update_snapshots),
+        ))
         .map_err(anyhow::Error::new)?;
     print!("{}", render_test_report(&report, source.as_deref()));
     Ok(report.exit_code())

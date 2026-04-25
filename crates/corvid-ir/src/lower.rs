@@ -288,6 +288,10 @@ impl<'a> Lowerer<'a> {
                 runs: *runs,
                 span: *span,
             },
+            EvalAssert::Snapshot { expr, span } => IrEvalAssert::Snapshot {
+                expr: self.lower_expr(expr),
+                span: *span,
+            },
             EvalAssert::Called { tool, span } => {
                 let def_id = match self.bindings.get(&tool.span) {
                     Some(Binding::Decl(def_id)) => *def_id,

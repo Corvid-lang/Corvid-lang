@@ -113,7 +113,8 @@ pub use run::{
 };
 pub use scaffold::{scaffold_new, scaffold_new_in};
 pub use test_runner::{
-    render_test_report, run_tests_at_path, CorvidTestReport, TestRunnerError,
+    render_test_report, run_tests_at_path, run_tests_at_path_with_options, test_options,
+    CorvidTestReport, TestRunnerError,
 };
 
 

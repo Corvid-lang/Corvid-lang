@@ -1398,6 +1398,17 @@ test bad_contract:
     }
 
     #[test]
+    fn snapshot_assertion_typechecks_non_bool_values() {
+        let src = r#"
+test snapshot_contract:
+    value = "stable"
+    assert_snapshot value
+"#;
+        let c = check(src);
+        assert!(c.errors.is_empty(), "errors: {:?}", c.errors);
+    }
+
+    #[test]
     fn fixture_can_be_called_from_test_body() {
         let src = r#"
 fixture order_id() -> String:

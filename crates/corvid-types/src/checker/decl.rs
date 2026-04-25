@@ -540,6 +540,9 @@ impl<'a> Checker<'a> {
                     ));
                 }
             }
+            EvalAssert::Snapshot { expr, .. } => {
+                self.check_expr(expr);
+            }
             EvalAssert::Called { tool, span } => {
                 self.check_eval_callable(tool, *span);
             }

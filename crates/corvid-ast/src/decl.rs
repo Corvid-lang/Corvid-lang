@@ -673,6 +673,8 @@ pub enum EvalAssert {
         runs: Option<u64>,
         span: Span,
     },
+    /// `assert_snapshot <expr>`
+    Snapshot { expr: Expr, span: Span },
     /// `assert called <tool>`
     Called { tool: Ident, span: Span },
     /// `assert approved <label>`

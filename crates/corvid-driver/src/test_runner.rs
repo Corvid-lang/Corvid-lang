@@ -2,7 +2,9 @@ use crate::{
     compile_to_ir_with_config_at_path, load_corvid_config_for, render_all_pretty, Diagnostic,
 };
 use corvid_runtime::Runtime;
-use corvid_vm::{run_all_tests, TestAssertionStatus, TestExecution};
+use corvid_vm::{
+    run_all_tests_with_options, SnapshotOptions, TestAssertionStatus, TestExecution, TestRunOptions,
+};
 use std::fmt;
 use std::path::{Path, PathBuf};
 
@@ -50,6 +52,14 @@ pub async fn run_tests_at_path(
     path: &Path,
     runtime: &Runtime,
 ) -> Result<CorvidTestReport, TestRunnerError> {
+    run_tests_at_path_with_options(path, runtime, default_test_options(path)).await
+}
+
+pub async fn run_tests_at_path_with_options(
+    path: &Path,
+    runtime: &Runtime,
+    options: TestRunOptions,
+) -> Result<CorvidTestReport, TestRunnerError> {
     let source = std::fs::read_to_string(path).map_err(|error| TestRunnerError::Io {
         path: path.to_path_buf(),
         error,
@@ -68,8 +78,29 @@ pub async fn run_tests_at_path(
     Ok(CorvidTestReport {
         source_path: path.to_path_buf(),
         compile_diagnostics: Vec::new(),
-        tests: run_all_tests(&ir, runtime).await,
+        tests: run_all_tests_with_options(&ir, runtime, options).await,
     })
+}
+
+pub fn default_test_options(path: &Path) -> TestRunOptions {
+    let update = std::env::var("CORVID_UPDATE_SNAPSHOTS")
+        .map(|value| matches!(value.as_str(), "1" | "true" | "TRUE" | "yes" | "YES"))
+        .unwrap_or(false);
+    test_options(path, update)
+}
+
+pub fn test_options(path: &Path, update_snapshots: bool) -> TestRunOptions {
+    let base = path.parent().unwrap_or_else(|| Path::new("."));
+    let stem = path
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .unwrap_or("suite");
+    TestRunOptions {
+        snapshots: Some(SnapshotOptions {
+            root: base.join(".corvid-snapshots").join(sanitize_path_segment(stem)),
+            update: update_snapshots,
+        }),
+    }
 }
 
 pub fn render_test_report(report: &CorvidTestReport, source: Option<&str>) -> String {
@@ -102,7 +133,17 @@ pub fn render_test_report(report: &CorvidTestReport, source: Option<&str>) -> St
     for test in &report.tests {
         if test.passed() {
             passed += 1;
-            out.push_str(&format!("  PASS {}\n", test.name));
+            let updated = test.updated_snapshot_count();
+            if updated == 0 {
+                out.push_str(&format!("  PASS {}\n", test.name));
+            } else {
+                out.push_str(&format!(
+                    "  PASS {} ({} snapshot{})\n",
+                    test.name,
+                    updated,
+                    if updated == 1 { " updated" } else { "s updated" }
+                ));
+            }
         } else {
             failed += 1;
             out.push_str(&format!("  FAIL {}\n", test.name));
@@ -126,6 +167,18 @@ pub fn render_test_report(report: &CorvidTestReport, source: Option<&str>) -> St
     }
     out.push_str(&format!("\n{passed} passed, {failed} failed\n"));
     out
+}
+
+fn sanitize_path_segment(raw: &str) -> String {
+    let sanitized: String = raw
+        .chars()
+        .map(|ch| if ch.is_ascii_alphanumeric() || ch == '_' || ch == '-' { ch } else { '_' })
+        .collect();
+    if sanitized.is_empty() {
+        "suite".into()
+    } else {
+        sanitized
+    }
 }
 
 #[cfg(test)]
@@ -211,5 +264,51 @@ test mocked_tool_contract:
         assert_eq!(report.tests.len(), 1);
         assert!(report.tests[0].passed(), "report: {report:?}");
         assert_eq!(report.exit_code(), 0);
+    }
+
+    #[tokio::test]
+    async fn run_tests_at_path_creates_snapshot_then_detects_diff_and_updates() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("snap.cor");
+        std::fs::write(
+            &path,
+            r#"
+test snapshot_contract:
+    value = "v1"
+    assert_snapshot value
+"#,
+        )
+        .expect("write");
+
+        let first = run_tests_at_path(&path, &runtime()).await.expect("run");
+        assert!(first.passed(), "report: {first:?}");
+        assert_eq!(first.tests[0].assertions[0].status, TestAssertionStatus::Updated);
+
+        std::fs::write(
+            &path,
+            r#"
+test snapshot_contract:
+    value = "v2"
+    assert_snapshot value
+"#,
+        )
+        .expect("rewrite");
+        let diff = run_tests_at_path(&path, &runtime()).await.expect("run");
+        assert!(!diff.passed(), "report: {diff:?}");
+        assert_eq!(diff.tests[0].assertions[0].status, TestAssertionStatus::Failed);
+        assert!(diff.tests[0].assertions[0]
+            .message
+            .as_deref()
+            .unwrap_or_default()
+            .contains("--- expected"));
+
+        let updated = run_tests_at_path_with_options(&path, &runtime(), test_options(&path, true))
+            .await
+            .expect("run update");
+        assert!(updated.passed(), "report: {updated:?}");
+        assert_eq!(
+            updated.tests[0].assertions[0].status,
+            TestAssertionStatus::Updated
+        );
     }
 }

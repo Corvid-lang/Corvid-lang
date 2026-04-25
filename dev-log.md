@@ -5445,3 +5445,19 @@ Mocks must match the target tool signature exactly. The VM activates mocks only
 inside test execution, and interception happens after the normal tool gate, so
 a mocked dangerous tool still requires approval instead of becoming a test-only
 escape hatch.
+
+## 2026-04-25 - Test snapshots
+
+Closed `26-D-snapshots`. Added `assert_snapshot <expr>` across AST, syntax,
+resolver dependency tracking, typechecking, IR lowering, VM execution, driver
+reporting, CLI update flow, and source rewrite rendering.
+
+Snapshots are deterministic JSON values stored under
+`.corvid-snapshots/<source-stem>/<test-name>__NNN.snap`. The first run creates a
+missing snapshot and reports it as updated. Normal later runs fail with diff
+output on mismatches; `corvid test --update-snapshots` and
+`CORVID_UPDATE_SNAPSHOTS=1` intentionally refresh stored values.
+
+The important boundary is that snapshots are runtime value assertions, not
+string snapshots of source text. They compose with typed fixtures and mocks
+because the VM evaluates the assertion expression before serializing the value.
