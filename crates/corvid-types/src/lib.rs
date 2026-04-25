@@ -24,7 +24,7 @@ pub use checker::{
 };
 pub use config::{
     CorvidConfig, CustomDimensionConfig, CustomDimensionMeta, DimensionConfigError,
-    DimensionValueType, EffectSystemConfig, BUILTIN_DIMENSION_NAMES,
+    DimensionValueType, EffectSystemConfig, PackagePolicyConfig, BUILTIN_DIMENSION_NAMES,
 };
 pub use law_check::{
     check_dimension, laws_for_rule, DimensionUnderTest, Law, LawCheckResult, Verdict,

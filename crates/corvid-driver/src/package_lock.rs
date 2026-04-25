@@ -7,7 +7,8 @@
 
 use std::path::{Path, PathBuf};
 
-use serde::Deserialize;
+use corvid_resolve::ModuleSemanticSummary;
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone)]
 pub(crate) struct PackageLockFile {
@@ -15,13 +16,13 @@ pub(crate) struct PackageLockFile {
     pub lock: PackageLock,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
 pub(crate) struct PackageLock {
     #[serde(default)]
     pub package: Vec<LockedPackage>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub(crate) struct LockedPackage {
     pub uri: String,
     pub url: String,
@@ -30,11 +31,46 @@ pub(crate) struct LockedPackage {
     pub registry: Option<String>,
     #[serde(default)]
     pub signature: Option<String>,
+    #[serde(default)]
+    pub semantic_summary: Option<ModuleSemanticSummary>,
 }
 
 impl PackageLock {
     pub fn find(&self, uri: &str) -> Option<&LockedPackage> {
         self.package.iter().find(|entry| entry.uri == uri)
+    }
+}
+
+pub(crate) fn write_package_lock(path: &Path, lock: &PackageLock) -> Result<(), String> {
+    let source = toml::to_string_pretty(lock)
+        .map_err(|err| format!("failed to serialize `{}`: {err}", path.display()))?;
+    std::fs::write(path, source)
+        .map_err(|err| format!("failed to write `{}`: {err}", path.display()))
+}
+
+pub(crate) fn load_or_empty_at(path: &Path) -> Result<PackageLock, String> {
+    match std::fs::read_to_string(path) {
+        Ok(source) => toml::from_str(&source)
+            .map_err(|err| format!("failed to parse `{}`: {err}", path.display())),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(PackageLock::default()),
+        Err(err) => Err(format!("failed to read `{}`: {err}", path.display())),
+    }
+}
+
+pub(crate) fn lock_path_for_project(project_dir: &Path) -> PathBuf {
+    project_dir.join("Corvid.lock")
+}
+
+pub(crate) fn upsert_package(lock: &mut PackageLock, package: LockedPackage) {
+    if let Some(existing) = lock
+        .package
+        .iter_mut()
+        .find(|entry| entry.uri == package.uri)
+    {
+        *existing = package;
+    } else {
+        lock.package.push(package);
+        lock.package.sort_by(|a, b| a.uri.cmp(&b.uri));
     }
 }
 
@@ -109,6 +145,7 @@ mod tests {
                     .to_string(),
                 registry: Some("https://registry.corvid.dev".to_string()),
                 signature: Some("ed25519:abc".to_string()),
+                semantic_summary: None,
             }],
         };
         let entry = lock.find("corvid://@scope/name/v1.2").expect("entry");
@@ -123,6 +160,7 @@ mod tests {
             sha256: "abc".to_string(),
             registry: None,
             signature: None,
+            semantic_summary: None,
         };
         assert!(validate_entry(&entry, Path::new("Corvid.lock")).is_err());
     }

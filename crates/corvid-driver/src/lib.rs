@@ -14,12 +14,14 @@ pub mod meta_verify;
 pub mod modules;
 mod import_integrity;
 mod package_lock;
+mod package_registry;
 mod native_ability;
 mod native_cache;
 mod render;
 pub mod spec_check;
 
 pub use add_dimension::{add_dimension as install_dimension, AddDimensionOutcome};
+pub use package_registry::{add_package, AddPackageOutcome};
 pub use approver::{simulate_approver, verify_approver_source};
 pub use modules::{
     build_module_resolution, inspect_import_semantics, render_import_semantic_summaries,

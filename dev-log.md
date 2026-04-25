@@ -5157,3 +5157,16 @@ and SHA-256 digest. The driver fetches that locked URL, verifies the exact
 bytes before parsing, and fails closed on missing lockfiles, missing package
 entries, and digest drift. Registry semver selection and signed publish remain
 open follow-ups rather than being implied by this foundation.
+
+## 2026-04-25 - package registry semantic resolver
+
+Closed `lang-cor-imports-versioned-registry`. `corvid add @scope/name@2.3`
+now resolves package requests against a local or HTTP registry index, selects
+the highest matching semantic version, verifies the selected source bytes
+against the registry SHA-256, computes the package's exported semantic summary,
+and writes `Corvid.lock`.
+
+Package install is effect-aware. Projects can declare `[package-policy]` in
+`corvid.toml` to reject packages with approval-required exports, existing
+effect violations, non-deterministic exported agents, or non-replayable exported
+agents. Rejected packages do not mutate the lockfile.

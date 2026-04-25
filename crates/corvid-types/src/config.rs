@@ -29,6 +29,34 @@ use std::path::{Path, PathBuf};
 pub struct CorvidConfig {
     #[serde(rename = "effect-system")]
     pub effect_system: EffectSystemConfig,
+    #[serde(rename = "package-policy")]
+    pub package_policy: PackagePolicyConfig,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default, rename_all = "kebab-case")]
+pub struct PackagePolicyConfig {
+    /// When false, `corvid add` rejects packages whose public exports
+    /// require human/supervisor approval.
+    pub allow_approval_required: bool,
+    /// When false, `corvid add` rejects packages whose exported agents
+    /// already have effect-constraint violations in their own module.
+    pub allow_effect_violations: bool,
+    /// When true, every exported agent must be marked `@deterministic`.
+    pub require_deterministic: bool,
+    /// When true, every exported agent must be marked `@replayable`.
+    pub require_replayable: bool,
+}
+
+impl Default for PackagePolicyConfig {
+    fn default() -> Self {
+        Self {
+            allow_approval_required: true,
+            allow_effect_violations: true,
+            require_deterministic: false,
+            require_replayable: false,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]

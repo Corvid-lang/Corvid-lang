@@ -502,6 +502,20 @@ fn build_semantic_summary(
     }
 }
 
+pub(crate) fn summarize_module_source(source: &str) -> Result<ModuleSemanticSummary, String> {
+    let tokens = lex(source).map_err(|errors| format!("lex errors: {errors:?}"))?;
+    let (file, parse_errors) = parse_file(&tokens);
+    if !parse_errors.is_empty() {
+        return Err(format!("parse errors: {parse_errors:?}"));
+    }
+    let resolved = resolve(&file);
+    if !resolved.errors.is_empty() {
+        return Err(format!("resolve errors: {:?}", resolved.errors));
+    }
+    let exports = collect_public_exports(&file, &resolved);
+    Ok(build_semantic_summary(&file, &resolved, &exports))
+}
+
 fn public_decl<'a>(file: &'a File, name: &str) -> Option<&'a Decl> {
     file.decls.iter().find(|decl| match decl {
         Decl::Type(decl) => decl.name.name == name,

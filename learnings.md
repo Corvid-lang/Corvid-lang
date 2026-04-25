@@ -3031,6 +3031,19 @@ human-readable, while `Corvid.lock` supplies the reviewed URL and digest. This
 prevents both shortcut failure modes: source files do not become a pile of raw
 hashes, and package imports do not float on mutable registry state.
 
+## lang-cor-imports-versioned-registry
+
+A package manager for an AI-native language cannot be only a downloader. It has
+to resolve code and the behavioral contract that code exports. `corvid add`
+therefore computes and stores the package semantic summary while writing the
+lockfile.
+
+The useful invention is policy-at-install time. Teams can reject packages whose
+public exports require approval, violate their own effect constraints, or miss
+determinism/replayability requirements before the dependency enters the project.
+That makes package resolution part of Corvid's safety model instead of an
+external supply-chain step.
+
 ## Contributing / feedback
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). The rules of the road are: design chat before code, per-scope commits at every boundary, dev-log entry for every session, no shortcuts. The `learnings.md` file you're reading gets updated when each user-visible feature ships.
