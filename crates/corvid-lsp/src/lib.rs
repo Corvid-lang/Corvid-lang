@@ -7,6 +7,10 @@
 
 mod analysis;
 mod position;
+mod server;
+mod transport;
 
 pub use analysis::{analyze_document, AnalysisResult, DocumentSnapshot};
 pub use position::{byte_span_to_lsp_range, byte_to_lsp_position};
+pub use server::{LanguageServerState, ServerMessage};
+pub use transport::{run_stdio_server, LspTransportError};

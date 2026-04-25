@@ -5288,3 +5288,15 @@ The responsibility split is deliberate: `analysis.rs` owns compile-to-diagnostic
 translation, `position.rs` owns byte-span to UTF-16 LSP range conversion, and
 `lib.rs` only exports the public API. Tests cover clean documents, unresolved
 names, approval-boundary violations, and Unicode column mapping.
+
+## 2026-04-25 - LSP stdio diagnostics server
+
+Closed `24-B-lsp-server`. `corvid-lsp` now has a stdio binary that speaks
+Content-Length framed JSON-RPC, handles initialize/shutdown/exit plus open,
+change, and save document notifications, and publishes diagnostics through
+`textDocument/publishDiagnostics`.
+
+The server remains intentionally modular: `server.rs` owns protocol state and
+method dispatch, `transport.rs` owns framing, and `analysis.rs` remains the
+only layer that calls the compiler. Tests cover JSON-RPC initialize, open/change
+diagnostic publication, and framed transport output.

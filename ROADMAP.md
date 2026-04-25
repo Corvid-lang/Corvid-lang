@@ -1374,7 +1374,7 @@ The determinism-source catalog and the language's treatment of non-reproducible 
 **Slice checklist:**
 
 - [x] 24-A-lsp-diagnostics   Transport-independent LSP analysis core in `corvid-lsp`: open document text compiles through the real driver, compiler diagnostics become `lsp_types::Diagnostic` values with UTF-16 ranges, compiler hints are preserved, and approval-boundary violations surface through the same live diagnostic path as CLI errors.
-- [ ] 24-B-lsp-server        JSON-RPC/stdin-stdout language server with initialize/open/change/save diagnostics.
+- [x] 24-B-lsp-server        JSON-RPC/stdin-stdout language server with `initialize`, `shutdown`, `exit`, `textDocument/didOpen`, `textDocument/didChange`, and `textDocument/didSave`; publishes compiler-backed diagnostics through `textDocument/publishDiagnostics` using full-document sync.
 - [ ] 24-C-hover-types       Hover with inferred types, effect rows, groundedness, budget, model route, and replayability summaries.
 - [ ] 24-D-completion        Context-aware completion for keywords, declarations, tools, prompts, approvals, effects, and model names.
 - [ ] 24-E-navigation        go-to-definition, find-references, rename, and workspace symbol index.

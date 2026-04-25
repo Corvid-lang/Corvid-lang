@@ -9,11 +9,19 @@ prototype. The first shipped layer is transport-independent diagnostics:
 - Byte spans are converted to zero-based LSP ranges with UTF-16 columns.
 - Compiler hints are preserved inside the diagnostic message.
 
-This layer intentionally has no JSON-RPC server yet. The next slice adds the
-stdin/stdout language-server transport and publishes diagnostics for
-`textDocument/didOpen` and `textDocument/didChange`. Keeping analysis separate
-prevents hover, completion, and navigation from growing their own compiler
-pipelines.
+The stdio server is now wired as the `corvid-lsp` binary. It supports:
+
+- `initialize` with full-document text sync capability.
+- `shutdown` / `exit`.
+- `textDocument/didOpen`.
+- `textDocument/didChange`.
+- `textDocument/didSave`.
+- `textDocument/publishDiagnostics` notifications backed by the same compiler
+  diagnostic path as the CLI.
+
+The implementation keeps protocol concerns separated: `server.rs` owns JSON-RPC
+method handling and document state, while `transport.rs` owns LSP
+`Content-Length` framing over stdin/stdout.
 
 Current validation:
 

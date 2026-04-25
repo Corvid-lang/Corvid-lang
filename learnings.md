@@ -3151,6 +3151,17 @@ LSP position mapping has to count UTF-16 code units, not bytes or Unicode scalar
 values. Getting this right in a dedicated `position.rs` module prevents hover,
 completion, and rename from each inventing their own slightly wrong range math.
 
+## lsp server
+
+The LSP transport should be boring and isolated. `transport.rs` only reads and
+writes Content-Length framed JSON-RPC; it does not know how Corvid compiles.
+That makes it safe to add hover, completion, and navigation without touching
+stdin/stdout framing.
+
+Full-document sync is the correct first server mode. Incremental sync is an
+optimization; using full sync keeps live diagnostics correct while the language
+surface is still expanding quickly.
+
 ## Contributing / feedback
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). The rules of the road are: design chat before code, per-scope commits at every boundary, dev-log entry for every session, no shortcuts. The `learnings.md` file you're reading gets updated when each user-visible feature ships.
