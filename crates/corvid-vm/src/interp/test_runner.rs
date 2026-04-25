@@ -1,4 +1,5 @@
 use super::{Flow, Interpreter};
+use super::test_trace::{evaluate_trace_assertion, load_trace_fixture, TraceFixture};
 use crate::conv::value_to_json;
 use crate::errors::{InterpError, InterpErrorKind};
 use crate::value::Value;
@@ -61,11 +62,22 @@ async fn run_test_decl(
 ) -> Result<TestExecution, InterpError> {
     let mut interp = Interpreter::new(ir, runtime).with_mocks();
     run_test_setup(&mut interp, test).await?;
+    let trace_fixture = load_test_trace_fixture(test, options);
 
     let mut assertions = Vec::with_capacity(test.assertions.len());
     for (index, assertion) in test.assertions.iter().enumerate() {
         assertions.push(
-            eval_test_assertion(ir, test, runtime, &mut interp, assertion, index, options).await,
+            eval_test_assertion(
+                ir,
+                test,
+                runtime,
+                &mut interp,
+                assertion,
+                index,
+                options,
+                trace_fixture.as_ref(),
+            )
+            .await,
         );
     }
     Ok(TestExecution {
@@ -100,6 +112,7 @@ async fn eval_test_assertion<'ir>(
     assertion: &'ir IrEvalAssert,
     assertion_index: usize,
     options: &TestRunOptions,
+    trace_fixture: Option<&Result<TraceFixture, String>>,
 ) -> TestAssertionExecution {
     match assertion {
         IrEvalAssert::Value {
@@ -120,12 +133,57 @@ async fn eval_test_assertion<'ir>(
         IrEvalAssert::Called { .. }
         | IrEvalAssert::Approved { .. }
         | IrEvalAssert::Cost { .. }
-        | IrEvalAssert::Ordering { .. } => TestAssertionExecution {
-            label: assertion_label(assertion),
+        | IrEvalAssert::Ordering { .. } => eval_trace_assertion(assertion, trace_fixture),
+    }
+}
+
+fn load_test_trace_fixture(
+    test: &IrTest,
+    options: &TestRunOptions,
+) -> Option<Result<TraceFixture, String>> {
+    let spec = test.trace_fixture.as_deref()?;
+    let root = options
+        .trace_fixtures
+        .as_ref()
+        .map(|options| options.root.as_path())
+        .unwrap_or_else(|| Path::new("."));
+    Some(load_trace_fixture(spec, root))
+}
+
+fn eval_trace_assertion(
+    assertion: &IrEvalAssert,
+    trace_fixture: Option<&Result<TraceFixture, String>>,
+) -> TestAssertionExecution {
+    let label = assertion_label(assertion);
+    let Some(trace_fixture) = trace_fixture else {
+        return TestAssertionExecution {
+            label,
             status: TestAssertionStatus::Unsupported,
             message: Some(
-                "trace assertions are reserved for Phase 26-E trace fixtures; this runner does not silently pass them".into(),
+                "trace assertions require `test name from_trace \"trace.jsonl\":`".into(),
             ),
+        };
+    };
+    let fixture = match trace_fixture {
+        Ok(fixture) => fixture,
+        Err(error) => {
+            return TestAssertionExecution {
+                label,
+                status: TestAssertionStatus::Error,
+                message: Some(error.clone()),
+            };
+        }
+    };
+    match evaluate_trace_assertion(assertion, fixture) {
+        Ok(message) => TestAssertionExecution {
+            label,
+            status: TestAssertionStatus::Passed,
+            message,
+        },
+        Err(message) => TestAssertionExecution {
+            label,
+            status: TestAssertionStatus::Failed,
+            message: Some(message),
         },
     }
 }
@@ -383,12 +441,18 @@ fn snapshot_diff(expected: &str, actual: &str) -> String {
 #[derive(Debug, Clone, Default)]
 pub struct TestRunOptions {
     pub snapshots: Option<SnapshotOptions>,
+    pub trace_fixtures: Option<TraceFixtureOptions>,
 }
 
 #[derive(Debug, Clone)]
 pub struct SnapshotOptions {
     pub root: PathBuf,
     pub update: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct TraceFixtureOptions {
+    pub root: PathBuf,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

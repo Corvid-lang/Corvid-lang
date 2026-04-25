@@ -21,10 +21,12 @@ mod stmt;
 mod stream_ops;
 #[path = "interp/test_runner.rs"]
 mod test_runner;
+#[path = "interp/test_trace.rs"]
+mod test_trace;
 
 pub use test_runner::{
     run_all_tests, run_all_tests_with_options, run_test, SnapshotOptions, TestAssertionExecution,
-    TestAssertionStatus, TestExecution, TestRunOptions,
+    TestAssertionStatus, TestExecution, TestRunOptions, TraceFixtureOptions,
 };
 
 use crate::conv::{json_to_value, value_to_json};

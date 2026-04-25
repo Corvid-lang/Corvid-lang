@@ -1127,6 +1127,7 @@ impl<'a> Lowerer<'a> {
         IrTest {
             id,
             name: t.name.name.clone(),
+            trace_fixture: t.trace_fixture.clone(),
             body: self.lower_block(&t.body),
             assertions: t
                 .assertions

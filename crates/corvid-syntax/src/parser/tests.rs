@@ -1724,6 +1724,9 @@ test refund_contract:
     assert called get_order
     assert_snapshot order
     assert order == \"ord_42\"
+
+test refund_trace from_trace \"traces/refund.jsonl\":
+    assert called get_order
 ";
         let file = parse_file_src(src);
         let test = match &file.decls[1] {
@@ -1744,6 +1747,14 @@ test refund_contract:
             test.assertions[2],
             corvid_ast::EvalAssert::Value { .. }
         ));
+        let trace_test = match &file.decls[2] {
+            Decl::Test(test_decl) => test_decl,
+            other => panic!("expected Test decl, got {other:?}"),
+        };
+        assert_eq!(
+            trace_test.trace_fixture.as_deref(),
+            Some("traces/refund.jsonl")
+        );
     }
 
     #[test]

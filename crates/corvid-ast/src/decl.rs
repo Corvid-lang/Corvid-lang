@@ -632,6 +632,8 @@ pub struct EvalDecl {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TestDecl {
     pub name: Ident,
+    #[serde(default)]
+    pub trace_fixture: Option<String>,
     pub body: Block,
     pub assertions: Vec<EvalAssert>,
     pub span: Span,

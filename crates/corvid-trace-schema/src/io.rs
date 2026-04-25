@@ -71,7 +71,7 @@ pub fn serialize_event_line(event: &TraceEvent) -> Result<String, serde_json::Er
 /// Parse a single JSONL line into a `TraceEvent`. Blank lines
 /// return `None` so callers can treat them as "no event".
 pub fn parse_event_line(line: &str) -> Result<Option<TraceEvent>, serde_json::Error> {
-    let trimmed = line.trim();
+    let trimmed = line.trim().trim_start_matches('\u{feff}').trim();
     if trimmed.is_empty() {
         return Ok(None);
     }
@@ -208,4 +208,19 @@ impl std::error::Error for UnsupportedSchema {}
 #[allow(dead_code)]
 fn _unused_serde_de_error_bring_in() -> serde_json::Error {
     serde_json::Error::custom("")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_event_line_accepts_utf8_bom_on_first_line() {
+        let line = "\u{feff}{\"kind\":\"run_started\",\"ts_ms\":1,\"run_id\":\"r\",\"agent\":\"a\",\"args\":[]}";
+        let event = parse_event_line(line).expect("parse").expect("event");
+        assert!(matches!(
+            event,
+            TraceEvent::RunStarted { agent, .. } if agent == "a"
+        ));
+    }
 }

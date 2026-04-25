@@ -277,6 +277,7 @@ pub struct IrEval {
 pub struct IrTest {
     pub id: DefId,
     pub name: String,
+    pub trace_fixture: Option<String>,
     pub body: IrBlock,
     pub assertions: Vec<IrEvalAssert>,
     pub span: Span,

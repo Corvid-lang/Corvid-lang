@@ -751,10 +751,31 @@ impl<'a> Parser<'a> {
         self.bump(); // test
 
         let (name, name_span) = self.expect_ident()?;
+        let trace_fixture = if self.peek_ident_is("from_trace") {
+            self.bump();
+            match self.peek().clone() {
+                TokKind::StringLit(path) => {
+                    self.bump();
+                    Some(path)
+                }
+                other => {
+                    return Err(ParseError {
+                        kind: ParseErrorKind::UnexpectedToken {
+                            got: describe_token(&other),
+                            expected: "a string trace fixture path after `from_trace`".into(),
+                        },
+                        span: self.peek_span(),
+                    });
+                }
+            }
+        } else {
+            None
+        };
         let (body, assertions, end) = self.parse_assertion_block("test")?;
 
         Ok(TestDecl {
             name: Ident::new(name, name_span),
+            trace_fixture,
             body,
             assertions,
             span: start.merge(end),

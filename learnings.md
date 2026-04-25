@@ -3305,6 +3305,18 @@ compare against. Existing mismatches require explicit update mode
 (`--update-snapshots` or `CORVID_UPDATE_SNAPSHOTS=1`) so CI failures cannot
 accidentally bless behavioral drift.
 
+## trace fixture tests
+
+Process assertions need evidence. `assert called tool` and
+`assert approved Label` should not pass because the compiler preserved the
+syntax; they should pass only when a trace shows the process happened. Binding
+tests to JSONL fixtures gives deterministic CI checks over real production
+behavior without re-running LLM calls.
+
+Trace-fixture paths belong in the language declaration, while path resolution
+belongs in the driver. The VM should evaluate already-lowered tests and inspect
+schema-validated events; it should not guess where the user's source file lives.
+
 ## Contributing / feedback
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). The rules of the road are: design chat before code, per-scope commits at every boundary, dev-log entry for every session, no shortcuts. The `learnings.md` file you're reading gets updated when each user-visible feature ships.

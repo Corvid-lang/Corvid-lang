@@ -404,9 +404,12 @@ test refund_contract:
     assert called get_order
     assert_snapshot order
     assert order == \"ord_42\"
+
+test refund_trace from_trace \"traces/refund.jsonl\":
+    assert called get_order
 ";
         let ir = lower_src(src);
-        assert_eq!(ir.tests.len(), 1);
+        assert_eq!(ir.tests.len(), 2);
         let test = &ir.tests[0];
         assert_eq!(test.name, "refund_contract");
         assert_eq!(test.body.stmts.len(), 1);
@@ -414,6 +417,10 @@ test refund_contract:
         assert!(matches!(test.assertions[0], IrEvalAssert::Called { .. }));
         assert!(matches!(test.assertions[1], IrEvalAssert::Snapshot { .. }));
         assert!(matches!(test.assertions[2], IrEvalAssert::Value { .. }));
+        assert_eq!(
+            ir.tests[1].trace_fixture.as_deref(),
+            Some("traces/refund.jsonl")
+        );
     }
 
     #[test]

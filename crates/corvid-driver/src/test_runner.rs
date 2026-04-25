@@ -4,6 +4,7 @@ use crate::{
 use corvid_runtime::Runtime;
 use corvid_vm::{
     run_all_tests_with_options, SnapshotOptions, TestAssertionStatus, TestExecution, TestRunOptions,
+    TraceFixtureOptions,
 };
 use std::fmt;
 use std::path::{Path, PathBuf};
@@ -100,6 +101,9 @@ pub fn test_options(path: &Path, update_snapshots: bool) -> TestRunOptions {
             root: base.join(".corvid-snapshots").join(sanitize_path_segment(stem)),
             update: update_snapshots,
         }),
+        trace_fixtures: Some(TraceFixtureOptions {
+            root: base.to_path_buf(),
+        }),
     }
 }
 
@@ -184,6 +188,9 @@ fn sanitize_path_segment(raw: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use corvid_trace_schema::{
+        write_events_to_path, TraceEvent, SCHEMA_VERSION, WRITER_INTERPRETER,
+    };
     use corvid_runtime::{ProgrammaticApprover, Runtime};
     use std::sync::Arc;
 
@@ -310,5 +317,65 @@ test snapshot_contract:
             updated.tests[0].assertions[0].status,
             TestAssertionStatus::Updated
         );
+    }
+
+    #[tokio::test]
+    async fn run_tests_at_path_resolves_trace_fixtures_relative_to_source() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let trace_path = dir.path().join("refund.jsonl");
+        write_events_to_path(
+            &trace_path,
+            &[
+                TraceEvent::SchemaHeader {
+                    version: SCHEMA_VERSION,
+                    writer: WRITER_INTERPRETER.into(),
+                    commit_sha: None,
+                    source_path: Some("refund.cor".into()),
+                    ts_ms: 0,
+                    run_id: "run-1".into(),
+                },
+                TraceEvent::RunStarted {
+                    ts_ms: 1,
+                    run_id: "run-1".into(),
+                    agent: "refund_bot".into(),
+                    args: vec![],
+                },
+                TraceEvent::ToolCall {
+                    ts_ms: 2,
+                    run_id: "run-1".into(),
+                    tool: "get_order".into(),
+                    args: vec![serde_json::json!("ord_42")],
+                },
+                TraceEvent::ToolCall {
+                    ts_ms: 3,
+                    run_id: "run-1".into(),
+                    tool: "issue_refund".into(),
+                    args: vec![serde_json::json!("ord_42")],
+                },
+                TraceEvent::RunCompleted {
+                    ts_ms: 4,
+                    run_id: "run-1".into(),
+                    ok: true,
+                    result: Some(serde_json::json!(true)),
+                    error: None,
+                },
+            ],
+        )
+        .expect("write trace");
+        let path = dir.path().join("suite.cor");
+        std::fs::write(
+            &path,
+            r#"
+tool get_order(id: String) -> String
+tool issue_refund(id: String) -> String
+
+test trace_contract from_trace "refund.jsonl":
+    assert called get_order before issue_refund
+"#,
+        )
+        .expect("write source");
+
+        let report = run_tests_at_path(&path, &runtime()).await.expect("run");
+        assert!(report.passed(), "report: {report:?}");
     }
 }

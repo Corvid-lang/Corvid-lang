@@ -1210,6 +1210,10 @@ fn render_decl(decl: &Decl, indent: usize, out: &mut String) {
             push_indent(indent, out);
             out.push_str("test ");
             out.push_str(&test.name.name);
+            if let Some(path) = &test.trace_fixture {
+                out.push_str(" from_trace ");
+                out.push_str(&format!("{path:?}"));
+            }
             out.push_str(":\n");
             render_block(&test.body, indent + 1, out);
             if !test.assertions.is_empty() {
@@ -1740,6 +1744,9 @@ test mocked_lookup:
     score = lookup(sample_id())
     assert_snapshot score
     assert score == 42
+
+test lookup_trace from_trace "traces/lookup.jsonl":
+    assert called lookup
 "#;
         let file = parse_source(source).expect("parse");
         let rendered = render_file(&file);

@@ -141,3 +141,38 @@ The VM evaluates the expression through the same interpreter path as ordinary
 tests, converts the value to JSON, and compares that JSON to the stored
 snapshot. This means typed fixtures and mocks compose with snapshots without a
 separate snapshot DSL.
+
+## Trace Fixtures
+
+`test name from_trace "path/to/run.jsonl":` binds a recorded production trace to
+a deterministic test:
+
+```corvid
+tool get_order(id: String) -> String
+tool issue_refund(id: String) -> String dangerous
+
+test refund_process from_trace "traces/refund-approved.jsonl":
+    assert called get_order before issue_refund
+    assert approved IssueRefund
+    assert cost < $0.50
+```
+
+Trace paths are resolved relative to the `.cor` file being tested. The runner
+loads the JSONL file through the shared trace-schema reader, rejects unsupported
+schema versions, and requires `run_started` plus `run_completed` events before
+any trace assertion can pass. This makes a trace fixture a replay-compatible
+behavior record, not an arbitrary text file.
+
+The supported trace assertions are:
+
+- `assert called name` passes when the trace contains a matching agent,
+  prompt, or tool call event.
+- `assert called A before B` checks temporal event order in the trace.
+- `assert approved Label` checks approval request/decision/response events for
+  the label.
+- `assert cost < $0.50` sums model-selection `cost_estimate` events and host
+  `cost_usd` events, then applies the declared comparison.
+
+Without `from_trace`, trace/process assertions still fail as unsupported. That
+is deliberate: Corvid does not silently pass process claims without a trace to
+inspect.

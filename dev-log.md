@@ -5461,3 +5461,17 @@ output on mismatches; `corvid test --update-snapshots` and
 The important boundary is that snapshots are runtime value assertions, not
 string snapshots of source text. They compose with typed fixtures and mocks
 because the VM evaluates the assertion expression before serializing the value.
+
+## 2026-04-25 - Trace fixture tests
+
+Closed `26-E-trace-fixtures` and the Phase 26 testing-primitives checklist.
+Added `test name from_trace "trace.jsonl":` as a language-level binding from a
+test declaration to a recorded JSONL trace. The path is preserved in AST/IR,
+rendered by the source rewriter, resolved relative to the `.cor` file by the
+driver, and loaded by the VM through the shared trace-schema reader.
+
+Trace assertions now execute against real trace events instead of reporting
+unsupported placeholders: `called`, `called A before B`, `approved Label`, and
+`cost < bound` all produce pass/fail output from the fixture. Fixture loading
+also validates schema compatibility and requires `run_started` plus
+`run_completed`, so malformed traces cannot accidentally bless a process claim.
