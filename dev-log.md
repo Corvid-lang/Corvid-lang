@@ -4738,3 +4738,20 @@ than `0.25` after at least three samples.
 The mock adapter gained calibrated replies so the behavior is testable without
 network calls. VM coverage proves repeated overconfident wrong prompt replies
 produce a miscalibration flag while preserving the normal prompt return path.
+
+## 2026-04-25 - Phase 20e REPL confidence step-through
+
+Closed the REPL-facing part of the confidence dimension. Step events now carry
+confidence metadata at the boundary where the developer needs it: prompt
+results report their effective confidence, tool and agent calls report input
+confidence, and completed calls report result confidence.
+
+Confidence-gated tool calls now also surface as explicit step approval
+boundaries before the runtime approver is invoked. The event records the
+threshold, the actual composed confidence, and whether the gate fired. The REPL
+prints that as `actual / threshold`, so a developer can see why an approval
+boundary appeared instead of guessing from the tool label.
+
+The trace summary shown by `:trace` includes the same confidence and gate
+metadata. This keeps step-through output and recorded execution traces aligned
+instead of creating a REPL-only display path.

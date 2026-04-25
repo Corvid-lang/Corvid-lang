@@ -932,7 +932,7 @@ impl StreamChunk {
     }
 }
 
-fn value_confidence(value: &Value) -> f64 {
+pub fn value_confidence(value: &Value) -> f64 {
     match value {
         Value::Grounded(g) => g.confidence,
         _ => 1.0,

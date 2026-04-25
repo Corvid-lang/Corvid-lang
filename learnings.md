@@ -2555,6 +2555,28 @@ samples, drift above `0.25` is considered miscalibrated. Future eval tooling can
 render these stats directly instead of treating self-reported confidence as
 truth.
 
+## 20e-repl-confidence-step-through
+
+Use `:stepon` or `:stepinto` in the REPL to inspect confidence as the agent
+runs. Boundary steps now show input confidence before tool, prompt, and agent
+calls, and result confidence after prompt/tool/agent results.
+
+Confidence gates are visible as approval boundaries:
+
+```text
+approval required: ConfidenceGate:issue_refund
+  confidence gate: actual 0.700 / threshold 0.900 (triggered)
+```
+
+That matters because `autonomous_if_confident(T)` is dynamic. A program can be
+statically valid and still require human approval on a specific execution if
+the values flowing into an irreversible action are less confident than the
+threshold. The REPL now shows that threshold comparison directly instead of
+hiding it behind a generic approval prompt.
+
+`:trace` includes the same metadata, so the confidence story is visible both
+during live step-through and after the run when reviewing the last execution.
+
 ## Contributing / feedback
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). The rules of the road are: design chat before code, per-scope commits at every boundary, dev-log entry for every session, no shortcuts. The `learnings.md` file you're reading gets updated when each user-visible feature ships.

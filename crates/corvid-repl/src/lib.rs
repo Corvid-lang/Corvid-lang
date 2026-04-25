@@ -348,14 +348,20 @@ impl Repl {
                             writeln!(output, "last trace: {} checkpoint(s), {} boundary event(s):", trace.len(), boundaries.len())?;
                             for cp in &boundaries {
                                 let label = match &cp.event {
-                                    corvid_vm::StepEvent::BeforeToolCall { tool_name, .. } => format!("  [{:>3}] tool call: {tool_name}", cp.index),
-                                    corvid_vm::StepEvent::AfterToolCall { tool_name, elapsed_ms, .. } => format!("  [{:>3}] tool result: {tool_name} ({elapsed_ms}ms)", cp.index),
-                                    corvid_vm::StepEvent::BeforePromptCall { prompt_name, .. } => format!("  [{:>3}] prompt call: {prompt_name}", cp.index),
-                                    corvid_vm::StepEvent::AfterPromptCall { prompt_name, elapsed_ms, .. } => format!("  [{:>3}] prompt result: {prompt_name} ({elapsed_ms}ms)", cp.index),
-                                    corvid_vm::StepEvent::BeforeApproval { label, .. } => format!("  [{:>3}] approval: {label}", cp.index),
+                                    corvid_vm::StepEvent::BeforeToolCall { tool_name, input_confidence, confidence_gate, .. } => {
+                                        let gate = confidence_gate.as_ref().map(format_confidence_gate).unwrap_or_default();
+                                        format!("  [{:>3}] tool call: {tool_name} confidence={input_confidence:.3}{gate}", cp.index)
+                                    }
+                                    corvid_vm::StepEvent::AfterToolCall { tool_name, elapsed_ms, result_confidence, .. } => format!("  [{:>3}] tool result: {tool_name} ({elapsed_ms}ms) confidence={result_confidence:.3}", cp.index),
+                                    corvid_vm::StepEvent::BeforePromptCall { prompt_name, input_confidence, .. } => format!("  [{:>3}] prompt call: {prompt_name} confidence={input_confidence:.3}", cp.index),
+                                    corvid_vm::StepEvent::AfterPromptCall { prompt_name, elapsed_ms, result_confidence, .. } => format!("  [{:>3}] prompt result: {prompt_name} ({elapsed_ms}ms) confidence={result_confidence:.3}", cp.index),
+                                    corvid_vm::StepEvent::BeforeApproval { label, confidence_gate, .. } => {
+                                        let gate = confidence_gate.as_ref().map(format_confidence_gate).unwrap_or_default();
+                                        format!("  [{:>3}] approval: {label}{gate}", cp.index)
+                                    }
                                     corvid_vm::StepEvent::AfterApproval { label, approved, .. } => format!("  [{:>3}] approval result: {label} -> {}", cp.index, if *approved { "yes" } else { "no" }),
-                                    corvid_vm::StepEvent::BeforeAgentCall { agent_name, .. } => format!("  [{:>3}] agent call: {agent_name}", cp.index),
-                                    corvid_vm::StepEvent::AfterAgentCall { agent_name, .. } => format!("  [{:>3}] agent result: {agent_name}", cp.index),
+                                    corvid_vm::StepEvent::BeforeAgentCall { agent_name, input_confidence, .. } => format!("  [{:>3}] agent call: {agent_name} confidence={input_confidence:.3}", cp.index),
+                                    corvid_vm::StepEvent::AfterAgentCall { agent_name, result_confidence, .. } => format!("  [{:>3}] agent result: {agent_name} confidence={result_confidence:.3}", cp.index),
                                     _ => continue,
                                 };
                                 writeln!(output, "{label}")?;
@@ -1527,6 +1533,15 @@ fn display_type_rich(ty: &Type, symbols: &corvid_resolve::SymbolTable) -> String
         }
         other => other.display_name(),
     }
+}
+
+fn format_confidence_gate(gate: &corvid_vm::ConfidenceGateStep) -> String {
+    let status = if gate.triggered { "triggered" } else { "clear" };
+    format!(
+        " gate={:.3}/{:.3}:{status}",
+        gate.actual.clamp(0.0, 1.0),
+        gate.threshold.clamp(0.0, 1.0)
+    )
 }
 
 fn format_typeref(ty: &corvid_ast::TypeRef) -> String {

@@ -21,8 +21,10 @@ mod stmt;
 use crate::conv::{json_to_value, value_to_json};
 use crate::env::Env;
 use crate::errors::{InterpError, InterpErrorKind};
-use crate::step::{self, StepAction, StepController, StepEvent, StepMode};
-use crate::value::{BoxedValue, ListValue, StreamChunk, StreamSender, StructValue, Value};
+use crate::step::{self, ConfidenceGateStep, StepAction, StepController, StepEvent, StepMode};
+use crate::value::{
+    value_confidence, BoxedValue, ListValue, StreamChunk, StreamSender, StructValue, Value,
+};
 use self::expr::{eval_binop, eval_literal, eval_unop, require_bool};
 use effect_compose::{
     composed_confidence, default_stream_backpressure, stream_start_is_retryable,
@@ -160,6 +162,7 @@ pub async fn run_agent_stepping(
         agent_name: agent_name.to_string(),
         ok: outcome.is_ok(),
         result: outcome.as_ref().ok().map(|(v, _)| v.clone()),
+        result_confidence: outcome.as_ref().ok().map(|(v, _)| value_confidence(v)),
         error: outcome.as_ref().err().map(|e| e.to_string()),
     }).await;
 
@@ -743,14 +746,73 @@ impl<'ir> Interpreter<'ir> {
                 // If below, activate the same approval path used by
                 // explicit `approve` statements before dispatching the
                 // tool.
-                if let Some(threshold) = tool.confidence_gate {
-                    let actual = composed_confidence(&arg_values);
-                    if actual < threshold {
+                let input_confidence = composed_confidence(&arg_values);
+                let confidence_gate = tool.confidence_gate.map(|threshold| ConfidenceGateStep {
+                    threshold,
+                    actual: input_confidence,
+                    triggered: input_confidence < threshold,
+                });
+                if let Some(gate) = confidence_gate {
+                    if gate.triggered {
                         let label = format!("ConfidenceGate:{callee_name}");
-                        self.runtime
-                            .approval_gate(&label, json_args.clone())
-                            .await
-                            .map_err(|e| InterpError::new(InterpErrorKind::Runtime(e), span))?;
+                        if self.should_yield_boundary() {
+                            let action = self
+                                .maybe_yield(StepEvent::BeforeApproval {
+                                    label: label.clone(),
+                                    args: json_args.clone(),
+                                    confidence_gate: Some(gate),
+                                    span,
+                                    env: self.env_snapshot(),
+                                })
+                                .await?;
+                            match action {
+                                StepAction::Approve => {
+                                    self.maybe_yield(StepEvent::AfterApproval {
+                                        label,
+                                        approved: true,
+                                        span,
+                                    })
+                                    .await?;
+                                }
+                                StepAction::Deny => {
+                                    self.maybe_yield(StepEvent::AfterApproval {
+                                        label: label.clone(),
+                                        approved: false,
+                                        span,
+                                    })
+                                    .await?;
+                                    return Err(InterpError::new(
+                                        InterpErrorKind::Runtime(
+                                            corvid_runtime::RuntimeError::ApprovalDenied {
+                                                action: label,
+                                            },
+                                        ),
+                                        span,
+                                    ));
+                                }
+                                _ => {
+                                    let result =
+                                        self.runtime.approval_gate(&label, json_args.clone()).await;
+                                    let approved = result.is_ok();
+                                    self.maybe_yield(StepEvent::AfterApproval {
+                                        label,
+                                        approved,
+                                        span,
+                                    })
+                                    .await?;
+                                    result.map_err(|e| {
+                                        InterpError::new(InterpErrorKind::Runtime(e), span)
+                                    })?;
+                                }
+                            }
+                        } else {
+                            self.runtime
+                                .approval_gate(&label, json_args.clone())
+                                .await
+                                .map_err(|e| {
+                                    InterpError::new(InterpErrorKind::Runtime(e), span)
+                                })?;
+                        }
                     }
                 }
                 let is_grounded = tool.effect_names.iter().any(|e| e == "retrieval");
@@ -763,6 +825,8 @@ impl<'ir> Interpreter<'ir> {
                     let action = self.maybe_yield(StepEvent::BeforeToolCall {
                         tool_name: callee_name.to_string(),
                         args: json_args.clone(),
+                        input_confidence,
+                        confidence_gate,
                         span,
                         env: self.env_snapshot(),
                     }).await?;
@@ -792,6 +856,7 @@ impl<'ir> Interpreter<'ir> {
                     let action = self.maybe_yield(StepEvent::AfterToolCall {
                         tool_name: callee_name.to_string(),
                         result: result.clone(),
+                        result_confidence: 1.0,
                         elapsed_ms,
                         span,
                     }).await?;
@@ -845,6 +910,7 @@ impl<'ir> Interpreter<'ir> {
                     self.maybe_yield(StepEvent::BeforeAgentCall {
                         agent_name: callee_name.to_string(),
                         args: json_args,
+                        input_confidence: composed_confidence(&arg_values),
                         span,
                     }).await?;
                 }
@@ -869,6 +935,14 @@ impl<'ir> Interpreter<'ir> {
                     self.maybe_yield(StepEvent::AfterAgentCall {
                         agent_name: callee_name.to_string(),
                         result: result_json,
+                        result_confidence: result
+                            .as_ref()
+                            .ok()
+                            .and_then(|flow| match flow {
+                                ExprFlow::Value(value) => Some(value_confidence(value)),
+                                ExprFlow::Propagate(value) => Some(value_confidence(value)),
+                            })
+                            .unwrap_or(1.0),
                         span,
                     }).await?;
                 }

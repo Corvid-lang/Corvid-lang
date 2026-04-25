@@ -36,7 +36,7 @@ pub use interp::{bind_and_run_agent, build_struct, run_agent, run_agent_stepping
 pub use repl_display::render_value;
 pub use schema::schema_for;
 pub use step::{
-    Checkpoint, EnvSnapshot, ExecutionTrace, NoOpHook, RecordingHook, ReplayForkHook,
+    Checkpoint, ConfidenceGateStep, EnvSnapshot, ExecutionTrace, NoOpHook, RecordingHook, ReplayForkHook,
     StepAction, StepController, StepEvent, StepHook, StepMode, StmtKind,
 };
 pub use value::{

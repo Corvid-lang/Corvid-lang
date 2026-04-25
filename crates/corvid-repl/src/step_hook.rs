@@ -26,10 +26,14 @@ fn render_and_prompt(event: &StepEvent) -> StepAction {
         StepEvent::BeforeToolCall {
             tool_name,
             args,
+            input_confidence,
+            confidence_gate,
             env,
             ..
         } => {
             let _ = writeln!(out, "\n\x1b[36m[step]\x1b[0m tool call: \x1b[1m{tool_name}\x1b[0m");
+            render_confidence(&mut out, "input confidence", *input_confidence);
+            render_confidence_gate(&mut out, confidence_gate);
             render_json_args(&mut out, args);
             render_env(&mut out, env);
             read_step_command(&mut out)
@@ -38,6 +42,7 @@ fn render_and_prompt(event: &StepEvent) -> StepAction {
         StepEvent::AfterToolCall {
             tool_name,
             result,
+            result_confidence,
             elapsed_ms,
             ..
         } => {
@@ -45,6 +50,7 @@ fn render_and_prompt(event: &StepEvent) -> StepAction {
                 out,
                 "\n\x1b[36m[step]\x1b[0m tool result: \x1b[1m{tool_name}\x1b[0m  \x1b[2m({elapsed_ms}ms)\x1b[0m"
             );
+            render_confidence(&mut out, "result confidence", *result_confidence);
             let _ = writeln!(out, "  result: {}", truncate_json(result, 200));
             read_step_command(&mut out)
         }
@@ -53,6 +59,7 @@ fn render_and_prompt(event: &StepEvent) -> StepAction {
             prompt_name,
             rendered,
             model,
+            input_confidence,
             env,
             ..
         } => {
@@ -63,6 +70,7 @@ fn render_and_prompt(event: &StepEvent) -> StepAction {
             if let Some(m) = model {
                 let _ = writeln!(out, "  model: {m}");
             }
+            render_confidence(&mut out, "input confidence", *input_confidence);
             let _ = writeln!(out, "  rendered: {}", truncate_str(rendered, 200));
             render_env(&mut out, env);
             read_step_command(&mut out)
@@ -71,6 +79,7 @@ fn render_and_prompt(event: &StepEvent) -> StepAction {
         StepEvent::AfterPromptCall {
             prompt_name,
             result,
+            result_confidence,
             elapsed_ms,
             ..
         } => {
@@ -78,17 +87,23 @@ fn render_and_prompt(event: &StepEvent) -> StepAction {
                 out,
                 "\n\x1b[35m[step]\x1b[0m prompt result: \x1b[1m{prompt_name}\x1b[0m  \x1b[2m({elapsed_ms}ms)\x1b[0m"
             );
+            render_confidence(&mut out, "result confidence", *result_confidence);
             let _ = writeln!(out, "  result: {}", truncate_json(result, 200));
             read_step_command(&mut out)
         }
 
         StepEvent::BeforeApproval {
-            label, args, env, ..
+            label,
+            args,
+            confidence_gate,
+            env,
+            ..
         } => {
             let _ = writeln!(
                 out,
                 "\n\x1b[33m[step]\x1b[0m \x1b[1mapproval required: {label}\x1b[0m"
             );
+            render_confidence_gate(&mut out, confidence_gate);
             render_json_args(&mut out, args);
             render_env(&mut out, env);
             read_approval_command(&mut out)
@@ -110,23 +125,31 @@ fn render_and_prompt(event: &StepEvent) -> StepAction {
         }
 
         StepEvent::BeforeAgentCall {
-            agent_name, args, ..
+            agent_name,
+            args,
+            input_confidence,
+            ..
         } => {
             let _ = writeln!(
                 out,
                 "\n\x1b[34m[step]\x1b[0m calling agent: \x1b[1m{agent_name}\x1b[0m"
             );
+            render_confidence(&mut out, "input confidence", *input_confidence);
             render_json_args(&mut out, args);
             read_step_command(&mut out)
         }
 
         StepEvent::AfterAgentCall {
-            agent_name, result, ..
+            agent_name,
+            result,
+            result_confidence,
+            ..
         } => {
             let _ = writeln!(
                 out,
                 "\n\x1b[34m[step]\x1b[0m agent returned: \x1b[1m{agent_name}\x1b[0m"
             );
+            render_confidence(&mut out, "result confidence", *result_confidence);
             let _ = writeln!(out, "  result: {}", truncate_json(result, 200));
             read_step_command(&mut out)
         }
@@ -144,6 +167,7 @@ fn render_and_prompt(event: &StepEvent) -> StepAction {
         StepEvent::Completed {
             agent_name,
             ok,
+            result_confidence,
             error,
             ..
         } => {
@@ -152,6 +176,9 @@ fn render_and_prompt(event: &StepEvent) -> StepAction {
                     out,
                     "\n\x1b[32m[step]\x1b[0m {agent_name} completed successfully"
                 );
+                if let Some(confidence) = result_confidence {
+                    render_confidence(&mut out, "result confidence", *confidence);
+                }
             } else {
                 let msg = error.as_deref().unwrap_or("unknown error");
                 let _ = writeln!(
@@ -180,8 +207,10 @@ fn render_json_args(out: &mut impl Write, args: &[serde_json::Value]) {
 
 fn render_env(out: &mut impl Write, env: &EnvSnapshot) {
     if env.locals.is_empty() {
+        render_confidence(out, "local confidence", env.confidence);
         return;
     }
+    render_confidence(out, "local confidence", env.confidence);
     let _ = write!(out, "  locals: {{");
     for (i, (name, val)) in env.locals.iter().enumerate() {
         if i > 0 {
@@ -194,6 +223,26 @@ fn render_env(out: &mut impl Write, env: &EnvSnapshot) {
         );
     }
     let _ = writeln!(out, "}}");
+}
+
+fn render_confidence(out: &mut impl Write, label: &str, confidence: f64) {
+    let _ = writeln!(out, "  {label}: {:.3}", confidence.clamp(0.0, 1.0));
+}
+
+fn render_confidence_gate(
+    out: &mut impl Write,
+    gate: &Option<corvid_vm::ConfidenceGateStep>,
+) {
+    let Some(gate) = gate else {
+        return;
+    };
+    let status = if gate.triggered { "triggered" } else { "clear" };
+    let _ = writeln!(
+        out,
+        "  confidence gate: actual {:.3} / threshold {:.3} ({status})",
+        gate.actual.clamp(0.0, 1.0),
+        gate.threshold.clamp(0.0, 1.0),
+    );
 }
 
 fn format_stmt_kind(kind: &corvid_vm::StmtKind) -> String {

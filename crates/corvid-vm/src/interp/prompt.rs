@@ -311,6 +311,7 @@ impl<'ir> Interpreter<'ir> {
                     prompt_name: callee_name.to_string(),
                     rendered: rendered.to_string(),
                     model: selected_model.clone(),
+                    input_confidence: super::effect_compose::composed_confidence(arg_values),
                     span,
                     env: self.env_snapshot(),
                 })
@@ -384,6 +385,9 @@ impl<'ir> Interpreter<'ir> {
                 .maybe_yield(StepEvent::AfterPromptCall {
                     prompt_name: callee_name.to_string(),
                     result: resp.value.clone(),
+                    result_confidence: prompt
+                        .effect_confidence
+                        .min(super::effect_compose::composed_confidence(arg_values)),
                     elapsed_ms,
                     span,
                 })
@@ -523,6 +527,7 @@ impl<'ir> Interpreter<'ir> {
                         prompt_name: callee_name.to_string(),
                         rendered: rendered.clone(),
                         model: None,
+                        input_confidence: super::effect_compose::composed_confidence(arg_values),
                         span,
                         env: self.env_snapshot(),
                     })
@@ -664,6 +669,7 @@ impl<'ir> Interpreter<'ir> {
                     .maybe_yield(StepEvent::AfterPromptCall {
                         prompt_name: callee_name.to_string(),
                         result: value_to_json(&winner_value),
+                        result_confidence: combined_confidence,
                         elapsed_ms: ensemble_start.elapsed().as_millis() as u64,
                         span,
                     })
@@ -705,6 +711,7 @@ impl<'ir> Interpreter<'ir> {
                         prompt_name: callee_name.to_string(),
                         rendered: rendered.clone(),
                         model: None,
+                        input_confidence: super::effect_compose::composed_confidence(arg_values),
                         span,
                         env: self.env_snapshot(),
                     })
@@ -789,6 +796,10 @@ impl<'ir> Interpreter<'ir> {
                     .maybe_yield(StepEvent::AfterPromptCall {
                         prompt_name: callee_name.to_string(),
                         result: verdict_json.clone(),
+                        result_confidence: proposed
+                            .confidence
+                            .min(challenge.confidence)
+                            .min(verdict.confidence),
                         elapsed_ms: pipeline_start.elapsed().as_millis() as u64,
                         span,
                     })

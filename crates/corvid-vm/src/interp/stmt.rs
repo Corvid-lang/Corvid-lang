@@ -342,6 +342,7 @@ impl<'ir> Interpreter<'ir> {
                         .maybe_yield(StepEvent::BeforeApproval {
                             label: label.clone(),
                             args: json_args.clone(),
+                            confidence_gate: None,
                             span: *span,
                             env: self.env_snapshot(),
                         })

@@ -6,7 +6,7 @@
 //! result, or abort. This turns the interpreter into a steerable
 //! coroutine that the REPL drives interactively.
 
-use crate::value::Value;
+use crate::value::{value_confidence, Value};
 use corvid_ast::Span;
 use std::collections::HashMap;
 
@@ -14,6 +14,14 @@ use std::collections::HashMap;
 #[derive(Debug, Clone)]
 pub struct EnvSnapshot {
     pub locals: Vec<(String, Value)>,
+    pub confidence: f64,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct ConfidenceGateStep {
+    pub threshold: f64,
+    pub actual: f64,
+    pub triggered: bool,
 }
 
 /// What kind of IR statement is about to execute.
@@ -45,6 +53,8 @@ pub enum StepEvent {
     BeforeToolCall {
         tool_name: String,
         args: Vec<serde_json::Value>,
+        input_confidence: f64,
+        confidence_gate: Option<ConfidenceGateStep>,
         span: Span,
         env: EnvSnapshot,
     },
@@ -53,6 +63,7 @@ pub enum StepEvent {
     AfterToolCall {
         tool_name: String,
         result: serde_json::Value,
+        result_confidence: f64,
         elapsed_ms: u64,
         span: Span,
     },
@@ -62,6 +73,7 @@ pub enum StepEvent {
         prompt_name: String,
         rendered: String,
         model: Option<String>,
+        input_confidence: f64,
         span: Span,
         env: EnvSnapshot,
     },
@@ -70,6 +82,7 @@ pub enum StepEvent {
     AfterPromptCall {
         prompt_name: String,
         result: serde_json::Value,
+        result_confidence: f64,
         elapsed_ms: u64,
         span: Span,
     },
@@ -78,6 +91,7 @@ pub enum StepEvent {
     BeforeApproval {
         label: String,
         args: Vec<serde_json::Value>,
+        confidence_gate: Option<ConfidenceGateStep>,
         span: Span,
         env: EnvSnapshot,
     },
@@ -93,6 +107,7 @@ pub enum StepEvent {
     BeforeAgentCall {
         agent_name: String,
         args: Vec<serde_json::Value>,
+        input_confidence: f64,
         span: Span,
     },
 
@@ -100,6 +115,7 @@ pub enum StepEvent {
     AfterAgentCall {
         agent_name: String,
         result: serde_json::Value,
+        result_confidence: f64,
         span: Span,
     },
 
@@ -108,6 +124,7 @@ pub enum StepEvent {
         agent_name: String,
         ok: bool,
         result: Option<Value>,
+        result_confidence: Option<f64>,
         error: Option<String>,
     },
 }
@@ -214,7 +231,11 @@ pub fn snapshot_env(
         .filter_map(|(id, name)| env.lookup(*id).map(|v| (name.clone(), v)))
         .collect();
     locals.sort_by(|a, b| a.0.cmp(&b.0));
-    EnvSnapshot { locals }
+    let confidence = locals
+        .iter()
+        .map(|(_, value)| value_confidence(value))
+        .fold(1.0_f64, f64::min);
+    EnvSnapshot { locals, confidence }
 }
 
 // ---- Execution trace: recording + replay + fork ----

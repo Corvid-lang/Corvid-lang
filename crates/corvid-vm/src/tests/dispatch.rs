@@ -1,6 +1,15 @@
 use super::*;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+struct BoundaryHook;
+
+#[async_trait::async_trait]
+impl StepHook for BoundaryHook {
+    async fn on_step(&self, _event: &StepEvent) -> StepAction {
+        StepAction::StepOver
+    }
+}
+
 // ---------------------------- Runtime integration ----------------------
 
 #[tokio::test]
@@ -294,6 +303,82 @@ agent run(input: String) -> String:
 
     assert_eq!(value, Value::String(Arc::from("acted:refund")));
     assert_eq!(approvals.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn step_trace_records_prompt_confidence_and_confidence_gate_threshold() {
+    let src = r#"
+effect low_confidence:
+    confidence: 0.70
+
+effect gated_action:
+    trust: autonomous_if_confident(0.90)
+
+prompt classify(input: String) -> String uses low_confidence:
+    "Classify {input}."
+
+tool act(label: String) -> String uses gated_action
+
+@trust(autonomous)
+agent run(input: String) -> String:
+    label = classify(input)
+    return act(label)
+"#;
+    let ir = ir_of(src);
+    let rt = Runtime::builder()
+        .llm(Arc::new(MockAdapter::new("mock").reply("classify", json!("refund"))))
+        .default_model("mock")
+        .tool("act", |args| async move {
+            Ok(json!(format!("acted:{}", args[0]["value"].as_str().unwrap())))
+        })
+        .approver(Arc::new(ProgrammaticApprover::always_yes()))
+        .build();
+    let hook = Arc::new(RecordingHook::new(Arc::new(BoundaryHook)));
+    let trace_ref = hook.trace_ref();
+
+    let (value, _) = run_agent_stepping(
+        &ir,
+        "run",
+        vec![Value::String(Arc::from("ticket"))],
+        &rt,
+        hook,
+        StepMode::Boundary,
+    )
+    .await
+    .expect("run");
+    assert_eq!(value, Value::String(Arc::from("acted:refund")));
+
+    let trace = trace_ref.lock().unwrap().clone();
+    let prompt_confidence = trace.checkpoints.iter().find_map(|checkpoint| {
+        if let StepEvent::AfterPromptCall {
+            prompt_name,
+            result_confidence,
+            ..
+        } = &checkpoint.event
+        {
+            (prompt_name == "classify").then_some(*result_confidence)
+        } else {
+            None
+        }
+    });
+    assert_eq!(prompt_confidence, Some(0.70));
+
+    let gate = trace.checkpoints.iter().find_map(|checkpoint| {
+        if let StepEvent::BeforeApproval {
+            label,
+            confidence_gate: Some(gate),
+            ..
+        } = &checkpoint.event
+        {
+            (label == "ConfidenceGate:act").then_some(*gate)
+        } else {
+            None
+        }
+    });
+    let gate = gate.expect("confidence gate event");
+    assert!(gate.triggered);
+    assert!((gate.actual - 0.70).abs() < 1e-9);
+    assert!((gate.threshold - 0.90).abs() < 1e-9);
 }
 
 #[tokio::test]
