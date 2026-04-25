@@ -1735,6 +1735,62 @@ agent good(x: String) -> String:
     }
 
     #[test]
+    fn parses_corvid_import_requires_deterministic_with_alias() {
+        let file = parse_file_src(r#"import "./policy" requires @deterministic as p"#);
+        match &file.decls[0] {
+            Decl::Import(i) => {
+                assert!(matches!(i.source, ImportSource::Corvid));
+                assert_eq!(i.module, "./policy");
+                assert_eq!(i.alias.as_ref().map(|alias| alias.name.as_str()), Some("p"));
+                assert_eq!(i.required_attributes.len(), 1);
+                assert!(matches!(
+                    i.required_attributes[0],
+                    corvid_ast::AgentAttribute::Deterministic { .. }
+                ));
+                assert!(i.required_constraints.is_empty());
+            }
+            other => panic!("expected import, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_corvid_import_requires_budget_with_use_list() {
+        let file = parse_file_src(r#"import "./policy" requires @budget($0.50) use Review"#);
+        match &file.decls[0] {
+            Decl::Import(i) => {
+                assert!(matches!(i.source, ImportSource::Corvid));
+                assert!(i.required_attributes.is_empty());
+                assert!(!i.required_constraints.is_empty());
+                assert_eq!(i.use_items.len(), 1);
+                assert_eq!(i.use_items[0].name.name, "Review");
+            }
+            other => panic!("expected import, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_public_annotated_agent() {
+        let file = parse_file_src(
+            "\
+public @deterministic
+agent safe() -> Bool:
+    return true
+",
+        );
+        match &file.decls[0] {
+            Decl::Agent(agent) => {
+                assert!(matches!(agent.visibility, corvid_ast::Visibility::Public));
+                assert_eq!(agent.attributes.len(), 1);
+                assert!(matches!(
+                    agent.attributes[0],
+                    corvid_ast::AgentAttribute::Deterministic { .. }
+                ));
+            }
+            other => panic!("expected agent, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn parses_prompt_with_output_format_clause() {
         let file = parse_file_src(
             "prompt classify(t: String) -> String:\n    output_format: strict_json\n    \"Classify {t}\"\n",

@@ -8,8 +8,9 @@
 
 use super::{pascal_case, snake_case, Checker, ImportedCallKind, ImportedCallTarget};
 use crate::errors::{TypeError, TypeErrorKind};
+use crate::effects::{analyze_effects, EffectRegistry};
 use crate::types::{ImportedStructType, Type};
-use corvid_ast::{Decl, Effect, Expr, Ident, Param, Span, WeakEffect};
+use corvid_ast::{AgentAttribute, Decl, Effect, Expr, Ident, Param, Span, WeakEffect};
 use corvid_resolve::{Binding, DeclKind, DefId, ModuleLookup, ResolvedModule};
 
 impl<'a> Checker<'a> {
@@ -21,6 +22,9 @@ impl<'a> Checker<'a> {
             let Decl::Import(import) = decl else { continue };
             if !matches!(import.source, corvid_ast::ImportSource::Corvid) {
                 continue;
+            }
+            if let Some(module) = modules.lookup_root_import(&import.module) {
+                self.validate_import_requirements(import, module);
             }
             let module_label = import
                 .alias
@@ -42,6 +46,157 @@ impl<'a> Checker<'a> {
                         item.span,
                     ));
                 }
+            }
+        }
+    }
+
+    fn validate_import_requirements(
+        &mut self,
+        import: &corvid_ast::ImportDecl,
+        module: &ResolvedModule,
+    ) {
+        for attr in &import.required_attributes {
+            match attr {
+                AgentAttribute::Deterministic { .. } => {
+                    self.validate_import_requires_deterministic(import, module);
+                }
+                AgentAttribute::Replayable { .. } => {
+                    self.validate_import_requires_replayable(import, module);
+                }
+                AgentAttribute::Wrapping { .. } => {
+                    self.errors.push(TypeError::new(
+                        TypeErrorKind::EffectConstraintViolation {
+                            agent: format!("import `{}`", import.module),
+                            dimension: "wrapping".to_string(),
+                            message: "`@wrapping` is an agent execution mode and cannot be required at an import boundary".to_string(),
+                        },
+                        import.span,
+                    ));
+                }
+            }
+        }
+        if import.required_constraints.is_empty() {
+            return;
+        }
+        let effect_decls = module
+            .file
+            .decls
+            .iter()
+            .filter_map(|decl| match decl {
+                Decl::Effect(effect) => Some(effect.clone()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        let registry = EffectRegistry::from_decls(&effect_decls);
+        let summaries = analyze_effects(&module.file, &module.resolved, &registry);
+        for summary in summaries {
+            let exported = module
+                .exports
+                .get(&summary.agent_name)
+                .is_some_and(|export| export.kind == DeclKind::Agent);
+            if !exported {
+                continue;
+            }
+            for violation in
+                registry.check_constraints(&summary.composed, &import.required_constraints)
+            {
+                let message = violation.to_string();
+                self.errors.push(TypeError::new(
+                    TypeErrorKind::EffectConstraintViolation {
+                        agent: format!(
+                            "import `{}` exported agent `{}`",
+                            import.module, summary.agent_name
+                        ),
+                        dimension: violation.dimension,
+                        message,
+                    },
+                    import.span,
+                ));
+            }
+        }
+    }
+
+    fn validate_import_requires_deterministic(
+        &mut self,
+        import: &corvid_ast::ImportDecl,
+        module: &ResolvedModule,
+    ) {
+        for export in module.exports.values() {
+            match export.kind {
+                DeclKind::Tool | DeclKind::Prompt => {
+                    self.errors.push(TypeError::new(
+                        TypeErrorKind::EffectConstraintViolation {
+                            agent: format!("import `{}`", import.module),
+                            dimension: "deterministic".to_string(),
+                            message: format!(
+                                "export `{}` is a {}, which is not deterministic at a module boundary",
+                                export.name,
+                                match export.kind {
+                                    DeclKind::Tool => "tool",
+                                    DeclKind::Prompt => "prompt",
+                                    _ => "declaration",
+                                }
+                            ),
+                        },
+                        import.span,
+                    ));
+                }
+                DeclKind::Agent => {
+                    let deterministic = imported_decl(module, export.def_id)
+                        .and_then(|decl| match decl {
+                            Decl::Agent(agent) => {
+                                Some(AgentAttribute::is_deterministic(&agent.attributes))
+                            }
+                            _ => None,
+                        })
+                        .unwrap_or(false);
+                    if !deterministic {
+                        self.errors.push(TypeError::new(
+                            TypeErrorKind::EffectConstraintViolation {
+                                agent: format!(
+                                    "import `{}` exported agent `{}`",
+                                    import.module, export.name
+                                ),
+                                dimension: "deterministic".to_string(),
+                                message: "exported agent is not marked `@deterministic`".to_string(),
+                            },
+                            import.span,
+                        ));
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    fn validate_import_requires_replayable(
+        &mut self,
+        import: &corvid_ast::ImportDecl,
+        module: &ResolvedModule,
+    ) {
+        for export in module.exports.values() {
+            if export.kind != DeclKind::Agent {
+                continue;
+            }
+            let replayable = imported_decl(module, export.def_id)
+                .and_then(|decl| match decl {
+                    Decl::Agent(agent) => Some(AgentAttribute::is_replayable(&agent.attributes)),
+                    _ => None,
+                })
+                .unwrap_or(false);
+            if !replayable {
+                self.errors.push(TypeError::new(
+                    TypeErrorKind::EffectConstraintViolation {
+                        agent: format!(
+                            "import `{}` exported agent `{}`",
+                            import.module, export.name
+                        ),
+                        dimension: "replayable".to_string(),
+                        message: "exported agent is not marked `@replayable` or `@deterministic`"
+                            .to_string(),
+                    },
+                    import.span,
+                ));
             }
         }
     }

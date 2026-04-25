@@ -100,6 +100,7 @@ pub struct ImportedUseTarget {
 pub struct ModuleResolution {
     pub modules: HashMap<String, ResolvedModule>,
     pub imported_uses: HashMap<String, ImportedUseTarget>,
+    pub root_imports: HashMap<String, ResolvedModule>,
     /// Every loaded module keyed by canonical-ish path, including
     /// transitive imports. The root alias map above controls what
     /// names the root file may use; this path map lets the checker
@@ -151,6 +152,10 @@ impl ModuleResolution {
 
     pub fn lookup_imported_use(&self, name: &str) -> Option<&ImportedUseTarget> {
         self.imported_uses.get(name)
+    }
+
+    pub fn lookup_root_import(&self, module: &str) -> Option<&ResolvedModule> {
+        self.root_imports.get(module)
     }
 }
 

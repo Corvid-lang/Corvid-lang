@@ -32,13 +32,14 @@ impl<'a> Parser<'a> {
                 TokKind::KwType
                 | TokKind::KwTool
                 | TokKind::KwPrompt
-                | TokKind::KwAgent => {}
+                | TokKind::KwAgent
+                | TokKind::At => {}
                 other => {
                     return Err(ParseError {
                         kind: ParseErrorKind::UnexpectedToken {
                             got: describe_token(other),
                             expected:
-                                "`type`, `tool`, `prompt`, or `agent` after `public`".into(),
+                                "`type`, `tool`, `prompt`, `agent`, or `@annotation` after `public`".into(),
                         },
                         span: self.peek_span(),
                     });
@@ -81,7 +82,7 @@ impl<'a> Parser<'a> {
                 let effective_visibility = if extern_abi.is_some() {
                     Visibility::Public
                 } else {
-                    Visibility::Private
+                    visibility
                 };
                 let mut agent = self.parse_agent_decl(effective_visibility)?;
                 agent.extern_abi = extern_abi;
@@ -168,6 +169,14 @@ impl<'a> Parser<'a> {
             }
         };
 
+        let (required_attributes, required_constraints) =
+            if matches!(self.peek(), TokKind::KwRequires) {
+                self.bump();
+                self.parse_inline_agent_annotations()?
+            } else {
+                (Vec::new(), Vec::new())
+            };
+
         // Optional `as IDENT`. Note: Corvid imports (`import "./path"`)
         // strongly expect an alias for the v1 resolver's qualified-
         // access story, but the grammar accepts no-alias for
@@ -194,6 +203,8 @@ impl<'a> Parser<'a> {
         Ok(ImportDecl {
             source,
             module,
+            required_attributes,
+            required_constraints,
             alias,
             use_items,
             span: start.merge(end),

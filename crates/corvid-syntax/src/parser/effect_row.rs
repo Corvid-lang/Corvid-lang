@@ -164,6 +164,19 @@ impl<'a> Parser<'a> {
     pub(super) fn parse_agent_annotations(
         &mut self,
     ) -> Result<(Vec<AgentAttribute>, Vec<EffectConstraint>), ParseError> {
+        self.parse_agent_annotations_with_newline(true)
+    }
+
+    pub(super) fn parse_inline_agent_annotations(
+        &mut self,
+    ) -> Result<(Vec<AgentAttribute>, Vec<EffectConstraint>), ParseError> {
+        self.parse_agent_annotations_with_newline(false)
+    }
+
+    fn parse_agent_annotations_with_newline(
+        &mut self,
+        expect_newline: bool,
+    ) -> Result<(Vec<AgentAttribute>, Vec<EffectConstraint>), ParseError> {
         let mut attributes = Vec::new();
         let mut constraints = Vec::new();
         while matches!(self.peek(), TokKind::At) {
@@ -175,7 +188,7 @@ impl<'a> Parser<'a> {
             // arguments. Optional empty parens are tolerated so
             // `@replayable` and `@replayable()` parse the same.
             if let Some(attribute) =
-                self.try_parse_attribute(&name, start, name_span)?
+                self.try_parse_attribute(&name, start, name_span, expect_newline)?
             {
                 attributes.push(attribute);
                 continue;
@@ -185,7 +198,9 @@ impl<'a> Parser<'a> {
             // `@budget(...)`, `@trust(autonomous)`, etc.
             if name == "budget" && matches!(self.peek(), TokKind::LParen) {
                 constraints.extend(self.parse_budget_constraints(start, name_span)?);
-                self.expect_newline()?;
+                if expect_newline {
+                    self.expect_newline()?;
+                }
                 continue;
             }
             let value = if matches!(self.peek(), TokKind::LParen) {
@@ -202,7 +217,9 @@ impl<'a> Parser<'a> {
                 None
             };
             let end = self.prev_span();
-            self.expect_newline()?;
+            if expect_newline {
+                self.expect_newline()?;
+            }
             constraints.push(EffectConstraint {
                 dimension: Ident::new(name, name_span),
                 value,
@@ -221,6 +238,7 @@ impl<'a> Parser<'a> {
         name: &str,
         start: Span,
         _name_span: Span,
+        expect_newline: bool,
     ) -> Result<Option<AgentAttribute>, ParseError> {
         let attribute_kind: fn(Span) -> AgentAttribute = match name {
             "replayable" => |span| AgentAttribute::Replayable { span },
@@ -238,7 +256,9 @@ impl<'a> Parser<'a> {
             self.expect(TokKind::RParen, "`)` after attribute name")?;
         }
         let end = self.prev_span();
-        self.expect_newline()?;
+        if expect_newline {
+            self.expect_newline()?;
+        }
         Ok(Some(attribute_kind(start.merge(end))))
     }
 

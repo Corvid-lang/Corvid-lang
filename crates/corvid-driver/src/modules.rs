@@ -136,6 +136,7 @@ pub fn build_module_resolution(
 
     let mut modules = HashMap::new();
     let mut imported_uses = HashMap::new();
+    let mut root_imports = HashMap::new();
     for import in corvid_imports(root_file) {
         let import_path = resolve_import_path(&root_canonical, &import.module);
         let loaded_path = loaded
@@ -150,6 +151,7 @@ pub fn build_module_resolution(
         let Some(module) = all_modules.get(&loaded_path).cloned() else {
             continue;
         };
+        root_imports.insert(import.module.clone(), module.clone());
         if let Some(alias) = import.alias.as_ref() {
             modules.insert(alias.name.clone(), module.clone());
         }
@@ -175,6 +177,7 @@ pub fn build_module_resolution(
         ModuleResolution {
             modules,
             imported_uses,
+            root_imports,
             all_modules,
         },
         errors,

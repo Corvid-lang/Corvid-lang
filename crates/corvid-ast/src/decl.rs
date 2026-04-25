@@ -164,10 +164,14 @@ pub enum ImportSource {
 /// `module` holds either the external module identifier (Python imports)
 /// or the relative filesystem path (Corvid imports). The distinction is
 /// carried by [`source`].
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ImportDecl {
     pub source: ImportSource,
     pub module: String,
+    #[serde(default)]
+    pub required_attributes: Vec<AgentAttribute>,
+    #[serde(default)]
+    pub required_constraints: Vec<EffectConstraint>,
     pub alias: Option<Ident>,
     #[serde(default)]
     pub use_items: Vec<ImportUseItem>,

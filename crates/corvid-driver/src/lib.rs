@@ -964,6 +964,240 @@ agent main(r: Receipt) -> String:
         );
     }
 
+    #[test]
+    fn compile_to_ir_at_path_accepts_import_requires_deterministic() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            tmp.path().join("policy.cor"),
+            "\
+public @deterministic
+agent safe() -> Bool:
+    return true
+",
+        )
+        .unwrap();
+        let main_src = "\
+import \"./policy\" requires @deterministic as p
+
+agent main() -> Bool:
+    return p.safe()
+";
+        let main_path = tmp.path().join("main.cor");
+        std::fs::write(&main_path, main_src).unwrap();
+
+        compile_to_ir_with_config_at_path(main_src, &main_path, None)
+            .expect("deterministic import contract should accept deterministic public exports");
+    }
+
+    #[test]
+    fn compile_to_ir_at_path_rejects_import_requires_deterministic_for_agent_export() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            tmp.path().join("policy.cor"),
+            "\
+public agent unsafe_policy() -> Bool:
+    return true
+",
+        )
+        .unwrap();
+        let main_src = "\
+import \"./policy\" requires @deterministic as p
+
+agent main() -> Bool:
+    return true
+";
+        let main_path = tmp.path().join("main.cor");
+        std::fs::write(&main_path, main_src).unwrap();
+
+        let diagnostics = compile_to_ir_with_config_at_path(main_src, &main_path, None)
+            .expect_err("non-deterministic public export should violate import contract");
+        assert!(
+            diagnostics.iter().any(|diagnostic| diagnostic
+                .message
+                .contains("exported agent is not marked `@deterministic`")),
+            "diagnostics: {diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn compile_to_ir_at_path_rejects_import_requires_deterministic_for_prompt_export() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            tmp.path().join("policy.cor"),
+            "\
+public prompt decide() -> Bool:
+    \"true\"
+",
+        )
+        .unwrap();
+        let main_src = "\
+import \"./policy\" requires @deterministic as p
+
+agent main() -> Bool:
+    return true
+";
+        let main_path = tmp.path().join("main.cor");
+        std::fs::write(&main_path, main_src).unwrap();
+
+        let diagnostics = compile_to_ir_with_config_at_path(main_src, &main_path, None)
+            .expect_err("prompt export should violate deterministic import contract");
+        assert!(
+            diagnostics.iter().any(|diagnostic| diagnostic
+                .message
+                .contains("which is not deterministic at a module boundary")),
+            "diagnostics: {diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn compile_to_ir_at_path_checks_import_required_budget() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            tmp.path().join("policy.cor"),
+            "\
+effect paid:
+    cost: $1.00
+
+tool pay() -> String uses paid
+
+public agent expensive() -> String:
+    return pay()
+",
+        )
+        .unwrap();
+        let main_src = "\
+import \"./policy\" requires @budget($0.50) as p
+
+agent main() -> String:
+    return p.expensive()
+";
+        let main_path = tmp.path().join("main.cor");
+        std::fs::write(&main_path, main_src).unwrap();
+
+        let diagnostics = compile_to_ir_with_config_at_path(main_src, &main_path, None)
+            .expect_err("import budget contract should reject expensive exported agent");
+        assert!(
+            diagnostics.iter().any(|diagnostic| diagnostic
+                .message
+                .contains("dimension `cost`: constraint requires $0.5000, but composed value is $1.0000")),
+            "diagnostics: {diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn compile_to_ir_at_path_accepts_import_required_budget_within_bound() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            tmp.path().join("policy.cor"),
+            "\
+effect paid:
+    cost: $1.00
+
+tool pay() -> String uses paid
+
+public agent expensive() -> String:
+    return pay()
+",
+        )
+        .unwrap();
+        let main_src = "\
+import \"./policy\" requires @budget($2.00) as p
+
+agent main() -> String:
+    return p.expensive()
+";
+        let main_path = tmp.path().join("main.cor");
+        std::fs::write(&main_path, main_src).unwrap();
+
+        compile_to_ir_with_config_at_path(main_src, &main_path, None)
+            .expect("import budget contract should accept exported agent within budget");
+    }
+
+    #[test]
+    fn compile_to_ir_at_path_accepts_import_requires_replayable() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            tmp.path().join("policy.cor"),
+            "\
+public @replayable
+agent replay_safe() -> Bool:
+    return true
+",
+        )
+        .unwrap();
+        let main_src = "\
+import \"./policy\" requires @replayable as p
+
+agent main() -> Bool:
+    return p.replay_safe()
+";
+        let main_path = tmp.path().join("main.cor");
+        std::fs::write(&main_path, main_src).unwrap();
+
+        compile_to_ir_with_config_at_path(main_src, &main_path, None)
+            .expect("replayable import contract should accept replayable exported agents");
+    }
+
+    #[test]
+    fn compile_to_ir_at_path_rejects_import_requires_replayable_for_agent_export() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            tmp.path().join("policy.cor"),
+            "\
+public agent ordinary() -> Bool:
+    return true
+",
+        )
+        .unwrap();
+        let main_src = "\
+import \"./policy\" requires @replayable as p
+
+agent main() -> Bool:
+    return true
+";
+        let main_path = tmp.path().join("main.cor");
+        std::fs::write(&main_path, main_src).unwrap();
+
+        let diagnostics = compile_to_ir_with_config_at_path(main_src, &main_path, None)
+            .expect_err("ordinary exported agent should violate replayable import contract");
+        assert!(
+            diagnostics.iter().any(|diagnostic| diagnostic
+                .message
+                .contains("exported agent is not marked `@replayable` or `@deterministic`")),
+            "diagnostics: {diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn compile_to_ir_at_path_rejects_import_requires_wrapping_as_noop_contract() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            tmp.path().join("policy.cor"),
+            "\
+public agent ordinary() -> Bool:
+    return true
+",
+        )
+        .unwrap();
+        let main_src = "\
+import \"./policy\" requires @wrapping as p
+
+agent main() -> Bool:
+    return true
+";
+        let main_path = tmp.path().join("main.cor");
+        std::fs::write(&main_path, main_src).unwrap();
+
+        let diagnostics = compile_to_ir_with_config_at_path(main_src, &main_path, None)
+            .expect_err("wrapping import requirement should be rejected instead of ignored");
+        assert!(
+            diagnostics.iter().any(|diagnostic| diagnostic
+                .message
+                .contains("`@wrapping` is an agent execution mode")),
+            "diagnostics: {diagnostics:?}"
+        );
+    }
+
     #[tokio::test]
     async fn run_with_runtime_executes_qualified_imported_agent_call() {
         let tmp = tempfile::tempdir().unwrap();

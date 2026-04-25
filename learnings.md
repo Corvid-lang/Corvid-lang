@@ -2971,6 +2971,19 @@ hash-pinned imports, and semantic summaries all need to know where a lifted
 name came from. The language convenience therefore preserves provenance instead
 of hiding it behind wildcard-style namespace merging.
 
+## lang-cor-imports-requires
+
+Imports should carry behavioral contracts, not just names. A policy library
+that was deterministic yesterday should not silently become prompt-backed
+tomorrow while callers continue compiling as if nothing changed.
+
+Corvid now lets the importing file state the boundary requirement directly:
+`import "./policy" requires @deterministic as p` and
+`requires @budget(...)` are checked while the import graph is compiled. The
+important design choice is that this is not a separate trust system; it reuses
+the existing agent attributes and dimensional effect algebra, so module
+boundaries participate in the same safety model as local calls.
+
 ## Contributing / feedback
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). The rules of the road are: design chat before code, per-scope commits at every boundary, dev-log entry for every session, no shortcuts. The `learnings.md` file you're reading gets updated when each user-visible feature ships.

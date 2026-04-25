@@ -3407,6 +3407,8 @@ agent run(x: String) -> Decision:
         all_modules.insert(path, module);
         corvid_resolve::ModuleResolution {
             modules,
+            imported_uses: HashMap::new(),
+            root_imports: HashMap::new(),
             all_modules,
         }
     }

@@ -5094,3 +5094,17 @@ the source module export, the checker typechecks calls and type references in
 the imported module's context, and IR lowering still calls the appended
 imported declaration by stable synthetic DefId. Local shadowing is rejected by
 the resolver's duplicate-declaration rule.
+
+## 2026-04-25 - effect-typed Corvid imports
+
+Closed `lang-cor-imports-requires` and the Corvid imports roll-up. Imports can
+now carry compile-time boundary requirements such as
+`import "./policy" requires @deterministic as p` and
+`import "./policy" requires @budget($0.50) as p`.
+
+The implementation is intentionally a real module-boundary check, not a doc
+claim: deterministic imports require exported agents to be marked
+`@deterministic` and reject public tool/prompt exports, while dimensional
+requirements reuse the effect registry/analyzer against exported imported
+agents. The parser also now accepts `public @deterministic agent ...`, which is
+needed for libraries to export explicit deterministic contracts.
