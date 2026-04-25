@@ -94,24 +94,111 @@ fn emit_js_loader(
     out.push_str("function missing(kind, name) {\n");
     out.push_str("  throw new Error(`Corvid WASM host ${kind} '${name}' is not provided`);\n");
     out.push_str("}\n\n");
-    out.push_str("export function adaptImports(host = {}) {\n");
+    out.push_str("function traceValue(value) {\n");
+    out.push_str("  if (typeof value === 'bigint') {\n");
+    out.push_str("    const asNumber = Number(value);\n");
+    out.push_str("    return Number.isSafeInteger(asNumber) ? asNumber : value.toString();\n");
+    out.push_str("  }\n");
+    out.push_str("  return value;\n");
+    out.push_str("}\n\n");
+    out.push_str("function freshRunId() {\n");
+    out.push_str("  if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID();\n");
+    out.push_str("  return `wasm-${Date.now()}-${Math.random().toString(16).slice(2)}`;\n");
+    out.push_str("}\n\n");
+    out.push_str("function makeTraceContext(trace) {\n");
+    out.push_str("  const sink = trace ?? null;\n");
+    out.push_str("  return {\n");
+    out.push_str("    activeRunId: null,\n");
+    out.push_str("    emit(event) {\n");
+    out.push_str("      if (!sink) return;\n");
+    out.push_str("      if (Array.isArray(sink)) sink.push(event);\n");
+    out.push_str("      else if (typeof sink === 'function') sink(event);\n");
+    out.push_str("      else if (Array.isArray(sink.events)) sink.events.push(event);\n");
+    out.push_str("    },\n");
+    out.push_str("    beginRun(agent, args) {\n");
+    out.push_str("      const runId = freshRunId();\n");
+    out.push_str("      this.activeRunId = runId;\n");
+    out.push_str("      this.emit({ kind: 'schema_header', version: 2, writer: 'corvid-codegen-wasm', commit_sha: null, source_path: null, ts_ms: Date.now(), run_id: runId });\n");
+    out.push_str("      this.emit({ kind: 'run_started', ts_ms: Date.now(), run_id: runId, agent, args: args.map(traceValue) });\n");
+    out.push_str("      return runId;\n");
+    out.push_str("    },\n");
+    out.push_str("    completeRun(runId, ok, result, error) {\n");
+    out.push_str("      this.emit({ kind: 'run_completed', ts_ms: Date.now(), run_id: runId, ok, result: result === undefined ? null : traceValue(result), error: error ?? null });\n");
+    out.push_str("      this.activeRunId = null;\n");
+    out.push_str("    },\n");
+    out.push_str("  };\n");
+    out.push_str("}\n\n");
+    out.push_str("function adaptImportsWithContext(host = {}, traceContext) {\n");
     out.push_str("  return {\n");
     out.push_str("    'corvid:host': {\n");
     for import in imports {
-        out.push_str(&format!(
-            "      '{}': (...args) => (host.{}?.['{}'] ?? (() => missing('{}', '{}')))(...args),\n",
-            import.import_name,
+        let call_line = format!(
+            "(host.{}?.['{}'] ?? (() => missing('{}', '{}')))(...args)",
             import.kind.namespace(),
             import.source_name,
             import.kind.label(),
             import.source_name
+        );
+        let run_id = "const runId = traceContext.activeRunId ?? freshRunId();\n";
+        let args_event = "args: args.map(traceValue)";
+        out.push_str(&format!(
+            "      '{}': (...args) => {{\n",
+            import.import_name
         ));
+        out.push_str("        ");
+        out.push_str(run_id);
+        match import.kind.label() {
+            "prompt" => {
+                out.push_str(&format!(
+                    "        traceContext.emit({{ kind: 'llm_call', ts_ms: Date.now(), run_id: runId, prompt: '{}', model: null, model_version: null, rendered: null, {} }});\n",
+                    import.source_name, args_event
+                ));
+                out.push_str(&format!("        const result = {};\n", call_line));
+                out.push_str(&format!(
+                    "        traceContext.emit({{ kind: 'llm_result', ts_ms: Date.now(), run_id: runId, prompt: '{}', model: null, model_version: null, result: traceValue(result) }});\n",
+                    import.source_name
+                ));
+            }
+            "tool" => {
+                out.push_str(&format!(
+                    "        traceContext.emit({{ kind: 'tool_call', ts_ms: Date.now(), run_id: runId, tool: '{}', {} }});\n",
+                    import.source_name, args_event
+                ));
+                out.push_str(&format!("        const result = {};\n", call_line));
+                out.push_str(&format!(
+                    "        traceContext.emit({{ kind: 'tool_result', ts_ms: Date.now(), run_id: runId, tool: '{}', result: traceValue(result) }});\n",
+                    import.source_name
+                ));
+            }
+            "approval" => {
+                out.push_str(&format!(
+                    "        traceContext.emit({{ kind: 'approval_request', ts_ms: Date.now(), run_id: runId, label: '{}', {} }});\n",
+                    import.source_name, args_event
+                ));
+                out.push_str(&format!("        const result = Boolean({});\n", call_line));
+                out.push_str(&format!(
+                    "        traceContext.emit({{ kind: 'approval_decision', ts_ms: Date.now(), run_id: runId, site: '{}', args: args.map(traceValue), accepted: result, decider: 'wasm-host', rationale: null }});\n",
+                    import.source_name
+                ));
+                out.push_str(&format!(
+                    "        traceContext.emit({{ kind: 'approval_response', ts_ms: Date.now(), run_id: runId, label: '{}', approved: result }});\n",
+                    import.source_name
+                ));
+            }
+            _ => {}
+        }
+        out.push_str("        return result;\n");
+        out.push_str("      },\n");
     }
     out.push_str("    },\n");
     out.push_str("  };\n");
     out.push_str("}\n\n");
-    out.push_str("export async function instantiate(hostOrImports = {}) {\n");
-    out.push_str("  const imports = hostOrImports['corvid:host'] ? hostOrImports : adaptImports(hostOrImports);\n");
+    out.push_str("export function adaptImports(host = {}, trace = undefined) {\n");
+    out.push_str("  return adaptImportsWithContext(host, makeTraceContext(trace));\n");
+    out.push_str("}\n\n");
+    out.push_str("export async function instantiate(hostOrImports = {}, options = {}) {\n");
+    out.push_str("  const traceContext = makeTraceContext(options.trace);\n");
+    out.push_str("  const imports = hostOrImports['corvid:host'] ? hostOrImports : adaptImportsWithContext(hostOrImports, traceContext);\n");
     out.push_str("  const source = await WebAssembly.instantiateStreaming(fetch(WASM_URL), imports).catch(async () => {\n");
     out.push_str("    const bytes = await fetch(WASM_URL).then((r) => r.arrayBuffer());\n");
     out.push_str("    return WebAssembly.instantiate(bytes, imports);\n");
@@ -126,23 +213,55 @@ fn emit_js_loader(
             .collect::<Vec<_>>()
             .join(", ");
         out.push_str(&format!("    {}({}) {{\n", agent.name, params));
+        let args_array = if params.is_empty() {
+            "[]".to_string()
+        } else {
+            format!("[{params}]")
+        };
+        out.push_str(&format!(
+            "      const runId = traceContext.beginRun('{}', {});\n",
+            agent.name, args_array
+        ));
         match agent.return_ty {
             Type::Nothing => {
-                out.push_str(&format!("      exports.{}({});\n", agent.name, params));
-                out.push_str("      return undefined;\n");
+                out.push_str("      try {\n");
+                out.push_str(&format!("        exports.{}({});\n", agent.name, params));
+                out.push_str("        traceContext.completeRun(runId, true, undefined, null);\n");
+                out.push_str("        return undefined;\n");
+                out.push_str("      } catch (error) {\n");
+                out.push_str("        traceContext.completeRun(runId, false, undefined, String(error?.message ?? error));\n");
+                out.push_str("        throw error;\n");
+                out.push_str("      }\n");
             }
             Type::Bool => {
+                out.push_str("      try {\n");
                 out.push_str(&format!(
-                    "      const result = exports.{}({});\n",
+                    "        const result = exports.{}({});\n",
                     agent.name, params
                 ));
+                out.push_str("        const value = Boolean(result);\n");
+                out.push_str("        traceContext.completeRun(runId, true, value, null);\n");
                 out.push_str(&format!(
-                    "      return {};\n",
+                    "        return {};\n",
                     js_return_expr("result", &agent.return_ty)
                 ));
+                out.push_str("      } catch (error) {\n");
+                out.push_str("        traceContext.completeRun(runId, false, undefined, String(error?.message ?? error));\n");
+                out.push_str("        throw error;\n");
+                out.push_str("      }\n");
             }
             _ => {
-                out.push_str(&format!("      return exports.{}({});\n", agent.name, params));
+                out.push_str("      try {\n");
+                out.push_str(&format!(
+                    "        const result = exports.{}({});\n",
+                    agent.name, params
+                ));
+                out.push_str("        traceContext.completeRun(runId, true, result, null);\n");
+                out.push_str("        return result;\n");
+                out.push_str("      } catch (error) {\n");
+                out.push_str("        traceContext.completeRun(runId, false, undefined, String(error?.message ?? error));\n");
+                out.push_str("        throw error;\n");
+                out.push_str("      }\n");
             }
         }
         out.push_str("    },\n");
@@ -195,10 +314,16 @@ fn emit_ts_types(
     }
     out.push_str("}\n\n");
     out.push_str(
-        "export function adaptImports(host?: CorvidWasmHost): WebAssembly.Imports;\n",
+        "export type CorvidWasmTraceSink = Array<Record<string, unknown>> | ((event: Record<string, unknown>) => void) | { events: Array<Record<string, unknown>> };\n",
     );
     out.push_str(
-        "export function instantiate(hostOrImports?: WebAssembly.Imports | CorvidWasmHost): Promise<CorvidWasmModule>;\n",
+        "export interface CorvidWasmInstantiateOptions { trace?: CorvidWasmTraceSink; }\n",
+    );
+    out.push_str(
+        "export function adaptImports(host?: CorvidWasmHost, trace?: CorvidWasmTraceSink): WebAssembly.Imports;\n",
+    );
+    out.push_str(
+        "export function instantiate(hostOrImports?: WebAssembly.Imports | CorvidWasmHost, options?: CorvidWasmInstantiateOptions): Promise<CorvidWasmModule>;\n",
     );
     Ok(out)
 }
@@ -262,7 +387,6 @@ fn emit_manifest(
         imports,
         host_capability_abi: "corvid:host scalar imports v1",
         non_scope: vec![
-            "replay trace recording in JS",
             "string and struct ABI",
             "provenance handles",
             "streaming host callbacks",

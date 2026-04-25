@@ -842,7 +842,10 @@ agent main() -> Int:
             .validate_all(&artifacts.wasm)
             .expect("valid wasm");
         assert!(artifacts.js_loader.contains("'prompt.answer'"));
+        assert!(artifacts.js_loader.contains("kind: 'llm_call'"));
+        assert!(artifacts.js_loader.contains("kind: 'run_started'"));
         assert!(artifacts.ts_types.contains("'answer': () => bigint"));
+        assert!(artifacts.ts_types.contains("CorvidWasmTraceSink"));
         assert!(artifacts.manifest_json.contains("\"kind\": \"prompt\""));
     }
 
@@ -863,6 +866,8 @@ agent refund(amount: Int) -> Int:
             .expect("valid wasm");
         assert!(artifacts.js_loader.contains("'approve.IssueRefund'"));
         assert!(artifacts.js_loader.contains("'tool.issue_refund'"));
+        assert!(artifacts.js_loader.contains("kind: 'approval_decision'"));
+        assert!(artifacts.js_loader.contains("kind: 'tool_result'"));
         assert!(artifacts.ts_types.contains("'IssueRefund': (arg1: bigint) => boolean"));
         assert!(artifacts.ts_types.contains("'issue_refund': (amount: bigint) => bigint"));
     }

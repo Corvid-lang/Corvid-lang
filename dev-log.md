@@ -5238,3 +5238,17 @@ The implementation is intentionally scoped to scalar values. Strings, structs,
 provenance handles, stream callbacks, and JS-side trace recording remain
 separate Phase 23 slices so the browser ABI preserves Corvid's safety contracts
 instead of flattening them into untyped glue.
+
+## 2026-04-25 - WASM loader trace recording
+
+Closed `23-C-wasm-replay` for generated-loader tracing. The ES loader now
+accepts `instantiate(host, { trace })`; `trace` can be an array, callback, or
+object with an `events` array. Agent wrappers emit schema-v2 run boundaries, and
+host prompt/tool/approval imports emit the same event taxonomy as Phase 21:
+`llm_call/result`, `tool_call/result`, and
+`approval_request/decision/response`.
+
+This does not claim full `corvid replay` execution over WASM modules yet. The
+important invariant for this slice is schema alignment: browser/edge host calls
+are no longer opaque glue, and the recorded events are shaped for the existing
+trace readers.

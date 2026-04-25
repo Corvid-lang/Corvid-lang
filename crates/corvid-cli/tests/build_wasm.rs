@@ -97,4 +97,8 @@ agent main() -> Int:
     assert!(manifest.contains("\"import_name\": \"prompt.answer\""));
     let types = std::fs::read_to_string(out_dir.join("prompted.d.ts")).expect("types");
     assert!(types.contains("'answer': () => bigint"));
+    assert!(types.contains("CorvidWasmTraceSink"));
+    let js = std::fs::read_to_string(out_dir.join("prompted.js")).expect("loader");
+    assert!(js.contains("kind: 'llm_call'"));
+    assert!(js.contains("kind: 'run_completed'"));
 }

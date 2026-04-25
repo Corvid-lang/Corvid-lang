@@ -3105,6 +3105,18 @@ that calls an LLM compiles to WASM plus a visible host capability requirement.
 The next hard part is making those host calls write the same replay traces as
 native and interpreter runs.
 
+## wasm trace recording
+
+The generated WASM loader now treats host calls as traceable events. That is the
+difference between "Corvid can run in a browser" and "Corvid's replay contract
+survives in a browser." Prompt, tool, approval, and run-boundary events use the
+same schema names as the interpreter and native tiers.
+
+The remaining gap is execution harnessing: the browser can record compatible
+events, but `corvid replay` does not yet drive a WASM module through a
+Wasmtime/Wasmer host. That distinction matters because trace shape compatibility
+is necessary but not sufficient for deterministic replay.
+
 ## Contributing / feedback
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). The rules of the road are: design chat before code, per-scope commits at every boundary, dev-log entry for every session, no shortcuts. The `learnings.md` file you're reading gets updated when each user-visible feature ships.

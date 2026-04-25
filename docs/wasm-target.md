@@ -25,6 +25,14 @@ The generated JS loader exposes `adaptImports(host)` so browser and edge hosts
 can provide `{ prompts, tools, approvals }` maps without writing raw
 `WebAssembly.Imports` objects by hand.
 
+`instantiate(host, { trace })` records Phase 21-style trace events while the
+WASM module runs. `trace` may be an array, a callback, or an object with an
+`events` array. The loader emits schema-v2 `schema_header`, `run_started`,
+`llm_call/result`, `tool_call/result`, `approval_request/decision/response`,
+and `run_completed` events for scalar host imports. BigInt values are converted
+to JSON-safe numbers when possible, or strings when they exceed JavaScript's
+safe integer range.
+
 Unsupported AI-native features still fail loudly. Strings, structs,
 provenance handles, stream callbacks, and replay trace recording require the
 next host ABI slices. Browser and edge deployment must preserve Corvid's effect,
@@ -55,6 +63,7 @@ export function instantiate(imports?: WebAssembly.Imports): Promise<CorvidWasmMo
 
 ## Next Slice
 
-The next Phase 23 slice is replay-compatible host tracing: JS-side prompt,
-tool, and approval imports must write Phase 21 trace events so native-captured
-and WASM-captured runs share one replay format.
+The next Phase 23 slice is a browser smoke demo that loads a generated module,
+provides typed host capabilities, records a trace, and displays the approval
+boundary in UI. Full `corvid replay` execution against WASM modules belongs in
+the Wasmtime/Wasmer parity harness slice.
