@@ -426,6 +426,10 @@ pub enum IrExprKind {
 
     List { items: Vec<IrExpr> },
 
+    /// `grounded.unwrap_discarding_sources()` — consciously erase the
+    /// provenance wrapper and keep the inner value.
+    UnwrapGrounded { value: Box<IrExpr> },
+
     WeakNew { strong: Box<IrExpr> },
     WeakUpgrade { weak: Box<IrExpr> },
     ResultOk { inner: Box<IrExpr> },

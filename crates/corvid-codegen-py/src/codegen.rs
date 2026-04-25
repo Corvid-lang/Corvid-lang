@@ -289,6 +289,9 @@ impl Codegen {
                 self.out.write(unary_op_str(*op));
                 self.emit_expr(operand);
             }
+            IrExprKind::UnwrapGrounded { value } => {
+                self.emit_expr(value);
+            }
             IrExprKind::List { items } => {
                 self.out.write("[");
                 self.emit_expr_list(items);

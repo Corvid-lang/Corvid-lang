@@ -327,6 +327,7 @@ fn scan_expr(expr: &IrExpr, max_id: &mut u32) {
         }
         IrExprKind::Literal(_) | IrExprKind::Decl { .. } | IrExprKind::OptionNone => {}
         IrExprKind::FieldAccess { target, .. } => scan_expr(target, max_id),
+        IrExprKind::UnwrapGrounded { value } => scan_expr(value, max_id),
         IrExprKind::Index { target, index } => {
             scan_expr(target, max_id);
             scan_expr(index, max_id);
@@ -376,6 +377,7 @@ fn expr_reads_local(expr: &IrExpr, target: LocalId) -> bool {
         IrExprKind::Local { local_id, .. } => *local_id == target,
         IrExprKind::Literal(_) | IrExprKind::Decl { .. } | IrExprKind::OptionNone => false,
         IrExprKind::FieldAccess { target: t, .. } => expr_reads_local(t, target),
+        IrExprKind::UnwrapGrounded { value } => expr_reads_local(value, target),
         IrExprKind::Index { target: t, index } => {
             expr_reads_local(t, target) || expr_reads_local(index, target)
         }

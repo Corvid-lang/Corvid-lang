@@ -216,6 +216,7 @@ fn scan_expr(expr: &IrExpr, current_return_ty: &Type) -> Result<(), NotNativeRea
             Ok(())
         }
         IrExprKind::FieldAccess { target, .. } => scan_expr(target, current_return_ty),
+        IrExprKind::UnwrapGrounded { value } => scan_expr(value, current_return_ty),
         IrExprKind::Index { target, index } => {
             scan_expr(target, current_return_ty)?;
             scan_expr(index, current_return_ty)

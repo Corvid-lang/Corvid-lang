@@ -410,6 +410,23 @@ impl<'ir> Interpreter<'ir> {
                 }
             }
 
+            IrExprKind::UnwrapGrounded { value } => {
+                let value = match self.eval_expr(value).await?.into_value() {
+                    Ok(v) => v,
+                    Err(v) => return Ok(ExprFlow::Propagate(v)),
+                };
+                match value {
+                    Value::Grounded(grounded) => Ok(ExprFlow::Value(grounded.inner.get())),
+                    other => Err(InterpError::new(
+                        InterpErrorKind::TypeMismatch {
+                            expected: "Grounded<T>".into(),
+                            got: other.type_name(),
+                        },
+                        expr.span,
+                    )),
+                }
+            }
+
             IrExprKind::Index { target, index } => {
                 let t = match self.eval_expr(target).await?.into_value() {
                     Ok(v) => v,
@@ -898,5 +915,4 @@ fn maybe_ground_tool_result(tool: &IrTool, callee_name: &str, value: Value) -> V
     let chain = crate::ProvenanceChain::with_retrieval(callee_name, corvid_runtime::now_ms());
     Value::Grounded(crate::value::GroundedValue::new(value, chain))
 }
-
 

@@ -46,6 +46,7 @@ fn expr_uses_runtime(expr: &IrExpr) -> bool {
             self_needs || args.iter().any(expr_uses_runtime)
         }
         IrExprKind::FieldAccess { target, .. } => expr_uses_runtime(target),
+        IrExprKind::UnwrapGrounded { value } => expr_uses_runtime(value),
         IrExprKind::Index { target, index } => {
             expr_uses_runtime(target) || expr_uses_runtime(index)
         }

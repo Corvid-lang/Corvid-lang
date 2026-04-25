@@ -366,6 +366,24 @@ impl<'a> Checker<'a> {
     ) -> Type {
         // 1. Typecheck the receiver and require a struct type.
         let recv_ty = self.check_expr(target);
+        if let Type::Grounded(inner) = &recv_ty {
+            if method_name.name == "unwrap_discarding_sources" {
+                if args.len() != 0 {
+                    self.errors.push(TypeError::new(
+                        TypeErrorKind::ArityMismatch {
+                            callee: method_name.name.clone(),
+                            expected: 0,
+                            got: args.len(),
+                        },
+                        span,
+                    ));
+                    for a in args {
+                        let _ = self.check_expr(a);
+                    }
+                }
+                return (**inner).clone();
+            }
+        }
         let recv_def_id = match recv_ty {
             Type::Struct(id) => id,
             other => {

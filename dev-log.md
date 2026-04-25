@@ -4673,3 +4673,11 @@ Two runtime boundary issues surfaced during real VM tests and were fixed instead
 Closed the native half of `cites ctx strictly`. Citation phrase matching now lives in `corvid-runtime::citation`, shared by the VM and the FFI bridge. Codegen-cl imports `corvid_citation_verify_or_panic`, emits it after prompt bridge calls, stringifies scalar responses when needed, and treats `Grounded<T>` as the inner `T` for prompt interpolation and trace payload encoding.
 
 Native parity tests now cover both accepted and rejected strict-citation responses using the `grounded_echo` retrieval-backed test tool. Rebuilding `corvid-test-tools` release was required locally because the staticlib bundles runtime FFI symbols.
+
+## 2026-04-25 - Phase 20b explicit provenance discard
+
+Shipped `Grounded<T>.unwrap_discarding_sources()` as an explicit source-level provenance drop. The checker recognizes it as a zero-argument built-in method on `Grounded<T>` and returns the inner `T`; wrong arity now produces the ordinary typed arity diagnostic.
+
+Lowering emits a dedicated `IrExprKind::UnwrapGrounded` node instead of leaving the operation as an unresolved method call. The interpreter unwraps `Value::Grounded` to its inner value, while native codegen lowers the wrapper erasure as the inner ABI value because `Grounded<T>` is represented as `T` on the native hot path. ABI and optimization walkers recurse through the node explicitly.
+
+One native ownership detail was fixed with the feature: `Grounded<T>` is now treated as refcounted whenever `T` is refcounted. That keeps string-backed grounded values under the same retain/release contract as their payloads.

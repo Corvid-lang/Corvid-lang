@@ -396,6 +396,37 @@ prompt answer(question: String, ctx: Grounded<String>) -> Grounded<String>:
         assert_eq!(prompt.cites_strictly_param, Some(1));
     }
 
+    #[test]
+    fn grounded_unwrap_lowers_to_explicit_ir_node() {
+        let src = "\
+effect retrieval:
+    data: grounded
+
+tool fetch_doc(id: String) -> Grounded<String> uses retrieval
+
+agent load(id: String) -> String:
+    doc = fetch_doc(id)
+    return doc.unwrap_discarding_sources()
+";
+        let ir = lower_src(src);
+        let agent = ir.agents.iter().find(|a| a.name == "load").unwrap();
+        let ret = agent
+            .body
+            .stmts
+            .iter()
+            .find_map(|stmt| match stmt {
+                IrStmt::Return { value: Some(value), .. } => Some(value),
+                _ => None,
+            })
+            .expect("return value");
+        assert!(
+            matches!(ret.kind, IrExprKind::UnwrapGrounded { .. }),
+            "expected UnwrapGrounded, got {:?}",
+            ret.kind
+        );
+        assert_eq!(ret.ty, corvid_types::Type::String);
+    }
+
     // ============================================================
     // Replay IR lowering (21-inv-E-4)
     // ============================================================
@@ -453,6 +484,7 @@ prompt answer(question: String, ctx: Grounded<String>) -> Grounded<String>:
                 args.iter().find_map(find_replay_in_expr)
             }
             IrExprKind::FieldAccess { target, .. }
+            | IrExprKind::UnwrapGrounded { value: target }
             | IrExprKind::WeakNew { strong: target }
             | IrExprKind::WeakUpgrade { weak: target }
             | IrExprKind::ResultOk { inner: target }
@@ -617,6 +649,7 @@ agent run(x: String) -> Order:
             IrExprKind::Local { local_id, .. } => *local_id == target,
             IrExprKind::Call { args, .. } => args.iter().any(|a| expr_mentions_local_id(a, target)),
             IrExprKind::FieldAccess { target: t, .. } => expr_mentions_local_id(t, target),
+            IrExprKind::UnwrapGrounded { value } => expr_mentions_local_id(value, target),
             IrExprKind::Index { target: t, index } => {
                 expr_mentions_local_id(t, target) || expr_mentions_local_id(index, target)
             }

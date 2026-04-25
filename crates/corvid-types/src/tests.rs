@@ -1183,6 +1183,46 @@ agent load(id: String) -> Grounded<String>:
     }
 
     #[test]
+    fn grounded_unwrap_discarding_sources_returns_inner_type() {
+        let src = "\
+effect retrieval:
+    data: grounded
+
+tool fetch_doc(id: String) -> Grounded<String> uses retrieval
+
+agent load(id: String) -> String:
+    doc = fetch_doc(id)
+    return doc.unwrap_discarding_sources()
+";
+        let c = check(src);
+        assert!(c.errors.is_empty(), "errors: {:?}", c.errors);
+    }
+
+    #[test]
+    fn grounded_unwrap_discarding_sources_rejects_arguments() {
+        let src = "\
+effect retrieval:
+    data: grounded
+
+tool fetch_doc(id: String) -> Grounded<String> uses retrieval
+
+agent load(id: String) -> String:
+    doc = fetch_doc(id)
+    return doc.unwrap_discarding_sources(1)
+";
+        let c = check(src);
+        assert!(
+            c.errors.iter().any(|e| matches!(
+                &e.kind,
+                TypeErrorKind::ArityMismatch { callee, expected: 0, got: 1 }
+                    if callee == "unwrap_discarding_sources"
+            )),
+            "got: {:?}",
+            c.errors
+        );
+    }
+
+    #[test]
     fn mutation_missing_approve_and_ungrounded_return_report_both() {
         // Safety checks must accumulate; one violation must not hide the other.
         let src = r#"

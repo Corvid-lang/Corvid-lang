@@ -201,6 +201,7 @@ fn count_local_mentions_expr(expr: &IrExpr, local_id: LocalId) -> usize {
             .map(|arg| count_local_mentions_expr(arg, local_id))
             .sum(),
         IrExprKind::FieldAccess { target, .. }
+        | IrExprKind::UnwrapGrounded { value: target }
         | IrExprKind::WeakNew { strong: target }
         | IrExprKind::WeakUpgrade { weak: target }
         | IrExprKind::ResultOk { inner: target }
@@ -240,6 +241,7 @@ fn expr_observes_refcount(expr: &IrExpr, local_id: LocalId) -> bool {
                 || args.iter().any(|arg| expr_observes_refcount(arg, local_id))
         }
         IrExprKind::FieldAccess { target, .. }
+        | IrExprKind::UnwrapGrounded { value: target }
         | IrExprKind::WeakUpgrade { weak: target }
         | IrExprKind::ResultOk { inner: target }
         | IrExprKind::ResultErr { inner: target }

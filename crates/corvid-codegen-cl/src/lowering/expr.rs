@@ -934,6 +934,18 @@ pub(super) fn lower_expr(
             let v = lower_expr(builder, operand, current_return_ty, env, scope_stack, func_ids_by_def, module, runtime)?;
             lower_unop(builder, *op, v, expr.span, module, runtime)
         }
+        IrExprKind::UnwrapGrounded { value } => {
+            lower_expr(
+                builder,
+                value,
+                current_return_ty,
+                env,
+                scope_stack,
+                func_ids_by_def,
+                module,
+                runtime,
+            )
+        }
         IrExprKind::Call { kind, callee_name, args } => match kind {
             IrCallKind::Agent { def_id } => {
                 let callee_id = func_ids_by_def.get(def_id).ok_or_else(|| {

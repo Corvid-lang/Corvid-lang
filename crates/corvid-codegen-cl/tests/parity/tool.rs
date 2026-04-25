@@ -119,6 +119,31 @@ fn tool_returns_int_directly() {
 }
 
 #[test]
+fn grounded_unwrap_discarding_sources_native_matches_interpreter() {
+    let src = r#"
+effect retrieval:
+    data: grounded
+
+tool grounded_echo(s: String) -> Grounded<String> uses retrieval
+tool string_len(s: String) -> Int
+
+agent main() -> Int:
+    doc = grounded_echo("hello")
+    raw = doc.unwrap_discarding_sources()
+    return string_len(raw)
+"#;
+    assert_parity_prebuilt_tools(src, 5, |builder| {
+        builder
+            .tool("grounded_echo", |args| async move {
+                Ok(serde_json::json!(args[0].as_str().unwrap()))
+            })
+            .tool("string_len", |args| async move {
+                Ok(serde_json::json!(args[0].as_str().unwrap().chars().count() as i64))
+            })
+    });
+}
+
+#[test]
 fn tool_result_in_arithmetic() {
     assert_parity_with_mock_tools(
         "tool base() -> Int\n\nagent main() -> Int:\n    return base() * 2 + 5\n",

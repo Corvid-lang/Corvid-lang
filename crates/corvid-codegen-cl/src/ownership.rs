@@ -294,6 +294,7 @@ fn expr_consumes_target(
         }
         IrExprKind::UnOp { operand, .. } => expr_consumes_target(operand, target, sigs),
         IrExprKind::FieldAccess { target: t, .. } => expr_consumes_target(t, target, sigs),
+        IrExprKind::UnwrapGrounded { value } => expr_consumes_target(value, target, sigs),
         IrExprKind::Index { target: t, index } => {
             expr_consumes_target(t, target, sigs)
                 || expr_consumes_target(index, target, sigs)
@@ -363,6 +364,7 @@ fn expr_references(expr: &IrExpr, target: LocalId) -> bool {
         }
         IrExprKind::UnOp { operand, .. } => expr_references(operand, target),
         IrExprKind::FieldAccess { target: t, .. } => expr_references(t, target),
+        IrExprKind::UnwrapGrounded { value } => expr_references(value, target),
         IrExprKind::Index { target: t, index } => {
             expr_references(t, target) || expr_references(index, target)
         }

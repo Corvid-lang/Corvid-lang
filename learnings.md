@@ -2454,6 +2454,32 @@ bridge calls, then attach or verify provenance at explicit runtime boundaries.
 That keeps the native tier behaviorally identical to the interpreter without
 inventing a second citation checker in Cranelift.
 
+## 20b-explicit-provenance-discard
+
+Use `.unwrap_discarding_sources()` when a program intentionally drops
+`Grounded<T>` evidence and continues with the inner `T`:
+
+```corvid
+effect retrieval:
+    data: grounded
+
+tool fetch_doc(id: String) -> Grounded<String> uses retrieval
+
+agent export_text(id: String) -> String:
+    doc = fetch_doc(id)
+    return doc.unwrap_discarding_sources()
+```
+
+The method takes no arguments and only exists on `Grounded<T>`. It is not a
+runtime conversion in native code; `Grounded<T>` is represented as the inner
+payload on the hot path, so the explicit IR node records intent for the
+compiler while preserving the efficient ABI shape.
+
+This is a visibility feature as much as a convenience feature. Corvid still
+keeps legacy `Grounded<T>`-to-`T` assignability for compatibility today, but
+new code should prefer the method so provenance erasure is visible in source,
+IR, reviews, and future policy tooling.
+
 ## Contributing / feedback
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). The rules of the road are: design chat before code, per-scope commits at every boundary, dev-log entry for every session, no shortcuts. The `learnings.md` file you're reading gets updated when each user-visible feature ships.

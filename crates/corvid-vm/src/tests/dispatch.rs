@@ -43,6 +43,31 @@ agent run(n: Int) -> Int:
 }
 
 #[tokio::test]
+async fn grounded_unwrap_discarding_sources_returns_inner_value() {
+    let src = "\
+effect retrieval:
+    data: grounded
+
+tool fetch_doc(id: String) -> Grounded<String> uses retrieval
+
+agent run(id: String) -> String:
+    doc = fetch_doc(id)
+    return doc.unwrap_discarding_sources()
+";
+    let ir = ir_of(src);
+    let rt = Runtime::builder()
+        .tool("fetch_doc", |args| async move {
+            let id = args[0].as_str().unwrap();
+            Ok(json!(format!("doc:{id}")))
+        })
+        .build();
+    let v = run_agent(&ir, "run", vec![Value::String(Arc::from("42"))], &rt)
+        .await
+        .expect("run");
+    assert_eq!(v, Value::String(Arc::from("doc:42")));
+}
+
+#[tokio::test]
 async fn approve_then_dangerous_tool_call_succeeds_with_yes_approver() {
     let src = "\
 type Receipt:

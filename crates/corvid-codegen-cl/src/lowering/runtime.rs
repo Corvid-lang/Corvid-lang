@@ -2157,6 +2157,9 @@ fn visit_expr_types(
         IrExprKind::FieldAccess { target, .. } => {
             visit_expr_types(target, seen, order, visit);
         }
+        IrExprKind::UnwrapGrounded { value } => {
+            visit_expr_types(value, seen, order, visit);
+        }
         IrExprKind::Index { target, index } => {
             visit_expr_types(target, seen, order, visit);
             visit_expr_types(index, seen, order, visit);
@@ -2233,6 +2236,7 @@ pub(super) fn is_refcounted_type(ty: &Type) -> bool {
         | Type::Weak(_, _)
         | Type::Result(_, _) => true,
         Type::Option(inner) => is_native_wide_option_type(ty) || is_refcounted_type(inner),
+        Type::Grounded(inner) => is_refcounted_type(inner),
         _ => false,
     }
 }

@@ -203,6 +203,7 @@ fn expr_mentions_local(expr: &IrExpr, local_id: LocalId) -> bool {
             args.iter().any(|arg| expr_mentions_local(arg, local_id))
         }
         IrExprKind::FieldAccess { target, .. }
+        | IrExprKind::UnwrapGrounded { value: target }
         | IrExprKind::WeakNew { strong: target }
         | IrExprKind::WeakUpgrade { weak: target }
         | IrExprKind::ResultOk { inner: target }
@@ -251,6 +252,7 @@ fn expr_is_effect_free(expr: &IrExpr) -> bool {
         }
         IrExprKind::Call { .. }
         | IrExprKind::FieldAccess { .. }
+        | IrExprKind::UnwrapGrounded { .. }
         | IrExprKind::Index { .. }
         | IrExprKind::List { .. }
         | IrExprKind::WeakNew { .. }

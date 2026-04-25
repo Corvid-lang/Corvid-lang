@@ -834,6 +834,9 @@ impl<'a> Lowerer<'a> {
             if let Some(rewrite) = self.try_imported_call(callee, field, args) {
                 return rewrite;
             }
+            if let Some(rewrite) = self.try_grounded_builtin_call(target, field, args) {
+                return rewrite;
+            }
             if let Some(rewrite) = self.try_method_call(target, field, args) {
                 return rewrite;
             }
@@ -989,6 +992,23 @@ impl<'a> Lowerer<'a> {
             callee_name: field.name.clone(),
             args: lowered_args,
         })
+    }
+
+    fn try_grounded_builtin_call(
+        &self,
+        target: &Expr,
+        field: &Ident,
+        args: &[Expr],
+    ) -> Option<IrExprKind> {
+        if field.name != "unwrap_discarding_sources" || !args.is_empty() {
+            return None;
+        }
+        match self.types.get(&target.span())? {
+            Type::Grounded(_) => Some(IrExprKind::UnwrapGrounded {
+                value: Box::new(self.lower_expr(target)),
+            }),
+            _ => None,
+        }
     }
 
     fn try_imported_call(

@@ -524,7 +524,7 @@ The invention: groundedness is not an annotation — it's a compile-time provena
 - [x] Provenance flows compositionally across agent boundaries: if agent B calls a grounded tool and agent A calls B, A's return inherits B's groundedness.
 - [x] `cites ctx strictly` runtime annotation in syntax, typechecking, IR, and interpreter: compile-time proves the cited prompt parameter is `Grounded<T>`; the VM verifies the response cites content from the grounded payload.
 - [x] Native `cites ctx strictly` emission in Cranelift/codegen-cl so compiled prompts enforce the same citation check as the interpreter.
-- [ ] `.unwrap_discarding_sources()` method on `Grounded<T>` for when the caller consciously drops provenance.
+- [x] `.unwrap_discarding_sources()` method on `Grounded<T>` for when the caller consciously drops provenance. Typechecker, explicit IR node, VM behavior, native lowering, and ABI/codegen IR walkers are implemented.
 - [x] Built-in `retrieval` effect with `data: grounded` dimension registered in the `EffectRegistry` so tools can declare themselves as grounded sources.
 
 #### Slice 20c — `eval ... assert ...` language syntax (~2 weeks)

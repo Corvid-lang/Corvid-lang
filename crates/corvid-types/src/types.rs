@@ -133,8 +133,9 @@ impl Type {
                 inner_a.is_assignable_to(inner_b) && effects_a == effects_b
             }
             (Type::Grounded(a), Type::Grounded(b)) => a.is_assignable_to(b),
-            // A Grounded<T> is assignable to T (unwrapping provenance is safe;
-            // the other direction requires .unwrap_discarding_sources()).
+            // Legacy compatibility: Grounded<T> remains assignable to T.
+            // New code should prefer `.unwrap_discarding_sources()` so the
+            // provenance drop is visible in source and IR.
             (Type::Grounded(inner), other) => inner.is_assignable_to(other),
             (a, b) => a == b,
         }

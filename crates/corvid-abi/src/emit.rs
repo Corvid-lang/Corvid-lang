@@ -447,6 +447,7 @@ fn collect_called_agents_from_expr(
             }
         }
         IrExprKind::FieldAccess { target, .. }
+        | IrExprKind::UnwrapGrounded { value: target }
         | IrExprKind::UnOp { operand: target, .. }
         | IrExprKind::WeakNew { strong: target }
         | IrExprKind::WeakUpgrade { weak: target }
@@ -536,6 +537,7 @@ fn walk_ir_expr_for_prompt(
             }
         }
         IrExprKind::FieldAccess { target, .. }
+        | IrExprKind::UnwrapGrounded { value: target }
         | IrExprKind::UnOp { operand: target, .. }
         | IrExprKind::WeakNew { strong: target }
         | IrExprKind::WeakUpgrade { weak: target }

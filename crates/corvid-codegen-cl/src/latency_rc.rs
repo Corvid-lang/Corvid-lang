@@ -155,6 +155,7 @@ fn collect_prompt_pins_in_expr(
             }
         }
         IrExprKind::FieldAccess { target, .. }
+        | IrExprKind::UnwrapGrounded { value: target }
         | IrExprKind::WeakNew { strong: target }
         | IrExprKind::WeakUpgrade { weak: target }
         | IrExprKind::ResultOk { inner: target }
