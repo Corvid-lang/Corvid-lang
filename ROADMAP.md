@@ -1375,7 +1375,7 @@ The determinism-source catalog and the language's treatment of non-reproducible 
 
 - [x] 24-A-lsp-diagnostics   Transport-independent LSP analysis core in `corvid-lsp`: open document text compiles through the real driver, compiler diagnostics become `lsp_types::Diagnostic` values with UTF-16 ranges, compiler hints are preserved, and approval-boundary violations surface through the same live diagnostic path as CLI errors.
 - [x] 24-B-lsp-server        JSON-RPC/stdin-stdout language server with `initialize`, `shutdown`, `exit`, `textDocument/didOpen`, `textDocument/didChange`, and `textDocument/didSave`; publishes compiler-backed diagnostics through `textDocument/publishDiagnostics` using full-document sync.
-- [ ] 24-C-hover-types       Hover with inferred types, effect rows, groundedness, budget, model route, and replayability summaries.
+- [x] 24-C-hover-types       Hover with compiler-backed inferred expression types plus declaration summaries for agents, tools, prompts, types, and effects. Prompt hovers surface AI-native metadata such as effect rows, calibration, cacheability, strict citations, and model routing mode; tool hovers show dangerous/approval boundaries.
 - [ ] 24-D-completion        Context-aware completion for keywords, declarations, tools, prompts, approvals, effects, and model names.
 - [ ] 24-E-navigation        go-to-definition, find-references, rename, and workspace symbol index.
 - [ ] 24-F-vscode-client     Reference VS Code extension wiring the server, diagnostics, hover, completion, and semantic visibility.

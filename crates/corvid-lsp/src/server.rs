@@ -1,6 +1,6 @@
-use crate::{analyze_document, DocumentSnapshot};
+use crate::{analyze_document, hover_at, DocumentSnapshot};
 use lsp_types::{
-    DidChangeTextDocumentParams, DidOpenTextDocumentParams, InitializeResult,
+    DidChangeTextDocumentParams, DidOpenTextDocumentParams, HoverParams, InitializeResult,
     PublishDiagnosticsParams, ServerCapabilities, TextDocumentSyncCapability,
     TextDocumentSyncKind, Url,
 };
@@ -45,6 +45,7 @@ impl LanguageServerState {
             "textDocument/didOpen" => self.did_open(request.get("params").cloned()),
             "textDocument/didChange" => self.did_change(request.get("params").cloned()),
             "textDocument/didSave" => self.did_save(request.get("params").cloned()),
+            "textDocument/hover" => self.hover(id, request.get("params").cloned()),
             _ if id.is_some() => vec![ServerMessage::Error {
                 id,
                 code: -32601,
@@ -64,6 +65,7 @@ impl LanguageServerState {
                 text_document_sync: Some(TextDocumentSyncCapability::Kind(
                     TextDocumentSyncKind::FULL,
                 )),
+                hover_provider: Some(lsp_types::HoverProviderCapability::Simple(true)),
                 ..ServerCapabilities::default()
             },
             server_info: Some(lsp_types::ServerInfo {
@@ -115,6 +117,27 @@ impl LanguageServerState {
             return Vec::new();
         };
         self.publish_diagnostics(uri)
+    }
+
+    fn hover(&self, id: Option<Value>, params: Option<Value>) -> Vec<ServerMessage> {
+        let params = match parse_params::<HoverParams>(params) {
+            Ok(params) => params,
+            Err(error) => return vec![error],
+        };
+        let uri = params.text_document_position_params.text_document.uri;
+        let position = params.text_document_position_params.position;
+        let result = self
+            .documents
+            .get(&uri)
+            .and_then(|text| hover_at(text, position))
+            .map(serde_json::to_value)
+            .transpose()
+            .expect("hover serializes")
+            .unwrap_or(Value::Null);
+        vec![ServerMessage::Response {
+            id: id.unwrap_or(Value::Null),
+            result,
+        }]
     }
 
     fn publish_diagnostics(&self, uri: Url) -> Vec<ServerMessage> {
@@ -203,6 +226,7 @@ mod tests {
             json["result"]["capabilities"]["textDocumentSync"].as_i64(),
             Some(1)
         );
+        assert_eq!(json["result"]["capabilities"]["hoverProvider"], true);
     }
 
     #[test]
@@ -243,5 +267,29 @@ mod tests {
             json["params"]["diagnostics"].as_array().unwrap().len(),
             0
         );
+    }
+
+    #[test]
+    fn hover_returns_compiler_backed_signature() {
+        let mut server = LanguageServerState::new();
+        server.handle(did_open(
+            "file:///workspace/main.cor",
+            "agent answer(x: Int) -> Int:\n    return x + 1\n",
+        ));
+        let messages = server.handle(json!({
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "textDocument/hover",
+            "params": {
+                "textDocument": { "uri": "file:///workspace/main.cor" },
+                "position": { "line": 0, "character": 7 }
+            }
+        }));
+        let json = messages.into_iter().next().unwrap().into_json();
+        assert_eq!(json["id"], 2);
+        assert!(json["result"]["contents"]["value"]
+            .as_str()
+            .unwrap()
+            .contains("agent answer(x: Int) -> Int"));
     }
 }

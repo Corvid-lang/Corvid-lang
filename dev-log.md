@@ -5300,3 +5300,15 @@ The server remains intentionally modular: `server.rs` owns protocol state and
 method dispatch, `transport.rs` owns framing, and `analysis.rs` remains the
 only layer that calls the compiler. Tests cover JSON-RPC initialize, open/change
 diagnostic publication, and framed transport output.
+
+## 2026-04-25 - LSP compiler-backed hover
+
+Closed `24-C-hover-types` for the initial hover surface. The server advertises
+hover support, handles `textDocument/hover`, and returns Markdown summaries
+from `hover.rs`, which parses/resolves/typechecks the open document instead of
+scraping syntax with regexes.
+
+Hovers currently cover inferred expression types plus declaration summaries for
+agents, tools, prompts, types, and effects. Prompt hovers expose AI-native
+metadata including effect rows, calibration/cache flags, strict citations, and
+model-routing mode; tool hovers show dangerous/approval boundaries.

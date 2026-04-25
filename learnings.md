@@ -3162,6 +3162,17 @@ Full-document sync is the correct first server mode. Incremental sync is an
 optimization; using full sync keeps live diagnostics correct while the language
 surface is still expanding quickly.
 
+## lsp hover
+
+Hover is where Corvid's AI-native semantics become visible while writing code.
+It should be compiler-backed for the same reason diagnostics are: effect rows,
+approval boundaries, model routes, calibration, grounding, and inferred types
+are compiler facts, not editor heuristics.
+
+The initial hover implementation deliberately separates source facts from
+protocol transport. `hover.rs` owns semantic summaries; `server.rs` only
+serializes the hover response.
+
 ## Contributing / feedback
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). The rules of the road are: design chat before code, per-scope commits at every boundary, dev-log entry for every session, no shortcuts. The `learnings.md` file you're reading gets updated when each user-visible feature ships.

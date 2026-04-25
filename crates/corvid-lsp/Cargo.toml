@@ -6,7 +6,11 @@ license.workspace = true
 description = "Language server for Corvid (v0.5+)."
 
 [dependencies]
+corvid-ast = { workspace = true }
 corvid-driver = { workspace = true }
+corvid-resolve = { workspace = true }
+corvid-syntax = { workspace = true }
+corvid-types = { workspace = true }
 lsp-types = "0.95"
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
