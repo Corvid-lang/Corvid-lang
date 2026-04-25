@@ -19,6 +19,12 @@ mod replay;
 mod stmt;
 #[path = "interp/stream_ops.rs"]
 mod stream_ops;
+#[path = "interp/test_runner.rs"]
+mod test_runner;
+
+pub use test_runner::{
+    run_all_tests, run_test, TestAssertionExecution, TestAssertionStatus, TestExecution,
+};
 
 use crate::conv::{json_to_value, value_to_json};
 use crate::env::Env;

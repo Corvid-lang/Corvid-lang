@@ -89,6 +89,7 @@ mod law;
 mod replay;
 mod run;
 mod scaffold;
+mod test_runner;
 mod trace_fresh;
 pub use replay::{
     configure_replay_mode, run_replay_from_source, run_replay_from_source_with_builder,
@@ -111,6 +112,9 @@ pub use run::{
     RunTarget,
 };
 pub use scaffold::{scaffold_new, scaffold_new_in};
+pub use test_runner::{
+    render_test_report, run_tests_at_path, CorvidTestReport, TestRunnerError,
+};
 
 
 /// Outcome of a compile. Always contains the Python source (even partial)

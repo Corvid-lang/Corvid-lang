@@ -15,6 +15,7 @@ use std::sync::Arc;
 mod stream;
 mod core;
 mod dispatch;
+mod test_runner;
 
 /// Compile source text all the way down to IR. Panics on any frontend
 /// error — tests should pass clean programs.

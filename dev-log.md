@@ -5419,3 +5419,16 @@ assertion syntax. That keeps ordinary value assertions and AI-native process
 assertions (`called`, `approved`, `cost`, ordering, statistical modifiers) on a
 single compiler path before the runner, mocks, fixtures, snapshots, and trace
 fixtures land in later slices.
+
+## 2026-04-25 - Test runner
+
+Closed `26-B-test-runner`. Added a VM-owned test execution API, a driver-owned
+file runner/report renderer, and CLI wiring for `corvid test <file.cor>`.
+The runner discovers `IrTest` declarations, executes setup bodies through the
+same interpreter used for agents, evaluates value assertions, supports
+statistical value assertions by rerunning setup for the requested count, and
+returns CI-grade exit codes.
+
+Trace/process assertions (`called`, `approved`, `cost`, ordering) are not
+silently accepted. They report as unsupported failures until the Phase 26-E
+trace-fixture slice wires recorded traces into the same assertion model.

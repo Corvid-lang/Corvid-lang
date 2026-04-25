@@ -3268,6 +3268,19 @@ declarations are deterministic developer checks; `eval` declarations add
 statistical LLM behavior and model-quality reporting. Both can share the same
 AST/IR assertion shape.
 
+## test runner
+
+Test execution belongs in the VM, not the CLI. A language-level test can call
+agents, prompts, tools, and approvals, so the runner must use the same
+interpreter semantics as normal program execution. The driver should compile
+and render reports; the CLI should only route arguments and set the process
+exit code.
+
+Unsupported AI-native assertions must fail loudly. If `assert called tool` is
+preserved by the compiler but the current runner cannot yet inspect traces, a
+passing result would be a false safety signal. Reporting an unsupported failure
+is less convenient, but it protects the guarantee.
+
 ## Contributing / feedback
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). The rules of the road are: design chat before code, per-scope commits at every boundary, dev-log entry for every session, no shortcuts. The `learnings.md` file you're reading gets updated when each user-visible feature ships.

@@ -7,6 +7,7 @@
 //!   corvid build --target=wasm <file> emits browser/edge artifacts
 //!   corvid run <file>         build + invoke python on the output
 //!   corvid repl               start the interactive REPL
+//!   corvid test <file>        run Corvid test declarations in a source file
 //!   corvid test <what>        run verification suites (dimensions, spec, rewrites, adversarial)
 //!   corvid verify             cross-tier effect-profile verification
 //!   corvid effect-diff        diff composed effect profiles between two revisions
@@ -61,8 +62,9 @@ use corvid_driver::{
     load_corvid_config_with_path_for,
     load_dotenv_walking, render_all_pretty, render_dimension_verification_report,
     render_effect_diff, render_import_semantic_summaries, render_law_check_report,
+    render_test_report,
     render_spec_report, run_dimension_verification, run_law_checks, run_native, run_with_target, scaffold_new,
-    snapshot_revision, verify_spec_examples, BuildTarget, RunTarget, VerdictKind,
+    run_tests_at_path, snapshot_revision, verify_spec_examples, BuildTarget, RunTarget, VerdictKind,
     DEFAULT_SAMPLES,
 };
 
@@ -135,10 +137,9 @@ enum Command {
     ///   `adversarial`   LLM-driven bypass generation against the effect
     ///                   checker
     ///
-    /// Without a target, acts as a placeholder for the future unit-test
-    /// runner.
+    /// Passing a `.cor` file runs its `test` declarations.
     Test {
-        /// What to verify. Omit for the legacy placeholder behavior.
+        /// Source file to test, or a legacy verification target.
         /// Mutually exclusive with `--from-traces`.
         #[arg(conflicts_with = "from_traces")]
         target: Option<String>,
@@ -1281,24 +1282,44 @@ fn cmd_test(
 ) -> Result<u8> {
     match target {
         None => {
-            eprintln!("`corvid test` with no target is the legacy placeholder.");
-            eprintln!("Use one of: `corvid test dimensions`, `corvid test spec`,");
+            eprintln!("usage: `corvid test <file.cor>`");
+            eprintln!("Legacy verification targets are still available:");
+            eprintln!("  `corvid test dimensions`, `corvid test spec`,");
             eprintln!(
-                "`corvid test spec --meta`, `corvid test rewrites`, `corvid test adversarial --count <N>`."
+                "  `corvid test spec --meta`, `corvid test rewrites`, `corvid test adversarial --count <N>`."
             );
-            Ok(0)
+            Ok(1)
         }
         Some("dimensions") => cmd_test_dimensions(),
         Some("spec") if meta => cmd_test_spec_meta(),
         Some("spec") => cmd_test_spec(),
         Some("rewrites") => cmd_test_rewrites(),
         Some("adversarial") => cmd_test_adversarial(count, model),
+        Some(other) if other.ends_with(".cor") || Path::new(other).exists() => {
+            cmd_test_file(Path::new(other))
+        }
         Some(other) => {
             anyhow::bail!(
-                "unknown test target `{other}`; valid: `dimensions`, `spec`, `spec --meta`, `rewrites`, `adversarial`"
+                "unknown test target `{other}`; pass a `.cor` file or one of: `dimensions`, `spec`, `spec --meta`, `rewrites`, `adversarial`"
             )
         }
     }
+}
+
+fn cmd_test_file(path: &Path) -> Result<u8> {
+    let dotenv_start = path.parent().unwrap_or_else(|| Path::new("."));
+    load_dotenv_walking(dotenv_start);
+    let runtime = corvid_driver::Runtime::builder().build();
+    let source = std::fs::read_to_string(path).ok();
+    let tokio = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .context("failed to initialize async test runtime")?;
+    let report = tokio
+        .block_on(run_tests_at_path(path, &runtime))
+        .map_err(anyhow::Error::new)?;
+    print!("{}", render_test_report(&report, source.as_deref()));
+    Ok(report.exit_code())
 }
 
 fn cmd_cost_frontier(

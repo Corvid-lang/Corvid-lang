@@ -16,9 +16,19 @@ test refund_contract:
     assert order == "ord_42"
 ```
 
-The compiler parses, resolves, typechecks, and lowers tests into IR. The runner
-lands in the next slice, but test declarations already share the eval assertion
-model:
+The compiler parses, resolves, typechecks, and lowers tests into IR. `corvid
+test <file.cor>` discovers the lowered `IrTest` declarations, executes each
+setup body in the interpreter, evaluates value assertions, and returns a CI
+exit code:
+
+```text
+corvid test examples/math.cor
+  PASS refund_contract
+
+1 passed, 0 failed
+```
+
+The assertion language is shared with eval declarations:
 
 - `assert <Bool expression>` checks ordinary values.
 - `assert called tool_name` checks trace/process shape.
@@ -27,6 +37,12 @@ model:
 - `assert cost < $0.50` checks cost traces.
 - `assert <Bool expression> with confidence P over N runs` is preserved for
   eval-compatible statistical assertions.
+
+The Phase 26-B runner executes value assertions now, including statistical value
+assertions by rerunning the test setup body for the requested number of runs.
+Trace/process assertions are parsed, typechecked, and lowered, but `corvid test`
+reports them as unsupported failures until Phase 26-E trace fixtures land. The
+runner deliberately does not silently pass process assertions it cannot verify.
 
 This is intentional. Tests and evals should not have competing assertion
 languages. Tests are deterministic developer checks; evals add statistical LLM
