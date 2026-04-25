@@ -5277,3 +5277,14 @@ imports through typed Wasmtime host functions. The scope is deliberately
 honest: strings, structs, lists, provenance handles, and streaming callbacks are
 still unsupported by the WASM ABI and stay out of the parity matrix until those
 features are implemented.
+
+## 2026-04-25 - LSP live diagnostics foundation
+
+Started Phase 24 with the compiler-backed diagnostic core in `corvid-lsp`.
+`DocumentSnapshot` plus `analyze_document` now turns open document text into
+standard LSP diagnostics by running the real frontend through `corvid-driver`.
+
+The responsibility split is deliberate: `analysis.rs` owns compile-to-diagnostic
+translation, `position.rs` owns byte-span to UTF-16 LSP range conversion, and
+`lib.rs` only exports the public API. Tests cover clean documents, unresolved
+names, approval-boundary violations, and Unicode column mapping.

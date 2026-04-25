@@ -3141,6 +3141,16 @@ that means interpreter parity for scalar arithmetic/branching/agent calls and
 typed host execution for scalar prompt/approval/tool imports. Full native-corpus
 coverage waits for the remaining WASM ABI work.
 
+## lsp diagnostics
+
+The LSP should not reimplement the compiler. Live diagnostics now reuse
+`corvid-driver`, which means editor errors match CLI errors for syntax,
+resolution, type, approval, effect, provenance, and budget violations.
+
+LSP position mapping has to count UTF-16 code units, not bytes or Unicode scalar
+values. Getting this right in a dedicated `position.rs` module prevents hover,
+completion, and rename from each inventing their own slightly wrong range math.
+
 ## Contributing / feedback
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). The rules of the road are: design chat before code, per-scope commits at every boundary, dev-log entry for every session, no shortcuts. The `learnings.md` file you're reading gets updated when each user-visible feature ships.

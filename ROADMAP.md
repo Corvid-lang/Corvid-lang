@@ -1371,6 +1371,15 @@ The determinism-source catalog and the language's treatment of non-reproducible 
 
 **Non-scope:** Other editors (vim / emacs / JetBrains) — users can use the LSP via any LSP-compatible client, but official extensions are post-v1.0.
 
+**Slice checklist:**
+
+- [x] 24-A-lsp-diagnostics   Transport-independent LSP analysis core in `corvid-lsp`: open document text compiles through the real driver, compiler diagnostics become `lsp_types::Diagnostic` values with UTF-16 ranges, compiler hints are preserved, and approval-boundary violations surface through the same live diagnostic path as CLI errors.
+- [ ] 24-B-lsp-server        JSON-RPC/stdin-stdout language server with initialize/open/change/save diagnostics.
+- [ ] 24-C-hover-types       Hover with inferred types, effect rows, groundedness, budget, model route, and replayability summaries.
+- [ ] 24-D-completion        Context-aware completion for keywords, declarations, tools, prompts, approvals, effects, and model names.
+- [ ] 24-E-navigation        go-to-definition, find-references, rename, and workspace symbol index.
+- [ ] 24-F-vscode-client     Reference VS Code extension wiring the server, diagnostics, hover, completion, and semantic visibility.
+
 ### Phase 25 — Package manager (~6–8 weeks)
 
 **Goal.** Users can share Corvid code and AI capabilities with guarantees. Table stakes for any language anyone takes seriously, made Corvid-native by distributing effect, provenance, approval, budget, and replay contracts alongside source.

@@ -6,3 +6,6 @@ license.workspace = true
 description = "Language server for Corvid (v0.5+)."
 
 [dependencies]
+corvid-driver = { workspace = true }
+lsp-types = "0.95"
+url = "2"
