@@ -307,7 +307,11 @@ impl Repl {
                     output.flush()?;
                     return Ok(true);
                 }
-                self.enter_replay(path, output)?;
+                if path == "last" {
+                    self.enter_last_replay(output)?;
+                } else {
+                    self.enter_replay(path, output)?;
+                }
                 Ok(true)
             }
             ":step" | ":s" => {
@@ -908,6 +912,7 @@ impl Repl {
         writeln!(output)?;
         writeln!(output, "\x1b[1mReplay:\x1b[0m")?;
         writeln!(output, "  :replay <path>   load a JSONL trace file")?;
+        writeln!(output, "  :replay last     replay the last REPL run's boundary trace")?;
         writeln!(output, "  :step [n]        advance n replay steps")?;
         writeln!(output, "  :run             run remaining replay steps")?;
         writeln!(output, "  :show            re-display current replay step")?;
@@ -1641,6 +1646,29 @@ impl Repl {
         Ok(())
     }
 
+    fn enter_last_replay<W: Write>(&mut self, output: &mut W) -> io::Result<()> {
+        let Some(trace) = self.last_trace.as_ref() else {
+            writeln!(output, "no last run is available to replay")?;
+            output.flush()?;
+            return Ok(());
+        };
+
+        let Some(session) = ReplaySession::from_execution_trace(trace) else {
+            writeln!(output, "last run has no replayable boundary events")?;
+            output.flush()?;
+            return Ok(());
+        };
+
+        writeln!(output, "{}", session.summary_line())?;
+        output.flush()?;
+        self.replay = Some(ReplayState {
+            session,
+            current: None,
+            next: 0,
+        });
+        Ok(())
+    }
+
     fn step_replay<W: Write>(&mut self, count: usize, output: &mut W) -> io::Result<()> {
         let Some(replay) = self.replay.as_mut() else {
             writeln!(output, "replay mode is not active")?;
@@ -2044,5 +2072,20 @@ p.x\n",
         assert!(text.contains("42"), "unexpected output: {text}");
         assert!(text.contains("agent `inc` was called"), "unexpected output: {text}");
         assert!(text.contains("confidence"), "unexpected output: {text}");
+    }
+
+    #[test]
+    fn replay_last_replays_last_repl_boundary_trace() {
+        let input = Cursor::new(
+            "agent inc(x: Int) -> Int:\n    return x + 1\n\ninc(1)\n:replay last\n:run\n:q\n",
+        );
+        let mut output = Vec::new();
+        Repl::run(input, &mut output).expect("repl run succeeds");
+        let text = String::from_utf8(output).expect("valid utf8");
+        assert!(text.contains("2"), "unexpected output: {text}");
+        assert!(text.contains("loaded replay `<last-run>`"), "unexpected output: {text}");
+        assert!(text.contains("run start: inc"), "unexpected output: {text}");
+        assert!(text.contains("run complete"), "unexpected output: {text}");
+        assert!(text.contains("left replay mode"), "unexpected output: {text}");
     }
 }

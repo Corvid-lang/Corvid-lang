@@ -1,6 +1,7 @@
 //! Typed replay loader over runtime JSONL traces.
 
 use corvid_runtime::TraceEvent;
+use corvid_vm::{render_value, ExecutionTrace, StepEvent};
 use serde_json::Value;
 use std::fmt;
 use std::path::{Path, PathBuf};
@@ -89,6 +90,105 @@ pub enum ReplayLoadError {
 }
 
 impl ReplaySession {
+    pub fn from_execution_trace(trace: &ExecutionTrace) -> Option<Self> {
+        if trace.is_empty() {
+            return None;
+        }
+
+        let mut steps = Vec::new();
+        let mut final_status = ReplayFinalStatus::Truncated;
+        let mut saw_completion = false;
+
+        for checkpoint in &trace.checkpoints {
+            let ts_ms = checkpoint.index as u64;
+            match &checkpoint.event {
+                StepEvent::BeforeToolCall {
+                    tool_name, args, ..
+                } => {
+                    let result = matching_after_tool(trace, checkpoint.index, tool_name);
+                    steps.push(ReplayStep::Tool {
+                        start_ts_ms: ts_ms,
+                        end_ts_ms: result.as_ref().map(|(index, _)| *index as u64),
+                        tool: tool_name.clone(),
+                        args: args.clone(),
+                        result: result.map(|(_, value)| value),
+                    });
+                }
+                StepEvent::BeforePromptCall {
+                    prompt_name,
+                    rendered,
+                    model,
+                    ..
+                } => {
+                    let result = matching_after_prompt(trace, checkpoint.index, prompt_name);
+                    steps.push(ReplayStep::Llm {
+                        start_ts_ms: ts_ms,
+                        end_ts_ms: result.as_ref().map(|(index, _)| *index as u64),
+                        prompt: prompt_name.clone(),
+                        model: model.clone(),
+                        rendered: Some(rendered.clone()),
+                        args: Vec::new(),
+                        result: result.map(|(_, value)| value),
+                    });
+                }
+                StepEvent::BeforeApproval { label, args, .. } => {
+                    let result = matching_after_approval(trace, checkpoint.index, label);
+                    steps.push(ReplayStep::Approval {
+                        start_ts_ms: ts_ms,
+                        end_ts_ms: result.as_ref().map(|(index, _)| *index as u64),
+                        label: label.clone(),
+                        args: args.clone(),
+                        approved: result.map(|(_, value)| value),
+                    });
+                }
+                StepEvent::BeforeAgentCall {
+                    agent_name, args, ..
+                } => {
+                    steps.push(ReplayStep::RunStart {
+                        ts_ms,
+                        agent: agent_name.clone(),
+                        args: args.clone(),
+                    });
+                }
+                StepEvent::Completed {
+                    ok,
+                    result,
+                    error,
+                    ..
+                } => {
+                    steps.push(ReplayStep::RunComplete {
+                        ts_ms,
+                        ok: *ok,
+                        result: result
+                            .as_ref()
+                            .map(|value| Value::String(render_value(value))),
+                        error: error.clone(),
+                    });
+                    final_status = if *ok {
+                        ReplayFinalStatus::Ok
+                    } else {
+                        ReplayFinalStatus::Error
+                    };
+                    saw_completion = true;
+                }
+                _ => {}
+            }
+        }
+
+        if steps.is_empty() {
+            return None;
+        }
+
+        Some(Self {
+            path: PathBuf::from("<last-run>"),
+            run_id: "repl-last".into(),
+            duration_ms: trace.len().saturating_sub(1) as u64,
+            steps,
+            final_status,
+            truncated: !saw_completion,
+        })
+    }
+
     pub fn load(path: impl AsRef<Path>) -> Result<Self, ReplayLoadError> {
         let path = path.as_ref().to_path_buf();
         let body = std::fs::read_to_string(&path).map_err(|error| ReplayLoadError::Read {
@@ -543,6 +643,57 @@ impl fmt::Display for ReplayLoadError {
             }
         }
     }
+}
+
+fn matching_after_tool(
+    trace: &ExecutionTrace,
+    after_index: usize,
+    tool_name: &str,
+) -> Option<(usize, Value)> {
+    trace.checkpoints.iter().skip(after_index + 1).find_map(|checkpoint| {
+        match &checkpoint.event {
+            StepEvent::AfterToolCall {
+                tool_name: result_tool,
+                result,
+                ..
+            } if result_tool == tool_name => Some((checkpoint.index, result.clone())),
+            _ => None,
+        }
+    })
+}
+
+fn matching_after_prompt(
+    trace: &ExecutionTrace,
+    after_index: usize,
+    prompt_name: &str,
+) -> Option<(usize, Value)> {
+    trace.checkpoints.iter().skip(after_index + 1).find_map(|checkpoint| {
+        match &checkpoint.event {
+            StepEvent::AfterPromptCall {
+                prompt_name: result_prompt,
+                result,
+                ..
+            } if result_prompt == prompt_name => Some((checkpoint.index, result.clone())),
+            _ => None,
+        }
+    })
+}
+
+fn matching_after_approval(
+    trace: &ExecutionTrace,
+    after_index: usize,
+    label: &str,
+) -> Option<(usize, bool)> {
+    trace.checkpoints.iter().skip(after_index + 1).find_map(|checkpoint| {
+        match &checkpoint.event {
+            StepEvent::AfterApproval {
+                label: result_label,
+                approved,
+                ..
+            } if result_label == label => Some((checkpoint.index, *approved)),
+            _ => None,
+        }
+    })
 }
 
 fn first_run_id(events: &[TraceEvent]) -> Result<&str, ReplayLoadError> {
