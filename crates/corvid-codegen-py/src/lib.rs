@@ -173,6 +173,16 @@ agent nop(id: String, amount: Float) -> Receipt:
     }
 
     #[test]
+    fn emits_corvid_import_hash_pin_comment() {
+        let digest = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        let src = format!("import \"./policy\" hash:sha256:{digest} as p\n");
+        let py = src_to_py(&src);
+        assert!(py.contains(&format!(
+            "# corvid import ./policy hash:sha256:{digest} as p"
+        )));
+    }
+
+    #[test]
     fn emits_float_with_decimal_point() {
         let src = "\
 agent nums() -> Float:

@@ -1769,6 +1769,53 @@ agent good(x: String) -> String:
     }
 
     #[test]
+    fn parses_corvid_import_hash_pin_before_alias() {
+        let digest = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        let file = parse_file_src(&format!(r#"import "./policy" hash:sha256:{digest} as p"#));
+        match &file.decls[0] {
+            Decl::Import(i) => {
+                assert!(matches!(i.source, ImportSource::Corvid));
+                let pin = i.content_hash.as_ref().expect("hash pin");
+                assert_eq!(pin.algorithm, "sha256");
+                assert_eq!(pin.hex, digest);
+                assert_eq!(i.alias.as_ref().map(|alias| alias.name.as_str()), Some("p"));
+            }
+            other => panic!("expected import, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_corvid_import_hash_pin_with_requires_and_use_list() {
+        let digest = "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789";
+        let file = parse_file_src(&format!(
+            r#"import "./policy" requires @deterministic hash:sha256:{digest} use Review"#
+        ));
+        match &file.decls[0] {
+            Decl::Import(i) => {
+                assert_eq!(i.required_attributes.len(), 1);
+                assert_eq!(i.content_hash.as_ref().map(|pin| pin.hex.as_str()), Some(digest));
+                assert_eq!(i.use_items.len(), 1);
+            }
+            other => panic!("expected import, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn rejects_short_corvid_import_hash_pin() {
+        let (_file, errs) = parse_file_errs(r#"import "./policy" hash:sha256:abc as p"#);
+        assert!(!errs.is_empty(), "expected short hash to fail");
+    }
+
+    #[test]
+    fn rejects_hash_pin_on_python_import() {
+        let digest = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        let (_file, errs) = parse_file_errs(&format!(
+            r#"import python "anthropic" hash:sha256:{digest} as anthropic"#
+        ));
+        assert!(!errs.is_empty(), "expected non-Corvid hash pin to fail");
+    }
+
+    #[test]
     fn parses_public_annotated_agent() {
         let file = parse_file_src(
             "\

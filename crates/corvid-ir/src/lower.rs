@@ -237,6 +237,10 @@ impl<'a> Lowerer<'a> {
             id,
             source,
             module: i.module.clone(),
+            content_hash: i.content_hash.as_ref().map(|hash| IrImportContentHash {
+                algorithm: hash.algorithm.clone(),
+                hex: hash.hex.clone(),
+            }),
             alias: alias_name,
             span: i.span,
         }

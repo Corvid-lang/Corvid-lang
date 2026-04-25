@@ -171,6 +171,14 @@ impl<'a> Lexer<'a> {
 
     fn lex_number(&mut self) {
         let start = self.pos;
+        if self.is_after_hash_digest_prefix(start) {
+            while self.pos < self.bytes.len() && self.bytes[self.pos].is_ascii_hexdigit() {
+                self.pos += 1;
+            }
+            let text = &self.src[start..self.pos];
+            self.emit(TokKind::Ident(text.to_string()), Span::new(start, self.pos));
+            return;
+        }
         while self.pos < self.bytes.len() && self.bytes[self.pos].is_ascii_digit() {
             self.pos += 1;
         }
@@ -438,6 +446,10 @@ impl<'a> Lexer<'a> {
 
     fn peek(&self, offset: usize) -> Option<u8> {
         self.bytes.get(self.pos + offset).copied()
+    }
+
+    fn is_after_hash_digest_prefix(&self, start: usize) -> bool {
+        self.src[..start].ends_with("hash:sha256:")
     }
 }
 

@@ -12,6 +12,7 @@ pub mod approver;
 pub mod effect_diff;
 pub mod meta_verify;
 pub mod modules;
+mod import_integrity;
 mod native_ability;
 mod native_cache;
 mod render;
@@ -388,6 +389,23 @@ fn module_load_error_diagnostics(error: ModuleLoadError) -> Vec<Diagnostic> {
                 hint: None,
             })
             .collect(),
+        ModuleLoadError::HashMismatch {
+            importing_file,
+            requested,
+            resolved,
+            expected,
+            actual,
+        } => vec![Diagnostic {
+            span: top,
+            message: format!(
+                "import `{requested}` from `{}` failed content-hash verification at `{}`",
+                importing_file.display(),
+                resolved.display()
+            ),
+            hint: Some(format!(
+                "expected sha256:{expected}, actual sha256:{actual}; review the imported source before updating the pin"
+            )),
+        }],
         ModuleLoadError::Cycle { cycle } => {
             let path = cycle
                 .iter()
@@ -1197,6 +1215,46 @@ agent main() -> Bool:
             diagnostics.iter().any(|diagnostic| diagnostic
                 .message
                 .contains("`@wrapping` is an agent execution mode")),
+            "diagnostics: {diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn compile_to_ir_at_path_rejects_hash_pinned_import_drift() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            tmp.path().join("policy.cor"),
+            "\
+public agent safe() -> Bool:
+    return true
+",
+        )
+        .unwrap();
+        let wrong = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        let main_src = format!(
+            "\
+import \"./policy\" hash:sha256:{wrong} as p
+
+agent main() -> Bool:
+    return true
+"
+        );
+        let main_path = tmp.path().join("main.cor");
+        std::fs::write(&main_path, &main_src).unwrap();
+
+        let diagnostics = compile_to_ir_with_config_at_path(&main_src, &main_path, None)
+            .expect_err("drifted pinned import should fail compilation");
+        assert!(
+            diagnostics.iter().any(|diagnostic| diagnostic
+                .message
+                .contains("failed content-hash verification")),
+            "diagnostics: {diagnostics:?}"
+        );
+        assert!(
+            diagnostics.iter().any(|diagnostic| diagnostic
+                .hint
+                .as_deref()
+                .is_some_and(|hint| hint.contains("review the imported source before updating the pin"))),
             "diagnostics: {diagnostics:?}"
         );
     }

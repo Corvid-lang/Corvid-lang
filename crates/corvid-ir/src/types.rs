@@ -24,8 +24,15 @@ pub struct IrImport {
     pub id: DefId,
     pub source: IrImportSource,
     pub module: String,
+    pub content_hash: Option<IrImportContentHash>,
     pub alias: Option<String>,
     pub span: Span,
+}
+
+#[derive(Debug, Clone)]
+pub struct IrImportContentHash {
+    pub algorithm: String,
+    pub hex: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

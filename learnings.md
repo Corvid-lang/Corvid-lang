@@ -2996,6 +2996,18 @@ tooling failure mode where enforcement says one thing but reports show another.
 It also sets up signed and remote imports: the thing to hash, sign, diff, and
 audit is not just bytes, but the exported semantic contract those bytes imply.
 
+## lang-cor-imports-signed
+
+Supply-chain safety starts before package registries. A local policy path can
+drift just as dangerously as a registry package, so Corvid imports now let the
+source file pin the imported bytes with `hash:sha256:<digest>`.
+
+The important invariant is fail-closed ordering. The driver verifies the exact
+file bytes before lexing, parsing, resolving, or typechecking the imported
+module. If the digest changed, the module never enters the compiler's alias map.
+That keeps hash pins as a real language trust boundary rather than a comment the
+tooling happens to check later.
+
 ## Contributing / feedback
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). The rules of the road are: design chat before code, per-scope commits at every boundary, dev-log entry for every session, no shortcuts. The `learnings.md` file you're reading gets updated when each user-visible feature ships.

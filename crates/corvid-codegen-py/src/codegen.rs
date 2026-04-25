@@ -78,10 +78,17 @@ impl Codegen {
                 }
                 IrImportSource::Corvid => {
                     let alias = imp.alias.as_deref().unwrap_or(&imp.module);
-                    self.out.writeln(&format!(
-                        "# corvid import {} as {} (lowered separately)",
-                        imp.module, alias
-                    ));
+                    if let Some(hash) = &imp.content_hash {
+                        self.out.writeln(&format!(
+                            "# corvid import {} hash:{}:{} as {} (lowered separately)",
+                            imp.module, hash.algorithm, hash.hex, alias
+                        ));
+                    } else {
+                        self.out.writeln(&format!(
+                            "# corvid import {} as {} (lowered separately)",
+                            imp.module, alias
+                        ));
+                    }
                 }
             }
         }

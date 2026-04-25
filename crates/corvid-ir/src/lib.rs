@@ -214,6 +214,17 @@ agent refund_bot(ticket: Ticket) -> Decision:
     }
 
     #[test]
+    fn corvid_import_hash_pin_survives_lowering() {
+        let digest = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        let src = format!("import \"./policy\" hash:sha256:{digest} as p\n");
+        let ir = lower_src(&src);
+        assert_eq!(ir.imports.len(), 1);
+        let pin = ir.imports[0].content_hash.as_ref().expect("hash pin");
+        assert_eq!(pin.algorithm, "sha256");
+        assert_eq!(pin.hex, digest);
+    }
+
+    #[test]
     fn lowers_grounded_type_refs_to_ir_grounded_types() {
         let src = "\
 effect retrieval:

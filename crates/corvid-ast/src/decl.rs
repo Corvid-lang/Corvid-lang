@@ -169,12 +169,30 @@ pub struct ImportDecl {
     pub source: ImportSource,
     pub module: String,
     #[serde(default)]
+    pub content_hash: Option<ImportContentHash>,
+    #[serde(default)]
     pub required_attributes: Vec<AgentAttribute>,
     #[serde(default)]
     pub required_constraints: Vec<EffectConstraint>,
     pub alias: Option<Ident>,
     #[serde(default)]
     pub use_items: Vec<ImportUseItem>,
+    pub span: Span,
+}
+
+/// Content pin attached to a Corvid import:
+///
+/// ```text
+/// import "./policy" hash:sha256:abc123... as policy
+/// ```
+///
+/// The parser currently accepts only `sha256`; the string field keeps
+/// the AST forward-compatible with future hash algorithms without
+/// forcing a new enum migration.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ImportContentHash {
+    pub algorithm: String,
+    pub hex: String,
     pub span: Span,
 }
 

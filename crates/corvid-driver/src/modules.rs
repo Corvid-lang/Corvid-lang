@@ -35,7 +35,12 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use corvid_ast::{AgentAttribute, Decl, DimensionValue, Effect, EffectRef, File, ImportSource, TypeRef};
+use crate::import_integrity::sha256_hex;
+use anyhow::{anyhow, Context, Result};
+use corvid_ast::{
+    AgentAttribute, Decl, DimensionValue, Effect, EffectRef, File, ImportContentHash,
+    ImportSource, TypeRef,
+};
 use corvid_resolve::{
     collect_public_exports, resolve, resolve_import_path, AgentSemanticSummary,
     ExportSemanticSummary, ImportedUseTarget, ModuleResolution, ModuleSemanticSummary, Resolved,
@@ -43,7 +48,6 @@ use corvid_resolve::{
 };
 use corvid_syntax::{lex, parse_file, LexError, ParseError};
 use corvid_types::{analyze_effects, EffectRegistry};
-use anyhow::{anyhow, Context, Result};
 
 /// Error surfaced while loading / parsing / resolving a module
 /// imported from another `.cor` file. Collected rather than
@@ -73,6 +77,15 @@ pub enum ModuleLoadError {
         path: PathBuf,
         errors: Vec<ParseError>,
     },
+    /// A pinned import read successfully, but its bytes do not match
+    /// the import's declared SHA-256 digest.
+    HashMismatch {
+        importing_file: PathBuf,
+        requested: String,
+        resolved: PathBuf,
+        expected: String,
+        actual: String,
+    },
     /// A cycle was detected in the import graph. `cycle` carries
     /// the sequence of paths from the root of the cycle back to
     /// itself (so `A -> B -> C -> A` is three entries).
@@ -83,6 +96,7 @@ pub enum ModuleLoadError {
 pub struct NamedModuleSemanticSummary {
     pub import: String,
     pub path: PathBuf,
+    pub content_hash: Option<ImportContentHash>,
     pub summary: ModuleSemanticSummary,
 }
 
@@ -98,13 +112,17 @@ pub fn inspect_import_semantics(root_path: &Path) -> Result<Vec<NamedModuleSeman
     if !errors.is_empty() {
         return Err(anyhow!("module load errors: {errors:?}"));
     }
-    let mut out = resolution
-        .root_imports
-        .iter()
-        .map(|(import, module)| NamedModuleSemanticSummary {
-            import: import.clone(),
-            path: module.path.clone(),
-            summary: module.semantic_summary.clone(),
+    let mut out = corvid_imports(&root_file)
+        .filter_map(|import| {
+            resolution
+                .root_imports
+                .get(&import.module)
+                .map(|module| NamedModuleSemanticSummary {
+                    import: import.module.clone(),
+                    path: module.path.clone(),
+                    content_hash: import.content_hash.clone(),
+                    summary: module.semantic_summary.clone(),
+                })
         })
         .collect::<Vec<_>>();
     out.sort_by(|a, b| a.import.cmp(&b.import));
@@ -118,8 +136,13 @@ pub fn render_import_semantic_summaries(summaries: &[NamedModuleSemanticSummary]
     let mut out = String::new();
     for module in summaries {
         out.push_str(&format!(
-            "import {} -> {}\n",
+            "import {}{} -> {}\n",
             module.import,
+            module
+                .content_hash
+                .as_ref()
+                .map(|hash| format!(" hash:{}:{}", hash.algorithm, hash.hex))
+                .unwrap_or_default(),
             module.path.display()
         ));
         if module.summary.exports.is_empty() {
@@ -185,6 +208,7 @@ pub fn build_module_resolution(
             &root_canonical,
             &child,
             &import.module,
+            import.content_hash.as_ref(),
             &mut loaded,
             &mut in_progress,
             &mut errors,
@@ -457,6 +481,7 @@ fn dfs_collect(
     importing_path: &Path,
     target: &Path,
     requested_module: &str,
+    expected_hash: Option<&ImportContentHash>,
     loaded: &mut HashMap<PathBuf, File>,
     in_progress: &mut Vec<PathBuf>,
     errors: &mut Vec<ModuleLoadError>,
@@ -480,9 +505,11 @@ fn dfs_collect(
         return;
     }
 
-    // Load the file from disk.
-    let source = match std::fs::read_to_string(&canonical) {
-        Ok(s) => s,
+    // Load and verify the file from disk. Hash verification runs on
+    // the exact bytes before parsing, so a pinned import cannot drift
+    // into the compiler under a stale trust boundary.
+    let bytes = match std::fs::read(&canonical) {
+        Ok(bytes) => bytes,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
             errors.push(ModuleLoadError::FileNotFound {
                 importing_file: importing_path.to_path_buf(),
@@ -495,6 +522,29 @@ fn dfs_collect(
             errors.push(ModuleLoadError::ReadError {
                 path: canonical,
                 message: e.to_string(),
+            });
+            return;
+        }
+    };
+    if let Some(expected_hash) = expected_hash {
+        let actual = sha256_hex(&bytes);
+        if actual != expected_hash.hex {
+            errors.push(ModuleLoadError::HashMismatch {
+                importing_file: importing_path.to_path_buf(),
+                requested: requested_module.to_string(),
+                resolved: canonical,
+                expected: expected_hash.hex.clone(),
+                actual,
+            });
+            return;
+        }
+    }
+    let source = match String::from_utf8(bytes) {
+        Ok(source) => source,
+        Err(err) => {
+            errors.push(ModuleLoadError::ReadError {
+                path: canonical,
+                message: format!("imported module is not valid UTF-8: {err}"),
             });
             return;
         }
@@ -529,6 +579,7 @@ fn dfs_collect(
             &canonical,
             &child,
             &import.module,
+            import.content_hash.as_ref(),
             loaded,
             in_progress,
             errors,
@@ -931,5 +982,59 @@ agent foo(x: Int) -> Int:
             })
             .collect();
         assert_eq!(imports.len(), 1);
+    }
+
+    #[test]
+    fn hash_pinned_import_loads_when_digest_matches() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root_dir = tmp.path();
+        let module_src = "public type Policy:\n    ok: Bool\n";
+        write_cor(root_dir, "policy", module_src);
+        let digest = crate::import_integrity::sha256_hex(module_src.as_bytes());
+        let main_src = format!(
+            "\
+import \"./policy\" hash:sha256:{digest} as p
+
+agent check(x: p.Policy) -> Bool:
+    return true
+"
+        );
+        let main_path = write_cor(root_dir, "main", &main_src);
+        let main_file = parse_src(&main_src);
+
+        let (res, errs) = build_module_resolution(&main_file, &main_path);
+
+        assert!(errs.is_empty(), "unexpected errs: {errs:?}");
+        assert!(res.lookup("p").is_some());
+    }
+
+    #[test]
+    fn hash_pinned_import_fails_closed_when_digest_mismatches() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root_dir = tmp.path();
+        write_cor(root_dir, "policy", "public type Policy:\n    ok: Bool\n");
+        let wrong = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        let main_src = format!(
+            "\
+import \"./policy\" hash:sha256:{wrong} as p
+
+agent check() -> Bool:
+    return true
+"
+        );
+        let main_path = write_cor(root_dir, "main", &main_src);
+        let main_file = parse_src(&main_src);
+
+        let (res, errs) = build_module_resolution(&main_file, &main_path);
+
+        assert!(
+            errs.iter()
+                .any(|err| matches!(err, ModuleLoadError::HashMismatch { .. })),
+            "expected HashMismatch, got {errs:?}"
+        );
+        assert!(
+            res.lookup("p").is_none(),
+            "mismatched module must not enter alias map"
+        );
     }
 }

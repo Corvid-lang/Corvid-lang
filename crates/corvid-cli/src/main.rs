@@ -1186,6 +1186,7 @@ fn cmd_import_summary(file: &Path, json: bool) -> Result<u8> {
                 serde_json::json!({
                     "import": summary.import,
                     "path": summary.path.display().to_string(),
+                    "content_hash": summary.content_hash,
                     "summary": summary.summary,
                 })
             })

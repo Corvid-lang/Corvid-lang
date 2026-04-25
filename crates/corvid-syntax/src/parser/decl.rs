@@ -15,7 +15,8 @@ use corvid_ast::{
     AgentDecl, BinaryOp, Block, Decl, DimensionDecl, DimensionValue, Effect, EffectDecl,
     ExternAbi, OwnershipAnnotation, OwnershipMode,
     EvalAssert, EvalDecl, ExtendDecl, ExtendMethod, ExtendMethodKind, Field, Ident, ImportDecl,
-    ImportSource, ImportUseItem, ModelDecl, ModelField, Param, ToolDecl, TypeDecl, Visibility,
+    ImportContentHash, ImportSource, ImportUseItem, ModelDecl, ModelField, Param, ToolDecl,
+    TypeDecl, Visibility,
 };
 
 impl<'a> Parser<'a> {
@@ -169,13 +170,43 @@ impl<'a> Parser<'a> {
             }
         };
 
-        let (required_attributes, required_constraints) =
+        let mut content_hash = None;
+        let mut required_attributes = Vec::new();
+        let mut required_constraints = Vec::new();
+        loop {
             if matches!(self.peek(), TokKind::KwRequires) {
                 self.bump();
-                self.parse_inline_agent_annotations()?
-            } else {
-                (Vec::new(), Vec::new())
-            };
+                let (attributes, constraints) = self.parse_inline_agent_annotations()?;
+                required_attributes.extend(attributes);
+                required_constraints.extend(constraints);
+                continue;
+            }
+            if matches!(self.peek(), TokKind::Ident(word) if word == "hash") {
+                if content_hash.is_some() {
+                    return Err(ParseError {
+                        kind: ParseErrorKind::UnexpectedToken {
+                            got: "duplicate `hash` import pin".into(),
+                            expected: "at most one `hash:sha256:<digest>` clause".into(),
+                        },
+                        span: self.peek_span(),
+                    });
+                }
+                content_hash = Some(self.parse_import_content_hash()?);
+                continue;
+            }
+            break;
+        }
+        if !matches!(source, ImportSource::Corvid) {
+            if let Some(hash) = &content_hash {
+                return Err(ParseError {
+                    kind: ParseErrorKind::UnexpectedToken {
+                        got: "`hash` on non-Corvid import".into(),
+                        expected: "hash pins only on local Corvid path imports".into(),
+                    },
+                    span: hash.span,
+                });
+            }
+        }
 
         // Optional `as IDENT`. Note: Corvid imports (`import "./path"`)
         // strongly expect an alias for the v1 resolver's qualified-
@@ -203,11 +234,60 @@ impl<'a> Parser<'a> {
         Ok(ImportDecl {
             source,
             module,
+            content_hash,
             required_attributes,
             required_constraints,
             alias,
             use_items,
             span: start.merge(end),
+        })
+    }
+
+    fn parse_import_content_hash(&mut self) -> Result<ImportContentHash, ParseError> {
+        let start = self.peek_span();
+        self.bump(); // hash
+        self.expect(TokKind::Colon, "`:` after import hash")?;
+        let (algorithm, algorithm_span) = self.expect_ident()?;
+        if algorithm != "sha256" {
+            return Err(ParseError {
+                kind: ParseErrorKind::UnexpectedToken {
+                    got: format!("hash algorithm `{algorithm}`"),
+                    expected: "`sha256`".into(),
+                },
+                span: algorithm_span,
+            });
+        }
+        self.expect(TokKind::Colon, "`:` after import hash algorithm")?;
+        let digest_span = self.peek_span();
+        let digest = match self.peek().clone() {
+            TokKind::Ident(value) | TokKind::StringLit(value) => {
+                self.bump();
+                value
+            }
+            other => {
+                return Err(ParseError {
+                    kind: ParseErrorKind::UnexpectedToken {
+                        got: describe_token(&other),
+                        expected: "a 64-character SHA-256 hex digest".into(),
+                    },
+                    span: digest_span,
+                });
+            }
+        };
+        let digest = digest.to_ascii_lowercase();
+        if digest.len() != 64 || !digest.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+            return Err(ParseError {
+                kind: ParseErrorKind::UnexpectedToken {
+                    got: format!("hash digest `{digest}`"),
+                    expected: "a 64-character SHA-256 hex digest".into(),
+                },
+                span: digest_span,
+            });
+        }
+        Ok(ImportContentHash {
+            algorithm,
+            hex: digest,
+            span: start.merge(digest_span),
         })
     }
 

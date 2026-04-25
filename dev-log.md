@@ -5120,3 +5120,15 @@ The checker consumes these summaries for import-boundary requirements instead
 of recomputing a separate view, and the CLI exposes the same contract via
 `corvid import-summary <file>` with text and JSON output. Imports are now
 inspectable semantic trust boundaries, not just file inclusion.
+
+## 2026-04-25 - hash-pinned Corvid imports
+
+Closed `lang-cor-imports-signed`. Corvid imports now accept
+`hash:sha256:<digest>` pins, preserve the pin through AST and IR, and verify
+the imported file's exact source bytes before parsing or exposing the module to
+resolution/typechecking.
+
+The loader fails closed on drift: a mismatched digest produces a typed module
+load diagnostic with both expected and actual SHA-256 values, and the module is
+not inserted into the import alias map. This turns local policy imports into
+content-addressed trust boundaries instead of path-only file inclusion.
