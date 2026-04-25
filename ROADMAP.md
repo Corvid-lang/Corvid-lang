@@ -474,7 +474,7 @@ Pre-phase chat caught two limiting shortcuts in my brief and reshaped the phase 
 
 **Non-scope:** User-defined error enums with arbitrary payload layouts beyond the supported native subset — that belongs to the later richer-type/effect work, not this first native-control-flow pass.
 
-### Phase 19 — REPL (~3 weeks)
+### Phase 19 — REPL (~3 weeks) ✅ closed
 
 **Goal.** `corvid repl` interactive shell. How users learn Corvid.
 
@@ -491,6 +491,8 @@ Pre-phase chat caught two limiting shortcuts in my brief and reshaped the phase 
 - [x] `:replay last` reruns the last interaction through the recorded trace so users can debug behavior without spending on another model call. Shipped as an in-memory replay session over the REPL's last boundary trace, reusing the same `:step` / `:run` / `:show` / `:where` replay UI as JSONL traces.
 
 **Non-scope:** Native-tier REPL. LSP integration (Phase 24 owns that).
+
+**Status.** Closed. The REPL now supports persistent locals/declarations, declaration redefinition, type-aware value display, readline history/multiline input, core meta-commands, source/trace import, step-through execution, `:why`, `:replay last`, and `:scratch [agent]`.
 
 **v0.5 cuts here.** Methods + cycle collector + Result + REPL make Corvid feel like a modern GP language.
 
