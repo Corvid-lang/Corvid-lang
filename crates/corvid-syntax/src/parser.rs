@@ -264,6 +264,7 @@ impl<'a> Parser<'a> {
                 | TokKind::KwTool
                 | TokKind::KwPrompt
                 | TokKind::KwEval
+                | TokKind::KwTest
                 | TokKind::KwAgent
                 | TokKind::KwExtend
                 | TokKind::KwEffect
@@ -310,6 +311,7 @@ impl<'a> Parser<'a> {
                 | TokKind::KwTool
                 | TokKind::KwPrompt
                 | TokKind::KwEval
+                | TokKind::KwTest
                 | TokKind::KwAgent
                 | TokKind::KwEffect
                 | TokKind::KwModel

@@ -79,6 +79,7 @@ pub fn decl_name(decl: &Decl) -> Option<&str> {
         Decl::Prompt(d) => Some(&d.name.name),
         Decl::Agent(d) => Some(&d.name.name),
         Decl::Eval(d) => Some(&d.name.name),
+        Decl::Test(d) => Some(&d.name.name),
         Decl::Extend(_) | Decl::Effect(_) | Decl::Model(_) => None,
     }
 }
@@ -93,25 +94,13 @@ fn collect_decl_deps(decl: &Decl, resolved: &Resolved, deps: &mut HashSet<DefId>
         Decl::Eval(eval) => {
             collect_block_deps(&eval.body, resolved, deps);
             for assertion in &eval.assertions {
-                match assertion {
-                    corvid_ast::EvalAssert::Value { expr, .. } => {
-                        collect_expr_deps(expr, resolved, deps);
-                    }
-                    corvid_ast::EvalAssert::Called { tool, .. } => {
-                        if let Some(Binding::Decl(id)) = resolved.bindings.get(&tool.span) {
-                            deps.insert(*id);
-                        }
-                    }
-                    corvid_ast::EvalAssert::Approved { .. }
-                    | corvid_ast::EvalAssert::Cost { .. } => {}
-                    corvid_ast::EvalAssert::Ordering { before, after, .. } => {
-                        for ident in [before, after] {
-                            if let Some(Binding::Decl(id)) = resolved.bindings.get(&ident.span) {
-                                deps.insert(*id);
-                            }
-                        }
-                    }
-                }
+                collect_assert_deps(assertion, resolved, deps);
+            }
+        }
+        Decl::Test(test) => {
+            collect_block_deps(&test.body, resolved, deps);
+            for assertion in &test.assertions {
+                collect_assert_deps(assertion, resolved, deps);
             }
         }
         Decl::Tool(tool) => {
@@ -128,6 +117,31 @@ fn collect_decl_deps(decl: &Decl, resolved: &Resolved, deps: &mut HashSet<DefId>
             }
         }
         Decl::Import(_) | Decl::Extend(_) | Decl::Effect(_) | Decl::Model(_) => {}
+    }
+}
+
+fn collect_assert_deps(
+    assertion: &corvid_ast::EvalAssert,
+    resolved: &Resolved,
+    deps: &mut HashSet<DefId>,
+) {
+    match assertion {
+        corvid_ast::EvalAssert::Value { expr, .. } => {
+            collect_expr_deps(expr, resolved, deps);
+        }
+        corvid_ast::EvalAssert::Called { tool, .. } => {
+            if let Some(Binding::Decl(id)) = resolved.bindings.get(&tool.span) {
+                deps.insert(*id);
+            }
+        }
+        corvid_ast::EvalAssert::Approved { .. } | corvid_ast::EvalAssert::Cost { .. } => {}
+        corvid_ast::EvalAssert::Ordering { before, after, .. } => {
+            for ident in [before, after] {
+                if let Some(Binding::Decl(id)) = resolved.bindings.get(&ident.span) {
+                    deps.insert(*id);
+                }
+            }
+        }
     }
 }
 

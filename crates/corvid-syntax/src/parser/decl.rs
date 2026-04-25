@@ -3,7 +3,7 @@
 //! `parser/prompt.rs` alongside its dispatch-clause helpers).
 //!
 //! Covers: import, type + field, tool, effect, dimension, model
-//! + model field + dimension value, agent, eval + eval assertion.
+//! + model field + dimension value, agent, eval/test + assertion.
 //!
 //! Extracted from `parser.rs` as part of Phase 20i responsibility
 //! decomposition.
@@ -15,8 +15,8 @@ use corvid_ast::{
     AgentDecl, BinaryOp, Block, Decl, DimensionDecl, DimensionValue, Effect, EffectDecl,
     ExternAbi, OwnershipAnnotation, OwnershipMode,
     EvalAssert, EvalDecl, ExtendDecl, ExtendMethod, ExtendMethodKind, Field, Ident, ImportDecl,
-    ImportContentHash, ImportSource, ImportUseItem, ModelDecl, ModelField, Param, ToolDecl,
-    TypeDecl, Visibility,
+    ImportContentHash, ImportSource, ImportUseItem, ModelDecl, ModelField, Param, Span, ToolDecl,
+    TestDecl, TypeDecl, Visibility,
 };
 
 impl<'a> Parser<'a> {
@@ -54,6 +54,7 @@ impl<'a> Parser<'a> {
             TokKind::KwTool => self.parse_tool_decl(visibility).map(Decl::Tool),
             TokKind::KwPrompt => self.parse_prompt_decl(visibility).map(Decl::Prompt),
             TokKind::KwEval => self.parse_eval_decl().map(Decl::Eval),
+            TokKind::KwTest => self.parse_test_decl().map(Decl::Test),
             TokKind::KwAgent => self.parse_agent_decl(visibility).map(Decl::Agent),
             TokKind::KwPub => self.parse_extern_agent_decl().map(Decl::Agent),
             TokKind::KwExtend => self.parse_extend_decl().map(Decl::Extend),
@@ -733,7 +734,37 @@ impl<'a> Parser<'a> {
         self.bump(); // eval
 
         let (name, name_span) = self.expect_ident()?;
-        self.expect(TokKind::Colon, "`:` after eval name")?;
+        let (body, assertions, end) = self.parse_assertion_block("eval")?;
+
+        Ok(EvalDecl {
+            name: Ident::new(name, name_span),
+            body,
+            assertions,
+            span: start.merge(end),
+        })
+    }
+
+    fn parse_test_decl(&mut self) -> Result<TestDecl, ParseError> {
+        let start = self.peek_span();
+        self.bump(); // test
+
+        let (name, name_span) = self.expect_ident()?;
+        let (body, assertions, end) = self.parse_assertion_block("test")?;
+
+        Ok(TestDecl {
+            name: Ident::new(name, name_span),
+            body,
+            assertions,
+            span: start.merge(end),
+        })
+    }
+
+    fn parse_assertion_block(
+        &mut self,
+        decl_kind: &'static str,
+    ) -> Result<(Block, Vec<EvalAssert>, Span), ParseError> {
+        let start = self.peek_span();
+        self.expect(TokKind::Colon, &format!("`:` after {decl_kind} name"))?;
         self.expect_newline()?;
 
         if !matches!(self.peek(), TokKind::Indent) {
@@ -762,7 +793,9 @@ impl<'a> Parser<'a> {
                 return Err(ParseError {
                     kind: ParseErrorKind::UnexpectedToken {
                         got: describe_token(self.peek()),
-                        expected: "only `assert ...` lines after the first eval assertion".into(),
+                        expected: format!(
+                            "only `assert ...` lines after the first {decl_kind} assertion"
+                        ),
                     },
                     span: self.peek_span(),
                 });
@@ -775,15 +808,14 @@ impl<'a> Parser<'a> {
             self.bump();
         }
 
-        Ok(EvalDecl {
-            name: Ident::new(name, name_span),
-            body: Block {
+        Ok((
+            Block {
                 stmts,
                 span: start.merge(end),
             },
             assertions,
-            span: start.merge(end),
-        })
+            end,
+        ))
     }
 
     fn parse_eval_assert(&mut self) -> Result<EvalAssert, ParseError> {

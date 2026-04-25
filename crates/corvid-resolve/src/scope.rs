@@ -65,6 +65,7 @@ pub enum DeclKind {
     Prompt,
     Agent,
     Eval,
+    Test,
     Effect,
     /// `model Name:` catalog entry (Phase 20h typed model substrate).
     Model,

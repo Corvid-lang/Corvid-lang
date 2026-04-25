@@ -1715,6 +1715,33 @@ agent good(x: String) -> String:
     }
 
     #[test]
+    fn parses_test_with_value_and_trace_assertions() {
+        let src = "\
+tool get_order(id: String) -> String
+
+test refund_contract:
+    order = get_order(\"ord_42\")
+    assert called get_order
+    assert order == \"ord_42\"
+";
+        let file = parse_file_src(src);
+        let test = match &file.decls[1] {
+            Decl::Test(test_decl) => test_decl,
+            other => panic!("expected Test decl, got {other:?}"),
+        };
+        assert_eq!(test.body.stmts.len(), 1);
+        assert_eq!(test.assertions.len(), 2);
+        assert!(matches!(
+            test.assertions[0],
+            corvid_ast::EvalAssert::Called { .. }
+        ));
+        assert!(matches!(
+            test.assertions[1],
+            corvid_ast::EvalAssert::Value { .. }
+        ));
+    }
+
+    #[test]
     fn parses_corvid_file_import_use_list_with_alias() {
         let file = parse_file_src(r#"import "./policy" use Review, Receipt as ReviewReceipt"#);
         match &file.decls[0] {

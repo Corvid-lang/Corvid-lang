@@ -72,6 +72,7 @@ impl<'a> Checker<'a> {
                     }
                     DeclKind::Import
                     | DeclKind::Eval
+                    | DeclKind::Test
                     | DeclKind::Effect
                     | DeclKind::Model => {
                         for a in args {

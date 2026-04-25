@@ -10,8 +10,8 @@ use crate::errors::{ResolveError, ResolveErrorKind};
 use crate::scope::{Binding, DefId, DeclKind, LocalId, LocalScope, SymbolTable};
 use corvid_ast::{
     AgentDecl, Block, Decl, EvalAssert, EvalDecl, Expr, ExtendDecl, ExtendMethodKind, File,
-    Ident, PromptDecl, ReplayArm, ReplayPattern, Span, Stmt, ToolArgPattern, ToolDecl, TypeDecl,
-    TypeRef, Visibility,
+    Ident, PromptDecl, ReplayArm, ReplayPattern, Span, Stmt, TestDecl, ToolArgPattern, ToolDecl,
+    TypeDecl, TypeRef, Visibility,
 };
 use std::collections::{HashMap, HashSet};
 
@@ -177,6 +177,7 @@ impl Resolver {
                 Decl::Prompt(p) => (p.name.name.clone(), DeclKind::Prompt, p.span),
                 Decl::Agent(a) => (a.name.name.clone(), DeclKind::Agent, a.span),
                 Decl::Eval(e) => (e.name.name.clone(), DeclKind::Eval, e.span),
+                Decl::Test(t) => (t.name.name.clone(), DeclKind::Test, t.span),
                 Decl::Effect(e) => (e.name.name.clone(), DeclKind::Effect, e.span),
                 Decl::Model(m) => (m.name.name.clone(), DeclKind::Model, m.span),
                 Decl::Extend(_) => {
@@ -326,6 +327,7 @@ impl Resolver {
                 Decl::Prompt(p) => self.resolve_prompt_decl(p),
                 Decl::Agent(a) => self.resolve_agent_decl(a),
                 Decl::Eval(e) => self.resolve_eval_decl(e),
+                Decl::Test(t) => self.resolve_test_decl(t),
                 Decl::Effect(e) => self.resolve_effect_decl(e),
                 Decl::Model(_) => {
                     // Phase 20h slice A: model decls register a name
@@ -533,6 +535,15 @@ impl Resolver {
         self.push_scope();
         self.resolve_block(&e.body);
         for assertion in &e.assertions {
+            self.resolve_eval_assert(assertion);
+        }
+        self.pop_scope();
+    }
+
+    fn resolve_test_decl(&mut self, t: &TestDecl) {
+        self.push_scope();
+        self.resolve_block(&t.body);
+        for assertion in &t.assertions {
             self.resolve_eval_assert(assertion);
         }
         self.pop_scope();
@@ -885,6 +896,7 @@ fn decl_kind_label(kind: DeclKind) -> &'static str {
         DeclKind::Prompt => "prompt",
         DeclKind::Agent => "agent",
         DeclKind::Eval => "eval",
+        DeclKind::Test => "test",
         DeclKind::Effect => "effect",
         DeclKind::Model => "model",
     }

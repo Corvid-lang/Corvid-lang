@@ -503,6 +503,7 @@ async fn stream_budget_termination_fires_before_over_budget_yield() {
             borrow_sig: None,
         }],
         evals: vec![],
+        tests: vec![],
     };
     let rt = Runtime::builder()
         .approver(Arc::new(ProgrammaticApprover::always_yes()))

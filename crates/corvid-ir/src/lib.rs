@@ -361,6 +361,26 @@ eval refund_process:
     }
 
     #[test]
+    fn lowers_tests_into_ir_nodes() {
+        let src = "\
+tool get_order(id: String) -> String
+
+test refund_contract:
+    order = get_order(\"ord_42\")
+    assert called get_order
+    assert order == \"ord_42\"
+";
+        let ir = lower_src(src);
+        assert_eq!(ir.tests.len(), 1);
+        let test = &ir.tests[0];
+        assert_eq!(test.name, "refund_contract");
+        assert_eq!(test.body.stmts.len(), 1);
+        assert_eq!(test.assertions.len(), 2);
+        assert!(matches!(test.assertions[0], IrEvalAssert::Called { .. }));
+        assert!(matches!(test.assertions[1], IrEvalAssert::Value { .. }));
+    }
+
+    #[test]
     fn lowers_yield_to_dedicated_ir_stmt() {
         let src = "\
 agent chunks(text: String) -> Stream<String>:

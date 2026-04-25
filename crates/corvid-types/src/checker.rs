@@ -11,8 +11,8 @@ use crate::errors::{TypeError, TypeErrorKind, TypeWarning, TypeWarningKind};
 use crate::types::Type;
 use corvid_ast::{
     AgentDecl, BinaryOp, Block, Decl, Effect, EvalAssert, EvalDecl, Expr, ExtendMethodKind, File,
-    Ident, Literal, ModelDecl, Param, PromptDecl, Span, Stmt, ToolDecl, TypeDecl, TypeRef, UnaryOp,
-    WeakEffect, WeakEffectRow,
+    Ident, Literal, ModelDecl, Param, PromptDecl, Span, Stmt, TestDecl, ToolDecl, TypeDecl,
+    TypeRef, UnaryOp, WeakEffect, WeakEffectRow,
 };
 use corvid_resolve::{
     resolver::{MethodEntry, MethodKind},
@@ -409,7 +409,7 @@ impl<'a> Checker<'a> {
                         agents.insert(id, a);
                     }
                 }
-                Decl::Eval(_) => {}
+                Decl::Eval(_) | Decl::Test(_) => {}
                 Decl::Type(t) => {
                     if let Some(id) = resolved.symbols.lookup_def(&t.name.name) {
                         types.insert(id, t);
@@ -491,6 +491,7 @@ impl<'a> Checker<'a> {
             match decl {
                 Decl::Agent(a) => self.check_agent(a),
                 Decl::Eval(e) => self.check_eval(e),
+                Decl::Test(t) => self.check_test(t),
                 Decl::Prompt(p) => self.check_prompt(p),
                 Decl::Tool(_)
                 | Decl::Type(_)

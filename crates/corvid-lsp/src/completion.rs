@@ -200,6 +200,12 @@ fn add_declarations(items: &mut CompletionSet, file: &File) {
                 "eval",
                 format!("eval {}", eval.name.name),
             )),
+            Decl::Test(test) => items.add(symbol_item(
+                &test.name.name,
+                CompletionItemKind::METHOD,
+                "test",
+                format!("test {}", test.name.name),
+            )),
             Decl::Import(_) | Decl::Extend(_) => {}
         }
     }

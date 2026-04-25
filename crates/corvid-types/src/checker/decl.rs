@@ -15,7 +15,7 @@ use crate::errors::{TypeError, TypeErrorKind, TypeWarning, TypeWarningKind};
 use crate::types::Type;
 use corvid_ast::{
     AgentAttribute, AgentDecl, Block, EvalAssert, EvalDecl, Expr, Ident, OwnershipAnnotation,
-    OwnershipMode, Span, Stmt,
+    OwnershipMode, Span, Stmt, TestDecl,
 };
 use corvid_resolve::{Binding, DeclKind};
 
@@ -385,11 +385,19 @@ impl<'a> Checker<'a> {
 
 
     pub(super) fn check_eval(&mut self, e: &EvalDecl) {
+        self.check_assertion_decl(&e.body, &e.assertions);
+    }
+
+    pub(super) fn check_test(&mut self, t: &TestDecl) {
+        self.check_assertion_decl(&t.body, &t.assertions);
+    }
+
+    fn check_assertion_decl(&mut self, body: &Block, assertions: &[EvalAssert]) {
         let prev_ret = self.current_return.take();
         let prev_in_agent = std::mem::replace(&mut self.in_agent_body, false);
         let prev_saw_yield = self.saw_yield;
-        self.check_block(&e.body);
-        for assertion in &e.assertions {
+        self.check_block(body);
+        for assertion in assertions {
             self.check_eval_assert(assertion);
         }
         self.current_return = prev_ret;

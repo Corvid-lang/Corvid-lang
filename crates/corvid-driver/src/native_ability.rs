@@ -364,6 +364,7 @@ mod tests {
                 borrow_sig: Some(vec![]),
             }],
             evals: vec![],
+            tests: vec![],
         };
 
         assert!(matches!(

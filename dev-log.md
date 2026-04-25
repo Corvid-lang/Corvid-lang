@@ -5406,3 +5406,16 @@ missing semantic summaries, and package-policy violations from locked semantic
 summaries. Version parsing now lives in `package_version.rs`, and package-policy
 loading/checking lives in `package_policy.rs`, so add/update and verify-lock use
 the same rules.
+
+## 2026-04-25 - Test declaration compiler foundation
+
+Started Phase 26 with `26-A-test-declarations`. Added `test name:` as a real
+top-level language declaration across AST, lexer/parser, resolver, typechecker,
+IR lowering, dependency graph, LSP completion/navigation, and source rewrite
+rendering.
+
+Tests reuse the existing eval assertion model instead of creating a parallel
+assertion syntax. That keeps ordinary value assertions and AI-native process
+assertions (`called`, `approved`, `cost`, ordering, statistical modifiers) on a
+single compiler path before the runner, mocks, fixtures, snapshots, and trace
+fixtures land in later slices.

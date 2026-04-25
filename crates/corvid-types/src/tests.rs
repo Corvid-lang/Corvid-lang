@@ -1369,6 +1369,35 @@ eval bad_eval:
     }
 
     #[test]
+    fn test_decl_assertions_are_typechecked() {
+        let src = r#"
+tool get_order(id: String) -> String
+
+test contract:
+    order = get_order("ord_42")
+    assert called get_order
+    assert order == "ord_42"
+"#;
+        let (_file, resolved, checked) = checked_with_file(src);
+        assert!(resolved.errors.is_empty(), "resolve errors: {:?}", resolved.errors);
+        assert!(checked.errors.is_empty(), "type errors: {:?}", checked.errors);
+    }
+
+    #[test]
+    fn test_decl_non_bool_assert_is_flagged() {
+        let src = r#"
+test bad_contract:
+    value = 1
+    assert value
+"#;
+        let c = check(src);
+        assert!(c.errors.iter().any(|e| matches!(
+            e.kind,
+            TypeErrorKind::AssertNotBool { .. }
+        )), "got: {:?}", c.errors);
+    }
+
+    #[test]
     fn eval_called_unknown_name_fails_in_resolution() {
         let src = "\
 eval bad_eval:

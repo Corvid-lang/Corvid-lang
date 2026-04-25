@@ -1422,6 +1422,14 @@ The determinism-source catalog and the language's treatment of non-reproducible 
 - Trace fixtures: production traces from Phase 21 can be used as deterministic test inputs and regression cases.
 - Interop with Phase 20's `eval ... assert ...` syntax (evals are tests, tests aren't necessarily evals — eval is statistical assertions over LLM behaviour).
 
+**Slice checklist:**
+
+- [x] 26-A-test-declarations          `test name:` declarations parse, resolve, typecheck, and lower into `IrTest` nodes. Tests reuse eval assertion syntax so value, trace-called, approval, ordering, cost, and statistical assertion metadata share one compiler model. See [docs/testing-primitives.md](docs/testing-primitives.md).
+- [ ] 26-B-test-runner                `corvid test <file>` discovers `test` declarations, executes setup bodies, evaluates value assertions, and reports typed pass/fail output with CI exit codes.
+- [ ] 26-C-mocks-fixtures             `mock` and `fixture` declarations with scoped override semantics, effect-profile preservation, and reusable typed test data.
+- [ ] 26-D-snapshots                  `assert_snapshot` with deterministic snapshot storage, update flow, and diff output.
+- [ ] 26-E-trace-fixtures             Production trace fixtures for deterministic regression tests over approvals, costs, provenance, grounding, and replay compatibility.
+
 ### Phase 27 — Eval tooling CLI (~3 weeks)
 
 **Goal.** Turn Phase 20's `eval ... assert ...` syntax into a usable dev + CI workflow.

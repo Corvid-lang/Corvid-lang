@@ -1053,6 +1053,10 @@ fn collect_all_names(file: &File) -> BTreeSet<String> {
                 names.insert(eval.name.name.clone());
                 collect_names_from_block(&eval.body, &mut names);
             }
+            Decl::Test(test) => {
+                names.insert(test.name.name.clone());
+                collect_names_from_block(&test.body, &mut names);
+            }
             Decl::Import(import) => {
                 if let Some(alias) = &import.alias {
                     names.insert(alias.name.clone());
@@ -1180,6 +1184,23 @@ fn render_decl(decl: &Decl, indent: usize, out: &mut String) {
                 out.push('\n');
             }
             for (index, assertion) in eval.assertions.iter().enumerate() {
+                if index > 0 {
+                    out.push('\n');
+                }
+                push_indent(indent + 1, out);
+                out.push_str(&render_eval_assert(assertion));
+            }
+        }
+        Decl::Test(test) => {
+            push_indent(indent, out);
+            out.push_str("test ");
+            out.push_str(&test.name.name);
+            out.push_str(":\n");
+            render_block(&test.body, indent + 1, out);
+            if !test.assertions.is_empty() {
+                out.push('\n');
+            }
+            for (index, assertion) in test.assertions.iter().enumerate() {
                 if index > 0 {
                     out.push('\n');
                 }

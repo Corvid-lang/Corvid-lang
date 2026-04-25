@@ -14,7 +14,7 @@ use corvid_ast::{
     AgentAttribute, AgentDecl, BinaryOp, Block, Decl, Effect, EvalAssert, EvalDecl, Expr,
     ExtendMethodKind, ExternAbi, File, Ident,
     ImportDecl, ImportSource, Literal, Param, PromptDecl, ReplayArm, ReplayPattern, Span, Stmt,
-    ToolArgPattern, ToolDecl, TypeDecl, TypeRef, UnaryOp,
+    TestDecl, ToolArgPattern, ToolDecl, TypeDecl, TypeRef, UnaryOp,
 };
 use corvid_resolve::{
     resolver::MethodEntry, Binding, BuiltIn, DeclKind, DefId, LocalId, ModuleResolution, Resolved,
@@ -161,6 +161,7 @@ impl<'a> Lowerer<'a> {
         let mut prompts = Vec::new();
         let mut agents = Vec::new();
         let mut evals = Vec::new();
+        let mut tests = Vec::new();
 
         for decl in &file.decls {
             match decl {
@@ -170,6 +171,7 @@ impl<'a> Lowerer<'a> {
                 Decl::Prompt(p) => prompts.push(self.lower_prompt(p)),
                 Decl::Agent(a) => agents.push(self.lower_agent(a)),
                 Decl::Eval(e) => evals.push(self.lower_eval(e)),
+                Decl::Test(t) => tests.push(self.lower_test(t)),
                 Decl::Effect(_) => {}
                 Decl::Model(_) => {
                     // Phase 20h slice A: model declarations are a
@@ -219,6 +221,7 @@ impl<'a> Lowerer<'a> {
             prompts,
             agents,
             evals,
+            tests,
         }
     }
 
@@ -1100,6 +1103,24 @@ impl<'a> Lowerer<'a> {
                 value: Box::new(self.lower_expr(target)),
             }),
             _ => None,
+        }
+    }
+
+    fn lower_test(&self, t: &TestDecl) -> IrTest {
+        let id = self
+            .symbols
+            .lookup_def(&t.name.name)
+            .unwrap_or(DefId(u32::MAX));
+        IrTest {
+            id,
+            name: t.name.name.clone(),
+            body: self.lower_block(&t.body),
+            assertions: t
+                .assertions
+                .iter()
+                .map(|assertion| self.lower_eval_assert(assertion))
+                .collect(),
+            span: t.span,
         }
     }
 

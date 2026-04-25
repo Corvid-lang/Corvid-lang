@@ -200,6 +200,7 @@ impl<'a> Checker<'a> {
             DeclKind::Import
             | DeclKind::ImportedUse
             | DeclKind::Eval
+            | DeclKind::Test
             | DeclKind::Effect
             | DeclKind::Model => {
                 Type::Unknown

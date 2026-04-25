@@ -206,6 +206,7 @@ async fn if_non_bool_condition_is_defensive_runtime_error() {
         prompts: vec![],
         agents: vec![agent],
         evals: vec![],
+        tests: vec![],
     };
     let rt = empty_runtime();
     let err = run_agent(&ir, "bad", vec![], &rt).await.unwrap_err();

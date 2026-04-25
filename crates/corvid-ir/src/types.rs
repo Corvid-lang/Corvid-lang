@@ -16,6 +16,7 @@ pub struct IrFile {
     pub prompts: Vec<IrPrompt>,
     pub agents: Vec<IrAgent>,
     pub evals: Vec<IrEval>,
+    pub tests: Vec<IrTest>,
 }
 
 /// `import python "..." as alias`.
@@ -261,6 +262,17 @@ pub enum IrExternAbi {
 /// An eval declaration lowered into IR.
 #[derive(Debug, Clone)]
 pub struct IrEval {
+    pub id: DefId,
+    pub name: String,
+    pub body: IrBlock,
+    pub assertions: Vec<IrEvalAssert>,
+    pub span: Span,
+}
+
+/// A test declaration lowered into IR. The runner lands in Phase 26 after the
+/// compiler can already preserve test bodies and assertion metadata.
+#[derive(Debug, Clone)]
+pub struct IrTest {
     pub id: DefId,
     pub name: String,
     pub body: IrBlock,

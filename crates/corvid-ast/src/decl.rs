@@ -23,6 +23,7 @@ pub enum Decl {
     Prompt(PromptDecl),
     Agent(AgentDecl),
     Eval(EvalDecl),
+    Test(TestDecl),
     /// `extend T:` block attaching methods to a user type.
     Extend(ExtendDecl),
     /// `effect Name:` dimensional effect declaration.
@@ -41,6 +42,7 @@ impl Decl {
             Decl::Prompt(d) => d.span,
             Decl::Agent(d) => d.span,
             Decl::Eval(d) => d.span,
+            Decl::Test(d) => d.span,
             Decl::Extend(d) => d.span,
             Decl::Effect(d) => d.span,
             Decl::Model(d) => d.span,
@@ -614,6 +616,17 @@ impl AgentAttribute {
 /// assertions validate either values or the execution trace shape.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct EvalDecl {
+    pub name: Ident,
+    pub body: Block,
+    pub assertions: Vec<EvalAssert>,
+    pub span: Span,
+}
+
+/// A `test` declaration. Tests are deterministic developer checks over
+/// ordinary setup code plus assertions. They reuse eval assertion syntax so
+/// value checks and trace/process checks share one assertion model.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TestDecl {
     pub name: Ident,
     pub body: Block,
     pub assertions: Vec<EvalAssert>,

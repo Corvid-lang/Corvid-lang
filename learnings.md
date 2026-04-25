@@ -3257,6 +3257,17 @@ bad new packages from entering the graph; `corvid package verify-lock` proves
 the graph remains valid after policy edits, merge conflicts, manual lockfile
 changes, or dependency updates.
 
+## test declarations
+
+Testing should reuse the same behavioral assertion language as evals. Corvid
+already has trace-aware assertions for process properties; splitting tests and
+evals into two assertion models would make one weaker than the other.
+
+The distinction should be runner semantics, not compiler semantics. `test`
+declarations are deterministic developer checks; `eval` declarations add
+statistical LLM behavior and model-quality reporting. Both can share the same
+AST/IR assertion shape.
+
 ## Contributing / feedback
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). The rules of the road are: design chat before code, per-scope commits at every boundary, dev-log entry for every session, no shortcuts. The `learnings.md` file you're reading gets updated when each user-visible feature ships.

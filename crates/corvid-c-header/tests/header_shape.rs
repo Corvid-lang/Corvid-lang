@@ -96,6 +96,7 @@ fn scalar_ir() -> IrFile {
             },
         ],
         evals: vec![],
+        tests: vec![],
     }
 }
 
