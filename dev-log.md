@@ -4944,3 +4944,19 @@ same policy program.
 The mode rejects stack review and signing. That is intentional: watch is an
 interactive terminal feedback loop, not a durable audit artifact. Durable
 artifacts still use `--format=json`, `--format=in-toto`, or `--sign`.
+
+## 2026-04-25 - preserved-semantics rewrite reports
+
+Closed the Phase 20g slice C follow-up. `corvid test rewrites` now exposes the
+preserved-semantics rewrite verifier as a user-facing command instead of
+leaving it buried in crate tests.
+
+The command prints the rewrite coverage matrix with each rewrite's semantic
+law. If a rewrite changes an effect profile, the existing
+`RewriteDivergenceReport` becomes the command failure: it names the rewrite
+rule, law, rationale, first changed line, original and rewritten profiles, and
+a shrunk reproducer.
+
+Sparse coverage stays informational. Unexercised rewrite rows are visible in
+the matrix, but the command fails only on actual semantic drift. That keeps the
+tool useful today without pretending the corpus is broader than it is.

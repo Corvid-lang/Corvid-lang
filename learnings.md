@@ -2827,6 +2827,22 @@ Watch mode intentionally does not sign receipts or compose stacked reviews.
 Those are artifact concerns. The local loop is optimized for speed and clarity;
 durable governance still belongs to JSON / in-toto / signed receipt modes.
 
+## 20g-preserved-semantics-rewrite-reports
+
+`corvid test rewrites` is now the public entry point for preserved-semantics
+fuzzing. It runs the rewrite coverage matrix over the clean corpus and names
+the semantic law attached to each rewrite.
+
+The important part is the failure shape. A drift is not reported as "test
+failed"; it names the exact rewrite rule and algebraic law that broke, includes
+the first changed source line, shows the original and rewritten effect
+profiles, and includes a shrunk reproducer when line deletion can minimize the
+case.
+
+Coverage gaps remain honest. Rows with no exercised corpus program are shown as
+unexercised, but they are not treated as profile drift. The command distinguishes
+"we need a better corpus" from "the checker is unsound under this rewrite."
+
 ## Contributing / feedback
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). The rules of the road are: design chat before code, per-scope commits at every boundary, dev-log entry for every session, no shortcuts. The `learnings.md` file you're reading gets updated when each user-visible feature ships.

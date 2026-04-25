@@ -663,7 +663,7 @@ If profiles diverge, the composition algebra is **non-compositional** — it dep
 
 - [x] Semantic-preserving rewriter — scaffold at commit `d89c910`; slice A (α-conversion, let-extract, let-inline) at commit `b300fd2`; slices B + C in progress
 - [x] proptest driver that generates programs + applies rewrites + checks profile equality — driver framework live in `crates/corvid-differential-verify/src/fuzz.rs`
-- [ ] Divergence reports name the rewrite rule that caused the profile drift — slice C of Dev B's invention #4 track
+- [x] Divergence reports name the rewrite rule that caused the profile drift — `corvid test rewrites` runs the preserved-semantics matrix and drift failures cite the rewrite rule, semantic law, first changed line, original/rewritten profiles, and shrunk reproducer.
 
 ##### 5. Bounty-fed regression corpus
 

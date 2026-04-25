@@ -6,7 +6,7 @@
 //!   corvid build <file>       compile to target/py/<name>.py
 //!   corvid run <file>         build + invoke python on the output
 //!   corvid repl               start the interactive REPL
-//!   corvid test <what>        run verification suites (dimensions, spec, adversarial)
+//!   corvid test <what>        run verification suites (dimensions, spec, rewrites, adversarial)
 //!   corvid verify             cross-tier effect-profile verification
 //!   corvid effect-diff        diff composed effect profiles between two revisions
 //!   corvid add-dimension      install a dimension from the effect registry
@@ -114,6 +114,8 @@ enum Command {
     ///   `spec`          recompile every .cor example in docs/effects-spec/
     ///                   against the current toolchain; with --meta, run the
     ///                   self-verifying verification harness
+    ///   `rewrites`      preserved-semantics rewrite fuzzing; failures name
+    ///                   the rewrite rule and algebraic law that drifted
     ///   `adversarial`   LLM-driven bypass generation against the effect
     ///                   checker
     ///
@@ -1060,16 +1062,19 @@ fn cmd_test(
         None => {
             eprintln!("`corvid test` with no target is the legacy placeholder.");
             eprintln!("Use one of: `corvid test dimensions`, `corvid test spec`,");
-            eprintln!("`corvid test spec --meta`, `corvid test adversarial --count <N>`.");
+            eprintln!(
+                "`corvid test spec --meta`, `corvid test rewrites`, `corvid test adversarial --count <N>`."
+            );
             Ok(0)
         }
         Some("dimensions") => cmd_test_dimensions(),
         Some("spec") if meta => cmd_test_spec_meta(),
         Some("spec") => cmd_test_spec(),
+        Some("rewrites") => cmd_test_rewrites(),
         Some("adversarial") => cmd_test_adversarial(count, model),
         Some(other) => {
             anyhow::bail!(
-                "unknown test target `{other}`; valid: `dimensions`, `spec`, `spec --meta`, `adversarial`"
+                "unknown test target `{other}`; valid: `dimensions`, `spec`, `spec --meta`, `rewrites`, `adversarial`"
             )
         }
     }
@@ -1137,6 +1142,19 @@ fn cmd_test_spec_meta() -> Result<u8> {
         .filter(|v| !matches!(v.kind, corvid_driver::MetaKind::Distinguishes))
         .count();
     Ok(if failed == 0 { 0 } else { 1 })
+}
+
+fn cmd_test_rewrites() -> Result<u8> {
+    println!("corvid test rewrites — preserved-semantics effect-profile fuzzing\n");
+    println!("Each rewrite row names the semantic law it is obligated to preserve.");
+    println!(
+        "If a profile drifts, the failure report names the rewrite rule, law, line, and shrunk reproducer.\n"
+    );
+    let matrix = corvid_differential_verify::fuzz::build_coverage_matrix()
+        .context("preserved-semantics rewrite verification failed")?;
+    print!("{}", corvid_differential_verify::fuzz::render_coverage_matrix(&matrix));
+    println!();
+    Ok(0)
 }
 
 fn cmd_test_adversarial(count: u32, model: &str) -> Result<u8> {

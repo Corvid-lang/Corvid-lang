@@ -37,7 +37,7 @@ Five independent techniques run on every build. A regression in any one fails CI
 
 **Why it matters.** If profiles diverge under a rewrite that claims to preserve semantics, the effect analyzer is *non-compositional* — it depends on surface syntax rather than semantics. That's a real soundness bug.
 
-**Implementation status.** Scaffold landed in commit `d89c910`. Real AST-level rewrites are Dev B's Phase 20g invention #4 track — slice A shipped at commit `b300fd2` (α-conversion + let-extract + let-inline); slice B (remaining four rewrites) + slice C (law-referenced divergence reports) are in progress.
+**Implementation status.** Scaffold landed in commit `d89c910`. Real AST-level rewrites are Dev B's Phase 20g invention #4 track — slice A shipped at commit `b300fd2` (alpha-conversion + let-extract + let-inline); slice B added commutative sibling swap, top-level reorder, branch swap, and constant folding; slice C exposes the matrix as `corvid test rewrites` and reports any drift with the rewrite rule, semantic law, first changed line, profile diff, and shrunk reproducer.
 
 **Inventive angle.** Each rewrite carries a **law reference**. When a rewrite breaks a profile, the divergence report cites the law: "α-equivalence broken at path/to/file.cor:42." Users learn the algebra by reading failures.
 
