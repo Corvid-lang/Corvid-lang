@@ -3375,6 +3375,18 @@ version, immutable URL, SHA-256, and optional proof URL/hash is enough to suppor
 HTTP/CDN hosting, private local registries, and CI fixtures without creating a
 second package manager inside the effect system.
 
+## runnable invention tour
+
+An invention catalog should be executable. If the README says a feature exists
+but no command can load a compiling example, the catalog will drift into
+marketing. `corvid tour` keeps the catalog honest by making every demo source
+compile through the normal driver pipeline.
+
+The useful shape is metadata plus code: category, pitch, spec link, roadmap
+anchor, test reference, explicit non-scope, and a REPL-loaded snippet. That gives
+developers a fast entry point and gives maintainers a concrete checklist for
+future inventions.
+
 ## Contributing / feedback
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). The rules of the road are: design chat before code, per-scope commits at every boundary, dev-log entry for every session, no shortcuts. The `learnings.md` file you're reading gets updated when each user-visible feature ships.

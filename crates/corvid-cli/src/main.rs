@@ -17,6 +17,7 @@
 //!   corvid add-dimension      install a dimension from the effect registry
 //!   corvid routing-report     aggregate dispatch traces into routing guidance
 //!   corvid cost-frontier      compute prompt cost/quality Pareto frontier
+//!   corvid tour               open runnable demos for Corvid inventions
 //!   corvid import-summary     inspect imported module semantic contracts
 //!   corvid eval --swap-model <id> <trace>  retrospective model migration analysis
 //!   corvid replay <trace>     re-execute a recorded trace deterministically
@@ -41,6 +42,7 @@ mod test_from_traces;
 mod trace_cmd;
 mod trace_dag;
 mod trace_diff;
+mod tour;
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -310,6 +312,15 @@ enum Command {
         /// Trace directory. Defaults to `target/trace`.
         #[arg(long, value_name = "PATH")]
         trace_dir: Option<PathBuf>,
+    },
+    /// Open runnable demos for Corvid's shipped inventions.
+    Tour {
+        /// List available invention demos.
+        #[arg(long)]
+        list: bool,
+        /// Topic to load into the REPL.
+        #[arg(long, value_name = "NAME")]
+        topic: Option<String>,
     },
     /// Inspect semantic summaries for every Corvid import in a root file.
     ImportSummary {
@@ -868,6 +879,7 @@ fn main() -> ExitCode {
             since_commit.as_deref(),
             json,
         ),
+        Some(Command::Tour { list, topic }) => tour::cmd_tour(list, topic.as_deref()),
         Some(Command::ImportSummary { file, json }) => cmd_import_summary(&file, json),
         Some(Command::Eval {
             inputs,

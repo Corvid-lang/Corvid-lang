@@ -108,11 +108,39 @@ impl Repl {
         }
     }
 
+    pub fn run_tour_stdio(title: &str, source: &str) -> io::Result<()> {
+        let mut repl = Self::new()?;
+        {
+            let stdout = io::stdout();
+            let mut writer = io::BufWriter::new(stdout.lock());
+            writeln!(writer, "Corvid tour: {title}")?;
+            writeln!(writer, "Loading demo into the REPL:\n")?;
+            writeln!(writer, "{source}")?;
+            repl.load_source(source, &mut writer)?;
+            writer.flush()?;
+        }
+
+        if io::stdin().is_terminal() && io::stdout().is_terminal() {
+            repl.run_interactive()
+        } else {
+            let stdin = io::stdin();
+            let stdout = io::stdout();
+            let reader = io::BufReader::new(stdin.lock());
+            let mut writer = io::BufWriter::new(stdout.lock());
+            repl.run_loop(reader, &mut writer)
+        }
+    }
+
     fn run_loop<R: BufRead, W: Write>(&mut self, mut input: R, output: &mut W) -> io::Result<()> {
         while let Some(source) = self.read_turn(&mut input, output)? {
             self.process_source(&source, output, false)?;
         }
         Ok(())
+    }
+
+    fn load_source<W: Write>(&mut self, source: &str, output: &mut W) -> io::Result<()> {
+        let reader = io::Cursor::new(source.as_bytes());
+        self.run_loop(reader, output)
     }
 
     fn run_interactive(&mut self) -> io::Result<()> {

@@ -5536,3 +5536,16 @@ carry their own SHA-256. The installer fetches the artifact, verifies the index
 digest, verifies the artifact's Ed25519 signature, checks the artifact contract,
 then reuses the existing dimension validation, law-check, proof replay, and
 regression corpus gates before writing to `corvid.toml`.
+
+## 2026-04-25 - Runnable invention tour
+
+Shipped the Phase 34 runnable invention index. `corvid tour --list` now renders
+the shipped invention catalog across compile-time safety, AI-native ergonomics,
+adaptive routing, streaming, and verification. `corvid tour --topic <name>`
+prints the topic's spec/roadmap/test/non-scope metadata and loads the demo
+source into the REPL.
+
+The catalog is not prose-only: every topic source is compiled by a unit test via
+the normal driver pipeline. The REPL preloader reuses the regular REPL turn
+processor, so tour examples exercise the same parser, resolver, checker, and
+lowering path users get interactively.
