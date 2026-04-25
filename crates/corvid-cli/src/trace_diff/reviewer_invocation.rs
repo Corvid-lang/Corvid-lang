@@ -27,6 +27,7 @@ use corvid_runtime::{AnthropicAdapter, OpenAiAdapter, ProgrammaticApprover};
 use corvid_vm::{json_to_value, value_to_json, Value};
 use serde::Serialize;
 
+use super::grounded_narrative::ground_receipt_narrative;
 use super::impact::TraceImpact;
 use super::narrative::{DiffSummary, ReceiptNarrative};
 
@@ -270,6 +271,7 @@ pub(super) fn invoke_reviewer(
         &types_by_id,
     )
     .map_err(|e| anyhow!("narrative → Value: {e:?}"))?;
+    let narrative_value = ground_receipt_narrative(narrative_value, narrative);
 
     // The reviewer is `@deterministic` and calls no LLMs, tools, or
     // approvers. A minimal runtime with a programmatic approver (any
@@ -279,19 +281,33 @@ pub(super) fn invoke_reviewer(
         .approver(Arc::new(ProgrammaticApprover::always_no()))
         .build();
 
-    let tokio_rt = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .context("build tokio runtime for reviewer")?;
+    let args = vec![base_value, head_value, impact_value, narrative_value];
+    let result = std::thread::Builder::new()
+        .name("corvid-trace-diff-reviewer".to_string())
+        // Windows CLI binaries get a smaller main-thread stack than
+        // Rust's test harness threads. The embedded Corvid reviewer is
+        // intentionally written in the language and can build a deep
+        // interpreter/drop chain for larger receipts, so run it on a
+        // predictable stack instead of depending on platform defaults.
+        .stack_size(8 * 1024 * 1024)
+        .spawn(move || {
+            let tokio_rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .context("build tokio runtime for reviewer")?;
 
-    let result = tokio_rt
-        .block_on(run_ir_with_runtime(
-            &reviewer_ir,
-            Some("review_pr"),
-            vec![base_value, head_value, impact_value, narrative_value],
-            &runtime,
-        ))
-        .map_err(|e| anyhow!("reviewer `review_pr` failed: {e}"))?;
+            tokio_rt
+                .block_on(run_ir_with_runtime(
+                    &reviewer_ir,
+                    Some("review_pr"),
+                    args,
+                    &runtime,
+                ))
+                .map_err(|e| anyhow!("reviewer `review_pr` failed: {e}"))
+        })
+        .context("spawn trace-diff reviewer thread")?
+        .join()
+        .map_err(|_| anyhow!("trace-diff reviewer thread panicked"))??;
 
     match result {
         Value::String(s) => Ok(s.to_string()),
@@ -410,6 +426,19 @@ mod tests {
         assert!(
             ir.types.iter().any(|t| t.name == "Descriptor"),
             "reviewer IR must expose `Descriptor` type"
+        );
+        let review_pr = ir
+            .agents
+            .iter()
+            .find(|agent| agent.name == "review_pr")
+            .expect("reviewer IR must expose `review_pr` agent");
+        assert!(
+            matches!(
+                &review_pr.params[3].ty,
+                corvid_types::Type::Grounded(inner)
+                    if matches!(&**inner, corvid_types::Type::Struct(_))
+            ),
+            "review_pr narrative parameter must be Grounded<ReceiptNarrative>"
         );
     }
 

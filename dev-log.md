@@ -4848,6 +4848,28 @@ first-class functions or typed lambdas.
 
 Closed the backpressure propagation item with a first-class
 `pulls_from(name)` policy alongside `bounded(N)` and `unbounded`.
+
+## 2026-04-25 - 21-inv-H-4-follow grounded receipt narratives
+
+Closed the deferred receipt-narrative provenance upgrade. The embedded
+Corvid reviewer now accepts `Grounded<ReceiptNarrative>` and explicitly
+unwraps it at the deterministic render boundary. Rust remains responsible
+for validating LLM-produced citation keys against the compiler-derived diff
+summary, then host-mints a grounded VM value whose provenance entries point
+at the validated delta keys.
+
+The implementation keeps the responsibilities separated: `reviewer.cor`
+owns the language-level contract, `grounded_narrative.rs` owns host-side
+provenance minting, and `reviewer_invocation.rs` only converts inputs and
+invokes the reviewer. Empty narrative sentinels stay grounded wrappers with
+empty provenance because they carry no prose claims.
+
+Validation found a Windows CLI-only stack overflow on larger markdown
+receipts after the grounded parameter was added. Unit tests ran on the Rust
+test harness stack and stayed green, but the released binary's main thread was
+smaller. The embedded reviewer now runs on an explicit 8 MiB worker thread so
+the Corvid reviewer remains the rendering implementation without depending on
+platform default stack sizes.
 Prompt stream modifiers and dimensional latency effects can now write
 `with backpressure pulls_from(producer_rate)` and
 `latency: streaming(backpressure: pulls_from(producer_rate))`.

@@ -2733,6 +2733,33 @@ unbounded; matching pull sources stay pull-based; mixed pull and bounded
 sources degrade to the bounded policy because buffering exists somewhere in the
 path.
 
+## 21-inv-H-grounded-receipt-narratives
+
+The PR behavior receipt's optional prose summary is now grounded before the
+deterministic reviewer can render it:
+
+```corvid
+agent review_pr(
+    base: Descriptor,
+    head: Descriptor,
+    impact: TraceImpact,
+    narrative_grounded: Grounded<ReceiptNarrative>,
+) -> String:
+    narrative = narrative_grounded.unwrap_discarding_sources()
+    ...
+```
+
+Rust still validates that every LLM citation references a real compiler-derived
+delta key. Only after validation does the host mint `Grounded<ReceiptNarrative>`
+with one provenance entry per cited delta. This preserves the separation of
+responsibility: the prompt may write prose, Rust proves the citations are real,
+and Corvid's reviewer refuses to consume the narrative as plain ungrounded data.
+
+The CLI executes this embedded reviewer on an explicit worker-thread stack.
+That is product behavior, not a test hack: Windows release binaries can have a
+smaller main-thread stack than Rust test threads, and complex receipts should
+not depend on that platform default.
+
 ## Contributing / feedback
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). The rules of the road are: design chat before code, per-scope commits at every boundary, dev-log entry for every session, no shortcuts. The `learnings.md` file you're reading gets updated when each user-visible feature ships.

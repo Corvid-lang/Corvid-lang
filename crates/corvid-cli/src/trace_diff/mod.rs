@@ -46,6 +46,7 @@
 
 mod delta_isolation;
 mod gitlab;
+mod grounded_narrative;
 mod impact;
 mod in_toto;
 mod narrative;
