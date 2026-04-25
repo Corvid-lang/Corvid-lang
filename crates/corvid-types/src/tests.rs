@@ -1744,6 +1744,58 @@ agent read(snapshot: Partial<Plan>) -> Option<String>:
         assert!(c.errors.is_empty(), "got: {:?}", c.errors);
     }
 
+    #[test]
+    fn resume_token_captures_stream_element_type() {
+        let src = "\
+prompt draft(topic: String) -> Stream<String>:
+    \"Draft {topic}\"
+
+agent capture(topic: String) -> ResumeToken<String>:
+    stream = draft(topic)
+    return resume_token(stream)
+
+agent continue_it(token: ResumeToken<String>) -> Stream<String>:
+    return resume(draft, token)
+";
+        let c = check(src);
+        assert!(c.errors.is_empty(), "got: {:?}", c.errors);
+    }
+
+    #[test]
+    fn resume_token_requires_stream_argument() {
+        let src = "\
+agent capture(text: String) -> ResumeToken<String>:
+    return resume_token(text)
+";
+        let c = check(src);
+        assert!(c.errors.iter().any(|e| matches!(
+            &e.kind,
+            TypeErrorKind::TypeMismatch { context, expected, got }
+                if context == "resume_token argument"
+                    && expected == "Stream<T>"
+                    && got == "String"
+        )), "got: {:?}", c.errors);
+    }
+
+    #[test]
+    fn resume_requires_matching_resume_token_type() {
+        let src = "\
+prompt draft(topic: String) -> Stream<String>:
+    \"Draft {topic}\"
+
+agent continue_it(token: ResumeToken<Int>) -> Stream<String>:
+    return resume(draft, token)
+";
+        let c = check(src);
+        assert!(c.errors.iter().any(|e| matches!(
+            &e.kind,
+            TypeErrorKind::TypeMismatch { context, expected, got }
+                if context == "resume token"
+                    && expected == "ResumeToken<String>"
+                    && got == "ResumeToken<Int>"
+        )), "got: {:?}", c.errors);
+    }
+
     // --- Custom dimensions via corvid.toml (Phase 20g invention #6) ---
 
     fn check_with_config(src: &str, config: &crate::config::CorvidConfig) -> Checked {

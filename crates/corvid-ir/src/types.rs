@@ -453,6 +453,12 @@ pub enum IrExprKind {
 
     WeakNew { strong: Box<IrExpr> },
     WeakUpgrade { weak: Box<IrExpr> },
+    StreamResumeToken { stream: Box<IrExpr> },
+    ResumeStream {
+        prompt_def_id: DefId,
+        prompt_name: String,
+        token: Box<IrExpr>,
+    },
     ResultOk { inner: Box<IrExpr> },
     ResultErr { inner: Box<IrExpr> },
     OptionSome { inner: Box<IrExpr> },

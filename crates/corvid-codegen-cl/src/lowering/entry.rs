@@ -62,6 +62,8 @@ fn expr_uses_runtime(expr: &IrExpr) -> bool {
         // `?`-propagated tool call inside `inner` still does.
         IrExprKind::WeakNew { strong: inner }
         | IrExprKind::WeakUpgrade { weak: inner }
+        | IrExprKind::StreamResumeToken { stream: inner }
+        | IrExprKind::ResumeStream { token: inner, .. }
         | IrExprKind::ResultOk { inner }
         | IrExprKind::ResultErr { inner }
         | IrExprKind::OptionSome { inner }
@@ -407,7 +409,7 @@ fn check_entry_boundary_type(
         Type::Int | Type::Bool | Type::Float | Type::String => Ok(()),
         Type::Struct(_) | Type::ImportedStruct(_) | Type::List(_) | Type::Nothing
         | Type::Result(_, _) | Type::Option(_) | Type::Weak(_, _) | Type::Stream(_)
-        | Type::Partial(_) => {
+        | Type::Partial(_) | Type::ResumeToken(_) => {
             Err(CodegenError::not_supported(
                 format!(
                     "entry agent {role} of type `{}` ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â the native command-line boundary currently supports only `Int` / `Bool` / `Float` / `String`; structured types (including Result, Option, and Weak) need a dedicated serialization layer (use a wrapper agent that converts internally)",

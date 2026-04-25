@@ -141,6 +141,7 @@ impl<'a> Checker<'a> {
                 | BuiltIn::Option
                 | BuiltIn::Weak
                 | BuiltIn::Partial
+                | BuiltIn::ResumeToken
                 | BuiltIn::Grounded => {
                     self.errors.push(TypeError::new(
                         TypeErrorKind::TypeAsValue {
@@ -154,7 +155,9 @@ impl<'a> Checker<'a> {
                 | BuiltIn::Err
                 | BuiltIn::Some
                 | BuiltIn::WeakNew
-                | BuiltIn::WeakUpgrade => {
+                | BuiltIn::WeakUpgrade
+                | BuiltIn::Resume
+                | BuiltIn::StreamResumeToken => {
                     self.errors.push(TypeError::new(
                         TypeErrorKind::BareFunctionReference {
                             name: id.name.clone(),
@@ -515,6 +518,8 @@ fn type_ref_to_type_readonly(tr: &corvid_ast::TypeRef, checker: &Checker<'_>) ->
                 "Stream" => Type::Stream(Box::new(inner)),
                 "Option" => Type::Option(Box::new(inner)),
                 "Grounded" => Type::Grounded(Box::new(inner)),
+                "Partial" => Type::Partial(Box::new(inner)),
+                "ResumeToken" => Type::ResumeToken(Box::new(inner)),
                 _ => Type::Unknown,
             }
         }

@@ -321,6 +321,11 @@ impl Codegen {
                     "(_ for _ in ()).throw(NotImplementedError(\"Weak codegen lands in 17g-py\"))",
                 );
             }
+            IrExprKind::StreamResumeToken { .. } | IrExprKind::ResumeStream { .. } => {
+                self.out.write(
+                    "(_ for _ in ()).throw(NotImplementedError(\"stream resumption codegen is interpreter-only\"))",
+                );
+            }
             // Result/Option construction and `?` / `try-retry`
             // control flow are not implemented in the Python
             // transpile tier yet.
@@ -460,6 +465,7 @@ fn python_type_hint_of(ty: &corvid_types::Type) -> String {
         | T::List(_)
         | T::Stream(_)
         | T::Partial(_)
+        | T::ResumeToken(_)
         | T::Unknown => "object".into(),
         // Emitting "object" here is a safe approximation until the
         // Python backend decides on its representation

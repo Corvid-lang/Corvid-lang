@@ -206,6 +206,8 @@ fn expr_mentions_local(expr: &IrExpr, local_id: LocalId) -> bool {
         | IrExprKind::UnwrapGrounded { value: target }
         | IrExprKind::WeakNew { strong: target }
         | IrExprKind::WeakUpgrade { weak: target }
+        | IrExprKind::StreamResumeToken { stream: target }
+        | IrExprKind::ResumeStream { token: target, .. }
         | IrExprKind::ResultOk { inner: target }
         | IrExprKind::ResultErr { inner: target }
         | IrExprKind::OptionSome { inner: target }
@@ -267,6 +269,8 @@ fn expr_is_effect_free(expr: &IrExpr) -> bool {
         | IrExprKind::List { .. }
         | IrExprKind::WeakNew { .. }
         | IrExprKind::WeakUpgrade { .. }
+        | IrExprKind::StreamResumeToken { .. }
+        | IrExprKind::ResumeStream { .. }
         | IrExprKind::ResultOk { .. }
         | IrExprKind::ResultErr { .. }
         | IrExprKind::OptionSome { .. }

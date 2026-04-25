@@ -314,6 +314,10 @@ pub(super) fn cl_type_for(ty: &Type, span: Span) -> Result<clir::Type, CodegenEr
             "`Partial<T>` - progressive structured lowering is interpreter-only until native tagged field-state layout lands",
             span,
         )),
+        Type::ResumeToken(_) => Err(CodegenError::not_supported(
+            "`ResumeToken<T>` - stream resumption is interpreter-only until native stream handles land",
+            span,
+        )),
         Type::Stream(_) => Err(CodegenError::not_supported(
             "`Stream<T>` - Stream lowering is not yet implemented",
             span,

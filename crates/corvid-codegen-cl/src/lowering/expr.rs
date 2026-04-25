@@ -1816,6 +1816,12 @@ pub(super) fn lower_expr(
             "`replay` expressions require runtime pattern-dispatch over a recorded trace; native tier lowering lands in a follow-up to 21-inv-E-runtime. Use the interpreter tier (`corvid run --tier interp`) until then.",
             expr.span,
         )),
+        IrExprKind::StreamResumeToken { .. } | IrExprKind::ResumeStream { .. } => {
+            Err(CodegenError::not_supported(
+                "stream resumption is interpreter-backed in this release; use the interpreter tier (`corvid run --tier interp`) for ResumeToken<T>",
+                expr.span,
+            ))
+        }
     }
 }
 

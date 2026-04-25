@@ -63,6 +63,9 @@ pub enum Type {
     /// Field access on `Partial<Struct>` returns `Option<FieldType>`.
     Partial(Box<Type>),
 
+    /// Compiler-known `ResumeToken<T>` for resuming interrupted streams.
+    ResumeToken(Box<Type>),
+
     /// Compiler-known `TraceId` — an opaque handle to a recorded
     /// JSONL trace, used as the subject of a `replay <expr>:`
     /// expression. String literals coerce to `TraceId` inside a
@@ -114,6 +117,7 @@ impl Type {
             }
             Type::Grounded(inner) => format!("Grounded<{}>", inner.display_name()),
             Type::Partial(inner) => format!("Partial<{}>", inner.display_name()),
+            Type::ResumeToken(inner) => format!("ResumeToken<{}>", inner.display_name()),
             Type::TraceId => "TraceId".into(),
             Type::Unknown => "<unknown>".into(),
         }
@@ -139,6 +143,7 @@ impl Type {
             }
             (Type::Grounded(a), Type::Grounded(b)) => a.is_assignable_to(b),
             (Type::Partial(a), Type::Partial(b)) => a.is_assignable_to(b),
+            (Type::ResumeToken(a), Type::ResumeToken(b)) => a.is_assignable_to(b),
             // Legacy compatibility: Grounded<T> remains assignable to T.
             // New code should prefer `.unwrap_discarding_sources()` so the
             // provenance drop is visible in source and IR.

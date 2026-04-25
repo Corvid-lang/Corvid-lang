@@ -4807,3 +4807,22 @@ ergonomics.
 The native boundary is explicit rather than implicit: CL codegen and native entry
 points reject `Partial<T>` until a native tagged field-state layout is designed.
 That keeps the interpreter feature real without pretending native lowering exists.
+
+## 2026-04-25 - Phase 20f stream resumption tokens
+
+Closed typed stream resumption for interpreter-backed prompt streams.
+`ResumeToken<T>` is now a compiler-known type constructor, `resume_token(stream)`
+captures the stream element type, and `resume(prompt, token)` verifies that the
+token matches the prompt's `Stream<T>` return type.
+
+The VM records delivered chunks as streams are consumed and stores resumable
+prompt context on prompt-produced streams. Resuming re-renders the original
+prompt arguments and appends the delivered chunk context before opening a new
+prompt call. Provider-native session continuation is carried as an optional
+field on the token but remains `None` until an adapter exposes real continuation
+handles.
+
+The responsibility split stays explicit: types own `ResumeToken<T>` and builtin
+checking, IR owns `StreamResumeToken` / `ResumeStream`, the VM owns token capture
+and continuation behavior, ABI/schema/bindings expose the type shape, and native
+CL lowering rejects resumption until a native stream runtime exists.

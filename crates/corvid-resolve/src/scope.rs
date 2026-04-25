@@ -38,6 +38,7 @@ pub enum BuiltIn {
     Option,
     Weak,
     Partial,
+    ResumeToken,
     Ok,
     Err,
     Some,
@@ -45,6 +46,8 @@ pub enum BuiltIn {
     Grounded,
     WeakNew,
     WeakUpgrade,
+    Resume,
+    StreamResumeToken,
     // Structural sentinels (surface as Idents today; real variants later).
     Break,
     Continue,
@@ -101,6 +104,7 @@ impl SymbolTable {
         self.builtins.insert("Option".into(), BuiltIn::Option);
         self.builtins.insert("Weak".into(), BuiltIn::Weak);
         self.builtins.insert("Partial".into(), BuiltIn::Partial);
+        self.builtins.insert("ResumeToken".into(), BuiltIn::ResumeToken);
         self.builtins.insert("Grounded".into(), BuiltIn::Grounded);
         self.builtins.insert("Ok".into(), BuiltIn::Ok);
         self.builtins.insert("Err".into(), BuiltIn::Err);
@@ -109,6 +113,9 @@ impl SymbolTable {
         self.builtins.insert("Weak::new".into(), BuiltIn::WeakNew);
         self.builtins
             .insert("Weak::upgrade".into(), BuiltIn::WeakUpgrade);
+        self.builtins.insert("resume".into(), BuiltIn::Resume);
+        self.builtins
+            .insert("resume_token".into(), BuiltIn::StreamResumeToken);
         self.builtins.insert("break".into(), BuiltIn::Break);
         self.builtins.insert("continue".into(), BuiltIn::Continue);
         self.builtins.insert("pass".into(), BuiltIn::Pass);

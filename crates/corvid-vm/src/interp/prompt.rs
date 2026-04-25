@@ -2,7 +2,7 @@ use super::{ExprFlow, Interpreter};
 use crate::conv::json_to_value;
 use crate::errors::{InterpError, InterpErrorKind};
 use crate::step::{StepAction, StepEvent};
-use crate::value::{value_confidence, StreamChunk, Value};
+use crate::value::{value_confidence, ResumeTokenValue, StreamChunk, StreamResumeContext, Value};
 use crate::value_to_json;
 use async_recursion::async_recursion;
 use corvid_ast::Span;
@@ -448,6 +448,8 @@ impl<'ir> Interpreter<'ir> {
     async fn finalize_prompt_result(
         &self,
         prompt: &'ir IrPrompt,
+        callee_name: &str,
+        arg_values: &[Value],
         result: PromptCallResult,
         span: Span,
     ) -> Result<ExprFlow, InterpError> {
@@ -492,10 +494,17 @@ impl<'ir> Interpreter<'ir> {
                         .map(ExprFlow::Value);
                 }
             }
-            Ok(ExprFlow::Value(
-                self.singleton_stream(chunk, super::effect_compose::prompt_backpressure(prompt))
-                    .await?,
-            ))
+            let value = self
+                .singleton_stream(chunk, super::effect_compose::prompt_backpressure(prompt))
+                .await?;
+            if let Value::Stream(stream) = &value {
+                stream.set_resume_context(StreamResumeContext {
+                    prompt_name: callee_name.to_string(),
+                    args: arg_values.to_vec(),
+                    provider_session: None,
+                });
+            }
+            Ok(ExprFlow::Value(value))
         } else {
             Ok(ExprFlow::Value(
                 super::effect_compose::with_value_confidence(result.value, result.confidence),
@@ -1048,7 +1057,54 @@ impl<'ir> Interpreter<'ir> {
         if !result.cost_charged && !matches!(&prompt.return_ty, Type::Stream(_)) {
             self.charge_cost(result.cost, span)?;
         }
-        self.finalize_prompt_result(prompt, result, span).await
+        self.finalize_prompt_result(prompt, callee_name, arg_values, result, span).await
+    }
+
+    pub(super) async fn resume_prompt_stream(
+        &mut self,
+        prompt_def_id: DefId,
+        prompt_name: &str,
+        token: ResumeTokenValue,
+        span: Span,
+    ) -> Result<ExprFlow, InterpError> {
+        let prompt = self.prompt_by_id(prompt_def_id, prompt_name, span)?;
+        if token.prompt_name != prompt_name {
+            return Err(InterpError::new(
+                InterpErrorKind::DispatchFailed(format!(
+                    "resume token is for prompt `{}`, not `{prompt_name}`",
+                    token.prompt_name
+                )),
+                span,
+            ));
+        }
+
+        let base_rendered = render_prompt(prompt, &token.args);
+        let delivered = token
+            .delivered
+            .iter()
+            .map(|chunk| trace_text(&value_to_json(&chunk.value)))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let continuation_rendered = if delivered.is_empty() {
+            format!("{base_rendered}\n\nResume from interruption with no delivered elements.")
+        } else {
+            format!("{base_rendered}\n\nResume after delivered elements:\n{delivered}")
+        };
+        let selected_model = self
+            .select_prompt_model(prompt, prompt_name, &continuation_rendered, &token.args, span)
+            .await?;
+        let result = self
+            .execute_prompt_call(
+                prompt,
+                prompt_name,
+                &token.args,
+                &continuation_rendered,
+                selected_model,
+                span,
+            )
+            .await?;
+        self.finalize_prompt_result(prompt, prompt_name, &token.args, result, span)
+            .await
     }
 }
 

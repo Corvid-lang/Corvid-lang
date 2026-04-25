@@ -319,6 +319,38 @@ impl<'a> Checker<'a> {
                     }
                 }
             }
+            BuiltIn::StreamResumeToken => {
+                if args.len() != 1 {
+                    self.errors.push(TypeError::new(
+                        TypeErrorKind::ArityMismatch {
+                            callee: name.name.clone(),
+                            expected: 1,
+                            got: args.len(),
+                        },
+                        name.span,
+                    ));
+                    for arg in args {
+                        let _ = self.check_expr(arg);
+                    }
+                    return Type::ResumeToken(Box::new(Type::Unknown));
+                }
+                match self.check_expr(&args[0]) {
+                    Type::Stream(inner) => Type::ResumeToken(inner),
+                    Type::Unknown => Type::ResumeToken(Box::new(Type::Unknown)),
+                    other => {
+                        self.errors.push(TypeError::new(
+                            TypeErrorKind::TypeMismatch {
+                                expected: "Stream<T>".into(),
+                                got: other.display_name(),
+                                context: "resume_token argument".into(),
+                            },
+                            args[0].span(),
+                        ));
+                        Type::ResumeToken(Box::new(Type::Unknown))
+                    }
+                }
+            }
+            BuiltIn::Resume => self.check_resume_call(name, args),
             BuiltIn::None => {
                 self.errors.push(TypeError::new(
                     TypeErrorKind::NotCallable {
@@ -342,6 +374,99 @@ impl<'a> Checker<'a> {
                     let _ = self.check_expr(arg);
                 }
                 Type::Unknown
+            }
+        }
+    }
+
+    fn check_resume_call(&mut self, name: &Ident, args: &[Expr]) -> Type {
+        if args.len() != 2 {
+            self.errors.push(TypeError::new(
+                TypeErrorKind::ArityMismatch {
+                    callee: name.name.clone(),
+                    expected: 2,
+                    got: args.len(),
+                },
+                name.span,
+            ));
+            for arg in args {
+                let _ = self.check_expr(arg);
+            }
+            return Type::Stream(Box::new(Type::Unknown));
+        }
+
+        let prompt_ty = match &args[0] {
+            Expr::Ident { name: prompt_name, .. } => match self.bindings.get(&prompt_name.span) {
+                Some(Binding::Decl(def_id))
+                    if self.symbols.get(*def_id).kind == DeclKind::Prompt =>
+                {
+                    let prompt = *self
+                        .prompts_by_id
+                        .get(def_id)
+                        .expect("prompt DefId not indexed");
+                    self.type_ref_to_type(&prompt.return_ty)
+                }
+                _ => {
+                    self.errors.push(TypeError::new(
+                        TypeErrorKind::TypeMismatch {
+                            expected: "prompt declaration".into(),
+                            got: "non-prompt value".into(),
+                            context: "first resume argument".into(),
+                        },
+                        args[0].span(),
+                    ));
+                    Type::Stream(Box::new(Type::Unknown))
+                }
+            },
+            _ => {
+                self.errors.push(TypeError::new(
+                    TypeErrorKind::TypeMismatch {
+                        expected: "prompt declaration".into(),
+                        got: "expression".into(),
+                        context: "first resume argument".into(),
+                    },
+                    args[0].span(),
+                ));
+                Type::Stream(Box::new(Type::Unknown))
+            }
+        };
+
+        let token_ty = self.check_expr(&args[1]);
+        match (&prompt_ty, token_ty) {
+            (Type::Stream(prompt_inner), Type::ResumeToken(token_inner)) => {
+                if !token_inner.is_assignable_to(prompt_inner) {
+                    self.errors.push(TypeError::new(
+                        TypeErrorKind::TypeMismatch {
+                            expected: format!("ResumeToken<{}>", prompt_inner.display_name()),
+                            got: format!("ResumeToken<{}>", token_inner.display_name()),
+                            context: "resume token".into(),
+                        },
+                        args[1].span(),
+                    ));
+                }
+                Type::Stream(prompt_inner.clone())
+            }
+            (Type::Stream(prompt_inner), Type::Unknown) => Type::Stream(prompt_inner.clone()),
+            (Type::Stream(_), other) => {
+                self.errors.push(TypeError::new(
+                    TypeErrorKind::TypeMismatch {
+                        expected: "ResumeToken<T>".into(),
+                        got: other.display_name(),
+                        context: "resume token".into(),
+                    },
+                    args[1].span(),
+                ));
+                prompt_ty
+            }
+            (other, _) => {
+                self.errors.push(TypeError::new(
+                    TypeErrorKind::TypeMismatch {
+                        expected: "streaming prompt".into(),
+                        got: other.display_name(),
+                        context: "first resume argument".into(),
+                    },
+                    args[0].span(),
+                ));
+                Type::Stream(Box::new(Type::Unknown))
             }
         }
     }

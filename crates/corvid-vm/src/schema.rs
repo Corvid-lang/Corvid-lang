@@ -94,6 +94,7 @@ fn schema_for_inner(
         }),
         Type::Grounded(inner) => schema_for_inner(inner, types_by_id, visiting),
         Type::Partial(inner) => partial_schema(inner, types_by_id, visiting),
+        Type::ResumeToken(inner) => resume_token_schema(inner, types_by_id, visiting),
         Type::Struct(def_id) => {
             // Cycle guard: if we're already building this struct's schema
             // higher up the stack, emit an empty object placeholder. The
@@ -134,6 +135,38 @@ fn schema_for_inner(
         Type::TraceId => json!({ "type": "string" }),
         Type::Unknown => json!({}),
     }
+}
+
+fn resume_token_schema(
+    inner: &Type,
+    types_by_id: &HashMap<DefId, &IrType>,
+    visiting: &mut Vec<DefId>,
+) -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "tag": { "const": "resume_token" },
+            "prompt": { "type": "string" },
+            "args": { "type": "array", "items": {} },
+            "delivered": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "value": schema_for_inner(inner, types_by_id, visiting),
+                        "cost": { "type": "number" },
+                        "confidence": { "type": "number" },
+                        "tokens": { "type": "integer" },
+                    },
+                    "required": ["value"],
+                    "additionalProperties": false,
+                }
+            },
+            "provider_session": { "type": ["string", "null"] },
+        },
+        "required": ["tag", "prompt", "delivered"],
+        "additionalProperties": false,
+    })
 }
 
 fn partial_schema(

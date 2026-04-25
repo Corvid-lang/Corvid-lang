@@ -413,6 +413,48 @@ prompt plan(topic: String) -> Stream<Partial<Plan>>:
     }
 
     #[test]
+    fn lowers_stream_resume_token_and_resume_call() {
+        let src = "\
+prompt draft(topic: String) -> Stream<String>:
+    \"Draft {topic}\"
+
+agent capture(topic: String) -> ResumeToken<String>:
+    stream = draft(topic)
+    return resume_token(stream)
+
+agent continue_it(token: ResumeToken<String>) -> Stream<String>:
+    return resume(draft, token)
+";
+        let ir = lower_src(src);
+        let capture = ir
+            .agents
+            .iter()
+            .find(|agent| agent.name == "capture")
+            .expect("capture agent");
+        match &capture.body.stmts[1] {
+            IrStmt::Return { value: Some(value), .. } => {
+                assert!(matches!(value.kind, IrExprKind::StreamResumeToken { .. }));
+            }
+            other => panic!("expected resume-token return, got {other:?}"),
+        }
+
+        let continue_it = ir
+            .agents
+            .iter()
+            .find(|agent| agent.name == "continue_it")
+            .expect("continue_it agent");
+        match &continue_it.body.stmts[0] {
+            IrStmt::Return { value: Some(value), .. } => match &value.kind {
+                IrExprKind::ResumeStream { prompt_name, .. } => {
+                    assert_eq!(prompt_name, "draft");
+                }
+                other => panic!("expected resume stream, got {other:?}"),
+            },
+            other => panic!("expected resume return, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn lowers_calibrated_prompt_modifier() {
         let src = "\
 prompt classify(ctx: String) -> String:
@@ -553,6 +595,8 @@ agent hash_step(n: Int) -> Int:
             | IrExprKind::UnwrapGrounded { value: target }
             | IrExprKind::WeakNew { strong: target }
             | IrExprKind::WeakUpgrade { weak: target }
+            | IrExprKind::StreamResumeToken { stream: target }
+            | IrExprKind::ResumeStream { token: target, .. }
             | IrExprKind::ResultOk { inner: target }
             | IrExprKind::ResultErr { inner: target }
             | IrExprKind::OptionSome { inner: target }
@@ -731,7 +775,11 @@ agent run(x: String) -> Order:
             | IrExprKind::WrappingUnOp { operand, .. } => expr_mentions_local_id(operand, target),
             IrExprKind::List { items } => items.iter().any(|i| expr_mentions_local_id(i, target)),
             IrExprKind::WeakNew { strong }
-            | IrExprKind::WeakUpgrade { weak: strong } => expr_mentions_local_id(strong, target),
+            | IrExprKind::WeakUpgrade { weak: strong }
+            | IrExprKind::StreamResumeToken { stream: strong }
+            | IrExprKind::ResumeStream { token: strong, .. } => {
+                expr_mentions_local_id(strong, target)
+            }
             IrExprKind::ResultOk { inner }
             | IrExprKind::ResultErr { inner }
             | IrExprKind::OptionSome { inner }

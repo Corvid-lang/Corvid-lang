@@ -1,6 +1,6 @@
 use crate::schema::{
-    AbiGroundedType, AbiListType, AbiOptionType, AbiPartialType, AbiResultType, AbiWeakType,
-    ScalarTypeName, TypeDescription,
+    AbiGroundedType, AbiListType, AbiOptionType, AbiPartialType, AbiResumeTokenType,
+    AbiResultType, AbiWeakType, ScalarTypeName, TypeDescription,
 };
 use corvid_ast::WeakEffect;
 use corvid_resolve::{DefId, Resolved};
@@ -55,6 +55,11 @@ pub fn emit_type_description(ty: &Type, resolved: &Resolved) -> TypeDescription 
         },
         Type::Partial(inner) => TypeDescription::Partial {
             partial: AbiPartialType {
+                inner: Box::new(emit_type_description(inner, resolved)),
+            },
+        },
+        Type::ResumeToken(inner) => TypeDescription::ResumeToken {
+            resume_token: AbiResumeTokenType {
                 inner: Box::new(emit_type_description(inner, resolved)),
             },
         },

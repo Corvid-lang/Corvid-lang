@@ -9,7 +9,10 @@
 //! struct results can recover their `type_id` and `type_name`. The
 //! interpreter passes the called tool's / prompt's declared return type.
 
-use crate::value::{BoxedValue, ListValue, PartialFieldValue, PartialValue, StructValue, Value};
+use crate::value::{
+    BoxedValue, ListValue, PartialFieldValue, PartialValue, ResumeTokenValue, StreamChunk,
+    StructValue, Value,
+};
 use corvid_ir::IrType;
 use corvid_resolve::DefId;
 use corvid_types::Type;
@@ -72,6 +75,20 @@ pub fn value_to_json(v: &Value) -> serde_json::Value {
             });
             serde_json::json!({ "tag": "partial", "type": p.type_name(), "fields": fields })
         }
+        Value::ResumeToken(token) => serde_json::json!({
+            "tag": "resume_token",
+            "prompt": token.prompt_name,
+            "args": token.args.iter().map(value_to_json).collect::<Vec<_>>(),
+            "delivered": token.delivered.iter().map(|chunk| {
+                serde_json::json!({
+                    "value": value_to_json(&chunk.value),
+                    "cost": chunk.cost,
+                    "confidence": chunk.confidence,
+                    "tokens": chunk.tokens,
+                })
+            }).collect::<Vec<_>>(),
+            "provider_session": token.provider_session,
+        }),
         Value::Stream(stream) => serde_json::json!({
             "tag": "stream",
             "backpressure": match stream.backpressure() {
@@ -130,6 +147,9 @@ pub fn json_to_value(
             got: json_kind(&got).into(),
         }),
         (Type::Partial(inner_ty), J::Object(map)) => partial_from_json(map, inner_ty, types_by_id),
+        (Type::ResumeToken(inner_ty), J::Object(map)) => {
+            resume_token_from_json(map, inner_ty, types_by_id)
+        }
         (Type::Option(inner_ty), J::Object(map)) => match map.get("tag").and_then(|v| v.as_str()) {
             Some("some") => {
                 let raw = map.get("value").cloned().ok_or_else(|| ConvError::TypeMismatch {
@@ -256,10 +276,92 @@ fn type_label(t: &Type) -> String {
         }
         Type::Grounded(inner) => format!("Grounded<{}>", type_label(inner)),
         Type::Partial(inner) => format!("Partial<{}>", type_label(inner)),
+        Type::ResumeToken(inner) => format!("ResumeToken<{}>", type_label(inner)),
         Type::TraceId => "TraceId".into(),
         Type::Function { .. } => "function".into(),
         Type::Unknown => "<unknown>".into(),
     }
+}
+
+fn resume_token_from_json(
+    map: serde_json::Map<String, serde_json::Value>,
+    inner_ty: &Type,
+    types_by_id: &HashMap<DefId, &IrType>,
+) -> Result<Value, ConvError> {
+    if map.get("tag").and_then(|v| v.as_str()) != Some("resume_token") {
+        return Err(ConvError::TypeMismatch {
+            expected: "resume_token".into(),
+            got: json_kind(&serde_json::Value::Object(map)).into(),
+        });
+    }
+    let prompt_name = map
+        .get("prompt")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| ConvError::TypeMismatch {
+            expected: "resume token prompt".into(),
+            got: "missing `prompt` field".into(),
+        })?
+        .to_string();
+    let args = map
+        .get("args")
+        .and_then(|v| v.as_array())
+        .map(|items| {
+            items
+                .iter()
+                .cloned()
+                .map(|raw| json_to_value(raw, &Type::Unknown, types_by_id))
+                .collect::<Result<Vec<_>, _>>()
+        })
+        .transpose()?
+        .unwrap_or_default();
+    let delivered = map
+        .get("delivered")
+        .and_then(|v| v.as_array())
+        .map(|items| {
+            items
+                .iter()
+                .map(|raw| resume_chunk_from_json(raw, inner_ty, types_by_id))
+                .collect::<Result<Vec<_>, _>>()
+        })
+        .transpose()?
+        .unwrap_or_default();
+    let provider_session = map
+        .get("provider_session")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+    Ok(Value::ResumeToken(ResumeTokenValue {
+        prompt_name,
+        args,
+        delivered,
+        provider_session,
+    }))
+}
+
+fn resume_chunk_from_json(
+    raw: &serde_json::Value,
+    inner_ty: &Type,
+    types_by_id: &HashMap<DefId, &IrType>,
+) -> Result<StreamChunk, ConvError> {
+    let serde_json::Value::Object(map) = raw else {
+        return Err(ConvError::TypeMismatch {
+            expected: "resume token delivered chunk".into(),
+            got: json_kind(raw).into(),
+        });
+    };
+    let value_raw = map.get("value").cloned().ok_or_else(|| ConvError::TypeMismatch {
+        expected: "resume token chunk value".into(),
+        got: "missing `value` field".into(),
+    })?;
+    let value = json_to_value(value_raw, inner_ty, types_by_id)?;
+    Ok(StreamChunk {
+        value,
+        cost: map.get("cost").and_then(|v| v.as_f64()).unwrap_or(0.0),
+        confidence: map
+            .get("confidence")
+            .and_then(|v| v.as_f64())
+            .unwrap_or(1.0),
+        tokens: map.get("tokens").and_then(|v| v.as_u64()).unwrap_or(0),
+    })
 }
 
 fn partial_from_json(

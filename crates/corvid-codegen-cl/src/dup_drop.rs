@@ -347,6 +347,8 @@ fn scan_expr(expr: &IrExpr, max_id: &mut u32) {
         }
         IrExprKind::WeakNew { strong } => scan_expr(strong, max_id),
         IrExprKind::WeakUpgrade { weak } => scan_expr(weak, max_id),
+        IrExprKind::StreamResumeToken { stream } => scan_expr(stream, max_id),
+        IrExprKind::ResumeStream { token, .. } => scan_expr(token, max_id),
         IrExprKind::ResultOk { inner }
         | IrExprKind::ResultErr { inner }
         | IrExprKind::OptionSome { inner }
@@ -393,6 +395,8 @@ fn expr_reads_local(expr: &IrExpr, target: LocalId) -> bool {
         IrExprKind::List { items } => items.iter().any(|it| expr_reads_local(it, target)),
         IrExprKind::WeakNew { strong } => expr_reads_local(strong, target),
         IrExprKind::WeakUpgrade { weak } => expr_reads_local(weak, target),
+        IrExprKind::StreamResumeToken { stream } => expr_reads_local(stream, target),
+        IrExprKind::ResumeStream { token, .. } => expr_reads_local(token, target),
         IrExprKind::ResultOk { inner }
         | IrExprKind::ResultErr { inner }
         | IrExprKind::OptionSome { inner }

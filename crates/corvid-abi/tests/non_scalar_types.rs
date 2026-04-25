@@ -38,6 +38,8 @@ prompt decide(ticket_id: String, order: Grounded<String>) -> Grounded<Decision>:
 prompt preview(ticket_id: String) -> Partial<Decision>:
     "preview {ticket_id}"
 
+tool checkpoint_token(ticket_id: String) -> ResumeToken<Decision>
+
 agent weak_bot(ticket_id: String) -> Weak<Decision, {tool_call, llm}>:
     return cached(ticket_id)
 
@@ -47,6 +49,10 @@ prompt cached(ticket_id: String) -> Weak<Decision, {tool_call, llm}>:
 
 fn find_prompt<'a>(abi: &'a corvid_abi::CorvidAbi, name: &str) -> &'a corvid_abi::AbiPrompt {
     abi.prompts.iter().find(|prompt| prompt.name == name).expect("prompt")
+}
+
+fn find_tool<'a>(abi: &'a corvid_abi::CorvidAbi, name: &str) -> &'a corvid_abi::AbiTool {
+    abi.tools.iter().find(|tool| tool.name == name).expect("tool")
 }
 
 #[test]
@@ -128,6 +134,18 @@ fn partial_type_descriptor_has_inner_field() {
             assert!(matches!(partial.inner.as_ref(), TypeDescription::Struct { .. }));
         }
         other => panic!("expected partial type, got {other:?}"),
+    }
+}
+
+#[test]
+fn resume_token_type_descriptor_has_inner_field() {
+    let abi = emit_descriptor(NON_SCALAR_SRC);
+    let checkpoint = find_tool(&abi, "checkpoint_token");
+    match &checkpoint.return_type {
+        TypeDescription::ResumeToken { resume_token } => {
+            assert!(matches!(resume_token.inner.as_ref(), TypeDescription::Struct { .. }));
+        }
+        other => panic!("expected resume token type, got {other:?}"),
     }
 }
 

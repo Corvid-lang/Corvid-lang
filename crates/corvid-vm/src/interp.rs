@@ -598,6 +598,54 @@ impl<'ir> Interpreter<'ir> {
                 }
             }
 
+            IrExprKind::StreamResumeToken { stream } => {
+                let stream = match self.eval_expr(stream).await?.into_value() {
+                    Ok(v) => v,
+                    Err(v) => return Ok(ExprFlow::Propagate(v)),
+                };
+                match stream {
+                    Value::Stream(stream) => match stream.resume_token() {
+                        Some(token) => Ok(ExprFlow::Value(Value::ResumeToken(token))),
+                        None => Err(InterpError::new(
+                            InterpErrorKind::Other(
+                                "stream does not carry a resumable prompt context".into(),
+                            ),
+                            expr.span,
+                        )),
+                    },
+                    other => Err(InterpError::new(
+                        InterpErrorKind::TypeMismatch {
+                            expected: "Stream<T>".into(),
+                            got: other.type_name(),
+                        },
+                        expr.span,
+                    )),
+                }
+            }
+
+            IrExprKind::ResumeStream {
+                prompt_def_id,
+                prompt_name,
+                token,
+            } => {
+                let token = match self.eval_expr(token).await?.into_value() {
+                    Ok(v) => v,
+                    Err(v) => return Ok(ExprFlow::Propagate(v)),
+                };
+                match token {
+                    Value::ResumeToken(token) => self
+                        .resume_prompt_stream(*prompt_def_id, prompt_name, token, expr.span)
+                        .await,
+                    other => Err(InterpError::new(
+                        InterpErrorKind::TypeMismatch {
+                            expected: "ResumeToken<T>".into(),
+                            got: other.type_name(),
+                        },
+                        expr.span,
+                    )),
+                }
+            }
+
             IrExprKind::ResultOk { inner } => {
                 let v = match self.eval_expr(inner).await?.into_value() {
                     Ok(v) => v,

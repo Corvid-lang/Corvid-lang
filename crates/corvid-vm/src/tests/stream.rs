@@ -126,6 +126,69 @@ agent relay(ctx: String) -> Stream<String>:
 }
 
 #[tokio::test]
+async fn resume_token_reopens_prompt_stream_with_delivered_context() {
+    let src = "\
+prompt draft(topic: String) -> Stream<String>:
+    \"Draft {topic}\"
+
+agent capture(topic: String) -> ResumeToken<String>:
+    stream = draft(topic)
+    for chunk in stream:
+        break
+    return resume_token(stream)
+
+agent continue_it(token: ResumeToken<String>) -> String:
+    stream = resume(draft, token)
+    for chunk in stream:
+        return chunk
+    return \"empty\"
+";
+    let ir = ir_of(src);
+    let trace_dir = std::env::temp_dir().join(format!(
+        "corvid-vm-stream-resume-{}",
+        corvid_runtime::now_ms()
+    ));
+    std::fs::create_dir_all(&trace_dir).unwrap();
+    let mock = Arc::new(MockAdapter::new("mock-1").reply("draft", json!("first")));
+    let rt = Runtime::builder()
+        .tracer(corvid_runtime::Tracer::open(&trace_dir, "run-stream-resume"))
+        .approver(Arc::new(ProgrammaticApprover::always_yes()))
+        .llm(mock.clone())
+        .default_model("mock-1")
+        .build();
+
+    let token = run_agent(&ir, "capture", vec![Value::String(Arc::from("launch"))], &rt)
+        .await
+        .expect("capture");
+    assert!(matches!(token, Value::ResumeToken(_)));
+
+    mock.add_reply("draft", json!("continued"));
+    let value = run_agent(&ir, "continue_it", vec![token], &rt)
+        .await
+        .expect("continue");
+    assert_eq!(value, Value::String(Arc::from("continued")));
+    drop(rt);
+
+    let body =
+        std::fs::read_to_string(trace_dir.join("run-stream-resume.jsonl")).expect("trace file");
+    let events: Vec<TraceEvent> = body
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| serde_json::from_str(line).expect("valid trace event"))
+        .collect();
+    assert!(events.iter().any(|event| matches!(
+        event,
+        TraceEvent::LlmCall {
+            prompt,
+            rendered: Some(rendered),
+            ..
+        } if prompt == "draft"
+            && rendered.contains("Resume after delivered elements")
+            && rendered.contains("first")
+    )));
+}
+
+#[tokio::test]
 async fn stream_prompt_confidence_floor_breaches_mid_stream() {
     let src = "\
 effect shaky:

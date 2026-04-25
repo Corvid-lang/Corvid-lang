@@ -132,6 +132,11 @@ fn render_value_inner(
             });
             format!("Partial<{}>({rendered})", p.type_name())
         }
+        Value::ResumeToken(token) => format!(
+            "ResumeToken(prompt: {}, delivered: {})",
+            token.prompt_name,
+            token.delivered.len()
+        ),
         Value::Stream(stream) => {
             let backpressure = match stream.backpressure() {
                 BackpressurePolicy::Bounded(size) => format!("bounded({size})"),

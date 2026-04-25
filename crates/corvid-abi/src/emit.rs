@@ -139,6 +139,7 @@ pub(crate) fn resolve_typeref_to_type(ty: &TypeRef, resolved: &Resolved) -> Type
             "Option" if args.len() == 1 => Type::Option(Box::new(resolve_typeref_to_type(&args[0], resolved))),
             "Grounded" if args.len() == 1 => Type::Grounded(Box::new(resolve_typeref_to_type(&args[0], resolved))),
             "Partial" if args.len() == 1 => Type::Partial(Box::new(resolve_typeref_to_type(&args[0], resolved))),
+            "ResumeToken" if args.len() == 1 => Type::ResumeToken(Box::new(resolve_typeref_to_type(&args[0], resolved))),
             "Result" if args.len() == 2 => Type::Result(
                 Box::new(resolve_typeref_to_type(&args[0], resolved)),
                 Box::new(resolve_typeref_to_type(&args[1], resolved)),
@@ -453,6 +454,8 @@ fn collect_called_agents_from_expr(
         | IrExprKind::WrappingUnOp { operand: target, .. }
         | IrExprKind::WeakNew { strong: target }
         | IrExprKind::WeakUpgrade { weak: target }
+        | IrExprKind::StreamResumeToken { stream: target }
+        | IrExprKind::ResumeStream { token: target, .. }
         | IrExprKind::ResultOk { inner: target }
         | IrExprKind::ResultErr { inner: target }
         | IrExprKind::OptionSome { inner: target }
@@ -546,6 +549,8 @@ fn walk_ir_expr_for_prompt(
         | IrExprKind::WrappingUnOp { operand: target, .. }
         | IrExprKind::WeakNew { strong: target }
         | IrExprKind::WeakUpgrade { weak: target }
+        | IrExprKind::StreamResumeToken { stream: target }
+        | IrExprKind::ResumeStream { token: target, .. }
         | IrExprKind::ResultOk { inner: target }
         | IrExprKind::ResultErr { inner: target }
         | IrExprKind::OptionSome { inner: target }

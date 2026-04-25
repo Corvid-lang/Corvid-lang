@@ -39,6 +39,7 @@ pub enum Value {
     OptionNone,
     Grounded(GroundedValue),
     Partial(PartialValue),
+    ResumeToken(ResumeTokenValue),
     Stream(StreamValue),
 }
 
@@ -98,6 +99,21 @@ pub struct PartialValue {
     type_id: DefId,
     type_name: String,
     fields: HashMap<String, PartialFieldValue>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ResumeTokenValue {
+    pub(crate) prompt_name: String,
+    pub(crate) args: Vec<Value>,
+    pub(crate) delivered: Vec<StreamChunk>,
+    pub(crate) provider_session: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct StreamResumeContext {
+    pub prompt_name: String,
+    pub args: Vec<Value>,
+    pub provider_session: Option<String>,
 }
 
 impl PartialValue {
@@ -249,11 +265,13 @@ struct StreamInner {
     receiver: AsyncMutex<StreamReceiver>,
     backpressure: BackpressurePolicy,
     provenance: Mutex<ProvenanceChain>,
+    history: Mutex<Vec<StreamChunk>>,
+    resume_context: Mutex<Option<StreamResumeContext>>,
     pending: AtomicUsize,
     warned_unbounded: AtomicBool,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) struct StreamChunk {
     pub value: Value,
     pub cost: f64,
@@ -694,6 +712,7 @@ impl Clone for Value {
             Value::OptionNone => Value::OptionNone,
             Value::Grounded(g) => Value::Grounded(g.clone()),
             Value::Partial(p) => Value::Partial(p.clone()),
+            Value::ResumeToken(token) => Value::ResumeToken(token.clone()),
             Value::Stream(stream) => Value::Stream(stream.clone()),
         }
     }
@@ -714,6 +733,7 @@ impl Value {
             Value::OptionSome(_) | Value::OptionNone => "Option".into(),
             Value::Grounded(g) => format!("Grounded<{}>", g.inner.get().type_name()),
             Value::Partial(p) => format!("Partial<{}>", p.type_name()),
+            Value::ResumeToken(_) => "ResumeToken".into(),
             Value::Stream(stream) => {
                 format!("Stream<{}>", stream.backpressure_label())
             }
@@ -746,6 +766,7 @@ impl Value {
             }
             Value::Grounded(g) => Some(ObjectRef::Boxed(g.inner.0.clone())),
             Value::Partial(_) => None,
+            Value::ResumeToken(_) => None,
             _ => None,
         }
     }
@@ -820,6 +841,12 @@ impl fmt::Display for Value {
                 });
                 write!(f, ")")
             }
+            Value::ResumeToken(token) => write!(
+                f,
+                "ResumeToken(prompt: {}, delivered: {})",
+                token.prompt_name,
+                token.delivered.len()
+            ),
             Value::Stream(stream) => write!(f, "Stream({})", stream.backpressure_label()),
         }
     }
@@ -858,6 +885,7 @@ impl PartialEq for Value {
             (Value::OptionNone, Value::OptionNone) => true,
             (Value::Grounded(a), Value::Grounded(b)) => a.inner == b.inner,
             (Value::Partial(a), Value::Partial(b)) => a == b,
+            (Value::ResumeToken(a), Value::ResumeToken(b)) => a == b,
             (Value::Stream(a), Value::Stream(b)) => a == b,
             _ => false,
         }
@@ -873,6 +901,8 @@ impl StreamValue {
                     receiver: AsyncMutex::new(StreamReceiver::Bounded(receiver)),
                     backpressure: BackpressurePolicy::Bounded(size),
                     provenance: Mutex::new(ProvenanceChain::new()),
+                    history: Mutex::new(Vec::new()),
+                    resume_context: Mutex::new(None),
                     pending: AtomicUsize::new(0),
                     warned_unbounded: AtomicBool::new(false),
                 });
@@ -889,6 +919,8 @@ impl StreamValue {
                     receiver: AsyncMutex::new(StreamReceiver::Unbounded(receiver)),
                     backpressure: BackpressurePolicy::Unbounded,
                     provenance: Mutex::new(ProvenanceChain::new()),
+                    history: Mutex::new(Vec::new()),
+                    resume_context: Mutex::new(None),
                     pending: AtomicUsize::new(0),
                     warned_unbounded: AtomicBool::new(false),
                 });
@@ -918,6 +950,11 @@ impl StreamValue {
             self.0.pending.fetch_sub(1, Ordering::AcqRel);
         }
         if let Some(Ok(chunk)) = &item {
+            self.0
+                .history
+                .lock()
+                .expect("stream history poisoned")
+                .push(chunk.clone());
             if let Some(chain) = chunk.provenance() {
                 self.0
                     .provenance
@@ -939,6 +976,35 @@ impl StreamValue {
 
     pub fn backpressure(&self) -> &BackpressurePolicy {
         &self.0.backpressure
+    }
+
+    pub(crate) fn set_resume_context(&self, context: StreamResumeContext) {
+        *self
+            .0
+            .resume_context
+            .lock()
+            .expect("stream resume context poisoned") = Some(context);
+    }
+
+    pub(crate) fn resume_token(&self) -> Option<ResumeTokenValue> {
+        let context = self
+            .0
+            .resume_context
+            .lock()
+            .expect("stream resume context poisoned")
+            .clone()?;
+        let delivered = self
+            .0
+            .history
+            .lock()
+            .expect("stream history poisoned")
+            .clone();
+        Some(ResumeTokenValue {
+            prompt_name: context.prompt_name,
+            args: context.args,
+            delivered,
+            provider_session: context.provider_session,
+        })
     }
 
     fn backpressure_label(&self) -> String {

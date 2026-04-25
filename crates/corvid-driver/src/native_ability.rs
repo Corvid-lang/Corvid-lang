@@ -73,7 +73,8 @@ fn is_refcounted_type(ty: &Type) -> bool {
         | Type::List(_)
         | Type::Weak(_, _)
         | Type::Result(_, _)
-        | Type::Partial(_) => true,
+        | Type::Partial(_)
+        | Type::ResumeToken(_) => true,
         Type::Option(inner) => is_native_wide_option_type(ty) || is_refcounted_type(inner),
         _ => false,
     }
@@ -90,7 +91,12 @@ fn is_native_value_type(ty: &Type) -> bool {
         // tier (Phase 21 slice 21-inv-E-4 + E-runtime). Until then,
         // a program using replay routes to the interpreter tier.
         Type::TraceId => false,
-        Type::Nothing | Type::Function { .. } | Type::Stream(_) | Type::Partial(_) | Type::Unknown => false,
+        Type::Nothing
+        | Type::Function { .. }
+        | Type::Stream(_)
+        | Type::Partial(_)
+        | Type::ResumeToken(_)
+        | Type::Unknown => false,
     }
 }
 
@@ -237,6 +243,14 @@ fn scan_expr(expr: &IrExpr, current_return_ty: &Type) -> Result<(), NotNativeRea
         }
         IrExprKind::WeakNew { strong } => scan_expr(strong, current_return_ty),
         IrExprKind::WeakUpgrade { weak } => scan_expr(weak, current_return_ty),
+        IrExprKind::StreamResumeToken { stream } => {
+            scan_expr(stream, current_return_ty)?;
+            Err(NotNativeReason::StreamLoweringNotImplemented)
+        }
+        IrExprKind::ResumeStream { token, .. } => {
+            scan_expr(token, current_return_ty)?;
+            Err(NotNativeReason::StreamLoweringNotImplemented)
+        }
         // Tagged-union/retry nodes are accepted only for the current
         // native subset. Recurse into sub-expressions first so any
         // nested tool/prompt calls still get reported correctly.

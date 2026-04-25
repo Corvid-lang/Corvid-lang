@@ -2657,6 +2657,34 @@ This is intentionally interpreter-first. Native CL lowering rejects `Partial<T>`
 for now, because shipping a real native version needs a dedicated tagged
 field-state layout rather than a generic object shortcut.
 
+## 20f-stream-resumption-tokens
+
+`ResumeToken<T>` is the typed checkpoint for interrupted prompt streams:
+
+```corvid
+prompt draft(topic: String) -> Stream<String>:
+    "Draft {topic}"
+
+agent capture(topic: String) -> ResumeToken<String>:
+    stream = draft(topic)
+    for chunk in stream:
+        break
+    return resume_token(stream)
+
+agent continue_it(token: ResumeToken<String>) -> Stream<String>:
+    return resume(draft, token)
+```
+
+The typechecker requires `resume_token` to receive `Stream<T>` and requires
+`resume(prompt, token)` to pair a `ResumeToken<T>` with a prompt returning
+`Stream<T>`. The runtime token stores the prompt name, original arguments,
+delivered chunks, and an optional provider session handle.
+
+The current implementation is honest about its boundary: provider-native
+continuation handles are represented but not fabricated. Until adapters expose
+real session state, resume reopens the prompt locally with delivered elements
+included as continuation context.
+
 ## Contributing / feedback
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). The rules of the road are: design chat before code, per-scope commits at every boundary, dev-log entry for every session, no shortcuts. The `learnings.md` file you're reading gets updated when each user-visible feature ships.

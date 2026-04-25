@@ -927,6 +927,41 @@ impl<'a> Lowerer<'a> {
                         weak: Box::new(weak),
                     };
                 }
+                Some(Binding::BuiltIn(BuiltIn::StreamResumeToken)) => {
+                    let stream = args
+                        .first()
+                        .map(|arg| self.lower_expr(arg))
+                        .unwrap_or_else(|| IrExpr {
+                            kind: IrExprKind::Literal(IrLiteral::Nothing),
+                            ty: Type::Unknown,
+                            span: name.span,
+                        });
+                    return IrExprKind::StreamResumeToken {
+                        stream: Box::new(stream),
+                    };
+                }
+                Some(Binding::BuiltIn(BuiltIn::Resume)) => {
+                    if let Some(Expr::Ident { name: prompt_name, .. }) = args.first() {
+                        if let Some(Binding::Decl(def_id)) = self.bindings.get(&prompt_name.span) {
+                            if self.symbols.get(*def_id).kind == DeclKind::Prompt {
+                                let token = args
+                                    .get(1)
+                                    .map(|arg| self.lower_expr(arg))
+                                    .unwrap_or_else(|| IrExpr {
+                                        kind: IrExprKind::Literal(IrLiteral::Nothing),
+                                        ty: Type::Unknown,
+                                        span: name.span,
+                                    });
+                                return IrExprKind::ResumeStream {
+                                    prompt_def_id: self.remap_def_id(*def_id),
+                                    prompt_name: prompt_name.name.clone(),
+                                    token: Box::new(token),
+                                };
+                            }
+                        }
+                    }
+                    (IrCallKind::Unknown, name.name.clone())
+                }
                 Some(Binding::Decl(def_id)) => {
                     let entry = self.symbols.get(*def_id);
                     let lowered_def_id = self.remap_def_id(*def_id);
@@ -1095,6 +1130,9 @@ impl<'a> Lowerer<'a> {
                 }
                 "Partial" if args.len() == 1 => {
                     Type::Partial(Box::new(self.type_ref_to_type(&args[0])))
+                }
+                "ResumeToken" if args.len() == 1 => {
+                    Type::ResumeToken(Box::new(self.type_ref_to_type(&args[0])))
                 }
                 "Option" if args.len() == 1 => {
                     Type::Option(Box::new(self.type_ref_to_type(&args[0])))
