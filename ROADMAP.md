@@ -1553,6 +1553,7 @@ The determinism-source catalog and the language's treatment of non-reproducible 
 - [x] `std.ai` foundation: repo-native Corvid source module with typed messages, sessions, tool-result envelopes, model-route envelopes, structured-output validation envelopes, confidence helpers, trace event summaries, docs, and import/compile coverage.
 - [x] `std.http` foundation: typed Corvid request/response envelopes plus runtime HTTP client with timeout, retry-on-5xx, response metadata, and trace events for request/response/error accounting.
 - [x] `std.io` foundation: typed Corvid path/file/directory envelopes plus runtime text read, text write, and directory listing APIs with byte, latency, entry-count, and error trace events.
+- [x] `std.secrets` foundation: typed Corvid secret-read envelopes plus runtime environment secret access that returns values to callers while emitting only redacted audit trace metadata.
 - `std.ai` — reusable AI application primitives: typed message/session objects, prompt rendering helpers, model-route helpers, tool-result envelopes, structured-output validation, confidence helpers, and trace/event utilities.
 - `std.rag` runtime pieces as one `std.ai` subdomain: sqlite-vec, document loaders (pdf / md / html), chunking, embedder trait with reference OpenAI + Ollama impls. Pairs with Phase 20's grounding-contract language half.
 - `std.rag` APIs return `Grounded<T>` by construction where retrieval provenance exists, but grounding is not limited to RAG; any tool/effect that proves provenance can produce `Grounded<T>`.

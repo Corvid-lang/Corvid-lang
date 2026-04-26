@@ -61,6 +61,7 @@ pub mod redact;
 pub mod replay;
 pub mod replay_dispatch;
 pub mod runtime;
+pub mod secrets;
 pub mod store;
 pub mod test_from_traces;
 pub mod tools;
@@ -130,6 +131,7 @@ pub use replay::{
     ReplayMutationReport, ReplaySource, RunCompletionDivergence, SubstitutionDivergence,
 };
 pub use runtime::{Runtime, RuntimeBuilder};
+pub use secrets::{SecretRead, SecretRuntime};
 #[cfg(feature = "python")]
 pub use python_ffi::{PythonRuntime, PythonSandboxProfile};
 pub use store::{

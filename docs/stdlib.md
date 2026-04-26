@@ -58,3 +58,15 @@ size metadata.
 The runtime exposes structured text read, text write, and directory listing
 APIs. Each emits `std.io.*` trace events with operation, path, byte count,
 entry count, latency, and error metadata.
+
+## `std.secrets`
+
+`std/secrets.cor` defines `SecretReadEnvelope` plus constructors for present and
+missing reads. The runtime exposes environment-backed secret reads that return
+the value to the caller but only emit redacted trace metadata:
+
+- secret name
+- whether the secret was present
+- whether the value was redacted
+
+Trace events never include the secret value.

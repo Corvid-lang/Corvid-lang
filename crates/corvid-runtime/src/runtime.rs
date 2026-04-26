@@ -25,6 +25,7 @@ use crate::prompt_cache::PromptCache;
 use crate::python_ffi::{PythonRuntime, PythonSandboxProfile};
 use crate::record::Recorder;
 use crate::replay::{ReplayDifferentialReport, ReplayMutationReport, ReplaySource};
+use crate::secrets::{SecretRead, SecretRuntime};
 use crate::store::{StoreKind, StoreManager, StorePolicySet, StoreRecord};
 use crate::tools::ToolRegistry;
 use crate::tracing::{fresh_run_id, now_ms, Tracer};
@@ -61,6 +62,7 @@ pub struct Runtime {
     usage_ledger: LlmUsageLedger,
     http: HttpClient,
     io: IoRuntime,
+    secrets: SecretRuntime,
 }
 
 #[derive(Clone)]
@@ -331,6 +333,32 @@ impl Runtime {
                     serde_json::json!({
                         "op": "list",
                         "path": path.display().to_string(),
+                        "error": err.to_string(),
+                    }),
+                );
+                Err(err)
+            }
+        }
+    }
+
+    pub fn read_env_secret(&self, name: &str) -> Result<SecretRead, RuntimeError> {
+        match self.secrets.read_env(name) {
+            Ok(read) => {
+                self.emit_host_event(
+                    "std.secrets.read",
+                    serde_json::json!({
+                        "name": read.name.clone(),
+                        "present": read.present,
+                        "value_redacted": read.present,
+                    }),
+                );
+                Ok(read)
+            }
+            Err(err) => {
+                self.emit_host_event(
+                    "std.secrets.error",
+                    serde_json::json!({
+                        "name": name,
                         "error": err.to_string(),
                     }),
                 );
@@ -1490,6 +1518,7 @@ impl RuntimeBuilder {
             usage_ledger: LlmUsageLedger::new(),
             http: HttpClient::new(),
             io: IoRuntime::new(),
+            secrets: SecretRuntime::new(),
         }
     }
 }
@@ -2188,6 +2217,30 @@ mod tests {
             event,
             TraceEvent::HostEvent { name, payload, .. }
                 if name == "std.io.list.result" && payload["entries"] == 1
+        )));
+    }
+
+    #[test]
+    fn secret_reads_are_trace_visible_without_secret_value() {
+        std::env::set_var("CORVID_TEST_RUNTIME_SECRET", "super-secret");
+        let dir = tempfile::tempdir().unwrap();
+        let trace_path = dir.path().join("secret.jsonl");
+        let r = Runtime::builder()
+            .tracer(Tracer::open_path(&trace_path, "secret-run"))
+            .build();
+
+        let read = r.read_env_secret("CORVID_TEST_RUNTIME_SECRET").unwrap();
+        assert!(read.present);
+        assert_eq!(read.value.as_deref(), Some("super-secret"));
+
+        let events = corvid_trace_schema::read_events_from_path(&trace_path).unwrap();
+        assert!(events.iter().any(|event| matches!(
+            event,
+            TraceEvent::HostEvent { name, payload, .. }
+                if name == "std.secrets.read"
+                    && payload["name"] == "CORVID_TEST_RUNTIME_SECRET"
+                    && payload["present"] == true
+                    && payload.get("value").is_none()
         )));
     }
 
