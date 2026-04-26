@@ -1036,6 +1036,9 @@ fn collect_all_names(file: &File) -> BTreeSet<String> {
                 for field in &store.fields {
                     names.insert(field.name.name.clone());
                 }
+                for policy in &store.policies {
+                    names.insert(policy.name.name.clone());
+                }
             }
             Decl::Tool(tool) => {
                 names.insert(tool.name.name.clone());
@@ -1206,6 +1209,16 @@ fn render_decl(decl: &Decl, indent: usize, out: &mut String) {
                 out.push_str(&field.name.name);
                 out.push_str(": ");
                 out.push_str(&render_type_ref(&field.ty));
+            }
+            for (index, policy) in store.policies.iter().enumerate() {
+                if !store.fields.is_empty() || index > 0 {
+                    out.push('\n');
+                }
+                push_indent(indent + 1, out);
+                out.push_str("policy ");
+                out.push_str(&policy.name.name);
+                out.push_str(": ");
+                out.push_str(&render_dimension_value(&policy.value));
             }
         }
         Decl::Tool(tool) => render_tool(tool, indent, out),

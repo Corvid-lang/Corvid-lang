@@ -253,13 +253,22 @@ pub struct TypeDecl {
 /// declares durable state. Both use the same field grammar as `type`
 /// declarations so later runtime accessors can expose typed `get` /
 /// `set` APIs without re-parsing schema metadata.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct StoreDecl {
     pub kind: StoreKind,
     pub name: Ident,
     pub fields: Vec<Field>,
     #[serde(default)]
+    pub policies: Vec<StorePolicy>,
+    #[serde(default)]
     pub visibility: Visibility,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct StorePolicy {
+    pub name: Ident,
+    pub value: crate::effect::DimensionValue,
     pub span: Span,
 }
 

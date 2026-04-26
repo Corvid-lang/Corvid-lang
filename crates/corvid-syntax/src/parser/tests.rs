@@ -1656,7 +1656,7 @@ agent good(x: String) -> String:
     #[test]
     fn parses_session_and_memory_store_decls() {
         let file = parse_file_src(
-            "session Conversation:\n    user_id: String\n    cart: List<String>\n\nmemory Profile:\n    facts: Grounded<String>\n",
+            "session Conversation:\n    user_id: String\n    cart: List<String>\n    policy retention: ttl_24h\n\nmemory Profile:\n    facts: Grounded<String>\n    policy approval_required: true\n",
         );
         assert_eq!(file.decls.len(), 2);
         match &file.decls[0] {
@@ -1664,6 +1664,7 @@ agent good(x: String) -> String:
                 assert_eq!(store.kind, corvid_ast::StoreKind::Session);
                 assert_eq!(store.name.name, "Conversation");
                 assert_eq!(store.fields.len(), 2);
+                assert_eq!(store.policies.len(), 1);
             }
             other => panic!("expected session store, got {other:?}"),
         }
@@ -1672,6 +1673,7 @@ agent good(x: String) -> String:
                 assert_eq!(store.kind, corvid_ast::StoreKind::Memory);
                 assert_eq!(store.name.name, "Profile");
                 assert_eq!(store.fields.len(), 1);
+                assert_eq!(store.policies.len(), 1);
             }
             other => panic!("expected memory store, got {other:?}"),
         }

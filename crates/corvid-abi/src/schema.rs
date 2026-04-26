@@ -152,8 +152,16 @@ pub struct AbiStore {
     pub kind: String,
     #[serde(default)]
     pub fields: Vec<AbiField>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub policies: Vec<AbiStorePolicy>,
     pub source_span: AbiSourceSpan,
     pub effects: AbiStoreEffects,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AbiStorePolicy {
+    pub name: String,
+    pub value: Value,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

@@ -69,7 +69,7 @@ fn apply_dimension(out: &mut AbiEffects, name: &str, value: &DimensionValue) {
     }
 }
 
-fn dim_to_json(value: &DimensionValue) -> Value {
+pub(crate) fn dim_to_json(value: &DimensionValue) -> Value {
     match value {
         DimensionValue::Bool(v) => Value::Bool(*v),
         DimensionValue::Name(v) => Value::String(v.clone()),

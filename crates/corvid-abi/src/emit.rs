@@ -1,11 +1,11 @@
 use crate::approval_contract::{analyze_agent_approval_contract, collect_all_approval_sites};
-use crate::effect_emit::{emit_effects_from_composed, emit_effects_from_effect_names};
+use crate::effect_emit::{dim_to_json, emit_effects_from_composed, emit_effects_from_effect_names};
 use crate::provenance_emit::emit_provenance_contract;
 use crate::schema::{
     AbiAgent, AbiAttributes, AbiBudget, AbiCostEnvelope, AbiDestructor, AbiDestructorKind,
     AbiDispatch, AbiField, AbiOwnership, AbiOwnershipMode, AbiParam, AbiProgressiveStage,
-    AbiPrompt, AbiRouteArm, AbiSourceSpan, AbiStore, AbiStoreEffects, AbiTool, AbiTypeDecl,
-    CorvidAbi,
+    AbiPrompt, AbiRouteArm, AbiSourceSpan, AbiStore, AbiStoreEffects, AbiStorePolicy, AbiTool,
+    AbiTypeDecl, CorvidAbi,
 };
 use crate::tool_contract::emit_tool_contract;
 use crate::type_description::emit_type_description;
@@ -162,6 +162,14 @@ fn emit_store(store: &StoreDecl, resolved: &Resolved) -> AbiStore {
                     &resolve_typeref_to_type(&field.ty, resolved),
                     resolved,
                 ),
+            })
+            .collect(),
+        policies: store
+            .policies
+            .iter()
+            .map(|policy| AbiStorePolicy {
+                name: policy.name.name.clone(),
+                value: dim_to_json(&policy.value),
             })
             .collect(),
         source_span: source_span(store.span),
