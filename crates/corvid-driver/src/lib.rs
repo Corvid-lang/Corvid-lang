@@ -54,7 +54,7 @@ pub use package_metadata::{
 pub use approver::{simulate_approver, verify_approver_source};
 pub use modules::{
     build_module_resolution, inspect_import_semantics, render_import_semantic_summaries,
-    ModuleLoadError, NamedModuleSemanticSummary,
+    summarize_module_file, ModuleLoadError, NamedModuleSemanticSummary,
 };
 pub use effect_diff::{
     diff_snapshots, render_effect_diff, snapshot_revision, AgentDiff, AgentSnapshot,

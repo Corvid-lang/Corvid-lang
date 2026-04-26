@@ -1585,6 +1585,10 @@ The determinism-source catalog and the language's treatment of non-reproducible 
 **Hard dep:** everything.
 
 **Scope:**
+- [x] In-repo installer flow: checked-in Unix + PowerShell install scripts under `install/` plus the documented `cargo install` path.
+- [x] Documentation rewrite foundation: launch reference, tutorial, cookbook, and migration-from-Python docs checked into `docs/`.
+- [x] Claim audit foundation: `docs/launch-claim-audit.md` links launch claims to concrete commands and committed artifacts, and keeps external-only claims explicitly blocked until the artifact exists.
+- [x] `corvid audit`: project-level static report for approval boundaries, replay coverage gaps, budget exposure, secret-bearing effects, money-moving paths, grounding signals, and semantic-effect violations.
 - Stability guarantees on the language surface: documented SemVer contract for syntax, type system, stdlib.
 - Windows + Linux + macOS all first-class (`corvid doctor` passes, installer works, parity harness green on all three).
 - Installer: `curl -fsSL corvid.dev/install.sh | sh` on Unix, PowerShell equivalent on Windows. Corresponding `cargo install` flow.

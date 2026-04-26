@@ -204,6 +204,13 @@ pub fn inspect_import_semantics(root_path: &Path) -> Result<Vec<NamedModuleSeman
     Ok(out)
 }
 
+pub fn summarize_module_file(path: &Path) -> Result<ModuleSemanticSummary> {
+    let source = std::fs::read_to_string(path)
+        .with_context(|| format!("cannot read `{}`", path.display()))?;
+    summarize_module_source(&source)
+        .map_err(|message| anyhow!("semantic summary failed for `{}`: {message}", path.display()))
+}
+
 pub fn render_import_semantic_summaries(summaries: &[NamedModuleSemanticSummary]) -> String {
     if summaries.is_empty() {
         return "No Corvid imports found.\n".to_string();

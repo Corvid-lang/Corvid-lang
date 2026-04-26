@@ -29,6 +29,7 @@
 
 mod abi_cmd;
 mod approver_cmd;
+mod audit_cmd;
 mod bind_cmd;
 mod bundle_cmd;
 mod capsule_cmd;
@@ -575,6 +576,14 @@ enum Command {
     Repl,
     /// Check the local environment for required tools.
     Doctor,
+    /// Audit a Corvid project surface for launch-relevant risks.
+    Audit {
+        /// Root Corvid source file.
+        file: PathBuf,
+        /// Emit structured JSON.
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -1072,6 +1081,7 @@ fn main() -> ExitCode {
         },
         Some(Command::Repl) => cmd_repl(),
         Some(Command::Doctor) => cmd_doctor(),
+        Some(Command::Audit { file, json }) => audit_cmd::run_audit(&file, json),
         None => {
             println!("corvid — the AI-native language compiler");
             println!("Run `corvid --help` for usage.");
