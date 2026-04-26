@@ -245,6 +245,19 @@ pub(super) fn regression_flag_for(delta: &DeltaRecord) -> Option<String> {
             }
         }
     }
+    if key.starts_with("tool.contract.domain_added:") {
+        let parts = key.split(':').collect::<Vec<_>>();
+        if matches!(parts.get(2).copied(), Some("money" | "irreversible")) {
+            return Some(delta.summary.clone());
+        }
+    }
+    if key.starts_with("tool.contract.approval_changed:") {
+        if let Some(transition) = key.rsplit(':').next() {
+            if transition.ends_with("->none") {
+                return Some(delta.summary.clone());
+            }
+        }
+    }
     None
 }
 
@@ -516,6 +529,38 @@ mod tests {
             vec![delta(
                 "agent.approval.reversibility_changed:refund_bot:IssueRefund:reversible->irreversible",
                 "reversibility regression on IssueRefund",
+            )],
+            empty_impact(),
+        );
+        assert!(!apply_default_policy(&r).ok);
+    }
+
+    #[test]
+    fn default_policy_flags_new_money_or_irreversible_tool_contracts() {
+        let r = receipt_with_deltas(
+            vec![
+                delta(
+                    "tool.contract.domain_added:charge_card:money:amount",
+                    "tool `charge_card` gained `money(amount)` contract effect",
+                ),
+                delta(
+                    "tool.contract.domain_added:charge_card:irreversible:true",
+                    "tool `charge_card` gained `irreversible(true)` contract effect",
+                ),
+            ],
+            empty_impact(),
+        );
+        let v = apply_default_policy(&r);
+        assert!(!v.ok);
+        assert_eq!(v.flags.len(), 2);
+    }
+
+    #[test]
+    fn default_policy_flags_removed_tool_approval_contract() {
+        let r = receipt_with_deltas(
+            vec![delta(
+                "tool.contract.approval_changed:charge_card:charge-card->none",
+                "tool `charge_card` approval contract changed from `charge-card` to `none`",
             )],
             empty_impact(),
         );

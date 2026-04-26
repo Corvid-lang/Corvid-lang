@@ -103,6 +103,37 @@ pub struct AbiTool {
     pub return_type: TypeDescription,
     pub effects: AbiEffects,
     pub dangerous: bool,
+    #[serde(default, skip_serializing_if = "AbiToolContract::is_empty")]
+    pub contract: AbiToolContract,
+}
+
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+pub struct AbiToolContract {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub domain_effects: Vec<AbiToolDomainEffect>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub requires_approval: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub approval_card_hints: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub ci_fail_on: Vec<String>,
+}
+
+impl AbiToolContract {
+    pub fn is_empty(&self) -> bool {
+        self.domain_effects.is_empty()
+            && self.requires_approval.is_none()
+            && self.approval_card_hints.is_empty()
+            && self.ci_fail_on.is_empty()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AbiToolDomainEffect {
+    pub kind: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub target: Option<String>,
+    pub source_effect: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

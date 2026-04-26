@@ -27,7 +27,7 @@ use std::str::FromStr;
 
 use corvid_abi::{
     AbiAgent, AbiApprovalContract, AbiOwnership, AbiOwnershipMode, AbiParam,
-    AbiProvenanceContract, CorvidAbi, ScalarTypeName, TypeDescription,
+    AbiProvenanceContract, AbiTool, CorvidAbi, ScalarTypeName, TypeDescription,
 };
 use serde::{Deserialize, Serialize};
 
@@ -228,6 +228,9 @@ pub fn validate_narrative(
 ///     `agent.provenance.dep_removed:<name>:<dep>`
 ///   - `agent.extern.ownership_changed:<name>:ret:<from>-><to>`
 ///   - `agent.extern.ownership_changed:<name>:arg[<idx>]:<from>-><to>`
+///   - `tool.contract.domain_added:<tool>:<kind>:<target>`
+///   - `tool.contract.domain_removed:<tool>:<kind>:<target>`
+///   - `tool.contract.approval_changed:<tool>:<from>-><to>`
 ///
 /// The keys stay stable between record emission here and the
 /// matching rendering in `reviewer.cor` by convention: any new
@@ -266,8 +269,102 @@ pub fn compute_diff_summary(base: &CorvidAbi, head: &CorvidAbi) -> DiffSummary {
             emit_initial_contract(ha, &mut records);
         }
     }
+    diff_tools(base, head, &mut records);
 
     DiffSummary { records }
+}
+
+fn diff_tools(base: &CorvidAbi, head: &CorvidAbi, out: &mut Vec<DeltaRecord>) {
+    let base_tools: std::collections::BTreeMap<&str, &AbiTool> =
+        base.tools.iter().map(|tool| (tool.name.as_str(), tool)).collect();
+    let head_tools: std::collections::BTreeMap<&str, &AbiTool> =
+        head.tools.iter().map(|tool| (tool.name.as_str(), tool)).collect();
+
+    for (name, head_tool) in &head_tools {
+        match base_tools.get(name) {
+            Some(base_tool) => diff_tool_contract(name, base_tool, head_tool, out),
+            None => emit_initial_tool_contract(name, head_tool, out),
+        }
+    }
+    for (name, base_tool) in &base_tools {
+        if !head_tools.contains_key(name) {
+            emit_removed_tool_contract(name, base_tool, out);
+        }
+    }
+}
+
+fn diff_tool_contract(
+    name: &str,
+    base: &AbiTool,
+    head: &AbiTool,
+    out: &mut Vec<DeltaRecord>,
+) {
+    let base_domains = tool_domain_keys(base);
+    let head_domains = tool_domain_keys(head);
+    for (kind, target) in &head_domains {
+        if !base_domains.contains(&(kind.clone(), target.clone())) {
+            out.push(DeltaRecord {
+                key: format!("tool.contract.domain_added:{name}:{kind}:{target}"),
+                summary: format!("tool `{name}` gained `{kind}({target})` contract effect"),
+            });
+        }
+    }
+    for (kind, target) in &base_domains {
+        if !head_domains.contains(&(kind.clone(), target.clone())) {
+            out.push(DeltaRecord {
+                key: format!("tool.contract.domain_removed:{name}:{kind}:{target}"),
+                summary: format!("tool `{name}` lost `{kind}({target})` contract effect"),
+            });
+        }
+    }
+
+    let base_approval = base.contract.requires_approval.as_deref().unwrap_or("none");
+    let head_approval = head.contract.requires_approval.as_deref().unwrap_or("none");
+    if base_approval != head_approval {
+        out.push(DeltaRecord {
+            key: format!("tool.contract.approval_changed:{name}:{base_approval}->{head_approval}"),
+            summary: format!(
+                "tool `{name}` approval contract changed from `{base_approval}` to `{head_approval}`"
+            ),
+        });
+    }
+}
+
+fn emit_initial_tool_contract(name: &str, tool: &AbiTool, out: &mut Vec<DeltaRecord>) {
+    for (kind, target) in tool_domain_keys(tool) {
+        out.push(DeltaRecord {
+            key: format!("tool.contract.domain_added:{name}:{kind}:{target}"),
+            summary: format!("new tool `{name}` declares `{kind}({target})` contract effect"),
+        });
+    }
+    if let Some(label) = &tool.contract.requires_approval {
+        out.push(DeltaRecord {
+            key: format!("tool.contract.approval_changed:{name}:none->{label}"),
+            summary: format!("new tool `{name}` requires approval `{label}`"),
+        });
+    }
+}
+
+fn emit_removed_tool_contract(name: &str, tool: &AbiTool, out: &mut Vec<DeltaRecord>) {
+    for (kind, target) in tool_domain_keys(tool) {
+        out.push(DeltaRecord {
+            key: format!("tool.contract.domain_removed:{name}:{kind}:{target}"),
+            summary: format!("removed tool `{name}` had `{kind}({target})` contract effect"),
+        });
+    }
+}
+
+fn tool_domain_keys(tool: &AbiTool) -> HashSet<(String, String)> {
+    tool.contract
+        .domain_effects
+        .iter()
+        .map(|effect| {
+            (
+                effect.kind.clone(),
+                effect.target.clone().unwrap_or_else(|| "true".to_string()),
+            )
+        })
+        .collect()
 }
 
 fn diff_agent_pair(name: &str, base: &AbiAgent, head: &AbiAgent, out: &mut Vec<DeltaRecord>) {
@@ -757,6 +854,70 @@ mod tests {
             .records
             .iter()
             .any(|r| r.key == "agent.dangerous_gained:refund_bot"));
+    }
+
+    #[test]
+    fn diff_summary_detects_new_money_moving_tool_contract() {
+        let base_json = serde_json::json!({
+            "corvid_abi_version": corvid_abi::CORVID_ABI_VERSION,
+            "compiler_version": "test",
+            "source_path": "test.cor",
+            "generated_at": "1970-01-01T00:00:00Z",
+            "agents": [],
+            "prompts": [],
+            "tools": [{
+                "name": "charge_card",
+                "symbol": "corvid_tool_charge_card",
+                "params": [],
+                "return_type": { "scalar": "Bool" },
+                "effects": {},
+                "dangerous": false
+            }],
+            "types": [],
+            "approval_sites": []
+        });
+        let head_json = serde_json::json!({
+            "corvid_abi_version": corvid_abi::CORVID_ABI_VERSION,
+            "compiler_version": "test",
+            "source_path": "test.cor",
+            "generated_at": "1970-01-01T00:00:00Z",
+            "agents": [],
+            "prompts": [],
+            "tools": [{
+                "name": "charge_card",
+                "symbol": "corvid_tool_charge_card",
+                "params": [],
+                "return_type": { "scalar": "Bool" },
+                "effects": {},
+                "dangerous": false,
+                "contract": {
+                    "domain_effects": [
+                        { "kind": "money", "target": "amount", "source_effect": "stripe_charge" },
+                        { "kind": "irreversible", "source_effect": "stripe_charge" }
+                    ],
+                    "requires_approval": "charge-card",
+                    "ci_fail_on": ["money", "irreversible"]
+                }
+            }],
+            "types": [],
+            "approval_sites": []
+        });
+        let base: CorvidAbi =
+            corvid_abi::descriptor_from_json(&serde_json::to_string(&base_json).unwrap()).unwrap();
+        let head: CorvidAbi =
+            corvid_abi::descriptor_from_json(&serde_json::to_string(&head_json).unwrap()).unwrap();
+
+        let diff = compute_diff_summary(&base, &head);
+        assert!(diff
+            .records
+            .iter()
+            .any(|r| r.key == "tool.contract.domain_added:charge_card:money:amount"));
+        assert!(diff.records.iter().any(
+            |r| r.key == "tool.contract.domain_added:charge_card:irreversible:true"
+        ));
+        assert!(diff.records.iter().any(
+            |r| r.key == "tool.contract.approval_changed:charge_card:none->charge-card"
+        ));
     }
 
     #[test]

@@ -6,6 +6,7 @@ mod effect_emit;
 mod emit;
 mod provenance_emit;
 mod schema;
+mod tool_contract;
 mod type_description;
 
 pub use canonical_hash::{hash_abi, hash_json_bytes, hash_json_str};
@@ -22,8 +23,9 @@ pub use schema::{
     AbiField, AbiGroundedType, AbiLatencyMs, AbiListType, AbiMinExpected, AbiOptionType,
     AbiOwnership, AbiOwnershipMode, AbiParam, AbiProgressiveStage, AbiProjectedTokens,
     AbiProjectedUsd, AbiPrompt, AbiProvenanceContract, AbiResultType, AbiRouteArm,
-    AbiSourceSpan, AbiTool, AbiTypeDecl, AbiVersionError, AbiWeakType, CorvidAbi,
-    ScalarTypeName, TypeDescription, CORVID_ABI_VERSION, MIN_SUPPORTED_ABI_VERSION,
+    AbiSourceSpan, AbiTool, AbiToolContract, AbiToolDomainEffect, AbiTypeDecl,
+    AbiVersionError, AbiWeakType, CorvidAbi, ScalarTypeName, TypeDescription,
+    CORVID_ABI_VERSION, MIN_SUPPORTED_ABI_VERSION,
 };
 
 use std::io;

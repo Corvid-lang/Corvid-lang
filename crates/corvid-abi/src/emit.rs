@@ -6,6 +6,7 @@ use crate::schema::{
     AbiDispatch, AbiField, AbiOwnership, AbiOwnershipMode, AbiParam, AbiProgressiveStage,
     AbiPrompt, AbiRouteArm, AbiSourceSpan, AbiTool, AbiTypeDecl, CorvidAbi,
 };
+use crate::tool_contract::emit_tool_contract;
 use crate::type_description::emit_type_description;
 use corvid_ast::{
     AgentAttribute, Decl, DimensionValue, File, OwnershipAnnotation, OwnershipMode, PromptDecl,
@@ -386,6 +387,9 @@ fn emit_tool(
         dangerous: ast_tool
             .map(|tool| tool.effect == corvid_ast::Effect::Dangerous)
             .unwrap_or(false),
+        contract: ast_tool
+            .map(|tool_decl| emit_tool_contract(tool_decl, registry))
+            .unwrap_or_default(),
     }
 }
 

@@ -59,3 +59,54 @@ fn approval_site_carries_cost_and_reversibility_from_target() {
     assert_eq!(site.effects.cost.as_ref().unwrap().projected_usd, 0.10);
     assert_eq!(site.effects.reversibility.as_deref(), Some("non_reversible"));
 }
+
+#[test]
+fn tool_contract_records_domain_effects_and_approval_requirements() {
+    let abi = emit_descriptor(
+        r#"
+effect stripe_charge:
+    trust: human_required
+    reversible: false
+    domain: money
+    money: amount
+    external: stripe
+    requires_approval: charge_card
+
+tool charge_card(customer_id: String, amount: Float) -> Bool uses stripe_charge
+
+pub extern "c"
+agent noop() -> Bool:
+    return true
+"#,
+    );
+
+    let tool = abi
+        .tools
+        .iter()
+        .find(|tool| tool.name == "charge_card")
+        .expect("tool contract");
+    assert_eq!(
+        tool.contract.requires_approval.as_deref(),
+        Some("charge-card")
+    );
+    assert!(tool
+        .contract
+        .domain_effects
+        .iter()
+        .any(|effect| effect.kind == "money" && effect.target.as_deref() == Some("amount")));
+    assert!(tool
+        .contract
+        .domain_effects
+        .iter()
+        .any(|effect| effect.kind == "external" && effect.target.as_deref() == Some("stripe")));
+    assert!(tool
+        .contract
+        .domain_effects
+        .iter()
+        .any(|effect| effect.kind == "irreversible"));
+    assert!(tool.contract.ci_fail_on.contains(&"money".to_string()));
+    assert!(tool
+        .contract
+        .ci_fail_on
+        .contains(&"irreversible".to_string()));
+}
