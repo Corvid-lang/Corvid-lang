@@ -28,6 +28,7 @@ use crate::observe::{
 use crate::prompt_cache::PromptCache;
 #[cfg(feature = "python")]
 use crate::python_ffi::{PythonRuntime, PythonSandboxProfile};
+use crate::queue::{QueueJob, QueueRuntime};
 use crate::record::Recorder;
 use crate::replay::{ReplayDifferentialReport, ReplayMutationReport, ReplaySource};
 use crate::secrets::{SecretRead, SecretRuntime};
@@ -68,6 +69,7 @@ pub struct Runtime {
     http: HttpClient,
     io: IoRuntime,
     secrets: SecretRuntime,
+    queue: QueueRuntime,
 }
 
 #[derive(Clone)]
@@ -414,6 +416,51 @@ impl Runtime {
                 Err(err)
             }
         }
+    }
+
+    pub fn enqueue_job(
+        &self,
+        task: impl Into<String>,
+        payload: serde_json::Value,
+        max_retries: u64,
+        budget_usd: f64,
+        effect_summary: Option<String>,
+        replay_key: Option<String>,
+    ) -> Result<QueueJob, RuntimeError> {
+        let job = self.queue.enqueue(
+            task,
+            payload,
+            max_retries,
+            budget_usd,
+            effect_summary,
+            replay_key,
+        )?;
+        self.emit_host_event(
+            "std.queue.enqueue",
+            serde_json::json!({
+                "id": job.id,
+                "task": job.task,
+                "status": job.status.as_str(),
+                "max_retries": job.max_retries,
+                "budget_usd": job.budget_usd,
+                "effect_summary": job.effect_summary,
+                "replay_key": job.replay_key,
+            }),
+        );
+        Ok(job)
+    }
+
+    pub fn cancel_job(&self, id: &str) -> Result<QueueJob, RuntimeError> {
+        let job = self.queue.cancel(id)?;
+        self.emit_host_event(
+            "std.queue.cancel",
+            serde_json::json!({
+                "id": job.id,
+                "task": job.task,
+                "status": job.status.as_str(),
+            }),
+        );
+        Ok(job)
     }
 
     #[cfg(feature = "python")]
@@ -1568,6 +1615,7 @@ impl RuntimeBuilder {
             http: HttpClient::new(),
             io: IoRuntime::new(),
             secrets: SecretRuntime::new(),
+            queue: QueueRuntime::new(),
         }
     }
 }
@@ -2393,6 +2441,45 @@ mod tests {
         assert_eq!(event["provenance_key"], json!("doc:123"));
         assert_eq!(event.get("value"), None);
         assert_eq!(event.get("payload"), None);
+    }
+
+    #[test]
+    fn queue_jobs_emit_lifecycle_trace_events() {
+        let dir = tempfile::tempdir().unwrap();
+        let trace_path = dir.path().join("queue.jsonl");
+        let r = Runtime::builder()
+            .tracer(Tracer::open_path(&trace_path, "queue-run"))
+            .build();
+
+        let job = r
+            .enqueue_job(
+                "embed",
+                json!({"doc": "a"}),
+                2,
+                0.5,
+                Some("llm+io".to_string()),
+                Some("trace:abc".to_string()),
+            )
+            .unwrap();
+        let canceled = r.cancel_job(&job.id).unwrap();
+        assert_eq!(canceled.status, crate::queue::QueueJobStatus::Canceled);
+
+        let events = corvid_trace_schema::read_events_from_path(&trace_path).unwrap();
+        assert!(events.iter().any(|event| matches!(
+            event,
+            TraceEvent::HostEvent { name, payload, .. }
+                if name == "std.queue.enqueue"
+                    && payload["task"] == "embed"
+                    && payload["max_retries"] == 2
+                    && payload["effect_summary"] == "llm+io"
+        )));
+        assert!(events.iter().any(|event| matches!(
+            event,
+            TraceEvent::HostEvent { name, payload, .. }
+                if name == "std.queue.cancel"
+                    && payload["id"] == job.id
+                    && payload["status"] == "canceled"
+        )));
     }
 
     #[test]

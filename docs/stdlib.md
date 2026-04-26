@@ -90,3 +90,11 @@ construction over namespace, subject, model, arguments, effect key, provenance
 key, and version metadata. Cache-key creation emits `std.cache.key` trace events
 so cache decisions are replay-auditable without storing cached payloads in the
 metadata event.
+
+## `std.queue`
+
+`std/queue.cor` defines typed background-job envelopes with task, status, retry,
+budget, effect-summary, and replay-key metadata. The runtime exposes an
+in-process queue foundation for enqueue and cancel operations. Each operation
+emits `std.queue.*` trace events so long-running AI work can be audited and later
+backed by a durable store without changing the job contract.

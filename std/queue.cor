@@ -1,0 +1,19 @@
+# Standard background job envelopes.
+
+public type QueueJobEnvelope:
+    id: String
+    task: String
+    status: String
+    max_retries: Int
+    budget_usd: Float
+    effect_summary: String
+    replay_key: String
+
+public agent queued_job(id: String, task: String, status: String, max_retries: Int, budget_usd: Float, effect_summary: String, replay_key: String) -> QueueJobEnvelope:
+    return QueueJobEnvelope(id, task, status, max_retries, budget_usd, effect_summary, replay_key)
+
+public agent pending_job(id: String, task: String, max_retries: Int, budget_usd: Float, effect_summary: String, replay_key: String) -> QueueJobEnvelope:
+    return QueueJobEnvelope(id, task, "pending", max_retries, budget_usd, effect_summary, replay_key)
+
+public agent canceled_job(job: QueueJobEnvelope) -> QueueJobEnvelope:
+    return QueueJobEnvelope(job.id, job.task, "canceled", job.max_retries, job.budget_usd, job.effect_summary, job.replay_key)
