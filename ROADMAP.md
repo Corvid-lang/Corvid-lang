@@ -1180,7 +1180,7 @@ Users register local models (Ollama, vLLM, llama.cpp) with declared capabilities
 
 ---
 
-### Phase 21 — Replay (~5–6 months, maximal-flagship scope) — **THE FLAGSHIP WOW**
+### Phase 21 — Replay (~5–6 months, maximal-flagship scope) ✅ closed — **THE FLAGSHIP WOW**
 
 **Goal.** Every run replayable by construction — and beyond. Baseline record + replay in both tiers, plus nine inventive features that push past every existing observability tool. Replay becomes a language-level, compile-time-guaranteed, regression-oracle-producing primitive.
 
