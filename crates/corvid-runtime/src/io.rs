@@ -1,6 +1,8 @@
 use crate::errors::RuntimeError;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
+use tokio::fs::File;
+use tokio::io::{AsyncBufReadExt, BufReader, Lines};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FileRead {
@@ -22,6 +24,12 @@ pub struct DirectoryEntry {
     pub path: PathBuf,
     pub name: String,
     pub is_dir: bool,
+}
+
+pub struct TextLineStream {
+    pub path: PathBuf,
+    lines: Lines<BufReader<File>>,
+    pub lines_read: u64,
 }
 
 #[derive(Clone, Default)]
@@ -138,6 +146,22 @@ impl IoRuntime {
         out.sort_by(|left, right| left.name.cmp(&right.name));
         Ok(out)
     }
+
+    pub async fn open_line_stream(
+        &self,
+        path: impl AsRef<Path>,
+    ) -> Result<TextLineStream, RuntimeError> {
+        let path = path.as_ref().to_path_buf();
+        let file = File::open(&path).await.map_err(|err| RuntimeError::ToolFailed {
+            tool: "std.io".to_string(),
+            message: format!("failed to open `{}` for streaming: {err}", path.display()),
+        })?;
+        Ok(TextLineStream {
+            path,
+            lines: BufReader::new(file).lines(),
+            lines_read: 0,
+        })
+    }
 }
 
 fn elapsed_ms(started: Instant) -> u64 {
@@ -164,6 +188,7 @@ fn normalize_path(path: &Path) -> PathBuf {
             Component::Normal(part) => parts.push(part.to_os_string()),
         }
     }
+
     for part in parts {
         normalized.push(part);
     }
@@ -171,6 +196,19 @@ fn normalize_path(path: &Path) -> PathBuf {
         PathBuf::from(".")
     } else {
         normalized
+    }
+}
+
+impl TextLineStream {
+    pub async fn next_line(&mut self) -> Result<Option<String>, RuntimeError> {
+        let line = self.lines.next_line().await.map_err(|err| RuntimeError::ToolFailed {
+            tool: "std.io".to_string(),
+            message: format!("failed to read streamed line from `{}`: {err}", self.path.display()),
+        })?;
+        if line.is_some() {
+            self.lines_read += 1;
+        }
+        Ok(line)
     }
 }
 
@@ -195,6 +233,20 @@ mod tests {
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].name, "note.txt");
         assert!(!entries[0].is_dir);
+    }
+
+    #[tokio::test]
+    async fn io_runtime_streams_lines() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("lines.txt");
+        std::fs::write(&path, "alpha\nbeta\n").unwrap();
+        let io = IoRuntime::new();
+        let mut stream = io.open_line_stream(&path).await.unwrap();
+
+        assert_eq!(stream.next_line().await.unwrap().as_deref(), Some("alpha"));
+        assert_eq!(stream.next_line().await.unwrap().as_deref(), Some("beta"));
+        assert_eq!(stream.next_line().await.unwrap(), None);
+        assert_eq!(stream.lines_read, 2);
     }
 
     #[test]

@@ -123,7 +123,7 @@ pub use http::{
     record_exchange, request_fingerprint, HttpClient, HttpHeader, HttpRequest, HttpResponse,
     HttpRetryPolicy, RecordedHttpExchange,
 };
-pub use io::{DirectoryEntry, FileRead, FileWrite, IoRuntime};
+pub use io::{DirectoryEntry, FileRead, FileWrite, IoRuntime, TextLineStream};
 pub use llm::{
     anthropic::AnthropicAdapter,
     gemini::GeminiAdapter,

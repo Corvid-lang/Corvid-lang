@@ -1566,7 +1566,7 @@ The determinism-source catalog and the language's treatment of non-reproducible 
 - `std.rag` APIs return `Grounded<T>` by construction where retrieval provenance exists, but grounding is not limited to RAG; any tool/effect that proves provenance can produce `Grounded<T>`.
 - [x] `std.http` typed HTTP client with effect tags, retry semantics, timeout/budget accounting, and recorded replay-hook exchanges.
 - [x] `std.io` path helpers in the runtime: join, parent, filename, extension, extension replacement, and lexical normalization.
-- `std.io` remaining runtime pieces: streaming surfaces and explicit filesystem-effect plumbing.
+- `std.io` remaining runtime pieces: explicit filesystem-effect plumbing.
 - [x] `std.agent` common AI patterns: classification, extraction, summarization, ranking, adjudication, routing, planning, tool-use loops, approval-gated action, review/critique, and grounded answer generation.
 - Everything in `std.*` effect-tagged so users get the moat's benefits from day one.
 - [x] `std.queue` durable background jobs for long-running AI tasks, with retry, cancellation, replay hooks, budget accounting, and effect summaries.
