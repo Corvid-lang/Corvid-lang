@@ -5,9 +5,19 @@ use std::path::Path;
 #[derive(Debug, Clone, PartialEq)]
 pub struct RegisteredModel {
     pub name: String,
+    pub provider: Option<String>,
     pub capability: Option<String>,
     pub version: Option<String>,
     pub output_format: Option<String>,
+    pub privacy_tier: Option<String>,
+    pub jurisdiction: Option<String>,
+    pub latency_tier: Option<String>,
+    pub context_window: Option<u64>,
+    pub structured_output: bool,
+    pub tool_calling: bool,
+    pub embeddings: bool,
+    pub multimodal: Vec<String>,
+    pub task_capabilities: Vec<String>,
     pub cost_per_token_in: f64,
     pub cost_per_token_out: f64,
 }
@@ -16,12 +26,27 @@ impl RegisteredModel {
     pub fn new(name: impl Into<String>) -> Self {
         Self {
             name: name.into(),
+            provider: None,
             capability: None,
             version: None,
             output_format: None,
+            privacy_tier: None,
+            jurisdiction: None,
+            latency_tier: None,
+            context_window: None,
+            structured_output: false,
+            tool_calling: false,
+            embeddings: false,
+            multimodal: Vec::new(),
+            task_capabilities: Vec::new(),
             cost_per_token_in: 0.0,
             cost_per_token_out: 0.0,
         }
+    }
+
+    pub fn provider(mut self, provider: impl Into<String>) -> Self {
+        self.provider = Some(provider.into());
+        self
     }
 
     pub fn capability(mut self, capability: impl Into<String>) -> Self {
@@ -36,6 +61,51 @@ impl RegisteredModel {
 
     pub fn output_format(mut self, output_format: impl Into<String>) -> Self {
         self.output_format = Some(output_format.into());
+        self
+    }
+
+    pub fn privacy_tier(mut self, privacy_tier: impl Into<String>) -> Self {
+        self.privacy_tier = Some(privacy_tier.into());
+        self
+    }
+
+    pub fn jurisdiction(mut self, jurisdiction: impl Into<String>) -> Self {
+        self.jurisdiction = Some(jurisdiction.into());
+        self
+    }
+
+    pub fn latency_tier(mut self, latency_tier: impl Into<String>) -> Self {
+        self.latency_tier = Some(latency_tier.into());
+        self
+    }
+
+    pub fn context_window(mut self, context_window: u64) -> Self {
+        self.context_window = Some(context_window);
+        self
+    }
+
+    pub fn structured_output(mut self, supported: bool) -> Self {
+        self.structured_output = supported;
+        self
+    }
+
+    pub fn tool_calling(mut self, supported: bool) -> Self {
+        self.tool_calling = supported;
+        self
+    }
+
+    pub fn embeddings(mut self, supported: bool) -> Self {
+        self.embeddings = supported;
+        self
+    }
+
+    pub fn multimodal(mut self, tags: impl IntoIterator<Item = impl Into<String>>) -> Self {
+        self.multimodal = tags.into_iter().map(Into::into).collect();
+        self
+    }
+
+    pub fn task_capabilities(mut self, tags: impl IntoIterator<Item = impl Into<String>>) -> Self {
+        self.task_capabilities = tags.into_iter().map(Into::into).collect();
         self
     }
 
@@ -63,11 +133,21 @@ pub struct ModelCatalog {
 #[derive(Debug, Clone, PartialEq)]
 pub struct ModelSelection {
     pub model: String,
+    pub provider: Option<String>,
     pub capability_required: Option<String>,
     pub capability_picked: Option<String>,
     pub version: Option<String>,
     pub output_format_required: Option<String>,
     pub output_format_picked: Option<String>,
+    pub privacy_tier: Option<String>,
+    pub jurisdiction: Option<String>,
+    pub latency_tier: Option<String>,
+    pub context_window: Option<u64>,
+    pub structured_output: bool,
+    pub tool_calling: bool,
+    pub embeddings: bool,
+    pub multimodal: Vec<String>,
+    pub task_capabilities: Vec<String>,
     pub cost_estimate: f64,
 }
 
@@ -179,11 +259,21 @@ impl ModelCatalog {
 
         Ok(ModelSelection {
             model: selected.name.clone(),
+            provider: selected.provider.clone(),
             capability_required: required_capability.map(ToString::to_string),
             capability_picked: selected.capability.clone(),
             version: selected.version.clone(),
             output_format_required: required_output_format.map(ToString::to_string),
             output_format_picked: selected.output_format.clone(),
+            privacy_tier: selected.privacy_tier.clone(),
+            jurisdiction: selected.jurisdiction.clone(),
+            latency_tier: selected.latency_tier.clone(),
+            context_window: selected.context_window,
+            structured_output: selected.structured_output,
+            tool_calling: selected.tool_calling,
+            embeddings: selected.embeddings,
+            multimodal: selected.multimodal.clone(),
+            task_capabilities: selected.task_capabilities.clone(),
             cost_estimate: selected.estimated_cost(prompt_tokens, completion_tokens),
         })
     }
@@ -197,20 +287,40 @@ impl ModelCatalog {
         match self.get(model_name) {
             Some(model) => ModelSelection {
                 model: model.name.clone(),
+                provider: model.provider.clone(),
                 capability_required: None,
                 capability_picked: model.capability.clone(),
                 version: model.version.clone(),
                 output_format_required: None,
                 output_format_picked: model.output_format.clone(),
+                privacy_tier: model.privacy_tier.clone(),
+                jurisdiction: model.jurisdiction.clone(),
+                latency_tier: model.latency_tier.clone(),
+                context_window: model.context_window,
+                structured_output: model.structured_output,
+                tool_calling: model.tool_calling,
+                embeddings: model.embeddings,
+                multimodal: model.multimodal.clone(),
+                task_capabilities: model.task_capabilities.clone(),
                 cost_estimate: model.estimated_cost(prompt_tokens, completion_tokens),
             },
             None => ModelSelection {
                 model: model_name.to_string(),
+                provider: None,
                 capability_required: None,
                 capability_picked: None,
                 version: None,
                 output_format_required: None,
                 output_format_picked: None,
+                privacy_tier: None,
+                jurisdiction: None,
+                latency_tier: None,
+                context_window: None,
+                structured_output: false,
+                tool_calling: false,
+                embeddings: false,
+                multimodal: Vec::new(),
+                task_capabilities: Vec::new(),
                 cost_estimate: 0.0,
             },
         }
@@ -240,6 +350,10 @@ fn parse_catalog_toml(path: &Path, value: toml::Value) -> Result<ModelCatalog, R
             .get("capability")
             .and_then(toml::Value::as_str)
             .map(ToString::to_string);
+        let provider = spec
+            .get("provider")
+            .and_then(toml::Value::as_str)
+            .map(ToString::to_string);
         let version = spec
             .get("version")
             .and_then(toml::Value::as_str)
@@ -248,18 +362,106 @@ fn parse_catalog_toml(path: &Path, value: toml::Value) -> Result<ModelCatalog, R
             .get("output_format")
             .and_then(toml::Value::as_str)
             .map(ToString::to_string);
+        let privacy_tier = spec
+            .get("privacy_tier")
+            .and_then(toml::Value::as_str)
+            .map(ToString::to_string);
+        let jurisdiction = spec
+            .get("jurisdiction")
+            .and_then(toml::Value::as_str)
+            .map(ToString::to_string);
+        let latency_tier = spec
+            .get("latency_tier")
+            .and_then(toml::Value::as_str)
+            .map(ToString::to_string);
+        let context_window =
+            parse_optional_u64_field(path, name, "context_window", spec.get("context_window"))?;
+        let structured_output = parse_bool_field(spec.get("structured_output"));
+        let tool_calling = parse_bool_field(spec.get("tool_calling"));
+        let embeddings = parse_bool_field(spec.get("embeddings"));
+        let multimodal = parse_string_list_field(path, name, "multimodal", spec.get("multimodal"))?;
+        let task_capabilities = parse_string_list_field(
+            path,
+            name,
+            "task_capabilities",
+            spec.get("task_capabilities"),
+        )?;
         let cost_per_token_in = parse_cost_field(path, name, spec.get("cost_per_token_in"))?;
         let cost_per_token_out = parse_cost_field(path, name, spec.get("cost_per_token_out"))?;
         catalog.register(RegisteredModel {
             name: name.clone(),
+            provider,
             capability,
             version,
             output_format,
+            privacy_tier,
+            jurisdiction,
+            latency_tier,
+            context_window,
+            structured_output,
+            tool_calling,
+            embeddings,
+            multimodal,
+            task_capabilities,
             cost_per_token_in,
             cost_per_token_out,
         });
     }
     Ok(catalog)
+}
+
+fn parse_optional_u64_field(
+    path: &Path,
+    model_name: &str,
+    field: &str,
+    value: Option<&toml::Value>,
+) -> Result<Option<u64>, RuntimeError> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    match value {
+        toml::Value::Integer(value) if *value >= 0 => Ok(Some(*value as u64)),
+        other => Err(RuntimeError::ModelCatalogParse {
+            path: path.to_path_buf(),
+            message: format!(
+                "model `{model_name}` field `{field}` must be a non-negative integer, got `{other}`"
+            ),
+        }),
+    }
+}
+
+fn parse_bool_field(value: Option<&toml::Value>) -> bool {
+    value.and_then(toml::Value::as_bool).unwrap_or(false)
+}
+
+fn parse_string_list_field(
+    path: &Path,
+    model_name: &str,
+    field: &str,
+    value: Option<&toml::Value>,
+) -> Result<Vec<String>, RuntimeError> {
+    let Some(value) = value else {
+        return Ok(Vec::new());
+    };
+    let Some(values) = value.as_array() else {
+        return Err(RuntimeError::ModelCatalogParse {
+            path: path.to_path_buf(),
+            message: format!("model `{model_name}` field `{field}` must be a string list"),
+        });
+    };
+    values
+        .iter()
+        .map(|value| {
+            value.as_str().map(ToString::to_string).ok_or_else(|| {
+                RuntimeError::ModelCatalogParse {
+                    path: path.to_path_buf(),
+                    message: format!(
+                        "model `{model_name}` field `{field}` must contain only strings"
+                    ),
+                }
+            })
+        })
+        .collect()
 }
 
 fn parse_cost_field(
@@ -325,9 +527,19 @@ mod tests {
             &path,
             r#"
 [llm.models.haiku]
+provider = "anthropic"
 capability = "basic"
 version = "2024-10-22"
 output_format = "strict_json"
+privacy_tier = "hosted"
+jurisdiction = "US"
+latency_tier = "low"
+context_window = 200000
+structured_output = true
+tool_calling = true
+embeddings = false
+multimodal = ["text", "image"]
+task_capabilities = ["classification", "extraction"]
 cost_per_token_in = "$0.00000025"
 cost_per_token_out = 0.00000125
 
@@ -341,6 +553,10 @@ cost_per_token_in = 0.000015
         let catalog = ModelCatalog::load_from_path(&path)
             .unwrap()
             .expect("catalog");
+        assert_eq!(
+            catalog.get("haiku").unwrap().provider.as_deref(),
+            Some("anthropic")
+        );
         assert_eq!(catalog.get("haiku").unwrap().capability.as_deref(), Some("basic"));
         assert_eq!(
             catalog.get("haiku").unwrap().version.as_deref(),
@@ -349,6 +565,30 @@ cost_per_token_in = 0.000015
         assert_eq!(
             catalog.get("haiku").unwrap().output_format.as_deref(),
             Some("strict_json")
+        );
+        assert_eq!(
+            catalog.get("haiku").unwrap().privacy_tier.as_deref(),
+            Some("hosted")
+        );
+        assert_eq!(
+            catalog.get("haiku").unwrap().jurisdiction.as_deref(),
+            Some("US")
+        );
+        assert_eq!(
+            catalog.get("haiku").unwrap().latency_tier.as_deref(),
+            Some("low")
+        );
+        assert_eq!(catalog.get("haiku").unwrap().context_window, Some(200000));
+        assert!(catalog.get("haiku").unwrap().structured_output);
+        assert!(catalog.get("haiku").unwrap().tool_calling);
+        assert!(!catalog.get("haiku").unwrap().embeddings);
+        assert_eq!(
+            catalog.get("haiku").unwrap().multimodal,
+            vec!["text".to_string(), "image".to_string()]
+        );
+        assert_eq!(
+            catalog.get("haiku").unwrap().task_capabilities,
+            vec!["classification".to_string(), "extraction".to_string()]
         );
         assert!((catalog.get("haiku").unwrap().cost_per_token_in - 0.00000025).abs() < 1e-12);
         assert!((catalog.get("opus").unwrap().cost_per_token_in - 0.000015).abs() < 1e-12);
@@ -365,7 +605,13 @@ cost_per_token_in = 0.000015
         );
         catalog.register(
             RegisteredModel::new("cheap-expert")
+                .provider("openai")
                 .capability("expert")
+                .privacy_tier("hosted")
+                .jurisdiction("US")
+                .context_window(128000)
+                .structured_output(true)
+                .task_capabilities(["classification", "ranking"])
                 .cost_per_token_in(0.000002)
                 .cost_per_token_out(0.000002),
         );
@@ -381,6 +627,15 @@ cost_per_token_in = 0.000015
             .unwrap();
         assert_eq!(selected.model, "cheap-expert");
         assert_eq!(selected.capability_picked.as_deref(), Some("expert"));
+        assert_eq!(selected.provider.as_deref(), Some("openai"));
+        assert_eq!(selected.privacy_tier.as_deref(), Some("hosted"));
+        assert_eq!(selected.jurisdiction.as_deref(), Some("US"));
+        assert_eq!(selected.context_window, Some(128000));
+        assert!(selected.structured_output);
+        assert_eq!(
+            selected.task_capabilities,
+            vec!["classification".to_string(), "ranking".to_string()]
+        );
     }
 
     #[test]
