@@ -183,6 +183,12 @@ fn add_declarations(items: &mut CompletionSet, file: &File) {
                 "type",
                 format!("type {}", ty.name.name),
             )),
+            Decl::Store(store) => items.add(symbol_item(
+                &store.name.name,
+                CompletionItemKind::STRUCT,
+                store.kind.as_str(),
+                format!("{} {}", store.kind.as_str(), store.name.name),
+            )),
             Decl::Effect(effect) => items.add(symbol_item(
                 &effect.name.name,
                 CompletionItemKind::EVENT,

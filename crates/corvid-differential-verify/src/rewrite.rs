@@ -1031,6 +1031,12 @@ fn collect_all_names(file: &File) -> BTreeSet<String> {
                     names.insert(field.name.name.clone());
                 }
             }
+            Decl::Store(store) => {
+                names.insert(store.name.name.clone());
+                for field in &store.fields {
+                    names.insert(field.name.name.clone());
+                }
+            }
             Decl::Tool(tool) => {
                 names.insert(tool.name.name.clone());
                 for param in &tool.params {
@@ -1177,6 +1183,22 @@ fn render_decl(decl: &Decl, indent: usize, out: &mut String) {
             out.push_str(&ty.name.name);
             out.push_str(":\n");
             for (index, field) in ty.fields.iter().enumerate() {
+                if index > 0 {
+                    out.push('\n');
+                }
+                push_indent(indent + 1, out);
+                out.push_str(&field.name.name);
+                out.push_str(": ");
+                out.push_str(&render_type_ref(&field.ty));
+            }
+        }
+        Decl::Store(store) => {
+            push_indent(indent, out);
+            out.push_str(store.kind.as_str());
+            out.push(' ');
+            out.push_str(&store.name.name);
+            out.push_str(":\n");
+            for (index, field) in store.fields.iter().enumerate() {
                 if index > 0 {
                     out.push('\n');
                 }

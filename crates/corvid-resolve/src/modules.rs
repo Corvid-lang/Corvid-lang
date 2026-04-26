@@ -232,6 +232,12 @@ pub fn collect_public_exports(file: &File, resolved: &Resolved) -> HashMap<Strin
                 DeclKind::Type,
                 Some(t.fields.clone()),
             ),
+            corvid_ast::Decl::Store(s) => (
+                s.name.name.as_str(),
+                s.visibility,
+                DeclKind::Store,
+                Some(s.fields.clone()),
+            ),
             corvid_ast::Decl::Tool(t) => (t.name.name.as_str(), t.visibility, DeclKind::Tool, None),
             corvid_ast::Decl::Prompt(p) => {
                 (p.name.name.as_str(), p.visibility, DeclKind::Prompt, None)

@@ -430,6 +430,7 @@ impl<'a> Checker<'a> {
                         types.insert(id, t);
                     }
                 }
+                Decl::Store(_) => {}
                 Decl::Import(_) => {}
                 Decl::Effect(_) => {}
                 Decl::Model(m) => {
@@ -514,6 +515,7 @@ impl<'a> Checker<'a> {
                 Decl::Prompt(p) => self.check_prompt(p),
                 Decl::Tool(_)
                 | Decl::Type(_)
+                | Decl::Store(_)
                 | Decl::Import(_)
                 | Decl::Effect(_)
                 | Decl::Model(_) => {}

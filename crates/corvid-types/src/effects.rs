@@ -147,6 +147,7 @@ impl EffectRegistry {
         // Built-in `retrieval` effect with `data: grounded` so tools can
         // declare themselves as grounded sources for provenance tracking.
         registry.register_retrieval_effect();
+        registry.register_store_effects();
 
         // Legacy bridge: the `dangerous` keyword on tools maps to a built-in
         // effect with `trust: human_required, reversible: false`. Existing
@@ -319,6 +320,28 @@ impl EffectRegistry {
                 dimensions: dims,
             },
         );
+    }
+
+    fn register_store_effects(&mut self) {
+        for (name, data) in [
+            ("reads_session", "session"),
+            ("writes_session", "session"),
+            ("reads_memory", "memory"),
+            ("writes_memory", "memory"),
+        ] {
+            let mut dims = HashMap::new();
+            dims.insert("data".into(), DimensionValue::Name(data.into()));
+            if name.starts_with("writes_") {
+                dims.insert("trust".into(), DimensionValue::Name("human_required".into()));
+            }
+            self.effects.insert(
+                name.into(),
+                EffectProfile {
+                    name: name.into(),
+                    dimensions: dims,
+                },
+            );
+        }
     }
 
     fn register_dangerous_effect(&mut self) {

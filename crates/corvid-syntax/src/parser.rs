@@ -261,6 +261,8 @@ impl<'a> Parser<'a> {
             self.peek(),
             TokKind::KwImport
                 | TokKind::KwType
+                | TokKind::KwSession
+                | TokKind::KwMemory
                 | TokKind::KwTool
                 | TokKind::KwPrompt
                 | TokKind::KwEval
@@ -308,6 +310,8 @@ impl<'a> Parser<'a> {
             match self.peek() {
                 TokKind::KwImport
                 | TokKind::KwType
+                | TokKind::KwSession
+                | TokKind::KwMemory
                 | TokKind::KwTool
                 | TokKind::KwPrompt
                 | TokKind::KwEval

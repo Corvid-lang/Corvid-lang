@@ -172,6 +172,7 @@ impl<'a> Lowerer<'a> {
             match decl {
                 Decl::Import(i) => imports.push(self.lower_import(i)),
                 Decl::Type(t) => types.push(self.lower_type(t)),
+                Decl::Store(_) => {}
                 Decl::Tool(t) => tools.push(self.lower_tool(t)),
                 Decl::Prompt(p) => prompts.push(self.lower_prompt(p)),
                 Decl::Agent(a) => agents.push(self.lower_agent(a)),

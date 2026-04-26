@@ -25,6 +25,8 @@ pub struct CorvidAbi {
     #[serde(default)]
     pub types: Vec<AbiTypeDecl>,
     #[serde(default)]
+    pub stores: Vec<AbiStore>,
+    #[serde(default)]
     pub approval_sites: Vec<AbiApprovalSite>,
     #[serde(flatten, default)]
     pub extra: BTreeMap<String, Value>,
@@ -142,6 +144,22 @@ pub struct AbiTypeDecl {
     pub kind: String,
     #[serde(default)]
     pub fields: Vec<AbiField>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AbiStore {
+    pub name: String,
+    pub kind: String,
+    #[serde(default)]
+    pub fields: Vec<AbiField>,
+    pub source_span: AbiSourceSpan,
+    pub effects: AbiStoreEffects,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AbiStoreEffects {
+    pub read: String,
+    pub write: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

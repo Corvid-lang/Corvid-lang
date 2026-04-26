@@ -23,8 +23,8 @@ pub use schema::{
     AbiField, AbiGroundedType, AbiLatencyMs, AbiListType, AbiMinExpected, AbiOptionType,
     AbiOwnership, AbiOwnershipMode, AbiParam, AbiProgressiveStage, AbiProjectedTokens,
     AbiProjectedUsd, AbiPrompt, AbiProvenanceContract, AbiResultType, AbiRouteArm,
-    AbiSourceSpan, AbiTool, AbiToolContract, AbiToolDomainEffect, AbiTypeDecl,
-    AbiVersionError, AbiWeakType, CorvidAbi, ScalarTypeName, TypeDescription,
+    AbiSourceSpan, AbiStore, AbiStoreEffects, AbiTool, AbiToolContract, AbiToolDomainEffect,
+    AbiTypeDecl, AbiVersionError, AbiWeakType, CorvidAbi, ScalarTypeName, TypeDescription,
     CORVID_ABI_VERSION, MIN_SUPPORTED_ABI_VERSION,
 };
 

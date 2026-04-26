@@ -1654,6 +1654,30 @@ agent good(x: String) -> String:
     }
 
     #[test]
+    fn parses_session_and_memory_store_decls() {
+        let file = parse_file_src(
+            "session Conversation:\n    user_id: String\n    cart: List<String>\n\nmemory Profile:\n    facts: Grounded<String>\n",
+        );
+        assert_eq!(file.decls.len(), 2);
+        match &file.decls[0] {
+            Decl::Store(store) => {
+                assert_eq!(store.kind, corvid_ast::StoreKind::Session);
+                assert_eq!(store.name.name, "Conversation");
+                assert_eq!(store.fields.len(), 2);
+            }
+            other => panic!("expected session store, got {other:?}"),
+        }
+        match &file.decls[1] {
+            Decl::Store(store) => {
+                assert_eq!(store.kind, corvid_ast::StoreKind::Memory);
+                assert_eq!(store.name.name, "Profile");
+                assert_eq!(store.fields.len(), 1);
+            }
+            other => panic!("expected memory store, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn rejects_model_decl_without_block() {
         let (_file, errs) = parse_file_errs("model haiku:\n");
         assert!(

@@ -1482,6 +1482,7 @@ The determinism-source catalog and the language's treatment of non-reproducible 
 **Hard dep:** Phase 18 (Result — `session.get()` returns `Result<T, StoreError>`). SQLite (external).
 
 **Scope:**
+- [x] Store declaration surface + metadata: `session Name:` and `memory Name:` parse as typed top-level schemas, resolve their field types, register store effect names, and emit ABI store contracts with `reads_*` / `writes_*` metadata.
 - `session { ... }` block declares per-conversation state. Compiler generates typed accessors.
 - `memory { ... }` block declares long-lived state (survives process restarts).
 - Both backed by SQLite (native) and IndexedDB (wasm).

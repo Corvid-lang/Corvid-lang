@@ -173,6 +173,7 @@ impl Resolver {
                     continue;
                 }
                 Decl::Type(t) => (t.name.name.clone(), DeclKind::Type, t.span),
+                Decl::Store(s) => (s.name.name.clone(), DeclKind::Store, s.span),
                 Decl::Tool(t) => (t.name.name.clone(), DeclKind::Tool, t.span),
                 Decl::Prompt(p) => (p.name.name.clone(), DeclKind::Prompt, p.span),
                 Decl::Agent(a) => (a.name.name.clone(), DeclKind::Agent, a.span),
@@ -330,6 +331,7 @@ impl Resolver {
             match decl {
                 Decl::Import(_) => {}
                 Decl::Type(t) => self.resolve_type_decl(t),
+                Decl::Store(s) => self.resolve_store_decl(s),
                 Decl::Tool(t) => self.resolve_tool_decl(t),
                 Decl::Prompt(p) => self.resolve_prompt_decl(p),
                 Decl::Agent(a) => self.resolve_agent_decl(a),
@@ -371,6 +373,12 @@ impl Resolver {
 
     fn resolve_type_decl(&mut self, t: &TypeDecl) {
         for field in &t.fields {
+            self.resolve_type_ref(&field.ty);
+        }
+    }
+
+    fn resolve_store_decl(&mut self, s: &corvid_ast::StoreDecl) {
+        for field in &s.fields {
             self.resolve_type_ref(&field.ty);
         }
     }
@@ -931,6 +939,7 @@ fn decl_kind_label(kind: DeclKind) -> &'static str {
         DeclKind::Import => "import",
         DeclKind::ImportedUse => "imported use",
         DeclKind::Type => "type",
+        DeclKind::Store => "store",
         DeclKind::Tool => "tool",
         DeclKind::Prompt => "prompt",
         DeclKind::Agent => "agent",

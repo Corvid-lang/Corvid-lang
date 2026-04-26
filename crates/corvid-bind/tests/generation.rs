@@ -167,6 +167,7 @@ fn sample_descriptor() -> CorvidAbi {
                 },
             ],
         }],
+        stores: Vec::new(),
         approval_sites: Vec::new(),
         extra: BTreeMap::new(),
     }

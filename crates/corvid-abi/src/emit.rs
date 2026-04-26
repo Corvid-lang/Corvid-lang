@@ -4,13 +4,14 @@ use crate::provenance_emit::emit_provenance_contract;
 use crate::schema::{
     AbiAgent, AbiAttributes, AbiBudget, AbiCostEnvelope, AbiDestructor, AbiDestructorKind,
     AbiDispatch, AbiField, AbiOwnership, AbiOwnershipMode, AbiParam, AbiProgressiveStage,
-    AbiPrompt, AbiRouteArm, AbiSourceSpan, AbiTool, AbiTypeDecl, CorvidAbi,
+    AbiPrompt, AbiRouteArm, AbiSourceSpan, AbiStore, AbiStoreEffects, AbiTool, AbiTypeDecl,
+    CorvidAbi,
 };
 use crate::tool_contract::emit_tool_contract;
 use crate::type_description::emit_type_description;
 use corvid_ast::{
     AgentAttribute, Decl, DimensionValue, File, OwnershipAnnotation, OwnershipMode, PromptDecl,
-    Span, ToolDecl, TypeRef, WeakEffectRow,
+    Span, StoreDecl, ToolDecl, TypeRef, WeakEffectRow,
 };
 use corvid_ir::{
     IrAgent, IrCallKind, IrExpr, IrExprKind, IrFile, IrPrompt, IrRoutePattern, IrTool,
@@ -122,6 +123,15 @@ pub fn emit_abi(
         })
         .collect();
 
+    let stores = file
+        .decls
+        .iter()
+        .filter_map(|decl| match decl {
+            Decl::Store(store) => Some(emit_store(store, resolved)),
+            _ => None,
+        })
+        .collect();
+
     let approval_sites = collect_all_approval_sites(file, resolved, registry);
 
     CorvidAbi {
@@ -133,8 +143,32 @@ pub fn emit_abi(
         prompts,
         tools,
         types,
+        stores,
         approval_sites,
         extra: Default::default(),
+    }
+}
+
+fn emit_store(store: &StoreDecl, resolved: &Resolved) -> AbiStore {
+    AbiStore {
+        name: store.name.name.clone(),
+        kind: store.kind.as_str().to_string(),
+        fields: store
+            .fields
+            .iter()
+            .map(|field| AbiField {
+                name: field.name.name.clone(),
+                r#type: emit_type_description(
+                    &resolve_typeref_to_type(&field.ty, resolved),
+                    resolved,
+                ),
+            })
+            .collect(),
+        source_span: source_span(store.span),
+        effects: AbiStoreEffects {
+            read: store.kind.read_effect().to_string(),
+            write: store.kind.write_effect().to_string(),
+        },
     }
 }
 

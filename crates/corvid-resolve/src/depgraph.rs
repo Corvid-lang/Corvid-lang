@@ -6,8 +6,8 @@
 //! Produces both forward deps (what does X use?) and reverse deps
 //! (what uses X?) for the REPL's redefinition cascade.
 
-use crate::scope::{Binding, DefId};
 use crate::resolver::Resolved;
+use crate::scope::{Binding, DefId};
 use corvid_ast::{Block, Decl, Expr, File, Param, Stmt, TypeRef};
 use std::collections::{HashMap, HashSet};
 
@@ -75,6 +75,7 @@ pub fn decl_name(decl: &Decl) -> Option<&str> {
     match decl {
         Decl::Import(d) => d.alias.as_ref().map(|a| a.name.as_str()),
         Decl::Type(d) => Some(&d.name.name),
+        Decl::Store(d) => Some(&d.name.name),
         Decl::Tool(d) => Some(&d.name.name),
         Decl::Prompt(d) => Some(&d.name.name),
         Decl::Agent(d) => Some(&d.name.name),
@@ -124,6 +125,11 @@ fn collect_decl_deps(decl: &Decl, resolved: &Resolved, deps: &mut HashSet<DefId>
         }
         Decl::Type(ty) => {
             for field in &ty.fields {
+                collect_typeref_dep(&field.ty, resolved, deps);
+            }
+        }
+        Decl::Store(store) => {
+            for field in &store.fields {
                 collect_typeref_dep(&field.ty, resolved, deps);
             }
         }
@@ -206,7 +212,9 @@ fn collect_stmt_deps(stmt: &Stmt, resolved: &Resolved, deps: &mut HashSet<DefId>
         Stmt::Let { value, .. } => {
             collect_expr_deps(value, resolved, deps);
         }
-        Stmt::Return { value: Some(value), .. } => {
+        Stmt::Return {
+            value: Some(value), ..
+        } => {
             collect_expr_deps(value, resolved, deps);
         }
         Stmt::Return { value: None, .. } => {}

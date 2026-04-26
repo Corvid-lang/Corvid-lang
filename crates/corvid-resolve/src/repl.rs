@@ -87,7 +87,10 @@ impl ReplResolveSession {
     pub fn redefine_decl(&mut self, new_decl: Decl) -> Option<RedefinitionResult> {
         let name = decl_name(&new_decl)?.to_string();
 
-        let old_index = self.decls.iter().position(|d| decl_name(d) == Some(&name))?;
+        let old_index = self
+            .decls
+            .iter()
+            .position(|d| decl_name(d) == Some(&name))?;
         let old_kind = decl_kind_name(&self.decls[old_index]);
 
         // Replace the old declaration in the list.
@@ -142,6 +145,7 @@ fn decl_kind_name(decl: &Decl) -> String {
     match decl {
         Decl::Import(_) => "import".into(),
         Decl::Type(_) => "type".into(),
+        Decl::Store(store) => store.kind.as_str().into(),
         Decl::Tool(_) => "tool".into(),
         Decl::Prompt(_) => "prompt".into(),
         Decl::Agent(_) => "agent".into(),

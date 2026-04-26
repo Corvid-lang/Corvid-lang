@@ -16,7 +16,7 @@ use corvid_ast::{
     ExternAbi, OwnershipAnnotation, OwnershipMode,
     EvalAssert, EvalDecl, ExtendDecl, ExtendMethod, ExtendMethodKind, Field, FixtureDecl, Ident,
     ImportDecl, ImportContentHash, ImportSource, ImportUseItem, MockDecl, ModelDecl, ModelField,
-    Param, Span, ToolDecl, TestDecl, TypeDecl, Visibility,
+    Param, Span, StoreDecl, StoreKind, ToolDecl, TestDecl, TypeDecl, Visibility,
 };
 
 impl<'a> Parser<'a> {
@@ -31,6 +31,8 @@ impl<'a> Parser<'a> {
         if !matches!(visibility, Visibility::Private) {
             match self.peek() {
                 TokKind::KwType
+                | TokKind::KwSession
+                | TokKind::KwMemory
                 | TokKind::KwTool
                 | TokKind::KwPrompt
                 | TokKind::KwAgent
@@ -40,7 +42,7 @@ impl<'a> Parser<'a> {
                         kind: ParseErrorKind::UnexpectedToken {
                             got: describe_token(other),
                             expected:
-                                "`type`, `tool`, `prompt`, `agent`, or `@annotation` after `public`".into(),
+                                "`type`, `session`, `memory`, `tool`, `prompt`, `agent`, or `@annotation` after `public`".into(),
                         },
                         span: self.peek_span(),
                     });
@@ -51,6 +53,12 @@ impl<'a> Parser<'a> {
         match self.peek() {
             TokKind::KwImport => self.parse_import_decl().map(Decl::Import),
             TokKind::KwType => self.parse_type_decl(visibility).map(Decl::Type),
+            TokKind::KwSession => self
+                .parse_store_decl(StoreKind::Session, visibility)
+                .map(Decl::Store),
+            TokKind::KwMemory => self
+                .parse_store_decl(StoreKind::Memory, visibility)
+                .map(Decl::Store),
             TokKind::KwTool => self.parse_tool_decl(visibility).map(Decl::Tool),
             TokKind::KwPrompt => self.parse_prompt_decl(visibility).map(Decl::Prompt),
             TokKind::KwEval => self.parse_eval_decl().map(Decl::Eval),
@@ -97,7 +105,7 @@ impl<'a> Parser<'a> {
             other => Err(ParseError {
                 kind: ParseErrorKind::UnexpectedToken {
                     got: describe_token(other),
-                    expected: "a top-level declaration (agent, tool, prompt, eval, test, fixture, mock, type, import, extend, effect, @annotation)".into(),
+                    expected: "a top-level declaration (agent, tool, prompt, eval, test, fixture, mock, type, session, memory, import, extend, effect, @annotation)".into(),
                 },
                 span: self.peek_span(),
             }),
@@ -406,6 +414,54 @@ impl<'a> Parser<'a> {
         Ok(Field {
             name: Ident::new(name, name_span),
             ty,
+            span: start.merge(end),
+        })
+    }
+
+    fn parse_store_decl(
+        &mut self,
+        kind: StoreKind,
+        visibility: Visibility,
+    ) -> Result<StoreDecl, ParseError> {
+        let start = self.peek_span();
+        self.bump(); // session / memory
+
+        let (name, name_span) = self.expect_ident()?;
+        self.expect(TokKind::Colon, "`:` after store name")?;
+        self.expect_newline()?;
+
+        if !matches!(self.peek(), TokKind::Indent) {
+            return Err(ParseError {
+                kind: ParseErrorKind::ExpectedBlock,
+                span: self.peek_span(),
+            });
+        }
+        self.bump(); // Indent
+
+        let mut fields = Vec::new();
+        while !matches!(self.peek(), TokKind::Dedent | TokKind::Eof) {
+            self.skip_newlines();
+            if matches!(self.peek(), TokKind::Dedent | TokKind::Eof) {
+                break;
+            }
+            match self.parse_field() {
+                Ok(f) => fields.push(f),
+                Err(e) => {
+                    self.errors.push(e);
+                    self.sync_to_statement_boundary();
+                }
+            }
+        }
+        let end = self.peek_span();
+        if matches!(self.peek(), TokKind::Dedent) {
+            self.bump();
+        }
+
+        Ok(StoreDecl {
+            kind,
+            name: Ident::new(name, name_span),
+            fields,
+            visibility,
             span: start.merge(end),
         })
     }

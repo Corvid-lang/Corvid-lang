@@ -132,6 +132,7 @@ fn kind_label(kind: DeclKind) -> &'static str {
         DeclKind::Import => "import",
         DeclKind::ImportedUse => "imported use",
         DeclKind::Type => "type",
+        DeclKind::Store => "store",
         DeclKind::Tool => "tool",
         DeclKind::Prompt => "prompt",
         DeclKind::Agent => "agent",

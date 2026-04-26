@@ -207,6 +207,7 @@ impl<'a> Checker<'a> {
             }
             DeclKind::Import
             | DeclKind::ImportedUse
+            | DeclKind::Store
             | DeclKind::Eval
             | DeclKind::Test
             | DeclKind::Mock

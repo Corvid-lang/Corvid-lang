@@ -72,6 +72,7 @@ impl<'a> Checker<'a> {
                         self.check_imported_use_call(def_id, &name.name, args, name.span, span)
                     }
                     DeclKind::Import
+                    | DeclKind::Store
                     | DeclKind::Eval
                     | DeclKind::Test
                     | DeclKind::Mock

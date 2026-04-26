@@ -143,6 +143,34 @@ agent hello(name: String) -> String:
     }
 
     #[test]
+    fn resolves_session_and_memory_store_fields() {
+        let src = "\
+type Fact:
+    text: String
+
+session Conversation:
+    current_fact: Fact
+
+memory Profile:
+    stable_fact: Grounded<Fact>
+";
+        let r = resolve_src(src);
+        assert!(r.errors.is_empty(), "errors: {:?}", r.errors);
+        assert_eq!(
+            r.symbols
+                .lookup_def("Conversation")
+                .map(|id| r.symbols.get(id).kind),
+            Some(DeclKind::Store)
+        );
+        assert_eq!(
+            r.symbols
+                .lookup_def("Profile")
+                .map(|id| r.symbols.get(id).kind),
+            Some(DeclKind::Store)
+        );
+    }
+
+    #[test]
     fn approve_label_is_not_undefined() {
         let src = "\
 type Receipt:

@@ -397,6 +397,14 @@ agent refund_bot(ticket: Ticket) -> Decision:
     }
 
     #[test]
+    fn lexes_session_and_memory_keywords() {
+        let toks = lex("session Conversation:\n    user_id: String\n\nmemory Profile:\n    notes: String\n")
+            .expect("lex");
+        assert!(toks.iter().any(|tok| tok.kind == TokKind::KwSession));
+        assert!(toks.iter().any(|tok| tok.kind == TokKind::KwMemory));
+    }
+
+    #[test]
     fn spans_point_at_source() {
         let toks = lex("agent x").unwrap();
         assert_eq!(toks[0].kind, TokKind::KwAgent);

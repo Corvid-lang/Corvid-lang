@@ -19,6 +19,7 @@ pub struct File {
 pub enum Decl {
     Import(ImportDecl),
     Type(TypeDecl),
+    Store(StoreDecl),
     Tool(ToolDecl),
     Prompt(PromptDecl),
     Agent(AgentDecl),
@@ -40,6 +41,7 @@ impl Decl {
         match self {
             Decl::Import(d) => d.span,
             Decl::Type(d) => d.span,
+            Decl::Store(d) => d.span,
             Decl::Tool(d) => d.span,
             Decl::Prompt(d) => d.span,
             Decl::Agent(d) => d.span,
@@ -243,6 +245,52 @@ pub struct TypeDecl {
     #[serde(default)]
     pub visibility: Visibility,
     pub span: Span,
+}
+
+/// A typed state declaration.
+///
+/// `session Name:` declares per-conversation state; `memory Name:`
+/// declares durable state. Both use the same field grammar as `type`
+/// declarations so later runtime accessors can expose typed `get` /
+/// `set` APIs without re-parsing schema metadata.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StoreDecl {
+    pub kind: StoreKind,
+    pub name: Ident,
+    pub fields: Vec<Field>,
+    #[serde(default)]
+    pub visibility: Visibility,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StoreKind {
+    Session,
+    Memory,
+}
+
+impl StoreKind {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Session => "session",
+            Self::Memory => "memory",
+        }
+    }
+
+    pub fn read_effect(&self) -> &'static str {
+        match self {
+            Self::Session => "reads_session",
+            Self::Memory => "reads_memory",
+        }
+    }
+
+    pub fn write_effect(&self) -> &'static str {
+        match self {
+            Self::Session => "writes_session",
+            Self::Memory => "writes_memory",
+        }
+    }
 }
 
 /// A tool declaration:

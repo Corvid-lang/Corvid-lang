@@ -63,6 +63,7 @@ pub enum DeclKind {
     Import,
     ImportedUse,
     Type,
+    Store,
     Tool,
     Prompt,
     Agent,
