@@ -172,6 +172,73 @@ impl ApprovalCard {
         }
         out
     }
+
+    pub fn render_html(&self) -> String {
+        let mut out = String::new();
+        out.push_str("<!doctype html>\n");
+        out.push_str("<html lang=\"en\"><head><meta charset=\"utf-8\">\n");
+        out.push_str("<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n");
+        out.push_str("<title>Corvid Approval</title>\n");
+        out.push_str("<style>");
+        out.push_str("body{font-family:system-ui,sans-serif;margin:0;background:#f6f7f9;color:#111827}");
+        out.push_str("main{max-width:760px;margin:32px auto;padding:0 16px}");
+        out.push_str(".card{background:#fff;border:1px solid #d1d5db;border-radius:8px;padding:20px}");
+        out.push_str("h1{font-size:22px;margin:0 0 12px}.meta{color:#4b5563;margin:4px 0}");
+        out.push_str("pre{background:#111827;color:#f9fafb;padding:12px;border-radius:6px;overflow:auto}");
+        out.push_str("table{width:100%;border-collapse:collapse;margin-top:12px}");
+        out.push_str("th,td{text-align:left;border-top:1px solid #e5e7eb;padding:8px;vertical-align:top}");
+        out.push_str(".actions{display:flex;gap:8px;margin-top:16px}");
+        out.push_str("button{border:1px solid #9ca3af;border-radius:6px;background:#fff;padding:8px 12px}");
+        out.push_str("button.primary{background:#065f46;color:#fff;border-color:#065f46}");
+        out.push_str("</style></head><body><main><section class=\"card\">\n");
+        out.push_str(&format!("<h1>{}</h1>\n", escape_html(&self.title)));
+        out.push_str(&format!(
+            "<p class=\"meta\"><strong>Label:</strong> {}</p>\n",
+            escape_html(&self.label)
+        ));
+        out.push_str(&format!(
+            "<p class=\"meta\"><strong>Risk:</strong> {:?}</p>\n",
+            self.risk
+        ));
+        out.push_str("<h2>Context</h2><ul>\n");
+        for line in &self.context {
+            out.push_str(&format!("<li>{}</li>\n", escape_html(line)));
+        }
+        out.push_str("</ul>\n<h2>Arguments</h2><table><thead><tr><th>#</th><th>Type</th><th>Value</th></tr></thead><tbody>\n");
+        for arg in &self.arguments {
+            let redacted = if arg.redacted { " (redacted)" } else { "" };
+            out.push_str(&format!(
+                "<tr><td>{}</td><td>{}{}</td><td><code>{}</code></td></tr>\n",
+                arg.index,
+                escape_html(&arg.json_type),
+                redacted,
+                escape_html(&arg.value.to_string())
+            ));
+        }
+        out.push_str("</tbody></table>\n");
+        if let Some(diff) = &self.diff_preview {
+            out.push_str("<h2>Preview</h2>\n");
+            out.push_str(&format!("<pre>{}</pre>\n", escape_html(diff)));
+        }
+        out.push_str("<div class=\"actions\"><button class=\"primary\">Approve</button><button>Deny</button></div>\n");
+        out.push_str("</section></main></body></html>\n");
+        out
+    }
+}
+
+fn escape_html(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+    for ch in value.chars() {
+        match ch {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '"' => out.push_str("&quot;"),
+            '\'' => out.push_str("&#39;"),
+            _ => out.push(ch),
+        }
+    }
+    out
 }
 
 fn build_context(label: &str, args: &[ApprovalCardArgument]) -> Vec<String> {
@@ -461,5 +528,9 @@ mod tests {
         assert!(rendered.contains("preview:"));
         assert!(rendered.contains("money-moving operation"));
         assert!(rendered.contains("arg 0 [string] (redacted) = \"<redacted>\""));
+        let html = card.render_html();
+        assert!(html.contains("<!doctype html>"));
+        assert!(html.contains("Charge Card"));
+        assert!(html.contains("&lt;redacted&gt;"));
     }
 }

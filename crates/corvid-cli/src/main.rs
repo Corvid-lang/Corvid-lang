@@ -48,7 +48,7 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use anyhow::{Context, Result};
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 use corvid_differential_verify::{
     render_corpus_grid, render_report, shrink_program, verify_corpus,
 };
@@ -770,6 +770,20 @@ enum ApproverCommand {
         #[arg(long, value_name = "USD")]
         max_budget_usd: Option<f64>,
     },
+    Card {
+        site_label: String,
+        #[arg(long, value_name = "JSON")]
+        args: String,
+        #[arg(long, value_enum, default_value_t = ApproverCardFormat::Text)]
+        format: ApproverCardFormat,
+    },
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum ApproverCardFormat {
+    Text,
+    Json,
+    Html,
 }
 
 #[derive(Subcommand)]
@@ -957,6 +971,11 @@ fn main() -> ExitCode {
                 args,
                 max_budget_usd,
             } => approver_cmd::run_simulate(&approver, &site_label, &args, max_budget_usd),
+            ApproverCommand::Card {
+                site_label,
+                args,
+                format,
+            } => approver_cmd::run_card(&site_label, &args, format),
         },
         Some(Command::Capsule { command }) => match command {
             CapsuleCommand::Create { trace, cdylib, out } => {
