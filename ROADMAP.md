@@ -1409,7 +1409,7 @@ The determinism-source catalog and the language's treatment of non-reproducible 
 - [x] 25-E-package-metadata-pages     `corvid package metadata` renders compiler-backed package pages from source: scoped package identity, install snippet, optional signature provenance, exported agents/tools/prompts/types/effects, effect profiles, approval boundaries, grounding, replayability, determinism, and cost/violation notes. JSON output gives the same semantic summary to web registries.
 - [x] 25-F-conflict-resolution        `corvid package verify-lock` validates the installed package graph: manifest dependencies, locked package presence, duplicate URIs, multiple locked versions for one dependency, semver requirement satisfaction, stale undeclared lock entries, required semantic summaries, and current package-policy compatibility from locked semantic summaries.
 
-### Phase 26 — Testing primitives (~4 weeks)
+### Phase 26 — Testing primitives (~4 weeks) ✅ closed
 
 **Goal.** `test`, `mock`, `fixture` as language features. Users can't ship production Corvid without first-class tests.
 
