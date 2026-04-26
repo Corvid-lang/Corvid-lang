@@ -983,7 +983,7 @@ agent load(id: String) -> Result<Option<Order>, String>:
     #[test]
     fn parses_weak_type_ref_with_effect_row() {
         let src = "\
-agent watch(name: String) -> Weak<String, {tool_call, llm}>:
+agent watch(name: String) -> Weak<String, {tool_call, llm, human}>:
     return Weak::new(name)
 ";
         let file = parse_file_src(src);
@@ -1004,6 +1004,7 @@ agent watch(name: String) -> Weak<String, {tool_call, llm}>:
                 assert!(effects.tool_call);
                 assert!(effects.llm);
                 assert!(!effects.approve);
+                assert!(effects.human);
             }
             other => panic!("expected Weak return type, got {other:?}"),
         }

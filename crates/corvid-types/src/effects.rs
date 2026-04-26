@@ -152,6 +152,7 @@ impl EffectRegistry {
         // effect with `trust: human_required, reversible: false`. Existing
         // code using `dangerous` gets dimensional tracking for free.
         registry.register_dangerous_effect();
+        registry.register_human_boundary_effects();
 
         for decl in decls {
             let mut profile = EffectProfile {
@@ -331,6 +332,20 @@ impl EffectRegistry {
                 dimensions: dims,
             },
         );
+    }
+
+    fn register_human_boundary_effects(&mut self) {
+        for name in ["human", "approve"] {
+            let mut dims = HashMap::new();
+            dims.insert("trust".into(), DimensionValue::Name("human_required".into()));
+            self.effects.insert(
+                name.into(),
+                EffectProfile {
+                    name: name.into(),
+                    dimensions: dims,
+                },
+            );
+        }
     }
 
     /// Look up an effect by name and return its profile.

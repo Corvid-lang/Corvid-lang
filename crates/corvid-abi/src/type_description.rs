@@ -73,6 +73,7 @@ pub fn emit_type_description(ty: &Type, resolved: &Resolved) -> TypeDescription 
                         WeakEffect::ToolCall => "tool_call".to_string(),
                         WeakEffect::Llm => "llm_call".to_string(),
                         WeakEffect::Approve => "approve".to_string(),
+                        WeakEffect::Human => "human".to_string(),
                     })
                     .collect(),
             },

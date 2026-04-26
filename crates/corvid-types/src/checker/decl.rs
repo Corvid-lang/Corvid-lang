@@ -17,7 +17,7 @@ use corvid_ast::{
     AgentAttribute, AgentDecl, Block, EvalAssert, EvalDecl, Expr, FixtureDecl, Ident, MockDecl,
     OwnershipAnnotation, OwnershipMode, Span, Stmt, TestDecl,
 };
-use corvid_resolve::{Binding, DeclKind};
+use corvid_resolve::{Binding, BuiltIn, DeclKind};
 
 impl<'a> Checker<'a> {
     pub(super) fn check_agent(&mut self, a: &AgentDecl) {
@@ -380,6 +380,15 @@ impl<'a> Checker<'a> {
                     span,
                 ));
             }
+        } else if let Some(Binding::BuiltIn(BuiltIn::Ask | BuiltIn::Choose)) = binding {
+            self.errors.push(TypeError::new(
+                TypeErrorKind::NonDeterministicCall {
+                    agent: agent.to_string(),
+                    call: name,
+                    call_kind: "human".to_string(),
+                },
+                span,
+            ));
         }
     }
 

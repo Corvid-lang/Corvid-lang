@@ -17,6 +17,7 @@ pub enum WeakEffect {
     ToolCall,
     Llm,
     Approve,
+    Human,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
@@ -24,6 +25,8 @@ pub struct WeakEffectRow {
     pub tool_call: bool,
     pub llm: bool,
     pub approve: bool,
+    #[serde(default)]
+    pub human: bool,
 }
 
 impl WeakEffectRow {
@@ -32,6 +35,7 @@ impl WeakEffectRow {
             tool_call: true,
             llm: true,
             approve: true,
+            human: true,
         }
     }
 
@@ -40,6 +44,7 @@ impl WeakEffectRow {
             tool_call: false,
             llm: false,
             approve: false,
+            human: false,
         }
     }
 
@@ -50,6 +55,7 @@ impl WeakEffectRow {
                 WeakEffect::ToolCall => row.tool_call = true,
                 WeakEffect::Llm => row.llm = true,
                 WeakEffect::Approve => row.approve = true,
+                WeakEffect::Human => row.human = true,
             }
         }
         row
@@ -66,11 +72,14 @@ impl WeakEffectRow {
         if self.approve {
             effects.push(WeakEffect::Approve);
         }
+        if self.human {
+            effects.push(WeakEffect::Human);
+        }
         effects
     }
 
     pub fn is_any(&self) -> bool {
-        self.tool_call && self.llm && self.approve
+        self.tool_call && self.llm && self.approve && self.human
     }
 }
 

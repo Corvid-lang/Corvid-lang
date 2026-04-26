@@ -428,7 +428,7 @@ impl<'a> Checker<'a> {
             ));
         }
 
-        self.bump_effect(WeakEffect::Approve);
+        self.bump_effect(WeakEffect::Human);
         self.type_expr_to_type(&args[1])
     }
 
@@ -448,7 +448,7 @@ impl<'a> Checker<'a> {
             return Type::Unknown;
         }
 
-        self.bump_effect(WeakEffect::Approve);
+        self.bump_effect(WeakEffect::Human);
         match self.check_expr(&args[0]) {
             Type::List(inner) => *inner,
             Type::Unknown => Type::Unknown,

@@ -335,6 +335,7 @@ struct EffectFrontier {
     tool_call: u64,
     llm: u64,
     approve: u64,
+    human: u64,
 }
 
 impl EffectFrontier {
@@ -343,6 +344,7 @@ impl EffectFrontier {
             WeakEffect::ToolCall => self.tool_call += 1,
             WeakEffect::Llm => self.llm += 1,
             WeakEffect::Approve => self.approve += 1,
+            WeakEffect::Human => self.human += 1,
         }
         self
     }
@@ -352,6 +354,7 @@ impl EffectFrontier {
             tool_call: self.tool_call.max(other.tool_call),
             llm: self.llm.max(other.llm),
             approve: self.approve.max(other.approve),
+            human: self.human.max(other.human),
         }
     }
 
@@ -360,6 +363,7 @@ impl EffectFrontier {
             tool_call: self.tool_call.min(other.tool_call),
             llm: self.llm.min(other.llm),
             approve: self.approve.min(other.approve),
+            human: self.human.min(other.human),
         }
     }
 
@@ -377,6 +381,9 @@ impl EffectFrontier {
         }
         if row.approve && self.approve != refreshed_at.approve {
             effects.push("approve".into());
+        }
+        if row.human && self.human != refreshed_at.human {
+            effects.push("human".into());
         }
         effects
     }

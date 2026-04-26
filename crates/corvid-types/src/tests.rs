@@ -704,6 +704,43 @@ agent load(name: String) -> Option<String>:
     }
 
     #[test]
+    fn weak_upgrade_after_human_effect_is_rejected_for_human_row() {
+        let src = "\
+agent make(name: String) -> Weak<String, {human}>:
+    return Weak::new(name)
+
+agent load(name: String) -> Option<String>:
+    w = make(name)
+    answer = ask(\"confirm\", String)
+    return Weak::upgrade(w)
+";
+        let c = check(src);
+        assert!(
+            c.errors.iter().any(|e| matches!(
+                e.kind,
+                TypeErrorKind::WeakUpgradeAcrossEffects { .. }
+            )),
+            "expected human boundary to invalidate Weak<T, {{human}}>; got {:?}",
+            c.errors
+        );
+    }
+
+    #[test]
+    fn ask_does_not_invalidate_approval_only_weak_row() {
+        let src = "\
+agent make(name: String) -> Weak<String, {approve}>:
+    return Weak::new(name)
+
+agent load(name: String) -> Option<String>:
+    w = make(name)
+    answer = ask(\"confirm\", String)
+    return Weak::upgrade(w)
+";
+        let c = check(src);
+        assert!(c.errors.is_empty(), "errors: {:?}", c.errors);
+    }
+
+    #[test]
     fn weak_upgrade_is_allowed_after_refreshing_with_new() {
         let src = "\
 tool fetch_name(id: String) -> String
@@ -3214,6 +3251,25 @@ agent choose(q: String) -> String:
                     if call == "classify" && call_kind == "prompt"
             )),
             "expected NonDeterministicCall for prompt invocation, got {:?}",
+            c.errors
+        );
+    }
+
+    #[test]
+    fn deterministic_agent_calling_ask_is_rejected_as_human_boundary() {
+        let src = "\
+@deterministic
+agent choose(q: String) -> String:
+    return ask(q, String)
+";
+        let c = check(src);
+        assert!(
+            c.errors.iter().any(|e| matches!(
+                &e.kind,
+                TypeErrorKind::NonDeterministicCall { call, call_kind, .. }
+                    if call == "ask" && call_kind == "human"
+            )),
+            "expected NonDeterministicCall for human input, got {:?}",
             c.errors
         );
     }

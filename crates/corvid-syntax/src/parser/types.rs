@@ -99,16 +99,21 @@ impl<'a> Parser<'a> {
     pub(super) fn parse_weak_effect_name(&mut self) -> Result<WeakEffect, ParseError> {
         let span = self.peek_span();
         match self.peek().clone() {
+            TokKind::KwApprove => {
+                self.bump();
+                Ok(WeakEffect::Approve)
+            }
             TokKind::Ident(name) => {
                 self.bump();
                 match name.as_str() {
                     "tool_call" => Ok(WeakEffect::ToolCall),
                     "llm" => Ok(WeakEffect::Llm),
                     "approve" => Ok(WeakEffect::Approve),
+                    "human" => Ok(WeakEffect::Human),
                     _ => Err(ParseError {
                         kind: ParseErrorKind::UnexpectedToken {
                             got: format!("identifier `{name}`"),
-                            expected: "`tool_call`, `llm`, or `approve`".into(),
+                            expected: "`tool_call`, `llm`, `approve`, or `human`".into(),
                         },
                         span,
                     }),

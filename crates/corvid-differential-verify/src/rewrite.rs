@@ -1601,6 +1601,7 @@ fn render_type_ref(ty: &TypeRef) -> String {
                         corvid_ast::WeakEffect::ToolCall => "tool_call",
                         corvid_ast::WeakEffect::Llm => "llm",
                         corvid_ast::WeakEffect::Approve => "approve",
+                        corvid_ast::WeakEffect::Human => "human",
                     })
                     .collect();
                 format!("Weak<{}, {{{}}}>", inner, names.join(", "))

@@ -1900,6 +1900,7 @@ pub(super) fn mangle_type_name(ty: &Type) -> String {
                         corvid_ast::WeakEffect::ToolCall => "tool_call",
                         corvid_ast::WeakEffect::Llm => "llm",
                         corvid_ast::WeakEffect::Approve => "approve",
+                        corvid_ast::WeakEffect::Human => "human",
                     })
                     .collect();
                 format!("Weak_{}_{}", mangle_type_name(inner), suffix.join("_"))

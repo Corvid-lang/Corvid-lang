@@ -236,6 +236,7 @@ fn collect_stmt_effects(
             collect_body_effects(body, file, resolved, registry, effects);
         }
         corvid_ast::Stmt::Approve { action, .. } => {
+            effects.push("approve".into());
             collect_expr_effects(action, file, resolved, registry, effects);
         }
         corvid_ast::Stmt::Expr { expr, .. } => {
@@ -288,6 +289,14 @@ fn collect_expr_effects(
                         }
                         _ => {}
                     }
+                }
+                if matches!(
+                    resolved.bindings.get(span),
+                    Some(corvid_resolve::Binding::BuiltIn(
+                        corvid_resolve::BuiltIn::Ask | corvid_resolve::BuiltIn::Choose
+                    ))
+                ) {
+                    effects.push("human".into());
                 }
             }
             collect_expr_effects(callee, file, resolved, registry, effects);
