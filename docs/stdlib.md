@@ -31,3 +31,17 @@ agent main() -> String:
 Later Phase 32 slices will add package-style `std.ai` resolution and extend the
 same module with routing, prompt rendering, structured-output validation, and
 trace helpers that carry effects, replay, cost, and provenance metadata.
+
+## `std.http`
+
+`std/http.cor` defines request/response envelopes for typed HTTP workflows:
+
+- `HttpHeader`
+- `HttpRequestEnvelope` plus `http_get`, `http_post_json`, `http_with_retry`,
+  and `http_with_timeout`
+- `HttpResponseEnvelope` plus `http_ok`
+
+The native runtime also exposes a matching `HttpClient`/`HttpRequest` API. Its
+calls emit `std.http.request`, `std.http.response`, and `std.http.error` trace
+events with method, URL, timeout, retry, status, attempt, latency, and payload
+size metadata.

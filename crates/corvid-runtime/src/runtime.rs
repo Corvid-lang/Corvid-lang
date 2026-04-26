@@ -14,6 +14,7 @@ use crate::capability_contract::{
 };
 use crate::errors::RuntimeError;
 use crate::human::{HumanChoiceRequest, HumanInputRequest, HumanInteractor, StdinHumanInteractor};
+use crate::http::{HttpClient, HttpRequest, HttpResponse};
 use crate::llm::{
     LlmAdapter, LlmRegistry, LlmRequest, LlmRequestRef, LlmResponse, ProviderHealth,
 };
@@ -57,6 +58,7 @@ pub struct Runtime {
     prompt_cache: PromptCache,
     stores: StoreManager,
     usage_ledger: LlmUsageLedger,
+    http: HttpClient,
 }
 
 #[derive(Clone)]
@@ -187,6 +189,46 @@ impl Runtime {
 
     pub fn stores(&self) -> &StoreManager {
         &self.stores
+    }
+
+    pub async fn http_request(&self, request: HttpRequest) -> Result<HttpResponse, RuntimeError> {
+        self.emit_host_event(
+            "std.http.request",
+            serde_json::json!({
+                "method": request.method.clone(),
+                "url": request.url.clone(),
+                "timeout_ms": request.timeout_ms,
+                "max_retries": request.retry.max_retries,
+                "body_bytes": request.body.as_ref().map(|body| body.len()).unwrap_or(0),
+            }),
+        );
+        match self.http.send(&request).await {
+            Ok(response) => {
+                self.emit_host_event(
+                    "std.http.response",
+                    serde_json::json!({
+                        "method": request.method.clone(),
+                        "url": request.url.clone(),
+                        "status": response.status,
+                        "attempts": response.attempts,
+                        "elapsed_ms": response.elapsed_ms,
+                        "body_bytes": response.body.len(),
+                    }),
+                );
+                Ok(response)
+            }
+            Err(err) => {
+                self.emit_host_event(
+                    "std.http.error",
+                    serde_json::json!({
+                        "method": request.method.clone(),
+                        "url": request.url.clone(),
+                        "error": err.to_string(),
+                    }),
+                );
+                Err(err)
+            }
+        }
     }
 
     #[cfg(feature = "python")]
@@ -1334,6 +1376,7 @@ impl RuntimeBuilder {
             prompt_cache: PromptCache::default(),
             stores: self.stores,
             usage_ledger: LlmUsageLedger::new(),
+            http: HttpClient::new(),
         }
     }
 }
@@ -1958,6 +2001,46 @@ mod tests {
                     && payload["provider"] == "openai"
                     && payload["total_tokens"] == 14
                     && payload["currency"] == "USD"
+        )));
+    }
+
+    #[tokio::test]
+    async fn http_request_emits_trace_events() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/status"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("ok"))
+            .mount(&server)
+            .await;
+        let dir = tempfile::tempdir().unwrap();
+        let trace_path = dir.path().join("http.jsonl");
+        let r = Runtime::builder()
+            .tracer(Tracer::open_path(&trace_path, "http-run"))
+            .build();
+
+        let response = r
+            .http_request(crate::http::HttpRequest::get(format!(
+                "{}/status",
+                server.uri()
+            )))
+            .await
+            .unwrap();
+        assert_eq!(response.status, 200);
+        assert_eq!(response.body, "ok");
+
+        let events = corvid_trace_schema::read_events_from_path(&trace_path).unwrap();
+        assert!(events.iter().any(|event| matches!(
+            event,
+            TraceEvent::HostEvent { name, payload, .. }
+                if name == "std.http.request" && payload["method"] == "GET"
+        )));
+        assert!(events.iter().any(|event| matches!(
+            event,
+            TraceEvent::HostEvent { name, payload, .. }
+                if name == "std.http.response" && payload["status"] == 200
         )));
     }
 

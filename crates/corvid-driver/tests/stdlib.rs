@@ -44,3 +44,16 @@ agent main() -> String:
     compile_to_ir_with_config_at_path(source, &main_path, None)
         .expect("program importing std.ai helpers should compile");
 }
+
+#[test]
+fn std_http_compiles_as_corvid_source() {
+    let repo = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(std::path::Path::parent)
+        .expect("repo root");
+    let source_path = repo.join("std").join("http.cor");
+    let source = fs::read_to_string(&source_path).expect("std/http.cor");
+
+    compile_to_ir_with_config_at_path(&source, &source_path, None)
+        .expect("std.http should compile as a standalone Corvid module");
+}
