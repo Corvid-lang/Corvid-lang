@@ -1383,7 +1383,7 @@ The determinism-source catalog and the language's treatment of non-reproducible 
 - [x] 24-E-navigation        Single-file navigation over resolver identity: go-to-definition, find-references, rename edits, and workspace symbol search across open documents. Navigation uses DefId/LocalId bindings, not text search, so local rename does not touch unrelated declarations with the same spelling.
 - [x] 24-F-vscode-client     Reference VS Code extension at `extensions/vscode-corvid`: registers `.cor`, starts `corvid-lsp`, wires diagnostics/hover/completion/definition/references/rename/workspace symbols, ships syntax highlighting, language configuration, snippets for AI-native constructs, restart/log commands, and a local verification script.
 
-### Phase 25 — Package manager (~6–8 weeks)
+### Phase 25 — Package manager (~6–8 weeks) ✅ closed
 
 **Goal.** Users can share Corvid code and AI capabilities with guarantees. Table stakes for any language anyone takes seriously, made Corvid-native by distributing effect, provenance, approval, budget, and replay contracts alongside source.
 
