@@ -1,0 +1,56 @@
+# Standard observability envelopes.
+
+public type MetricCounter:
+    name: String
+    value: Float
+    unit: String
+
+public type CostCounter:
+    llm_calls: Int
+    prompt_tokens: Int
+    completion_tokens: Int
+    total_tokens: Int
+    cost_usd: Float
+
+public type LatencyHistogram:
+    name: String
+    p50_ms: Int
+    p95_ms: Int
+    p99_ms: Int
+
+public type RoutingDecision:
+    prompt_name: String
+    from_model: String
+    to_model: String
+    reason: String
+
+public type ApprovalSummary:
+    label: String
+    approved: Int
+    denied: Int
+
+public type RuntimeObservationSummary:
+    llm_calls: Int
+    local_llm_calls: Int
+    total_tokens: Int
+    cost_usd: Float
+    provider_count: Int
+    degraded_provider_count: Int
+
+public agent metric_counter(name: String, value: Float, unit: String) -> MetricCounter:
+    return MetricCounter(name, value, unit)
+
+public agent cost_counter(llm_calls: Int, prompt_tokens: Int, completion_tokens: Int, total_tokens: Int, cost_usd: Float) -> CostCounter:
+    return CostCounter(llm_calls, prompt_tokens, completion_tokens, total_tokens, cost_usd)
+
+public agent latency_histogram(name: String, p50_ms: Int, p95_ms: Int, p99_ms: Int) -> LatencyHistogram:
+    return LatencyHistogram(name, p50_ms, p95_ms, p99_ms)
+
+public agent routing_decision(prompt_name: String, from_model: String, to_model: String, reason: String) -> RoutingDecision:
+    return RoutingDecision(prompt_name, from_model, to_model, reason)
+
+public agent approval_summary(label: String, approved: Int, denied: Int) -> ApprovalSummary:
+    return ApprovalSummary(label, approved, denied)
+
+public agent runtime_summary(llm_calls: Int, local_llm_calls: Int, total_tokens: Int, cost_usd: Float, provider_count: Int, degraded_provider_count: Int) -> RuntimeObservationSummary:
+    return RuntimeObservationSummary(llm_calls, local_llm_calls, total_tokens, cost_usd, provider_count, degraded_provider_count)

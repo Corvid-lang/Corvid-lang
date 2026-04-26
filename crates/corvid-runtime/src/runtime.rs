@@ -20,6 +20,10 @@ use crate::llm::{
     LlmAdapter, LlmRegistry, LlmRequest, LlmRequestRef, LlmResponse, ProviderHealth,
 };
 use crate::models::{ModelCatalog, ModelSelection, RegisteredModel};
+use crate::observe::{
+    provider_observations, runtime_observation_summary, ProviderObservation,
+    RuntimeObservationSummary,
+};
 use crate::prompt_cache::PromptCache;
 #[cfg(feature = "python")]
 use crate::python_ffi::{PythonRuntime, PythonSandboxProfile};
@@ -182,6 +186,35 @@ impl Runtime {
 
     pub fn llm_usage_totals_by_provider(&self) -> std::collections::BTreeMap<String, LlmUsageTotals> {
         self.usage_ledger.totals_by_provider()
+    }
+
+    pub fn observation_summary(&self) -> RuntimeObservationSummary {
+        let usage = self.llm_usage_records();
+        let health = self.provider_health();
+        runtime_observation_summary(&usage, &health)
+    }
+
+    pub fn provider_observations(&self) -> Vec<ProviderObservation> {
+        provider_observations(&self.provider_health())
+    }
+
+    pub fn emit_observation_summary(&self) -> RuntimeObservationSummary {
+        let summary = self.observation_summary();
+        self.emit_host_event(
+            "std.observe.summary",
+            serde_json::json!({
+                "llm_calls": summary.llm_calls,
+                "local_llm_calls": summary.local_llm_calls,
+                "prompt_tokens": summary.prompt_tokens,
+                "completion_tokens": summary.completion_tokens,
+                "total_tokens": summary.total_tokens,
+                "cost_usd": summary.cost_usd,
+                "currency": "USD",
+                "provider_count": summary.provider_count,
+                "degraded_provider_count": summary.degraded_provider_count,
+            }),
+        );
+        summary
     }
 
     pub async fn check_model_capability_contracts(
@@ -2144,6 +2177,66 @@ mod tests {
                     && payload["total_tokens"] == 14
                     && payload["currency"] == "USD"
         )));
+    }
+
+    #[tokio::test]
+    async fn observation_summary_aggregates_usage_and_provider_health() {
+        let dir = tempfile::tempdir().unwrap();
+        let trace_path = dir.path().join("observe.jsonl");
+        let r = Runtime::builder()
+            .tracer(Tracer::open_path(&trace_path, "observe-run"))
+            .llm(Arc::new(MockAdapter::new("gpt").reply_with_usage(
+                "summarize",
+                json!("ok"),
+                crate::llm::TokenUsage {
+                    prompt_tokens: 8,
+                    completion_tokens: 4,
+                    total_tokens: 12,
+                },
+            )))
+            .model(
+                RegisteredModel::new("gpt")
+                    .provider("openai")
+                    .privacy_tier("hosted")
+                    .cost_per_token_in(0.001)
+                    .cost_per_token_out(0.002),
+            )
+            .build();
+
+        r.call_llm(LlmRequest {
+            prompt: "summarize".into(),
+            model: "gpt".into(),
+            rendered: "Summarize.".into(),
+            args: vec![],
+            output_schema: None,
+        })
+        .await
+        .unwrap();
+
+        let summary = r.emit_observation_summary();
+        assert_eq!(summary.llm_calls, 1);
+        assert_eq!(summary.local_llm_calls, 0);
+        assert_eq!(summary.total_tokens, 12);
+        assert_eq!(summary.cost_usd, 0.016);
+        assert_eq!(summary.provider_count, 1);
+        assert_eq!(summary.degraded_provider_count, 0);
+
+        let events = corvid_trace_schema::read_events_from_path(&trace_path).unwrap();
+        let event = events
+            .iter()
+            .find_map(|event| match event {
+                TraceEvent::HostEvent { name, payload, .. }
+                    if name == "std.observe.summary" =>
+                {
+                    Some(payload)
+                }
+                _ => None,
+            })
+            .expect("std.observe summary event");
+        assert_eq!(event["llm_calls"], json!(1));
+        assert_eq!(event["total_tokens"], json!(12));
+        assert_eq!(event["provider_count"], json!(1));
+        assert_eq!(event["degraded_provider_count"], json!(0));
     }
 
     #[tokio::test]

@@ -70,3 +70,14 @@ the value to the caller but only emit redacted trace metadata:
 - whether the value was redacted
 
 Trace events never include the secret value.
+
+## `std.observe`
+
+`std/observe.cor` defines typed observability envelopes for metrics, cost
+counters, latency histograms, routing decisions, approval summaries, and runtime
+observation summaries.
+
+The runtime exposes an observation snapshot API that aggregates normalized LLM
+usage and provider health. Emitting the snapshot records a `std.observe.summary`
+trace event with call counts, token totals, cost totals, local-call counts, and
+degraded-provider counts.

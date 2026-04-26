@@ -52,6 +52,7 @@ pub mod llm;
 pub mod models;
 mod native_trace;
 pub mod observation_handles;
+pub mod observe;
 pub mod prompt_cache;
 pub mod provenance;
 #[cfg(feature = "python")]
@@ -123,6 +124,10 @@ pub use llm::{
     LlmAdapter, LlmRegistry, LlmRequest, LlmResponse, ProviderHealth, TokenUsage,
 };
 pub use models::{ModelCatalog, ModelSelection, RegisteredModel};
+pub use observe::{
+    provider_observations, runtime_observation_summary, ProviderObservation,
+    RuntimeObservationSummary,
+};
 pub use provenance::{ProvenanceChain, ProvenanceEntry, ProvenanceKind};
 pub use record::Recorder;
 pub use redact::RedactionSet;

@@ -83,3 +83,16 @@ fn std_secrets_compiles_as_corvid_source() {
     compile_to_ir_with_config_at_path(&source, &source_path, None)
         .expect("std.secrets should compile as a standalone Corvid module");
 }
+
+#[test]
+fn std_observe_compiles_as_corvid_source() {
+    let repo = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(std::path::Path::parent)
+        .expect("repo root");
+    let source_path = repo.join("std").join("observe.cor");
+    let source = fs::read_to_string(&source_path).expect("std/observe.cor");
+
+    compile_to_ir_with_config_at_path(&source, &source_path, None)
+        .expect("std.observe should compile as a standalone Corvid module");
+}
