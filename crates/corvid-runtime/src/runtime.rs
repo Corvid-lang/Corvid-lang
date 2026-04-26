@@ -23,6 +23,7 @@ use crate::replay::{ReplayDifferentialReport, ReplayMutationReport, ReplaySource
 use crate::store::{StoreKind, StoreManager, StorePolicySet, StoreRecord};
 use crate::tools::ToolRegistry;
 use crate::tracing::{fresh_run_id, now_ms, Tracer};
+use crate::usage::{normalized_total_tokens, LlmUsageLedger, LlmUsageRecord, LlmUsageTotals};
 use corvid_trace_schema::{TraceEvent, WRITER_INTERPRETER};
 use sha2::{Digest, Sha256};
 use std::path::Path;
@@ -52,6 +53,7 @@ pub struct Runtime {
     calibration: CalibrationStore,
     prompt_cache: PromptCache,
     stores: StoreManager,
+    usage_ledger: LlmUsageLedger,
 }
 
 #[derive(Clone)]
@@ -163,6 +165,14 @@ impl Runtime {
 
     pub fn provider_health(&self) -> Vec<ProviderHealth> {
         self.llms.health()
+    }
+
+    pub fn llm_usage_records(&self) -> Vec<LlmUsageRecord> {
+        self.usage_ledger.records()
+    }
+
+    pub fn llm_usage_totals_by_provider(&self) -> std::collections::BTreeMap<String, LlmUsageTotals> {
+        self.usage_ledger.totals_by_provider()
     }
 
     pub fn stores(&self) -> &StoreManager {
@@ -703,6 +713,7 @@ impl Runtime {
             .as_deref()
             .unwrap_or(req.model)
             .to_string();
+        let mut actual_adapter = None;
         let mut result_trace_model = trace_model.to_string();
         let mut result_trace_model_version = trace_model_version.clone();
         let resp = if let Some(replay) = replay {
@@ -728,7 +739,10 @@ impl Runtime {
                 .await?
         } else {
             match self.llms.call_with_adapter_name(&req).await {
-                Ok(outcome) => outcome.response,
+                Ok(outcome) => {
+                    actual_adapter = Some(outcome.adapter);
+                    outcome.response
+                }
                 Err(primary_err) => {
                     let primary_error = primary_err.to_string();
                     self.emit_host_event(
@@ -763,6 +777,7 @@ impl Runtime {
                                     }),
                                 );
                                 actual_model = fallback.model;
+                                actual_adapter = Some(outcome.adapter);
                                 result_trace_model = actual_model.clone();
                                 result_trace_model_version = self.model_version(&actual_model);
                                 fallback_response = Some(outcome.response);
@@ -816,6 +831,41 @@ impl Runtime {
                 )
                 .cost_estimate
         };
+        let model_metadata = self.model_catalog.get(&actual_model);
+        let provider = model_metadata.and_then(|model| model.provider.clone());
+        let privacy_tier = model_metadata.and_then(|model| model.privacy_tier.clone());
+        let total_tokens = normalized_total_tokens(resp.usage);
+        let usage_record = LlmUsageRecord {
+            ts_ms: now_ms(),
+            prompt: req.prompt.to_string(),
+            model: actual_model.clone(),
+            provider: provider.clone(),
+            adapter: actual_adapter.clone(),
+            privacy_tier: privacy_tier.clone(),
+            prompt_tokens: resp.usage.prompt_tokens as u64,
+            completion_tokens: resp.usage.completion_tokens as u64,
+            total_tokens,
+            cost_usd,
+            local: provider.as_deref() == Some("ollama") || privacy_tier.as_deref() == Some("local"),
+        };
+        self.usage_ledger.record(usage_record.clone());
+        self.emit_host_event(
+            "llm.usage",
+            serde_json::json!({
+                "prompt": usage_record.prompt,
+                "model": usage_record.model,
+                "provider": usage_record.provider,
+                "adapter": usage_record.adapter,
+                "privacy_tier": usage_record.privacy_tier,
+                "prompt_tokens": usage_record.prompt_tokens,
+                "completion_tokens": usage_record.completion_tokens,
+                "total_tokens": usage_record.total_tokens,
+                "cost_usd": usage_record.cost_usd,
+                "currency": "USD",
+                "unit": "token",
+                "local": usage_record.local,
+            }),
+        );
         crate::observation_handles::record_llm_usage(resp.usage, cost_usd);
         if self.tracer.is_enabled() {
             self.tracer.emit(TraceEvent::LlmResult {
@@ -1273,6 +1323,7 @@ impl RuntimeBuilder {
             calibration: CalibrationStore::default(),
             prompt_cache: PromptCache::default(),
             stores: self.stores,
+            usage_ledger: LlmUsageLedger::new(),
         }
     }
 }
@@ -1837,6 +1888,66 @@ mod tests {
             event,
             TraceEvent::LlmResult { model, result, .. }
                 if model.as_deref() == Some("fallback") && result == &json!("from fallback")
+        )));
+    }
+
+    #[tokio::test]
+    async fn call_llm_records_normalized_usage_by_provider() {
+        let dir = tempfile::tempdir().unwrap();
+        let trace_path = dir.path().join("usage.jsonl");
+        let r = Runtime::builder()
+            .tracer(Tracer::open_path(&trace_path, "usage-run"))
+            .llm(Arc::new(MockAdapter::new("gpt").reply_with_usage(
+                "greet",
+                json!("hi"),
+                crate::llm::TokenUsage {
+                    prompt_tokens: 10,
+                    completion_tokens: 4,
+                    total_tokens: 0,
+                },
+            )))
+            .default_model("gpt")
+            .model(
+                RegisteredModel::new("gpt")
+                    .provider("openai")
+                    .privacy_tier("hosted")
+                    .cost_per_token_in(0.01)
+                    .cost_per_token_out(0.02),
+            )
+            .build();
+
+        let resp = r
+            .call_llm(LlmRequest {
+                prompt: "greet".into(),
+                model: String::new(),
+                rendered: "say hi".into(),
+                args: vec![],
+                output_schema: None,
+            })
+            .await
+            .unwrap();
+        assert_eq!(resp.value, json!("hi"));
+
+        let records = r.llm_usage_records();
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].provider.as_deref(), Some("openai"));
+        assert_eq!(records[0].adapter.as_deref(), Some("gpt"));
+        assert_eq!(records[0].total_tokens, 14);
+        assert!((records[0].cost_usd - 0.18).abs() < 1e-12);
+
+        let totals = r.llm_usage_totals_by_provider();
+        assert_eq!(totals["openai"].calls, 1);
+        assert_eq!(totals["openai"].total_tokens, 14);
+        assert!((totals["openai"].cost_usd - 0.18).abs() < 1e-12);
+
+        let events = corvid_trace_schema::read_events_from_path(&trace_path).unwrap();
+        assert!(events.iter().any(|event| matches!(
+            event,
+            TraceEvent::HostEvent { name, payload, .. }
+                if name == "llm.usage"
+                    && payload["provider"] == "openai"
+                    && payload["total_tokens"] == 14
+                    && payload["currency"] == "USD"
         )));
     }
 

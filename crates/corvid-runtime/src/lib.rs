@@ -62,6 +62,7 @@ pub mod store;
 pub mod test_from_traces;
 pub mod tools;
 pub mod tracing;
+pub mod usage;
 
 // Re-exports consumed by `corvid-macros`-expanded code. The proc-macro
 // emits `::corvid_runtime::inventory::submit! { ... }` and
@@ -133,3 +134,4 @@ pub use test_from_traces::{
 };
 pub use tools::{ToolHandler, ToolRegistry};
 pub use tracing::{fresh_run_id, now_ms, Tracer};
+pub use usage::{LlmUsageLedger, LlmUsageRecord, LlmUsageTotals};

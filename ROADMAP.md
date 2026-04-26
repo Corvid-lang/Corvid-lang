@@ -1532,6 +1532,7 @@ The determinism-source catalog and the language's treatment of non-reproducible 
 **Scope:**
 - [x] Provider capability metadata: `corvid.toml` model entries can declare provider, privacy tier, jurisdiction, context window, structured-output/tool/embedding support, multimodal tags, latency tier, and task capability tags for routing and audit surfaces.
 - [x] Provider health and automatic failover: runtime tracks adapter health, records provider degradation/failover trace events, and routes failed live calls to cheapest compatible cross-provider catalog fallbacks that preserve capability, format, privacy, jurisdiction, context, tool, embedding, multimodal, and task contracts.
+- [x] Cost normalization and usage accounting: runtime records normalized USD/token usage per LLM call with provider, adapter, privacy tier, local-vs-hosted, prompt/completion/total tokens, trace `llm.usage` events, and provider-level totals for routing and budget reports.
 - `GoogleAdapter` in `corvid-runtime`. API compatibility with existing AnthropicAdapter + OpenAiAdapter surface.
 - `OllamaAdapter` for local-first Corvid.
 - Provider/model metadata includes cost, latency, privacy tier, jurisdiction, structured-output support, context window, tool-calling support, embedding support, multimodal capability tags where available, and task capability tags.
