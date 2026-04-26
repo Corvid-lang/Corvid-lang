@@ -16,6 +16,7 @@ use crate::models::{ModelCatalog, ModelSelection, RegisteredModel};
 use crate::prompt_cache::PromptCache;
 use crate::record::Recorder;
 use crate::replay::{ReplayDifferentialReport, ReplayMutationReport, ReplaySource};
+use crate::store::{StoreKind, StoreManager};
 use crate::tools::ToolRegistry;
 use crate::tracing::{fresh_run_id, now_ms, Tracer};
 use corvid_trace_schema::{TraceEvent, WRITER_INTERPRETER};
@@ -46,6 +47,7 @@ pub struct Runtime {
     rollout_state: Arc<AtomicU64>,
     calibration: CalibrationStore,
     prompt_cache: PromptCache,
+    stores: StoreManager,
 }
 
 #[derive(Clone)]
@@ -153,6 +155,62 @@ impl Runtime {
 
     pub fn model_catalog(&self) -> &ModelCatalog {
         &self.model_catalog
+    }
+
+    pub fn stores(&self) -> &StoreManager {
+        &self.stores
+    }
+
+    pub fn store_get(
+        &self,
+        kind: StoreKind,
+        store: &str,
+        key: &str,
+    ) -> Result<Option<serde_json::Value>, RuntimeError> {
+        let value = self.stores.get(kind, store, key)?;
+        self.emit_store_event("get", kind, store, key, value.as_ref());
+        Ok(value)
+    }
+
+    pub fn store_put(
+        &self,
+        kind: StoreKind,
+        store: &str,
+        key: &str,
+        value: serde_json::Value,
+    ) -> Result<(), RuntimeError> {
+        self.stores.put(kind, store, key, value)?;
+        self.emit_store_event("put", kind, store, key, None);
+        Ok(())
+    }
+
+    pub fn store_delete(&self, kind: StoreKind, store: &str, key: &str) -> Result<(), RuntimeError> {
+        self.stores.delete(kind, store, key)?;
+        self.emit_store_event("delete", kind, store, key, None);
+        Ok(())
+    }
+
+    fn emit_store_event(
+        &self,
+        op: &str,
+        kind: StoreKind,
+        store: &str,
+        key: &str,
+        value: Option<&serde_json::Value>,
+    ) {
+        self.tracer.emit(TraceEvent::HostEvent {
+            ts_ms: now_ms(),
+            run_id: self.tracer.run_id().to_string(),
+            name: "store".to_string(),
+            payload: serde_json::json!({
+                "op": op,
+                "kind": kind.as_str(),
+                "store": store,
+                "key": key,
+                "effect": if op == "get" { kind.read_effect() } else { kind.write_effect() },
+                "hit": value.is_some(),
+            }),
+        });
     }
 
     pub fn select_cheapest_model_for_capability(
@@ -718,6 +776,7 @@ pub struct RuntimeBuilder {
     replay_trace: Option<PathBuf>,
     replay_model_swap: Option<String>,
     replay_mutation: Option<(usize, serde_json::Value)>,
+    stores: StoreManager,
 }
 
 impl Default for RuntimeBuilder {
@@ -736,6 +795,7 @@ impl Default for RuntimeBuilder {
             replay_trace: None,
             replay_model_swap: None,
             replay_mutation: None,
+            stores: StoreManager::default(),
         }
     }
 }
@@ -799,6 +859,16 @@ impl RuntimeBuilder {
     pub fn model_catalog_root(mut self, root: impl Into<PathBuf>) -> Self {
         self.model_catalog_root = Some(root.into());
         self
+    }
+
+    pub fn stores(mut self, stores: StoreManager) -> Self {
+        self.stores = stores;
+        self
+    }
+
+    pub fn sqlite_store(mut self, path: impl AsRef<Path>) -> Result<Self, RuntimeError> {
+        self.stores = StoreManager::sqlite(path)?;
+        Ok(self)
     }
 
     pub fn rollout_seed(mut self, seed: u64) -> Self {
@@ -914,6 +984,7 @@ impl RuntimeBuilder {
             rollout_state: Arc::new(AtomicU64::new(rollout_seed)),
             calibration: CalibrationStore::default(),
             prompt_cache: PromptCache::default(),
+            stores: self.stores,
         }
     }
 }
@@ -937,6 +1008,43 @@ mod tests {
             ))
             .default_model("mock-1")
             .build()
+    }
+
+    #[test]
+    fn runtime_store_api_persists_through_sqlite_backend() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("runtime-store.sqlite3");
+        let runtime = Runtime::builder()
+            .sqlite_store(&path)
+            .expect("sqlite store")
+            .build();
+
+        runtime
+            .store_put(
+                StoreKind::Session,
+                "Conversation",
+                "thread-1",
+                json!({"topic": "shipping"}),
+            )
+            .expect("put");
+        assert_eq!(
+            runtime
+                .store_get(StoreKind::Session, "Conversation", "thread-1")
+                .expect("get"),
+            Some(json!({"topic": "shipping"}))
+        );
+
+        drop(runtime);
+        let reopened = Runtime::builder()
+            .sqlite_store(&path)
+            .expect("sqlite store")
+            .build();
+        assert_eq!(
+            reopened
+                .store_get(StoreKind::Session, "Conversation", "thread-1")
+                .expect("get after reopen"),
+            Some(json!({"topic": "shipping"}))
+        );
     }
 
     #[tokio::test]

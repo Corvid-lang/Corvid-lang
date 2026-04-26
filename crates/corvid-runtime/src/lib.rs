@@ -56,6 +56,7 @@ pub mod redact;
 pub mod replay;
 pub mod replay_dispatch;
 pub mod runtime;
+pub mod store;
 pub mod test_from_traces;
 pub mod tools;
 pub mod tracing;
@@ -117,6 +118,7 @@ pub use replay::{
     ReplayMutationReport, ReplaySource, RunCompletionDivergence, SubstitutionDivergence,
 };
 pub use runtime::{Runtime, RuntimeBuilder};
+pub use store::{InMemoryStoreBackend, SqliteStoreBackend, StoreBackend, StoreKind, StoreManager};
 pub use test_from_traces::{
     run_test_from_traces, Divergence, FlakeRank, ModelSwapOutcome, PromoteDecision,
     PromotePromptMode, TestFromTracesOptions, TestFromTracesReport, TestFromTracesSummary,

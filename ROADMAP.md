@@ -1483,6 +1483,7 @@ The determinism-source catalog and the language's treatment of non-reproducible 
 
 **Scope:**
 - [x] Store declaration surface + metadata: `session Name:` and `memory Name:` parse as typed top-level schemas, resolve their field types, register store effect names, and emit ABI store contracts with `reads_*` / `writes_*` metadata.
+- [x] Native runtime store backend: `Runtime` exposes replay-visible `store_get` / `store_put` / `store_delete` over a pluggable store manager, with SQLite persistence for native hosts and an in-memory backend for tests/embedding.
 - `session { ... }` block declares per-conversation state. Compiler generates typed accessors.
 - `memory { ... }` block declares long-lived state (survives process restarts).
 - Both backed by SQLite (native) and IndexedDB (wasm).
