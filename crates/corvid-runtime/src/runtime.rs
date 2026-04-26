@@ -17,10 +17,14 @@ use crate::replay::{ReplayDifferentialReport, ReplayMutationReport, ReplaySource
 use crate::tools::ToolRegistry;
 use crate::tracing::{fresh_run_id, now_ms, Tracer};
 use corvid_trace_schema::{TraceEvent, WRITER_INTERPRETER};
+use sha2::{Digest, Sha256};
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+
+const APPROVAL_TOKEN_SCOPE_ONE_TIME: &str = "one_time";
+const APPROVAL_TOKEN_TTL_MS: u64 = 5 * 60 * 1000;
 
 #[derive(Clone)]
 pub struct Runtime {
@@ -551,6 +555,28 @@ impl Runtime {
             });
         }
         if approved {
+            if trace_enabled {
+                let issued_at_ms = now_ms();
+                let expires_at_ms = issued_at_ms.saturating_add(APPROVAL_TOKEN_TTL_MS);
+                let run_id = self.tracer.run_id().to_string();
+                self.tracer.emit(TraceEvent::ApprovalTokenIssued {
+                    ts_ms: issued_at_ms,
+                    run_id: run_id.clone(),
+                    token_id: approval_token_id(
+                        &run_id,
+                        &label_owned,
+                        &req.args,
+                        APPROVAL_TOKEN_SCOPE_ONE_TIME,
+                        issued_at_ms,
+                        expires_at_ms,
+                    ),
+                    label: label_owned.clone(),
+                    args: req.args.clone(),
+                    scope: APPROVAL_TOKEN_SCOPE_ONE_TIME.to_string(),
+                    issued_at_ms,
+                    expires_at_ms,
+                });
+            }
             Ok(())
         } else {
             Err(RuntimeError::ApprovalDenied {
@@ -614,6 +640,39 @@ impl Runtime {
         }
         Ok(selected_index)
     }
+}
+
+fn approval_token_id(
+    run_id: &str,
+    label: &str,
+    args: &[serde_json::Value],
+    scope: &str,
+    issued_at_ms: u64,
+    expires_at_ms: u64,
+) -> String {
+    let args_json = serde_json::to_string(args).unwrap_or_else(|_| "[]".to_string());
+    let mut hasher = Sha256::new();
+    hasher.update(run_id.as_bytes());
+    hasher.update(b"\0");
+    hasher.update(label.as_bytes());
+    hasher.update(b"\0");
+    hasher.update(args_json.as_bytes());
+    hasher.update(b"\0");
+    hasher.update(scope.as_bytes());
+    hasher.update(b"\0");
+    hasher.update(issued_at_ms.to_le_bytes());
+    hasher.update(expires_at_ms.to_le_bytes());
+    format!("apr_{}", hex_lower(&hasher.finalize()))
+}
+
+fn hex_lower(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        out.push(HEX[(byte >> 4) as usize] as char);
+        out.push(HEX[(byte & 0x0f) as usize] as char);
+    }
+    out
 }
 
 pub struct RuntimeBuilder {
@@ -862,6 +921,51 @@ mod tests {
     async fn approval_gate_passes_when_approver_says_yes() {
         let r = rt();
         r.approval_gate("Anything", vec![]).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn approval_gate_emits_scoped_token_for_approved_request() {
+        let dir = tempfile::tempdir().unwrap();
+        let trace_path = dir.path().join("approval.jsonl");
+        let r = Runtime::builder()
+            .approver(Arc::new(ProgrammaticApprover::always_yes()))
+            .tracer(Tracer::open_path(&trace_path, "approval-run"))
+            .build();
+
+        r.approval_gate("IssueRefund", vec![json!("ord_1"), json!(12.5)])
+            .await
+            .unwrap();
+
+        let events = corvid_trace_schema::read_events_from_path(&trace_path).unwrap();
+        let token = events
+            .iter()
+            .find_map(|event| match event {
+                TraceEvent::ApprovalTokenIssued {
+                    token_id,
+                    label,
+                    args,
+                    scope,
+                    issued_at_ms,
+                    expires_at_ms,
+                    ..
+                } => Some((
+                    token_id,
+                    label,
+                    args,
+                    scope,
+                    *issued_at_ms,
+                    *expires_at_ms,
+                )),
+                _ => None,
+            })
+            .expect("approval token event");
+
+        assert!(token.0.starts_with("apr_"));
+        assert_eq!(token.0.len(), 68);
+        assert_eq!(token.1, "IssueRefund");
+        assert_eq!(token.2, &vec![json!("ord_1"), json!(12.5)]);
+        assert_eq!(token.3, "one_time");
+        assert_eq!(token.5 - token.4, APPROVAL_TOKEN_TTL_MS);
     }
 
     #[tokio::test]

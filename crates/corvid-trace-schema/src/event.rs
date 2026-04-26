@@ -138,6 +138,16 @@ pub enum TraceEvent {
         label: String,
         approved: bool,
     },
+    ApprovalTokenIssued {
+        ts_ms: u64,
+        run_id: String,
+        token_id: String,
+        label: String,
+        args: Vec<serde_json::Value>,
+        scope: String,
+        issued_at_ms: u64,
+        expires_at_ms: u64,
+    },
     HumanInputRequest {
         ts_ms: u64,
         run_id: String,

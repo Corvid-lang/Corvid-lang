@@ -472,6 +472,7 @@ fn run_id_of(events: &[TraceEvent]) -> Option<&str> {
         | TraceEvent::ApprovalRequest { run_id, .. }
         | TraceEvent::ApprovalDecision { run_id, .. }
         | TraceEvent::ApprovalResponse { run_id, .. }
+        | TraceEvent::ApprovalTokenIssued { run_id, .. }
         | TraceEvent::HumanInputRequest { run_id, .. }
         | TraceEvent::HumanInputResponse { run_id, .. }
         | TraceEvent::HumanChoiceRequest { run_id, .. }

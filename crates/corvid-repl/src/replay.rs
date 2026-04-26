@@ -407,6 +407,10 @@ impl ReplaySession {
                     run_id: event_run_id,
                     ..
                 }
+                | TraceEvent::ApprovalTokenIssued {
+                    run_id: event_run_id,
+                    ..
+                }
                 | TraceEvent::HumanInputRequest {
                     run_id: event_run_id,
                     ..
@@ -728,6 +732,7 @@ fn first_run_id(events: &[TraceEvent]) -> Result<&str, ReplayLoadError> {
         | Some(TraceEvent::ApprovalRequest { run_id, .. })
         | Some(TraceEvent::ApprovalDecision { run_id, .. })
         | Some(TraceEvent::ApprovalResponse { run_id, .. })
+        | Some(TraceEvent::ApprovalTokenIssued { run_id, .. })
         | Some(TraceEvent::HumanInputRequest { run_id, .. })
         | Some(TraceEvent::HumanInputResponse { run_id, .. })
         | Some(TraceEvent::HumanChoiceRequest { run_id, .. })
@@ -772,6 +777,7 @@ fn first_ts(events: &[TraceEvent]) -> u64 {
         | Some(TraceEvent::ApprovalRequest { ts_ms, .. })
         | Some(TraceEvent::ApprovalDecision { ts_ms, .. })
         | Some(TraceEvent::ApprovalResponse { ts_ms, .. })
+        | Some(TraceEvent::ApprovalTokenIssued { ts_ms, .. })
         | Some(TraceEvent::HumanInputRequest { ts_ms, .. })
         | Some(TraceEvent::HumanInputResponse { ts_ms, .. })
         | Some(TraceEvent::HumanChoiceRequest { ts_ms, .. })
@@ -805,6 +811,7 @@ fn last_ts(events: &[TraceEvent]) -> u64 {
         | Some(TraceEvent::ApprovalRequest { ts_ms, .. })
         | Some(TraceEvent::ApprovalDecision { ts_ms, .. })
         | Some(TraceEvent::ApprovalResponse { ts_ms, .. })
+        | Some(TraceEvent::ApprovalTokenIssued { ts_ms, .. })
         | Some(TraceEvent::HumanInputRequest { ts_ms, .. })
         | Some(TraceEvent::HumanInputResponse { ts_ms, .. })
         | Some(TraceEvent::HumanChoiceRequest { ts_ms, .. })
