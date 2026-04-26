@@ -1,0 +1,72 @@
+# Standard AI application primitives.
+
+public type AiMessage:
+    role: String
+    content: String
+
+public type AiSession:
+    id: String
+    title: String
+    turn_count: Int
+
+public type ToolResultEnvelope:
+    tool_name: String
+    ok: Bool
+    value: String
+    error_message: String
+
+public type ModelRoute:
+    model_name: String
+    provider: String
+    reason: String
+
+public type StructuredValidation:
+    valid: Bool
+    schema: String
+    error_message: String
+
+public type Confidence:
+    score: Float
+    threshold: Float
+    accepted: Bool
+
+public type TraceEventSummary:
+    kind: String
+    name: String
+    detail: String
+
+public agent system_message(content: String) -> AiMessage:
+    return AiMessage("system", content)
+
+public agent user_message(content: String) -> AiMessage:
+    return AiMessage("user", content)
+
+public agent assistant_message(content: String) -> AiMessage:
+    return AiMessage("assistant", content)
+
+public agent start_session(id: String, title: String) -> AiSession:
+    return AiSession(id, title, 0)
+
+public agent next_turn(current: AiSession) -> AiSession:
+    return AiSession(current.id, current.title, current.turn_count + 1)
+
+public agent tool_ok(tool_name: String, value: String) -> ToolResultEnvelope:
+    return ToolResultEnvelope(tool_name, true, value, "")
+
+public agent tool_error(tool_name: String, error_message: String) -> ToolResultEnvelope:
+    return ToolResultEnvelope(tool_name, false, "", error_message)
+
+public agent route_to(model_name: String, provider: String, reason: String) -> ModelRoute:
+    return ModelRoute(model_name, provider, reason)
+
+public agent validation_ok(schema: String) -> StructuredValidation:
+    return StructuredValidation(true, schema, "")
+
+public agent validation_error(schema: String, error_message: String) -> StructuredValidation:
+    return StructuredValidation(false, schema, error_message)
+
+public agent confidence(score: Float, threshold: Float) -> Confidence:
+    return Confidence(score, threshold, score >= threshold)
+
+public agent trace_event(kind: String, name: String, detail: String) -> TraceEventSummary:
+    return TraceEventSummary(kind, name, detail)
