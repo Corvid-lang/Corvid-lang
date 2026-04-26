@@ -1501,7 +1501,7 @@ The determinism-source catalog and the language's treatment of non-reproducible 
 - Memory conflict resolution: typed handling for stale facts, contradictory facts, and source-priority rules, with conflicts surfaced as `Result`/diagnostics rather than silently overwriting state.
 - Memory write approvals for sensitive or irreversible state changes, recorded in replay and visible in effect summaries.
 
-### Phase 30 — Python FFI via PyO3 (~5–6 weeks)
+### Phase 30 — Python FFI via PyO3 (~5–6 weeks) ✅ closed
 
 **Goal.** `import python "..."` works in compiled code. Closes the "but Python has the ecosystem" gap.
 
