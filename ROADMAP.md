@@ -1358,7 +1358,7 @@ The determinism-source catalog and the language's treatment of non-reproducible 
 
 ---
 
-### Phase 24 — LSP + IDE (~6–8 weeks)
+### Phase 24 — LSP + IDE (~6–8 weeks) ✅ closed
 
 **Goal.** Editor support worthy of a real GP language. Users need this to write serious Corvid — must land before the moat features are worth using daily.
 
