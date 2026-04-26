@@ -4,8 +4,8 @@ use crate::provenance_emit::emit_provenance_contract;
 use crate::schema::{
     AbiAgent, AbiAttributes, AbiBudget, AbiCostEnvelope, AbiDestructor, AbiDestructorKind,
     AbiDispatch, AbiField, AbiOwnership, AbiOwnershipMode, AbiParam, AbiProgressiveStage,
-    AbiPrompt, AbiRouteArm, AbiSourceSpan, AbiStore, AbiStoreEffects, AbiStorePolicy, AbiTool,
-    AbiTypeDecl, CorvidAbi,
+    AbiPrompt, AbiRouteArm, AbiSourceSpan, AbiStore, AbiStoreAccessor, AbiStoreAccessorKind,
+    AbiStoreEffects, AbiStorePolicy, AbiTool, AbiTypeDecl, CorvidAbi,
 };
 use crate::tool_contract::emit_tool_contract;
 use crate::type_description::emit_type_description;
@@ -150,20 +150,19 @@ pub fn emit_abi(
 }
 
 fn emit_store(store: &StoreDecl, resolved: &Resolved) -> AbiStore {
+    let fields = store
+        .fields
+        .iter()
+        .map(|field| AbiField {
+            name: field.name.name.clone(),
+            r#type: emit_type_description(&resolve_typeref_to_type(&field.ty, resolved), resolved),
+        })
+        .collect::<Vec<_>>();
     AbiStore {
         name: store.name.name.clone(),
         kind: store.kind.as_str().to_string(),
-        fields: store
-            .fields
-            .iter()
-            .map(|field| AbiField {
-                name: field.name.name.clone(),
-                r#type: emit_type_description(
-                    &resolve_typeref_to_type(&field.ty, resolved),
-                    resolved,
-                ),
-            })
-            .collect(),
+        accessors: emit_store_accessors(store, &fields),
+        fields,
         policies: store
             .policies
             .iter()
@@ -178,6 +177,35 @@ fn emit_store(store: &StoreDecl, resolved: &Resolved) -> AbiStore {
             write: store.kind.write_effect().to_string(),
         },
     }
+}
+
+fn emit_store_accessors(store: &StoreDecl, fields: &[AbiField]) -> Vec<AbiStoreAccessor> {
+    let mut accessors = Vec::new();
+    for field in fields {
+        let base = format!("{}.{}", store.name.name, field.name);
+        accessors.push(AbiStoreAccessor {
+            name: format!("{base}.get"),
+            field: field.name.clone(),
+            kind: AbiStoreAccessorKind::Get,
+            value_type: field.r#type.clone(),
+            effect: store.kind.read_effect().to_string(),
+        });
+        accessors.push(AbiStoreAccessor {
+            name: format!("{base}.set"),
+            field: field.name.clone(),
+            kind: AbiStoreAccessorKind::Set,
+            value_type: field.r#type.clone(),
+            effect: store.kind.write_effect().to_string(),
+        });
+        accessors.push(AbiStoreAccessor {
+            name: format!("{base}.delete"),
+            field: field.name.clone(),
+            kind: AbiStoreAccessorKind::Delete,
+            value_type: field.r#type.clone(),
+            effect: store.kind.write_effect().to_string(),
+        });
+    }
+    accessors
 }
 
 pub fn normalize_source_path(path: &str) -> String {

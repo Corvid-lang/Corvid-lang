@@ -1490,6 +1490,7 @@ The determinism-source catalog and the language's treatment of non-reproducible 
 - [x] Runtime retention policy enforcement: ABI store policies can become runtime `StorePolicySet`s; TTL reads expire stale records, and legal-hold policies block deletion with typed policy errors.
 - [x] Approval-required memory writes: runtime store policy APIs gate sensitive writes through the existing approval flow and preserve denial/approval events in replay-visible traces.
 - [x] Provenance-required memory reads: store policies can require retrieved records to carry `ProvenanceChain` lineage, failing ungrounded reads with typed policy errors.
+- [x] Generated typed store accessor contracts: ABI store metadata now includes compiler-generated `get` / `set` / `delete` accessor signatures for each declared field, carrying field types and read/write effects for codegen and host SDKs.
 - `session { ... }` block declares per-conversation state. Compiler generates typed accessors.
 - `memory { ... }` block declares long-lived state (survives process restarts).
 - Both backed by SQLite (native) and IndexedDB (wasm).

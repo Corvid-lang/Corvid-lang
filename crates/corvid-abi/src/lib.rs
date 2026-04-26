@@ -23,9 +23,10 @@ pub use schema::{
     AbiField, AbiGroundedType, AbiLatencyMs, AbiListType, AbiMinExpected, AbiOptionType,
     AbiOwnership, AbiOwnershipMode, AbiParam, AbiProgressiveStage, AbiProjectedTokens,
     AbiProjectedUsd, AbiPrompt, AbiProvenanceContract, AbiResultType, AbiRouteArm,
-    AbiSourceSpan, AbiStore, AbiStoreEffects, AbiStorePolicy, AbiTool, AbiToolContract,
-    AbiToolDomainEffect, AbiTypeDecl, AbiVersionError, AbiWeakType, CorvidAbi, ScalarTypeName,
-    TypeDescription, CORVID_ABI_VERSION, MIN_SUPPORTED_ABI_VERSION,
+    AbiSourceSpan, AbiStore, AbiStoreAccessor, AbiStoreAccessorKind, AbiStoreEffects,
+    AbiStorePolicy, AbiTool, AbiToolContract, AbiToolDomainEffect, AbiTypeDecl, AbiVersionError,
+    AbiWeakType, CorvidAbi, ScalarTypeName, TypeDescription, CORVID_ABI_VERSION,
+    MIN_SUPPORTED_ABI_VERSION,
 };
 
 use std::io;

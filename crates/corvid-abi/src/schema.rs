@@ -154,6 +154,8 @@ pub struct AbiStore {
     pub fields: Vec<AbiField>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub policies: Vec<AbiStorePolicy>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub accessors: Vec<AbiStoreAccessor>,
     pub source_span: AbiSourceSpan,
     pub effects: AbiStoreEffects,
 }
@@ -168,6 +170,23 @@ pub struct AbiStorePolicy {
 pub struct AbiStoreEffects {
     pub read: String,
     pub write: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AbiStoreAccessorKind {
+    Get,
+    Set,
+    Delete,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AbiStoreAccessor {
+    pub name: String,
+    pub field: String,
+    pub kind: AbiStoreAccessorKind,
+    pub value_type: TypeDescription,
+    pub effect: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
