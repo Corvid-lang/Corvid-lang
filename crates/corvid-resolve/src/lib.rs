@@ -215,7 +215,7 @@ agent refund(id: String) -> Receipt:
     #[test]
     fn resolves_full_refund_bot() {
         let src = r#"
-import python "anthropic" as anthropic
+import python "anthropic" as anthropic effects: network
 
 type Ticket:
     order_id: String

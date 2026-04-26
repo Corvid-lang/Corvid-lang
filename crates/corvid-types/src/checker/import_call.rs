@@ -7,7 +7,7 @@
 //! imported target for IR lowering.
 
 use super::{pascal_case, snake_case, Checker, ImportedCallKind, ImportedCallTarget};
-use crate::errors::{TypeError, TypeErrorKind};
+use crate::errors::{TypeError, TypeErrorKind, TypeWarning, TypeWarningKind};
 use crate::effects::{ComposedProfile, EffectRegistry};
 use crate::types::{ImportedStructType, Type};
 use corvid_ast::{AgentAttribute, Decl, Effect, Expr, Ident, Param, Span, WeakEffect};
@@ -15,6 +15,40 @@ use corvid_resolve::{Binding, DeclKind, DefId, ModuleLookup, ResolvedModule};
 use std::collections::HashMap;
 
 impl<'a> Checker<'a> {
+    pub(super) fn validate_python_import_effects(&mut self, file: &corvid_ast::File) {
+        for decl in &file.decls {
+            let Decl::Import(import) = decl else { continue };
+            if !matches!(import.source, corvid_ast::ImportSource::Python) {
+                continue;
+            }
+            if import.effect_row.effects.is_empty() {
+                self.errors.push(TypeError::new(
+                    TypeErrorKind::EffectConstraintViolation {
+                        agent: format!("python import `{}`", import.module),
+                        dimension: "effects".to_string(),
+                        message: "Python imports must declare their host capabilities with `effects: ...`; use `effects: unsafe` only as an explicit review escape hatch".to_string(),
+                    },
+                    import.span,
+                ));
+                continue;
+            }
+            if import
+                .effect_row
+                .effects
+                .iter()
+                .any(|effect| effect.name.name == "unsafe")
+            {
+                self.warnings.push(TypeWarning::new(
+                    TypeWarningKind::UnsafePythonImport {
+                        module: import.module.clone(),
+                        message: "dynamic Python code can access capabilities the compiler cannot inspect".to_string(),
+                    },
+                    import.effect_row.span,
+                ));
+            }
+        }
+    }
+
     pub(super) fn validate_import_use_items(&mut self, file: &corvid_ast::File) {
         let Some(modules) = self.module_resolution else {
             return;

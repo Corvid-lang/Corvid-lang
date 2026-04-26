@@ -190,6 +190,8 @@ pub struct ImportDecl {
     pub required_attributes: Vec<AgentAttribute>,
     #[serde(default)]
     pub required_constraints: Vec<EffectConstraint>,
+    #[serde(default)]
+    pub effect_row: EffectRow,
     pub alias: Option<Ident>,
     #[serde(default)]
     pub use_items: Vec<ImportUseItem>,

@@ -1509,6 +1509,7 @@ The determinism-source catalog and the language's treatment of non-reproducible 
 **Soft dep:** Phase 20 slice 20a (effect rows). Python imports declare effects at the import site — the basic `effects: network` / `effects: unsafe` syntax works against the existing `safe` / `dangerous` split; richer user-declared effects via 20a's effect rows make the story better but aren't a compilation blocker.
 
 **Scope:**
+- [x] Python import effect declarations: parser accepts `import python "..." as name effects: ...`; the type checker rejects untagged Python imports, while `effects: unsafe` is allowed but flagged for review.
 - PyO3 integration in `corvid-runtime`. Lazy CPython load.
 - `import python "requests" as requests effects: network` — untagged imports rejected by the effect checker. `effects: unsafe` is the opt-in escape hatch and is flagged for review.
 - Error marshalling: Python exceptions become Corvid `Result::Err` with preserved traceback.

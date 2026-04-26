@@ -1179,6 +1179,15 @@ fn render_decl(decl: &Decl, indent: usize, out: &mut String) {
                 out.push_str(" as ");
                 out.push_str(&alias.name);
             }
+            if !import.effect_row.effects.is_empty() {
+                out.push_str(" effects: ");
+                for (index, effect) in import.effect_row.effects.iter().enumerate() {
+                    if index > 0 {
+                        out.push_str(", ");
+                    }
+                    out.push_str(&effect.name.name);
+                }
+            }
         }
         Decl::Type(ty) => {
             push_indent(indent, out);

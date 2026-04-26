@@ -399,6 +399,11 @@ pub enum TypeWarningKind {
         pattern: String,
         first_arm_span: Span,
     },
+    /// `effects: unsafe` on a Python import is explicit but should be reviewed.
+    UnsafePythonImport {
+        module: String,
+        message: String,
+    },
 }
 
 impl TypeErrorKind {
@@ -849,6 +854,9 @@ impl TypeWarningKind {
                     first_arm_span.start, first_arm_span.end
                 )
             }
+            Self::UnsafePythonImport { module, message } => {
+                format!("python import `{module}` declares `effects: unsafe`: {message}")
+            }
         }
     }
 
@@ -862,6 +870,9 @@ impl TypeWarningKind {
             ),
             Self::ReplayUnreachableArm { .. } => Some(
                 "remove the duplicate arm or make its pattern distinct (different prompt / tool / label)".into(),
+            ),
+            Self::UnsafePythonImport { .. } => Some(
+                "replace `unsafe` with narrower effects such as `network`, `filesystem`, `subprocess`, `environment`, or `native_extension` when possible".into(),
             ),
         }
     }

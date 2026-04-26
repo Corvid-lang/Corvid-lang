@@ -179,7 +179,7 @@ test mocked_lookup:
     #[test]
     fn refund_bot_lowers_to_expected_ir_shape() {
         let src = r#"
-import python "anthropic" as anthropic
+import python "anthropic" as anthropic effects: network
 
 type Ticket:
     order_id: String

@@ -702,13 +702,15 @@ prompt classify(ctx: String) -> String:
 
     #[test]
     fn parses_import_python() {
-        let file = parse_file_src(r#"import python "anthropic" as anthropic"#);
+        let file = parse_file_src(r#"import python "anthropic" as anthropic effects: network"#);
         assert_eq!(file.decls.len(), 1);
         match &file.decls[0] {
             Decl::Import(i) => {
                 assert!(matches!(i.source, ImportSource::Python));
                 assert_eq!(i.module, "anthropic");
                 assert_eq!(i.alias.as_ref().unwrap().name, "anthropic");
+                assert_eq!(i.effect_row.effects.len(), 1);
+                assert_eq!(i.effect_row.effects[0].name.name, "network");
             }
             other => panic!("expected Import, got {other:?}"),
         }

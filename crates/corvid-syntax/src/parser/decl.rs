@@ -13,7 +13,7 @@ use crate::errors::{ParseError, ParseErrorKind};
 use crate::token::TokKind;
 use corvid_ast::{
     AgentDecl, BinaryOp, Block, Decl, DimensionDecl, DimensionValue, Effect, EffectDecl,
-    ExternAbi, OwnershipAnnotation, OwnershipMode,
+    EffectRef, EffectRow, ExternAbi, OwnershipAnnotation, OwnershipMode,
     EvalAssert, EvalDecl, ExtendDecl, ExtendMethod, ExtendMethodKind, Field, FixtureDecl, Ident,
     ImportDecl, ImportContentHash, ImportSource, ImportUseItem, MockDecl, ModelDecl, ModelField,
     Param, Span, StoreDecl, StoreKind, StorePolicy, ToolDecl, TestDecl, TypeDecl, Visibility,
@@ -261,6 +261,12 @@ impl<'a> Parser<'a> {
             None
         };
 
+        let effect_row = if self.peek_ident_is("effects") {
+            self.parse_import_effects_clause()?
+        } else {
+            EffectRow::default()
+        };
+
         let use_items = if matches!(self.peek(), TokKind::Ident(word) if word == "use") {
             self.bump();
             self.parse_import_use_items()?
@@ -276,8 +282,33 @@ impl<'a> Parser<'a> {
             content_hash,
             required_attributes,
             required_constraints,
+            effect_row,
             alias,
             use_items,
+            span: start.merge(end),
+        })
+    }
+
+    fn parse_import_effects_clause(&mut self) -> Result<EffectRow, ParseError> {
+        let start = self.peek_span();
+        self.bump(); // effects
+        self.expect(TokKind::Colon, "`:` after import effects")?;
+        let (first_name, first_span) = self.expect_ident()?;
+        let mut effects = vec![EffectRef {
+            name: Ident::new(first_name, first_span),
+            span: first_span,
+        }];
+        while matches!(self.peek(), TokKind::Comma) {
+            self.bump();
+            let (name, span) = self.expect_ident()?;
+            effects.push(EffectRef {
+                name: Ident::new(name, span),
+                span,
+            });
+        }
+        let end = effects.last().map(|effect| effect.span).unwrap_or(start);
+        Ok(EffectRow {
+            effects,
             span: start.merge(end),
         })
     }

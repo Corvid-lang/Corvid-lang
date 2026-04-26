@@ -111,6 +111,7 @@ fn typecheck_with_everything(
 ) -> Checked {
     let mut c = Checker::new(file, resolved, modules);
     c.validate_import_use_items(file);
+    c.validate_python_import_effects(file);
     c.check_file(file);
 
     let effect_decls: Vec<&corvid_ast::EffectDecl> = file.decls.iter().filter_map(|d| {

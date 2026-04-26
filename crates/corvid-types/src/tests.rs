@@ -450,7 +450,7 @@ agent bad(x: String) -> String:
     #[test]
     fn refund_bot_typechecks_cleanly() {
         let src = r#"
-import python "anthropic" as anthropic
+import python "anthropic" as anthropic effects: network
 
 type Ticket:
     order_id: String
@@ -3675,6 +3675,48 @@ agent f(r: p.Receipt) -> Int:
             }
             _ => unreachable!(),
         }
+    }
+
+    #[test]
+    fn python_import_without_effects_is_rejected() {
+        let checked = check(
+            r#"
+import python "requests" as requests
+
+agent f() -> Bool:
+    return true
+"#,
+        );
+        assert!(
+            checked.errors.iter().any(|error| matches!(
+                &error.kind,
+                TypeErrorKind::EffectConstraintViolation { dimension, message, .. }
+                    if dimension == "effects" && message.contains("Python imports must declare")
+            )),
+            "got: {:?}",
+            checked.errors
+        );
+    }
+
+    #[test]
+    fn python_import_with_unsafe_effect_warns() {
+        let checked = check(
+            r#"
+import python "requests" as requests effects: unsafe
+
+agent f() -> Bool:
+    return true
+"#,
+        );
+        assert!(checked.errors.is_empty(), "got: {:?}", checked.errors);
+        assert!(
+            checked.warnings.iter().any(|warning| matches!(
+                &warning.kind,
+                TypeWarningKind::UnsafePythonImport { module, .. } if module == "requests"
+            )),
+            "got: {:?}",
+            checked.warnings
+        );
     }
 
     #[test]

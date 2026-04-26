@@ -1981,7 +1981,7 @@ agent main(id: String) -> Int:
 "#;
 
     const PYTHON_IMPORT_SRC: &str = r#"
-import python "math" as math
+import python "math" as math effects: unsafe
 
 agent main() -> Int:
     return 1

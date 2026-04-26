@@ -1229,7 +1229,7 @@ public type Surface:
         let root_dir = tmp.path();
 
         let main_src = "\
-import python \"anthropic\" as anthropic
+import python \"anthropic\" as anthropic effects: network
 
 agent foo(x: Int) -> Int:
     return x

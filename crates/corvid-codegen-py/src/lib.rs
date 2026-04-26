@@ -167,7 +167,7 @@ agent nop(id: String, amount: Float) -> Receipt:
 
     #[test]
     fn emits_import_passthrough() {
-        let src = r#"import python "anthropic" as ant"#;
+        let src = r#"import python "anthropic" as ant effects: network"#;
         let py = src_to_py(src);
         assert!(py.contains("import anthropic as ant"));
     }
@@ -233,7 +233,7 @@ agent calc(x: Int) -> Int:
     #[test]
     fn emits_full_refund_bot() {
         let src = r#"
-import python "anthropic" as anthropic
+import python "anthropic" as anthropic effects: network
 
 type Ticket:
     order_id: String
