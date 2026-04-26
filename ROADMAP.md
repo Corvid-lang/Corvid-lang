@@ -1565,7 +1565,8 @@ The determinism-source catalog and the language's treatment of non-reproducible 
 - `std.rag` remaining runtime pieces as one `std.ai` subdomain: sqlite-vec, chunking polish, and tighter grounding-by-construction APIs. Pairs with Phase 20's grounding-contract language half.
 - `std.rag` APIs return `Grounded<T>` by construction where retrieval provenance exists, but grounding is not limited to RAG; any tool/effect that proves provenance can produce `Grounded<T>`.
 - `std.http` — typed HTTP client with effect tags, retry semantics, timeout/budget accounting, and replay hooks where responses are recorded.
-- `std.io` — structured file I/O, streaming, path manipulation, and explicit filesystem effects.
+- [x] `std.io` path helpers in the runtime: join, parent, filename, extension, extension replacement, and lexical normalization.
+- `std.io` remaining runtime pieces: streaming surfaces and explicit filesystem-effect plumbing.
 - `std.agent` — common AI patterns: classification, extraction, summarization, ranking, adjudication, routing, planning, tool-use loops, approval-gated action, review/critique, and grounded answer generation.
 - Everything in `std.*` effect-tagged so users get the moat's benefits from day one.
 - `std.queue` — durable background jobs for long-running AI tasks, with retry, cancellation, replay hooks, budget accounting, and effect summaries.
