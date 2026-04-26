@@ -1458,7 +1458,7 @@ The determinism-source catalog and the language's treatment of non-reproducible 
 
 ---
 
-### Phase 28 — HITL expansion (~3 weeks)
+### Phase 28 — HITL expansion (~3 weeks) ✅ closed
 
 **Goal.** `ask`, `choose`, rich approval UI. Completes the human-in-the-loop surface.
 
