@@ -1,7 +1,9 @@
 use crate::errors::RuntimeError;
+use sha2::{Digest, Sha256};
+use serde::Serialize;
 use std::time::{Duration, Instant};
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct HttpHeader {
     pub name: String,
     pub value: String,
@@ -30,6 +32,7 @@ pub struct HttpRequest {
     pub body: Option<String>,
     pub timeout_ms: u64,
     pub retry: HttpRetryPolicy,
+    pub effect_tag: Option<String>,
 }
 
 impl HttpRequest {
@@ -41,6 +44,7 @@ impl HttpRequest {
             body: None,
             timeout_ms: 30_000,
             retry: HttpRetryPolicy::default(),
+            effect_tag: None,
         }
     }
 
@@ -55,6 +59,7 @@ impl HttpRequest {
             body: Some(body.into()),
             timeout_ms: 30_000,
             retry: HttpRetryPolicy::default(),
+            effect_tag: None,
         }
     }
 
@@ -75,6 +80,11 @@ impl HttpRequest {
         });
         self
     }
+
+    pub fn effect_tag(mut self, effect_tag: impl Into<String>) -> Self {
+        self.effect_tag = Some(effect_tag.into());
+        self
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -84,6 +94,17 @@ pub struct HttpResponse {
     pub body: String,
     pub attempts: u32,
     pub elapsed_ms: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RecordedHttpExchange {
+    pub request_fingerprint: String,
+    pub method: String,
+    pub url: String,
+    pub status: u16,
+    pub attempts: u32,
+    pub effect_tag: Option<String>,
+    pub response_body: String,
 }
 
 #[derive(Clone)]
@@ -148,6 +169,15 @@ impl HttpClient {
         })
     }
 
+    pub async fn send_recorded(
+        &self,
+        request: &HttpRequest,
+    ) -> Result<(HttpResponse, RecordedHttpExchange), RuntimeError> {
+        let response = self.send(request).await?;
+        let record = record_exchange(request, &response);
+        Ok((response, record))
+    }
+
     async fn send_once(
         &self,
         request: &HttpRequest,
@@ -189,6 +219,48 @@ fn response_headers(headers: &reqwest::header::HeaderMap) -> Vec<HttpHeader> {
 
 fn elapsed_ms(started: Instant) -> u64 {
     started.elapsed().as_millis().min(u128::from(u64::MAX)) as u64
+}
+
+pub fn record_exchange(request: &HttpRequest, response: &HttpResponse) -> RecordedHttpExchange {
+    RecordedHttpExchange {
+        request_fingerprint: request_fingerprint(request),
+        method: request.method.clone(),
+        url: request.url.clone(),
+        status: response.status,
+        attempts: response.attempts,
+        effect_tag: request.effect_tag.clone(),
+        response_body: response.body.clone(),
+    }
+}
+
+pub fn request_fingerprint(request: &HttpRequest) -> String {
+    let mut headers = request.headers.clone();
+    headers.sort_by(|left, right| left.name.cmp(&right.name).then(left.value.cmp(&right.value)));
+    let canonical = serde_json::json!({
+        "method": request.method,
+        "url": request.url,
+        "headers": headers,
+        "body": request.body,
+        "timeout_ms": request.timeout_ms,
+        "retry": {
+            "max_retries": request.retry.max_retries,
+            "retry_on_5xx": request.retry.retry_on_5xx,
+        },
+        "effect_tag": request.effect_tag,
+    });
+    let mut hasher = Sha256::new();
+    hasher.update(canonical.to_string().as_bytes());
+    encode_hex(&hasher.finalize())
+}
+
+fn encode_hex(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        out.push(HEX[(byte >> 4) as usize] as char);
+        out.push(HEX[(byte & 0x0f) as usize] as char);
+    }
+    out
 }
 
 #[cfg(test)]
@@ -244,5 +316,24 @@ mod tests {
         assert_eq!(response.status, 200);
         assert_eq!(response.body, "ok");
         assert_eq!(response.attempts, 2);
+    }
+
+    #[tokio::test]
+    async fn http_client_records_exchange_with_effect_tag() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/recorded"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("captured"))
+            .mount(&server)
+            .await;
+
+        let request = HttpRequest::get(format!("{}/recorded", server.uri())).effect_tag("network:http");
+        let (response, record) = HttpClient::new().send_recorded(&request).await.unwrap();
+
+        assert_eq!(response.status, 200);
+        assert_eq!(record.status, 200);
+        assert_eq!(record.effect_tag.as_deref(), Some("network:http"));
+        assert_eq!(record.response_body, "captured");
+        assert_eq!(record.request_fingerprint.len(), 64);
     }
 }

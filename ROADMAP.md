@@ -1564,7 +1564,7 @@ The determinism-source catalog and the language's treatment of non-reproducible 
 - [x] `std.rag` embedder trait with reference OpenAI + Ollama implementations.
 - `std.rag` remaining runtime pieces as one `std.ai` subdomain: sqlite-vec, chunking polish, and tighter grounding-by-construction APIs. Pairs with Phase 20's grounding-contract language half.
 - `std.rag` APIs return `Grounded<T>` by construction where retrieval provenance exists, but grounding is not limited to RAG; any tool/effect that proves provenance can produce `Grounded<T>`.
-- `std.http` — typed HTTP client with effect tags, retry semantics, timeout/budget accounting, and replay hooks where responses are recorded.
+- [x] `std.http` typed HTTP client with effect tags, retry semantics, timeout/budget accounting, and recorded replay-hook exchanges.
 - [x] `std.io` path helpers in the runtime: join, parent, filename, extension, extension replacement, and lexical normalization.
 - `std.io` remaining runtime pieces: streaming surfaces and explicit filesystem-effect plumbing.
 - [x] `std.agent` common AI patterns: classification, extraction, summarization, ranking, adjudication, routing, planning, tool-use loops, approval-gated action, review/critique, and grounded answer generation.
