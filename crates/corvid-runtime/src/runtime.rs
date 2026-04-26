@@ -14,6 +14,8 @@ use crate::human::{HumanChoiceRequest, HumanInputRequest, HumanInteractor, Stdin
 use crate::llm::{LlmAdapter, LlmRegistry, LlmRequest, LlmRequestRef, LlmResponse};
 use crate::models::{ModelCatalog, ModelSelection, RegisteredModel};
 use crate::prompt_cache::PromptCache;
+#[cfg(feature = "python")]
+use crate::python_ffi::PythonRuntime;
 use crate::record::Recorder;
 use crate::replay::{ReplayDifferentialReport, ReplayMutationReport, ReplaySource};
 use crate::store::{StoreKind, StoreManager, StorePolicySet, StoreRecord};
@@ -159,6 +161,47 @@ impl Runtime {
 
     pub fn stores(&self) -> &StoreManager {
         &self.stores
+    }
+
+    #[cfg(feature = "python")]
+    pub fn call_python_function(
+        &self,
+        module: &str,
+        function: &str,
+        args: Vec<serde_json::Value>,
+    ) -> Result<serde_json::Value, RuntimeError> {
+        self.emit_python_event(
+            "python.call",
+            serde_json::json!({
+                "module": module,
+                "function": function,
+                "args": args,
+            }),
+        );
+        match PythonRuntime::new().call_function(module, function, &args) {
+            Ok(value) => {
+                self.emit_python_event(
+                    "python.result",
+                    serde_json::json!({
+                        "module": module,
+                        "function": function,
+                        "result": value.clone(),
+                    }),
+                );
+                Ok(value)
+            }
+            Err(err) => {
+                self.emit_python_event(
+                    "python.error",
+                    serde_json::json!({
+                        "module": module,
+                        "function": function,
+                        "error": err.to_string(),
+                    }),
+                );
+                Err(err)
+            }
+        }
     }
 
     pub fn store_get(
@@ -342,6 +385,19 @@ impl Runtime {
                 "effect": if op == "get" { kind.read_effect() } else { kind.write_effect() },
                 "hit": value.is_some(),
             }),
+        });
+    }
+
+    #[cfg(feature = "python")]
+    fn emit_python_event(&self, name: &str, payload: serde_json::Value) {
+        if !self.tracer.is_enabled() {
+            return;
+        }
+        self.tracer.emit(TraceEvent::HostEvent {
+            ts_ms: now_ms(),
+            run_id: self.tracer.run_id().to_string(),
+            name: name.to_string(),
+            payload,
         });
     }
 
@@ -1397,6 +1453,60 @@ mod tests {
             }
             other => panic!("unexpected error: {other}"),
         }
+    }
+
+    #[cfg(feature = "python")]
+    #[test]
+    fn runtime_python_calls_emit_host_events() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let trace_path = dir.path().join("python.jsonl");
+        let runtime = Runtime::builder()
+            .tracer(Tracer::open_path(&trace_path, "python-run"))
+            .build();
+
+        let value = runtime
+            .call_python_function("math", "sqrt", vec![json!(16.0)])
+            .expect("python call");
+        assert_eq!(value, json!(4.0));
+
+        let events = corvid_trace_schema::read_events_from_path(&trace_path).unwrap();
+        assert!(events.iter().any(|event| matches!(
+            event,
+            TraceEvent::HostEvent { name, payload, .. }
+                if name == "python.call"
+                    && payload["module"] == "math"
+                    && payload["function"] == "sqrt"
+        )));
+        assert!(events.iter().any(|event| matches!(
+            event,
+            TraceEvent::HostEvent { name, payload, .. }
+                if name == "python.result" && payload["result"] == json!(4.0)
+        )));
+    }
+
+    #[cfg(feature = "python")]
+    #[test]
+    fn runtime_python_errors_emit_host_events() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let trace_path = dir.path().join("python-error.jsonl");
+        let runtime = Runtime::builder()
+            .tracer(Tracer::open_path(&trace_path, "python-error-run"))
+            .build();
+
+        let err = runtime
+            .call_python_function("math", "sqrt", vec![json!(-1.0)])
+            .expect_err("python error");
+        assert!(matches!(err, RuntimeError::PythonFailed { .. }));
+
+        let events = corvid_trace_schema::read_events_from_path(&trace_path).unwrap();
+        assert!(events.iter().any(|event| matches!(
+            event,
+            TraceEvent::HostEvent { name, payload, .. }
+                if name == "python.error"
+                    && payload["module"] == "math"
+                    && payload["function"] == "sqrt"
+                    && payload["error"].as_str().is_some_and(|error| error.contains("ValueError"))
+        )));
     }
 
     #[tokio::test]
