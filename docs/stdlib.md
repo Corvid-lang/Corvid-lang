@@ -114,3 +114,11 @@ adds document construction, markdown loading, deterministic chunking with
 per-chunk provenance keys, and OpenAI/Ollama embedder configuration envelopes.
 Chunks carry provenance metadata so retrieval results can compose with grounding,
 cache keys, replay, and audit trails.
+
+## `std.effects`
+
+`std/effects.cor` defines common effect metadata envelopes: effect tags, budget
+summaries, provenance keys, approval labels, cache keys, and replay keys. The
+module gives every `std.*` surface a shared vocabulary for carrying Corvid's
+effect, approval, budget, replay, cache, and provenance semantics through normal
+application values.

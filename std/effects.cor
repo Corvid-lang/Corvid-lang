@@ -1,0 +1,35 @@
+# Standard effect metadata envelopes.
+
+public type EffectTag:
+    name: String
+    capability: String
+    trust: String
+    data: String
+    replay_policy: String
+
+public type EffectBudget:
+    cost_usd: Float
+    latency_ms: Int
+    token_limit: Int
+
+public type EffectEnvelope:
+    effect_name: String
+    provenance_key: String
+    approval_label: String
+    cache_key: String
+    replay_key: String
+
+public agent effect_tag(name: String, capability: String, trust: String, data: String, replay_policy: String) -> EffectTag:
+    return EffectTag(name, capability, trust, data, replay_policy)
+
+public agent effect_budget(cost_usd: Float, latency_ms: Int, token_limit: Int) -> EffectBudget:
+    return EffectBudget(cost_usd, latency_ms, token_limit)
+
+public agent effect_envelope(effect_name: String, provenance_key: String, approval_label: String, cache_key: String, replay_key: String) -> EffectEnvelope:
+    return EffectEnvelope(effect_name, provenance_key, approval_label, cache_key, replay_key)
+
+public agent replay_safe(effect_meta: EffectEnvelope) -> Bool:
+    return effect_meta.replay_key != ""
+
+public agent approval_required(effect_meta: EffectEnvelope) -> Bool:
+    return effect_meta.approval_label != ""
