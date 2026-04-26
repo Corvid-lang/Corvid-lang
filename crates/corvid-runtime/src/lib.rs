@@ -51,6 +51,8 @@ mod native_trace;
 pub mod observation_handles;
 pub mod prompt_cache;
 pub mod provenance;
+#[cfg(feature = "python")]
+pub mod python_ffi;
 pub mod record;
 pub mod redact;
 pub mod replay;
@@ -118,6 +120,8 @@ pub use replay::{
     ReplayMutationReport, ReplaySource, RunCompletionDivergence, SubstitutionDivergence,
 };
 pub use runtime::{Runtime, RuntimeBuilder};
+#[cfg(feature = "python")]
+pub use python_ffi::PythonRuntime;
 pub use store::{
     InMemoryStoreBackend, SqliteStoreBackend, StoreBackend, StoreKind, StoreManager,
     StorePolicySet, StoreRecord,

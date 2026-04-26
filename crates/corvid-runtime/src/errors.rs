@@ -29,6 +29,13 @@ pub enum RuntimeError {
     /// An LLM adapter returned an error (HTTP, parse, etc.).
     AdapterFailed { adapter: String, message: String },
 
+    /// A Python FFI import/call failed.
+    PythonFailed {
+        module: String,
+        function: String,
+        traceback: String,
+    },
+
     /// Approval was denied (user said no, programmatic approver returned deny).
     ApprovalDenied { action: String },
 
@@ -124,6 +131,13 @@ impl fmt::Display for RuntimeError {
             }
             Self::AdapterFailed { adapter, message } => {
                 write!(f, "LLM adapter `{adapter}` failed: {message}")
+            }
+            Self::PythonFailed {
+                module,
+                function,
+                traceback,
+            } => {
+                write!(f, "python call `{module}.{function}` failed: {traceback}")
             }
             Self::ApprovalDenied { action } => {
                 write!(f, "approval denied for `{action}`")
