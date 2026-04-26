@@ -1571,8 +1571,8 @@ The determinism-source catalog and the language's treatment of non-reproducible 
 - Everything in `std.*` effect-tagged so users get the moat's benefits from day one.
 - [x] `std.queue` durable background jobs for long-running AI tasks, with retry, cancellation, replay hooks, budget accounting, and effect summaries.
 - [x] `std.cache` prompt/model/tool-result caching with replay-safe invalidation, provenance preservation, and effect-aware cache keys.
-- `std.secrets` — explicit secret access APIs whose reads compose into the effect system and are visible to audits without leaking secret values.
-- `std.observe` — metrics, trace counters, cost counters, latency histograms, routing decisions, and approval summaries exposed through one typed observability surface.
+- [x] `std.secrets` explicit secret access APIs with redacted audit metadata surfaces that avoid leaking secret values.
+- [x] `std.observe` metrics, trace counters, cost counters, latency histograms, routing decisions, and approval summaries exposed through one typed observability surface.
 
 **v0.9 cuts here.** Language feature-complete: HITL, memory, Python FFI, multi-provider LLMs, stdlib. Only polish remaining.
 

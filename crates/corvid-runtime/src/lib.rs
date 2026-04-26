@@ -132,8 +132,9 @@ pub use llm::{
 };
 pub use models::{ModelCatalog, ModelSelection, RegisteredModel};
 pub use observe::{
-    provider_observations, runtime_observation_summary, ProviderObservation,
-    RuntimeObservationSummary,
+    approval_summary, latency_histogram, provider_observations, route_summaries,
+    runtime_observation_summary, ApprovalObservationSummary, LatencyObservation,
+    ProviderObservation, RouteObservationSummary, RuntimeObservationSummary,
 };
 pub use provenance::{ProvenanceChain, ProvenanceEntry, ProvenanceKind};
 pub use queue::{DurableQueueRuntime, QueueJob, QueueJobStatus, QueueRuntime};
@@ -149,7 +150,7 @@ pub use replay::{
     ReplayMutationReport, ReplaySource, RunCompletionDivergence, SubstitutionDivergence,
 };
 pub use runtime::{Runtime, RuntimeBuilder};
-pub use secrets::{SecretRead, SecretRuntime};
+pub use secrets::{SecretAuditMetadata, SecretRead, SecretRuntime};
 #[cfg(feature = "python")]
 pub use python_ffi::{PythonRuntime, PythonSandboxProfile};
 pub use store::{

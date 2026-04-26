@@ -7,6 +7,14 @@ pub struct SecretRead {
     pub value: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SecretAuditMetadata {
+    pub name: String,
+    pub present: bool,
+    pub source: String,
+    pub redacted_value: Option<String>,
+}
+
 #[derive(Clone, Default)]
 pub struct SecretRuntime;
 
@@ -40,6 +48,30 @@ impl SecretRuntime {
             }),
         }
     }
+
+    pub fn audit_metadata(&self, read: &SecretRead) -> SecretAuditMetadata {
+        SecretAuditMetadata {
+            name: read.name.clone(),
+            present: read.present,
+            source: "env".to_string(),
+            redacted_value: read.value.as_ref().map(|value| redact_secret(value)),
+        }
+    }
+}
+
+fn redact_secret(value: &str) -> String {
+    if value.is_empty() {
+        return "<redacted>".to_string();
+    }
+    let suffix: String = value
+        .chars()
+        .rev()
+        .take(2)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect();
+    format!("<redacted:{}>", suffix)
 }
 
 #[cfg(test)]
@@ -53,9 +85,13 @@ mod tests {
         let present = runtime.read_env("CORVID_TEST_SECRET_RUNTIME").unwrap();
         assert!(present.present);
         assert_eq!(present.value.as_deref(), Some("secret-value"));
+        let audit = runtime.audit_metadata(&present);
+        assert_eq!(audit.source, "env");
+        assert_eq!(audit.redacted_value.as_deref(), Some("<redacted:ue>"));
 
         let missing = runtime.read_env("CORVID_TEST_SECRET_RUNTIME_MISSING").unwrap();
         assert!(!missing.present);
         assert_eq!(missing.value, None);
+        assert_eq!(runtime.audit_metadata(&missing).redacted_value, None);
     }
 }
