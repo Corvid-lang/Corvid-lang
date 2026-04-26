@@ -644,6 +644,10 @@ fn event_ts_ms(event: &TraceEvent) -> u64 {
         | TraceEvent::ApprovalRequest { ts_ms, .. }
         | TraceEvent::ApprovalDecision { ts_ms, .. }
         | TraceEvent::ApprovalResponse { ts_ms, .. }
+        | TraceEvent::HumanInputRequest { ts_ms, .. }
+        | TraceEvent::HumanInputResponse { ts_ms, .. }
+        | TraceEvent::HumanChoiceRequest { ts_ms, .. }
+        | TraceEvent::HumanChoiceResponse { ts_ms, .. }
         | TraceEvent::HostEvent { ts_ms, .. }
         | TraceEvent::SeedRead { ts_ms, .. }
         | TraceEvent::ClockRead { ts_ms, .. }

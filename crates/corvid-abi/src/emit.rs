@@ -39,8 +39,16 @@ pub fn emit_abi(
         .into_iter()
         .map(|summary| (summary.agent_def_id, summary))
         .collect::<HashMap<_, _>>();
-    let prompt_map = ir.prompts.iter().map(|prompt| (prompt.id, prompt)).collect::<HashMap<_, _>>();
-    let agent_map = ir.agents.iter().map(|agent| (agent.id, agent)).collect::<HashMap<_, _>>();
+    let prompt_map = ir
+        .prompts
+        .iter()
+        .map(|prompt| (prompt.id, prompt))
+        .collect::<HashMap<_, _>>();
+    let agent_map = ir
+        .agents
+        .iter()
+        .map(|agent| (agent.id, agent))
+        .collect::<HashMap<_, _>>();
     let ast_prompts = file
         .decls
         .iter()
@@ -64,13 +72,30 @@ pub fn emit_abi(
         .agents
         .iter()
         .filter(|agent| exported_agent_ids.contains(&agent.id))
-        .map(|agent| emit_agent(agent, file, resolved, registry, &summaries, &prompt_map, opts))
+        .map(|agent| {
+            emit_agent(
+                agent,
+                file,
+                resolved,
+                registry,
+                &summaries,
+                &prompt_map,
+                opts,
+            )
+        })
         .collect();
 
     let prompts = ir
         .prompts
         .iter()
-        .map(|prompt| emit_prompt(prompt, resolved, registry, ast_prompts.get(&prompt.name).copied()))
+        .map(|prompt| {
+            emit_prompt(
+                prompt,
+                resolved,
+                registry,
+                ast_prompts.get(&prompt.name).copied(),
+            )
+        })
         .collect();
 
     let tools = ir
@@ -79,18 +104,22 @@ pub fn emit_abi(
         .map(|tool| emit_tool(tool, resolved, registry, tool_map.get(&tool.name).copied()))
         .collect();
 
-    let types = ir.types.iter().map(|ty| AbiTypeDecl {
-        name: ty.name.clone(),
-        kind: "struct".to_string(),
-        fields: ty
-            .fields
-            .iter()
-            .map(|field| AbiField {
-                name: field.name.clone(),
-                r#type: emit_type_description(&field.ty, resolved),
-            })
-            .collect(),
-    }).collect();
+    let types = ir
+        .types
+        .iter()
+        .map(|ty| AbiTypeDecl {
+            name: ty.name.clone(),
+            kind: "struct".to_string(),
+            fields: ty
+                .fields
+                .iter()
+                .map(|field| AbiField {
+                    name: field.name.clone(),
+                    r#type: emit_type_description(&field.ty, resolved),
+                })
+                .collect(),
+        })
+        .collect();
 
     let approval_sites = collect_all_approval_sites(file, resolved, registry);
 
@@ -135,22 +164,36 @@ pub(crate) fn resolve_typeref_to_type(ty: &TypeRef, resolved: &Resolved) -> Type
         // span so the user sees precise feedback.
         TypeRef::Qualified { .. } => Type::Unknown,
         TypeRef::Generic { name, args, .. } => match name.name.as_str() {
-            "List" | "Stream" if args.len() == 1 => Type::List(Box::new(resolve_typeref_to_type(&args[0], resolved))),
-            "Option" if args.len() == 1 => Type::Option(Box::new(resolve_typeref_to_type(&args[0], resolved))),
-            "Grounded" if args.len() == 1 => Type::Grounded(Box::new(resolve_typeref_to_type(&args[0], resolved))),
-            "Partial" if args.len() == 1 => Type::Partial(Box::new(resolve_typeref_to_type(&args[0], resolved))),
-            "ResumeToken" if args.len() == 1 => Type::ResumeToken(Box::new(resolve_typeref_to_type(&args[0], resolved))),
+            "List" | "Stream" if args.len() == 1 => {
+                Type::List(Box::new(resolve_typeref_to_type(&args[0], resolved)))
+            }
+            "Option" if args.len() == 1 => {
+                Type::Option(Box::new(resolve_typeref_to_type(&args[0], resolved)))
+            }
+            "Grounded" if args.len() == 1 => {
+                Type::Grounded(Box::new(resolve_typeref_to_type(&args[0], resolved)))
+            }
+            "Partial" if args.len() == 1 => {
+                Type::Partial(Box::new(resolve_typeref_to_type(&args[0], resolved)))
+            }
+            "ResumeToken" if args.len() == 1 => {
+                Type::ResumeToken(Box::new(resolve_typeref_to_type(&args[0], resolved)))
+            }
             "Result" if args.len() == 2 => Type::Result(
                 Box::new(resolve_typeref_to_type(&args[0], resolved)),
                 Box::new(resolve_typeref_to_type(&args[1], resolved)),
             ),
             _ => Type::Unknown,
         },
-        TypeRef::Weak { inner, effects, .. } => {
-            Type::Weak(Box::new(resolve_typeref_to_type(inner, resolved)), effects.unwrap_or_else(WeakEffectRow::any))
-        }
+        TypeRef::Weak { inner, effects, .. } => Type::Weak(
+            Box::new(resolve_typeref_to_type(inner, resolved)),
+            effects.unwrap_or_else(WeakEffectRow::any),
+        ),
         TypeRef::Function { params, ret, .. } => Type::Function {
-            params: params.iter().map(|param| resolve_typeref_to_type(param, resolved)).collect(),
+            params: params
+                .iter()
+                .map(|param| resolve_typeref_to_type(param, resolved))
+                .collect(),
             ret: Box::new(resolve_typeref_to_type(ret, resolved)),
             effect: corvid_ast::Effect::Safe,
         },
@@ -166,20 +209,26 @@ fn emit_agent(
     prompt_map: &HashMap<corvid_resolve::DefId, &IrPrompt>,
     opts: &EmitOptions<'_>,
 ) -> AbiAgent {
-    let ast_agent = file.decls.iter().find_map(|decl| match decl {
-        Decl::Agent(ast_agent) if ast_agent.name.name == agent.name => Some(ast_agent),
-        _ => None,
-    }).expect("agent present in AST");
+    let ast_agent = file
+        .decls
+        .iter()
+        .find_map(|decl| match decl {
+            Decl::Agent(ast_agent) if ast_agent.name.name == agent.name => Some(ast_agent),
+            _ => None,
+        })
+        .expect("agent present in AST");
     let summary = summaries.get(&agent.id);
     let approval = analyze_agent_approval_contract(file, resolved, registry, ast_agent);
     let effects = summary
         .map(|summary| emit_effects_from_composed(&summary.composed))
         .unwrap_or_default();
-    let required_capability = summary
-        .and_then(|summary| match summary.composed.dimensions.get("capability") {
-            Some(DimensionValue::Name(value)) => Some(value.clone()),
-            _ => None,
-        });
+    let required_capability =
+        summary.and_then(
+            |summary| match summary.composed.dimensions.get("capability") {
+                Some(DimensionValue::Name(value)) => Some(value.clone()),
+                _ => None,
+            },
+        );
     let declared_return_ty = resolve_typeref_to_type(&ast_agent.return_ty, resolved);
     AbiAgent {
         name: agent.name.clone(),
@@ -193,7 +242,11 @@ fn emit_agent(
                 name: param.name.name.clone(),
                 ty: emit_type_description(&resolve_typeref_to_type(&param.ty, resolved), resolved),
                 ownership: if ast_agent.extern_abi.is_some() {
-                    Some(emit_param_ownership(&param.ty, param.ownership.as_ref(), resolved))
+                    Some(emit_param_ownership(
+                        &param.ty,
+                        param.ownership.as_ref(),
+                        resolved,
+                    ))
                 } else {
                     None
                 },
@@ -260,7 +313,12 @@ fn emit_prompt(
                     .collect()
             }),
         return_type: ast_prompt
-            .map(|prompt| emit_type_description(&resolve_typeref_to_type(&prompt.return_ty, resolved), resolved))
+            .map(|prompt| {
+                emit_type_description(
+                    &resolve_typeref_to_type(&prompt.return_ty, resolved),
+                    resolved,
+                )
+            })
             .unwrap_or_else(|| emit_type_description(&prompt.return_ty, resolved)),
         effects: emit_effects_from_effect_names(&prompt.effect_names, registry),
         required_capability: prompt.capability_required.clone(),
@@ -307,8 +365,7 @@ fn emit_tool(
                     .collect()
             })
             .unwrap_or_else(|| {
-                tool
-                    .params
+                tool.params
                     .iter()
                     .map(|param| AbiParam {
                         name: param.name.clone(),
@@ -318,20 +375,31 @@ fn emit_tool(
                     .collect()
             }),
         return_type: ast_tool
-            .map(|tool_decl| emit_type_description(&resolve_typeref_to_type(&tool_decl.return_ty, resolved), resolved))
+            .map(|tool_decl| {
+                emit_type_description(
+                    &resolve_typeref_to_type(&tool_decl.return_ty, resolved),
+                    resolved,
+                )
+            })
             .unwrap_or_else(|| emit_type_description(&tool.return_ty, resolved)),
         effects: emit_effects_from_effect_names(&tool.effect_names, registry),
-        dangerous: ast_tool.map(|tool| tool.effect == corvid_ast::Effect::Dangerous).unwrap_or(false),
+        dangerous: ast_tool
+            .map(|tool| tool.effect == corvid_ast::Effect::Dangerous)
+            .unwrap_or(false),
     }
 }
 
 fn emit_prompt_dispatch(prompt: &IrPrompt) -> Option<AbiDispatch> {
     if !prompt.progressive.is_empty() {
         return Some(AbiDispatch::Progressive {
-            stages: prompt.progressive.iter().map(|stage| AbiProgressiveStage {
-                model_requires: stage.model_name.clone(),
-                escalate_below_confidence: stage.threshold,
-            }).collect(),
+            stages: prompt
+                .progressive
+                .iter()
+                .map(|stage| AbiProgressiveStage {
+                    model_requires: stage.model_name.clone(),
+                    escalate_below_confidence: stage.threshold,
+                })
+                .collect(),
         });
     }
     if let Some(rollout) = &prompt.rollout {
@@ -343,7 +411,11 @@ fn emit_prompt_dispatch(prompt: &IrPrompt) -> Option<AbiDispatch> {
     }
     if let Some(ensemble) = &prompt.ensemble {
         return Some(AbiDispatch::Ensemble {
-            models: ensemble.models.iter().map(|model| model.name.clone()).collect(),
+            models: ensemble
+                .models
+                .iter()
+                .map(|model| model.name.clone())
+                .collect(),
             vote_strategy: match ensemble.vote {
                 IrVoteStrategy::Majority => "majority".into(),
             },
@@ -358,13 +430,17 @@ fn emit_prompt_dispatch(prompt: &IrPrompt) -> Option<AbiDispatch> {
     }
     if !prompt.route.is_empty() {
         return Some(AbiDispatch::Route {
-            route_arms: prompt.route.iter().map(|arm| AbiRouteArm {
-                model: arm.model_name.clone(),
-                matcher: match &arm.pattern {
-                    IrRoutePattern::Wildcard => "_".into(),
-                    IrRoutePattern::Guard(_) => "guard".into(),
-                },
-            }).collect(),
+            route_arms: prompt
+                .route
+                .iter()
+                .map(|arm| AbiRouteArm {
+                    model: arm.model_name.clone(),
+                    matcher: match &arm.pattern {
+                        IrRoutePattern::Wildcard => "_".into(),
+                        IrRoutePattern::Guard(_) => "guard".into(),
+                    },
+                })
+                .collect(),
         });
     }
     None
@@ -412,8 +488,12 @@ fn collect_called_agents_from_block(
         match stmt {
             corvid_ir::IrStmt::Let { value, .. }
             | corvid_ir::IrStmt::Expr { expr: value, .. }
-            | corvid_ir::IrStmt::Return { value: Some(value), .. }
-            | corvid_ir::IrStmt::Yield { value, .. } => collect_called_agents_from_expr(value, stack),
+            | corvid_ir::IrStmt::Return {
+                value: Some(value), ..
+            }
+            | corvid_ir::IrStmt::Yield { value, .. } => {
+                collect_called_agents_from_expr(value, stack)
+            }
             corvid_ir::IrStmt::If {
                 cond,
                 then_block,
@@ -435,10 +515,7 @@ fn collect_called_agents_from_block(
     }
 }
 
-fn collect_called_agents_from_expr(
-    expr: &IrExpr,
-    stack: &mut Vec<corvid_resolve::DefId>,
-) {
+fn collect_called_agents_from_expr(expr: &IrExpr, stack: &mut Vec<corvid_resolve::DefId>) {
     match &expr.kind {
         IrExprKind::Call { kind, args, .. } => {
             if let IrCallKind::Agent { def_id } = kind {
@@ -450,8 +527,12 @@ fn collect_called_agents_from_expr(
         }
         IrExprKind::FieldAccess { target, .. }
         | IrExprKind::UnwrapGrounded { value: target }
-        | IrExprKind::UnOp { operand: target, .. }
-        | IrExprKind::WrappingUnOp { operand: target, .. }
+        | IrExprKind::UnOp {
+            operand: target, ..
+        }
+        | IrExprKind::WrappingUnOp {
+            operand: target, ..
+        }
         | IrExprKind::WeakNew { strong: target }
         | IrExprKind::WeakUpgrade { weak: target }
         | IrExprKind::StreamSplitBy { stream: target, .. }
@@ -462,10 +543,22 @@ fn collect_called_agents_from_expr(
         | IrExprKind::ResultOk { inner: target }
         | IrExprKind::ResultErr { inner: target }
         | IrExprKind::OptionSome { inner: target }
-        | IrExprKind::TryPropagate { inner: target } => collect_called_agents_from_expr(target, stack),
+        | IrExprKind::Ask { prompt: target, .. }
+        | IrExprKind::Choose { options: target }
+        | IrExprKind::TryPropagate { inner: target } => {
+            collect_called_agents_from_expr(target, stack)
+        }
         IrExprKind::Index { target, index }
-        | IrExprKind::BinOp { left: target, right: index, .. }
-        | IrExprKind::WrappingBinOp { left: target, right: index, .. } => {
+        | IrExprKind::BinOp {
+            left: target,
+            right: index,
+            ..
+        }
+        | IrExprKind::WrappingBinOp {
+            left: target,
+            right: index,
+            ..
+        } => {
             collect_called_agents_from_expr(target, stack);
             collect_called_agents_from_expr(index, stack);
         }
@@ -475,7 +568,11 @@ fn collect_called_agents_from_expr(
             }
         }
         IrExprKind::TryRetry { body, .. } => collect_called_agents_from_expr(body, stack),
-        IrExprKind::Replay { trace, arms, else_body } => {
+        IrExprKind::Replay {
+            trace,
+            arms,
+            else_body,
+        } => {
             collect_called_agents_from_expr(trace, stack);
             for arm in arms {
                 collect_called_agents_from_expr(&arm.body, stack);
@@ -498,8 +595,12 @@ fn walk_ir_block_for_prompt(
         match stmt {
             corvid_ir::IrStmt::Let { value, .. }
             | corvid_ir::IrStmt::Expr { expr: value, .. }
-            | corvid_ir::IrStmt::Return { value: Some(value), .. }
-            | corvid_ir::IrStmt::Yield { value, .. } => walk_ir_expr_for_prompt(value, prompt_map, found),
+            | corvid_ir::IrStmt::Return {
+                value: Some(value), ..
+            }
+            | corvid_ir::IrStmt::Yield { value, .. } => {
+                walk_ir_expr_for_prompt(value, prompt_map, found)
+            }
             corvid_ir::IrStmt::If {
                 cond,
                 then_block,
@@ -548,8 +649,12 @@ fn walk_ir_expr_for_prompt(
         }
         IrExprKind::FieldAccess { target, .. }
         | IrExprKind::UnwrapGrounded { value: target }
-        | IrExprKind::UnOp { operand: target, .. }
-        | IrExprKind::WrappingUnOp { operand: target, .. }
+        | IrExprKind::UnOp {
+            operand: target, ..
+        }
+        | IrExprKind::WrappingUnOp {
+            operand: target, ..
+        }
         | IrExprKind::WeakNew { strong: target }
         | IrExprKind::WeakUpgrade { weak: target }
         | IrExprKind::StreamSplitBy { stream: target, .. }
@@ -560,10 +665,22 @@ fn walk_ir_expr_for_prompt(
         | IrExprKind::ResultOk { inner: target }
         | IrExprKind::ResultErr { inner: target }
         | IrExprKind::OptionSome { inner: target }
-        | IrExprKind::TryPropagate { inner: target } => walk_ir_expr_for_prompt(target, prompt_map, found),
+        | IrExprKind::Ask { prompt: target, .. }
+        | IrExprKind::Choose { options: target }
+        | IrExprKind::TryPropagate { inner: target } => {
+            walk_ir_expr_for_prompt(target, prompt_map, found)
+        }
         IrExprKind::Index { target, index }
-        | IrExprKind::BinOp { left: target, right: index, .. }
-        | IrExprKind::WrappingBinOp { left: target, right: index, .. } => {
+        | IrExprKind::BinOp {
+            left: target,
+            right: index,
+            ..
+        }
+        | IrExprKind::WrappingBinOp {
+            left: target,
+            right: index,
+            ..
+        } => {
             walk_ir_expr_for_prompt(target, prompt_map, found);
             walk_ir_expr_for_prompt(index, prompt_map, found);
         }
@@ -573,7 +690,11 @@ fn walk_ir_expr_for_prompt(
             }
         }
         IrExprKind::TryRetry { body, .. } => walk_ir_expr_for_prompt(body, prompt_map, found),
-        IrExprKind::Replay { trace, arms, else_body } => {
+        IrExprKind::Replay {
+            trace,
+            arms,
+            else_body,
+        } => {
             walk_ir_expr_for_prompt(trace, prompt_map, found);
             for arm in arms {
                 walk_ir_expr_for_prompt(&arm.body, prompt_map, found);
@@ -591,8 +712,12 @@ fn extract_budget(constraints: &[corvid_ast::EffectConstraint]) -> Option<AbiBud
     constraints.iter().find_map(|constraint| {
         if constraint.dimension.name == "budget" || constraint.dimension.name == "cost" {
             match &constraint.value {
-                Some(DimensionValue::Cost(value)) => Some(AbiBudget { usd_per_call: *value }),
-                Some(DimensionValue::Number(value)) => Some(AbiBudget { usd_per_call: *value }),
+                Some(DimensionValue::Cost(value)) => Some(AbiBudget {
+                    usd_per_call: *value,
+                }),
+                Some(DimensionValue::Number(value)) => Some(AbiBudget {
+                    usd_per_call: *value,
+                }),
                 _ => None,
             }
         } else {

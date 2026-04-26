@@ -22,10 +22,7 @@ fn stmt_uses_runtime(stmt: &IrStmt) -> bool {
         } => {
             expr_uses_runtime(cond)
                 || block_uses_runtime(then_block)
-                || else_block
-                    .as_ref()
-                    .map(block_uses_runtime)
-                    .unwrap_or(false)
+                || else_block.as_ref().map(block_uses_runtime).unwrap_or(false)
         }
         IrStmt::For { iter, body, .. } => expr_uses_runtime(iter) || block_uses_runtime(body),
         IrStmt::Approve { .. } => true,
@@ -50,12 +47,12 @@ fn expr_uses_runtime(expr: &IrExpr) -> bool {
         IrExprKind::Index { target, index } => {
             expr_uses_runtime(target) || expr_uses_runtime(index)
         }
-        IrExprKind::BinOp { left, right, .. }
-        | IrExprKind::WrappingBinOp { left, right, .. } => {
+        IrExprKind::BinOp { left, right, .. } | IrExprKind::WrappingBinOp { left, right, .. } => {
             expr_uses_runtime(left) || expr_uses_runtime(right)
         }
-        IrExprKind::UnOp { operand, .. }
-        | IrExprKind::WrappingUnOp { operand, .. } => expr_uses_runtime(operand),
+        IrExprKind::UnOp { operand, .. } | IrExprKind::WrappingUnOp { operand, .. } => {
+            expr_uses_runtime(operand)
+        }
         IrExprKind::List { items } => items.iter().any(expr_uses_runtime),
         // Result/Option IR variants recurse into sub-expressions. The
         // wrappers themselves don't use the async runtime, but a
@@ -70,10 +67,16 @@ fn expr_uses_runtime(expr: &IrExpr) -> bool {
         | IrExprKind::ResultOk { inner }
         | IrExprKind::ResultErr { inner }
         | IrExprKind::OptionSome { inner }
+        | IrExprKind::Ask { prompt: inner, .. }
+        | IrExprKind::Choose { options: inner }
         | IrExprKind::TryPropagate { inner } => expr_uses_runtime(inner),
         IrExprKind::OptionNone => false,
         IrExprKind::TryRetry { body, .. } => expr_uses_runtime(body),
-        IrExprKind::Replay { trace, arms, else_body } => {
+        IrExprKind::Replay {
+            trace,
+            arms,
+            else_body,
+        } => {
             // Replay dispatch itself reads a trace via the runtime,
             // so ANY replay expression needs the async bridge even
             // if every arm body is pure. Short-circuit to true.
@@ -127,14 +130,16 @@ pub(super) fn emit_entry_main(
     sig.returns.push(AbiParam::new(I32));
     let main_id = module
         .declare_function("main", Linkage::Export, &sig)
-        .map_err(|e| {
-            CodegenError::cranelift(format!("declare main: {e}"), entry_agent.span)
-        })?;
+        .map_err(|e| CodegenError::cranelift(format!("declare main: {e}"), entry_agent.span))?;
 
     let mut ctx = Context::new();
     ctx.func = Function::with_name_signature(
         UserFuncName::user(0, main_id.as_u32()),
-        module.declarations().get_function_decl(main_id).signature.clone(),
+        module
+            .declarations()
+            .get_function_decl(main_id)
+            .signature
+            .clone(),
     );
 
     let mut bctx = FunctionBuilderContext::new();
@@ -159,8 +164,7 @@ pub(super) fn emit_entry_main(
         // is LIFO), so any refcount activity from the runtime settles
         // before the counter prints ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â that's the intended ordering.
         if uses_runtime {
-            let rt_init_ref =
-                module.declare_func_in_func(runtime.runtime_init, builder.func);
+            let rt_init_ref = module.declare_func_in_func(runtime.runtime_init, builder.func);
             builder.ins().call(rt_init_ref, &[]);
 
             // Register corvid_runtime_shutdown via libc atexit. atexit
@@ -172,14 +176,10 @@ pub(super) fn emit_entry_main(
             let atexit_id = module
                 .declare_function("atexit", Linkage::Import, &atexit_sig)
                 .map_err(|e| {
-                    CodegenError::cranelift(
-                        format!("declare atexit: {e}"),
-                        entry_agent.span,
-                    )
+                    CodegenError::cranelift(format!("declare atexit: {e}"), entry_agent.span)
                 })?;
             let atexit_ref = module.declare_func_in_func(atexit_id, builder.func);
-            let shutdown_ref =
-                module.declare_func_in_func(runtime.runtime_shutdown, builder.func);
+            let shutdown_ref = module.declare_func_in_func(runtime.runtime_shutdown, builder.func);
             let shutdown_addr = builder.ins().func_addr(I64, shutdown_ref);
             builder.ins().call(atexit_ref, &[shutdown_addr]);
         }
@@ -196,8 +196,7 @@ pub(super) fn emit_entry_main(
         // mismatch path: call the helper, trap (it never returns).
         builder.switch_to_block(mismatch_b);
         builder.seal_block(mismatch_b);
-        let arity_ref =
-            module.declare_func_in_func(runtime.entry_arity_mismatch, builder.func);
+        let arity_ref = module.declare_func_in_func(runtime.entry_arity_mismatch, builder.func);
         let expected_const = builder.ins().iconst(I64, n_params);
         let got = builder.ins().iadd_imm(argc_i64, -1);
         builder.ins().call(arity_ref, &[expected_const, got]);
@@ -221,26 +220,22 @@ pub(super) fn emit_entry_main(
             let argv_index = builder.ins().iconst(I64, (i as i64) + 1);
             let value = match &p.ty {
                 Type::Int => {
-                    let r =
-                        module.declare_func_in_func(runtime.parse_i64, builder.func);
+                    let r = module.declare_func_in_func(runtime.parse_i64, builder.func);
                     let c = builder.ins().call(r, &[cstr, argv_index]);
                     builder.inst_results(c)[0]
                 }
                 Type::Float => {
-                    let r =
-                        module.declare_func_in_func(runtime.parse_f64, builder.func);
+                    let r = module.declare_func_in_func(runtime.parse_f64, builder.func);
                     let c = builder.ins().call(r, &[cstr, argv_index]);
                     builder.inst_results(c)[0]
                 }
                 Type::Bool => {
-                    let r =
-                        module.declare_func_in_func(runtime.parse_bool, builder.func);
+                    let r = module.declare_func_in_func(runtime.parse_bool, builder.func);
                     let c = builder.ins().call(r, &[cstr, argv_index]);
                     builder.inst_results(c)[0]
                 }
                 Type::String => {
-                    let r = module
-                        .declare_func_in_func(runtime.string_from_cstr, builder.func);
+                    let r = module.declare_func_in_func(runtime.string_from_cstr, builder.func);
                     let c = builder.ins().call(r, &[cstr]);
                     builder.inst_results(c)[0]
                 }
@@ -264,8 +259,7 @@ pub(super) fn emit_entry_main(
         let entry_ref = module.declare_func_in_func(entry_func_id, builder.func);
         let bench_enabled_ref =
             module.declare_func_in_func(runtime.bench_server_enabled, builder.func);
-        let bench_next_ref =
-            module.declare_func_in_func(runtime.bench_next_trial, builder.func);
+        let bench_next_ref = module.declare_func_in_func(runtime.bench_next_trial, builder.func);
         let bench_finish_ref =
             module.declare_func_in_func(runtime.bench_finish_trial, builder.func);
 
@@ -309,8 +303,13 @@ pub(super) fn emit_entry_main(
         builder.switch_to_block(normal_call_b);
         builder.seal_block(normal_call_b);
         if uses_runtime {
-            let entry_name_val =
-                emit_string_const(&mut builder, module, runtime, &entry_agent.name, entry_agent.span)?;
+            let entry_name_val = emit_string_const(
+                &mut builder,
+                module,
+                runtime,
+                &entry_agent.name,
+                entry_agent.span,
+            )?;
             let entry_arg_tys = entry_agent
                 .params
                 .iter()
@@ -388,14 +387,7 @@ pub(super) fn emit_entry_main(
         builder.finalize();
     }
 
-    define_function_with_stack_maps(
-        module,
-        main_id,
-        &mut ctx,
-        runtime,
-        entry_agent.span,
-        "main",
-    )?;
+    define_function_with_stack_maps(module, main_id, &mut ctx, runtime, entry_agent.span, "main")?;
     Ok(())
 }
 
@@ -403,11 +395,7 @@ pub(super) fn emit_entry_main(
 /// command-line / stdout boundary. Struct and List need a
 /// dedicated serialization layer; Nothing isn't a sensible
 /// CLI value either.
-fn check_entry_boundary_type(
-    ty: &Type,
-    span: Span,
-    role: &str,
-) -> Result<(), CodegenError> {
+fn check_entry_boundary_type(ty: &Type, span: Span, role: &str) -> Result<(), CodegenError> {
     match ty {
         Type::Int | Type::Bool | Type::Float | Type::String => Ok(()),
         Type::Struct(_) | Type::ImportedStruct(_) | Type::List(_) | Type::Nothing
@@ -468,4 +456,3 @@ fn emit_entry_result_print(
         _ => unreachable!("boundary check rejected non-printable returns"),
     }
 }
-

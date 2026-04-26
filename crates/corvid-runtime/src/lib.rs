@@ -31,19 +31,20 @@
 
 pub mod abi;
 pub mod adversarial;
-pub(crate) mod attestation_store;
-pub mod calibration;
 pub mod approvals;
 pub mod approver_bridge;
+pub(crate) mod attestation_store;
+pub mod calibration;
 pub mod catalog;
 pub mod catalog_c_api;
 pub mod citation;
 pub mod effect_filter;
-pub mod grounded_handles;
 pub mod ensemble;
 pub mod env;
 pub mod errors;
 pub mod ffi_bridge;
+pub mod grounded_handles;
+pub mod human;
 pub mod llm;
 pub mod models;
 mod native_trace;
@@ -51,9 +52,9 @@ pub mod observation_handles;
 pub mod prompt_cache;
 pub mod provenance;
 pub mod record;
+pub mod redact;
 pub mod replay;
 pub mod replay_dispatch;
-pub mod redact;
 pub mod runtime;
 pub mod test_from_traces;
 pub mod tools;
@@ -66,8 +67,8 @@ pub mod tracing;
 pub use abi::{
     registered_tool_count, CorvidGroundedBoolReturn, CorvidGroundedFloatReturn,
     CorvidGroundedHandle, CorvidGroundedIntReturn, CorvidGroundedStringReturn,
-    CorvidObservationHandle, CorvidString, CORVID_NULL_GROUNDED_HANDLE,
-    CORVID_NULL_OBSERVATION_HANDLE, ToolMetadata,
+    CorvidObservationHandle, CorvidString, ToolMetadata, CORVID_NULL_GROUNDED_HANDLE,
+    CORVID_NULL_OBSERVATION_HANDLE,
 };
 pub use inventory;
 
@@ -80,6 +81,7 @@ pub mod c_runtime {
     include!(concat!(env!("OUT_DIR"), "/c_runtime_path.rs"));
 }
 
+pub use adversarial::{contradiction_flag, trace_text};
 pub use approvals::{
     ApprovalCard, ApprovalCardArgument, ApprovalDecision, ApprovalRequest, ApprovalRisk, Approver,
     ProgrammaticApprover, StdinApprover,
@@ -92,12 +94,11 @@ pub use catalog::{
     CorvidApprovalRequired, CorvidApproverFn, CorvidCallStatus, CorvidFindAgentsResult,
     CorvidPreFlight, CorvidPreFlightStatus, CorvidTrustTier,
 };
+pub use corvid_trace_schema::{TraceEvent, WRITER_INTERPRETER, WRITER_NATIVE};
 pub use effect_filter::CorvidFindAgentsStatus;
-pub use adversarial::{contradiction_flag, trace_text};
 pub use ensemble::{majority_vote, weighted_vote, EnsembleVoteOutcome};
 pub use env::{find_dotenv_walking, load_dotenv, load_dotenv_walking};
 pub use errors::RuntimeError;
-pub use redact::RedactionSet;
 pub use llm::{
     anthropic::AnthropicAdapter,
     gemini::GeminiAdapter,
@@ -108,7 +109,9 @@ pub use llm::{
     LlmAdapter, LlmRegistry, LlmRequest, LlmResponse, TokenUsage,
 };
 pub use models::{ModelCatalog, ModelSelection, RegisteredModel};
+pub use provenance::{ProvenanceChain, ProvenanceEntry, ProvenanceKind};
 pub use record::Recorder;
+pub use redact::RedactionSet;
 pub use replay::{
     LlmDivergence, MutationDivergence, ReplayDifferentialReport, ReplayDivergence,
     ReplayMutationReport, ReplaySource, RunCompletionDivergence, SubstitutionDivergence,
@@ -120,6 +123,4 @@ pub use test_from_traces::{
     TraceHarnessMode, TraceHarnessRequest, TraceHarnessRun, TraceOutcome, Verdict,
 };
 pub use tools::{ToolHandler, ToolRegistry};
-pub use corvid_trace_schema::{TraceEvent, WRITER_INTERPRETER, WRITER_NATIVE};
-pub use provenance::{ProvenanceChain, ProvenanceEntry, ProvenanceKind};
 pub use tracing::{fresh_run_id, now_ms, Tracer};

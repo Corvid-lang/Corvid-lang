@@ -134,9 +134,7 @@ fn reduce_block(block: &mut IrBlock, parent: &mut IrPath, effect_info: &EffectIn
 
         let mut move_after = def_idx;
         for scan_idx in def_idx + 1..idx {
-            if stmt_mentions_local(&block.stmts[scan_idx], local_id)
-                || barrier_flags[scan_idx]
-            {
+            if stmt_mentions_local(&block.stmts[scan_idx], local_id) || barrier_flags[scan_idx] {
                 move_after = scan_idx;
             }
         }
@@ -214,12 +212,16 @@ fn expr_mentions_local(expr: &IrExpr, local_id: LocalId) -> bool {
         | IrExprKind::ResultOk { inner: target }
         | IrExprKind::ResultErr { inner: target }
         | IrExprKind::OptionSome { inner: target }
+        | IrExprKind::Ask { prompt: target, .. }
+        | IrExprKind::Choose { options: target }
         | IrExprKind::TryPropagate { inner: target }
         | IrExprKind::TryRetry { body: target, .. }
-        | IrExprKind::UnOp { operand: target, .. }
-        | IrExprKind::WrappingUnOp { operand: target, .. } => {
-            expr_mentions_local(target, local_id)
+        | IrExprKind::UnOp {
+            operand: target, ..
         }
+        | IrExprKind::WrappingUnOp {
+            operand: target, ..
+        } => expr_mentions_local(target, local_id),
         IrExprKind::Index { target, index }
         | IrExprKind::BinOp {
             left: target,
@@ -231,9 +233,15 @@ fn expr_mentions_local(expr: &IrExpr, local_id: LocalId) -> bool {
             right: index,
             ..
         } => expr_mentions_local(target, local_id) || expr_mentions_local(index, local_id),
-        IrExprKind::Replay { trace, arms, else_body } => {
+        IrExprKind::Replay {
+            trace,
+            arms,
+            else_body,
+        } => {
             expr_mentions_local(trace, local_id)
-                || arms.iter().any(|arm| expr_mentions_local(&arm.body, local_id))
+                || arms
+                    .iter()
+                    .any(|arm| expr_mentions_local(&arm.body, local_id))
                 || expr_mentions_local(else_body, local_id)
         }
     }
@@ -281,6 +289,8 @@ fn expr_is_effect_free(expr: &IrExpr) -> bool {
         | IrExprKind::ResultErr { .. }
         | IrExprKind::OptionSome { .. }
         | IrExprKind::OptionNone
+        | IrExprKind::Ask { .. }
+        | IrExprKind::Choose { .. }
         | IrExprKind::TryPropagate { .. }
         | IrExprKind::TryRetry { .. }
         // Replay dispatches over a recorded trace (reads a file)

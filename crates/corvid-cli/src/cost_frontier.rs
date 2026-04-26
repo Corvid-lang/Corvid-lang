@@ -74,7 +74,9 @@ pub fn build_frontier(opts: CostFrontierOptions<'_>) -> Result<CostFrontierRepor
                 cost_estimate,
                 ..
             } if prompt == opts.prompt => {
-                let row = aggs.entry(model_label(&model, model_version.as_deref())).or_default();
+                let row = aggs
+                    .entry(model_label(&model, model_version.as_deref()))
+                    .or_default();
                 row.calls += 1;
                 if cost_estimate.is_finite() && cost_estimate >= 0.0 {
                     row.total_cost += cost_estimate;
@@ -123,8 +125,7 @@ pub fn build_frontier(opts: CostFrontierOptions<'_>) -> Result<CostFrontierRepor
     let mut candidates: Vec<FrontierCandidate> = aggs
         .into_iter()
         .map(|(model, agg)| {
-            let quality = (agg.eval_samples > 0)
-                .then(|| agg.quality_sum / agg.eval_samples as f64);
+            let quality = (agg.eval_samples > 0).then(|| agg.quality_sum / agg.eval_samples as f64);
             let status = match quality {
                 None => FrontierStatus::Unscored,
                 Some(_) if is_dominated(&model, &scored_snapshot) => FrontierStatus::Dominated,
@@ -144,7 +145,11 @@ pub fn build_frontier(opts: CostFrontierOptions<'_>) -> Result<CostFrontierRepor
         a.mean_cost
             .partial_cmp(&b.mean_cost)
             .unwrap_or(std::cmp::Ordering::Equal)
-            .then_with(|| b.quality.partial_cmp(&a.quality).unwrap_or(std::cmp::Ordering::Equal))
+            .then_with(|| {
+                b.quality
+                    .partial_cmp(&a.quality)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            })
             .then_with(|| a.model.cmp(&b.model))
     });
 
@@ -178,7 +183,10 @@ pub fn build_frontier(opts: CostFrontierOptions<'_>) -> Result<CostFrontierRepor
 
 pub fn render_frontier(report: &CostFrontierReport) -> String {
     let mut out = String::new();
-    out.push_str(&format!("Cost-quality frontier for `{}`\n\n", report.prompt));
+    out.push_str(&format!(
+        "Cost-quality frontier for `{}`\n\n",
+        report.prompt
+    ));
     out.push_str("model                calls  eval_n  mean_cost  quality  status\n");
     out.push_str("-------------------- ------ ------- ---------- -------- ----------------\n");
     for row in &report.candidates {
@@ -301,7 +309,10 @@ fn load_trace_events(trace_dir: &Path, since_ms: Option<u64>) -> Result<Vec<Trac
             let event: TraceEvent = serde_json::from_str(line).with_context(|| {
                 format!("invalid trace event at {}:{}", path.display(), idx + 1)
             })?;
-            if since_ms.map(|cutoff| event_ts_ms(&event) >= cutoff).unwrap_or(true) {
+            if since_ms
+                .map(|cutoff| event_ts_ms(&event) >= cutoff)
+                .unwrap_or(true)
+            {
                 events.push(event);
             }
         }
@@ -348,6 +359,10 @@ fn event_ts_ms(event: &TraceEvent) -> u64 {
         | TraceEvent::ApprovalRequest { ts_ms, .. }
         | TraceEvent::ApprovalDecision { ts_ms, .. }
         | TraceEvent::ApprovalResponse { ts_ms, .. }
+        | TraceEvent::HumanInputRequest { ts_ms, .. }
+        | TraceEvent::HumanInputResponse { ts_ms, .. }
+        | TraceEvent::HumanChoiceRequest { ts_ms, .. }
+        | TraceEvent::HumanChoiceResponse { ts_ms, .. }
         | TraceEvent::HostEvent { ts_ms, .. }
         | TraceEvent::SeedRead { ts_ms, .. }
         | TraceEvent::ClockRead { ts_ms, .. }

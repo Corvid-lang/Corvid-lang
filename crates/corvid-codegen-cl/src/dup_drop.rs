@@ -63,7 +63,10 @@ pub fn insert_dup_drop(agent: &IrAgent) -> IrAgent {
     // failure is caused by pass-inserted Dup/Drop ops or by an
     // unguarded scattered emit site in codegen. Silent under
     // normal operation.
-    if std::env::var("CORVID_DUP_DROP_DRY_RUN").map(|v| v == "1").unwrap_or(false) {
+    if std::env::var("CORVID_DUP_DROP_DRY_RUN")
+        .map(|v| v == "1")
+        .unwrap_or(false)
+    {
         return agent.clone();
     }
     let (_cfg, plan) = analyze_agent(agent);
@@ -101,7 +104,10 @@ pub fn apply_plan(agent: &IrAgent, plan: &OwnershipPlan) -> IrAgent {
             for &l in locals {
                 group.entry(parent.clone()).or_default().push((
                     idx,
-                    IrStmt::Dup { local_id: l, span: zero_span() },
+                    IrStmt::Dup {
+                        local_id: l,
+                        span: zero_span(),
+                    },
                     InsertionSide::Before,
                 ));
             }
@@ -147,7 +153,10 @@ pub fn apply_plan(agent: &IrAgent, plan: &OwnershipPlan) -> IrAgent {
                 for &l in locals {
                     group.entry(parent.clone()).or_default().push((
                         idx,
-                        IrStmt::Drop { local_id: l, span: zero_span() },
+                        IrStmt::Drop {
+                            local_id: l,
+                            span: zero_span(),
+                        },
                         InsertionSide::Before,
                     ));
                 }
@@ -157,7 +166,10 @@ pub fn apply_plan(agent: &IrAgent, plan: &OwnershipPlan) -> IrAgent {
             for &l in locals {
                 group.entry(parent.clone()).or_default().push((
                     idx,
-                    IrStmt::Drop { local_id: l, span: zero_span() },
+                    IrStmt::Drop {
+                        local_id: l,
+                        span: zero_span(),
+                    },
                     InsertionSide::After,
                 ));
             }
@@ -230,13 +242,18 @@ pub fn apply_plan(agent: &IrAgent, plan: &OwnershipPlan) -> IrAgent {
     // executes.
     if let Some(locals) = plan.drops_at_block_exit.get(&0) {
         let stmts = &mut out.body.stmts;
-        let ret_pos = stmts.iter().rposition(|s| matches!(s, IrStmt::Return { .. }));
+        let ret_pos = stmts
+            .iter()
+            .rposition(|s| matches!(s, IrStmt::Return { .. }));
         let insert_at = ret_pos.unwrap_or(stmts.len());
         // Iterate in stable order (BTreeSet) for deterministic output.
         for &l in locals {
             stmts.insert(
                 insert_at,
-                IrStmt::Drop { local_id: l, span: zero_span() },
+                IrStmt::Drop {
+                    local_id: l,
+                    span: zero_span(),
+                },
             );
         }
     }
@@ -278,7 +295,9 @@ struct HoistPlan {
 fn next_local_id(agent: &IrAgent) -> u32 {
     let mut max_id: u32 = 0;
     for p in &agent.params {
-        if p.local_id.0 > max_id { max_id = p.local_id.0; }
+        if p.local_id.0 > max_id {
+            max_id = p.local_id.0;
+        }
     }
     scan_block(&agent.body, &mut max_id);
     max_id + 1
@@ -292,29 +311,51 @@ fn scan_block(block: &IrBlock, max_id: &mut u32) {
 
 fn scan_stmt(stmt: &IrStmt, max_id: &mut u32) {
     match stmt {
-        IrStmt::Let { local_id, value, .. } => {
-            if local_id.0 > *max_id { *max_id = local_id.0; }
+        IrStmt::Let {
+            local_id, value, ..
+        } => {
+            if local_id.0 > *max_id {
+                *max_id = local_id.0;
+            }
             scan_expr(value, max_id);
         }
         IrStmt::Return { value: Some(e), .. } => scan_expr(e, max_id),
         IrStmt::Return { value: None, .. } => {}
         IrStmt::Yield { value, .. } => scan_expr(value, max_id),
-        IrStmt::If { cond, then_block, else_block, .. } => {
+        IrStmt::If {
+            cond,
+            then_block,
+            else_block,
+            ..
+        } => {
             scan_expr(cond, max_id);
             scan_block(then_block, max_id);
-            if let Some(eb) = else_block { scan_block(eb, max_id); }
+            if let Some(eb) = else_block {
+                scan_block(eb, max_id);
+            }
         }
-        IrStmt::For { var_local, iter, body, .. } => {
-            if var_local.0 > *max_id { *max_id = var_local.0; }
+        IrStmt::For {
+            var_local,
+            iter,
+            body,
+            ..
+        } => {
+            if var_local.0 > *max_id {
+                *max_id = var_local.0;
+            }
             scan_expr(iter, max_id);
             scan_block(body, max_id);
         }
         IrStmt::Expr { expr, .. } => scan_expr(expr, max_id),
         IrStmt::Approve { args, .. } => {
-            for a in args { scan_expr(a, max_id); }
+            for a in args {
+                scan_expr(a, max_id);
+            }
         }
         IrStmt::Dup { local_id, .. } | IrStmt::Drop { local_id, .. } => {
-            if local_id.0 > *max_id { *max_id = local_id.0; }
+            if local_id.0 > *max_id {
+                *max_id = local_id.0;
+            }
         }
         IrStmt::Break { .. } | IrStmt::Continue { .. } | IrStmt::Pass { .. } => {}
     }
@@ -323,7 +364,9 @@ fn scan_stmt(stmt: &IrStmt, max_id: &mut u32) {
 fn scan_expr(expr: &IrExpr, max_id: &mut u32) {
     match &expr.kind {
         IrExprKind::Local { local_id, .. } => {
-            if local_id.0 > *max_id { *max_id = local_id.0; }
+            if local_id.0 > *max_id {
+                *max_id = local_id.0;
+            }
         }
         IrExprKind::Literal(_) | IrExprKind::Decl { .. } | IrExprKind::OptionNone => {}
         IrExprKind::FieldAccess { target, .. } => scan_expr(target, max_id),
@@ -332,18 +375,22 @@ fn scan_expr(expr: &IrExpr, max_id: &mut u32) {
             scan_expr(target, max_id);
             scan_expr(index, max_id);
         }
-        IrExprKind::BinOp { left, right, .. }
-        | IrExprKind::WrappingBinOp { left, right, .. } => {
+        IrExprKind::BinOp { left, right, .. } | IrExprKind::WrappingBinOp { left, right, .. } => {
             scan_expr(left, max_id);
             scan_expr(right, max_id);
         }
-        IrExprKind::UnOp { operand, .. }
-        | IrExprKind::WrappingUnOp { operand, .. } => scan_expr(operand, max_id),
+        IrExprKind::UnOp { operand, .. } | IrExprKind::WrappingUnOp { operand, .. } => {
+            scan_expr(operand, max_id)
+        }
         IrExprKind::Call { args, .. } => {
-            for a in args { scan_expr(a, max_id); }
+            for a in args {
+                scan_expr(a, max_id);
+            }
         }
         IrExprKind::List { items } => {
-            for item in items { scan_expr(item, max_id); }
+            for item in items {
+                scan_expr(item, max_id);
+            }
         }
         IrExprKind::WeakNew { strong } => scan_expr(strong, max_id),
         IrExprKind::WeakUpgrade { weak } => scan_expr(weak, max_id),
@@ -355,20 +402,30 @@ fn scan_expr(expr: &IrExpr, max_id: &mut u32) {
         IrExprKind::ResultOk { inner }
         | IrExprKind::ResultErr { inner }
         | IrExprKind::OptionSome { inner }
+        | IrExprKind::Ask { prompt: inner, .. }
+        | IrExprKind::Choose { options: inner }
         | IrExprKind::TryPropagate { inner } => scan_expr(inner, max_id),
         IrExprKind::TryRetry { body, .. } => scan_expr(body, max_id),
-        IrExprKind::Replay { trace, arms, else_body } => {
+        IrExprKind::Replay {
+            trace,
+            arms,
+            else_body,
+        } => {
             scan_expr(trace, max_id);
             for arm in arms {
                 if let Some(capture) = &arm.capture {
-                    if capture.local_id.0 > *max_id { *max_id = capture.local_id.0; }
+                    if capture.local_id.0 > *max_id {
+                        *max_id = capture.local_id.0;
+                    }
                 }
                 if let corvid_ir::IrReplayPattern::Tool {
                     arg: corvid_ir::IrReplayToolArgPattern::Capture(capture),
                     ..
                 } = &arm.pattern
                 {
-                    if capture.local_id.0 > *max_id { *max_id = capture.local_id.0; }
+                    if capture.local_id.0 > *max_id {
+                        *max_id = capture.local_id.0;
+                    }
                 }
                 scan_expr(&arm.body, max_id);
             }
@@ -388,12 +445,12 @@ fn expr_reads_local(expr: &IrExpr, target: LocalId) -> bool {
         IrExprKind::Index { target: t, index } => {
             expr_reads_local(t, target) || expr_reads_local(index, target)
         }
-        IrExprKind::BinOp { left, right, .. }
-        | IrExprKind::WrappingBinOp { left, right, .. } => {
+        IrExprKind::BinOp { left, right, .. } | IrExprKind::WrappingBinOp { left, right, .. } => {
             expr_reads_local(left, target) || expr_reads_local(right, target)
         }
-        IrExprKind::UnOp { operand, .. }
-        | IrExprKind::WrappingUnOp { operand, .. } => expr_reads_local(operand, target),
+        IrExprKind::UnOp { operand, .. } | IrExprKind::WrappingUnOp { operand, .. } => {
+            expr_reads_local(operand, target)
+        }
         IrExprKind::Call { args, .. } => args.iter().any(|a| expr_reads_local(a, target)),
         IrExprKind::List { items } => items.iter().any(|it| expr_reads_local(it, target)),
         IrExprKind::WeakNew { strong } => expr_reads_local(strong, target),
@@ -406,9 +463,15 @@ fn expr_reads_local(expr: &IrExpr, target: LocalId) -> bool {
         IrExprKind::ResultOk { inner }
         | IrExprKind::ResultErr { inner }
         | IrExprKind::OptionSome { inner }
+        | IrExprKind::Ask { prompt: inner, .. }
+        | IrExprKind::Choose { options: inner }
         | IrExprKind::TryPropagate { inner } => expr_reads_local(inner, target),
         IrExprKind::TryRetry { body, .. } => expr_reads_local(body, target),
-        IrExprKind::Replay { trace, arms, else_body } => {
+        IrExprKind::Replay {
+            trace,
+            arms,
+            else_body,
+        } => {
             expr_reads_local(trace, target)
                 || arms.iter().any(|arm| expr_reads_local(&arm.body, target))
                 || expr_reads_local(else_body, target)
@@ -453,7 +516,10 @@ fn apply_hoist(root: &mut IrBlock, hoist: &HoistPlan) {
     let mut drop_stmts: Vec<IrStmt> = hoist
         .drop_locals
         .iter()
-        .map(|&l| IrStmt::Drop { local_id: l, span: zero_span() })
+        .map(|&l| IrStmt::Drop {
+            local_id: l,
+            span: zero_span(),
+        })
         .collect();
     let new_return = IrStmt::Return {
         value: Some(IrExpr {
@@ -510,7 +576,13 @@ fn find_block<'a>(root: &'a IrBlock, parent: &IrPath) -> Option<&'a IrBlock> {
         let stmt = current.stmts.get(stmt_idx)?;
         current = match (stmt, descend_step) {
             (IrStmt::If { then_block, .. }, IrNavStep::IfThen) => then_block,
-            (IrStmt::If { else_block: Some(eb), .. }, IrNavStep::IfElse) => eb,
+            (
+                IrStmt::If {
+                    else_block: Some(eb),
+                    ..
+                },
+                IrNavStep::IfElse,
+            ) => eb,
             (IrStmt::For { body, .. }, IrNavStep::ForBody) => body,
             _ => return None,
         };
@@ -539,7 +611,13 @@ fn navigate_mut<'a>(root: &'a mut IrBlock, parent: &IrPath) -> &'a mut IrBlock {
         let stmt = &mut current.stmts[stmt_idx];
         current = match (stmt, descend) {
             (IrStmt::If { then_block, .. }, IrNavStep::IfThen) => then_block,
-            (IrStmt::If { else_block: Some(eb), .. }, IrNavStep::IfElse) => eb,
+            (
+                IrStmt::If {
+                    else_block: Some(eb),
+                    ..
+                },
+                IrNavStep::IfElse,
+            ) => eb,
             (IrStmt::For { body, .. }, IrNavStep::ForBody) => body,
             _ => panic!("IrPath descent doesn't match IR shape"),
         };
@@ -574,9 +652,12 @@ fn apply_branch_drops(root: &mut IrBlock, if_path: &IrPath, drops: &BranchDrops)
     }
     let if_stmt = &mut parent_block.stmts[idx];
     let (then_block, else_block, if_span) = match if_stmt {
-        IrStmt::If { then_block, else_block, span, .. } => {
-            (then_block, else_block, *span)
-        }
+        IrStmt::If {
+            then_block,
+            else_block,
+            span,
+            ..
+        } => (then_block, else_block, *span),
         _ => return, // stale path
     };
 
@@ -598,7 +679,10 @@ fn apply_branch_drops(root: &mut IrBlock, if_path: &IrPath, drops: &BranchDrops)
                 let drop_stmts: Vec<IrStmt> = drops
                     .fallthrough_drops
                     .iter()
-                    .map(|&l| IrStmt::Drop { local_id: l, span: zero_span() })
+                    .map(|&l| IrStmt::Drop {
+                        local_id: l,
+                        span: zero_span(),
+                    })
                     .collect();
                 *else_block = Some(IrBlock {
                     stmts: drop_stmts,
@@ -612,18 +696,27 @@ fn apply_branch_drops(root: &mut IrBlock, if_path: &IrPath, drops: &BranchDrops)
 /// Append Drop ops at the tail of `block`, but BEFORE any trailing
 /// Return — Drops after a Return are unreachable at runtime. Locals
 /// iterated in BTreeSet order for deterministic output.
-fn insert_drops_at_block_tail(block: &mut IrBlock, locals: &std::collections::BTreeSet<corvid_resolve::LocalId>) {
+fn insert_drops_at_block_tail(
+    block: &mut IrBlock,
+    locals: &std::collections::BTreeSet<corvid_resolve::LocalId>,
+) {
     if locals.is_empty() {
         return;
     }
-    let ret_pos = block.stmts.iter().rposition(|s| matches!(s, IrStmt::Return { .. }));
+    let ret_pos = block
+        .stmts
+        .iter()
+        .rposition(|s| matches!(s, IrStmt::Return { .. }));
     let insert_at = ret_pos.unwrap_or(block.stmts.len());
     let mut at = insert_at;
     for &l in locals {
-        block.stmts.insert(at, IrStmt::Drop {
-            local_id: l,
-            span: zero_span(),
-        });
+        block.stmts.insert(
+            at,
+            IrStmt::Drop {
+                local_id: l,
+                span: zero_span(),
+            },
+        );
         at += 1;
     }
 }
@@ -646,7 +739,10 @@ mod tests {
 
     fn local_expr(id: u32, ty: Type) -> IrExpr {
         IrExpr {
-            kind: IrExprKind::Local { local_id: LocalId(id), name: format!("l{id}") },
+            kind: IrExprKind::Local {
+                local_id: LocalId(id),
+                name: format!("l{id}"),
+            },
             ty,
             span: span(),
         }
@@ -669,7 +765,10 @@ mod tests {
             return_ty: ret,
             cost_budget: None,
             wrapping_arithmetic: false,
-            body: IrBlock { stmts: body, span: span() },
+            body: IrBlock {
+                stmts: body,
+                span: span(),
+            },
             span: span(),
             borrow_sig: None,
         }
@@ -705,8 +804,18 @@ mod tests {
             Type::String,
         );
         let out = insert_dup_drop(&agent);
-        assert_eq!(out.body.stmts.len(), 3, "Dup should have been inserted before the Let");
-        assert!(matches!(out.body.stmts[0], IrStmt::Dup { local_id: LocalId(0), .. }));
+        assert_eq!(
+            out.body.stmts.len(),
+            3,
+            "Dup should have been inserted before the Let"
+        );
+        assert!(matches!(
+            out.body.stmts[0],
+            IrStmt::Dup {
+                local_id: LocalId(0),
+                ..
+            }
+        ));
         assert!(matches!(out.body.stmts[1], IrStmt::Let { .. }));
         assert!(matches!(out.body.stmts[2], IrStmt::Return { .. }));
     }
@@ -730,7 +839,13 @@ mod tests {
         let out = insert_dup_drop(&agent);
         assert_eq!(out.body.stmts.len(), 2);
         assert!(
-            matches!(out.body.stmts[0], IrStmt::Drop { local_id: LocalId(0), .. }),
+            matches!(
+                out.body.stmts[0],
+                IrStmt::Drop {
+                    local_id: LocalId(0),
+                    ..
+                }
+            ),
             "unused param drop comes before return"
         );
         assert!(matches!(out.body.stmts[1], IrStmt::Return { .. }));
@@ -766,7 +881,13 @@ mod tests {
         // consumed by the Let (last use of s), so no extra Dup needed.
         assert_eq!(out.body.stmts.len(), 3);
         assert!(matches!(out.body.stmts[0], IrStmt::Let { .. }));
-        assert!(matches!(out.body.stmts[1], IrStmt::Drop { local_id: LocalId(1), .. }));
+        assert!(matches!(
+            out.body.stmts[1],
+            IrStmt::Drop {
+                local_id: LocalId(1),
+                ..
+            }
+        ));
         assert!(matches!(out.body.stmts[2], IrStmt::Return { .. }));
     }
 
@@ -867,7 +988,13 @@ mod tests {
         assert!(matches!(out.body.stmts[0], IrStmt::If { .. }));
         if let IrStmt::If { then_block, .. } = &out.body.stmts[0] {
             assert!(
-                then_block.stmts.iter().any(|s| matches!(s, IrStmt::Dup { local_id: LocalId(0), .. })),
+                then_block.stmts.iter().any(|s| matches!(
+                    s,
+                    IrStmt::Dup {
+                        local_id: LocalId(0),
+                        ..
+                    }
+                )),
                 "Dup of param 0 should land inside the then-block"
             );
         }

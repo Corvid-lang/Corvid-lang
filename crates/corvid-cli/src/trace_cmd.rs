@@ -24,12 +24,15 @@ pub fn run_list(trace_dir: Option<&Path>) -> Result<u8> {
         .unwrap_or_else(|| PathBuf::from(DEFAULT_TRACE_DIR));
 
     if !dir.exists() {
-        println!("no traces at `{}` (directory does not exist)", dir.display());
+        println!(
+            "no traces at `{}` (directory does not exist)",
+            dir.display()
+        );
         return Ok(0);
     }
 
-    let files = collect_trace_files(&dir)
-        .with_context(|| format!("failed to scan `{}`", dir.display()))?;
+    let files =
+        collect_trace_files(&dir).with_context(|| format!("failed to scan `{}`", dir.display()))?;
 
     if files.is_empty() {
         println!("no traces at `{}`", dir.display());
@@ -53,9 +56,8 @@ pub fn run_show(id_or_path: &str, trace_dir: Option<&Path>) -> Result<u8> {
     let path = resolve_trace_path(id_or_path, trace_dir)
         .with_context(|| format!("failed to locate trace `{id_or_path}`"))?;
 
-    let events = read_events_from_path(&path).with_context(|| {
-        format!("failed to read trace at `{}`", path.display())
-    })?;
+    let events = read_events_from_path(&path)
+        .with_context(|| format!("failed to read trace at `{}`", path.display()))?;
 
     if events.is_empty() {
         anyhow::bail!("trace `{}` is empty", path.display());
@@ -69,8 +71,7 @@ pub fn run_show(id_or_path: &str, trace_dir: Option<&Path>) -> Result<u8> {
     }
 
     for event in &events {
-        let pretty = serde_json::to_string_pretty(event)
-            .unwrap_or_else(|_| format!("{event:?}"));
+        let pretty = serde_json::to_string_pretty(event).unwrap_or_else(|_| format!("{event:?}"));
         println!("{pretty}");
     }
     Ok(0)
@@ -178,10 +179,7 @@ fn collect_trace_files(dir: &Path) -> Result<Vec<PathBuf>> {
 /// Resolve a user-supplied identifier to a trace file path. If
 /// the input is already a path on disk, return it. Otherwise,
 /// treat it as a run id and look for `<trace_dir>/<id>.jsonl`.
-pub(crate) fn resolve_trace_path(
-    id_or_path: &str,
-    trace_dir: Option<&Path>,
-) -> Result<PathBuf> {
+pub(crate) fn resolve_trace_path(id_or_path: &str, trace_dir: Option<&Path>) -> Result<PathBuf> {
     let as_path = PathBuf::from(id_or_path);
     if as_path.is_file() {
         return Ok(as_path);
@@ -216,6 +214,10 @@ fn event_run_id(event: &TraceEvent) -> Option<&str> {
         | TraceEvent::ApprovalRequest { run_id, .. }
         | TraceEvent::ApprovalDecision { run_id, .. }
         | TraceEvent::ApprovalResponse { run_id, .. }
+        | TraceEvent::HumanInputRequest { run_id, .. }
+        | TraceEvent::HumanInputResponse { run_id, .. }
+        | TraceEvent::HumanChoiceRequest { run_id, .. }
+        | TraceEvent::HumanChoiceResponse { run_id, .. }
         | TraceEvent::HostEvent { run_id, .. }
         | TraceEvent::SeedRead { run_id, .. }
         | TraceEvent::ClockRead { run_id, .. }
@@ -244,6 +246,10 @@ fn event_ts_ms(event: &TraceEvent) -> u64 {
         | TraceEvent::ApprovalRequest { ts_ms, .. }
         | TraceEvent::ApprovalDecision { ts_ms, .. }
         | TraceEvent::ApprovalResponse { ts_ms, .. }
+        | TraceEvent::HumanInputRequest { ts_ms, .. }
+        | TraceEvent::HumanInputResponse { ts_ms, .. }
+        | TraceEvent::HumanChoiceRequest { ts_ms, .. }
+        | TraceEvent::HumanChoiceResponse { ts_ms, .. }
         | TraceEvent::HostEvent { ts_ms, .. }
         | TraceEvent::SeedRead { ts_ms, .. }
         | TraceEvent::ClockRead { ts_ms, .. }
@@ -270,18 +276,14 @@ fn last_ts(events: &[TraceEvent]) -> Option<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use corvid_trace_schema::{
-        write_events_to_path, SCHEMA_VERSION, WRITER_INTERPRETER,
-    };
+    use corvid_trace_schema::{write_events_to_path, SCHEMA_VERSION, WRITER_INTERPRETER};
 
     fn test_dir() -> PathBuf {
         use std::sync::atomic::{AtomicU64, Ordering};
         static COUNTER: AtomicU64 = AtomicU64::new(0);
         let n = COUNTER.fetch_add(1, Ordering::SeqCst);
-        let dir = std::env::temp_dir().join(format!(
-            "corvid-cli-trace-test-{}-{n}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("corvid-cli-trace-test-{}-{n}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         dir
     }
@@ -342,10 +344,7 @@ mod tests {
 
     #[test]
     fn list_reports_missing_dir_cleanly() {
-        let dir = std::env::temp_dir().join(format!(
-            "corvid-cli-missing-{}",
-            std::process::id()
-        ));
+        let dir = std::env::temp_dir().join(format!("corvid-cli-missing-{}", std::process::id()));
         if dir.exists() {
             std::fs::remove_dir_all(&dir).unwrap();
         }

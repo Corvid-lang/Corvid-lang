@@ -49,6 +49,8 @@ pub enum BuiltIn {
     StreamMerge,
     Resume,
     StreamResumeToken,
+    Ask,
+    Choose,
     // Structural sentinels (surface as Idents today; real variants later).
     Break,
     Continue,
@@ -109,7 +111,8 @@ impl SymbolTable {
         self.builtins.insert("Option".into(), BuiltIn::Option);
         self.builtins.insert("Weak".into(), BuiltIn::Weak);
         self.builtins.insert("Partial".into(), BuiltIn::Partial);
-        self.builtins.insert("ResumeToken".into(), BuiltIn::ResumeToken);
+        self.builtins
+            .insert("ResumeToken".into(), BuiltIn::ResumeToken);
         self.builtins.insert("Grounded".into(), BuiltIn::Grounded);
         self.builtins.insert("Ok".into(), BuiltIn::Ok);
         self.builtins.insert("Err".into(), BuiltIn::Err);
@@ -122,6 +125,8 @@ impl SymbolTable {
         self.builtins.insert("resume".into(), BuiltIn::Resume);
         self.builtins
             .insert("resume_token".into(), BuiltIn::StreamResumeToken);
+        self.builtins.insert("ask".into(), BuiltIn::Ask);
+        self.builtins.insert("choose".into(), BuiltIn::Choose);
         self.builtins.insert("break".into(), BuiltIn::Break);
         self.builtins.insert("continue".into(), BuiltIn::Continue);
         self.builtins.insert("pass".into(), BuiltIn::Pass);
@@ -131,12 +136,7 @@ impl SymbolTable {
     ///
     /// Returns `Ok(DefId)` on success. On duplicate, returns `Err(first_span)`
     /// — the caller records the duplicate error and proceeds.
-    pub fn declare(
-        &mut self,
-        name: &str,
-        kind: DeclKind,
-        span: Span,
-    ) -> Result<DefId, Span> {
+    pub fn declare(&mut self, name: &str, kind: DeclKind, span: Span) -> Result<DefId, Span> {
         if let Some(existing_id) = self.by_name.get(name) {
             let existing = &self.entries[existing_id.0 as usize];
             return Err(existing.span);
@@ -192,12 +192,7 @@ impl SymbolTable {
     /// identity for downstream IR + diagnostics. Caller is responsible
     /// for storing the (scope, name) → DefId mapping in their own
     /// side table.
-    pub fn allocate_def(
-        &mut self,
-        name: &str,
-        kind: DeclKind,
-        span: Span,
-    ) -> DefId {
+    pub fn allocate_def(&mut self, name: &str, kind: DeclKind, span: Span) -> DefId {
         let id = DefId(self.entries.len() as u32);
         self.entries.push(DeclEntry {
             id,

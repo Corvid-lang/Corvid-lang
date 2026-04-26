@@ -122,7 +122,9 @@ pub fn build_report(opts: RoutingReportOptions<'_>) -> Result<RoutingReport> {
                 ..
             } => {
                 let model_label = model_label(model, model_version.as_deref());
-                let row = usage.entry((prompt.clone(), model_label.clone())).or_default();
+                let row = usage
+                    .entry((prompt.clone(), model_label.clone()))
+                    .or_default();
                 row.count += 1;
                 row.total_cost += cost_estimate;
                 if let Some(stage) = stage_index {
@@ -170,9 +172,7 @@ pub fn build_report(opts: RoutingReportOptions<'_>) -> Result<RoutingReport> {
                 }
             }
             TraceEvent::ProgressiveEscalation {
-                prompt,
-                from_stage,
-                ..
+                prompt, from_stage, ..
             } => {
                 escalations
                     .entry((prompt.clone(), *from_stage))
@@ -248,15 +248,19 @@ pub fn build_report(opts: RoutingReportOptions<'_>) -> Result<RoutingReport> {
         }
     }
 
-    let prompt_totals = usage.iter().fold(HashMap::<String, u64>::new(), |mut acc, ((prompt, _), row)| {
-        *acc.entry(prompt.clone()).or_insert(0) += row.count;
-        acc
-    });
+    let prompt_totals = usage.iter().fold(
+        HashMap::<String, u64>::new(),
+        |mut acc, ((prompt, _), row)| {
+            *acc.entry(prompt.clone()).or_insert(0) += row.count;
+            acc
+        },
+    );
 
     let mut model_usage: Vec<ModelUsageRow> = usage
         .into_iter()
         .map(|((prompt, model), agg)| {
-            let share = agg.count as f64 / (*prompt_totals.get(&prompt).unwrap_or(&agg.count) as f64);
+            let share =
+                agg.count as f64 / (*prompt_totals.get(&prompt).unwrap_or(&agg.count) as f64);
             let mean_cost = agg.total_cost / agg.count as f64;
             let p50_latency_ms = percentile50(&mut agg.latencies.clone());
             let recommendation = if share >= 0.80 {
@@ -266,7 +270,10 @@ pub fn build_report(opts: RoutingReportOptions<'_>) -> Result<RoutingReport> {
                     fmt_conf(None)
                 )
             } else if share <= 0.10 {
-                format!("underutilized — {model} handles only {:.0}% of calls", share * 100.0)
+                format!(
+                    "underutilized — {model} handles only {:.0}% of calls",
+                    share * 100.0
+                )
             } else {
                 "healthy".to_string()
             };
@@ -293,7 +300,9 @@ pub fn build_report(opts: RoutingReportOptions<'_>) -> Result<RoutingReport> {
             } else {
                 (agg.escalation_count as f64 / agg.entry_count as f64) * 100.0
             };
-            let (recommendation, healthy) = if agg.entry_count > 0 && agg.exhaustion_count == agg.entry_count {
+            let (recommendation, healthy) = if agg.entry_count > 0
+                && agg.exhaustion_count == agg.entry_count
+            {
                 (
                     "terminal always reached — promote cheaper model out of the chain".to_string(),
                     false,
@@ -342,7 +351,8 @@ pub fn build_report(opts: RoutingReportOptions<'_>) -> Result<RoutingReport> {
         };
         let unhealthy = sigma > 0.0 && (observed - declared).abs() > 3.0 * sigma;
         let recommendation = if unhealthy {
-            "observed rollout share drifts past sampling variance — inspect cohort assignment".to_string()
+            "observed rollout share drifts past sampling variance — inspect cohort assignment"
+                .to_string()
         } else {
             "cohort ratio stable".to_string()
         };
@@ -373,7 +383,10 @@ pub fn build_report(opts: RoutingReportOptions<'_>) -> Result<RoutingReport> {
             let share = count as f64 / agg.count.max(1) as f64;
             if share >= 0.80 {
                 (
-                    format!("promote {winner} to default — wins {:.0}% of votes", share * 100.0),
+                    format!(
+                        "promote {winner} to default — wins {:.0}% of votes",
+                        share * 100.0
+                    ),
                     false,
                 )
             } else if mean_agreement.unwrap_or(1.0) < 0.60 {
@@ -407,7 +420,8 @@ pub fn build_report(opts: RoutingReportOptions<'_>) -> Result<RoutingReport> {
         };
         let healthy = contradiction_rate.unwrap_or(0.0) < 0.20;
         let recommendation = if healthy {
-            "low contradiction rate — consider whether full adversarial review is worth the cost".to_string()
+            "low contradiction rate — consider whether full adversarial review is worth the cost"
+                .to_string()
         } else {
             "high contradiction rate — keep the adversarial pipeline; proposer is catching real errors".to_string()
         };
@@ -535,7 +549,10 @@ fn load_trace_events(trace_dir: &Path, since_ms: Option<u64>) -> Result<Vec<Trac
             let event: TraceEvent = serde_json::from_str(line).with_context(|| {
                 format!("invalid trace event at {}:{}", path.display(), idx + 1)
             })?;
-            if since_ms.map(|cutoff| event_ts_ms(&event) >= cutoff).unwrap_or(true) {
+            if since_ms
+                .map(|cutoff| event_ts_ms(&event) >= cutoff)
+                .unwrap_or(true)
+            {
                 events.push(event);
             }
         }
@@ -582,6 +599,10 @@ fn event_ts_ms(event: &TraceEvent) -> u64 {
         | TraceEvent::ApprovalRequest { ts_ms, .. }
         | TraceEvent::ApprovalDecision { ts_ms, .. }
         | TraceEvent::ApprovalResponse { ts_ms, .. }
+        | TraceEvent::HumanInputRequest { ts_ms, .. }
+        | TraceEvent::HumanInputResponse { ts_ms, .. }
+        | TraceEvent::HumanChoiceRequest { ts_ms, .. }
+        | TraceEvent::HumanChoiceResponse { ts_ms, .. }
         | TraceEvent::HostEvent { ts_ms, .. }
         | TraceEvent::SeedRead { ts_ms, .. }
         | TraceEvent::ClockRead { ts_ms, .. }
@@ -632,8 +653,7 @@ mod tests {
     use std::path::PathBuf;
 
     fn fixture_dir() -> PathBuf {
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../../tests/fixtures/trace-report")
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/trace-report")
     }
 
     #[test]

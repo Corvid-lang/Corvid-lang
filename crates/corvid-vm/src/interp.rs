@@ -29,16 +29,13 @@ pub use test_runner::{
     TestAssertionStatus, TestExecution, TestRunOptions, TraceFixtureOptions,
 };
 
+use self::expr::{eval_binop, eval_literal, eval_unop, require_bool};
 use crate::conv::{json_to_value, value_to_json};
 use crate::env::Env;
 use crate::errors::{InterpError, InterpErrorKind};
 use crate::step::{self, ConfidenceGateStep, StepAction, StepController, StepEvent, StepMode};
 use crate::value::{
     value_confidence, BoxedValue, ListValue, StreamChunk, StreamSender, StructValue, Value,
-};
-use self::expr::{eval_binop, eval_literal, eval_unop, require_bool};
-use effect_compose::{
-    composed_confidence, default_stream_backpressure, stream_start_is_retryable,
 };
 use async_recursion::async_recursion;
 use corvid_ast::{BinaryOp, Span};
@@ -49,6 +46,7 @@ use corvid_ir::{
 use corvid_resolve::{DefId, LocalId};
 use corvid_runtime::{Runtime, RuntimeError, TraceEvent};
 use corvid_types::Type;
+use effect_compose::{composed_confidence, default_stream_backpressure, stream_start_is_retryable};
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -80,9 +78,7 @@ pub async fn run_agent_with_env(
         .find(|a| a.name == agent_name)
         .ok_or_else(|| {
             InterpError::new(
-                InterpErrorKind::DispatchFailed(format!(
-                    "no agent named `{agent_name}`"
-                )),
+                InterpErrorKind::DispatchFailed(format!("no agent named `{agent_name}`")),
                 Span::new(0, 0),
             )
         })?;
@@ -102,7 +98,10 @@ pub async fn run_agent_with_env(
     let mut interp = Interpreter::new(ir, runtime);
     let bind_result = interp.bind_params(agent, args);
     let outcome = match bind_result {
-        Ok(()) => interp.run_body(agent).await.map(|value| (value, interp.env.clone())),
+        Ok(()) => interp
+            .run_body(agent)
+            .await
+            .map(|value| (value, interp.env.clone())),
         Err(e) => Err(e),
     };
 
@@ -113,11 +112,7 @@ pub async fn run_agent_with_env(
     let error_text = outcome.as_ref().err().map(|error| error.to_string());
     if should_validate_run_completion(&outcome) {
         runtime
-            .complete_run(
-                outcome.is_ok(),
-                result_json.as_ref(),
-                error_text.as_deref(),
-            )
+            .complete_run(outcome.is_ok(), result_json.as_ref(), error_text.as_deref())
             .map_err(|e| InterpError::new(InterpErrorKind::Runtime(e), Span::new(0, 0)))?;
     }
     runtime.tracer().emit(TraceEvent::RunCompleted {
@@ -168,27 +163,28 @@ pub async fn run_agent_stepping(
     interp.stepper = Some(StepController::new(hook, mode));
     let bind_result = interp.bind_params(agent, args);
     let outcome = match bind_result {
-        Ok(()) => interp.run_body(agent).await.map(|value| (value, interp.env.clone())),
+        Ok(()) => interp
+            .run_body(agent)
+            .await
+            .map(|value| (value, interp.env.clone())),
         Err(e) => Err(e),
     };
 
-    let _ = interp.maybe_yield(StepEvent::Completed {
-        agent_name: agent_name.to_string(),
-        ok: outcome.is_ok(),
-        result: outcome.as_ref().ok().map(|(v, _)| v.clone()),
-        result_confidence: outcome.as_ref().ok().map(|(v, _)| value_confidence(v)),
-        error: outcome.as_ref().err().map(|e| e.to_string()),
-    }).await;
+    let _ = interp
+        .maybe_yield(StepEvent::Completed {
+            agent_name: agent_name.to_string(),
+            ok: outcome.is_ok(),
+            result: outcome.as_ref().ok().map(|(v, _)| v.clone()),
+            result_confidence: outcome.as_ref().ok().map(|(v, _)| value_confidence(v)),
+            error: outcome.as_ref().err().map(|e| e.to_string()),
+        })
+        .await;
 
     let result_json = outcome.as_ref().ok().map(|(value, _)| value_to_json(value));
     let error_text = outcome.as_ref().err().map(|error| error.to_string());
     if should_validate_run_completion(&outcome) {
         runtime
-            .complete_run(
-                outcome.is_ok(),
-                result_json.as_ref(),
-                error_text.as_deref(),
-            )
+            .complete_run(outcome.is_ok(), result_json.as_ref(), error_text.as_deref())
             .map_err(|e| InterpError::new(InterpErrorKind::Runtime(e), Span::new(0, 0)))?;
     }
     runtime.tracer().emit(TraceEvent::RunCompleted {
@@ -300,14 +296,11 @@ struct Interpreter<'ir> {
 
 impl<'ir> Interpreter<'ir> {
     fn new(ir: &'ir IrFile, runtime: &'ir Runtime) -> Self {
-        let types_by_id: HashMap<DefId, &IrType> =
-            ir.types.iter().map(|t| (t.id, t)).collect();
-        let tools_by_id: HashMap<DefId, &IrTool> =
-            ir.tools.iter().map(|t| (t.id, t)).collect();
+        let types_by_id: HashMap<DefId, &IrType> = ir.types.iter().map(|t| (t.id, t)).collect();
+        let tools_by_id: HashMap<DefId, &IrTool> = ir.tools.iter().map(|t| (t.id, t)).collect();
         let prompts_by_id: HashMap<DefId, &IrPrompt> =
             ir.prompts.iter().map(|p| (p.id, p)).collect();
-        let agents_by_id: HashMap<DefId, &IrAgent> =
-            ir.agents.iter().map(|a| (a.id, a)).collect();
+        let agents_by_id: HashMap<DefId, &IrAgent> = ir.agents.iter().map(|a| (a.id, a)).collect();
         let fixtures_by_id: HashMap<DefId, &IrFixture> =
             ir.fixtures.iter().map(|f| (f.id, f)).collect();
         Self {
@@ -336,11 +329,7 @@ impl<'ir> Interpreter<'ir> {
         self
     }
 
-    fn bind_params(
-        &mut self,
-        agent: &'ir IrAgent,
-        args: Vec<Value>,
-    ) -> Result<(), InterpError> {
+    fn bind_params(&mut self, agent: &'ir IrAgent, args: Vec<Value>) -> Result<(), InterpError> {
         if agent.params.len() != args.len() {
             return Err(InterpError::new(
                 InterpErrorKind::DispatchFailed(format!(
@@ -405,11 +394,15 @@ impl<'ir> Interpreter<'ir> {
     }
 
     fn should_yield_statement(&self) -> bool {
-        self.stepper.as_ref().is_some_and(|s| s.should_yield_on_statement())
+        self.stepper
+            .as_ref()
+            .is_some_and(|s| s.should_yield_on_statement())
     }
 
     fn should_yield_boundary(&self) -> bool {
-        self.stepper.as_ref().is_some_and(|s| s.should_yield_on_boundary())
+        self.stepper
+            .as_ref()
+            .is_some_and(|s| s.should_yield_on_boundary())
     }
 
     #[async_recursion]
@@ -417,14 +410,13 @@ impl<'ir> Interpreter<'ir> {
         match &expr.kind {
             IrExprKind::Literal(lit) => Ok(ExprFlow::Value(eval_literal(lit))),
 
-            IrExprKind::Local { local_id, .. } => {
-                self.env.lookup(*local_id).map(ExprFlow::Value).ok_or_else(|| {
-                    InterpError::new(
-                        InterpErrorKind::UndefinedLocal(*local_id),
-                        expr.span,
-                    )
-                })
-            }
+            IrExprKind::Local { local_id, .. } => self
+                .env
+                .lookup(*local_id)
+                .map(ExprFlow::Value)
+                .ok_or_else(|| {
+                    InterpError::new(InterpErrorKind::UndefinedLocal(*local_id), expr.span)
+                }),
 
             IrExprKind::Decl { .. } => Err(InterpError::new(
                 InterpErrorKind::NotImplemented(
@@ -433,9 +425,75 @@ impl<'ir> Interpreter<'ir> {
                 expr.span,
             )),
 
-            IrExprKind::Call { kind, callee_name, args } => {
+            IrExprKind::Call {
+                kind,
+                callee_name,
+                args,
+            } => {
                 self.eval_call(kind, callee_name, args, &expr.ty, expr.span)
                     .await
+            }
+
+            IrExprKind::Ask { prompt, target_ty } => {
+                let prompt = match self.eval_expr(prompt).await?.into_value() {
+                    Ok(Value::String(s)) => s.to_string(),
+                    Ok(other) => {
+                        return Err(InterpError::new(
+                            InterpErrorKind::TypeMismatch {
+                                expected: "String".into(),
+                                got: other.type_name(),
+                            },
+                            prompt.span,
+                        ));
+                    }
+                    Err(v) => return Ok(ExprFlow::Propagate(v)),
+                };
+                let value = self
+                    .runtime
+                    .ask_human(&prompt, target_ty.display_name())
+                    .await
+                    .map_err(|err| InterpError::new(InterpErrorKind::Runtime(err), expr.span))?;
+                let value = json_to_value(value, target_ty, &self.types_by_id).map_err(|err| {
+                    InterpError::new(
+                        InterpErrorKind::Runtime(corvid_runtime::RuntimeError::Marshal(
+                            err.to_string(),
+                        )),
+                        expr.span,
+                    )
+                })?;
+                Ok(ExprFlow::Value(value))
+            }
+
+            IrExprKind::Choose { options } => {
+                let options_value = match self.eval_expr(options).await?.into_value() {
+                    Ok(v) => v,
+                    Err(v) => return Ok(ExprFlow::Propagate(v)),
+                };
+                let Value::List(list) = options_value else {
+                    return Err(InterpError::new(
+                        InterpErrorKind::TypeMismatch {
+                            expected: "List".into(),
+                            got: options_value.type_name(),
+                        },
+                        options.span,
+                    ));
+                };
+                let values = list.iter_cloned();
+                let options_json = values.iter().map(value_to_json).collect::<Vec<_>>();
+                let index = self
+                    .runtime
+                    .choose_human(options_json)
+                    .await
+                    .map_err(|err| InterpError::new(InterpErrorKind::Runtime(err), expr.span))?;
+                let Some(value) = values.get(index).cloned() else {
+                    return Err(InterpError::new(
+                        InterpErrorKind::Runtime(corvid_runtime::RuntimeError::Other(format!(
+                            "human choice index {index} out of range"
+                        ))),
+                        expr.span,
+                    ));
+                };
+                Ok(ExprFlow::Value(value))
             }
 
             IrExprKind::FieldAccess { target, field } => {
@@ -508,7 +566,9 @@ impl<'ir> Interpreter<'ir> {
                                 expr.span,
                             ));
                         }
-                        Ok(ExprFlow::Value(items.get(idx as usize).expect("checked list index")))
+                        Ok(ExprFlow::Value(
+                            items.get(idx as usize).expect("checked list index"),
+                        ))
                     }
                     (other, _) => Err(InterpError::new(
                         InterpErrorKind::TypeMismatch {
@@ -635,7 +695,9 @@ impl<'ir> Interpreter<'ir> {
                 };
                 match weak {
                     Value::Weak(weak) => match weak.upgrade() {
-                        Some(value) => Ok(ExprFlow::Value(Value::OptionSome(BoxedValue::new(value)))),
+                        Some(value) => {
+                            Ok(ExprFlow::Value(Value::OptionSome(BoxedValue::new(value))))
+                        }
                         None => Ok(ExprFlow::Value(Value::OptionNone)),
                     },
                     other => Err(InterpError::new(
@@ -713,9 +775,10 @@ impl<'ir> Interpreter<'ir> {
                     Err(v) => return Ok(ExprFlow::Propagate(v)),
                 };
                 match token {
-                    Value::ResumeToken(token) => self
-                        .resume_prompt_stream(*prompt_def_id, prompt_name, token, expr.span)
-                        .await,
+                    Value::ResumeToken(token) => {
+                        self.resume_prompt_stream(*prompt_def_id, prompt_name, token, expr.span)
+                            .await
+                    }
                     other => Err(InterpError::new(
                         InterpErrorKind::TypeMismatch {
                             expected: "ResumeToken<T>".into(),
@@ -818,15 +881,16 @@ impl<'ir> Interpreter<'ir> {
                 if let Some(v) = last_result_err {
                     Ok(ExprFlow::Value(v))
                 } else if let Some(chunk) = last_stream_start_chunk {
-                    Ok(ExprFlow::Value(self.singleton_stream(
-                        chunk,
-                        default_stream_backpressure(),
-                    ).await?))
+                    Ok(ExprFlow::Value(
+                        self.singleton_stream(chunk, default_stream_backpressure())
+                            .await?,
+                    ))
                 } else if saw_option_retry {
                     Ok(ExprFlow::Value(Value::OptionNone))
                 } else if let Some(err) = last_stream_start_err {
                     Ok(ExprFlow::Value(
-                        self.singleton_stream_error(err, default_stream_backpressure()).await?,
+                        self.singleton_stream_error(err, default_stream_backpressure())
+                            .await?,
                     ))
                 } else if let Some(err) = last_runtime_error {
                     Err(err)
@@ -839,7 +903,10 @@ impl<'ir> Interpreter<'ir> {
                 trace,
                 arms,
                 else_body,
-            } => self.eval_replay_expr(trace, arms, else_body, expr.span).await,
+            } => {
+                self.eval_replay_expr(trace, arms, else_body, expr.span)
+                    .await
+            }
         }
     }
 
@@ -946,9 +1013,7 @@ impl<'ir> Interpreter<'ir> {
                             self.runtime
                                 .approval_gate(&label, json_args.clone())
                                 .await
-                                .map_err(|e| {
-                                    InterpError::new(InterpErrorKind::Runtime(e), span)
-                                })?;
+                                .map_err(|e| InterpError::new(InterpErrorKind::Runtime(e), span))?;
                         }
                     }
                 }
@@ -959,20 +1024,26 @@ impl<'ir> Interpreter<'ir> {
                 };
 
                 if self.should_yield_boundary() {
-                    let action = self.maybe_yield(StepEvent::BeforeToolCall {
-                        tool_name: callee_name.to_string(),
-                        args: json_args.clone(),
-                        input_confidence,
-                        confidence_gate,
-                        span,
-                        env: self.env_snapshot(),
-                    }).await?;
+                    let action = self
+                        .maybe_yield(StepEvent::BeforeToolCall {
+                            tool_name: callee_name.to_string(),
+                            args: json_args.clone(),
+                            input_confidence,
+                            confidence_gate,
+                            span,
+                            env: self.env_snapshot(),
+                        })
+                        .await?;
                     if let StepAction::Override(val) = action {
                         let value = json_to_value(val, result_decode_ty, &self.types_by_id)
-                            .map_err(|e| InterpError::new(
-                                InterpErrorKind::Marshal(format!("tool `{callee_name}` override: {e}")),
-                                span,
-                            ))?;
+                            .map_err(|e| {
+                                InterpError::new(
+                                    InterpErrorKind::Marshal(format!(
+                                        "tool `{callee_name}` override: {e}"
+                                    )),
+                                    span,
+                                )
+                            })?;
                         return Ok(ExprFlow::Value(maybe_ground_tool_result(
                             tool,
                             callee_name,
@@ -985,16 +1056,18 @@ impl<'ir> Interpreter<'ir> {
                 let result_value = if let Some(mock) = self.mock_tools.get(def_id).copied() {
                     let mut sub = Interpreter::new(self.ir, self.runtime).with_mocks();
                     sub.bind_ir_params(callee_name, &mock.params, arg_values, span)?;
-                    sub.eval_block(&mock.body).await.and_then(|flow| match flow {
-                        Flow::Return(value) => Ok(value),
-                        Flow::Normal => Ok(Value::Nothing),
-                        Flow::Break | Flow::Continue => Err(InterpError::new(
-                            InterpErrorKind::Other(
-                                "loop control flow escaped mock body".into(),
-                            ),
-                            mock.span,
-                        )),
-                    })?
+                    sub.eval_block(&mock.body)
+                        .await
+                        .and_then(|flow| match flow {
+                            Flow::Return(value) => Ok(value),
+                            Flow::Normal => Ok(Value::Nothing),
+                            Flow::Break | Flow::Continue => Err(InterpError::new(
+                                InterpErrorKind::Other(
+                                    "loop control flow escaped mock body".into(),
+                                ),
+                                mock.span,
+                            )),
+                        })?
                 } else {
                     let result = self
                         .runtime
@@ -1012,19 +1085,25 @@ impl<'ir> Interpreter<'ir> {
                 let result = value_to_json(&result_value);
 
                 if self.should_yield_boundary() {
-                    let action = self.maybe_yield(StepEvent::AfterToolCall {
-                        tool_name: callee_name.to_string(),
-                        result: result.clone(),
-                        result_confidence: 1.0,
-                        elapsed_ms,
-                        span,
-                    }).await?;
+                    let action = self
+                        .maybe_yield(StepEvent::AfterToolCall {
+                            tool_name: callee_name.to_string(),
+                            result: result.clone(),
+                            result_confidence: 1.0,
+                            elapsed_ms,
+                            span,
+                        })
+                        .await?;
                     if let StepAction::Override(val) = action {
                         let value = json_to_value(val, result_decode_ty, &self.types_by_id)
-                            .map_err(|e| InterpError::new(
-                                InterpErrorKind::Marshal(format!("tool `{callee_name}` override: {e}")),
-                                span,
-                            ))?;
+                            .map_err(|e| {
+                                InterpError::new(
+                                    InterpErrorKind::Marshal(format!(
+                                        "tool `{callee_name}` override: {e}"
+                                    )),
+                                    span,
+                                )
+                            })?;
                         return Ok(ExprFlow::Value(maybe_ground_tool_result(
                             tool,
                             callee_name,
@@ -1063,7 +1142,8 @@ impl<'ir> Interpreter<'ir> {
                         args: json_args,
                         input_confidence: composed_confidence(&arg_values),
                         span,
-                    }).await?;
+                    })
+                    .await?;
                 }
 
                 let mut sub = Interpreter::new(self.ir, self.runtime);
@@ -1096,7 +1176,8 @@ impl<'ir> Interpreter<'ir> {
                             })
                             .unwrap_or(1.0),
                         span,
-                    }).await?;
+                    })
+                    .await?;
                 }
 
                 result
@@ -1112,14 +1193,16 @@ impl<'ir> Interpreter<'ir> {
                 })?;
                 let mut sub = Interpreter::new(self.ir, self.runtime).with_mocks();
                 sub.bind_ir_params(callee_name, &fixture.params, arg_values, span)?;
-                sub.eval_block(&fixture.body).await.and_then(|flow| match flow {
-                    Flow::Return(value) => Ok(ExprFlow::Value(value)),
-                    Flow::Normal => Ok(ExprFlow::Value(Value::Nothing)),
-                    Flow::Break | Flow::Continue => Err(InterpError::new(
-                        InterpErrorKind::Other("loop control flow escaped fixture body".into()),
-                        fixture.span,
-                    )),
-                })
+                sub.eval_block(&fixture.body)
+                    .await
+                    .and_then(|flow| match flow {
+                        Flow::Return(value) => Ok(ExprFlow::Value(value)),
+                        Flow::Normal => Ok(ExprFlow::Value(Value::Nothing)),
+                        Flow::Break | Flow::Continue => Err(InterpError::new(
+                            InterpErrorKind::Other("loop control flow escaped fixture body".into()),
+                            fixture.span,
+                        )),
+                    })
             }
             IrCallKind::StructConstructor { def_id } => {
                 // Build a `Value::Struct` from the constructor args, in
@@ -1149,11 +1232,9 @@ impl<'ir> Interpreter<'ir> {
                     .zip(arg_values.into_iter())
                     .map(|(f, v)| (f.name.clone(), v))
                     .collect();
-                Ok(ExprFlow::Value(Value::Struct(crate::value::StructValue::new(
-                    ir_type.id,
-                    ir_type.name.clone(),
-                    fields,
-                ))))
+                Ok(ExprFlow::Value(Value::Struct(
+                    crate::value::StructValue::new(ir_type.id, ir_type.name.clone(), fields),
+                )))
             }
             IrCallKind::Unknown => {
                 let _ = result_ty;

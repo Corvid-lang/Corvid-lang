@@ -162,12 +162,7 @@ impl<'a> Checker<'a> {
         self.type_ref_to_type(&fixture.return_ty)
     }
 
-    fn check_prompt_call(
-        &mut self,
-        def_id: DefId,
-        name: &str,
-        args: &[Expr],
-    ) -> Type {
+    fn check_prompt_call(&mut self, def_id: DefId, name: &str, args: &[Expr]) -> Type {
         let prompt = *self
             .prompts_by_id
             .get(&def_id)
@@ -177,12 +172,7 @@ impl<'a> Checker<'a> {
         self.type_ref_to_type(&prompt.return_ty)
     }
 
-    fn check_agent_call(
-        &mut self,
-        def_id: DefId,
-        name: &str,
-        args: &[Expr],
-    ) -> Type {
+    fn check_agent_call(&mut self, def_id: DefId, name: &str, args: &[Expr]) -> Type {
         let agent = *self
             .agents_by_id
             .get(&def_id)
@@ -381,6 +371,8 @@ impl<'a> Checker<'a> {
             }
             BuiltIn::StreamMerge => self.check_stream_merge_call(name, args),
             BuiltIn::Resume => self.check_resume_call(name, args),
+            BuiltIn::Ask => self.check_ask_call(name, args),
+            BuiltIn::Choose => self.check_choose_call(name, args),
             BuiltIn::None => {
                 self.errors.push(TypeError::new(
                     TypeErrorKind::NotCallable {
@@ -408,6 +400,108 @@ impl<'a> Checker<'a> {
         }
     }
 
+    fn check_ask_call(&mut self, name: &Ident, args: &[Expr]) -> Type {
+        if args.len() != 2 {
+            self.errors.push(TypeError::new(
+                TypeErrorKind::ArityMismatch {
+                    callee: name.name.clone(),
+                    expected: 2,
+                    got: args.len(),
+                },
+                name.span,
+            ));
+            for arg in args {
+                let _ = self.check_expr(arg);
+            }
+            return Type::Unknown;
+        }
+
+        let prompt_ty = self.check_expr(&args[0]);
+        if !matches!(prompt_ty, Type::String | Type::Unknown) {
+            self.errors.push(TypeError::new(
+                TypeErrorKind::TypeMismatch {
+                    expected: "String".into(),
+                    got: prompt_ty.display_name(),
+                    context: "ask prompt".into(),
+                },
+                args[0].span(),
+            ));
+        }
+
+        self.bump_effect(WeakEffect::Approve);
+        self.type_expr_to_type(&args[1])
+    }
+
+    fn check_choose_call(&mut self, name: &Ident, args: &[Expr]) -> Type {
+        if args.len() != 1 {
+            self.errors.push(TypeError::new(
+                TypeErrorKind::ArityMismatch {
+                    callee: name.name.clone(),
+                    expected: 1,
+                    got: args.len(),
+                },
+                name.span,
+            ));
+            for arg in args {
+                let _ = self.check_expr(arg);
+            }
+            return Type::Unknown;
+        }
+
+        self.bump_effect(WeakEffect::Approve);
+        match self.check_expr(&args[0]) {
+            Type::List(inner) => *inner,
+            Type::Unknown => Type::Unknown,
+            other => {
+                self.errors.push(TypeError::new(
+                    TypeErrorKind::TypeMismatch {
+                        expected: "List<T>".into(),
+                        got: other.display_name(),
+                        context: "choose options".into(),
+                    },
+                    args[0].span(),
+                ));
+                Type::Unknown
+            }
+        }
+    }
+
+    fn type_expr_to_type(&mut self, expr: &Expr) -> Type {
+        let Expr::Ident { name, .. } = expr else {
+            self.errors.push(TypeError::new(
+                TypeErrorKind::TypeMismatch {
+                    expected: "type name".into(),
+                    got: "value expression".into(),
+                    context: "ask return type".into(),
+                },
+                expr.span(),
+            ));
+            return Type::Unknown;
+        };
+
+        match self.bindings.get(&name.span) {
+            Some(Binding::BuiltIn(BuiltIn::Int)) => Type::Int,
+            Some(Binding::BuiltIn(BuiltIn::Float)) => Type::Float,
+            Some(Binding::BuiltIn(BuiltIn::String)) => Type::String,
+            Some(Binding::BuiltIn(BuiltIn::Bool)) => Type::Bool,
+            Some(Binding::BuiltIn(BuiltIn::Nothing)) => Type::Nothing,
+            Some(Binding::Decl(def_id)) if self.symbols.get(*def_id).kind == DeclKind::Type => {
+                Type::Struct(*def_id)
+            }
+            _ => {
+                self.errors.push(TypeError::new(
+                    TypeErrorKind::TypeMismatch {
+                        expected: "type name".into(),
+                        got: name.name.clone(),
+                        context: "ask return type".into(),
+                    },
+                    name.span,
+                ));
+                Type::Unknown
+            }
+        }
+    }
+
     fn check_resume_call(&mut self, name: &Ident, args: &[Expr]) -> Type {
         if args.len() != 2 {
             self.errors.push(TypeError::new(
@@ -425,7 +519,9 @@ impl<'a> Checker<'a> {
         }
 
         let prompt_ty = match &args[0] {
-            Expr::Ident { name: prompt_name, .. } => match self.bindings.get(&prompt_name.span) {
+            Expr::Ident {
+                name: prompt_name, ..
+            } => match self.bindings.get(&prompt_name.span) {
                 Some(Binding::Decl(def_id))
                     if self.symbols.get(*def_id).kind == DeclKind::Prompt =>
                 {
@@ -577,10 +673,7 @@ impl<'a> Checker<'a> {
                 let type_name = self.symbols.get(recv_def_id).name.clone();
                 self.errors.push(TypeError::new(
                     TypeErrorKind::NotCallable {
-                        got: format!(
-                            "no method `{}` on type `{type_name}`",
-                            method_name.name
-                        ),
+                        got: format!("no method `{}` on type `{type_name}`", method_name.name),
                     },
                     method_name.span,
                 ));
@@ -599,12 +692,9 @@ impl<'a> Checker<'a> {
         effective_args.extend_from_slice(args);
 
         match method.kind {
-            MethodKind::Tool => self.check_tool_call(
-                method.def_id,
-                &method_name.name,
-                &effective_args,
-                span,
-            ),
+            MethodKind::Tool => {
+                self.check_tool_call(method.def_id, &method_name.name, &effective_args, span)
+            }
             MethodKind::Prompt => {
                 self.check_prompt_call(method.def_id, &method_name.name, &effective_args)
             }
@@ -617,7 +707,12 @@ impl<'a> Checker<'a> {
     /// `TypeName(field0, field1, ...)` — construct a struct. Field
     /// values must be assignable to each field's declared type.
     /// Returns `Struct(def_id)`.
-    pub(super) fn check_struct_constructor(&mut self, def_id: DefId, name: &str, args: &[Expr]) -> Type {
+    pub(super) fn check_struct_constructor(
+        &mut self,
+        def_id: DefId,
+        name: &str,
+        args: &[Expr],
+    ) -> Type {
         let ty_decl = *self
             .types_by_id
             .get(&def_id)
@@ -654,12 +749,7 @@ impl<'a> Checker<'a> {
         Type::Struct(def_id)
     }
 
-    fn check_args_against_params(
-        &mut self,
-        callee_name: &str,
-        params: &[Param],
-        args: &[Expr],
-    ) {
+    fn check_args_against_params(&mut self, callee_name: &str, params: &[Param], args: &[Expr]) {
         if params.len() != args.len() {
             self.errors.push(TypeError::new(
                 TypeErrorKind::ArityMismatch {
@@ -667,9 +757,7 @@ impl<'a> Checker<'a> {
                     expected: params.len(),
                     got: args.len(),
                 },
-                args.first()
-                    .map(|a| a.span())
-                    .unwrap_or(Span::new(0, 0)),
+                args.first().map(|a| a.span()).unwrap_or(Span::new(0, 0)),
             ));
         }
         for (i, arg) in args.iter().enumerate() {
@@ -681,10 +769,7 @@ impl<'a> Checker<'a> {
                         TypeErrorKind::TypeMismatch {
                             expected: param_ty.display_name(),
                             got: arg_ty.display_name(),
-                            context: format!(
-                                "argument {} to `{callee_name}`",
-                                i + 1
-                            ),
+                            context: format!("argument {} to `{callee_name}`", i + 1),
                         },
                         arg.span(),
                     ));

@@ -70,17 +70,15 @@ pub fn run_replay(
     model: Option<&str>,
     mutate: Option<&[String]>,
 ) -> Result<u8> {
-    let events = read_events_from_path(trace).with_context(|| {
-        format!("failed to load trace at `{}`", trace.display())
-    })?;
+    let events = read_events_from_path(trace)
+        .with_context(|| format!("failed to load trace at `{}`", trace.display()))?;
 
     if events.is_empty() {
         anyhow::bail!("trace `{}` is empty", trace.display());
     }
 
-    validate_supported_schema(&events).with_context(|| {
-        format!("trace `{}` uses an unsupported schema", trace.display())
-    })?;
+    validate_supported_schema(&events)
+        .with_context(|| format!("trace `{}` uses an unsupported schema", trace.display()))?;
 
     print_summary(trace, &events);
 
@@ -127,11 +125,7 @@ fn plain_replay_stub() -> Result<u8> {
 /// `0` when the live model agreed with the recording on every
 /// LLM call (and substitutions + completion matched), `1` when at
 /// least one divergence surfaced.
-fn differential_replay_live(
-    trace: &Path,
-    source: Option<&Path>,
-    model_id: &str,
-) -> Result<u8> {
+fn differential_replay_live(trace: &Path, source: Option<&Path>, model_id: &str) -> Result<u8> {
     let source_path = source.ok_or_else(|| {
         anyhow::anyhow!(
             "`--model` replay requires `--source <FILE>` pointing at the Corvid source the \
@@ -167,10 +161,11 @@ fn render_differential_report(outcome: &ReplayOutcome, model_id: &str) -> Result
     let sub_count = report.substitution_divergences.len();
     let completion_diverged = report.run_completion_divergence.is_some();
 
-    eprintln!("differential replay report — agent: `{}`", outcome.agent_name);
     eprintln!(
-        "  LLM divergences (live `{model_id}` vs. recorded): {llm_count}"
+        "differential replay report — agent: `{}`",
+        outcome.agent_name
     );
+    eprintln!("  LLM divergences (live `{model_id}` vs. recorded): {llm_count}");
     eprintln!("  substitution divergences (shape mismatches): {sub_count}");
     eprintln!(
         "  completion divergence (final result / error): {}",
@@ -200,9 +195,7 @@ fn render_differential_report(outcome: &ReplayOutcome, model_id: &str) -> Result
 
     if let Some(err) = &outcome.result_error {
         eprintln!("note: the replay run itself errored: {err}");
-        eprintln!(
-            "      divergences above (if any) were observed before the error surfaced."
-        );
+        eprintln!("      divergences above (if any) were observed before the error surfaced.");
     }
 
     if llm_count == 0 && sub_count == 0 && !completion_diverged {
@@ -336,9 +329,7 @@ fn mutate_replay_live(
     })?;
 
     eprintln!();
-    eprintln!(
-        "counterfactual replay — step {step_1based} ({kind} `{name}`) overridden"
-    );
+    eprintln!("counterfactual replay — step {step_1based} ({kind} `{name}`) overridden");
     eprintln!(
         "    recorded response replaced with: {}",
         serde_json::to_string(&replacement).unwrap_or_else(|_| "<unrenderable>".into())
@@ -376,10 +367,7 @@ fn render_mutation_report(
     let completion_diverged = report.run_completion_divergence.is_some();
 
     eprintln!("mutation replay report — agent: `{}`", outcome.agent_name);
-    eprintln!(
-        "  mutated step: {} ({} `{}`)",
-        step, kind, name
-    );
+    eprintln!("  mutated step: {} ({} `{}`)", step, kind, name);
     eprintln!("  downstream divergences: {}", divergence_count);
     eprintln!(
         "  completion divergence (final result / error): {}",
@@ -402,9 +390,7 @@ fn render_mutation_report(
 
     if let Some(err) = &outcome.result_error {
         eprintln!("note: the replay run itself errored: {err}");
-        eprintln!(
-            "      divergences above (if any) were observed before the error surfaced."
-        );
+        eprintln!("      divergences above (if any) were observed before the error surfaced.");
     }
 
     if divergence_count == 0 && !completion_diverged {
@@ -486,6 +472,10 @@ fn run_id_of(events: &[TraceEvent]) -> Option<&str> {
         | TraceEvent::ApprovalRequest { run_id, .. }
         | TraceEvent::ApprovalDecision { run_id, .. }
         | TraceEvent::ApprovalResponse { run_id, .. }
+        | TraceEvent::HumanInputRequest { run_id, .. }
+        | TraceEvent::HumanInputResponse { run_id, .. }
+        | TraceEvent::HumanChoiceRequest { run_id, .. }
+        | TraceEvent::HumanChoiceResponse { run_id, .. }
         | TraceEvent::HostEvent { run_id, .. }
         | TraceEvent::SeedRead { run_id, .. }
         | TraceEvent::ClockRead { run_id, .. }
@@ -504,19 +494,15 @@ fn run_id_of(events: &[TraceEvent]) -> Option<&str> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use corvid_trace_schema::{
-        write_events_to_path, SCHEMA_VERSION, WRITER_INTERPRETER,
-    };
+    use corvid_trace_schema::{write_events_to_path, SCHEMA_VERSION, WRITER_INTERPRETER};
     use std::path::PathBuf;
 
     fn test_dir() -> PathBuf {
         use std::sync::atomic::{AtomicU64, Ordering};
         static COUNTER: AtomicU64 = AtomicU64::new(0);
         let n = COUNTER.fetch_add(1, Ordering::SeqCst);
-        let dir = std::env::temp_dir().join(format!(
-            "corvid-cli-replay-test-{}-{n}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("corvid-cli-replay-test-{}-{n}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         dir
     }
@@ -648,8 +634,7 @@ mod tests {
         let dir = test_dir();
         let path = write_sample(&dir, "run-mutate", true);
         let args = mutate_args(1, "\"cancel\"");
-        let err =
-            run_replay(&path, None, None, Some(args.as_slice())).unwrap_err();
+        let err = run_replay(&path, None, None, Some(args.as_slice())).unwrap_err();
         let msg = format!("{err:#}");
         assert!(msg.contains("--source"), "got: {msg}");
     }
@@ -714,13 +699,8 @@ mod tests {
         let dir = test_dir();
         let path = write_sample(&dir, "run-mutate-conflict", true);
         let args = mutate_args(1, "\"refund\"");
-        let err = run_replay(
-            &path,
-            None,
-            Some("claude-opus-5-0"),
-            Some(args.as_slice()),
-        )
-        .unwrap_err();
+        let err =
+            run_replay(&path, None, Some("claude-opus-5-0"), Some(args.as_slice())).unwrap_err();
         let msg = format!("{err:#}");
         assert!(msg.contains("mutually exclusive"), "got: {msg}");
     }

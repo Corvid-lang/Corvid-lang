@@ -67,7 +67,10 @@ struct HostImportPlan {
     approval_indices: HashMap<String, u32>,
 }
 
-pub fn emit_wasm_artifacts(ir: &IrFile, module_name: &str) -> Result<WasmArtifacts, WasmCodegenError> {
+pub fn emit_wasm_artifacts(
+    ir: &IrFile,
+    module_name: &str,
+) -> Result<WasmArtifacts, WasmCodegenError> {
     let scalar_agents = ir
         .agents
         .iter()
@@ -133,7 +136,12 @@ pub fn emit_wasm_artifacts(ir: &IrFile, module_name: &str) -> Result<WasmArtifac
     module.section(&exports);
     module.section(&code);
 
-    companions::build_artifacts(module_name, &scalar_agents, &host_plan.imports, module.finish())
+    companions::build_artifacts(
+        module_name,
+        &scalar_agents,
+        &host_plan.imports,
+        module.finish(),
+    )
 }
 
 fn validate_agent(agent: &IrAgent) -> Result<&IrAgent, WasmCodegenError> {
@@ -253,7 +261,11 @@ fn collect_expr_imports(
     agent_name: &str,
 ) -> Result<(), WasmCodegenError> {
     match &expr.kind {
-        IrExprKind::Call { kind, args, callee_name } => {
+        IrExprKind::Call {
+            kind,
+            args,
+            callee_name,
+        } => {
             for arg in args {
                 collect_expr_imports(arg, tools, prompts, plan, agent_name)?;
             }
@@ -305,6 +317,8 @@ fn collect_expr_imports(
         | IrExprKind::ResultOk { inner: target }
         | IrExprKind::ResultErr { inner: target }
         | IrExprKind::OptionSome { inner: target }
+        | IrExprKind::Ask { prompt: target, .. }
+        | IrExprKind::Choose { options: target }
         | IrExprKind::TryPropagate { inner: target } => {
             collect_expr_imports(target, tools, prompts, plan, agent_name)
         }
@@ -328,7 +342,10 @@ fn collect_expr_imports(
             }
             collect_expr_imports(else_body, tools, prompts, plan, agent_name)
         }
-        IrExprKind::Literal(_) | IrExprKind::Local { .. } | IrExprKind::Decl { .. } | IrExprKind::OptionNone => Ok(()),
+        IrExprKind::Literal(_)
+        | IrExprKind::Local { .. }
+        | IrExprKind::Decl { .. }
+        | IrExprKind::OptionNone => Ok(()),
     }
 }
 
@@ -389,9 +406,7 @@ fn add_approval_import(
         params: args
             .iter()
             .enumerate()
-            .map(|(idx, arg)| {
-                validate_import_param(label, &format!("arg{}", idx + 1), &arg.ty)
-            })
+            .map(|(idx, arg)| validate_import_param(label, &format!("arg{}", idx + 1), &arg.ty))
             .collect::<Result<Vec<_>, _>>()?,
         return_ty: Type::Bool,
     };
@@ -435,7 +450,13 @@ fn compile_agent(
     let local_groups = locals.local_groups();
     let mut function = Function::new(local_groups);
 
-    emit_block(&agent.body, &mut function, &locals, agent_indices, host_plan)?;
+    emit_block(
+        &agent.body,
+        &mut function,
+        &locals,
+        agent_indices,
+        host_plan,
+    )?;
     function.instruction(&Instruction::Unreachable);
     function.instruction(&Instruction::End);
     Ok(function)
@@ -512,9 +533,7 @@ impl LocalLayout {
 
     fn index(&self, local_id: LocalId, name: &str) -> Result<u32, WasmCodegenError> {
         self.map.get(&local_id).copied().ok_or_else(|| {
-            WasmCodegenError::unsupported(format!(
-                "wasm target could not resolve local `{name}`"
-            ))
+            WasmCodegenError::unsupported(format!("wasm target could not resolve local `{name}`"))
         })
     }
 }
@@ -568,11 +587,15 @@ fn emit_block(
                 for arg in args {
                     emit_expr(arg, function, locals, agent_indices, host_plan)?;
                 }
-                let index = host_plan.approval_indices.get(label).copied().ok_or_else(|| {
-                    WasmCodegenError::unsupported(format!(
-                        "wasm target could not resolve approval import `{label}`"
-                    ))
-                })?;
+                let index = host_plan
+                    .approval_indices
+                    .get(label)
+                    .copied()
+                    .ok_or_else(|| {
+                        WasmCodegenError::unsupported(format!(
+                            "wasm target could not resolve approval import `{label}`"
+                        ))
+                    })?;
                 function.instruction(&Instruction::Call(index));
                 function.instruction(&Instruction::If(BlockType::Empty));
                 function.instruction(&Instruction::Else);
@@ -650,11 +673,15 @@ fn emit_expr(
                 for arg in args {
                     emit_expr(arg, function, locals, agent_indices, host_plan)?;
                 }
-                let index = host_plan.prompt_indices.get(def_id).copied().ok_or_else(|| {
-                    WasmCodegenError::unsupported(format!(
-                        "wasm target could not resolve prompt import `{callee_name}`"
-                    ))
-                })?;
+                let index = host_plan
+                    .prompt_indices
+                    .get(def_id)
+                    .copied()
+                    .ok_or_else(|| {
+                        WasmCodegenError::unsupported(format!(
+                            "wasm target could not resolve prompt import `{callee_name}`"
+                        ))
+                    })?;
                 function.instruction(&Instruction::Call(index));
             }
             IrCallKind::Fixture { .. } => {
@@ -692,6 +719,8 @@ fn emit_expr(
         | IrExprKind::ResultErr { .. }
         | IrExprKind::OptionSome { .. }
         | IrExprKind::OptionNone
+        | IrExprKind::Ask { .. }
+        | IrExprKind::Choose { .. }
         | IrExprKind::TryPropagate { .. }
         | IrExprKind::TryRetry { .. }
         | IrExprKind::Replay { .. } => {
@@ -831,7 +860,9 @@ agent add_one(x: Int) -> Int:
             .expect("valid wasm");
         assert!(artifacts.js_loader.contains("add_one(x)"));
         assert!(artifacts.ts_types.contains("add_one(x: bigint): bigint"));
-        assert!(artifacts.manifest_json.contains("\"module_name\": \"math\""));
+        assert!(artifacts
+            .manifest_json
+            .contains("\"module_name\": \"math\""));
     }
 
     #[test]
@@ -876,7 +907,11 @@ agent refund(amount: Int) -> Int:
         assert!(artifacts.js_loader.contains("'tool.issue_refund'"));
         assert!(artifacts.js_loader.contains("kind: 'approval_decision'"));
         assert!(artifacts.js_loader.contains("kind: 'tool_result'"));
-        assert!(artifacts.ts_types.contains("'IssueRefund': (arg1: bigint) => boolean"));
-        assert!(artifacts.ts_types.contains("'issue_refund': (amount: bigint) => bigint"));
+        assert!(artifacts
+            .ts_types
+            .contains("'IssueRefund': (arg1: bigint) => boolean"));
+        assert!(artifacts
+            .ts_types
+            .contains("'issue_refund': (amount: bigint) => bigint"));
     }
 }

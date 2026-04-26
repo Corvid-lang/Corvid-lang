@@ -151,10 +151,7 @@ impl ReplaySession {
                     });
                 }
                 StepEvent::Completed {
-                    ok,
-                    result,
-                    error,
-                    ..
+                    ok, result, error, ..
                 } => {
                     steps.push(ReplayStep::RunComplete {
                         ts_ms,
@@ -204,13 +201,12 @@ impl ReplaySession {
             if line.trim().is_empty() {
                 continue;
             }
-            let event: TraceEvent = serde_json::from_str(line).map_err(|error| {
-                ReplayLoadError::InvalidLine {
+            let event: TraceEvent =
+                serde_json::from_str(line).map_err(|error| ReplayLoadError::InvalidLine {
                     path: path.clone(),
                     line: index + 1,
                     message: error.to_string(),
-                }
-            })?;
+                })?;
             events.push(event);
         }
         if events.is_empty() {
@@ -252,18 +248,17 @@ impl ReplaySession {
                 } => {
                     ensure_run_id(&path, &run_id, event_run_id)?;
                     let session_run_id = run_id.as_str();
-                    let (end_ts_ms, result, consumed, was_truncated) =
-                        match events.get(i + 1) {
-                            Some(TraceEvent::ToolResult {
-                                ts_ms,
-                                run_id,
-                                tool: result_tool,
-                                result,
-                            }) if run_id == session_run_id && result_tool == tool => {
-                                (Some(*ts_ms), Some(result.clone()), 2, false)
-                            }
-                            _ => (None, None, 1, true),
-                        };
+                    let (end_ts_ms, result, consumed, was_truncated) = match events.get(i + 1) {
+                        Some(TraceEvent::ToolResult {
+                            ts_ms,
+                            run_id,
+                            tool: result_tool,
+                            result,
+                        }) if run_id == session_run_id && result_tool == tool => {
+                            (Some(*ts_ms), Some(result.clone()), 2, false)
+                        }
+                        _ => (None, None, 1, true),
+                    };
                     if was_truncated {
                         truncated = true;
                     }
@@ -287,19 +282,18 @@ impl ReplaySession {
                 } => {
                     ensure_run_id(&path, &run_id, event_run_id)?;
                     let session_run_id = run_id.as_str();
-                    let (end_ts_ms, result, consumed, was_truncated) =
-                        match events.get(i + 1) {
-                            Some(TraceEvent::LlmResult {
-                                ts_ms,
-                                run_id,
-                                prompt: result_prompt,
-                                result,
-                                ..
-                            }) if run_id == session_run_id && result_prompt == prompt => {
-                                (Some(*ts_ms), Some(result.clone()), 2, false)
-                            }
-                            _ => (None, None, 1, true),
-                        };
+                    let (end_ts_ms, result, consumed, was_truncated) = match events.get(i + 1) {
+                        Some(TraceEvent::LlmResult {
+                            ts_ms,
+                            run_id,
+                            prompt: result_prompt,
+                            result,
+                            ..
+                        }) if run_id == session_run_id && result_prompt == prompt => {
+                            (Some(*ts_ms), Some(result.clone()), 2, false)
+                        }
+                        _ => (None, None, 1, true),
+                    };
                     if was_truncated {
                         truncated = true;
                     }
@@ -322,29 +316,28 @@ impl ReplaySession {
                 } => {
                     ensure_run_id(&path, &run_id, event_run_id)?;
                     let session_run_id = run_id.as_str();
-                    let (end_ts_ms, approved, consumed, was_truncated) =
-                        match events.get(i + 1) {
-                            Some(TraceEvent::ApprovalDecision { .. }) => match events.get(i + 2) {
-                                Some(TraceEvent::ApprovalResponse {
-                                    ts_ms,
-                                    run_id,
-                                    label: result_label,
-                                    approved,
-                                }) if run_id == session_run_id && result_label == label => {
-                                    (Some(*ts_ms), Some(*approved), 3, false)
-                                }
-                                _ => (None, None, 2, true),
-                            },
+                    let (end_ts_ms, approved, consumed, was_truncated) = match events.get(i + 1) {
+                        Some(TraceEvent::ApprovalDecision { .. }) => match events.get(i + 2) {
                             Some(TraceEvent::ApprovalResponse {
                                 ts_ms,
                                 run_id,
                                 label: result_label,
                                 approved,
                             }) if run_id == session_run_id && result_label == label => {
-                                (Some(*ts_ms), Some(*approved), 2, false)
+                                (Some(*ts_ms), Some(*approved), 3, false)
                             }
-                            _ => (None, None, 1, true),
-                        };
+                            _ => (None, None, 2, true),
+                        },
+                        Some(TraceEvent::ApprovalResponse {
+                            ts_ms,
+                            run_id,
+                            label: result_label,
+                            approved,
+                        }) if run_id == session_run_id && result_label == label => {
+                            (Some(*ts_ms), Some(*approved), 2, false)
+                        }
+                        _ => (None, None, 1, true),
+                    };
                     if was_truncated {
                         truncated = true;
                     }
@@ -411,6 +404,22 @@ impl ReplaySession {
                     ..
                 }
                 | TraceEvent::ApprovalDecision {
+                    run_id: event_run_id,
+                    ..
+                }
+                | TraceEvent::HumanInputRequest {
+                    run_id: event_run_id,
+                    ..
+                }
+                | TraceEvent::HumanInputResponse {
+                    run_id: event_run_id,
+                    ..
+                }
+                | TraceEvent::HumanChoiceRequest {
+                    run_id: event_run_id,
+                    ..
+                }
+                | TraceEvent::HumanChoiceResponse {
                     run_id: event_run_id,
                     ..
                 }
@@ -639,7 +648,11 @@ impl fmt::Display for ReplayLoadError {
                 )
             }
             ReplayLoadError::InvalidShape { path, message } => {
-                write!(f, "replay `{}` has invalid event shape: {message}", path.display())
+                write!(
+                    f,
+                    "replay `{}` has invalid event shape: {message}",
+                    path.display()
+                )
             }
         }
     }
@@ -650,16 +663,18 @@ fn matching_after_tool(
     after_index: usize,
     tool_name: &str,
 ) -> Option<(usize, Value)> {
-    trace.checkpoints.iter().skip(after_index + 1).find_map(|checkpoint| {
-        match &checkpoint.event {
+    trace
+        .checkpoints
+        .iter()
+        .skip(after_index + 1)
+        .find_map(|checkpoint| match &checkpoint.event {
             StepEvent::AfterToolCall {
                 tool_name: result_tool,
                 result,
                 ..
             } if result_tool == tool_name => Some((checkpoint.index, result.clone())),
             _ => None,
-        }
-    })
+        })
 }
 
 fn matching_after_prompt(
@@ -667,16 +682,18 @@ fn matching_after_prompt(
     after_index: usize,
     prompt_name: &str,
 ) -> Option<(usize, Value)> {
-    trace.checkpoints.iter().skip(after_index + 1).find_map(|checkpoint| {
-        match &checkpoint.event {
+    trace
+        .checkpoints
+        .iter()
+        .skip(after_index + 1)
+        .find_map(|checkpoint| match &checkpoint.event {
             StepEvent::AfterPromptCall {
                 prompt_name: result_prompt,
                 result,
                 ..
             } if result_prompt == prompt_name => Some((checkpoint.index, result.clone())),
             _ => None,
-        }
-    })
+        })
 }
 
 fn matching_after_approval(
@@ -684,16 +701,18 @@ fn matching_after_approval(
     after_index: usize,
     label: &str,
 ) -> Option<(usize, bool)> {
-    trace.checkpoints.iter().skip(after_index + 1).find_map(|checkpoint| {
-        match &checkpoint.event {
+    trace
+        .checkpoints
+        .iter()
+        .skip(after_index + 1)
+        .find_map(|checkpoint| match &checkpoint.event {
             StepEvent::AfterApproval {
                 label: result_label,
                 approved,
                 ..
             } if result_label == label => Some((checkpoint.index, *approved)),
             _ => None,
-        }
-    })
+        })
 }
 
 fn first_run_id(events: &[TraceEvent]) -> Result<&str, ReplayLoadError> {
@@ -709,6 +728,10 @@ fn first_run_id(events: &[TraceEvent]) -> Result<&str, ReplayLoadError> {
         | Some(TraceEvent::ApprovalRequest { run_id, .. })
         | Some(TraceEvent::ApprovalDecision { run_id, .. })
         | Some(TraceEvent::ApprovalResponse { run_id, .. })
+        | Some(TraceEvent::HumanInputRequest { run_id, .. })
+        | Some(TraceEvent::HumanInputResponse { run_id, .. })
+        | Some(TraceEvent::HumanChoiceRequest { run_id, .. })
+        | Some(TraceEvent::HumanChoiceResponse { run_id, .. })
         | Some(TraceEvent::HostEvent { run_id, .. })
         | Some(TraceEvent::SeedRead { run_id, .. })
         | Some(TraceEvent::ClockRead { run_id, .. })
@@ -749,6 +772,10 @@ fn first_ts(events: &[TraceEvent]) -> u64 {
         | Some(TraceEvent::ApprovalRequest { ts_ms, .. })
         | Some(TraceEvent::ApprovalDecision { ts_ms, .. })
         | Some(TraceEvent::ApprovalResponse { ts_ms, .. })
+        | Some(TraceEvent::HumanInputRequest { ts_ms, .. })
+        | Some(TraceEvent::HumanInputResponse { ts_ms, .. })
+        | Some(TraceEvent::HumanChoiceRequest { ts_ms, .. })
+        | Some(TraceEvent::HumanChoiceResponse { ts_ms, .. })
         | Some(TraceEvent::HostEvent { ts_ms, .. })
         | Some(TraceEvent::SeedRead { ts_ms, .. })
         | Some(TraceEvent::ClockRead { ts_ms, .. })
@@ -778,6 +805,10 @@ fn last_ts(events: &[TraceEvent]) -> u64 {
         | Some(TraceEvent::ApprovalRequest { ts_ms, .. })
         | Some(TraceEvent::ApprovalDecision { ts_ms, .. })
         | Some(TraceEvent::ApprovalResponse { ts_ms, .. })
+        | Some(TraceEvent::HumanInputRequest { ts_ms, .. })
+        | Some(TraceEvent::HumanInputResponse { ts_ms, .. })
+        | Some(TraceEvent::HumanChoiceRequest { ts_ms, .. })
+        | Some(TraceEvent::HumanChoiceResponse { ts_ms, .. })
         | Some(TraceEvent::HostEvent { ts_ms, .. })
         | Some(TraceEvent::SeedRead { ts_ms, .. })
         | Some(TraceEvent::ClockRead { ts_ms, .. })
@@ -807,7 +838,10 @@ fn render_optional_json(value: Option<&Value>) -> String {
 fn render_window(start_ts_ms: u64, end_ts_ms: Option<u64>) -> String {
     match end_ts_ms {
         Some(end_ts_ms) if end_ts_ms >= start_ts_ms => {
-            format!("{start_ts_ms} -> {end_ts_ms} ({} ms)", end_ts_ms - start_ts_ms)
+            format!(
+                "{start_ts_ms} -> {end_ts_ms} ({} ms)",
+                end_ts_ms - start_ts_ms
+            )
         }
         Some(end_ts_ms) => format!("{start_ts_ms} -> {end_ts_ms}"),
         None => format!("{start_ts_ms} -> <missing>"),

@@ -175,12 +175,12 @@ pub(super) fn lower_string_binop_with_ownership(
             }
             Ok(result)
         }
-        BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div | BinaryOp::Mod => Err(
-            CodegenError::not_supported(
+        BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div | BinaryOp::Mod => {
+            Err(CodegenError::not_supported(
                 format!("`{op:?}` is not defined for `String` operands"),
                 span,
-            ),
-        ),
+            ))
+        }
         BinaryOp::And | BinaryOp::Or => {
             unreachable!("and/or is short-circuited upstream and never reaches string BinOp")
         }
@@ -218,12 +218,13 @@ fn emit_grounded_value_attestation(
         _ => unreachable!("grounded attestation requires Grounded<T>"),
     };
     let attest_ref = module.declare_func_in_func(attest_id, builder.func);
-    let attest_call = builder.ins().call(attest_ref, &[value, source_name_val, confidence_val]);
+    let attest_call = builder
+        .ins()
+        .call(attest_ref, &[value, source_name_val, confidence_val]);
     let attested = builder.inst_results(attest_call)[0];
     emit_release(builder, module, runtime, source_name_val);
     Ok(attested)
 }
-
 
 /// Lower a struct constructor: allocate, store each field at its
 /// offset, return the struct pointer (refcount = 1, Owned).
@@ -359,7 +360,9 @@ pub(super) fn lower_result_constructor(
         module,
         runtime,
     )?;
-    emit_result_wrapper_value(builder, module, runtime, &expr.ty, payload, payload_ty, tag, expr.span)
+    emit_result_wrapper_value(
+        builder, module, runtime, &expr.ty, payload, payload_ty, tag, expr.span,
+    )
 }
 
 pub(super) fn emit_result_wrapper_value(
@@ -450,7 +453,6 @@ pub(super) fn emit_option_wrapper_value(
     Ok(option_ptr)
 }
 
-
 /// Strict (eager) binary operator lowering: arithmetic and comparison
 /// for both `Int` and `Float`. Mixed `Int + Float` operands are
 /// promoted to `F64` first (matches the interpreter's widening rule).
@@ -516,9 +518,7 @@ pub(super) fn lower_binop_strict(
         (BinaryOp::LtEq, ArithDomain::Int) => {
             Ok(builder.ins().icmp(IntCC::SignedLessThanOrEqual, l, r))
         }
-        (BinaryOp::Gt, ArithDomain::Int) => {
-            Ok(builder.ins().icmp(IntCC::SignedGreaterThan, l, r))
-        }
+        (BinaryOp::Gt, ArithDomain::Int) => Ok(builder.ins().icmp(IntCC::SignedGreaterThan, l, r)),
         (BinaryOp::GtEq, ArithDomain::Int) => {
             Ok(builder.ins().icmp(IntCC::SignedGreaterThanOrEqual, l, r))
         }
@@ -529,16 +529,12 @@ pub(super) fn lower_binop_strict(
         // GreaterThanOrEqual variants all return false on NaN, matching
         // Rust's lt/le/gt/ge.
         (BinaryOp::Eq, ArithDomain::Float) => Ok(builder.ins().fcmp(FloatCC::Equal, l, r)),
-        (BinaryOp::NotEq, ArithDomain::Float) => {
-            Ok(builder.ins().fcmp(FloatCC::NotEqual, l, r))
-        }
+        (BinaryOp::NotEq, ArithDomain::Float) => Ok(builder.ins().fcmp(FloatCC::NotEqual, l, r)),
         (BinaryOp::Lt, ArithDomain::Float) => Ok(builder.ins().fcmp(FloatCC::LessThan, l, r)),
         (BinaryOp::LtEq, ArithDomain::Float) => {
             Ok(builder.ins().fcmp(FloatCC::LessThanOrEqual, l, r))
         }
-        (BinaryOp::Gt, ArithDomain::Float) => {
-            Ok(builder.ins().fcmp(FloatCC::GreaterThan, l, r))
-        }
+        (BinaryOp::Gt, ArithDomain::Float) => Ok(builder.ins().fcmp(FloatCC::GreaterThan, l, r)),
         (BinaryOp::GtEq, ArithDomain::Float) => {
             Ok(builder.ins().fcmp(FloatCC::GreaterThanOrEqual, l, r))
         }
@@ -576,7 +572,6 @@ enum ArithDomain {
     Int,
     Float,
 }
-
 
 /// Layout (single allocation):
 /// ```text
@@ -630,9 +625,9 @@ pub(super) fn lower_string_literal(
     // (this same symbol + 32) so `bytes_ptr` points at the inline bytes.
     let self_gv = module.declare_data_in_data(data_id, &mut desc);
     desc.write_data_addr(16, self_gv, 32);
-    module
-        .define_data(data_id, &desc)
-        .map_err(|e| CodegenError::cranelift(format!("define literal `{symbol_name}`: {e}"), span))?;
+    module.define_data(data_id, &desc).map_err(|e| {
+        CodegenError::cranelift(format!("define literal `{symbol_name}`: {e}"), span)
+    })?;
 
     // The String value is the address of the descriptor (symbol + 16),
     // matching what `corvid_alloc` returns for heap strings.
@@ -805,7 +800,6 @@ pub(super) fn lower_short_circuit(
     Ok(result)
 }
 
-
 /// Run an overflow-producing Cranelift op, branch to an overflow handler
 /// block on the flag, and return the sum/diff/product value.
 fn with_overflow_trap<F>(
@@ -830,7 +824,9 @@ where
     builder.seal_block(overflow_block);
     let callee_ref = module.declare_func_in_func(runtime.overflow, builder.func);
     builder.ins().call(callee_ref, &[]);
-    builder.ins().trap(cranelift_codegen::ir::TrapCode::INTEGER_OVERFLOW);
+    builder
+        .ins()
+        .trap(cranelift_codegen::ir::TrapCode::INTEGER_OVERFLOW);
 
     builder.switch_to_block(cont_block);
     builder.seal_block(cont_block);
@@ -854,11 +850,12 @@ fn trap_on_zero(
     builder.seal_block(trap_block);
     let callee_ref = module.declare_func_in_func(runtime.overflow, builder.func);
     builder.ins().call(callee_ref, &[]);
-    builder.ins().trap(cranelift_codegen::ir::TrapCode::INTEGER_OVERFLOW);
+    builder
+        .ins()
+        .trap(cranelift_codegen::ir::TrapCode::INTEGER_OVERFLOW);
     builder.switch_to_block(cont_block);
     builder.seal_block(cont_block);
 }
-
 
 pub(super) fn lower_expr(
     builder: &mut FunctionBuilder,
@@ -1824,9 +1821,11 @@ pub(super) fn lower_expr(
         | IrExprKind::StreamMerge { .. }
         | IrExprKind::StreamOrderedBy { .. }
         | IrExprKind::StreamResumeToken { .. }
-        | IrExprKind::ResumeStream { .. } => {
+        | IrExprKind::ResumeStream { .. }
+        | IrExprKind::Ask { .. }
+        | IrExprKind::Choose { .. } => {
             Err(CodegenError::not_supported(
-                "stream combinators are interpreter-backed in this release; use the interpreter tier (`corvid run --tier interp`) for split_by/merge/resume",
+                "human-boundary and stream combinators are interpreter-backed in this release; use the interpreter tier (`corvid run --tier interp`)",
                 expr.span,
             ))
         }
@@ -2110,10 +2109,9 @@ fn emit_retry_delay_ms(
             }
             let base = (base_ms.min(i64::MAX as u64)) as i64;
             let max_shift = ((i64::MAX / base) as u64).ilog2() as i64;
-            let overflow =
-                builder
-                    .ins()
-                    .icmp_imm(IntCC::SignedGreaterThan, retry_index, max_shift);
+            let overflow = builder
+                .ins()
+                .icmp_imm(IntCC::SignedGreaterThan, retry_index, max_shift);
             let base_val = builder.ins().iconst(I64, base);
             let raw = builder.ins().ishl(base_val, retry_index);
             builder.ins().select(overflow, cap, raw)
@@ -2162,7 +2160,9 @@ fn lower_try_retry_result(
     let attempt_retry_index = builder.append_block_param(attempt_block, I64);
     let attempt_remaining = builder.append_block_param(attempt_block, I64);
 
-    builder.ins().jump(attempt_block, &[zero.into(), total_val.into()]);
+    builder
+        .ins()
+        .jump(attempt_block, &[zero.into(), total_val.into()]);
 
     builder.switch_to_block(attempt_block);
     let retry_index_val = attempt_retry_index;
@@ -2194,7 +2194,9 @@ fn lower_try_retry_result(
 
     builder.switch_to_block(err_block);
     builder.seal_block(err_block);
-    let should_retry = builder.ins().icmp_imm(IntCC::SignedGreaterThan, remaining_val, 1);
+    let should_retry = builder
+        .ins()
+        .icmp_imm(IntCC::SignedGreaterThan, remaining_val, 1);
     let retry_block = builder.create_block();
     let finish_err_block = builder.create_block();
     builder.append_block_param(retry_block, result_cl_ty);
@@ -2204,7 +2206,11 @@ fn lower_try_retry_result(
     builder.ins().brif(
         should_retry,
         retry_block,
-        &[result_ptr.into(), retry_index_val.into(), remaining_val.into()],
+        &[
+            result_ptr.into(),
+            retry_index_val.into(),
+            remaining_val.into(),
+        ],
         finish_err_block,
         &[result_ptr.into()],
     );
@@ -2223,14 +2229,20 @@ fn lower_try_retry_result(
 
     let delay_val = emit_retry_delay_ms(builder, retry_index, backoff);
     let zero_delay = builder.ins().iconst(I64, 0);
-    let has_delay = builder.ins().icmp(IntCC::SignedGreaterThan, delay_val, zero_delay);
+    let has_delay = builder
+        .ins()
+        .icmp(IntCC::SignedGreaterThan, delay_val, zero_delay);
     let sleep_block = builder.create_block();
     let no_sleep_block = builder.create_block();
     let continue_block = builder.create_block();
     builder.append_block_param(sleep_block, I64);
-    builder
-        .ins()
-        .brif(has_delay, sleep_block, &[delay_val.into()], no_sleep_block, &[]);
+    builder.ins().brif(
+        has_delay,
+        sleep_block,
+        &[delay_val.into()],
+        no_sleep_block,
+        &[],
+    );
 
     builder.switch_to_block(sleep_block);
     builder.seal_block(sleep_block);
@@ -2248,9 +2260,10 @@ fn lower_try_retry_result(
 
     let next_retry_index = builder.ins().iadd_imm(retry_index, 1);
     let next_remaining = builder.ins().iadd_imm(retry_remaining, -1);
-    builder
-        .ins()
-        .jump(attempt_block, &[next_retry_index.into(), next_remaining.into()]);
+    builder.ins().jump(
+        attempt_block,
+        &[next_retry_index.into(), next_remaining.into()],
+    );
     builder.seal_block(attempt_block);
 
     builder.switch_to_block(done_block);
@@ -2299,7 +2312,9 @@ fn lower_try_retry_option(
     let attempt_retry_index = builder.append_block_param(attempt_block, I64);
     let attempt_remaining = builder.append_block_param(attempt_block, I64);
 
-    builder.ins().jump(attempt_block, &[zero.into(), total_val.into()]);
+    builder
+        .ins()
+        .jump(attempt_block, &[zero.into(), total_val.into()]);
 
     builder.switch_to_block(attempt_block);
     let retry_index_val = attempt_retry_index;
@@ -2318,7 +2333,9 @@ fn lower_try_retry_option(
     let is_some = builder.ins().icmp_imm(IntCC::NotEqual, option_val, 0);
     let some_block = builder.create_block();
     let none_block = builder.create_block();
-    builder.ins().brif(is_some, some_block, &[], none_block, &[]);
+    builder
+        .ins()
+        .brif(is_some, some_block, &[], none_block, &[]);
 
     builder.switch_to_block(some_block);
     builder.seal_block(some_block);
@@ -2326,7 +2343,9 @@ fn lower_try_retry_option(
 
     builder.switch_to_block(none_block);
     builder.seal_block(none_block);
-    let should_retry = builder.ins().icmp_imm(IntCC::SignedGreaterThan, remaining_val, 1);
+    let should_retry = builder
+        .ins()
+        .icmp_imm(IntCC::SignedGreaterThan, remaining_val, 1);
     let retry_block = builder.create_block();
     let finish_none_block = builder.create_block();
     builder.append_block_param(retry_block, result_cl_ty);
@@ -2336,7 +2355,11 @@ fn lower_try_retry_option(
     builder.ins().brif(
         should_retry,
         retry_block,
-        &[option_val.into(), retry_index_val.into(), remaining_val.into()],
+        &[
+            option_val.into(),
+            retry_index_val.into(),
+            remaining_val.into(),
+        ],
         finish_none_block,
         &[option_val.into()],
     );
@@ -2354,14 +2377,20 @@ fn lower_try_retry_option(
 
     let delay_val = emit_retry_delay_ms(builder, retry_index, backoff);
     let zero_delay = builder.ins().iconst(I64, 0);
-    let has_delay = builder.ins().icmp(IntCC::SignedGreaterThan, delay_val, zero_delay);
+    let has_delay = builder
+        .ins()
+        .icmp(IntCC::SignedGreaterThan, delay_val, zero_delay);
     let sleep_block = builder.create_block();
     let no_sleep_block = builder.create_block();
     let continue_block = builder.create_block();
     builder.append_block_param(sleep_block, I64);
-    builder
-        .ins()
-        .brif(has_delay, sleep_block, &[delay_val.into()], no_sleep_block, &[]);
+    builder.ins().brif(
+        has_delay,
+        sleep_block,
+        &[delay_val.into()],
+        no_sleep_block,
+        &[],
+    );
 
     builder.switch_to_block(sleep_block);
     builder.seal_block(sleep_block);
@@ -2379,9 +2408,10 @@ fn lower_try_retry_option(
 
     let next_retry_index = builder.ins().iadd_imm(retry_index, 1);
     let next_remaining = builder.ins().iadd_imm(retry_remaining, -1);
-    builder
-        .ins()
-        .jump(attempt_block, &[next_retry_index.into(), next_remaining.into()]);
+    builder.ins().jump(
+        attempt_block,
+        &[next_retry_index.into(), next_remaining.into()],
+    );
     builder.seal_block(attempt_block);
 
     builder.switch_to_block(done_block);
@@ -2396,4 +2426,3 @@ fn tool_wrapper_symbol(tool_name: &str) -> String {
         .collect();
     format!("__corvid_tool_{mangled}")
 }
-

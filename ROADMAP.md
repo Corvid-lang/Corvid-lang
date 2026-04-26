@@ -1465,8 +1465,8 @@ The determinism-source catalog and the language's treatment of non-reproducible 
 **Hard dep:** runtime (✅).
 
 **Scope:**
-- `ask(prompt, Type)` — structured input from the human. Returns `Type`. Ties into the approval runtime.
-- `choose(options: [T]) -> T` — pick one. UI presents options; user selects.
+- [x] `ask(prompt, Type)` — structured input from the human. Returns `Type`. Ties into the approval runtime.
+- [x] `choose(options: [T]) -> T` — pick one. UI presents options; user selects.
 - Rich `approve` UI: show context (why approval requested), diff preview (what will change), arguments inspection.
 - Scoped, replay-verifiable approval tokens: the trace records what the human approved, for which label, arguments, and time window.
 - Human-boundary effects: `ask`, `choose`, and `approve` compose into the same effect algebra as tools and prompts, so human interaction is visible to the compiler and host descriptors.

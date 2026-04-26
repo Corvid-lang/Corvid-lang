@@ -18,12 +18,16 @@ use corvid_types::Type;
 /// Why a program can't run via the native tier.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum NotNativeReason {
-    PythonImport { module: String },
+    PythonImport {
+        module: String,
+    },
     /// User-declared tool called from compiled code. This is supported
     /// via typed-ABI direct calls, but only when the caller
     /// supplies a tools staticlib (`--with-tools-lib`). Without one,
     /// the scan reports this reason and the dispatcher falls back.
-    ToolCall { name: String },
+    ToolCall {
+        name: String,
+    },
     /// Wider tagged unions and retry bodies outside the supported
     /// native `Result` / `Option` subset still route to the
     /// interpreter. Nullable-pointer `Option<T>` with a
@@ -32,13 +36,16 @@ pub enum NotNativeReason {
     /// supported native forms today.
     TaggedUnionRetryNotNative,
     StreamLoweringNotImplemented,
-    TestFixtureNotNative { name: String },
+    TestFixtureNotNative {
+        name: String,
+    },
     /// `replay <trace>: when ... else ...` expressions need the
     /// trace-dispatch runtime primitive (Phase 21 slice
     /// 21-inv-E-runtime) plus its native-tier lowering follow-up.
     /// Until both land, any program containing a replay expression
     /// routes to the interpreter tier.
     ReplayPrimitiveNotNative,
+    HumanBoundaryNotNative,
 }
 
 impl std::fmt::Display for NotNativeReason {
@@ -65,6 +72,9 @@ impl std::fmt::Display for NotNativeReason {
             ),
             Self::ReplayPrimitiveNotNative => {
                 write!(f, "program uses `replay <trace>: when ... else ...` - native lowering of the replay language primitive lands in a follow-up to Phase 21 slice 21-inv-E-runtime; until then the interpreter tier runs it")
+            }
+            Self::HumanBoundaryNotNative => {
+                write!(f, "program uses `ask` or `choose` - human input boundaries are interpreter-only in this slice")
             }
         }
     }
@@ -136,7 +146,9 @@ pub fn native_ability(ir: &IrFile) -> Result<(), NotNativeReason> {
                     module: import.module.clone(),
                 });
             }
-            IrImportSource::Corvid | IrImportSource::RemoteCorvid | IrImportSource::PackageCorvid => {}
+            IrImportSource::Corvid
+            | IrImportSource::RemoteCorvid
+            | IrImportSource::PackageCorvid => {}
         }
     }
     for agent in &ir.agents {
@@ -239,13 +251,13 @@ fn scan_expr(expr: &IrExpr, current_return_ty: &Type) -> Result<(), NotNativeRea
             scan_expr(target, current_return_ty)?;
             scan_expr(index, current_return_ty)
         }
-        IrExprKind::BinOp { left, right, .. }
-        | IrExprKind::WrappingBinOp { left, right, .. } => {
+        IrExprKind::BinOp { left, right, .. } | IrExprKind::WrappingBinOp { left, right, .. } => {
             scan_expr(left, current_return_ty)?;
             scan_expr(right, current_return_ty)
         }
-        IrExprKind::UnOp { operand, .. }
-        | IrExprKind::WrappingUnOp { operand, .. } => scan_expr(operand, current_return_ty),
+        IrExprKind::UnOp { operand, .. } | IrExprKind::WrappingUnOp { operand, .. } => {
+            scan_expr(operand, current_return_ty)
+        }
         IrExprKind::List { items } => {
             for it in items {
                 scan_expr(it, current_return_ty)?;
@@ -340,6 +352,9 @@ fn scan_expr(expr: &IrExpr, current_return_ty: &Type) -> Result<(), NotNativeRea
             }
         }
         IrExprKind::Replay { .. } => Err(NotNativeReason::ReplayPrimitiveNotNative),
+        IrExprKind::Ask { .. } | IrExprKind::Choose { .. } => {
+            Err(NotNativeReason::HumanBoundaryNotNative)
+        }
     }
 }
 

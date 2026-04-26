@@ -144,8 +144,11 @@ impl<'a> Lowerer<'a> {
             let Decl::Effect(effect) = decl else { continue };
             for dim in &effect.dimensions {
                 if dim.name.name == "trust" {
-                    if let corvid_ast::DimensionValue::ConfidenceGated { threshold, .. } = &dim.value {
-                        self.confidence_gates.insert(effect.name.name.clone(), *threshold);
+                    if let corvid_ast::DimensionValue::ConfidenceGated { threshold, .. } =
+                        &dim.value
+                    {
+                        self.confidence_gates
+                            .insert(effect.name.name.clone(), *threshold);
                     }
                 }
             }
@@ -190,9 +193,7 @@ impl<'a> Lowerer<'a> {
                     // their `DefId` from the resolver's method side
                     // table (NOT the by-name namespace, since two
                     // types can share method names like `total`).
-                    let Some(type_def_id) =
-                        self.symbols.lookup_def(&ext.type_name.name)
-                    else {
+                    let Some(type_def_id) = self.symbols.lookup_def(&ext.type_name.name) else {
                         continue;
                     };
                     let Some(method_table) = self.methods.get(&type_def_id) else {
@@ -389,7 +390,12 @@ impl<'a> Lowerer<'a> {
             params: self.lower_params(&t.params),
             return_ty: self.type_ref_to_type(&t.return_ty),
             effect: t.effect,
-            effect_names: t.effect_row.effects.iter().map(|e| e.name.name.clone()).collect(),
+            effect_names: t
+                .effect_row
+                .effects
+                .iter()
+                .map(|e| e.name.name.clone())
+                .collect(),
             confidence_gate,
             span: t.span,
         }
@@ -405,7 +411,9 @@ impl<'a> Lowerer<'a> {
 
     fn lower_prompt_with_id(&self, p: &PromptDecl, id: DefId) -> IrPrompt {
         let cites_strictly_param = p.cites_strictly.as_ref().and_then(|param_name| {
-            p.params.iter().position(|param| param.name.name == *param_name)
+            p.params
+                .iter()
+                .position(|param| param.name.name == *param_name)
         });
         let effect_names: Vec<String> = p
             .effect_row
@@ -458,15 +466,14 @@ impl<'a> Lowerer<'a> {
                     IrEnsembleWeighting::AccuracyHistory
                 }
             });
-            let disagreement_escalation =
-                spec.disagreement_escalation.as_ref().and_then(|model| {
-                    let def_id = self.symbols.lookup_def(&model.name)?;
-                    Some(IrEnsembleMember {
-                        def_id: self.remap_def_id(def_id),
-                        name: model.name.clone(),
-                        span: model.span,
-                    })
-                });
+            let disagreement_escalation = spec.disagreement_escalation.as_ref().and_then(|model| {
+                let def_id = self.symbols.lookup_def(&model.name)?;
+                Some(IrEnsembleMember {
+                    def_id: self.remap_def_id(def_id),
+                    name: model.name.clone(),
+                    span: model.span,
+                })
+            });
             IrEnsembleSpec {
                 models: members,
                 vote,
@@ -502,14 +509,15 @@ impl<'a> Lowerer<'a> {
             min_confidence: p.stream.min_confidence,
             max_tokens: p.stream.max_tokens,
             backpressure: p.stream.backpressure.clone(),
-            escalate_to: p.stream.escalate_to.as_ref().map(|model| model.name.clone()),
+            escalate_to: p
+                .stream
+                .escalate_to
+                .as_ref()
+                .map(|model| model.name.clone()),
             calibrated: p.calibrated,
             cacheable: p.cacheable,
             capability_required: p.capability_required.as_ref().map(|c| c.name.clone()),
-            output_format_required: p
-                .output_format_required
-                .as_ref()
-                .map(|f| f.name.clone()),
+            output_format_required: p.output_format_required.as_ref().map(|f| f.name.clone()),
             route,
             progressive,
             rollout,
@@ -633,7 +641,9 @@ impl<'a> Lowerer<'a> {
 
     fn lower_stmt(&self, s: &Stmt) -> IrStmt {
         match s {
-            Stmt::Let { name, value, span, .. } => {
+            Stmt::Let {
+                name, value, span, ..
+            } => {
                 let local_id = match self.bindings.get(&name.span) {
                     Some(Binding::Local(id)) => *id,
                     _ => LocalId(u32::MAX),
@@ -655,13 +665,23 @@ impl<'a> Lowerer<'a> {
                 value: self.lower_expr(value),
                 span: *span,
             },
-            Stmt::If { cond, then_block, else_block, span } => IrStmt::If {
+            Stmt::If {
+                cond,
+                then_block,
+                else_block,
+                span,
+            } => IrStmt::If {
                 cond: self.lower_expr(cond),
                 then_block: self.lower_block(then_block),
                 else_block: else_block.as_ref().map(|b| self.lower_block(b)),
                 span: *span,
             },
-            Stmt::For { var, iter, body, span } => {
+            Stmt::For {
+                var,
+                iter,
+                body,
+                span,
+            } => {
                 let var_local = match self.bindings.get(&var.span) {
                     Some(Binding::Local(id)) => *id,
                     _ => LocalId(u32::MAX),
@@ -705,8 +725,7 @@ impl<'a> Lowerer<'a> {
     fn extract_approve_action(&self, action: &Expr) -> (String, Vec<IrExpr>) {
         if let Expr::Call { callee, args, .. } = action {
             if let Expr::Ident { name, .. } = &**callee {
-                let lowered_args: Vec<IrExpr> =
-                    args.iter().map(|a| self.lower_expr(a)).collect();
+                let lowered_args: Vec<IrExpr> = args.iter().map(|a| self.lower_expr(a)).collect();
                 return (name.name.clone(), lowered_args);
             }
         }
@@ -734,13 +753,26 @@ impl<'a> Lowerer<'a> {
                 target: Box::new(self.lower_expr(target)),
                 index: Box::new(self.lower_expr(index)),
             },
-            Expr::BinOp { op, left, right, span } => {
+            Expr::BinOp {
+                op,
+                left,
+                right,
+                span,
+            } => {
                 let left = Box::new(self.lower_expr(left));
                 let right = Box::new(self.lower_expr(right));
                 if self.wrapping_arithmetic && is_wrapping_int_binop(*op, self.types.get(span)) {
-                    IrExprKind::WrappingBinOp { op: *op, left, right }
+                    IrExprKind::WrappingBinOp {
+                        op: *op,
+                        left,
+                        right,
+                    }
                 } else {
-                    IrExprKind::BinOp { op: *op, left, right }
+                    IrExprKind::BinOp {
+                        op: *op,
+                        left,
+                        right,
+                    }
                 }
             }
             Expr::UnOp { op, operand, span } => {
@@ -947,14 +979,14 @@ impl<'a> Lowerer<'a> {
                 }
                 Some(Binding::BuiltIn(BuiltIn::None)) => return IrExprKind::OptionNone,
                 Some(Binding::BuiltIn(BuiltIn::WeakNew)) => {
-                    let strong = args
-                        .first()
-                        .map(|arg| self.lower_expr(arg))
-                        .unwrap_or_else(|| IrExpr {
-                            kind: IrExprKind::Literal(IrLiteral::Nothing),
-                            ty: Type::Unknown,
-                            span: name.span,
-                        });
+                    let strong =
+                        args.first()
+                            .map(|arg| self.lower_expr(arg))
+                            .unwrap_or_else(|| IrExpr {
+                                kind: IrExprKind::Literal(IrLiteral::Nothing),
+                                ty: Type::Unknown,
+                                span: name.span,
+                            });
                     return IrExprKind::WeakNew {
                         strong: Box::new(strong),
                     };
@@ -976,20 +1008,53 @@ impl<'a> Lowerer<'a> {
                     return stream::lower_merge_call(self, name.span, args);
                 }
                 Some(Binding::BuiltIn(BuiltIn::StreamResumeToken)) => {
-                    let stream = args
-                        .first()
-                        .map(|arg| self.lower_expr(arg))
-                        .unwrap_or_else(|| IrExpr {
-                            kind: IrExprKind::Literal(IrLiteral::Nothing),
-                            ty: Type::Unknown,
-                            span: name.span,
-                        });
+                    let stream =
+                        args.first()
+                            .map(|arg| self.lower_expr(arg))
+                            .unwrap_or_else(|| IrExpr {
+                                kind: IrExprKind::Literal(IrLiteral::Nothing),
+                                ty: Type::Unknown,
+                                span: name.span,
+                            });
                     return IrExprKind::StreamResumeToken {
                         stream: Box::new(stream),
                     };
                 }
+                Some(Binding::BuiltIn(BuiltIn::Ask)) => {
+                    let prompt =
+                        args.first()
+                            .map(|arg| self.lower_expr(arg))
+                            .unwrap_or_else(|| IrExpr {
+                                kind: IrExprKind::Literal(IrLiteral::String(String::new())),
+                                ty: Type::String,
+                                span: name.span,
+                            });
+                    return IrExprKind::Ask {
+                        prompt: Box::new(prompt),
+                        target_ty: args
+                            .get(1)
+                            .map(|arg| self.type_expr_to_type(arg))
+                            .unwrap_or(Type::Unknown),
+                    };
+                }
+                Some(Binding::BuiltIn(BuiltIn::Choose)) => {
+                    let options =
+                        args.first()
+                            .map(|arg| self.lower_expr(arg))
+                            .unwrap_or_else(|| IrExpr {
+                                kind: IrExprKind::List { items: Vec::new() },
+                                ty: Type::List(Box::new(Type::Unknown)),
+                                span: name.span,
+                            });
+                    return IrExprKind::Choose {
+                        options: Box::new(options),
+                    };
+                }
                 Some(Binding::BuiltIn(BuiltIn::Resume)) => {
-                    if let Some(Expr::Ident { name: prompt_name, .. }) = args.first() {
+                    if let Some(Expr::Ident {
+                        name: prompt_name, ..
+                    }) = args.first()
+                    {
                         if let Some(Binding::Decl(def_id)) = self.bindings.get(&prompt_name.span) {
                             if self.symbols.get(*def_id).kind == DeclKind::Prompt {
                                 let token = args
@@ -1062,12 +1127,7 @@ impl<'a> Lowerer<'a> {
     /// `None` when the call doesn't resolve to a method (caller
     /// falls back to the regular field-access-of-a-fn path, which
     /// produces `IrCallKind::Unknown` and lets later validation error).
-    fn try_method_call(
-        &self,
-        target: &Expr,
-        field: &Ident,
-        args: &[Expr],
-    ) -> Option<IrExprKind> {
+    fn try_method_call(&self, target: &Expr, field: &Ident, args: &[Expr]) -> Option<IrExprKind> {
         // Receiver type lives on the type-checker's side-table.
         let recv_ty = self.types.get(&target.span())?;
         let recv_def_id = match recv_ty {
@@ -1084,12 +1144,8 @@ impl<'a> Lowerer<'a> {
                 // declared effect once `define_tool` lowers it.
                 effect: Effect::Safe,
             },
-            corvid_resolve::resolver::MethodKind::Prompt => IrCallKind::Prompt {
-                def_id,
-            },
-            corvid_resolve::resolver::MethodKind::Agent => IrCallKind::Agent {
-                def_id,
-            },
+            corvid_resolve::resolver::MethodKind::Prompt => IrCallKind::Prompt { def_id },
+            corvid_resolve::resolver::MethodKind::Agent => IrCallKind::Agent { def_id },
         };
         // Receiver becomes the first argument.
         let mut lowered_args: Vec<IrExpr> = Vec::with_capacity(args.len() + 1);
@@ -1168,12 +1224,7 @@ impl<'a> Lowerer<'a> {
         }
     }
 
-    fn try_imported_call(
-        &self,
-        callee: &Expr,
-        field: &Ident,
-        args: &[Expr],
-    ) -> Option<IrExprKind> {
+    fn try_imported_call(&self, callee: &Expr, field: &Ident, args: &[Expr]) -> Option<IrExprKind> {
         let target = self.imported_calls.get(&callee.span())?;
         let def_id = self.remap_imported_target(target);
         let kind = match target.kind {
@@ -1190,6 +1241,21 @@ impl<'a> Lowerer<'a> {
             callee_name: field.name.clone(),
             args: args.iter().map(|arg| self.lower_expr(arg)).collect(),
         })
+    }
+
+    fn type_expr_to_type(&self, expr: &Expr) -> Type {
+        let Expr::Ident { name, .. } = expr else {
+            return Type::Unknown;
+        };
+        match self.bindings.get(&name.span) {
+            Some(Binding::BuiltIn(BuiltIn::Int)) => Type::Int,
+            Some(Binding::BuiltIn(BuiltIn::Float)) => Type::Float,
+            Some(Binding::BuiltIn(BuiltIn::String)) => Type::String,
+            Some(Binding::BuiltIn(BuiltIn::Bool)) => Type::Bool,
+            Some(Binding::BuiltIn(BuiltIn::Nothing)) => Type::Nothing,
+            Some(Binding::Decl(def_id)) => Type::Struct(self.remap_def_id(*def_id)),
+            _ => Type::Unknown,
+        }
     }
 
     fn try_imported_lifted_call(&self, name: &Ident, args: &[Expr]) -> Option<IrExprKind> {
@@ -1286,10 +1352,7 @@ impl<'a> Lowerer<'a> {
     }
 }
 
-fn numeric_profile_dimension(
-    profile: &corvid_types::effects::ComposedProfile,
-    dim: &str,
-) -> f64 {
+fn numeric_profile_dimension(profile: &corvid_types::effects::ComposedProfile, dim: &str) -> f64 {
     match profile.dimensions.get(dim) {
         Some(corvid_ast::DimensionValue::Cost(value)) => *value,
         Some(corvid_ast::DimensionValue::Number(value)) => *value,

@@ -64,9 +64,7 @@
 //! * **No per-call-site specialization.**
 //! * **No escape analysis / stack promotion.**
 
-use corvid_ir::{
-    IrAgent, IrBlock, IrCallKind, IrExpr, IrExprKind, IrFile, IrStmt, ParamBorrow,
-};
+use corvid_ir::{IrAgent, IrBlock, IrCallKind, IrExpr, IrExprKind, IrFile, IrStmt, ParamBorrow};
 use corvid_resolve::{DefId, LocalId};
 use corvid_types::Type;
 use std::collections::HashMap;
@@ -291,20 +289,16 @@ fn expr_consumes_target(
     match &expr.kind {
         IrExprKind::Local { local_id, .. } => *local_id == target,
         IrExprKind::Literal(_) | IrExprKind::Decl { .. } => false,
-        IrExprKind::BinOp { left, right, .. }
-        | IrExprKind::WrappingBinOp { left, right, .. } => {
-            expr_consumes_target(left, target, sigs)
-                || expr_consumes_target(right, target, sigs)
+        IrExprKind::BinOp { left, right, .. } | IrExprKind::WrappingBinOp { left, right, .. } => {
+            expr_consumes_target(left, target, sigs) || expr_consumes_target(right, target, sigs)
         }
-        IrExprKind::UnOp { operand, .. }
-        | IrExprKind::WrappingUnOp { operand, .. } => {
+        IrExprKind::UnOp { operand, .. } | IrExprKind::WrappingUnOp { operand, .. } => {
             expr_consumes_target(operand, target, sigs)
         }
         IrExprKind::FieldAccess { target: t, .. } => expr_consumes_target(t, target, sigs),
         IrExprKind::UnwrapGrounded { value } => expr_consumes_target(value, target, sigs),
         IrExprKind::Index { target: t, index } => {
-            expr_consumes_target(t, target, sigs)
-                || expr_consumes_target(index, target, sigs)
+            expr_consumes_target(t, target, sigs) || expr_consumes_target(index, target, sigs)
         }
         IrExprKind::List { items } => {
             // Every element is stored into the list payload → always
@@ -350,10 +344,16 @@ fn expr_consumes_target(
         | IrExprKind::ResultOk { inner }
         | IrExprKind::ResultErr { inner }
         | IrExprKind::OptionSome { inner }
+        | IrExprKind::Ask { prompt: inner, .. }
+        | IrExprKind::Choose { options: inner }
         | IrExprKind::TryPropagate { inner } => expr_references(inner, target),
         IrExprKind::OptionNone => false,
         IrExprKind::TryRetry { body, .. } => expr_references(body, target),
-        IrExprKind::Replay { trace, arms, else_body } => {
+        IrExprKind::Replay {
+            trace,
+            arms,
+            else_body,
+        } => {
             // Replay arms are conditional — at most one executes.
             // Any reference inside any arm body (or the else) is a
             // potential consume if the branch fires, so we return
@@ -371,12 +371,12 @@ fn expr_references(expr: &IrExpr, target: LocalId) -> bool {
     match &expr.kind {
         IrExprKind::Local { local_id, .. } => *local_id == target,
         IrExprKind::Literal(_) | IrExprKind::Decl { .. } => false,
-        IrExprKind::BinOp { left, right, .. }
-        | IrExprKind::WrappingBinOp { left, right, .. } => {
+        IrExprKind::BinOp { left, right, .. } | IrExprKind::WrappingBinOp { left, right, .. } => {
             expr_references(left, target) || expr_references(right, target)
         }
-        IrExprKind::UnOp { operand, .. }
-        | IrExprKind::WrappingUnOp { operand, .. } => expr_references(operand, target),
+        IrExprKind::UnOp { operand, .. } | IrExprKind::WrappingUnOp { operand, .. } => {
+            expr_references(operand, target)
+        }
         IrExprKind::FieldAccess { target: t, .. } => expr_references(t, target),
         IrExprKind::UnwrapGrounded { value } => expr_references(value, target),
         IrExprKind::Index { target: t, index } => {
@@ -395,9 +395,15 @@ fn expr_references(expr: &IrExpr, target: LocalId) -> bool {
         | IrExprKind::ResultOk { inner }
         | IrExprKind::ResultErr { inner }
         | IrExprKind::OptionSome { inner }
+        | IrExprKind::Ask { prompt: inner, .. }
+        | IrExprKind::Choose { options: inner }
         | IrExprKind::TryPropagate { inner } => expr_references(inner, target),
         IrExprKind::OptionNone => false,
-        IrExprKind::Replay { trace, arms, else_body } => {
+        IrExprKind::Replay {
+            trace,
+            arms,
+            else_body,
+        } => {
             expr_references(trace, target)
                 || arms.iter().any(|arm| expr_references(&arm.body, target))
                 || expr_references(else_body, target)
@@ -413,7 +419,11 @@ fn visit_block(block: &IrBlock, visitor: &mut dyn FnMut(&IrStmt)) {
     for stmt in &block.stmts {
         visitor(stmt);
         match stmt {
-            IrStmt::If { then_block, else_block, .. } => {
+            IrStmt::If {
+                then_block,
+                else_block,
+                ..
+            } => {
                 visit_block(then_block, visitor);
                 if let Some(eb) = else_block {
                     visit_block(eb, visitor);
@@ -494,8 +504,12 @@ fn transform_agent(
 /// forthcoming 17b-3 / 17b-5 escape + reuse analyses).
 pub(crate) fn is_refcounted(ty: &Type) -> bool {
     match ty {
-        Type::String | Type::Struct(_) | Type::List(_) | Type::Weak(_, _) | Type::Result(_, _) => true,
-        Type::Option(inner) => matches!(&**inner, Type::Int | Type::Bool | Type::Float) || is_refcounted(inner),
+        Type::String | Type::Struct(_) | Type::List(_) | Type::Weak(_, _) | Type::Result(_, _) => {
+            true
+        }
+        Type::Option(inner) => {
+            matches!(&**inner, Type::Int | Type::Bool | Type::Float) || is_refcounted(inner)
+        }
         _ => false,
     }
 }
@@ -520,7 +534,9 @@ pub(crate) fn is_strong_refcounted(ty: &Type) -> bool {
         Type::Weak(_, _) => false,
         // Option<strong> is maybe-strong; callers requiring
         // definite-strong should test with the null-path consideration.
-        Type::Option(inner) => matches!(&**inner, Type::Int | Type::Bool | Type::Float) || is_strong_refcounted(inner),
+        Type::Option(inner) => {
+            matches!(&**inner, Type::Int | Type::Bool | Type::Float) || is_strong_refcounted(inner)
+        }
         _ => false,
     }
 }

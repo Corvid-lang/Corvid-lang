@@ -5,9 +5,10 @@
 //! and adapters, freeze with `.build()`. Pass `&Runtime` to the
 //! interpreter.
 
-use crate::approvals::{Approver, ApprovalDecision, ApprovalRequest, StdinApprover};
+use crate::approvals::{ApprovalDecision, ApprovalRequest, Approver, StdinApprover};
 use crate::calibration::{CalibrationStats, CalibrationStore};
 use crate::errors::RuntimeError;
+use crate::human::{HumanChoiceRequest, HumanInputRequest, HumanInteractor, StdinHumanInteractor};
 use crate::llm::{LlmAdapter, LlmRegistry, LlmRequest, LlmRequestRef, LlmResponse};
 use crate::models::{ModelCatalog, ModelSelection, RegisteredModel};
 use crate::prompt_cache::PromptCache;
@@ -26,6 +27,7 @@ pub struct Runtime {
     tools: ToolRegistry,
     llms: LlmRegistry,
     approver: Arc<dyn Approver>,
+    human: Arc<dyn HumanInteractor>,
     tracer: Tracer,
     recorder: Option<Arc<Recorder>>,
     mode: RuntimeMode,
@@ -115,7 +117,9 @@ impl Runtime {
             return Ok(());
         };
         let bytes = serde_json::to_vec_pretty(&report).map_err(|err| {
-            RuntimeError::Other(format!("failed to serialize replay differential report: {err}"))
+            RuntimeError::Other(format!(
+                "failed to serialize replay differential report: {err}"
+            ))
         })?;
         std::fs::write(path, bytes).map_err(|err| {
             RuntimeError::Other(format!(
@@ -125,10 +129,7 @@ impl Runtime {
         })
     }
 
-    pub fn write_replay_mutation_report(
-        &self,
-        path: impl AsRef<Path>,
-    ) -> Result<(), RuntimeError> {
+    pub fn write_replay_mutation_report(&self, path: impl AsRef<Path>) -> Result<(), RuntimeError> {
         let path = path.as_ref();
         let Some(report) = self.replay_mutation_report() else {
             return Ok(());
@@ -191,11 +192,9 @@ impl Runtime {
         if let Some(err) = &self.model_catalog_error {
             return Err(err.clone());
         }
-        Ok(self.model_catalog.describe_named_model(
-            model_name,
-            prompt_tokens,
-            completion_tokens,
-        ))
+        Ok(self
+            .model_catalog
+            .describe_named_model(model_name, prompt_tokens, completion_tokens))
     }
 
     pub fn model_version(&self, model_name: &str) -> Option<String> {
@@ -245,11 +244,7 @@ impl Runtime {
         Ok(mantissa as f64 / ((1_u64 << 53) as f64))
     }
 
-    pub fn prepare_run(
-        &self,
-        agent: &str,
-        args: &[serde_json::Value],
-    ) -> Result<(), RuntimeError> {
+    pub fn prepare_run(&self, agent: &str, args: &[serde_json::Value]) -> Result<(), RuntimeError> {
         if let Some(replay) = self.replay_source()? {
             replay.prepare_run(agent, args)?;
         }
@@ -424,20 +419,21 @@ impl Runtime {
             } else {
                 req
             };
-            replay.replay_llm_call(
-                req.prompt,
-                if req.model.is_empty() {
-                    None
-                } else {
-                    Some(req.model)
-                },
-                recorded_model_version.as_deref(),
-                trace_rendered,
-                req.args,
-                live_req,
-                &self.llms,
-            )
-            .await?
+            replay
+                .replay_llm_call(
+                    req.prompt,
+                    if req.model.is_empty() {
+                        None
+                    } else {
+                        Some(req.model)
+                    },
+                    recorded_model_version.as_deref(),
+                    trace_rendered,
+                    req.args,
+                    live_req,
+                    &self.llms,
+                )
+                .await?
         } else {
             self.llms.call(&req).await?
         };
@@ -513,11 +509,14 @@ impl Runtime {
         };
         let (approved, detail) = if let Some(replay) = self.replay_source()? {
             let outcome = replay.replay_approval(&label_owned, &req.args)?;
-            let detail = outcome.decision.map(|decision| crate::approver_bridge::ApprovalDecisionInfo {
-                accepted: decision.accepted,
-                decider: decision.decider,
-                rationale: decision.rationale,
-            });
+            let detail =
+                outcome
+                    .decision
+                    .map(|decision| crate::approver_bridge::ApprovalDecisionInfo {
+                        accepted: decision.accepted,
+                        decider: decision.decider,
+                        rationale: decision.rationale,
+                    });
             (outcome.approved, detail)
         } else {
             let approved = self.approver.approve(&req).await? == ApprovalDecision::Approve;
@@ -559,12 +558,69 @@ impl Runtime {
             })
         }
     }
+
+    pub async fn ask_human(
+        &self,
+        prompt: &str,
+        expected_type: impl Into<String>,
+    ) -> Result<serde_json::Value, RuntimeError> {
+        let req = HumanInputRequest {
+            prompt: prompt.to_string(),
+            expected_type: expected_type.into(),
+        };
+        if self.tracer.is_enabled() {
+            self.tracer.emit(TraceEvent::HumanInputRequest {
+                ts_ms: now_ms(),
+                run_id: self.tracer.run_id().to_string(),
+                prompt: req.prompt.clone(),
+                expected_type: req.expected_type.clone(),
+            });
+        }
+        let value = self.human.ask(&req).await?;
+        if self.tracer.is_enabled() {
+            self.tracer.emit(TraceEvent::HumanInputResponse {
+                ts_ms: now_ms(),
+                run_id: self.tracer.run_id().to_string(),
+                prompt: req.prompt,
+                value: value.clone(),
+            });
+        }
+        Ok(value)
+    }
+
+    pub async fn choose_human(
+        &self,
+        options: Vec<serde_json::Value>,
+    ) -> Result<usize, RuntimeError> {
+        let req = HumanChoiceRequest { options };
+        if self.tracer.is_enabled() {
+            self.tracer.emit(TraceEvent::HumanChoiceRequest {
+                ts_ms: now_ms(),
+                run_id: self.tracer.run_id().to_string(),
+                options: req.options.clone(),
+            });
+        }
+        let selected_index = self.human.choose(&req).await?;
+        let selected_value = req.options.get(selected_index).cloned().ok_or_else(|| {
+            RuntimeError::Other(format!("human choice index {selected_index} out of range"))
+        })?;
+        if self.tracer.is_enabled() {
+            self.tracer.emit(TraceEvent::HumanChoiceResponse {
+                ts_ms: now_ms(),
+                run_id: self.tracer.run_id().to_string(),
+                selected_index,
+                selected_value,
+            });
+        }
+        Ok(selected_index)
+    }
 }
 
 pub struct RuntimeBuilder {
     tools: ToolRegistry,
     llms: LlmRegistry,
     approver: Option<Arc<dyn Approver>>,
+    human: Option<Arc<dyn HumanInteractor>>,
     tracer: Option<Tracer>,
     trace_schema_writer: &'static str,
     default_model: String,
@@ -582,6 +638,7 @@ impl Default for RuntimeBuilder {
             tools: ToolRegistry::default(),
             llms: LlmRegistry::default(),
             approver: None,
+            human: None,
             tracer: None,
             trace_schema_writer: WRITER_INTERPRETER,
             default_model: String::new(),
@@ -599,9 +656,7 @@ impl RuntimeBuilder {
     pub fn tool<F, Fut>(mut self, name: impl Into<String>, handler: F) -> Self
     where
         F: Fn(Vec<serde_json::Value>) -> Fut + Send + Sync + 'static,
-        Fut: std::future::Future<Output = Result<serde_json::Value, RuntimeError>>
-            + Send
-            + 'static,
+        Fut: std::future::Future<Output = Result<serde_json::Value, RuntimeError>> + Send + 'static,
     {
         self.tools.register(name, handler);
         self
@@ -614,6 +669,11 @@ impl RuntimeBuilder {
 
     pub fn approver(mut self, approver: Arc<dyn Approver>) -> Self {
         self.approver = Some(approver);
+        self
+    }
+
+    pub fn human_interactor(mut self, human: Arc<dyn HumanInteractor>) -> Self {
+        self.human = Some(human);
         self
     }
 
@@ -753,6 +813,9 @@ impl RuntimeBuilder {
             approver: self
                 .approver
                 .unwrap_or_else(|| Arc::new(StdinApprover::new())),
+            human: self
+                .human
+                .unwrap_or_else(|| Arc::new(StdinHumanInteractor::new())),
             tracer,
             recorder,
             mode,
@@ -871,9 +934,7 @@ cost_per_token_in = 0.000015
         )
         .unwrap();
 
-        let runtime = Runtime::builder()
-            .model_catalog_root(dir.path())
-            .build();
+        let runtime = Runtime::builder().model_catalog_root(dir.path()).build();
         let selected = runtime
             .select_cheapest_model_for_capability("expert", 10, 10)
             .unwrap();

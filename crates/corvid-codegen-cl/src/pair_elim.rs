@@ -70,9 +70,7 @@ fn eliminate_pairs_in_block(block: &mut IrBlock) {
         };
 
         let use_idx = idx + 1;
-        if use_idx >= block.stmts.len()
-            || !stmt_is_pairable_use(&block.stmts[use_idx], local_id)
-        {
+        if use_idx >= block.stmts.len() || !stmt_is_pairable_use(&block.stmts[use_idx], local_id) {
             idx += 1;
             continue;
         }
@@ -122,7 +120,9 @@ fn stmt_is_pairable_use(stmt: &IrStmt, local_id: LocalId) -> bool {
     }
 
     match stmt {
-        IrStmt::Let { local_id: defined, .. } => *defined != local_id,
+        IrStmt::Let {
+            local_id: defined, ..
+        } => *defined != local_id,
         IrStmt::Expr { .. } => true,
         _ => false,
     }
@@ -144,10 +144,12 @@ fn stmt_blocks_pair_search(stmt: &IrStmt, local_id: LocalId) -> bool {
         } => *defined == local_id || expr_mentions_local(value, local_id),
         IrStmt::Expr { expr, .. } => expr_mentions_local(expr, local_id),
         IrStmt::Dup {
-            local_id: dup_local, ..
+            local_id: dup_local,
+            ..
         }
         | IrStmt::Drop {
-            local_id: dup_local, ..
+            local_id: dup_local,
+            ..
         } => *dup_local == local_id,
         IrStmt::Pass { .. } => false,
     }
@@ -180,9 +182,7 @@ fn stmt_observes_refcount(stmt: &IrStmt, local_id: LocalId) -> bool {
     match stmt {
         IrStmt::Let { value, .. }
         | IrStmt::Expr { expr: value, .. }
-        | IrStmt::Yield { value, .. } => {
-            expr_observes_refcount(value, local_id)
-        }
+        | IrStmt::Yield { value, .. } => expr_observes_refcount(value, local_id),
         IrStmt::Approve { args, .. } => args.iter().any(|expr| expr_mentions_local(expr, local_id)),
         _ => true,
     }
@@ -195,7 +195,9 @@ fn expr_mentions_local(expr: &IrExpr, local_id: LocalId) -> bool {
 fn count_local_mentions_expr(expr: &IrExpr, local_id: LocalId) -> usize {
     match &expr.kind {
         IrExprKind::Literal(_) | IrExprKind::Decl { .. } | IrExprKind::OptionNone => 0,
-        IrExprKind::Local { local_id: current, .. } => usize::from(*current == local_id),
+        IrExprKind::Local {
+            local_id: current, ..
+        } => usize::from(*current == local_id),
         IrExprKind::Call { args, .. } | IrExprKind::List { items: args } => args
             .iter()
             .map(|arg| count_local_mentions_expr(arg, local_id))
@@ -212,19 +214,34 @@ fn count_local_mentions_expr(expr: &IrExpr, local_id: LocalId) -> usize {
         | IrExprKind::ResultOk { inner: target }
         | IrExprKind::ResultErr { inner: target }
         | IrExprKind::OptionSome { inner: target }
+        | IrExprKind::Ask { prompt: target, .. }
+        | IrExprKind::Choose { options: target }
         | IrExprKind::TryPropagate { inner: target }
         | IrExprKind::TryRetry { body: target, .. }
-        | IrExprKind::UnOp { operand: target, .. }
-        | IrExprKind::WrappingUnOp { operand: target, .. } => {
-            count_local_mentions_expr(target, local_id)
+        | IrExprKind::UnOp {
+            operand: target, ..
         }
+        | IrExprKind::WrappingUnOp {
+            operand: target, ..
+        } => count_local_mentions_expr(target, local_id),
         IrExprKind::Index { target, index }
-        | IrExprKind::BinOp { left: target, right: index, .. }
-        | IrExprKind::WrappingBinOp { left: target, right: index, .. } => {
-            count_local_mentions_expr(target, local_id)
-                + count_local_mentions_expr(index, local_id)
+        | IrExprKind::BinOp {
+            left: target,
+            right: index,
+            ..
         }
-        IrExprKind::Replay { trace, arms, else_body } => {
+        | IrExprKind::WrappingBinOp {
+            left: target,
+            right: index,
+            ..
+        } => {
+            count_local_mentions_expr(target, local_id) + count_local_mentions_expr(index, local_id)
+        }
+        IrExprKind::Replay {
+            trace,
+            arms,
+            else_body,
+        } => {
             let mut total = count_local_mentions_expr(trace, local_id);
             for arm in arms {
                 total += count_local_mentions_expr(&arm.body, local_id);
@@ -261,24 +278,42 @@ fn expr_observes_refcount(expr: &IrExpr, local_id: LocalId) -> bool {
         | IrExprKind::ResultOk { inner: target }
         | IrExprKind::ResultErr { inner: target }
         | IrExprKind::OptionSome { inner: target }
+        | IrExprKind::Ask { prompt: target, .. }
+        | IrExprKind::Choose { options: target }
         | IrExprKind::TryPropagate { inner: target }
         | IrExprKind::TryRetry { body: target, .. }
-        | IrExprKind::UnOp { operand: target, .. }
-        | IrExprKind::WrappingUnOp { operand: target, .. } => {
-            expr_observes_refcount(target, local_id)
+        | IrExprKind::UnOp {
+            operand: target, ..
         }
+        | IrExprKind::WrappingUnOp {
+            operand: target, ..
+        } => expr_observes_refcount(target, local_id),
         IrExprKind::WeakNew { strong } => {
             expr_mentions_local(strong, local_id) || expr_observes_refcount(strong, local_id)
         }
         IrExprKind::Index { target, index }
-        | IrExprKind::BinOp { left: target, right: index, .. }
-        | IrExprKind::WrappingBinOp { left: target, right: index, .. } => {
-            expr_observes_refcount(target, local_id) || expr_observes_refcount(index, local_id)
+        | IrExprKind::BinOp {
+            left: target,
+            right: index,
+            ..
         }
-        IrExprKind::List { items } => items.iter().any(|item| expr_observes_refcount(item, local_id)),
-        IrExprKind::Replay { trace, arms, else_body } => {
+        | IrExprKind::WrappingBinOp {
+            left: target,
+            right: index,
+            ..
+        } => expr_observes_refcount(target, local_id) || expr_observes_refcount(index, local_id),
+        IrExprKind::List { items } => items
+            .iter()
+            .any(|item| expr_observes_refcount(item, local_id)),
+        IrExprKind::Replay {
+            trace,
+            arms,
+            else_body,
+        } => {
             expr_observes_refcount(trace, local_id)
-                || arms.iter().any(|arm| expr_observes_refcount(&arm.body, local_id))
+                || arms
+                    .iter()
+                    .any(|arm| expr_observes_refcount(&arm.body, local_id))
                 || expr_observes_refcount(else_body, local_id)
         }
     }
@@ -344,7 +379,10 @@ mod tests {
             return_ty: Type::Int,
             cost_budget: None,
             wrapping_arithmetic: false,
-            body: IrBlock { stmts: body, span: span() },
+            body: IrBlock {
+                stmts: body,
+                span: span(),
+            },
             span: span(),
             borrow_sig: None,
         }
@@ -464,8 +502,20 @@ mod tests {
 
         let out = eliminate_pairs(agent);
         assert_eq!(out.body.stmts.len(), 3);
-        assert!(matches!(out.body.stmts[0], IrStmt::Let { local_id: LocalId(1), .. }));
-        assert!(matches!(out.body.stmts[1], IrStmt::Let { local_id: LocalId(2), .. }));
+        assert!(matches!(
+            out.body.stmts[0],
+            IrStmt::Let {
+                local_id: LocalId(1),
+                ..
+            }
+        ));
+        assert!(matches!(
+            out.body.stmts[1],
+            IrStmt::Let {
+                local_id: LocalId(2),
+                ..
+            }
+        ));
         assert!(matches!(out.body.stmts[2], IrStmt::Pass { .. }));
     }
 }

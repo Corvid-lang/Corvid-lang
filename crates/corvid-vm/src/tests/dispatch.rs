@@ -93,6 +93,44 @@ agent run(n: Int) -> Int:
 }
 
 #[tokio::test]
+async fn ask_returns_typed_programmatic_human_input() {
+    let src = r#"
+agent collect_age() -> Int:
+    return ask("age", Int)
+"#;
+    let ir = ir_of(src);
+    let rt = Runtime::builder()
+        .approver(Arc::new(ProgrammaticApprover::always_yes()))
+        .human_interactor(Arc::new(corvid_runtime::human::ProgrammaticHumanInteractor::new(
+            [json!(42)],
+            [],
+        )))
+        .build();
+
+    let value = run_agent(&ir, "collect_age", vec![], &rt).await.unwrap();
+    assert_eq!(value, Value::Int(42));
+}
+
+#[tokio::test]
+async fn choose_returns_selected_option() {
+    let src = r#"
+agent pick() -> String:
+    return choose(["slow", "fast"])
+"#;
+    let ir = ir_of(src);
+    let rt = Runtime::builder()
+        .approver(Arc::new(ProgrammaticApprover::always_yes()))
+        .human_interactor(Arc::new(corvid_runtime::human::ProgrammaticHumanInteractor::new(
+            [],
+            [1],
+        )))
+        .build();
+
+    let value = run_agent(&ir, "pick", vec![], &rt).await.unwrap();
+    assert_eq!(value, Value::String(Arc::from("fast")));
+}
+
+#[tokio::test]
 async fn grounded_unwrap_discarding_sources_returns_inner_value() {
     let src = "\
 effect retrieval:

@@ -32,11 +32,17 @@ impl<'a> Checker<'a> {
                 Literal::Nothing => Type::Nothing,
             },
             Expr::Ident { name, .. } => self.type_of_ident(name),
-            Expr::Call { callee, args, span } => {
-                self.check_call(callee, args, *span, expected)
-            }
-            Expr::FieldAccess { target, field, span } => self.check_field(target, field, *span),
-            Expr::Index { target, index, span } => {
+            Expr::Call { callee, args, span } => self.check_call(callee, args, *span, expected),
+            Expr::FieldAccess {
+                target,
+                field,
+                span,
+            } => self.check_field(target, field, *span),
+            Expr::Index {
+                target,
+                index,
+                span,
+            } => {
                 let target_ty = self.check_expr(target);
                 let index_ty = self.check_expr(index);
                 // Index must be Int.
@@ -66,7 +72,12 @@ impl<'a> Checker<'a> {
                     }
                 }
             }
-            Expr::BinOp { op, left, right, span } => self.check_binop(*op, left, right, *span),
+            Expr::BinOp {
+                op,
+                left,
+                right,
+                span,
+            } => self.check_binop(*op, left, right, *span),
             Expr::UnOp { op, operand, .. } => self.check_unop(*op, operand),
             Expr::List { items, span } => {
                 // Infer element type from the first item; every other
@@ -82,8 +93,7 @@ impl<'a> Checker<'a> {
                     {
                         // Allow Int → Float promotion (matching binop rule).
                         if !(matches!(elem_ty, Type::Int) && matches!(item_ty, Type::Float)
-                            || matches!(elem_ty, Type::Float)
-                                && matches!(item_ty, Type::Int))
+                            || matches!(elem_ty, Type::Float) && matches!(item_ty, Type::Int))
                         {
                             self.errors.push(TypeError::new(
                                 TypeErrorKind::TypeMismatch {
@@ -123,11 +133,7 @@ impl<'a> Checker<'a> {
             return Type::Unknown;
         };
         match binding {
-            Binding::Local(lid) => self
-                .local_types
-                .get(lid)
-                .cloned()
-                .unwrap_or(Type::Unknown),
+            Binding::Local(lid) => self.local_types.get(lid).cloned().unwrap_or(Type::Unknown),
             Binding::Decl(def_id) => self.type_of_decl(*def_id, id),
             Binding::BuiltIn(b) => match b {
                 BuiltIn::Int
@@ -158,7 +164,9 @@ impl<'a> Checker<'a> {
                 | BuiltIn::WeakUpgrade
                 | BuiltIn::StreamMerge
                 | BuiltIn::Resume
-                | BuiltIn::StreamResumeToken => {
+                | BuiltIn::StreamResumeToken
+                | BuiltIn::Ask
+                | BuiltIn::Choose => {
                     self.errors.push(TypeError::new(
                         TypeErrorKind::BareFunctionReference {
                             name: id.name.clone(),
@@ -203,12 +211,9 @@ impl<'a> Checker<'a> {
             | DeclKind::Test
             | DeclKind::Mock
             | DeclKind::Effect
-            | DeclKind::Model => {
-                Type::Unknown
-            }
+            | DeclKind::Model => Type::Unknown,
         }
     }
-
 
     pub(super) fn check_field(&mut self, target: &Expr, field: &Ident, span: Span) -> Type {
         let target_ty = self.check_expr(target);
@@ -218,11 +223,7 @@ impl<'a> Checker<'a> {
                     .types_by_id
                     .get(def_id)
                     .expect("struct DefId not indexed");
-                if let Some(f) = type_decl
-                    .fields
-                    .iter()
-                    .find(|f| f.name.name == field.name)
-                {
+                if let Some(f) = type_decl.fields.iter().find(|f| f.name.name == field.name) {
                     self.type_ref_to_type(&f.ty)
                 } else {
                     self.errors.push(TypeError::new(
@@ -432,22 +433,14 @@ impl<'a> Checker<'a> {
     /// code degrades to Unknown gracefully).
     fn replay_whole_event_capture_type(&self, pattern: &ReplayPattern) -> Type {
         match pattern {
-            ReplayPattern::Llm { span, .. } => {
-                match self.replay_pattern_bindings.get(span) {
-                    Some(ReplayPatternBinding::Llm(def_id)) => {
-                        self.prompt_return_type(*def_id)
-                    }
-                    _ => Type::Unknown,
-                }
-            }
-            ReplayPattern::Tool { span, .. } => {
-                match self.replay_pattern_bindings.get(span) {
-                    Some(ReplayPatternBinding::Tool(def_id)) => {
-                        self.tool_return_type(*def_id)
-                    }
-                    _ => Type::Unknown,
-                }
-            }
+            ReplayPattern::Llm { span, .. } => match self.replay_pattern_bindings.get(span) {
+                Some(ReplayPatternBinding::Llm(def_id)) => self.prompt_return_type(*def_id),
+                _ => Type::Unknown,
+            },
+            ReplayPattern::Tool { span, .. } => match self.replay_pattern_bindings.get(span) {
+                Some(ReplayPatternBinding::Tool(def_id)) => self.tool_return_type(*def_id),
+                _ => Type::Unknown,
+            },
             ReplayPattern::Approve { .. } => Type::Bool,
         }
     }

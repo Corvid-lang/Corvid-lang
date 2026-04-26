@@ -40,7 +40,9 @@ pub(super) fn declare_runtime_funcs(
     cmp_sig.returns.push(AbiParam::new(I64));
     let cmp_id = module
         .declare_function(STRING_CMP_SYMBOL, Linkage::Import, &cmp_sig)
-        .map_err(|e| CodegenError::cranelift(format!("declare string_cmp: {e}"), Span::new(0, 0)))?;
+        .map_err(|e| {
+            CodegenError::cranelift(format!("declare string_cmp: {e}"), Span::new(0, 0))
+        })?;
 
     // corvid_alloc_typed(size: i64, typeinfo: i64) -> i64
     let mut alloc_typed_sig = module.make_signature();
@@ -61,10 +63,7 @@ pub(super) fn declare_runtime_funcs(
     let list_destroy_id = module
         .declare_function(LIST_DESTROY_SYMBOL, Linkage::Import, &list_destroy_sig)
         .map_err(|e| {
-            CodegenError::cranelift(
-                format!("declare list destroy: {e}"),
-                Span::new(0, 0),
-            )
+            CodegenError::cranelift(format!("declare list destroy: {e}"), Span::new(0, 0))
         })?;
 
     // corvid_trace_list(payload, marker, ctx) -> void — installed in
@@ -77,10 +76,7 @@ pub(super) fn declare_runtime_funcs(
     let list_trace_id = module
         .declare_function(LIST_TRACE_SYMBOL, Linkage::Import, &list_trace_sig)
         .map_err(|e| {
-            CodegenError::cranelift(
-                format!("declare list trace: {e}"),
-                Span::new(0, 0),
-            )
+            CodegenError::cranelift(format!("declare list trace: {e}"), Span::new(0, 0))
         })?;
 
     let mut weak_unary_sig = module.make_signature();
@@ -88,9 +84,7 @@ pub(super) fn declare_runtime_funcs(
     weak_unary_sig.returns.push(AbiParam::new(I64));
     let weak_new_id = module
         .declare_function(WEAK_NEW_SYMBOL, Linkage::Import, &weak_unary_sig)
-        .map_err(|e| {
-            CodegenError::cranelift(format!("declare weak_new: {e}"), Span::new(0, 0))
-        })?;
+        .map_err(|e| CodegenError::cranelift(format!("declare weak_new: {e}"), Span::new(0, 0)))?;
     let weak_upgrade_id = module
         .declare_function(WEAK_UPGRADE_SYMBOL, Linkage::Import, &weak_unary_sig)
         .map_err(|e| {
@@ -102,10 +96,7 @@ pub(super) fn declare_runtime_funcs(
     let weak_clear_self_id = module
         .declare_function(WEAK_CLEAR_SELF_SYMBOL, Linkage::Import, &weak_clear_sig)
         .map_err(|e| {
-            CodegenError::cranelift(
-                format!("declare weak_clear_self: {e}"),
-                Span::new(0, 0),
-            )
+            CodegenError::cranelift(format!("declare weak_clear_self: {e}"), Span::new(0, 0))
         })?;
 
     // corvid_typeinfo_String — runtime-provided data symbol. Declared
@@ -114,18 +105,12 @@ pub(super) fn declare_runtime_funcs(
     let string_typeinfo_id = module
         .declare_data(STRING_TYPEINFO_SYMBOL, Linkage::Import, false, false)
         .map_err(|e| {
-            CodegenError::cranelift(
-                format!("declare String typeinfo: {e}"),
-                Span::new(0, 0),
-            )
+            CodegenError::cranelift(format!("declare String typeinfo: {e}"), Span::new(0, 0))
         })?;
     let weak_box_typeinfo_id = module
         .declare_data(WEAK_BOX_TYPEINFO_SYMBOL, Linkage::Import, false, false)
         .map_err(|e| {
-            CodegenError::cranelift(
-                format!("declare WeakBox typeinfo: {e}"),
-                Span::new(0, 0),
-            )
+            CodegenError::cranelift(format!("declare WeakBox typeinfo: {e}"), Span::new(0, 0))
         })?;
 
     // ---- native entry helpers ----
@@ -142,10 +127,7 @@ pub(super) fn declare_runtime_funcs(
     let arity_id = module
         .declare_function(ENTRY_ARITY_MISMATCH_SYMBOL, Linkage::Import, &arity_sig)
         .map_err(|e| {
-            CodegenError::cranelift(
-                format!("declare arity_mismatch: {e}"),
-                Span::new(0, 0),
-            )
+            CodegenError::cranelift(format!("declare arity_mismatch: {e}"), Span::new(0, 0))
         })?;
 
     // parse helpers: (cstr_ptr, argv_index) -> typed value
@@ -155,9 +137,7 @@ pub(super) fn declare_runtime_funcs(
     parse_i64_sig.returns.push(AbiParam::new(I64));
     let parse_i64_id = module
         .declare_function(PARSE_I64_SYMBOL, Linkage::Import, &parse_i64_sig)
-        .map_err(|e| {
-            CodegenError::cranelift(format!("declare parse_i64: {e}"), Span::new(0, 0))
-        })?;
+        .map_err(|e| CodegenError::cranelift(format!("declare parse_i64: {e}"), Span::new(0, 0)))?;
 
     let mut parse_f64_sig = module.make_signature();
     parse_f64_sig.params.push(AbiParam::new(I64));
@@ -165,9 +145,7 @@ pub(super) fn declare_runtime_funcs(
     parse_f64_sig.returns.push(AbiParam::new(F64));
     let parse_f64_id = module
         .declare_function(PARSE_F64_SYMBOL, Linkage::Import, &parse_f64_sig)
-        .map_err(|e| {
-            CodegenError::cranelift(format!("declare parse_f64: {e}"), Span::new(0, 0))
-        })?;
+        .map_err(|e| CodegenError::cranelift(format!("declare parse_f64: {e}"), Span::new(0, 0)))?;
 
     let mut parse_bool_sig = module.make_signature();
     parse_bool_sig.params.push(AbiParam::new(I64));
@@ -194,9 +172,7 @@ pub(super) fn declare_runtime_funcs(
     print_i64_sig.params.push(AbiParam::new(I64));
     let print_i64_id = module
         .declare_function(PRINT_I64_SYMBOL, Linkage::Import, &print_i64_sig)
-        .map_err(|e| {
-            CodegenError::cranelift(format!("declare print_i64: {e}"), Span::new(0, 0))
-        })?;
+        .map_err(|e| CodegenError::cranelift(format!("declare print_i64: {e}"), Span::new(0, 0)))?;
 
     let mut print_bool_sig = module.make_signature();
     print_bool_sig.params.push(AbiParam::new(I64));
@@ -210,9 +186,7 @@ pub(super) fn declare_runtime_funcs(
     print_f64_sig.params.push(AbiParam::new(F64));
     let print_f64_id = module
         .declare_function(PRINT_F64_SYMBOL, Linkage::Import, &print_f64_sig)
-        .map_err(|e| {
-            CodegenError::cranelift(format!("declare print_f64: {e}"), Span::new(0, 0))
-        })?;
+        .map_err(|e| CodegenError::cranelift(format!("declare print_f64: {e}"), Span::new(0, 0)))?;
 
     let mut print_string_sig = module.make_signature();
     print_string_sig.params.push(AbiParam::new(I64));
@@ -224,7 +198,11 @@ pub(super) fn declare_runtime_funcs(
     let mut bench_enabled_sig = module.make_signature();
     bench_enabled_sig.returns.push(AbiParam::new(I64));
     let bench_server_enabled_id = module
-        .declare_function(BENCH_SERVER_ENABLED_SYMBOL, Linkage::Import, &bench_enabled_sig)
+        .declare_function(
+            BENCH_SERVER_ENABLED_SYMBOL,
+            Linkage::Import,
+            &bench_enabled_sig,
+        )
         .map_err(|e| {
             CodegenError::cranelift(
                 format!("declare bench_server_enabled: {e}"),
@@ -243,12 +221,13 @@ pub(super) fn declare_runtime_funcs(
     let mut bench_finish_sig = module.make_signature();
     bench_finish_sig.params.push(AbiParam::new(I64));
     let bench_finish_trial_id = module
-        .declare_function(BENCH_FINISH_TRIAL_SYMBOL, Linkage::Import, &bench_finish_sig)
+        .declare_function(
+            BENCH_FINISH_TRIAL_SYMBOL,
+            Linkage::Import,
+            &bench_finish_sig,
+        )
         .map_err(|e| {
-            CodegenError::cranelift(
-                format!("declare bench_finish_trial: {e}"),
-                Span::new(0, 0),
-            )
+            CodegenError::cranelift(format!("declare bench_finish_trial: {e}"), Span::new(0, 0))
         })?;
 
     // Runtime bridge imports.
@@ -263,10 +242,7 @@ pub(super) fn declare_runtime_funcs(
             &tool_call_sync_int_sig,
         )
         .map_err(|e| {
-            CodegenError::cranelift(
-                format!("declare tool_call_sync_int: {e}"),
-                Span::new(0, 0),
-            )
+            CodegenError::cranelift(format!("declare tool_call_sync_int: {e}"), Span::new(0, 0))
         })?;
 
     let mut runtime_is_replay_sig = module.make_signature();
@@ -278,10 +254,7 @@ pub(super) fn declare_runtime_funcs(
             &runtime_is_replay_sig,
         )
         .map_err(|e| {
-            CodegenError::cranelift(
-                format!("declare runtime_is_replay: {e}"),
-                Span::new(0, 0),
-            )
+            CodegenError::cranelift(format!("declare runtime_is_replay: {e}"), Span::new(0, 0))
         })?;
 
     let make_replay_tool_sig =
@@ -378,24 +351,14 @@ pub(super) fn declare_runtime_funcs(
             &runtime_shutdown_sig,
         )
         .map_err(|e| {
-            CodegenError::cranelift(
-                format!("declare runtime_shutdown: {e}"),
-                Span::new(0, 0),
-            )
+            CodegenError::cranelift(format!("declare runtime_shutdown: {e}"), Span::new(0, 0))
         })?;
 
     let embed_init_sig = module.make_signature();
     let embed_init_id = module
-        .declare_function(
-            RUNTIME_EMBED_INIT_SYMBOL,
-            Linkage::Import,
-            &embed_init_sig,
-        )
+        .declare_function(RUNTIME_EMBED_INIT_SYMBOL, Linkage::Import, &embed_init_sig)
         .map_err(|e| {
-            CodegenError::cranelift(
-                format!("declare runtime_embed_init: {e}"),
-                Span::new(0, 0),
-            )
+            CodegenError::cranelift(format!("declare runtime_embed_init: {e}"), Span::new(0, 0))
         })?;
 
     let mut string_into_cstr_sig = module.make_signature();
@@ -408,10 +371,7 @@ pub(super) fn declare_runtime_funcs(
             &string_into_cstr_sig,
         )
         .map_err(|e| {
-            CodegenError::cranelift(
-                format!("declare string_into_cstr: {e}"),
-                Span::new(0, 0),
-            )
+            CodegenError::cranelift(format!("declare string_into_cstr: {e}"), Span::new(0, 0))
         })?;
 
     let mut begin_direct_observation_sig = module.make_signature();
@@ -430,7 +390,9 @@ pub(super) fn declare_runtime_funcs(
         })?;
 
     let mut finish_direct_observation_sig = module.make_signature();
-    finish_direct_observation_sig.params.push(AbiParam::new(I64));
+    finish_direct_observation_sig
+        .params
+        .push(AbiParam::new(I64));
     let finish_direct_observation_id = module
         .declare_function(
             FINISH_DIRECT_OBSERVATION_SYMBOL,
@@ -491,10 +453,7 @@ pub(super) fn declare_runtime_funcs(
             &grounded_attest_int_sig,
         )
         .map_err(|e| {
-            CodegenError::cranelift(
-                format!("declare grounded_attest_int: {e}"),
-                Span::new(0, 0),
-            )
+            CodegenError::cranelift(format!("declare grounded_attest_int: {e}"), Span::new(0, 0))
         })?;
     let grounded_attest_bool_sig = make_grounded_attest_sig(module, I8);
     let grounded_attest_bool_id = module
@@ -540,9 +499,7 @@ pub(super) fn declare_runtime_funcs(
     sleep_ms_sig.params.push(AbiParam::new(I64));
     let sleep_ms_id = module
         .declare_function(SLEEP_MS_SYMBOL, Linkage::Import, &sleep_ms_sig)
-        .map_err(|e| {
-            CodegenError::cranelift(format!("declare sleep_ms: {e}"), Span::new(0, 0))
-        })?;
+        .map_err(|e| CodegenError::cranelift(format!("declare sleep_ms: {e}"), Span::new(0, 0)))?;
 
     // Stringification helpers. Each takes a typed scalar
     // and returns a Corvid String descriptor pointer (i64).
@@ -588,19 +545,18 @@ pub(super) fn declare_runtime_funcs(
     // Typed prompt bridges. Each takes 7 args:
     //   prompt name, signature, rendered template, model,
     //   arg type-tag string, argc, arg value slots pointer.
-    let make_prompt_sig =
-        |module: &mut ObjectModule, ret_ty: cranelift_codegen::ir::Type| {
-            let mut s = module.make_signature();
-            s.params.push(AbiParam::new(I64));
-            s.params.push(AbiParam::new(I64));
-            s.params.push(AbiParam::new(I64));
-            s.params.push(AbiParam::new(I64));
-            s.params.push(AbiParam::new(I64));
-            s.params.push(AbiParam::new(I64));
-            s.params.push(AbiParam::new(I64));
-            s.returns.push(AbiParam::new(ret_ty));
-            s
-        };
+    let make_prompt_sig = |module: &mut ObjectModule, ret_ty: cranelift_codegen::ir::Type| {
+        let mut s = module.make_signature();
+        s.params.push(AbiParam::new(I64));
+        s.params.push(AbiParam::new(I64));
+        s.params.push(AbiParam::new(I64));
+        s.params.push(AbiParam::new(I64));
+        s.params.push(AbiParam::new(I64));
+        s.params.push(AbiParam::new(I64));
+        s.params.push(AbiParam::new(I64));
+        s.returns.push(AbiParam::new(ret_ty));
+        s
+    };
     let prompt_int_sig = make_prompt_sig(module, I64);
     let prompt_call_int_id = module
         .declare_function(PROMPT_CALL_INT_SYMBOL, Linkage::Import, &prompt_int_sig)
@@ -621,7 +577,11 @@ pub(super) fn declare_runtime_funcs(
         })?;
     let prompt_string_sig = make_prompt_sig(module, I64); // returns CorvidString descriptor ptr
     let prompt_call_string_id = module
-        .declare_function(PROMPT_CALL_STRING_SYMBOL, Linkage::Import, &prompt_string_sig)
+        .declare_function(
+            PROMPT_CALL_STRING_SYMBOL,
+            Linkage::Import,
+            &prompt_string_sig,
+        )
         .map_err(|e| {
             CodegenError::cranelift(format!("declare prompt_call_string: {e}"), Span::new(0, 0))
         })?;
@@ -650,7 +610,11 @@ pub(super) fn declare_runtime_funcs(
     trace_run_started_sig.params.push(AbiParam::new(I64));
     trace_run_started_sig.params.push(AbiParam::new(I64));
     let trace_run_started_id = module
-        .declare_function(TRACE_RUN_STARTED_SYMBOL, Linkage::Import, &trace_run_started_sig)
+        .declare_function(
+            TRACE_RUN_STARTED_SYMBOL,
+            Linkage::Import,
+            &trace_run_started_sig,
+        )
         .map_err(|e| {
             CodegenError::cranelift(format!("declare trace_run_started: {e}"), Span::new(0, 0))
         })?;
@@ -686,7 +650,9 @@ pub(super) fn declare_runtime_funcs(
         })?;
 
     let mut trace_run_completed_float_sig = module.make_signature();
-    trace_run_completed_float_sig.params.push(AbiParam::new(F64));
+    trace_run_completed_float_sig
+        .params
+        .push(AbiParam::new(F64));
     let trace_run_completed_float_id = module
         .declare_function(
             TRACE_RUN_COMPLETED_FLOAT_SYMBOL,
@@ -701,7 +667,9 @@ pub(super) fn declare_runtime_funcs(
         })?;
 
     let mut trace_run_completed_string_sig = module.make_signature();
-    trace_run_completed_string_sig.params.push(AbiParam::new(I64));
+    trace_run_completed_string_sig
+        .params
+        .push(AbiParam::new(I64));
     let trace_run_completed_string_id = module
         .declare_function(
             TRACE_RUN_COMPLETED_STRING_SYMBOL,
@@ -721,7 +689,11 @@ pub(super) fn declare_runtime_funcs(
     trace_tool_call_sig.params.push(AbiParam::new(I64));
     trace_tool_call_sig.params.push(AbiParam::new(I64));
     let trace_tool_call_id = module
-        .declare_function(TRACE_TOOL_CALL_SYMBOL, Linkage::Import, &trace_tool_call_sig)
+        .declare_function(
+            TRACE_TOOL_CALL_SYMBOL,
+            Linkage::Import,
+            &trace_tool_call_sig,
+        )
         .map_err(|e| {
             CodegenError::cranelift(format!("declare trace_tool_call: {e}"), Span::new(0, 0))
         })?;
@@ -934,10 +906,7 @@ pub(super) fn define_function_with_stack_maps(
 ) -> Result<(), CodegenError> {
     let mut ctrl_plane = ControlPlane::default();
     ctx.compile(module.isa(), &mut ctrl_plane).map_err(|e| {
-        CodegenError::cranelift(
-            format!("compile `{error_context}`: {e:?}"),
-            error_span,
-        )
+        CodegenError::cranelift(format!("compile `{error_context}`: {e:?}"), error_span)
     })?;
 
     // Rescue the stack maps before the compile result borrow is
@@ -953,10 +922,7 @@ pub(super) fn define_function_with_stack_maps(
         .map(|(offset, span, sm)| (*offset, *span, sm.clone()))
         .collect();
     if !extracted.is_empty() {
-        runtime
-            .stack_maps
-            .borrow_mut()
-            .insert(func_id, extracted);
+        runtime.stack_maps.borrow_mut().insert(func_id, extracted);
     }
 
     // Replicate cranelift-object's inner path: feed the already-
@@ -974,10 +940,7 @@ pub(super) fn define_function_with_stack_maps(
             ctx.compiled_code().unwrap().buffer.relocs(),
         )
         .map_err(|e| {
-            CodegenError::cranelift(
-                format!("define `{error_context}`: {e}"),
-                error_span,
-            )
+            CodegenError::cranelift(format!("define `{error_context}`: {e}"), error_span)
         })?;
     Ok(())
 }
@@ -1084,10 +1047,7 @@ pub(super) fn emit_stack_map_table(
     let data_id = module
         .declare_data("corvid_stack_maps", Linkage::Export, false, false)
         .map_err(|e| {
-            CodegenError::cranelift(
-                format!("declare corvid_stack_maps: {e}"),
-                Span::new(0, 0),
-            )
+            CodegenError::cranelift(format!("declare corvid_stack_maps: {e}"), Span::new(0, 0))
         })?;
     let mut desc = DataDescription::new();
     desc.set_align(8);
@@ -1108,10 +1068,7 @@ pub(super) fn emit_stack_map_table(
     }
 
     module.define_data(data_id, &desc).map_err(|e| {
-        CodegenError::cranelift(
-            format!("define corvid_stack_maps: {e}"),
-            Span::new(0, 0),
-        )
+        CodegenError::cranelift(format!("define corvid_stack_maps: {e}"), Span::new(0, 0))
     })?;
     Ok(())
 }
@@ -1139,7 +1096,11 @@ pub(super) fn define_struct_destructor(
     let mut ctx = Context::new();
     ctx.func = Function::with_name_signature(
         UserFuncName::user(0, func_id.as_u32()),
-        module.declarations().get_function_decl(func_id).signature.clone(),
+        module
+            .declarations()
+            .get_function_decl(func_id)
+            .signature
+            .clone(),
     );
     let mut bctx = FunctionBuilderContext::new();
     {
@@ -1151,8 +1112,7 @@ pub(super) fn define_struct_destructor(
         let payload = builder.block_params(entry)[0];
 
         // For each refcounted field, load and release.
-        let release_ref =
-            module.declare_func_in_func(runtime.release, builder.func);
+        let release_ref = module.declare_func_in_func(runtime.release, builder.func);
         for (i, field) in ty.fields.iter().enumerate() {
             if is_refcounted_type(&field.ty) {
                 let offset = (i as i32) * STRUCT_FIELD_SLOT_BYTES;
@@ -1207,14 +1167,16 @@ pub(super) fn define_struct_trace(
     let symbol = format!("corvid_trace_{}", ty.name);
     let func_id = module
         .declare_function(&symbol, Linkage::Local, &sig)
-        .map_err(|e| {
-            CodegenError::cranelift(format!("declare trace `{symbol}`: {e}"), ty.span)
-        })?;
+        .map_err(|e| CodegenError::cranelift(format!("declare trace `{symbol}`: {e}"), ty.span))?;
 
     let mut ctx = Context::new();
     ctx.func = Function::with_name_signature(
         UserFuncName::user(0, func_id.as_u32()),
-        module.declarations().get_function_decl(func_id).signature.clone(),
+        module
+            .declarations()
+            .get_function_decl(func_id)
+            .signature
+            .clone(),
     );
     let mut bctx = FunctionBuilderContext::new();
     {
@@ -1243,7 +1205,9 @@ pub(super) fn define_struct_trace(
                     payload,
                     offset,
                 );
-                builder.ins().call_indirect(marker_sigref, marker, &[v, marker_ctx]);
+                builder
+                    .ins()
+                    .call_indirect(marker_sigref, marker, &[v, marker_ctx]);
             }
         }
 
@@ -1358,11 +1322,9 @@ pub(super) fn emit_struct_typeinfo(
     let weak_ref = module.declare_func_in_data(runtime.weak_clear_self, &mut desc);
     desc.write_function_addr(TYPEINFO_OFF_WEAK_FN, weak_ref);
 
-    module
-        .define_data(data_id, &desc)
-        .map_err(|e| {
-            CodegenError::cranelift(format!("define typeinfo `{symbol}`: {e}"), ty.span)
-        })?;
+    module.define_data(data_id, &desc).map_err(|e| {
+        CodegenError::cranelift(format!("define typeinfo `{symbol}`: {e}"), ty.span)
+    })?;
     Ok(data_id)
 }
 
@@ -1380,13 +1342,20 @@ pub(super) fn define_result_destructor(
     let func_id = module
         .declare_function(&symbol, Linkage::Local, &sig)
         .map_err(|e| {
-            CodegenError::cranelift(format!("declare destructor `{symbol}`: {e}"), Span::new(0, 0))
+            CodegenError::cranelift(
+                format!("declare destructor `{symbol}`: {e}"),
+                Span::new(0, 0),
+            )
         })?;
 
     let mut ctx = Context::new();
     ctx.func = Function::with_name_signature(
         UserFuncName::user(0, func_id.as_u32()),
-        module.declarations().get_function_decl(func_id).signature.clone(),
+        module
+            .declarations()
+            .get_function_decl(func_id)
+            .signature
+            .clone(),
     );
     let mut bctx = FunctionBuilderContext::new();
     {
@@ -1459,7 +1428,9 @@ pub(super) fn define_result_destructor(
 
 pub(super) fn option_uses_wrapper(option_ty: &Type) -> bool {
     match option_ty {
-        Type::Option(inner) => is_native_wide_option_type(option_ty) || matches!(&**inner, Type::Option(_)),
+        Type::Option(inner) => {
+            is_native_wide_option_type(option_ty) || matches!(&**inner, Type::Option(_))
+        }
         _ => false,
     }
 }
@@ -1486,7 +1457,11 @@ pub(super) fn define_result_trace(
     let mut ctx = Context::new();
     ctx.func = Function::with_name_signature(
         UserFuncName::user(0, func_id.as_u32()),
-        module.declarations().get_function_decl(func_id).signature.clone(),
+        module
+            .declarations()
+            .get_function_decl(func_id)
+            .signature
+            .clone(),
     );
     let mut bctx = FunctionBuilderContext::new();
     {
@@ -1528,7 +1503,9 @@ pub(super) fn define_result_trace(
                     payload,
                     RESULT_PAYLOAD_OFFSET,
                 );
-                builder.ins().call_indirect(marker_sigref, marker, &[v, marker_ctx]);
+                builder
+                    .ins()
+                    .call_indirect(marker_sigref, marker, &[v, marker_ctx]);
             }
             builder.ins().jump(done_block, &[]);
 
@@ -1541,7 +1518,9 @@ pub(super) fn define_result_trace(
                     payload,
                     RESULT_PAYLOAD_OFFSET,
                 );
-                builder.ins().call_indirect(marker_sigref, marker, &[v, marker_ctx]);
+                builder
+                    .ins()
+                    .call_indirect(marker_sigref, marker, &[v, marker_ctx]);
             }
             builder.ins().jump(done_block, &[]);
 
@@ -1598,11 +1577,9 @@ pub(super) fn emit_result_typeinfo(
     let weak_ref = module.declare_func_in_data(runtime.weak_clear_self, &mut desc);
     desc.write_function_addr(TYPEINFO_OFF_WEAK_FN, weak_ref);
 
-    module
-        .define_data(data_id, &desc)
-        .map_err(|e| {
-            CodegenError::cranelift(format!("define typeinfo `{symbol}`: {e}"), Span::new(0, 0))
-        })?;
+    module.define_data(data_id, &desc).map_err(|e| {
+        CodegenError::cranelift(format!("define typeinfo `{symbol}`: {e}"), Span::new(0, 0))
+    })?;
     Ok(data_id)
 }
 
@@ -1621,13 +1598,20 @@ pub(super) fn define_option_trace(
     let func_id = module
         .declare_function(&symbol, Linkage::Local, &sig)
         .map_err(|e| {
-            CodegenError::cranelift(format!("declare option trace `{symbol}`: {e}"), Span::new(0, 0))
+            CodegenError::cranelift(
+                format!("declare option trace `{symbol}`: {e}"),
+                Span::new(0, 0),
+            )
         })?;
 
     let mut ctx = Context::new();
     ctx.func = Function::with_name_signature(
         UserFuncName::user(0, func_id.as_u32()),
-        module.declarations().get_function_decl(func_id).signature.clone(),
+        module
+            .declarations()
+            .get_function_decl(func_id)
+            .signature
+            .clone(),
     );
     let mut bctx = FunctionBuilderContext::new();
     {
@@ -1686,13 +1670,20 @@ pub(super) fn define_option_destructor(
     let func_id = module
         .declare_function(&symbol, Linkage::Local, &sig)
         .map_err(|e| {
-            CodegenError::cranelift(format!("declare option destructor `{symbol}`: {e}"), Span::new(0, 0))
+            CodegenError::cranelift(
+                format!("declare option destructor `{symbol}`: {e}"),
+                Span::new(0, 0),
+            )
         })?;
 
     let mut ctx = Context::new();
     ctx.func = Function::with_name_signature(
         UserFuncName::user(0, func_id.as_u32()),
-        module.declarations().get_function_decl(func_id).signature.clone(),
+        module
+            .declarations()
+            .get_function_decl(func_id)
+            .signature
+            .clone(),
     );
     let mut bctx = FunctionBuilderContext::new();
     {
@@ -1740,7 +1731,10 @@ pub(super) fn emit_option_typeinfo(
     let data_id = module
         .declare_data(&symbol, Linkage::Local, false, false)
         .map_err(|e| {
-            CodegenError::cranelift(format!("declare option typeinfo `{symbol}`: {e}"), Span::new(0, 0))
+            CodegenError::cranelift(
+                format!("declare option typeinfo `{symbol}`: {e}"),
+                Span::new(0, 0),
+            )
         })?;
 
     let mut desc = DataDescription::new();
@@ -1763,11 +1757,12 @@ pub(super) fn emit_option_typeinfo(
     let weak_ref = module.declare_func_in_data(runtime.weak_clear_self, &mut desc);
     desc.write_function_addr(TYPEINFO_OFF_WEAK_FN, weak_ref);
 
-    module
-        .define_data(data_id, &desc)
-        .map_err(|e| {
-            CodegenError::cranelift(format!("define option typeinfo `{symbol}`: {e}"), Span::new(0, 0))
-        })?;
+    module.define_data(data_id, &desc).map_err(|e| {
+        CodegenError::cranelift(
+            format!("define option typeinfo `{symbol}`: {e}"),
+            Span::new(0, 0),
+        )
+    })?;
     Ok(data_id)
 }
 
@@ -1831,14 +1826,12 @@ pub(super) fn emit_list_typeinfo(
         desc.write_data_addr(TYPEINFO_OFF_ELEM_TYPEINFO, elem_gv, 0);
     }
 
-    module
-        .define_data(data_id, &desc)
-        .map_err(|e| {
-            CodegenError::cranelift(
-                format!("define list typeinfo `{symbol}`: {e}"),
-                Span::new(0, 0),
-            )
-        })?;
+    module.define_data(data_id, &desc).map_err(|e| {
+        CodegenError::cranelift(
+            format!("define list typeinfo `{symbol}`: {e}"),
+            Span::new(0, 0),
+        )
+    })?;
     Ok(data_id)
 }
 
@@ -1876,7 +1869,11 @@ pub(super) fn mangle_type_name(ty: &Type) -> String {
         Type::Stream(inner) => format!("Stream_{}", mangle_type_name(inner)),
         Type::Struct(def_id) => format!("Struct_{}", def_id.0),
         Type::ImportedStruct(imported) => {
-            format!("ImportedStruct_{}_{}", imported.module_path.replace(['\\', '/', ':'], "_"), imported.def_id.0)
+            format!(
+                "ImportedStruct_{}_{}",
+                imported.module_path.replace(['\\', '/', ':'], "_"),
+                imported.def_id.0
+            )
         }
         Type::Function { .. } => "Function".into(),
         // Result<T,E> and Option<T> are compiler-known
@@ -1885,11 +1882,9 @@ pub(super) fn mangle_type_name(ty: &Type) -> String {
         // to terminate; the resulting names won't be used at runtime
         // because programs touching these types fail at the
         // `lower_expr` codegen step below before reaching emission.
-        Type::Result(ok, err) => format!(
-            "Result_{}_{}",
-            mangle_type_name(ok),
-            mangle_type_name(err)
-        ),
+        Type::Result(ok, err) => {
+            format!("Result_{}_{}", mangle_type_name(ok), mangle_type_name(err))
+        }
         Type::Option(inner) => format!("Option_{}", mangle_type_name(inner)),
         Type::Grounded(inner) => format!("Grounded_{}", mangle_type_name(inner)),
         Type::Partial(inner) => format!("Partial_{}", mangle_type_name(inner)),
@@ -1947,9 +1942,7 @@ pub(super) fn collect_list_element_types(ir: &IrFile) -> Vec<Type> {
             Type::Option(inner)
             | Type::Partial(inner)
             | Type::ResumeToken(inner)
-            | Type::Weak(inner, _) => {
-                visit(inner, seen, order)
-            }
+            | Type::Weak(inner, _) => visit(inner, seen, order),
             Type::Function { params, ret, .. } => {
                 for param in params {
                     visit(param, seen, order);
@@ -2064,9 +2057,10 @@ pub(super) fn collect_option_types(ir: &IrFile) -> Vec<Type> {
                 visit(ok, seen, order);
                 visit(err, seen, order);
             }
-            Type::List(inner) | Type::Partial(inner) | Type::ResumeToken(inner) | Type::Weak(inner, _) => {
-                visit(inner, seen, order)
-            }
+            Type::List(inner)
+            | Type::Partial(inner)
+            | Type::ResumeToken(inner)
+            | Type::Weak(inner, _) => visit(inner, seen, order),
             Type::Function { params, ret, .. } => {
                 for param in params {
                     visit(param, seen, order);
@@ -2124,7 +2118,12 @@ fn visit_block_types(
             IrStmt::Yield { value, .. } => visit_expr_types(value, seen, order, visit),
             IrStmt::Return { value: Some(e), .. } => visit_expr_types(e, seen, order, visit),
             IrStmt::Return { value: None, .. } => {}
-            IrStmt::If { cond, then_block, else_block, .. } => {
+            IrStmt::If {
+                cond,
+                then_block,
+                else_block,
+                ..
+            } => {
                 visit_expr_types(cond, seen, order, visit);
                 visit_block_types(then_block, seen, order, visit);
                 if let Some(eb) = else_block {
@@ -2155,13 +2154,11 @@ fn visit_expr_types(
     visit(&e.ty, seen, order);
     match &e.kind {
         IrExprKind::Literal(_) | IrExprKind::Local { .. } | IrExprKind::Decl { .. } => {}
-        IrExprKind::BinOp { left, right, .. }
-        | IrExprKind::WrappingBinOp { left, right, .. } => {
+        IrExprKind::BinOp { left, right, .. } | IrExprKind::WrappingBinOp { left, right, .. } => {
             visit_expr_types(left, seen, order, visit);
             visit_expr_types(right, seen, order, visit);
         }
-        IrExprKind::UnOp { operand, .. }
-        | IrExprKind::WrappingUnOp { operand, .. } => {
+        IrExprKind::UnOp { operand, .. } | IrExprKind::WrappingUnOp { operand, .. } => {
             visit_expr_types(operand, seen, order, visit);
         }
         IrExprKind::Call { args, .. } => {
@@ -2200,6 +2197,8 @@ fn visit_expr_types(
         | IrExprKind::ResultOk { inner }
         | IrExprKind::ResultErr { inner }
         | IrExprKind::OptionSome { inner }
+        | IrExprKind::Ask { prompt: inner, .. }
+        | IrExprKind::Choose { options: inner }
         | IrExprKind::TryPropagate { inner } => {
             visit_expr_types(inner, seen, order, visit);
         }
@@ -2207,7 +2206,11 @@ fn visit_expr_types(
         IrExprKind::TryRetry { body, .. } => {
             visit_expr_types(body, seen, order, visit);
         }
-        IrExprKind::Replay { trace, arms, else_body } => {
+        IrExprKind::Replay {
+            trace,
+            arms,
+            else_body,
+        } => {
             visit_expr_types(trace, seen, order, visit);
             for arm in arms {
                 visit_expr_types(&arm.body, seen, order, visit);
@@ -2406,8 +2409,7 @@ pub(super) const PROMPT_CALL_INT_SYMBOL: &str = "corvid_prompt_call_int";
 pub(super) const PROMPT_CALL_BOOL_SYMBOL: &str = "corvid_prompt_call_bool";
 pub(super) const PROMPT_CALL_FLOAT_SYMBOL: &str = "corvid_prompt_call_float";
 pub(super) const PROMPT_CALL_STRING_SYMBOL: &str = "corvid_prompt_call_string";
-pub(super) const CITATION_VERIFY_OR_PANIC_SYMBOL: &str =
-    "corvid_citation_verify_or_panic";
+pub(super) const CITATION_VERIFY_OR_PANIC_SYMBOL: &str = "corvid_citation_verify_or_panic";
 pub(super) const APPROVE_SYNC_SYMBOL: &str = "corvid_approve_sync";
 pub(super) const TRACE_RUN_STARTED_SYMBOL: &str = "corvid_trace_run_started";
 pub(super) const TRACE_RUN_COMPLETED_INT_SYMBOL: &str = "corvid_trace_run_completed_int";
@@ -2624,9 +2626,7 @@ pub(super) struct RuntimeFuncs {
     /// `&RuntimeFuncs` (immutable) but still need to push their
     /// stack maps; the ownership-pass integration point had the
     /// same constraint with `tool_wrapper_ids`.
-    pub stack_maps: std::cell::RefCell<
-        HashMap<FuncId, Vec<(CodeOffset, u32, UserStackMap)>>,
-    >,
+    pub stack_maps: std::cell::RefCell<HashMap<FuncId, Vec<(CodeOffset, u32, UserStackMap)>>>,
 }
 
 impl RuntimeFuncs {
@@ -2804,7 +2804,9 @@ impl LocalsCtx {
     /// Iterate over every refcounted local across all scopes,
     /// innermost first. Used by `IrStmt::Return` to release all live
     /// locals before transferring the return value to the caller.
-    pub(super) fn all_refcounted_innermost_first(&self) -> impl Iterator<Item = &(LocalId, Variable)> {
+    pub(super) fn all_refcounted_innermost_first(
+        &self,
+    ) -> impl Iterator<Item = &(LocalId, Variable)> {
         self.scope_stack.iter().rev().flat_map(|s| s.iter().rev())
     }
 }
@@ -2815,7 +2817,6 @@ impl Default for LocalsCtx {
     }
 }
 
-
 /// Symbol name used by the C entry shim to pick up the runtime
 /// overflow handler. Declared here so both codegen and the shim agree.
 pub(super) const OVERFLOW_HANDLER_SYMBOL: &str = "corvid_runtime_overflow";
@@ -2825,5 +2826,3 @@ pub(super) const OVERFLOW_HANDLER_SYMBOL: &str = "corvid_runtime_overflow";
 /// the shim source constant regardless of what the user named their
 /// agent.
 pub(super) const ENTRY_TRAMPOLINE_SYMBOL: &str = "corvid_entry";
-
-

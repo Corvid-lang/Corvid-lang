@@ -138,6 +138,29 @@ pub enum TraceEvent {
         label: String,
         approved: bool,
     },
+    HumanInputRequest {
+        ts_ms: u64,
+        run_id: String,
+        prompt: String,
+        expected_type: String,
+    },
+    HumanInputResponse {
+        ts_ms: u64,
+        run_id: String,
+        prompt: String,
+        value: serde_json::Value,
+    },
+    HumanChoiceRequest {
+        ts_ms: u64,
+        run_id: String,
+        options: Vec<serde_json::Value>,
+    },
+    HumanChoiceResponse {
+        ts_ms: u64,
+        run_id: String,
+        selected_index: usize,
+        selected_value: serde_json::Value,
+    },
     HostEvent {
         ts_ms: u64,
         run_id: String,

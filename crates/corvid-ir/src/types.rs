@@ -419,12 +419,21 @@ pub enum IrStmt {
     },
 
     /// Expression evaluated for side effects.
-    Expr { expr: IrExpr, span: Span },
+    Expr {
+        expr: IrExpr,
+        span: Span,
+    },
 
     /// `break`, `continue`, `pass` — dedicated IR variants.
-    Break { span: Span },
-    Continue { span: Span },
-    Pass { span: Span },
+    Break {
+        span: Span,
+    },
+    Continue {
+        span: Span,
+    },
+    Pass {
+        span: Span,
+    },
 
     /// Increment a refcounted local's refcount.
     /// Inserted by the ownership analysis pass at non-final uses of a
@@ -434,13 +443,19 @@ pub enum IrStmt {
     /// `Dup` on a non-refcounted local is a no-op — the analysis pass
     /// emits it only for refcounted types, but the codegen double-
     /// checks via the local's declared type before emitting.
-    Dup { local_id: LocalId, span: Span },
+    Dup {
+        local_id: LocalId,
+        span: Span,
+    },
 
     /// Release a refcounted local's refcount.
     /// Inserted at final use (unless the use is a consume/move) or at
     /// scope exit for any still-owned bindings. Codegen lowers this as
     /// a single `corvid_release` call. The interpreter ignores it.
-    Drop { local_id: LocalId, span: Span },
+    Drop {
+        local_id: LocalId,
+        span: Span,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -462,7 +477,10 @@ pub enum IrExprKind {
     },
 
     /// Reference to a top-level declaration (imports only in v0.1).
-    Decl { def_id: DefId, name: String },
+    Decl {
+        def_id: DefId,
+        name: String,
+    },
 
     /// `tool_or_agent_or_prompt(args)` — resolved to a specific declaration.
     Call {
@@ -507,14 +525,22 @@ pub enum IrExprKind {
         operand: Box<IrExpr>,
     },
 
-    List { items: Vec<IrExpr> },
+    List {
+        items: Vec<IrExpr>,
+    },
 
     /// `grounded.unwrap_discarding_sources()` — consciously erase the
     /// provenance wrapper and keep the inner value.
-    UnwrapGrounded { value: Box<IrExpr> },
+    UnwrapGrounded {
+        value: Box<IrExpr>,
+    },
 
-    WeakNew { strong: Box<IrExpr> },
-    WeakUpgrade { weak: Box<IrExpr> },
+    WeakNew {
+        strong: Box<IrExpr>,
+    },
+    WeakUpgrade {
+        weak: Box<IrExpr>,
+    },
     StreamSplitBy {
         stream: Box<IrExpr>,
         key: String,
@@ -527,17 +553,34 @@ pub enum IrExprKind {
         stream: Box<IrExpr>,
         policy: StreamMergePolicy,
     },
-    StreamResumeToken { stream: Box<IrExpr> },
+    StreamResumeToken {
+        stream: Box<IrExpr>,
+    },
     ResumeStream {
         prompt_def_id: DefId,
         prompt_name: String,
         token: Box<IrExpr>,
     },
-    ResultOk { inner: Box<IrExpr> },
-    ResultErr { inner: Box<IrExpr> },
-    OptionSome { inner: Box<IrExpr> },
+    ResultOk {
+        inner: Box<IrExpr>,
+    },
+    ResultErr {
+        inner: Box<IrExpr>,
+    },
+    OptionSome {
+        inner: Box<IrExpr>,
+    },
     OptionNone,
-    TryPropagate { inner: Box<IrExpr> },
+    Ask {
+        prompt: Box<IrExpr>,
+        target_ty: Type,
+    },
+    Choose {
+        options: Box<IrExpr>,
+    },
+    TryPropagate {
+        inner: Box<IrExpr>,
+    },
     TryRetry {
         body: Box<IrExpr>,
         attempts: u64,
@@ -612,21 +655,25 @@ pub struct IrReplayCapture {
 /// events' names — trace events carry strings, not DefIds.
 #[derive(Debug, Clone)]
 pub enum IrReplayPattern {
-    Llm { prompt: String, span: Span },
+    Llm {
+        prompt: String,
+        span: Span,
+    },
     Tool {
         tool: String,
         arg: IrReplayToolArgPattern,
         span: Span,
     },
-    Approve { label: String, span: Span },
+    Approve {
+        label: String,
+        span: Span,
+    },
 }
 
 impl IrReplayPattern {
     pub fn span(&self) -> Span {
         match self {
-            Self::Llm { span, .. }
-            | Self::Tool { span, .. }
-            | Self::Approve { span, .. } => *span,
+            Self::Llm { span, .. } | Self::Tool { span, .. } | Self::Approve { span, .. } => *span,
         }
     }
 }
@@ -656,16 +703,27 @@ pub enum IrLiteral {
 pub enum IrCallKind {
     /// Tool call. Codegen dispatches through the runtime so effect +
     /// audit metadata can travel with the call.
-    Tool { def_id: DefId, effect: Effect },
+    Tool {
+        def_id: DefId,
+        effect: Effect,
+    },
     /// Prompt call. Codegen routes through the LLM runtime.
-    Prompt { def_id: DefId },
+    Prompt {
+        def_id: DefId,
+    },
     /// Agent call — recursion or composition.
-    Agent { def_id: DefId },
-    Fixture { def_id: DefId },
+    Agent {
+        def_id: DefId,
+    },
+    Fixture {
+        def_id: DefId,
+    },
     /// Struct constructor — `Order(id, amount)` builds an `Order`.
     /// Args are field values in declaration order. Codegen lowers as
     /// an allocation followed by per-field stores.
-    StructConstructor { def_id: DefId },
+    StructConstructor {
+        def_id: DefId,
+    },
     /// Something we couldn't resolve (graceful degradation).
     Unknown,
 }

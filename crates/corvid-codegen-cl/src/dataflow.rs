@@ -101,7 +101,11 @@ pub struct CfgBlock {
 #[derive(Debug, Clone)]
 pub enum CfgStmt {
     /// `let lhs = expr`. Defines `lhs`. Reads listed in `reads`.
-    Let { lhs: LocalId, lhs_ty: Type, reads: Vec<LocalRead> },
+    Let {
+        lhs: LocalId,
+        lhs_ty: Type,
+        reads: Vec<LocalRead>,
+    },
     /// Side-effect or control-flow without a binding.
     Expr { reads: Vec<LocalRead> },
     /// `return expr?` — exits the function. Reads listed.
@@ -112,7 +116,11 @@ pub enum CfgStmt {
     /// Loop entry — reads the iterable's locals; introduces the loop
     /// variable. Cfg edges out of the parent block describe the body
     /// + after-loop continuation.
-    LoopHead { var: LocalId, var_ty: Type, reads: Vec<LocalRead> },
+    LoopHead {
+        var: LocalId,
+        var_ty: Type,
+        reads: Vec<LocalRead>,
+    },
     /// Approve, break, continue, pass — included for completeness;
     /// either pure control or carries a small read set.
     Other { reads: Vec<LocalRead> },
@@ -267,7 +275,10 @@ pub fn analyze_agent_full(agent: &IrAgent) -> (Cfg, Liveness, OwnershipPlan) {
     let mut builder = CfgBuilder::new();
     let entry = builder.alloc_block();
     builder.lower_block(&agent.body, entry, Vec::new());
-    let cfg = Cfg { blocks: builder.blocks, entry };
+    let cfg = Cfg {
+        blocks: builder.blocks,
+        entry,
+    };
     let ir_paths = builder.ir_paths;
     let if_cfg_coords = builder.if_cfg_coords;
 
@@ -389,7 +400,10 @@ impl CfgBuilder {
 
     fn alloc_block(&mut self) -> BlockId {
         let id = self.blocks.len();
-        self.blocks.push(CfgBlock { stmts: Vec::new(), successors: Vec::new() });
+        self.blocks.push(CfgBlock {
+            stmts: Vec::new(),
+            successors: Vec::new(),
+        });
         id
     }
 
@@ -425,13 +439,22 @@ impl CfgBuilder {
             let mut my_path = parent_path.clone();
             my_path.push(IrNavStep::Stmt(ir_idx));
             match stmt {
-                IrStmt::Let { local_id, value, ty, .. } => {
+                IrStmt::Let {
+                    local_id,
+                    value,
+                    ty,
+                    ..
+                } => {
                     let reads = collect_reads(value, true);
-                    self.push_stmt(cur, CfgStmt::Let {
-                        lhs: *local_id,
-                        lhs_ty: ty.clone(),
-                        reads,
-                    }, my_path);
+                    self.push_stmt(
+                        cur,
+                        CfgStmt::Let {
+                            lhs: *local_id,
+                            lhs_ty: ty.clone(),
+                            reads,
+                        },
+                        my_path,
+                    );
                 }
                 IrStmt::Expr { expr, .. } => {
                     let reads = collect_reads(expr, true);
@@ -450,7 +473,12 @@ impl CfgBuilder {
                     // No successor — return exits.
                     return None;
                 }
-                IrStmt::If { cond, then_block, else_block, .. } => {
+                IrStmt::If {
+                    cond,
+                    then_block,
+                    else_block,
+                    ..
+                } => {
                     let if_ir_path = my_path.clone();
                     let cond_block = cur;
                     let cond_reads = collect_reads(cond, false);
@@ -492,7 +520,13 @@ impl CfgBuilder {
                     );
                     cur = join;
                 }
-                IrStmt::For { var_local, var_name: _, iter, body, .. } => {
+                IrStmt::For {
+                    var_local,
+                    var_name: _,
+                    iter,
+                    body,
+                    ..
+                } => {
                     // For-loop iter is BORROWED when it's a bare Local
                     // (the codegen peephole `lower_container_maybe_borrowed`
                     // reads the Variable without retaining; the iter's
@@ -508,11 +542,15 @@ impl CfgBuilder {
                     // correct behavior because the classification only
                     // affects Local reads.
                     let iter_reads = collect_reads(iter, false);
-                    self.push_stmt(cur, CfgStmt::LoopHead {
-                        var: *var_local,
-                        var_ty: iter_element_type(iter),
-                        reads: iter_reads,
-                    }, my_path.clone());
+                    self.push_stmt(
+                        cur,
+                        CfgStmt::LoopHead {
+                            var: *var_local,
+                            var_ty: iter_element_type(iter),
+                            reads: iter_reads,
+                        },
+                        my_path.clone(),
+                    );
                     let body_id = self.alloc_block();
                     let after_loop = self.alloc_block();
                     // Loop edges: head → body, body → head (back-edge),
@@ -534,9 +572,7 @@ impl CfgBuilder {
                     }
                     self.push_stmt(cur, CfgStmt::Other { reads }, my_path);
                 }
-                IrStmt::Break { .. }
-                | IrStmt::Continue { .. }
-                | IrStmt::Pass { .. } => {
+                IrStmt::Break { .. } | IrStmt::Continue { .. } | IrStmt::Pass { .. } => {
                     self.push_stmt(cur, CfgStmt::Other { reads: Vec::new() }, my_path);
                 }
                 // Dup/Drop should not appear in input IR for .6a — the
@@ -599,7 +635,11 @@ fn walk_expr(expr: &IrExpr, consumed: bool, out: &mut Vec<LocalRead>) {
             if is_refcounted(&expr.ty) {
                 out.push(LocalRead {
                     local_id: *local_id,
-                    kind: if consumed { ReadKind::Owned } else { ReadKind::Borrowed },
+                    kind: if consumed {
+                        ReadKind::Owned
+                    } else {
+                        ReadKind::Borrowed
+                    },
                 });
             }
         }
@@ -615,16 +655,14 @@ fn walk_expr(expr: &IrExpr, consumed: bool, out: &mut Vec<LocalRead>) {
             walk_expr(target, false, out);
             walk_expr(index, true, out);
         }
-        IrExprKind::BinOp { left, right, .. }
-        | IrExprKind::WrappingBinOp { left, right, .. } => {
+        IrExprKind::BinOp { left, right, .. } | IrExprKind::WrappingBinOp { left, right, .. } => {
             // String concat consumes both operands (releases at
             // codegen line 3336–3340). Other BinOps on primitives
             // have no refcounted operands to track.
             walk_expr(left, true, out);
             walk_expr(right, true, out);
         }
-        IrExprKind::UnOp { operand, .. }
-        | IrExprKind::WrappingUnOp { operand, .. } => {
+        IrExprKind::UnOp { operand, .. } | IrExprKind::WrappingUnOp { operand, .. } => {
             walk_expr(operand, true, out);
         }
         IrExprKind::Call { kind, args, .. } => {
@@ -677,6 +715,8 @@ fn walk_expr(expr: &IrExpr, consumed: bool, out: &mut Vec<LocalRead>) {
         IrExprKind::ResultOk { inner }
         | IrExprKind::ResultErr { inner }
         | IrExprKind::OptionSome { inner }
+        | IrExprKind::Ask { prompt: inner, .. }
+        | IrExprKind::Choose { options: inner }
         | IrExprKind::TryPropagate { inner } => walk_expr(inner, true, out),
         IrExprKind::TryRetry { body, .. } => walk_expr(body, consumed, out),
         IrExprKind::Replay {
@@ -842,11 +882,7 @@ fn stmt_def(s: &CfgStmt) -> Option<LocalId> {
 // Plan construction
 // ---------------------------------------------------------------------------
 
-fn build_plan(
-    cfg: &Cfg,
-    liveness: &Liveness,
-    params: &BTreeMap<LocalId, Type>,
-) -> OwnershipPlan {
+fn build_plan(cfg: &Cfg, liveness: &Liveness, params: &BTreeMap<LocalId, Type>) -> OwnershipPlan {
     let mut plan = OwnershipPlan::default();
 
     // Walk every statement; classify each consuming use as last/non-last.
@@ -875,10 +911,7 @@ fn build_plan(
             for (read_idx, r) in reads.iter().enumerate() {
                 let l = r.local_id;
                 // Is `l` read again LATER in this same statement?
-                let read_again_in_stmt = reads
-                    .iter()
-                    .skip(read_idx + 1)
-                    .any(|r2| r2.local_id == l);
+                let read_again_in_stmt = reads.iter().skip(read_idx + 1).any(|r2| r2.local_id == l);
                 // A use is "last" iff (no later in-statement read of
                 // it) AND (not live after the statement on any
                 // successor path).
@@ -972,7 +1005,10 @@ mod tests {
 
     fn local_expr(id: u32, ty: Type) -> IrExpr {
         IrExpr {
-            kind: IrExprKind::Local { local_id: LocalId(id), name: format!("l{id}") },
+            kind: IrExprKind::Local {
+                local_id: LocalId(id),
+                name: format!("l{id}"),
+            },
             ty,
             span: span(),
         }
@@ -995,7 +1031,10 @@ mod tests {
             return_ty: ret,
             cost_budget: None,
             wrapping_arithmetic: false,
-            body: IrBlock { stmts: body, span: span() },
+            body: IrBlock {
+                stmts: body,
+                span: span(),
+            },
             span: span(),
             borrow_sig: None,
         }
@@ -1059,7 +1098,9 @@ mod tests {
         );
         // Return uses local 1 as last consuming use → no Dup expected.
         assert!(
-            plan.dups.get(&(0, 1)).map_or(true, |s| !s.contains(&LocalId(1))),
+            plan.dups
+                .get(&(0, 1))
+                .map_or(true, |s| !s.contains(&LocalId(1))),
             "let-bound t is consumed by return — no Dup"
         );
     }
@@ -1080,7 +1121,11 @@ mod tests {
             Type::Int,
         );
         let (_cfg, plan) = analyze_agent(&agent);
-        let drops = plan.drops_at_block_exit.get(&0).cloned().unwrap_or_default();
+        let drops = plan
+            .drops_at_block_exit
+            .get(&0)
+            .cloned()
+            .unwrap_or_default();
         assert!(
             drops.contains(&LocalId(0)),
             "unused String param must be scheduled for drop"
@@ -1143,8 +1188,14 @@ mod tests {
             vec![
                 IrStmt::If {
                     cond: local_expr(0, Type::Bool),
-                    then_block: IrBlock { stmts: vec![], span: span() },
-                    else_block: Some(IrBlock { stmts: vec![], span: span() }),
+                    then_block: IrBlock {
+                        stmts: vec![],
+                        span: span(),
+                    },
+                    else_block: Some(IrBlock {
+                        stmts: vec![],
+                        span: span(),
+                    }),
                     span: span(),
                 },
                 IrStmt::Return {
@@ -1192,7 +1243,10 @@ mod tests {
         let (_, p1) = analyze_agent(&mk());
         let (_, p2) = analyze_agent(&mk());
         assert_eq!(p1.op_count(), p2.op_count());
-        assert_eq!(p1.dups.keys().collect::<Vec<_>>(), p2.dups.keys().collect::<Vec<_>>());
+        assert_eq!(
+            p1.dups.keys().collect::<Vec<_>>(),
+            p2.dups.keys().collect::<Vec<_>>()
+        );
         assert_eq!(
             p1.drops_after.keys().collect::<Vec<_>>(),
             p2.drops_after.keys().collect::<Vec<_>>()

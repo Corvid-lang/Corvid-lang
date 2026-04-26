@@ -49,7 +49,13 @@ pub fn analyze_prompt_pins(agent: &IrAgent) -> PromptPinInfo {
     }
 
     let mut out = PromptPinInfo::default();
-    collect_prompt_pins_in_block(&agent.body, &mut Vec::new(), &cfg.blocks, &point_by_path, &mut out);
+    collect_prompt_pins_in_block(
+        &agent.body,
+        &mut Vec::new(),
+        &cfg.blocks,
+        &point_by_path,
+        &mut out,
+    );
     out
 }
 
@@ -78,7 +84,13 @@ fn collect_prompt_pins_in_block(
                 parent.pop();
                 if let Some(else_block) = else_block {
                     parent.push(crate::dataflow::IrNavStep::IfElse);
-                    collect_prompt_pins_in_block(else_block, parent, cfg_blocks, point_by_path, out);
+                    collect_prompt_pins_in_block(
+                        else_block,
+                        parent,
+                        cfg_blocks,
+                        point_by_path,
+                        out,
+                    );
                     parent.pop();
                 }
             }
@@ -166,12 +178,16 @@ fn collect_prompt_pins_in_expr(
         | IrExprKind::ResultOk { inner: target }
         | IrExprKind::ResultErr { inner: target }
         | IrExprKind::OptionSome { inner: target }
+        | IrExprKind::Ask { prompt: target, .. }
+        | IrExprKind::Choose { options: target }
         | IrExprKind::TryPropagate { inner: target }
         | IrExprKind::TryRetry { body: target, .. }
-        | IrExprKind::UnOp { operand: target, .. }
-        | IrExprKind::WrappingUnOp { operand: target, .. } => {
-            collect_prompt_pins_in_expr(target, borrowed_reads, out)
+        | IrExprKind::UnOp {
+            operand: target, ..
         }
+        | IrExprKind::WrappingUnOp {
+            operand: target, ..
+        } => collect_prompt_pins_in_expr(target, borrowed_reads, out),
         IrExprKind::Index { target, index }
         | IrExprKind::BinOp {
             left: target,
@@ -190,7 +206,11 @@ fn collect_prompt_pins_in_expr(
         | IrExprKind::Local { .. }
         | IrExprKind::Decl { .. }
         | IrExprKind::OptionNone => {}
-        IrExprKind::Replay { trace, arms, else_body } => {
+        IrExprKind::Replay {
+            trace,
+            arms,
+            else_body,
+        } => {
             // Replay expressions can't reach native codegen today
             // (cl_type_for rejects TraceId and routes to interpreter
             // tier), but we still walk children so if that boundary
@@ -215,7 +235,8 @@ fn borrowed_reads_for_stmt(stmt: &CfgStmt) -> BTreeSet<LocalId> {
         | CfgStmt::LoopHead { reads, .. }
         | CfgStmt::Other { reads } => reads,
     };
-    reads.iter()
+    reads
+        .iter()
         .filter(|r| matches!(r.kind, ReadKind::Borrowed))
         .map(|r| r.local_id)
         .collect()
@@ -269,7 +290,10 @@ mod tests {
             return_ty: Type::Int,
             cost_budget: None,
             wrapping_arithmetic: false,
-            body: IrBlock { stmts: body, span: span() },
+            body: IrBlock {
+                stmts: body,
+                span: span(),
+            },
             span: span(),
             borrow_sig: None,
         }
