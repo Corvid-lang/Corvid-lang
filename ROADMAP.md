@@ -1589,6 +1589,10 @@ The determinism-source catalog and the language's treatment of non-reproducible 
 - [x] Documentation rewrite foundation: launch reference, tutorial, cookbook, and migration-from-Python docs checked into `docs/`.
 - [x] Claim audit foundation: `docs/launch-claim-audit.md` links launch claims to concrete commands and committed artifacts, and keeps external-only claims explicitly blocked until the artifact exists.
 - [x] `corvid audit`: project-level static report for approval boundaries, replay coverage gaps, budget exposure, secret-bearing effects, money-moving paths, grounding signals, and semantic-effect violations.
+- [x] Stability contract foundation: checked-in launch contract for syntax, type system, CLI, stdlib, and benchmark-claim semantics.
+- [x] `corvid doctor` launch checks: provider keys, local-model tooling, replay storage, approval configuration, wasm/native toolchains, registry lock presence, and platform prerequisites.
+- [x] `corvid bench compare python|js`: published-archive comparison command over committed benchmark sessions with explicit ratio semantics and no hidden model-latency claim inflation.
+- [x] Reproducibility-script foundation: checked-in scripts for benchmark and bundle claim reproduction from committed archives and examples.
 - Stability guarantees on the language surface: documented SemVer contract for syntax, type system, stdlib.
 - Windows + Linux + macOS all first-class (`corvid doctor` passes, installer works, parity harness green on all three).
 - Installer: `curl -fsSL corvid.dev/install.sh | sh` on Unix, PowerShell equivalent on Windows. Corresponding `cargo install` flow.

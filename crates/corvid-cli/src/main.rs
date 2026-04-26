@@ -30,6 +30,7 @@
 mod abi_cmd;
 mod approver_cmd;
 mod audit_cmd;
+mod bench_cmd;
 mod bind_cmd;
 mod bundle_cmd;
 mod capsule_cmd;
@@ -584,6 +585,26 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
+    /// Inspect published orchestration-overhead benchmark archives.
+    Bench {
+        #[command(subcommand)]
+        command: BenchCommand,
+    },
+}
+
+#[derive(Subcommand)]
+enum BenchCommand {
+    /// Compare Corvid against Python or JS/TypeScript using a published archive.
+    Compare {
+        /// Comparison target: `python`, `js`, or `typescript`.
+        target: String,
+        /// Benchmark session id under `benches/results/`.
+        #[arg(long, value_name = "SESSION", default_value = "2026-04-17-marketable-session")]
+        session: String,
+        /// Emit structured JSON.
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -1080,8 +1101,15 @@ fn main() -> ExitCode {
             } => cmd_package_publish(&source, &name, &version, &out, &url_base, &key, &key_id),
         },
         Some(Command::Repl) => cmd_repl(),
-        Some(Command::Doctor) => cmd_doctor(),
+        Some(Command::Doctor) => cmd_doctor_v2(),
         Some(Command::Audit { file, json }) => audit_cmd::run_audit(&file, json),
+        Some(Command::Bench { command }) => match command {
+            BenchCommand::Compare {
+                target,
+                session,
+                json,
+            } => bench_cmd::run_compare(&target, &session, json),
+        },
         None => {
             println!("corvid — the AI-native language compiler");
             println!("Run `corvid --help` for usage.");
@@ -1857,4 +1885,154 @@ fn cmd_doctor() -> Result<u8> {
     println!("native `corvid run` works without Python. Configure CORVID_MODEL + the");
     println!("matching API key and prompt-only programs run end-to-end.");
     Ok(0)
+}
+
+fn cmd_doctor_v2() -> Result<u8> {
+    use corvid_driver::load_dotenv_walking;
+
+    println!("corvid doctor - checking local environment...\n");
+    let mut ok = true;
+    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+
+    match load_dotenv_walking(&cwd) {
+        Some(p) => println!("  OK .env loaded from {}", p.display()),
+        None => println!("  .. no .env file found from cwd upward (optional)"),
+    }
+
+    if command_succeeds("cargo", &["--version"]) {
+        println!("  OK cargo detected");
+    } else {
+        ok = false;
+        println!("  XX cargo not found in PATH");
+    }
+
+    if command_succeeds("rustc", &["--version"]) {
+        println!("  OK rustc detected");
+    } else {
+        ok = false;
+        println!("  XX rustc not found in PATH");
+    }
+
+    if command_output("rustup", &["target", "list", "--installed"])
+        .map(|stdout| stdout.contains("wasm32-unknown-unknown"))
+        .unwrap_or(false)
+    {
+        println!("  OK wasm32-unknown-unknown target installed");
+    } else {
+        println!("  .. wasm32-unknown-unknown target missing (`rustup target add wasm32-unknown-unknown`)");
+    }
+
+    let model = std::env::var("CORVID_MODEL").ok();
+    match &model {
+        Some(v) => println!("  OK CORVID_MODEL = {v}"),
+        None => println!("  .. CORVID_MODEL not set"),
+    }
+
+    let anthropic = std::env::var("ANTHROPIC_API_KEY").is_ok();
+    let openai = std::env::var("OPENAI_API_KEY").is_ok();
+    println!(
+        "  {} ANTHROPIC_API_KEY {}",
+        if anthropic { "OK" } else { ".." },
+        if anthropic { "set" } else { "not set" }
+    );
+    println!(
+        "  {} OPENAI_API_KEY {}",
+        if openai { "OK" } else { ".." },
+        if openai { "set" } else { "not set" }
+    );
+
+    if let Some(m) = &model {
+        if m.starts_with("claude-") && !anthropic {
+            ok = false;
+            println!("  XX CORVID_MODEL is `{m}` but ANTHROPIC_API_KEY is not set");
+        }
+        if ["gpt-", "o1-", "o3-", "o4-"]
+            .iter()
+            .any(|prefix| m.starts_with(prefix))
+            && !openai
+        {
+            ok = false;
+            println!("  XX CORVID_MODEL is `{m}` but OPENAI_API_KEY is not set");
+        }
+    }
+
+    println!(
+        "  {} ollama {}",
+        if command_succeeds("ollama", &["--version"]) {
+            "OK"
+        } else {
+            ".."
+        },
+        if command_succeeds("ollama", &["--version"]) {
+            "detected"
+        } else {
+            "not detected (only needed for local-model demos)"
+        }
+    );
+
+    let trace_dir = cwd.join("target").join("trace");
+    if trace_dir.exists() {
+        println!("  OK replay storage present at {}", trace_dir.display());
+    } else {
+        println!("  .. replay storage not initialized yet (expected at {})", trace_dir.display());
+    }
+
+    match std::env::var("CORVID_APPROVER").ok() {
+        Some(value) => println!("  OK CORVID_APPROVER = {value}"),
+        None => println!("  .. CORVID_APPROVER not set"),
+    }
+
+    match find_upward(&cwd, "Corvid.lock") {
+        Some(path) => println!("  OK registry lockfile found at {}", path.display()),
+        None => println!("  .. no Corvid.lock found from cwd upward"),
+    }
+
+    let has_python = command_succeeds("python3", &["--version"])
+        || command_succeeds("python", &["--version"]);
+    println!(
+        "  .. {}",
+        if has_python {
+            "python detected (legacy --target=python available)"
+        } else {
+            "python not detected (only needed for --target=python)"
+        }
+    );
+
+    println!();
+    println!("native `corvid run` works without Python. Configure CORVID_MODEL + the matching API key and prompt-only programs run end-to-end.");
+    Ok(if ok { 0 } else { 1 })
+}
+
+fn command_succeeds(program: &str, args: &[&str]) -> bool {
+    std::process::Command::new(program)
+        .args(args)
+        .output()
+        .map(|output| output.status.success())
+        .unwrap_or(false)
+}
+
+fn command_output(program: &str, args: &[&str]) -> Option<String> {
+    std::process::Command::new(program)
+        .args(args)
+        .output()
+        .ok()
+        .and_then(|output| {
+            if output.status.success() {
+                Some(String::from_utf8_lossy(&output.stdout).to_string())
+            } else {
+                None
+            }
+        })
+}
+
+fn find_upward(start: &Path, name: &str) -> Option<PathBuf> {
+    let mut current = Some(start);
+    while let Some(dir) = current {
+        let candidate = dir.join(name);
+        if candidate.exists() {
+            return Some(candidate);
+        }
+        current = dir.parent();
+    }
+    None
 }
