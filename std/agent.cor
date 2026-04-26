@@ -1,0 +1,71 @@
+# Standard agent workflow envelopes.
+
+public type Classification:
+    label: String
+    confidence: Float
+    threshold: Float
+    accepted: Bool
+
+public type Extraction:
+    schema_name: String
+    value: String
+    valid: Bool
+    error_message: String
+
+public type Ranking:
+    item_id: String
+    score: Float
+    reason: String
+
+public type Judgement:
+    winner: String
+    rationale: String
+    needs_human: Bool
+
+public type PlanStep:
+    id: String
+    instruction: String
+    effect_summary: String
+
+public type ToolUse:
+    tool_name: String
+    argument_summary: String
+    approval_label: String
+    approved: Bool
+
+public type Critique:
+    accepted: Bool
+    finding: String
+    revision_hint: String
+
+public type AnswerWithProvenance:
+    answer: String
+    provenance_key: String
+    grounded: Bool
+
+public agent classify(label: String, confidence: Float, threshold: Float) -> Classification:
+    return Classification(label, confidence, threshold, confidence >= threshold)
+
+public agent extraction_ok(schema_name: String, value: String) -> Extraction:
+    return Extraction(schema_name, value, true, "")
+
+public agent extraction_error(schema_name: String, error_message: String) -> Extraction:
+    return Extraction(schema_name, "", false, error_message)
+
+public agent rank(item_id: String, score: Float, reason: String) -> Ranking:
+    return Ranking(item_id, score, reason)
+
+public agent judge(winner: String, rationale: String, needs_human: Bool) -> Judgement:
+    return Judgement(winner, rationale, needs_human)
+
+public agent plan_step(id: String, instruction: String, effect_summary: String) -> PlanStep:
+    return PlanStep(id, instruction, effect_summary)
+
+public agent tool_use(tool_name: String, argument_summary: String, approval_label: String, approved: Bool) -> ToolUse:
+    return ToolUse(tool_name, argument_summary, approval_label, approved)
+
+public agent critique(accepted: Bool, finding: String, revision_hint: String) -> Critique:
+    return Critique(accepted, finding, revision_hint)
+
+public agent answer_with_provenance(answer: String, provenance_key: String) -> AnswerWithProvenance:
+    return AnswerWithProvenance(answer, provenance_key, provenance_key != "")

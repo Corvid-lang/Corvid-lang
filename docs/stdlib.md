@@ -98,3 +98,11 @@ budget, effect-summary, and replay-key metadata. The runtime exposes an
 in-process queue foundation for enqueue and cancel operations. Each operation
 emits `std.queue.*` trace events so long-running AI work can be audited and later
 backed by a durable store without changing the job contract.
+
+## `std.agent`
+
+`std/agent.cor` defines pure typed envelopes for common AI application patterns:
+classification, extraction, ranking, adjudication, planning, tool-use records,
+approval labels, critique/review, and grounded answer metadata. These are
+ordinary Corvid values, so applications can compose them with effects, replay,
+approval, provenance, and cache keys without introducing framework glue.
