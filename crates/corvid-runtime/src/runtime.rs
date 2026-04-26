@@ -1372,6 +1372,33 @@ mod tests {
         );
     }
 
+    #[test]
+    fn runtime_store_policy_provenance_required_rejects_ungrounded_record() {
+        let runtime = Runtime::builder().build();
+        runtime
+            .store_put(
+                StoreKind::Memory,
+                "Profile",
+                "user-1",
+                json!({"fact": "ungrounded"}),
+            )
+            .expect("put");
+        let policy = StorePolicySet {
+            provenance_required: true,
+            ..StorePolicySet::default()
+        };
+
+        let err = runtime
+            .store_get_record_with_policy(StoreKind::Memory, "Profile", "user-1", &policy)
+            .expect_err("ungrounded read must fail");
+        match err {
+            RuntimeError::StorePolicyViolation { policy, .. } => {
+                assert_eq!(policy, "provenance_required");
+            }
+            other => panic!("unexpected error: {other}"),
+        }
+    }
+
     #[tokio::test]
     async fn call_tool_routes_through_registry() {
         let r = rt();

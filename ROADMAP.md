@@ -1489,6 +1489,7 @@ The determinism-source catalog and the language's treatment of non-reproducible 
 - [x] Revisioned memory conflict detection: runtime stores assign monotonic record revisions and expose compare-and-set writes so stale memory updates fail with `StoreConflict` instead of silently overwriting newer facts.
 - [x] Runtime retention policy enforcement: ABI store policies can become runtime `StorePolicySet`s; TTL reads expire stale records, and legal-hold policies block deletion with typed policy errors.
 - [x] Approval-required memory writes: runtime store policy APIs gate sensitive writes through the existing approval flow and preserve denial/approval events in replay-visible traces.
+- [x] Provenance-required memory reads: store policies can require retrieved records to carry `ProvenanceChain` lineage, failing ungrounded reads with typed policy errors.
 - `session { ... }` block declares per-conversation state. Compiler generates typed accessors.
 - `memory { ... }` block declares long-lived state (survives process restarts).
 - Both backed by SQLite (native) and IndexedDB (wasm).

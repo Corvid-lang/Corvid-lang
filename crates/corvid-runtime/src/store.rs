@@ -121,6 +121,7 @@ pub struct StorePolicySet {
     pub legal_hold: bool,
     pub approval_required: bool,
     pub approval_label: Option<String>,
+    pub provenance_required: bool,
     pub privacy_tier: Option<String>,
 }
 
@@ -161,6 +162,7 @@ impl StorePolicySet {
             "legal_hold" => self.legal_hold = parse_bool_policy(name, value)?,
             "approval_required" => self.approval_required = parse_bool_policy(name, value)?,
             "approval_label" => self.approval_label = Some(parse_string_policy(name, value)?),
+            "provenance_required" => self.provenance_required = parse_bool_policy(name, value)?,
             "privacy_tier" => self.privacy_tier = Some(parse_string_policy(name, value)?),
             _ => {}
         }
@@ -235,6 +237,17 @@ impl StoreManager {
         {
             self.backend.delete(kind, store, key)?;
             return Ok(None);
+        }
+        if let Some(record) = record.as_ref() {
+            if policy.provenance_required && record.provenance.is_none() {
+                return Err(store_policy_violation(
+                    kind,
+                    store,
+                    key,
+                    "provenance_required",
+                    "record has no provenance chain",
+                ));
+            }
         }
         Ok(record)
     }
@@ -835,6 +848,10 @@ mod tests {
                 value: json!("RememberSensitiveFact"),
             },
             AbiStorePolicy {
+                name: "provenance_required".to_string(),
+                value: json!(true),
+            },
+            AbiStorePolicy {
                 name: "privacy_tier".to_string(),
                 value: json!("restricted"),
             },
@@ -847,6 +864,7 @@ mod tests {
             policy.approval_label.as_deref(),
             Some("RememberSensitiveFact")
         );
+        assert!(policy.provenance_required);
         assert_eq!(policy.privacy_tier.as_deref(), Some("restricted"));
     }
 
@@ -913,5 +931,58 @@ mod tests {
                 .expect("record still present"),
             Some(json!({"fact": "protected"}))
         );
+    }
+
+    #[test]
+    fn store_policy_provenance_required_rejects_ungrounded_records() {
+        let store = StoreManager::memory();
+        store
+            .put(
+                StoreKind::Memory,
+                "Profile",
+                "user-1",
+                json!({"fact": "ungrounded"}),
+            )
+            .expect("put");
+
+        let policy = StorePolicySet {
+            provenance_required: true,
+            ..StorePolicySet::default()
+        };
+        let err = store
+            .get_record_with_policy(StoreKind::Memory, "Profile", "user-1", &policy)
+            .expect_err("read must fail");
+        match err {
+            RuntimeError::StorePolicyViolation { policy, .. } => {
+                assert_eq!(policy, "provenance_required");
+            }
+            other => panic!("unexpected error: {other}"),
+        }
+    }
+
+    #[test]
+    fn store_policy_provenance_required_accepts_grounded_records() {
+        let store = StoreManager::memory();
+        store
+            .put_record(
+                StoreKind::Memory,
+                "Profile",
+                "user-1",
+                StoreRecord::grounded(
+                    json!({"fact": "grounded"}),
+                    ProvenanceChain::with_retrieval("profile_search", 3),
+                ),
+            )
+            .expect("put");
+
+        let policy = StorePolicySet {
+            provenance_required: true,
+            ..StorePolicySet::default()
+        };
+        let record = store
+            .get_record_with_policy(StoreKind::Memory, "Profile", "user-1", &policy)
+            .expect("read")
+            .expect("record");
+        assert!(record.provenance.is_some());
     }
 }
