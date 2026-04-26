@@ -118,7 +118,7 @@ Carry-overs explicitly tracked elsewhere:
 
 ## In progress
 
-### Phase 12 — Cranelift scaffolding (~2 months)
+### Phase 12 — Cranelift scaffolding (~2 months) ✅ closed
 Goal: compile typed IR to native machine code via Cranelift. Interpreter and compiled binary produce the same answer on every fixture — the oracle parity the async-interpreter decision was defending.
 
 Pre-phase decisions locked: **AOT-first** via `cranelift-object` (no JIT detour — the v1.0 pitch is a single binary), **trap-on-overflow** arithmetic via `sadd_overflow` + explicit branch to a runtime overflow handler (safety wins; Rust-debug-mode cost accepted).
