@@ -126,28 +126,26 @@ pub struct ApprovalCardArgument {
 
 impl ApprovalCard {
     pub fn from_request(req: &ApprovalRequest) -> Self {
+        let arguments = req
+            .args
+            .iter()
+            .enumerate()
+            .map(|(index, value)| ApprovalCardArgument {
+                index,
+                json_type: json_type_name(value).into(),
+                value: redact_if_sensitive(value),
+                redacted: is_sensitive_value(value),
+            })
+            .collect::<Vec<_>>();
+        let title = humanize_label(&req.label);
+        let risk = infer_risk(&req.label, &req.args);
         Self {
             label: req.label.clone(),
-            title: humanize_label(&req.label),
-            risk: infer_risk(&req.label, &req.args),
-            arguments: req
-                .args
-                .iter()
-                .enumerate()
-                .map(|(index, value)| ApprovalCardArgument {
-                    index,
-                    json_type: json_type_name(value).into(),
-                    value: redact_if_sensitive(value),
-                    redacted: is_sensitive_value(value),
-                })
-                .collect(),
-            context: vec![format!(
-                "approval `{}` requested with {} argument{}",
-                req.label,
-                req.args.len(),
-                if req.args.len() == 1 { "" } else { "s" }
-            )],
-            diff_preview: None,
+            title: title.clone(),
+            risk,
+            context: build_context(&req.label, &arguments),
+            diff_preview: Some(build_diff_preview(&title, risk, &arguments)),
+            arguments,
         }
     }
 
@@ -168,11 +166,72 @@ impl ApprovalCard {
             out.push_str(&format!("  context: {line}\n"));
         }
         if let Some(diff) = &self.diff_preview {
-            out.push_str("  diff:\n");
+            out.push_str("  preview:\n");
             out.push_str(diff);
             out.push('\n');
         }
         out
+    }
+}
+
+fn build_context(label: &str, args: &[ApprovalCardArgument]) -> Vec<String> {
+    let plural = if args.len() == 1 { "" } else { "s" };
+    let types = args
+        .iter()
+        .map(|arg| format!("arg{}:{}", arg.index, arg.json_type))
+        .collect::<Vec<_>>()
+        .join(", ");
+    vec![
+        format!("why: program requested approval `{label}` before a protected action"),
+        format!("scope: one decision covers this label and exact argument payload"),
+        format!(
+            "argument inspection: {} argument{}{}",
+            args.len(),
+            plural,
+            if types.is_empty() {
+                String::new()
+            } else {
+                format!(" ({types})")
+            }
+        ),
+    ]
+}
+
+fn build_diff_preview(
+    title: &str,
+    risk: ApprovalRisk,
+    args: &[ApprovalCardArgument],
+) -> String {
+    let mut out = String::new();
+    out.push_str("    before: protected action is blocked\n");
+    out.push_str(&format!(
+        "    after: `{title}` may proceed as {}\n",
+        risk_preview_label(risk)
+    ));
+    if args.is_empty() {
+        out.push_str("    arguments: <none>");
+    } else {
+        out.push_str("    arguments:\n");
+        for arg in args {
+            let suffix = if arg.redacted { " (redacted)" } else { "" };
+            out.push_str(&format!(
+                "      - arg {} [{}]{} = {}\n",
+                arg.index, arg.json_type, suffix, arg.value
+            ));
+        }
+        while out.ends_with('\n') {
+            out.pop();
+        }
+    }
+    out
+}
+
+fn risk_preview_label(risk: ApprovalRisk) -> &'static str {
+    match risk {
+        ApprovalRisk::Review => "a reviewed operation",
+        ApprovalRisk::MoneyMovement => "a money-moving operation",
+        ApprovalRisk::ExternalSideEffect => "an external side effect",
+        ApprovalRisk::Irreversible => "an irreversible operation",
     }
 }
 
@@ -396,6 +455,11 @@ mod tests {
         assert_eq!(card.risk, ApprovalRisk::MoneyMovement);
         assert_eq!(card.arguments[0].value, json!("<redacted>"));
         assert!(card.arguments[0].redacted);
-        assert!(card.render_text().contains("corvid approval card"));
+        let rendered = card.render_text();
+        assert!(rendered.contains("corvid approval card"));
+        assert!(rendered.contains("why: program requested approval"));
+        assert!(rendered.contains("preview:"));
+        assert!(rendered.contains("money-moving operation"));
+        assert!(rendered.contains("arg 0 [string] (redacted) = \"<redacted>\""));
     }
 }
