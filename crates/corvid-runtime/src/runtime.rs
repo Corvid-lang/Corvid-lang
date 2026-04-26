@@ -184,6 +184,19 @@ impl Runtime {
         Ok(())
     }
 
+    pub async fn store_put_with_policy(
+        &self,
+        kind: StoreKind,
+        store: &str,
+        key: &str,
+        value: serde_json::Value,
+        policy: &StorePolicySet,
+    ) -> Result<(), RuntimeError> {
+        self.store_put_record_with_policy(kind, store, key, StoreRecord::plain(value), policy)
+            .await?;
+        Ok(())
+    }
+
     pub fn store_get_record(
         &self,
         kind: StoreKind,
@@ -240,6 +253,33 @@ impl Runtime {
         Ok(record)
     }
 
+    pub async fn store_put_record_with_policy(
+        &self,
+        kind: StoreKind,
+        store: &str,
+        key: &str,
+        record: StoreRecord,
+        policy: &StorePolicySet,
+    ) -> Result<StoreRecord, RuntimeError> {
+        self.approve_store_write_if_required(kind, store, key, &record, policy)
+            .await?;
+        self.store_put_record(kind, store, key, record)
+    }
+
+    pub async fn store_put_record_if_revision_with_policy(
+        &self,
+        kind: StoreKind,
+        store: &str,
+        key: &str,
+        expected_revision: u64,
+        record: StoreRecord,
+        policy: &StorePolicySet,
+    ) -> Result<StoreRecord, RuntimeError> {
+        self.approve_store_write_if_required(kind, store, key, &record, policy)
+            .await?;
+        self.store_put_record_if_revision(kind, store, key, expected_revision, record)
+    }
+
     pub fn store_delete(&self, kind: StoreKind, store: &str, key: &str) -> Result<(), RuntimeError> {
         self.stores.delete(kind, store, key)?;
         self.emit_store_event("delete", kind, store, key, None);
@@ -256,6 +296,30 @@ impl Runtime {
         self.stores.delete_with_policy(kind, store, key, policy)?;
         self.emit_store_event("delete", kind, store, key, None);
         Ok(())
+    }
+
+    async fn approve_store_write_if_required(
+        &self,
+        kind: StoreKind,
+        store: &str,
+        key: &str,
+        record: &StoreRecord,
+        policy: &StorePolicySet,
+    ) -> Result<(), RuntimeError> {
+        if !policy.approval_required {
+            return Ok(());
+        }
+        let label = policy.approval_label.as_deref().unwrap_or("StoreWrite");
+        self.approval_gate(
+            label,
+            vec![
+                serde_json::json!(kind.as_str()),
+                serde_json::json!(store),
+                serde_json::json!(key),
+                record.value.clone(),
+            ],
+        )
+        .await
     }
 
     fn emit_store_event(
@@ -1244,6 +1308,68 @@ mod tests {
             }
             other => panic!("unexpected error: {other}"),
         }
+    }
+
+    #[tokio::test]
+    async fn runtime_store_policy_approval_required_allows_approved_write() {
+        let runtime = Runtime::builder()
+            .approver(Arc::new(ProgrammaticApprover::always_yes()))
+            .build();
+        let policy = StorePolicySet {
+            approval_required: true,
+            approval_label: Some("RememberSensitiveFact".to_string()),
+            ..StorePolicySet::default()
+        };
+
+        runtime
+            .store_put_with_policy(
+                StoreKind::Memory,
+                "Profile",
+                "user-1",
+                json!({"fact": "sensitive"}),
+                &policy,
+            )
+            .await
+            .expect("approved write");
+        assert_eq!(
+            runtime
+                .store_get(StoreKind::Memory, "Profile", "user-1")
+                .expect("get"),
+            Some(json!({"fact": "sensitive"}))
+        );
+    }
+
+    #[tokio::test]
+    async fn runtime_store_policy_approval_required_blocks_denied_write() {
+        let runtime = Runtime::builder()
+            .approver(Arc::new(ProgrammaticApprover::always_no()))
+            .build();
+        let policy = StorePolicySet {
+            approval_required: true,
+            approval_label: Some("RememberSensitiveFact".to_string()),
+            ..StorePolicySet::default()
+        };
+
+        let err = runtime
+            .store_put_with_policy(
+                StoreKind::Memory,
+                "Profile",
+                "user-1",
+                json!({"fact": "sensitive"}),
+                &policy,
+            )
+            .await
+            .expect_err("denied write");
+        assert!(matches!(
+            err,
+            RuntimeError::ApprovalDenied { ref action } if action == "RememberSensitiveFact"
+        ));
+        assert_eq!(
+            runtime
+                .store_get(StoreKind::Memory, "Profile", "user-1")
+                .expect("get"),
+            None
+        );
     }
 
     #[tokio::test]

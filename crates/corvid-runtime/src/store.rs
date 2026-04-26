@@ -120,6 +120,7 @@ pub struct StorePolicySet {
     pub user_delete: bool,
     pub legal_hold: bool,
     pub approval_required: bool,
+    pub approval_label: Option<String>,
     pub privacy_tier: Option<String>,
 }
 
@@ -159,6 +160,7 @@ impl StorePolicySet {
             "user_delete" => self.user_delete = parse_bool_policy(name, value)?,
             "legal_hold" => self.legal_hold = parse_bool_policy(name, value)?,
             "approval_required" => self.approval_required = parse_bool_policy(name, value)?,
+            "approval_label" => self.approval_label = Some(parse_string_policy(name, value)?),
             "privacy_tier" => self.privacy_tier = Some(parse_string_policy(name, value)?),
             _ => {}
         }
@@ -829,6 +831,10 @@ mod tests {
                 value: json!(true),
             },
             AbiStorePolicy {
+                name: "approval_label".to_string(),
+                value: json!("RememberSensitiveFact"),
+            },
+            AbiStorePolicy {
                 name: "privacy_tier".to_string(),
                 value: json!("restricted"),
             },
@@ -837,6 +843,10 @@ mod tests {
         let policy = StorePolicySet::from_abi_policies(&policies).expect("parse policies");
         assert_eq!(policy.ttl_ms, Some(86_400_000));
         assert!(policy.legal_hold);
+        assert_eq!(
+            policy.approval_label.as_deref(),
+            Some("RememberSensitiveFact")
+        );
         assert_eq!(policy.privacy_tier.as_deref(), Some("restricted"));
     }
 
