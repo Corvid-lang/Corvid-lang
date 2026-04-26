@@ -9,6 +9,9 @@ use crate::approvals::{
     ApprovalDecision, ApprovalRequest, ApprovalToken, Approver, StdinApprover,
 };
 use crate::calibration::{CalibrationStats, CalibrationStore};
+use crate::capability_contract::{
+    run_capability_contracts, CapabilityContractOptions, CapabilityContractReport,
+};
 use crate::errors::RuntimeError;
 use crate::human::{HumanChoiceRequest, HumanInputRequest, HumanInteractor, StdinHumanInteractor};
 use crate::llm::{
@@ -173,6 +176,13 @@ impl Runtime {
 
     pub fn llm_usage_totals_by_provider(&self) -> std::collections::BTreeMap<String, LlmUsageTotals> {
         self.usage_ledger.totals_by_provider()
+    }
+
+    pub async fn check_model_capability_contracts(
+        &self,
+        options: CapabilityContractOptions,
+    ) -> Result<CapabilityContractReport, RuntimeError> {
+        run_capability_contracts(self, options).await
     }
 
     pub fn stores(&self) -> &StoreManager {

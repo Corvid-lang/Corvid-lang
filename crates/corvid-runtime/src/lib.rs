@@ -35,6 +35,7 @@ pub mod approvals;
 pub mod approver_bridge;
 pub(crate) mod attestation_store;
 pub mod calibration;
+pub mod capability_contract;
 pub mod catalog;
 pub mod catalog_c_api;
 pub mod citation;
@@ -91,6 +92,10 @@ pub use approvals::{
     ProgrammaticApprover, StdinApprover,
 };
 pub use calibration::{CalibrationObservation, CalibrationStats};
+pub use capability_contract::{
+    CapabilityCheckKind, CapabilityCheckStatus, CapabilityContractCheck, CapabilityContractOptions,
+    CapabilityContractReport,
+};
 pub use catalog::{
     call_agent as catalog_call_agent, descriptor_hash as catalog_descriptor_hash,
     descriptor_json as catalog_descriptor_json, find_agents_where as catalog_find_agents_where,
