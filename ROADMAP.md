@@ -1523,7 +1523,7 @@ The determinism-source catalog and the language's treatment of non-reproducible 
 - Generated typed wrappers from Python signatures and docstring/schema metadata where available; unresolved dynamic shapes require explicit Corvid type annotations.
 - Python FFI contract tests: verify exception marshalling, type conversion, trace recording, and effect summaries for imported Python functions.
 
-### Phase 31 — Multi-provider LLM adapters (~2 weeks)
+### Phase 31 — Multi-provider LLM adapters (~2 weeks) ✅ closed
 
 **Goal.** Provider coverage for the AI application surface, not just chat completion: hosted frontier models, local models, OpenAI-compatible gateways, structured-output providers, routing metadata, and adapters users actually request.
 
