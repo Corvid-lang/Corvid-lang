@@ -1,0 +1,24 @@
+# Standard cache metadata envelopes.
+
+public type CacheKeyEnvelope:
+    namespace: String
+    subject: String
+    fingerprint: String
+    effect_key: String
+    provenance_key: String
+
+public type CacheEntryEnvelope:
+    namespace: String
+    subject: String
+    fingerprint: String
+    replay_safe: Bool
+    invalidation_key: String
+
+public agent cache_key(namespace: String, subject: String, fingerprint: String, effect_key: String, provenance_key: String) -> CacheKeyEnvelope:
+    return CacheKeyEnvelope(namespace, subject, fingerprint, effect_key, provenance_key)
+
+public agent cache_entry(key: CacheKeyEnvelope, replay_safe: Bool, invalidation_key: String) -> CacheEntryEnvelope:
+    return CacheEntryEnvelope(key.namespace, key.subject, key.fingerprint, replay_safe, invalidation_key)
+
+public agent cache_hit(entry: CacheEntryEnvelope) -> Bool:
+    return entry.replay_safe and entry.fingerprint != ""

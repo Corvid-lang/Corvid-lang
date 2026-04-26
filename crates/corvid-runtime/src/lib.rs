@@ -35,6 +35,7 @@ pub mod approvals;
 pub mod approver_bridge;
 pub(crate) mod attestation_store;
 pub mod calibration;
+pub mod cache;
 pub mod capability_contract;
 pub mod catalog;
 pub mod catalog_c_api;
@@ -96,6 +97,9 @@ pub use approvals::{
     ProgrammaticApprover, StdinApprover,
 };
 pub use calibration::{CalibrationObservation, CalibrationStats};
+pub use cache::{
+    build_cache_key, cache_entry_metadata, CacheEntryMetadata, CacheKey, CacheKeyInput,
+};
 pub use capability_contract::{
     CapabilityCheckKind, CapabilityCheckStatus, CapabilityContractCheck, CapabilityContractOptions,
     CapabilityContractReport,

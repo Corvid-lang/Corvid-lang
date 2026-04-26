@@ -81,3 +81,12 @@ The runtime exposes an observation snapshot API that aggregates normalized LLM
 usage and provider health. Emitting the snapshot records a `std.observe.summary`
 trace event with call counts, token totals, cost totals, local-call counts, and
 degraded-provider counts.
+
+## `std.cache`
+
+`std/cache.cor` defines typed cache-key and cache-entry envelopes for prompt,
+model, and tool-result caching. The runtime exposes deterministic cache-key
+construction over namespace, subject, model, arguments, effect key, provenance
+key, and version metadata. Cache-key creation emits `std.cache.key` trace events
+so cache decisions are replay-auditable without storing cached payloads in the
+metadata event.

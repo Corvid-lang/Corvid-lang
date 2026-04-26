@@ -9,6 +9,7 @@ use crate::approvals::{
     ApprovalDecision, ApprovalRequest, ApprovalToken, Approver, StdinApprover,
 };
 use crate::calibration::{CalibrationStats, CalibrationStore};
+use crate::cache::{build_cache_key, CacheKey, CacheKeyInput};
 use crate::capability_contract::{
     run_capability_contracts, CapabilityContractOptions, CapabilityContractReport,
 };
@@ -196,6 +197,21 @@ impl Runtime {
 
     pub fn provider_observations(&self) -> Vec<ProviderObservation> {
         provider_observations(&self.provider_health())
+    }
+
+    pub fn cache_key(&self, input: CacheKeyInput) -> Result<CacheKey, RuntimeError> {
+        let key = build_cache_key(input)?;
+        self.emit_host_event(
+            "std.cache.key",
+            serde_json::json!({
+                "namespace": key.namespace,
+                "subject": key.subject,
+                "fingerprint": key.fingerprint,
+                "effect_key": key.effect_key,
+                "provenance_key": key.provenance_key,
+            }),
+        );
+        Ok(key)
     }
 
     pub fn emit_observation_summary(&self) -> RuntimeObservationSummary {
@@ -2335,6 +2351,48 @@ mod tests {
                     && payload["present"] == true
                     && payload.get("value").is_none()
         )));
+    }
+
+    #[test]
+    fn cache_keys_are_trace_visible_without_cached_payloads() {
+        let dir = tempfile::tempdir().unwrap();
+        let trace_path = dir.path().join("cache.jsonl");
+        let r = Runtime::builder()
+            .tracer(Tracer::open_path(&trace_path, "cache-run"))
+            .build();
+
+        let key = r
+            .cache_key(CacheKeyInput {
+                namespace: "tool".to_string(),
+                subject: "lookup".to_string(),
+                model: None,
+                effect_key: Some("io:read".to_string()),
+                provenance_key: Some("doc:123".to_string()),
+                version: Some("v1".to_string()),
+                args: json!({"id": 7}),
+            })
+            .unwrap();
+
+        assert_eq!(key.namespace, "tool");
+        assert_eq!(key.subject, "lookup");
+        assert_eq!(key.fingerprint.len(), 64);
+
+        let events = corvid_trace_schema::read_events_from_path(&trace_path).unwrap();
+        let event = events
+            .iter()
+            .find_map(|event| match event {
+                TraceEvent::HostEvent { name, payload, .. } if name == "std.cache.key" => {
+                    Some(payload)
+                }
+                _ => None,
+            })
+            .expect("std.cache key event");
+        assert_eq!(event["namespace"], json!("tool"));
+        assert_eq!(event["subject"], json!("lookup"));
+        assert_eq!(event["effect_key"], json!("io:read"));
+        assert_eq!(event["provenance_key"], json!("doc:123"));
+        assert_eq!(event.get("value"), None);
+        assert_eq!(event.get("payload"), None);
     }
 
     #[test]
