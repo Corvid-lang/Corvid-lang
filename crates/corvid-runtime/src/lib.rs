@@ -138,6 +138,7 @@ pub use provenance::{ProvenanceChain, ProvenanceEntry, ProvenanceKind};
 pub use queue::{QueueJob, QueueJobStatus, QueueRuntime};
 pub use rag::{
     chunk_document, document_from_text, load_markdown, EmbedderConfig, RagChunk, RagDocument,
+    RagSqliteIndex,
 };
 pub use record::Recorder;
 pub use redact::RedactionSet;

@@ -1,4 +1,5 @@
 use crate::errors::RuntimeError;
+use rusqlite::{params, Connection};
 use sha2::{Digest, Sha256};
 use std::path::Path;
 
@@ -122,6 +123,131 @@ pub fn chunk_document(
     Ok(chunks)
 }
 
+pub struct RagSqliteIndex {
+    conn: Connection,
+}
+
+impl RagSqliteIndex {
+    pub fn open(path: impl AsRef<Path>) -> Result<Self, RuntimeError> {
+        let conn = Connection::open(path.as_ref()).map_err(|err| {
+            RuntimeError::Other(format!(
+                "failed to open RAG index `{}`: {err}",
+                path.as_ref().display()
+            ))
+        })?;
+        let index = Self { conn };
+        index.init()?;
+        Ok(index)
+    }
+
+    pub fn open_in_memory() -> Result<Self, RuntimeError> {
+        let conn = Connection::open_in_memory()
+            .map_err(|err| RuntimeError::Other(format!("failed to open RAG memory index: {err}")))?;
+        let index = Self { conn };
+        index.init()?;
+        Ok(index)
+    }
+
+    pub fn insert_document(&self, document: &RagDocument) -> Result<(), RuntimeError> {
+        self.conn
+            .execute(
+                "insert or replace into rag_documents (id, source, media_type, text)
+                 values (?1, ?2, ?3, ?4)",
+                params![document.id, document.source, document.media_type, document.text],
+            )
+            .map_err(|err| RuntimeError::Other(format!("failed to insert RAG document: {err}")))?;
+        Ok(())
+    }
+
+    pub fn insert_chunks(&mut self, chunks: &[RagChunk]) -> Result<(), RuntimeError> {
+        let tx = self
+            .conn
+            .transaction()
+            .map_err(|err| RuntimeError::Other(format!("failed to start RAG chunk insert: {err}")))?;
+        for chunk in chunks {
+            tx.execute(
+                "insert or replace into rag_chunks
+                 (chunk_id, doc_id, source, text, start_char, end_char, provenance_key)
+                 values (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                params![
+                    chunk.chunk_id,
+                    chunk.doc_id,
+                    chunk.source,
+                    chunk.text,
+                    chunk.start_char as i64,
+                    chunk.end_char as i64,
+                    chunk.provenance_key
+                ],
+            )
+            .map_err(|err| RuntimeError::Other(format!("failed to insert RAG chunk: {err}")))?;
+        }
+        tx.commit()
+            .map_err(|err| RuntimeError::Other(format!("failed to commit RAG chunks: {err}")))?;
+        Ok(())
+    }
+
+    pub fn search_text(&self, query: &str, limit: usize) -> Result<Vec<RagChunk>, RuntimeError> {
+        let escaped = query.replace('%', "\\%").replace('_', "\\_");
+        let like = format!("%{escaped}%");
+        let mut stmt = self
+            .conn
+            .prepare(
+                "select chunk_id, doc_id, source, text, start_char, end_char, provenance_key
+                 from rag_chunks
+                 where text like ?1 escape '\\'
+                 order by chunk_id
+                 limit ?2",
+            )
+            .map_err(|err| RuntimeError::Other(format!("failed to prepare RAG search: {err}")))?;
+        let rows = stmt
+            .query_map(params![like, limit as i64], |row| {
+                Ok(RagChunk {
+                    chunk_id: row.get(0)?,
+                    doc_id: row.get(1)?,
+                    source: row.get(2)?,
+                    text: row.get(3)?,
+                    start_char: row.get::<_, i64>(4)? as usize,
+                    end_char: row.get::<_, i64>(5)? as usize,
+                    provenance_key: row.get(6)?,
+                })
+            })
+            .map_err(|err| RuntimeError::Other(format!("failed to query RAG chunks: {err}")))?;
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(
+                row.map_err(|err| RuntimeError::Other(format!("failed to read RAG chunk: {err}")))?,
+            );
+        }
+        Ok(out)
+    }
+
+    fn init(&self) -> Result<(), RuntimeError> {
+        self.conn
+            .execute_batch(
+                "create table if not exists rag_documents (
+                    id text primary key,
+                    source text not null,
+                    media_type text not null,
+                    text text not null
+                );
+                create table if not exists rag_chunks (
+                    chunk_id text primary key,
+                    doc_id text not null,
+                    source text not null,
+                    text text not null,
+                    start_char integer not null,
+                    end_char integer not null,
+                    provenance_key text not null,
+                    foreign key(doc_id) references rag_documents(id)
+                );
+                create index if not exists rag_chunks_doc_id on rag_chunks(doc_id);
+                create index if not exists rag_chunks_provenance_key on rag_chunks(provenance_key);",
+            )
+            .map_err(|err| RuntimeError::Other(format!("failed to initialize RAG index: {err}")))?;
+        Ok(())
+    }
+}
+
 fn stable_id(bytes: &[u8]) -> String {
     let mut hasher = Sha256::new();
     hasher.update(bytes);
@@ -173,5 +299,19 @@ mod tests {
         let ollama = EmbedderConfig::ollama("nomic-embed-text", "http://localhost:11434");
         assert_eq!(ollama.provider, "ollama");
         assert_eq!(ollama.endpoint.as_deref(), Some("http://localhost:11434"));
+    }
+
+    #[test]
+    fn sqlite_index_round_trips_chunks_with_provenance() {
+        let doc = document_from_text("doc1", "memory", "text/plain", "alpha beta gamma").unwrap();
+        let chunks = chunk_document(&doc, 8, 0).unwrap();
+        let mut index = RagSqliteIndex::open_in_memory().unwrap();
+        index.insert_document(&doc).unwrap();
+        index.insert_chunks(&chunks).unwrap();
+
+        let hits = index.search_text("alpha", 5).unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].doc_id, "doc1");
+        assert!(hits[0].provenance_key.starts_with("rag_"));
     }
 }

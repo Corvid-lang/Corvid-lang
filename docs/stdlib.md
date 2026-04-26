@@ -111,9 +111,9 @@ approval, provenance, and cache keys without introducing framework glue.
 
 `std/rag.cor` defines typed document, chunk, and embedder envelopes. The runtime
 adds document construction, markdown loading, deterministic chunking with
-per-chunk provenance keys, and OpenAI/Ollama embedder configuration envelopes.
-Chunks carry provenance metadata so retrieval results can compose with grounding,
-cache keys, replay, and audit trails.
+per-chunk provenance keys, OpenAI/Ollama embedder configuration envelopes, and a
+SQLite-backed chunk index. Chunks carry provenance metadata so retrieval results
+can compose with grounding, cache keys, replay, and audit trails.
 
 ## `std.effects`
 
