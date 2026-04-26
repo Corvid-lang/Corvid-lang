@@ -645,6 +645,7 @@ fn event_ts_ms(event: &TraceEvent) -> u64 {
         | TraceEvent::ApprovalDecision { ts_ms, .. }
         | TraceEvent::ApprovalResponse { ts_ms, .. }
         | TraceEvent::ApprovalTokenIssued { ts_ms, .. }
+        | TraceEvent::ApprovalScopeViolation { ts_ms, .. }
         | TraceEvent::HumanInputRequest { ts_ms, .. }
         | TraceEvent::HumanInputResponse { ts_ms, .. }
         | TraceEvent::HumanChoiceRequest { ts_ms, .. }

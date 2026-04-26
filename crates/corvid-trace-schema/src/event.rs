@@ -148,6 +148,13 @@ pub enum TraceEvent {
         issued_at_ms: u64,
         expires_at_ms: u64,
     },
+    ApprovalScopeViolation {
+        ts_ms: u64,
+        run_id: String,
+        token_id: String,
+        label: String,
+        reason: String,
+    },
     HumanInputRequest {
         ts_ms: u64,
         run_id: String,

@@ -1081,6 +1081,7 @@ fn event_kind(event: &TraceEvent) -> &'static str {
         TraceEvent::ApprovalDecision { .. } => "approval_decision",
         TraceEvent::ApprovalResponse { .. } => "approval_response",
         TraceEvent::ApprovalTokenIssued { .. } => "approval_token_issued",
+        TraceEvent::ApprovalScopeViolation { .. } => "approval_scope_violation",
         TraceEvent::HumanInputRequest { .. } => "human_input_request",
         TraceEvent::HumanInputResponse { .. } => "human_input_response",
         TraceEvent::HumanChoiceRequest { .. } => "human_choice_request",

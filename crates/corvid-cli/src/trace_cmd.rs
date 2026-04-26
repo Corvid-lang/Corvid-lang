@@ -215,6 +215,7 @@ fn event_run_id(event: &TraceEvent) -> Option<&str> {
         | TraceEvent::ApprovalDecision { run_id, .. }
         | TraceEvent::ApprovalResponse { run_id, .. }
         | TraceEvent::ApprovalTokenIssued { run_id, .. }
+        | TraceEvent::ApprovalScopeViolation { run_id, .. }
         | TraceEvent::HumanInputRequest { run_id, .. }
         | TraceEvent::HumanInputResponse { run_id, .. }
         | TraceEvent::HumanChoiceRequest { run_id, .. }
@@ -248,6 +249,7 @@ fn event_ts_ms(event: &TraceEvent) -> u64 {
         | TraceEvent::ApprovalDecision { ts_ms, .. }
         | TraceEvent::ApprovalResponse { ts_ms, .. }
         | TraceEvent::ApprovalTokenIssued { ts_ms, .. }
+        | TraceEvent::ApprovalScopeViolation { ts_ms, .. }
         | TraceEvent::HumanInputRequest { ts_ms, .. }
         | TraceEvent::HumanInputResponse { ts_ms, .. }
         | TraceEvent::HumanChoiceRequest { ts_ms, .. }

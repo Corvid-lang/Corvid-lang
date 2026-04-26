@@ -1471,7 +1471,7 @@ The determinism-source catalog and the language's treatment of non-reproducible 
 - [x] Scoped, replay-verifiable approval tokens: the trace records what the human approved, for which label, arguments, and time window.
 - [x] Human-boundary effects: `ask`, `choose`, and `approve` compose into the same effect algebra as tools and prompts, so human interaction is visible to the compiler and host descriptors.
 - [x] CLI + web-UI implementations; approval tokens same regardless of UI.
-- Approval scopes: one-time, session-scoped, amount-limited, time-limited, and argument-bound tokens. Scope violations fail closed and are replay-visible.
+- [x] Approval scopes: one-time, session-scoped, amount-limited, time-limited, and argument-bound tokens. Scope violations fail closed and are replay-visible.
 - Typed tool contract recorder: tools can declare domain effects such as `money(amount)`, `external(stripe)`, `irreversible`, and `requires approve "charge-card"`. The compiler/runtime turns those contracts into approval cards, trace events, PR behavior diffs, package metadata, and CI failures when a change introduces a new money-moving or irreversible path.
 - [x] Human-readable approval cards generated from typed tool arguments, with schema validation and redaction rules inherited from the effect/privacy profile. First runtime slice shipped as `ApprovalCard` generation from approval labels and JSON argument types, risk inference, sensitive-value redaction, and richer stdin approval rendering.
 

@@ -253,6 +253,19 @@ impl Tracer {
                 issued_at_ms,
                 expires_at_ms,
             },
+            TraceEvent::ApprovalScopeViolation {
+                ts_ms,
+                run_id,
+                token_id,
+                label,
+                reason,
+            } => TraceEvent::ApprovalScopeViolation {
+                ts_ms,
+                run_id,
+                token_id,
+                label,
+                reason,
+            },
             TraceEvent::HostEvent {
                 ts_ms,
                 run_id,

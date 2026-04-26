@@ -5,7 +5,9 @@
 //! and adapters, freeze with `.build()`. Pass `&Runtime` to the
 //! interpreter.
 
-use crate::approvals::{ApprovalDecision, ApprovalRequest, Approver, StdinApprover};
+use crate::approvals::{
+    ApprovalDecision, ApprovalRequest, ApprovalToken, Approver, StdinApprover,
+};
 use crate::calibration::{CalibrationStats, CalibrationStore};
 use crate::errors::RuntimeError;
 use crate::human::{HumanChoiceRequest, HumanInputRequest, HumanInteractor, StdinHumanInteractor};
@@ -585,6 +587,33 @@ impl Runtime {
         }
     }
 
+    pub fn validate_approval_token_scope(
+        &self,
+        token: &mut ApprovalToken,
+        label: &str,
+        args: &[serde_json::Value],
+        session_id: Option<&str>,
+    ) -> Result<(), RuntimeError> {
+        let now = now_ms();
+        match token.validate(label, args, now, session_id) {
+            Ok(()) => Ok(()),
+            Err(reason) => {
+                if self.tracer.is_enabled() {
+                    self.tracer.emit(TraceEvent::ApprovalScopeViolation {
+                        ts_ms: now,
+                        run_id: self.tracer.run_id().to_string(),
+                        token_id: token.token_id.clone(),
+                        label: label.to_string(),
+                        reason: reason.clone(),
+                    });
+                }
+                Err(RuntimeError::ApprovalFailed(format!(
+                    "approval token scope violation: {reason}"
+                )))
+            }
+        }
+    }
+
     pub async fn ask_human(
         &self,
         prompt: &str,
@@ -892,7 +921,7 @@ impl RuntimeBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::approvals::ProgrammaticApprover;
+    use crate::approvals::{ApprovalTokenScope, ProgrammaticApprover};
     use crate::llm::mock::MockAdapter;
     use serde_json::json;
 
@@ -966,6 +995,42 @@ mod tests {
         assert_eq!(token.2, &vec![json!("ord_1"), json!(12.5)]);
         assert_eq!(token.3, "one_time");
         assert_eq!(token.5 - token.4, APPROVAL_TOKEN_TTL_MS);
+    }
+
+    #[test]
+    fn approval_scope_violation_is_trace_visible() {
+        let dir = tempfile::tempdir().unwrap();
+        let trace_path = dir.path().join("scope.jsonl");
+        let r = Runtime::builder()
+            .tracer(Tracer::open_path(&trace_path, "scope-run"))
+            .build();
+        let mut token = ApprovalToken {
+            token_id: "apr_limit".into(),
+            label: "ChargeCard".into(),
+            args: vec![json!(100.0)],
+            scope: ApprovalTokenScope::AmountLimited { max_amount: 100.0 },
+            issued_at_ms: 0,
+            expires_at_ms: u64::MAX,
+            uses_remaining: 1,
+        };
+
+        let err = r
+            .validate_approval_token_scope(&mut token, "ChargeCard", &[json!(125.0)], None)
+            .unwrap_err();
+        assert!(matches!(err, RuntimeError::ApprovalFailed(_)));
+
+        let events = corvid_trace_schema::read_events_from_path(&trace_path).unwrap();
+        assert!(events.iter().any(|event| matches!(
+            event,
+            TraceEvent::ApprovalScopeViolation {
+                token_id,
+                label,
+                reason,
+                ..
+            } if token_id == "apr_limit"
+                && label == "ChargeCard"
+                && reason.contains("exceeds token limit")
+        )));
     }
 
     #[tokio::test]

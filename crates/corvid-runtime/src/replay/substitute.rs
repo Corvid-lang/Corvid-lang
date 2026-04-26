@@ -18,6 +18,7 @@ pub(crate) fn is_dispatch_metadata(event: &TraceEvent) -> bool {
             | TraceEvent::StreamUpgrade { .. }
             | TraceEvent::PromptCache { .. }
             | TraceEvent::ApprovalTokenIssued { .. }
+            | TraceEvent::ApprovalScopeViolation { .. }
             | TraceEvent::AbVariantChosen { .. }
             | TraceEvent::EnsembleVote { .. }
             | TraceEvent::AdversarialPipelineCompleted { .. }
