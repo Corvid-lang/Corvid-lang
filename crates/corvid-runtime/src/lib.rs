@@ -59,6 +59,7 @@ pub mod provenance;
 #[cfg(feature = "python")]
 pub mod python_ffi;
 pub mod queue;
+pub mod rag;
 pub mod record;
 pub mod redact;
 pub mod replay;
@@ -135,6 +136,9 @@ pub use observe::{
 };
 pub use provenance::{ProvenanceChain, ProvenanceEntry, ProvenanceKind};
 pub use queue::{QueueJob, QueueJobStatus, QueueRuntime};
+pub use rag::{
+    chunk_document, document_from_text, load_markdown, EmbedderConfig, RagChunk, RagDocument,
+};
 pub use record::Recorder;
 pub use redact::RedactionSet;
 pub use replay::{

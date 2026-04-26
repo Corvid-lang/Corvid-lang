@@ -106,3 +106,11 @@ classification, extraction, ranking, adjudication, planning, tool-use records,
 approval labels, critique/review, and grounded answer metadata. These are
 ordinary Corvid values, so applications can compose them with effects, replay,
 approval, provenance, and cache keys without introducing framework glue.
+
+## `std.rag`
+
+`std/rag.cor` defines typed document, chunk, and embedder envelopes. The runtime
+adds document construction, markdown loading, deterministic chunking with
+per-chunk provenance keys, and OpenAI/Ollama embedder configuration envelopes.
+Chunks carry provenance metadata so retrieval results can compose with grounding,
+cache keys, replay, and audit trails.

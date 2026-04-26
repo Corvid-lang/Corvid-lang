@@ -1,0 +1,36 @@
+# Standard retrieval-augmented generation envelopes.
+
+public type RagDocumentEnvelope:
+    id: String
+    source: String
+    media_type: String
+    text: String
+
+public type RagChunkEnvelope:
+    doc_id: String
+    chunk_id: String
+    source: String
+    text: String
+    start_char: Int
+    end_char: Int
+    provenance_key: String
+
+public type EmbedderEnvelope:
+    provider: String
+    model_name: String
+    endpoint: String
+
+public agent rag_document(id: String, source: String, media_type: String, text: String) -> RagDocumentEnvelope:
+    return RagDocumentEnvelope(id, source, media_type, text)
+
+public agent rag_chunk(doc_id: String, chunk_id: String, source: String, text: String, start_char: Int, end_char: Int, provenance_key: String) -> RagChunkEnvelope:
+    return RagChunkEnvelope(doc_id, chunk_id, source, text, start_char, end_char, provenance_key)
+
+public agent openai_embedder(model_name: String) -> EmbedderEnvelope:
+    return EmbedderEnvelope("openai", model_name, "")
+
+public agent ollama_embedder(model_name: String, endpoint: String) -> EmbedderEnvelope:
+    return EmbedderEnvelope("ollama", model_name, endpoint)
+
+public agent chunk_is_grounded(chunk: RagChunkEnvelope) -> Bool:
+    return chunk.provenance_key != ""
