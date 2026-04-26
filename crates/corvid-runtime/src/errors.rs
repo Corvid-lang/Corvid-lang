@@ -36,6 +36,13 @@ pub enum RuntimeError {
         traceback: String,
     },
 
+    /// A Python FFI call requested a host capability not declared by policy.
+    PythonPolicyDenied {
+        module: String,
+        function: String,
+        required_effect: String,
+    },
+
     /// Approval was denied (user said no, programmatic approver returned deny).
     ApprovalDenied { action: String },
 
@@ -139,6 +146,14 @@ impl fmt::Display for RuntimeError {
             } => {
                 write!(f, "python call `{module}.{function}` failed: {traceback}")
             }
+            Self::PythonPolicyDenied {
+                module,
+                function,
+                required_effect,
+            } => write!(
+                f,
+                "python call `{module}.{function}` requires undeclared effect `{required_effect}`"
+            ),
             Self::ApprovalDenied { action } => {
                 write!(f, "approval denied for `{action}`")
             }

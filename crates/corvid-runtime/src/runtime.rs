@@ -15,7 +15,7 @@ use crate::llm::{LlmAdapter, LlmRegistry, LlmRequest, LlmRequestRef, LlmResponse
 use crate::models::{ModelCatalog, ModelSelection, RegisteredModel};
 use crate::prompt_cache::PromptCache;
 #[cfg(feature = "python")]
-use crate::python_ffi::PythonRuntime;
+use crate::python_ffi::{PythonRuntime, PythonSandboxProfile};
 use crate::record::Recorder;
 use crate::replay::{ReplayDifferentialReport, ReplayMutationReport, ReplaySource};
 use crate::store::{StoreKind, StoreManager, StorePolicySet, StoreRecord};
@@ -170,6 +170,22 @@ impl Runtime {
         function: &str,
         args: Vec<serde_json::Value>,
     ) -> Result<serde_json::Value, RuntimeError> {
+        self.call_python_function_with_policy(
+            module,
+            function,
+            args,
+            &PythonSandboxProfile::unsafe_all(),
+        )
+    }
+
+    #[cfg(feature = "python")]
+    pub fn call_python_function_with_policy(
+        &self,
+        module: &str,
+        function: &str,
+        args: Vec<serde_json::Value>,
+        policy: &PythonSandboxProfile,
+    ) -> Result<serde_json::Value, RuntimeError> {
         self.emit_python_event(
             "python.call",
             serde_json::json!({
@@ -178,7 +194,7 @@ impl Runtime {
                 "args": args,
             }),
         );
-        match PythonRuntime::new().call_function(module, function, &args) {
+        match PythonRuntime::new().call_function_with_policy(module, function, &args, policy) {
             Ok(value) => {
                 self.emit_python_event(
                     "python.result",
@@ -1506,6 +1522,42 @@ mod tests {
                     && payload["module"] == "math"
                     && payload["function"] == "sqrt"
                     && payload["error"].as_str().is_some_and(|error| error.contains("ValueError"))
+        )));
+    }
+
+    #[cfg(feature = "python")]
+    #[test]
+    fn runtime_python_policy_denials_are_trace_visible() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let trace_path = dir.path().join("python-policy.jsonl");
+        let runtime = Runtime::builder()
+            .tracer(Tracer::open_path(&trace_path, "python-policy-run"))
+            .build();
+
+        let err = runtime
+            .call_python_function_with_policy(
+                "os",
+                "getcwd",
+                vec![],
+                &PythonSandboxProfile::new(["network"]),
+            )
+            .expect_err("policy denial");
+        assert!(matches!(
+            err,
+            RuntimeError::PythonPolicyDenied {
+                required_effect,
+                ..
+            } if required_effect == "filesystem"
+        ));
+
+        let events = corvid_trace_schema::read_events_from_path(&trace_path).unwrap();
+        assert!(events.iter().any(|event| matches!(
+            event,
+            TraceEvent::HostEvent { name, payload, .. }
+                if name == "python.error"
+                    && payload["error"]
+                        .as_str()
+                        .is_some_and(|error| error.contains("filesystem"))
         )));
     }
 

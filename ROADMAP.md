@@ -1512,6 +1512,7 @@ The determinism-source catalog and the language's treatment of non-reproducible 
 - [x] Python import effect declarations: parser accepts `import python "..." as name effects: ...`; the type checker rejects untagged Python imports, while `effects: unsafe` is allowed but flagged for review.
 - [x] Runtime PyO3 call bridge: feature-gated runtime support can import Python modules, call functions, marshal JSON-like scalars/lists/dicts, and return Python exceptions with formatted traceback text.
 - [x] Trace-visible Python calls: runtime Python FFI calls emit `python.call`, `python.result`, and `python.error` host events so Python ecosystem use is visible to audits.
+- [x] Python sandbox capability profiles: feature-gated runtime Python calls can be checked against declared effects and deny obvious network/filesystem/subprocess/environment modules before import.
 - PyO3 integration in `corvid-runtime`. Lazy CPython load.
 - `import python "requests" as requests effects: network` — untagged imports rejected by the effect checker. `effects: unsafe` is the opt-in escape hatch and is flagged for review.
 - Error marshalling: Python exceptions become Corvid `Result::Err` with preserved traceback.

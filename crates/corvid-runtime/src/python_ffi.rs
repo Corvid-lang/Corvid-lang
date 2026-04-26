@@ -8,6 +8,7 @@ use crate::errors::RuntimeError;
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList, PyTuple};
 use serde_json::{Map, Number, Value};
+use std::collections::HashSet;
 
 #[derive(Debug, Clone, Default)]
 pub struct PythonRuntime;
@@ -23,6 +24,17 @@ impl PythonRuntime {
         function: &str,
         args: &[Value],
     ) -> Result<Value, RuntimeError> {
+        self.call_function_with_policy(module, function, args, &PythonSandboxProfile::unsafe_all())
+    }
+
+    pub fn call_function_with_policy(
+        &self,
+        module: &str,
+        function: &str,
+        args: &[Value],
+        policy: &PythonSandboxProfile,
+    ) -> Result<Value, RuntimeError> {
+        policy.check_call(module, function)?;
         Python::with_gil(|py| {
             let result = (|| -> PyResult<Value> {
                 let module_obj = py.import_bound(module)?;
@@ -37,6 +49,56 @@ impl PythonRuntime {
             })();
             result.map_err(|err| python_error(py, module, function, err))
         })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PythonSandboxProfile {
+    allowed_effects: HashSet<String>,
+}
+
+impl PythonSandboxProfile {
+    pub fn new(effects: impl IntoIterator<Item = impl Into<String>>) -> Self {
+        Self {
+            allowed_effects: effects.into_iter().map(Into::into).collect(),
+        }
+    }
+
+    pub fn unsafe_all() -> Self {
+        Self::new(["unsafe"])
+    }
+
+    pub fn allows(&self, effect: &str) -> bool {
+        self.allowed_effects.contains("unsafe") || self.allowed_effects.contains(effect)
+    }
+
+    pub fn check_call(&self, module: &str, function: &str) -> Result<(), RuntimeError> {
+        if let Some(effect) = required_effect_for_call(module, function) {
+            if !self.allows(effect) {
+                return Err(RuntimeError::PythonPolicyDenied {
+                    module: module.to_string(),
+                    function: function.to_string(),
+                    required_effect: effect.to_string(),
+                });
+            }
+        }
+        Ok(())
+    }
+}
+
+fn required_effect_for_call(module: &str, function: &str) -> Option<&'static str> {
+    let root = module.split('.').next().unwrap_or(module);
+    match root {
+        "requests" | "httpx" | "aiohttp" | "socket" | "urllib" | "http" => Some("network"),
+        "pathlib" | "glob" | "shutil" | "tempfile" => Some("filesystem"),
+        "subprocess" => Some("subprocess"),
+        "os" => match function {
+            "getenv" | "putenv" | "unsetenv" | "environ" => Some("environment"),
+            "system" | "spawnl" | "spawnle" | "spawnlp" | "spawnlpe" | "spawnv" | "spawnve"
+            | "spawnvp" | "spawnvpe" => Some("subprocess"),
+            _ => Some("filesystem"),
+        },
+        _ => None,
     }
 }
 
@@ -178,5 +240,39 @@ mod tests {
             }
             other => panic!("unexpected error: {other}"),
         }
+    }
+
+    #[test]
+    fn sandbox_denies_undeclared_filesystem_modules() {
+        let runtime = PythonRuntime::new();
+        let err = runtime
+            .call_function_with_policy(
+                "os",
+                "getcwd",
+                &[],
+                &PythonSandboxProfile::new(["network"]),
+            )
+            .expect_err("policy denial");
+        assert!(matches!(
+            err,
+            RuntimeError::PythonPolicyDenied {
+                required_effect,
+                ..
+            } if required_effect == "filesystem"
+        ));
+    }
+
+    #[test]
+    fn sandbox_allows_declared_filesystem_modules() {
+        let runtime = PythonRuntime::new();
+        let value = runtime
+            .call_function_with_policy(
+                "os",
+                "getcwd",
+                &[],
+                &PythonSandboxProfile::new(["filesystem"]),
+            )
+            .expect("policy allows call");
+        assert!(value.as_str().is_some());
     }
 }

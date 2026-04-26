@@ -121,7 +121,7 @@ pub use replay::{
 };
 pub use runtime::{Runtime, RuntimeBuilder};
 #[cfg(feature = "python")]
-pub use python_ffi::PythonRuntime;
+pub use python_ffi::{PythonRuntime, PythonSandboxProfile};
 pub use store::{
     InMemoryStoreBackend, SqliteStoreBackend, StoreBackend, StoreKind, StoreManager,
     StorePolicySet, StoreRecord,
