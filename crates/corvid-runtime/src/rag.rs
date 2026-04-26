@@ -251,6 +251,19 @@ pub fn load_markdown(path: impl AsRef<Path>) -> Result<RagDocument, RuntimeError
     document_from_text(id, path.display().to_string(), "text/markdown", text)
 }
 
+pub fn load_html(path: impl AsRef<Path>) -> Result<RagDocument, RuntimeError> {
+    let path = path.as_ref();
+    let html = std::fs::read_to_string(path).map_err(|err| {
+        RuntimeError::Other(format!(
+            "failed to read html document `{}`: {err}",
+            path.display()
+        ))
+    })?;
+    let text = extract_html_text(&html);
+    let id = stable_id(path.display().to_string().as_bytes());
+    document_from_text(id, path.display().to_string(), "text/html", text)
+}
+
 pub fn chunk_document(
     document: &RagDocument,
     max_chars: usize,
@@ -541,6 +554,112 @@ fn parse_embedding_values(
     Ok(values)
 }
 
+fn extract_html_text(html: &str) -> String {
+    let stripped = strip_html_blocks(html, "script");
+    let stripped = strip_html_blocks(&stripped, "style");
+    let mut out = String::with_capacity(stripped.len());
+    let mut in_tag = false;
+    let mut tag_name = String::new();
+    for ch in stripped.chars() {
+        if in_tag {
+            if ch == '>' {
+                let tag = tag_name
+                    .trim()
+                    .trim_start_matches('/')
+                    .split_whitespace()
+                    .next()
+                    .unwrap_or("");
+                if matches!(tag, "br" | "p" | "div" | "li" | "tr" | "section" | "article"
+                    | "header" | "footer" | "h1" | "h2" | "h3" | "h4" | "h5" | "h6")
+                {
+                    out.push('\n');
+                }
+                tag_name.clear();
+                in_tag = false;
+            } else {
+                tag_name.push(ch.to_ascii_lowercase());
+            }
+            continue;
+        }
+        if ch == '<' {
+            in_tag = true;
+            continue;
+        }
+        out.push(ch);
+    }
+    normalize_html_text(&decode_html_entities(&out))
+}
+
+fn strip_html_blocks(html: &str, tag: &str) -> String {
+    let lower = html.to_ascii_lowercase();
+    let open = format!("<{tag}");
+    let close = format!("</{tag}>");
+    let mut out = String::with_capacity(html.len());
+    let mut cursor = 0;
+    while let Some(relative_start) = lower[cursor..].find(&open) {
+        let start = cursor + relative_start;
+        out.push_str(&html[cursor..start]);
+        let after_start = match lower[start..].find('>') {
+            Some(offset) => start + offset + 1,
+            None => {
+                cursor = html.len();
+                break;
+            }
+        };
+        let block_end = match lower[after_start..].find(&close) {
+            Some(offset) => after_start + offset + close.len(),
+            None => {
+                cursor = html.len();
+                break;
+            }
+        };
+        cursor = block_end;
+    }
+    if cursor < html.len() {
+        out.push_str(&html[cursor..]);
+    }
+    out
+}
+
+fn decode_html_entities(text: &str) -> String {
+    text.replace("&nbsp;", " ")
+        .replace("&amp;", "&")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace("&#39;", "'")
+}
+
+fn normalize_html_text(text: &str) -> String {
+    let mut out = String::new();
+    let mut pending_space = false;
+    let mut previous_was_newline = false;
+    for ch in text.chars() {
+        if ch == '\r' {
+            continue;
+        }
+        if ch == '\n' {
+            if !out.is_empty() && !previous_was_newline {
+                out.push('\n');
+            }
+            pending_space = false;
+            previous_was_newline = true;
+            continue;
+        }
+        if ch.is_whitespace() {
+            pending_space = !previous_was_newline;
+            continue;
+        }
+        if pending_space && !out.is_empty() && !previous_was_newline {
+            out.push(' ');
+        }
+        out.push(ch);
+        pending_space = false;
+        previous_was_newline = false;
+    }
+    out.trim().to_string()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -583,6 +702,22 @@ mod tests {
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].doc_id, "doc1");
         assert!(hits[0].provenance_key.starts_with("rag_"));
+    }
+
+    #[test]
+    fn load_html_extracts_readable_text() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("page.html");
+        std::fs::write(
+            &path,
+            "<html><head><style>.x{color:red}</style></head><body><h1>Title</h1><p>Hello <b>world</b> &amp; friends</p><script>ignored()</script><div>Next line</div></body></html>",
+        )
+        .unwrap();
+
+        let doc = load_html(&path).unwrap();
+
+        assert_eq!(doc.media_type, "text/html");
+        assert_eq!(doc.text, "Title\nHello world & friends\nNext line");
     }
 
     #[tokio::test]
