@@ -47,6 +47,7 @@ pub mod ffi_bridge;
 pub mod grounded_handles;
 pub mod human;
 pub mod http;
+pub mod io;
 pub mod llm;
 pub mod models;
 mod native_trace;
@@ -110,6 +111,7 @@ pub use ensemble::{majority_vote, weighted_vote, EnsembleVoteOutcome};
 pub use env::{find_dotenv_walking, load_dotenv, load_dotenv_walking};
 pub use errors::RuntimeError;
 pub use http::{HttpClient, HttpHeader, HttpRequest, HttpResponse, HttpRetryPolicy};
+pub use io::{DirectoryEntry, FileRead, FileWrite, IoRuntime};
 pub use llm::{
     anthropic::AnthropicAdapter,
     gemini::GeminiAdapter,

@@ -1,0 +1,30 @@
+# Standard structured I/O data envelopes.
+
+public type PathInfo:
+    value: String
+
+public type FileReadEnvelope:
+    path_value: String
+    contents: String
+    bytes: Int
+
+public type FileWriteEnvelope:
+    path_value: String
+    bytes: Int
+
+public type DirectoryEntryEnvelope:
+    path_value: String
+    name: String
+    is_dir: Bool
+
+public agent path(value: String) -> PathInfo:
+    return PathInfo(value)
+
+public agent file_read(path_value: String, contents: String, bytes: Int) -> FileReadEnvelope:
+    return FileReadEnvelope(path_value, contents, bytes)
+
+public agent file_write(path_value: String, bytes: Int) -> FileWriteEnvelope:
+    return FileWriteEnvelope(path_value, bytes)
+
+public agent directory_entry(path_value: String, name: String, is_dir: Bool) -> DirectoryEntryEnvelope:
+    return DirectoryEntryEnvelope(path_value, name, is_dir)

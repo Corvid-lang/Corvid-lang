@@ -45,3 +45,16 @@ The native runtime also exposes a matching `HttpClient`/`HttpRequest` API. Its
 calls emit `std.http.request`, `std.http.response`, and `std.http.error` trace
 events with method, URL, timeout, retry, status, attempt, latency, and payload
 size metadata.
+
+## `std.io`
+
+`std/io.cor` defines path and file-system envelopes:
+
+- `PathInfo`
+- `FileReadEnvelope`
+- `FileWriteEnvelope`
+- `DirectoryEntryEnvelope`
+
+The runtime exposes structured text read, text write, and directory listing
+APIs. Each emits `std.io.*` trace events with operation, path, byte count,
+entry count, latency, and error metadata.

@@ -254,6 +254,13 @@ impl LlmRegistry {
         self.adapters.iter().map(|a| a.name().to_string()).collect()
     }
 
+    pub fn adapter_name_for_model(&self, model: &str) -> Option<String> {
+        self.adapters
+            .iter()
+            .find(|adapter| adapter.handles(model))
+            .map(|adapter| adapter.name().to_string())
+    }
+
     pub fn health(&self) -> Vec<ProviderHealth> {
         let health = self.health.lock().unwrap();
         self.adapters
@@ -357,6 +364,17 @@ mod tests {
         assert_eq!(health[0].consecutive_failures, 0);
         assert!(!health[0].degraded);
         assert!(health[0].last_success_ms.is_some());
+    }
+
+    #[test]
+    fn registry_resolves_adapter_name_for_model_without_calling() {
+        let mut reg = LlmRegistry::new();
+        reg.register(Arc::new(MockAdapter::new("mock-1")));
+        assert_eq!(
+            reg.adapter_name_for_model("mock-1").as_deref(),
+            Some("mock-1")
+        );
+        assert_eq!(reg.adapter_name_for_model("missing"), None);
     }
 
     #[tokio::test]
