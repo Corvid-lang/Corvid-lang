@@ -264,6 +264,23 @@ pub fn load_html(path: impl AsRef<Path>) -> Result<RagDocument, RuntimeError> {
     document_from_text(id, path.display().to_string(), "text/html", text)
 }
 
+pub fn load_pdf(path: impl AsRef<Path>) -> Result<RagDocument, RuntimeError> {
+    let path = path.as_ref();
+    let text = pdf_extract::extract_text(path).map_err(|err| {
+        RuntimeError::Other(format!(
+            "failed to read pdf document `{}`: {err}",
+            path.display()
+        ))
+    })?;
+    let id = stable_id(path.display().to_string().as_bytes());
+    document_from_text(
+        id,
+        path.display().to_string(),
+        "application/pdf",
+        normalize_html_text(&text),
+    )
+}
+
 pub fn chunk_document(
     document: &RagDocument,
     max_chars: usize,
@@ -720,6 +737,18 @@ mod tests {
         assert_eq!(doc.text, "Title\nHello world & friends\nNext line");
     }
 
+    #[test]
+    fn load_pdf_extracts_text() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("sample.pdf");
+        std::fs::write(&path, minimal_pdf_bytes("Hello PDF")).unwrap();
+
+        let doc = load_pdf(&path).unwrap();
+
+        assert_eq!(doc.media_type, "application/pdf");
+        assert!(doc.text.contains("Hello PDF"));
+    }
+
     #[tokio::test]
     async fn openai_embedder_posts_embedding_requests() {
         let server = MockServer::start().await;
@@ -771,5 +800,48 @@ mod tests {
         assert_eq!(embeddings.len(), 2);
         assert_eq!(embeddings[0].values, vec![0.5, 0.6]);
         assert_eq!(embeddings[1].values, vec![0.7, 0.8]);
+    }
+
+    fn minimal_pdf_bytes(text: &str) -> Vec<u8> {
+        let content = format!(
+            "BT\n/F1 24 Tf\n72 72 Td\n({}) Tj\nET",
+            escape_pdf_text(text)
+        );
+        let objects = vec![
+            "1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n".to_string(),
+            "2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n".to_string(),
+            "3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 144] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>\nendobj\n".to_string(),
+            format!(
+                "4 0 obj\n<< /Length {} >>\nstream\n{}\nendstream\nendobj\n",
+                content.len(),
+                content
+            ),
+            "5 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n"
+                .to_string(),
+        ];
+        let mut pdf = String::from("%PDF-1.4\n");
+        let mut offsets = vec![0usize];
+        for object in &objects {
+            offsets.push(pdf.len());
+            pdf.push_str(object);
+        }
+        let xref_offset = pdf.len();
+        pdf.push_str(&format!("xref\n0 {}\n", objects.len() + 1));
+        pdf.push_str("0000000000 65535 f \n");
+        for offset in offsets.iter().skip(1) {
+            pdf.push_str(&format!("{offset:010} 00000 n \n"));
+        }
+        pdf.push_str(&format!(
+            "trailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{}\n%%EOF\n",
+            objects.len() + 1,
+            xref_offset
+        ));
+        pdf.into_bytes()
+    }
+
+    fn escape_pdf_text(text: &str) -> String {
+        text.replace('\\', "\\\\")
+            .replace('(', "\\(")
+            .replace(')', "\\)")
     }
 }

@@ -29,6 +29,7 @@ tokio = { workspace = true }
 futures = "0.3"
 rusqlite = { version = "0.31", features = ["bundled"] }
 sha2 = "0.10"
+pdf-extract = "0.10"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 dotenvy = "0.15"
 corvid-ast = { workspace = true }

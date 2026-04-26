@@ -137,7 +137,7 @@ pub use observe::{
 pub use provenance::{ProvenanceChain, ProvenanceEntry, ProvenanceKind};
 pub use queue::{QueueJob, QueueJobStatus, QueueRuntime};
 pub use rag::{
-    chunk_document, document_from_text, load_html, load_markdown, EmbedderConfig, EmbeddingVector,
+    chunk_document, document_from_text, load_html, load_markdown, load_pdf, EmbedderConfig, EmbeddingVector,
     OllamaEmbedder, OpenAiEmbedder, RagChunk, RagDocument, RagEmbedder, RagSqliteIndex,
     OLLAMA_EMBEDDING_BASE, OPENAI_EMBEDDING_BASE,
 };
