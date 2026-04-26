@@ -35,6 +35,10 @@ public type TraceEventSummary:
     name: String
     detail: String
 
+public type PromptRender:
+    template_name: String
+    rendered: String
+
 public agent system_message(content: String) -> AiMessage:
     return AiMessage("system", content)
 
@@ -70,3 +74,15 @@ public agent confidence(score: Float, threshold: Float) -> Confidence:
 
 public agent trace_event(kind: String, name: String, detail: String) -> TraceEventSummary:
     return TraceEventSummary(kind, name, detail)
+
+public agent render_prompt_pair(label: String, value: String) -> String:
+    return label + ": " + value
+
+public agent render_prompt_section(title: String, body: String) -> String:
+    return title + "\n" + body
+
+public agent render_message(message: AiMessage) -> String:
+    return message.role + ": " + message.content
+
+public agent rendered_prompt(template_name: String, rendered: String) -> PromptRender:
+    return PromptRender(template_name, rendered)

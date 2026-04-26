@@ -1560,7 +1560,7 @@ The determinism-source catalog and the language's treatment of non-reproducible 
 - [x] `std.agent` foundation: pure Corvid workflow envelopes and helpers for classification, extraction, ranking, adjudication, planning, tool-use, approval labels, critique, and grounded answers.
 - [x] `std.rag` foundation: typed Corvid document/chunk/embedder envelopes plus runtime document construction, markdown loading, deterministic chunking, per-chunk provenance keys, SQLite-backed chunk indexing, and OpenAI/Ollama embedder configuration metadata.
 - [x] `std.effects` foundation: shared Corvid effect metadata envelopes for effect tags, budgets, provenance keys, approval labels, cache keys, and replay keys across `std.*`.
-- `std.ai` — reusable AI application primitives: typed message/session objects, prompt rendering helpers, model-route helpers, tool-result envelopes, structured-output validation, confidence helpers, and trace/event utilities.
+- [x] `std.ai` reusable AI application primitives: typed message/session objects, prompt rendering helpers, model-route helpers, tool-result envelopes, structured-output validation, confidence helpers, and trace/event utilities.
 - [x] `std.rag` embedder trait with reference OpenAI + Ollama implementations.
 - `std.rag` remaining runtime pieces as one `std.ai` subdomain: sqlite-vec, chunking polish, and tighter grounding-by-construction APIs. Pairs with Phase 20's grounding-contract language half.
 - `std.rag` APIs return `Grounded<T>` by construction where retrieval provenance exists, but grounding is not limited to RAG; any tool/effect that proves provenance can produce `Grounded<T>`.

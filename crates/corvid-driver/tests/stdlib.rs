@@ -26,7 +26,7 @@ fn std_ai_imported_helpers_typecheck() {
 
     let main_path = dir.path().join("main.cor");
     let source = r#"
-import "./std/ai" use AiMessage, AiSession, user_message, start_session, next_turn, tool_ok, confidence
+import "./std/ai" use AiMessage, AiSession, user_message, start_session, next_turn, tool_ok, confidence, render_prompt_pair, render_message, rendered_prompt
 
 agent main() -> String:
     msg = user_message("hello")
@@ -34,8 +34,10 @@ agent main() -> String:
     next = next_turn(sess)
     envelope = tool_ok("lookup", msg.content)
     conf = confidence(0.8, 0.5)
+    prompt_line = render_prompt_pair("query", msg.content)
+    rendered = rendered_prompt("search", render_message(msg))
     if conf.accepted:
-        return envelope.value
+        return envelope.value + " " + prompt_line + " " + rendered.template_name
     else:
         return next.title
 "#;
