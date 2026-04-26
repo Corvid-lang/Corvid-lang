@@ -109,7 +109,7 @@ pub use llm::{
     ollama::OllamaAdapter,
     openai::OpenAiAdapter,
     openai_compat::OpenAiCompatibleAdapter,
-    LlmAdapter, LlmRegistry, LlmRequest, LlmResponse, TokenUsage,
+    LlmAdapter, LlmRegistry, LlmRequest, LlmResponse, ProviderHealth, TokenUsage,
 };
 pub use models::{ModelCatalog, ModelSelection, RegisteredModel};
 pub use provenance::{ProvenanceChain, ProvenanceEntry, ProvenanceKind};

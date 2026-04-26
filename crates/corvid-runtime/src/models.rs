@@ -325,6 +325,33 @@ impl ModelCatalog {
             },
         }
     }
+
+    pub fn compatible_fallbacks_for(
+        &self,
+        primary_model: &str,
+        prompt_tokens: u64,
+        completion_tokens: u64,
+    ) -> Vec<ModelSelection> {
+        let Some(primary) = self.get(primary_model) else {
+            return Vec::new();
+        };
+        let mut candidates: Vec<_> = self
+            .models
+            .values()
+            .filter(|candidate| candidate.name != primary.name)
+            .filter(|candidate| model_is_compatible_fallback(primary, candidate))
+            .map(|candidate| {
+                self.describe_named_model(&candidate.name, prompt_tokens, completion_tokens)
+            })
+            .collect();
+        candidates.sort_by(|left, right| {
+            left.cost_estimate
+                .partial_cmp(&right.cost_estimate)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| left.model.cmp(&right.model))
+        });
+        candidates
+    }
 }
 
 fn parse_catalog_toml(path: &Path, value: toml::Value) -> Result<ModelCatalog, RuntimeError> {
@@ -504,6 +531,48 @@ fn capability_satisfies(model_capability: Option<&str>, required: &str) -> bool 
         (Some(model_rank), Some(required_rank)) => model_rank >= required_rank,
         _ => model_capability == required,
     }
+}
+
+fn model_is_compatible_fallback(primary: &RegisteredModel, candidate: &RegisteredModel) -> bool {
+    if primary.provider.is_some() && primary.provider == candidate.provider {
+        return false;
+    }
+    if let Some(required) = primary.capability.as_deref() {
+        if !capability_satisfies(candidate.capability.as_deref(), required) {
+            return false;
+        }
+    }
+    if primary.output_format.is_some() && primary.output_format != candidate.output_format {
+        return false;
+    }
+    if primary.privacy_tier.is_some() && primary.privacy_tier != candidate.privacy_tier {
+        return false;
+    }
+    if primary.jurisdiction.is_some() && primary.jurisdiction != candidate.jurisdiction {
+        return false;
+    }
+    if primary.structured_output && !candidate.structured_output {
+        return false;
+    }
+    if primary.tool_calling && !candidate.tool_calling {
+        return false;
+    }
+    if primary.embeddings && !candidate.embeddings {
+        return false;
+    }
+    if let Some(required_context) = primary.context_window {
+        if candidate.context_window.unwrap_or(0) < required_context {
+            return false;
+        }
+    }
+    primary
+        .multimodal
+        .iter()
+        .all(|tag| candidate.multimodal.contains(tag))
+        && primary
+            .task_capabilities
+            .iter()
+            .all(|tag| candidate.task_capabilities.contains(tag))
 }
 
 fn capability_rank(capability: &str) -> Option<u8> {
@@ -713,5 +782,87 @@ cost_per_token_in = 0.000015
         assert_eq!(selection.model, "custom");
         assert_eq!(selection.capability_picked, None);
         assert_eq!(selection.cost_estimate, 0.0);
+    }
+
+    #[test]
+    fn compatible_fallbacks_preserve_contract_and_prefer_cheapest_other_provider() {
+        let mut catalog = ModelCatalog::new();
+        catalog.register(
+            RegisteredModel::new("primary")
+                .provider("openai")
+                .capability("standard")
+                .output_format("strict_json")
+                .privacy_tier("hosted")
+                .jurisdiction("US")
+                .context_window(128000)
+                .structured_output(true)
+                .tool_calling(true)
+                .multimodal(["text"])
+                .task_capabilities(["classification"])
+                .cost_per_token_in(0.000002),
+        );
+        catalog.register(
+            RegisteredModel::new("fallback-expensive")
+                .provider("anthropic")
+                .capability("expert")
+                .output_format("strict_json")
+                .privacy_tier("hosted")
+                .jurisdiction("US")
+                .context_window(200000)
+                .structured_output(true)
+                .tool_calling(true)
+                .multimodal(["text", "image"])
+                .task_capabilities(["classification", "ranking"])
+                .cost_per_token_in(0.000020),
+        );
+        catalog.register(
+            RegisteredModel::new("fallback-cheap")
+                .provider("gemini")
+                .capability("standard")
+                .output_format("strict_json")
+                .privacy_tier("hosted")
+                .jurisdiction("US")
+                .context_window(128000)
+                .structured_output(true)
+                .tool_calling(true)
+                .multimodal(["text"])
+                .task_capabilities(["classification"])
+                .cost_per_token_in(0.000001),
+        );
+        catalog.register(
+            RegisteredModel::new("same-provider")
+                .provider("openai")
+                .capability("expert")
+                .output_format("strict_json")
+                .privacy_tier("hosted")
+                .jurisdiction("US")
+                .context_window(200000)
+                .structured_output(true)
+                .tool_calling(true)
+                .multimodal(["text"])
+                .task_capabilities(["classification"])
+                .cost_per_token_in(0.0000001),
+        );
+        catalog.register(
+            RegisteredModel::new("wrong-jurisdiction")
+                .provider("ollama")
+                .capability("expert")
+                .output_format("strict_json")
+                .privacy_tier("hosted")
+                .jurisdiction("EU")
+                .context_window(200000)
+                .structured_output(true)
+                .tool_calling(true)
+                .multimodal(["text"])
+                .task_capabilities(["classification"])
+                .cost_per_token_in(0.0000001),
+        );
+
+        let fallbacks = catalog.compatible_fallbacks_for("primary", 100, 0);
+        let names: Vec<_> = fallbacks
+            .into_iter()
+            .map(|selection| selection.model)
+            .collect();
+        assert_eq!(names, vec!["fallback-cheap", "fallback-expensive"]);
     }
 }

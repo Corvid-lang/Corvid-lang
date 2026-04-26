@@ -18,9 +18,12 @@ pub mod openai_compat;
 
 use crate::calibration::CalibrationObservation;
 use crate::errors::RuntimeError;
+use crate::tracing::now_ms;
 use futures::future::BoxFuture;
 use std::borrow::Cow;
+use std::collections::BTreeMap;
 use std::sync::Arc;
+use std::sync::Mutex;
 
 /// Request handed to an adapter.
 #[derive(Debug, Clone)]
@@ -150,6 +153,33 @@ pub struct TokenUsage {
     pub total_tokens: u32,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProviderHealth {
+    pub adapter: String,
+    pub consecutive_failures: u64,
+    pub last_success_ms: Option<u64>,
+    pub last_failure_ms: Option<u64>,
+    pub degraded: bool,
+}
+
+impl ProviderHealth {
+    fn new(adapter: impl Into<String>) -> Self {
+        Self {
+            adapter: adapter.into(),
+            consecutive_failures: 0,
+            last_success_ms: None,
+            last_failure_ms: None,
+            degraded: false,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct LlmCallOutcome {
+    pub adapter: String,
+    pub response: LlmResponse,
+}
+
 /// Trait every LLM adapter implements.
 pub trait LlmAdapter: Send + Sync {
     /// Adapter identifier used for diagnostics and tracing.
@@ -171,6 +201,7 @@ pub trait LlmAdapter: Send + Sync {
 #[derive(Clone, Default)]
 pub struct LlmRegistry {
     adapters: Vec<Arc<dyn LlmAdapter>>,
+    health: Arc<Mutex<BTreeMap<String, ProviderHealth>>>,
 }
 
 impl LlmRegistry {
@@ -184,6 +215,13 @@ impl LlmRegistry {
 
     /// Dispatch `req` to the first adapter whose `handles` returns true.
     pub async fn call(&self, req: &LlmRequestRef<'_>) -> Result<LlmResponse, RuntimeError> {
+        Ok(self.call_with_adapter_name(req).await?.response)
+    }
+
+    pub async fn call_with_adapter_name(
+        &self,
+        req: &LlmRequestRef<'_>,
+    ) -> Result<LlmCallOutcome, RuntimeError> {
         let model = if req.model.is_empty() {
             return Err(RuntimeError::NoModelConfigured);
         } else {
@@ -195,12 +233,58 @@ impl LlmRegistry {
             .find(|a| a.handles(model))
             .ok_or_else(|| RuntimeError::NoAdapter(model.to_string()))?
             .clone();
-        adapter.call(req).await
+        let adapter_name = adapter.name().to_string();
+        match adapter.call(req).await {
+            Ok(response) => {
+                self.record_success(&adapter_name);
+                Ok(LlmCallOutcome {
+                    adapter: adapter_name,
+                    response,
+                })
+            }
+            Err(err) => {
+                self.record_failure(&adapter_name);
+                Err(err)
+            }
+        }
     }
 
     /// Names of all registered adapters, in registration order.
     pub fn names(&self) -> Vec<String> {
         self.adapters.iter().map(|a| a.name().to_string()).collect()
+    }
+
+    pub fn health(&self) -> Vec<ProviderHealth> {
+        let health = self.health.lock().unwrap();
+        self.adapters
+            .iter()
+            .map(|adapter| {
+                health
+                    .get(adapter.name())
+                    .cloned()
+                    .unwrap_or_else(|| ProviderHealth::new(adapter.name()))
+            })
+            .collect()
+    }
+
+    fn record_success(&self, adapter: &str) {
+        let mut health = self.health.lock().unwrap();
+        let entry = health
+            .entry(adapter.to_string())
+            .or_insert_with(|| ProviderHealth::new(adapter));
+        entry.consecutive_failures = 0;
+        entry.last_success_ms = Some(now_ms());
+        entry.degraded = false;
+    }
+
+    fn record_failure(&self, adapter: &str) {
+        let mut health = self.health.lock().unwrap();
+        let entry = health
+            .entry(adapter.to_string())
+            .or_insert_with(|| ProviderHealth::new(adapter));
+        entry.consecutive_failures = entry.consecutive_failures.saturating_add(1);
+        entry.last_failure_ms = Some(now_ms());
+        entry.degraded = true;
     }
 }
 
@@ -239,6 +323,40 @@ mod tests {
         };
         let err = reg.call(&req.as_ref()).await.unwrap_err();
         assert!(matches!(err, RuntimeError::NoAdapter(ref m) if m == "claude-opus-4-6"));
+    }
+
+    #[tokio::test]
+    async fn registry_records_adapter_health() {
+        let mut reg = LlmRegistry::new();
+        reg.register(Arc::new(
+            MockAdapter::new("mock-1").reply("ok", serde_json::json!("yes")),
+        ));
+        let missing = LlmRequest {
+            prompt: "missing".into(),
+            model: "mock-1".into(),
+            rendered: "".into(),
+            args: vec![],
+            output_schema: None,
+        };
+        let err = reg.call(&missing.as_ref()).await.unwrap_err();
+        assert!(matches!(err, RuntimeError::AdapterFailed { .. }));
+        let health = reg.health();
+        assert_eq!(health[0].adapter, "mock-1");
+        assert_eq!(health[0].consecutive_failures, 1);
+        assert!(health[0].degraded);
+
+        let ok = LlmRequest {
+            prompt: "ok".into(),
+            model: "mock-1".into(),
+            rendered: "".into(),
+            args: vec![],
+            output_schema: None,
+        };
+        reg.call(&ok.as_ref()).await.unwrap();
+        let health = reg.health();
+        assert_eq!(health[0].consecutive_failures, 0);
+        assert!(!health[0].degraded);
+        assert!(health[0].last_success_ms.is_some());
     }
 
     #[tokio::test]

@@ -11,7 +11,9 @@ use crate::approvals::{
 use crate::calibration::{CalibrationStats, CalibrationStore};
 use crate::errors::RuntimeError;
 use crate::human::{HumanChoiceRequest, HumanInputRequest, HumanInteractor, StdinHumanInteractor};
-use crate::llm::{LlmAdapter, LlmRegistry, LlmRequest, LlmRequestRef, LlmResponse};
+use crate::llm::{
+    LlmAdapter, LlmRegistry, LlmRequest, LlmRequestRef, LlmResponse, ProviderHealth,
+};
 use crate::models::{ModelCatalog, ModelSelection, RegisteredModel};
 use crate::prompt_cache::PromptCache;
 #[cfg(feature = "python")]
@@ -157,6 +159,10 @@ impl Runtime {
 
     pub fn model_catalog(&self) -> &ModelCatalog {
         &self.model_catalog
+    }
+
+    pub fn provider_health(&self) -> Vec<ProviderHealth> {
+        self.llms.health()
     }
 
     pub fn stores(&self) -> &StoreManager {
@@ -541,6 +547,18 @@ impl Runtime {
         })
     }
 
+    fn emit_host_event(&self, name: &str, payload: serde_json::Value) {
+        if !self.tracer.is_enabled() {
+            return;
+        }
+        self.tracer.emit(TraceEvent::HostEvent {
+            ts_ms: now_ms(),
+            run_id: self.tracer.run_id().to_string(),
+            name: name.to_string(),
+            payload,
+        });
+    }
+
     // ---- dispatch helpers ----
 
     /// Call a tool by name. Emits trace events bracketing the call.
@@ -681,6 +699,12 @@ impl Runtime {
                 return Ok(PromptCache::cached_response(cached));
             }
         }
+        let mut actual_model = live_model_override
+            .as_deref()
+            .unwrap_or(req.model)
+            .to_string();
+        let mut result_trace_model = trace_model.to_string();
+        let mut result_trace_model_version = trace_model_version.clone();
         let resp = if let Some(replay) = replay {
             let live_req = if let Some(model) = live_model_override.as_deref() {
                 req.with_model(model)
@@ -703,7 +727,64 @@ impl Runtime {
                 )
                 .await?
         } else {
-            self.llms.call(&req).await?
+            match self.llms.call_with_adapter_name(&req).await {
+                Ok(outcome) => outcome.response,
+                Err(primary_err) => {
+                    let primary_error = primary_err.to_string();
+                    self.emit_host_event(
+                        "llm.provider_degraded",
+                        serde_json::json!({
+                            "prompt": req.prompt,
+                            "model": req.model,
+                            "provider": self.model_catalog.get(req.model).and_then(|model| model.provider.clone()),
+                            "error": primary_error,
+                        }),
+                    );
+                    let mut last_err = primary_err;
+                    let fallbacks = self.model_catalog.compatible_fallbacks_for(
+                        req.model,
+                        estimate_tokens(trace_rendered),
+                        0,
+                    );
+                    let mut fallback_response = None;
+                    for fallback in fallbacks {
+                        let fallback_req = req.with_model(&fallback.model);
+                        match self.llms.call_with_adapter_name(&fallback_req).await {
+                            Ok(outcome) => {
+                                self.emit_host_event(
+                                    "llm.provider_failover",
+                                    serde_json::json!({
+                                        "prompt": req.prompt,
+                                        "from_model": req.model,
+                                        "from_provider": self.model_catalog.get(req.model).and_then(|model| model.provider.clone()),
+                                        "to_model": fallback.model.clone(),
+                                        "to_provider": fallback.provider.clone(),
+                                        "adapter": outcome.adapter,
+                                    }),
+                                );
+                                actual_model = fallback.model;
+                                result_trace_model = actual_model.clone();
+                                result_trace_model_version = self.model_version(&actual_model);
+                                fallback_response = Some(outcome.response);
+                                break;
+                            }
+                            Err(err) => {
+                                self.emit_host_event(
+                                    "llm.provider_degraded",
+                                    serde_json::json!({
+                                        "prompt": req.prompt,
+                                        "model": fallback.model.clone(),
+                                        "provider": fallback.provider.clone(),
+                                        "error": err.to_string(),
+                                    }),
+                                );
+                                last_err = err;
+                            }
+                        }
+                    }
+                    fallback_response.ok_or(last_err)?
+                }
+            }
         };
         if let Some(fingerprint) = cache_fingerprint.as_deref() {
             self.prompt_cache
@@ -724,13 +805,12 @@ impl Runtime {
                 });
             }
         }
-        let actual_model = live_model_override.as_deref().unwrap_or(req.model);
         let cost_usd = if actual_model.is_empty() {
             0.0
         } else {
             self.model_catalog
                 .describe_named_model(
-                    actual_model,
+                    &actual_model,
                     resp.usage.prompt_tokens as u64,
                     resp.usage.completion_tokens as u64,
                 )
@@ -742,12 +822,12 @@ impl Runtime {
                 ts_ms: now_ms(),
                 run_id: self.tracer.run_id().to_string(),
                 prompt: req.prompt.to_string(),
-                model: if trace_model.is_empty() {
+                model: if result_trace_model.is_empty() {
                     None
                 } else {
-                    Some(trace_model.to_string())
+                    Some(result_trace_model)
                 },
-                model_version: trace_model_version,
+                model_version: result_trace_model_version,
                 result: resp.value.clone(),
             });
         }
@@ -931,6 +1011,10 @@ impl Runtime {
         }
         Ok(selected_index)
     }
+}
+
+fn estimate_tokens(text: &str) -> u64 {
+    (text.len() as u64).div_ceil(4).max(1)
 }
 
 fn approval_token_id(
@@ -1681,6 +1765,79 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(resp.value, json!("hi"));
+    }
+
+    #[tokio::test]
+    async fn call_llm_fails_over_to_compatible_model_and_traces_provider_events() {
+        let dir = tempfile::tempdir().unwrap();
+        let trace_path = dir.path().join("failover.jsonl");
+        let r = Runtime::builder()
+            .tracer(Tracer::open_path(&trace_path, "failover-run"))
+            .llm(Arc::new(MockAdapter::new("primary")))
+            .llm(Arc::new(
+                MockAdapter::new("fallback").reply("greet", json!("from fallback")),
+            ))
+            .default_model("primary")
+            .model(
+                RegisteredModel::new("primary")
+                    .provider("openai")
+                    .capability("standard")
+                    .output_format("strict_json")
+                    .privacy_tier("hosted")
+                    .jurisdiction("US")
+                    .structured_output(true)
+                    .cost_per_token_in(0.000002),
+            )
+            .model(
+                RegisteredModel::new("fallback")
+                    .provider("anthropic")
+                    .capability("expert")
+                    .output_format("strict_json")
+                    .privacy_tier("hosted")
+                    .jurisdiction("US")
+                    .structured_output(true)
+                    .cost_per_token_in(0.000001),
+            )
+            .build();
+
+        let resp = r
+            .call_llm(LlmRequest {
+                prompt: "greet".into(),
+                model: String::new(),
+                rendered: "say hi".into(),
+                args: vec![],
+                output_schema: None,
+            })
+            .await
+            .unwrap();
+        assert_eq!(resp.value, json!("from fallback"));
+
+        let health = r.provider_health();
+        let primary = health
+            .iter()
+            .find(|entry| entry.adapter == "primary")
+            .expect("primary health");
+        assert_eq!(primary.consecutive_failures, 1);
+        assert!(primary.degraded);
+
+        let events = corvid_trace_schema::read_events_from_path(&trace_path).unwrap();
+        assert!(events.iter().any(|event| matches!(
+            event,
+            TraceEvent::HostEvent { name, payload, .. }
+                if name == "llm.provider_degraded" && payload["model"] == "primary"
+        )));
+        assert!(events.iter().any(|event| matches!(
+            event,
+            TraceEvent::HostEvent { name, payload, .. }
+                if name == "llm.provider_failover"
+                    && payload["from_model"] == "primary"
+                    && payload["to_model"] == "fallback"
+        )));
+        assert!(events.iter().any(|event| matches!(
+            event,
+            TraceEvent::LlmResult { model, result, .. }
+                if model.as_deref() == Some("fallback") && result == &json!("from fallback")
+        )));
     }
 
     #[test]
