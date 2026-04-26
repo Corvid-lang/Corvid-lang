@@ -1597,7 +1597,7 @@ The determinism-source catalog and the language's treatment of non-reproducible 
 - Launch materials: 2-minute GIF/video showing the time-travel replay moment + effect-checker catching a bug + compile-time cost budget. HN + Reddit + ProductHunt announcement drafts reviewed with 3 external readers.
 - Beta round: 20 external developers build something real in Corvid; their feedback gates the final cut.
 
-### Phase 34 — Inventions readme + landing page (~2 weeks)
+### Phase 34 — Inventions readme + landing page (~2 weeks) ✅ closed
 
 **Goal.** Every Corvid invention documented in one place, visible from the repo's front door. The README and landing page must answer: "what does this language do that no other language does?" — in code, not in prose.
 
