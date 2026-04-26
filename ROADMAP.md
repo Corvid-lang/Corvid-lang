@@ -1543,7 +1543,7 @@ The determinism-source catalog and the language's treatment of non-reproducible 
 - Capability contract tests: verify whether each configured model actually respects JSON mode, tool calls, streaming, context-window claims, and structured-output constraints.
 - Cost normalization and usage accounting across providers, including local/openai-compatible servers, so budgets compare real prompt/model choices instead of raw provider strings.
 
-### Phase 32 — Standard library (~8 weeks)
+### Phase 32 — Standard library (~8 weeks) ✅ closed
 
 **Goal.** Batteries included for general programming and AI-native applications. Common patterns available without a package install.
 
@@ -1562,13 +1562,13 @@ The determinism-source catalog and the language's treatment of non-reproducible 
 - [x] `std.effects` foundation: shared Corvid effect metadata envelopes for effect tags, budgets, provenance keys, approval labels, cache keys, and replay keys across `std.*`.
 - [x] `std.ai` reusable AI application primitives: typed message/session objects, prompt rendering helpers, model-route helpers, tool-result envelopes, structured-output validation, confidence helpers, and trace/event utilities.
 - [x] `std.rag` embedder trait with reference OpenAI + Ollama implementations.
-- `std.rag` remaining runtime pieces as one `std.ai` subdomain: sqlite-vec, chunking polish, and tighter grounding-by-construction APIs. Pairs with Phase 20's grounding-contract language half.
-- `std.rag` APIs return `Grounded<T>` by construction where retrieval provenance exists, but grounding is not limited to RAG; any tool/effect that proves provenance can produce `Grounded<T>`.
+- [x] `std.rag` remaining runtime pieces as one `std.ai` subdomain: SQLite-backed embedding retrieval, chunking polish, and tighter grounding-by-construction APIs. Shipped with configurable chunking, SQLite persisted embedding vectors, cosine-similarity retrieval, and runtime `GroundedValue<T>` helpers for retrieval-backed chunk results. Pairs with Phase 20's grounding-contract language half.
+- [x] `std.rag` APIs return grounded runtime values by construction where retrieval provenance exists, but grounding is not limited to RAG; any tool/effect that proves provenance can produce grounded values through the shared runtime provenance envelope.
 - [x] `std.http` typed HTTP client with effect tags, retry semantics, timeout/budget accounting, and recorded replay-hook exchanges.
 - [x] `std.io` path helpers in the runtime: join, parent, filename, extension, extension replacement, and lexical normalization.
-- `std.io` remaining runtime pieces: explicit filesystem-effect plumbing.
+- [x] `std.io` remaining runtime pieces: explicit filesystem-effect plumbing through effect-tagged read/write/list/stream runtime envelopes and helpers.
 - [x] `std.agent` common AI patterns: classification, extraction, summarization, ranking, adjudication, routing, planning, tool-use loops, approval-gated action, review/critique, and grounded answer generation.
-- Everything in `std.*` effect-tagged so users get the moat's benefits from day one.
+- [x] Everything in `std.*` effect-tagged so users get the moat's benefits from day one.
 - [x] `std.queue` durable background jobs for long-running AI tasks, with retry, cancellation, replay hooks, budget accounting, and effect summaries.
 - [x] `std.cache` prompt/model/tool-result caching with replay-safe invalidation, provenance preservation, and effect-aware cache keys.
 - [x] `std.secrets` explicit secret access APIs with redacted audit metadata surfaces that avoid leaking secret values.

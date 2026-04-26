@@ -1,5 +1,7 @@
 # Standard AI application primitives.
 
+import "./effects" use EffectEnvelope, effect_envelope
+
 public type AiMessage:
     role: String
     content: String
@@ -14,11 +16,13 @@ public type ToolResultEnvelope:
     ok: Bool
     value: String
     error_message: String
+    effect_meta: EffectEnvelope
 
 public type ModelRoute:
     model_name: String
     provider: String
     reason: String
+    effect_meta: EffectEnvelope
 
 public type StructuredValidation:
     valid: Bool
@@ -34,10 +38,12 @@ public type TraceEventSummary:
     kind: String
     name: String
     detail: String
+    effect_meta: EffectEnvelope
 
 public type PromptRender:
     template_name: String
     rendered: String
+    effect_meta: EffectEnvelope
 
 public agent system_message(content: String) -> AiMessage:
     return AiMessage("system", content)
@@ -55,13 +61,13 @@ public agent next_turn(current: AiSession) -> AiSession:
     return AiSession(current.id, current.title, current.turn_count + 1)
 
 public agent tool_ok(tool_name: String, value: String) -> ToolResultEnvelope:
-    return ToolResultEnvelope(tool_name, true, value, "")
+    return ToolResultEnvelope(tool_name, true, value, "", effect_envelope("std.ai.tool_result", "", "", "", "std.ai.tool_result"))
 
 public agent tool_error(tool_name: String, error_message: String) -> ToolResultEnvelope:
-    return ToolResultEnvelope(tool_name, false, "", error_message)
+    return ToolResultEnvelope(tool_name, false, "", error_message, effect_envelope("std.ai.tool_result", "", "", "", "std.ai.tool_result"))
 
 public agent route_to(model_name: String, provider: String, reason: String) -> ModelRoute:
-    return ModelRoute(model_name, provider, reason)
+    return ModelRoute(model_name, provider, reason, effect_envelope("std.ai.route", "", "", "", "std.ai.route"))
 
 public agent validation_ok(schema: String) -> StructuredValidation:
     return StructuredValidation(true, schema, "")
@@ -73,7 +79,7 @@ public agent confidence(score: Float, threshold: Float) -> Confidence:
     return Confidence(score, threshold, score >= threshold)
 
 public agent trace_event(kind: String, name: String, detail: String) -> TraceEventSummary:
-    return TraceEventSummary(kind, name, detail)
+    return TraceEventSummary(kind, name, detail, effect_envelope("std.ai.trace", "", "", "", "std.ai.trace"))
 
 public agent render_prompt_pair(label: String, value: String) -> String:
     return label + ": " + value
@@ -85,4 +91,4 @@ public agent render_message(message: AiMessage) -> String:
     return message.role + ": " + message.content
 
 public agent rendered_prompt(template_name: String, rendered: String) -> PromptRender:
-    return PromptRender(template_name, rendered)
+    return PromptRender(template_name, rendered, effect_envelope("std.ai.prompt_render", "", "", "", "std.ai.prompt_render"))

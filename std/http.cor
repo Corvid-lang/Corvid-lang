@@ -1,5 +1,7 @@
 # Standard HTTP data envelopes.
 
+import "./effects" use EffectEnvelope, effect_envelope
+
 public type HttpHeader:
     name: String
     value: String
@@ -10,24 +12,26 @@ public type HttpRequestEnvelope:
     body: String
     timeout_ms: Int
     max_retries: Int
+    effect_meta: EffectEnvelope
 
 public type HttpResponseEnvelope:
     status: Int
     body: String
     attempts: Int
     elapsed_ms: Int
+    effect_meta: EffectEnvelope
 
 public agent http_get(url: String) -> HttpRequestEnvelope:
-    return HttpRequestEnvelope("GET", url, "", 30000, 0)
+    return HttpRequestEnvelope("GET", url, "", 30000, 0, effect_envelope("std.http.request", "", "", "", "std.http.request"))
 
 public agent http_post_json(url: String, body: String) -> HttpRequestEnvelope:
-    return HttpRequestEnvelope("POST", url, body, 30000, 0)
+    return HttpRequestEnvelope("POST", url, body, 30000, 0, effect_envelope("std.http.request", "", "", "", "std.http.request"))
 
 public agent http_with_retry(request: HttpRequestEnvelope, max_retries: Int) -> HttpRequestEnvelope:
-    return HttpRequestEnvelope(request.method_name, request.url, request.body, request.timeout_ms, max_retries)
+    return HttpRequestEnvelope(request.method_name, request.url, request.body, request.timeout_ms, max_retries, request.effect_meta)
 
 public agent http_with_timeout(request: HttpRequestEnvelope, timeout_ms: Int) -> HttpRequestEnvelope:
-    return HttpRequestEnvelope(request.method_name, request.url, request.body, timeout_ms, request.max_retries)
+    return HttpRequestEnvelope(request.method_name, request.url, request.body, timeout_ms, request.max_retries, request.effect_meta)
 
 public agent http_ok(response: HttpResponseEnvelope) -> Bool:
     return response.status >= 200 and response.status < 300

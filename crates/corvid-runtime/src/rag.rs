@@ -1,4 +1,6 @@
 use crate::errors::RuntimeError;
+use crate::provenance::GroundedValue;
+use crate::tracing::now_ms;
 use futures::future::BoxFuture;
 use rusqlite::{params, Connection};
 use sha2::{Digest, Sha256};
@@ -22,6 +24,37 @@ pub struct RagChunk {
     pub start_char: usize,
     pub end_char: usize,
     pub provenance_key: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RagChunkingConfig {
+    pub max_chars: usize,
+    pub overlap_chars: usize,
+    pub trim_whitespace: bool,
+    pub prefer_sentence_boundary: bool,
+}
+
+impl RagChunkingConfig {
+    pub fn new(max_chars: usize, overlap_chars: usize) -> Self {
+        Self {
+            max_chars,
+            overlap_chars,
+            trim_whitespace: true,
+            prefer_sentence_boundary: true,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct RagSearchHit {
+    pub chunk: RagChunk,
+    pub score: f32,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct RagEmbeddingRecord {
+    pub chunk_id: String,
+    pub values: Vec<f32>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -286,7 +319,14 @@ pub fn chunk_document(
     max_chars: usize,
     overlap_chars: usize,
 ) -> Result<Vec<RagChunk>, RuntimeError> {
-    if max_chars == 0 {
+    chunk_document_with_config(document, &RagChunkingConfig::new(max_chars, overlap_chars))
+}
+
+pub fn chunk_document_with_config(
+    document: &RagDocument,
+    config: &RagChunkingConfig,
+) -> Result<Vec<RagChunk>, RuntimeError> {
+    if config.max_chars == 0 {
         return Err(RuntimeError::Other(
             "std.rag chunk size must be greater than zero".to_string(),
         ));
@@ -295,32 +335,40 @@ pub fn chunk_document(
     if chars.is_empty() {
         return Ok(Vec::new());
     }
-    let overlap = overlap_chars.min(max_chars.saturating_sub(1));
+    let overlap = config
+        .overlap_chars
+        .min(config.max_chars.saturating_sub(1));
     let mut chunks = Vec::new();
     let mut start = 0;
     while start < chars.len() {
-        let end = (start + max_chars).min(chars.len());
-        let start_byte = chars[start].0;
-        let end_byte = if end == chars.len() {
+        let target_end = (start + config.max_chars).min(chars.len());
+        let end = choose_chunk_end(&chars, &document.text, start, target_end, config);
+        let (start_idx, end_idx) = trim_chunk_window(&chars, &document.text, start, end, config);
+        if start_idx >= end_idx {
+            start = target_end;
+            continue;
+        }
+        let start_byte = chars[start_idx].0;
+        let end_byte = if end_idx == chars.len() {
             document.text.len()
         } else {
-            chars[end].0
+            chars[end_idx].0
         };
         let text = document.text[start_byte..end_byte].to_string();
-        let provenance_key = provenance_key(&document.id, start, end, &text);
+        let provenance_key = provenance_key(&document.id, start_idx, end_idx, &text);
         chunks.push(RagChunk {
             doc_id: document.id.clone(),
             chunk_id: format!("{}:{}", document.id, chunks.len()),
             source: document.source.clone(),
             text,
-            start_char: start,
-            end_char: end,
+            start_char: start_idx,
+            end_char: end_idx,
             provenance_key,
         });
-        if end == chars.len() {
+        if end_idx == chars.len() {
             break;
         }
-        start = end.saturating_sub(overlap);
+        start = end_idx.saturating_sub(overlap);
     }
     Ok(chunks)
 }
@@ -423,6 +471,115 @@ impl RagSqliteIndex {
         Ok(out)
     }
 
+    pub fn search_grounded_text(
+        &self,
+        query: &str,
+        limit: usize,
+    ) -> Result<Vec<GroundedValue<RagChunk>>, RuntimeError> {
+        let source_name = format!("std.rag.search_text:{query}");
+        Ok(self
+            .search_text(query, limit)?
+            .into_iter()
+            .map(|chunk| GroundedValue::new(chunk, grounded_chunk_chain(&source_name)))
+            .collect())
+    }
+
+    pub fn insert_embedding_vectors(
+        &mut self,
+        embeddings: &[RagEmbeddingRecord],
+    ) -> Result<(), RuntimeError> {
+        let tx = self
+            .conn
+            .transaction()
+            .map_err(|err| RuntimeError::Other(format!("failed to start RAG embedding insert: {err}")))?;
+        for embedding in embeddings {
+            let payload = serde_json::to_string(&embedding.values).map_err(|err| {
+                RuntimeError::Other(format!("failed to encode RAG embedding vector: {err}"))
+            })?;
+            tx.execute(
+                "insert or replace into rag_chunk_embeddings
+                 (chunk_id, dimension, values_json)
+                 values (?1, ?2, ?3)",
+                params![embedding.chunk_id, embedding.values.len() as i64, payload],
+            )
+            .map_err(|err| RuntimeError::Other(format!("failed to insert RAG embedding: {err}")))?;
+        }
+        tx.commit().map_err(|err| {
+            RuntimeError::Other(format!("failed to commit RAG embeddings: {err}"))
+        })?;
+        Ok(())
+    }
+
+    pub fn search_embeddings(
+        &self,
+        query: &[f32],
+        limit: usize,
+    ) -> Result<Vec<RagSearchHit>, RuntimeError> {
+        if query.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut stmt = self
+            .conn
+            .prepare(
+                "select c.chunk_id, c.doc_id, c.source, c.text, c.start_char, c.end_char, c.provenance_key,
+                        e.values_json
+                 from rag_chunks c
+                 join rag_chunk_embeddings e on e.chunk_id = c.chunk_id
+                 where e.dimension = ?1",
+            )
+            .map_err(|err| RuntimeError::Other(format!("failed to prepare RAG embedding search: {err}")))?;
+        let rows = stmt
+            .query_map(params![query.len() as i64], |row| {
+                Ok((
+                    RagChunk {
+                        chunk_id: row.get(0)?,
+                        doc_id: row.get(1)?,
+                        source: row.get(2)?,
+                        text: row.get(3)?,
+                        start_char: row.get::<_, i64>(4)? as usize,
+                        end_char: row.get::<_, i64>(5)? as usize,
+                        provenance_key: row.get(6)?,
+                    },
+                    row.get::<_, String>(7)?,
+                ))
+            })
+            .map_err(|err| RuntimeError::Other(format!("failed to query RAG embeddings: {err}")))?;
+        let mut hits = Vec::new();
+        for row in rows {
+            let (chunk, values_json) = row
+                .map_err(|err| RuntimeError::Other(format!("failed to read RAG embedding row: {err}")))?;
+            let values: Vec<f32> = serde_json::from_str(&values_json).map_err(|err| {
+                RuntimeError::Other(format!("failed to decode RAG embedding vector: {err}"))
+            })?;
+            let score = cosine_similarity(query, &values);
+            hits.push(RagSearchHit { chunk, score });
+        }
+        hits.sort_by(|left, right| {
+            right
+                .score
+                .partial_cmp(&left.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        if hits.len() > limit {
+            hits.truncate(limit);
+        }
+        Ok(hits)
+    }
+
+    pub fn search_grounded_embeddings(
+        &self,
+        query_label: &str,
+        query: &[f32],
+        limit: usize,
+    ) -> Result<Vec<GroundedValue<RagChunk>>, RuntimeError> {
+        let source_name = format!("std.rag.search_embeddings:{query_label}");
+        Ok(self
+            .search_embeddings(query, limit)?
+            .into_iter()
+            .map(|hit| GroundedValue::new(hit.chunk, grounded_chunk_chain(&source_name)))
+            .collect())
+    }
+
     fn init(&self) -> Result<(), RuntimeError> {
         self.conn
             .execute_batch(
@@ -443,10 +600,94 @@ impl RagSqliteIndex {
                     foreign key(doc_id) references rag_documents(id)
                 );
                 create index if not exists rag_chunks_doc_id on rag_chunks(doc_id);
-                create index if not exists rag_chunks_provenance_key on rag_chunks(provenance_key);",
+                create index if not exists rag_chunks_provenance_key on rag_chunks(provenance_key);
+                create table if not exists rag_chunk_embeddings (
+                    chunk_id text primary key,
+                    dimension integer not null,
+                    values_json text not null,
+                    foreign key(chunk_id) references rag_chunks(chunk_id)
+                );
+                create index if not exists rag_chunk_embeddings_dimension on rag_chunk_embeddings(dimension);",
             )
             .map_err(|err| RuntimeError::Other(format!("failed to initialize RAG index: {err}")))?;
         Ok(())
+    }
+}
+
+fn choose_chunk_end(
+    chars: &[(usize, char)],
+    text: &str,
+    start: usize,
+    target_end: usize,
+    config: &RagChunkingConfig,
+) -> usize {
+    if !config.prefer_sentence_boundary || target_end >= chars.len() {
+        return target_end;
+    }
+    let min_end = start + ((target_end - start) / 2).max(1);
+    for candidate in (min_end..target_end).rev() {
+        let boundary = chars[candidate - 1].1;
+        if matches!(boundary, '.' | '!' | '?' | '\n') {
+            let byte = chars[candidate].0;
+            if text[..byte].chars().last().is_some() {
+                return candidate;
+            }
+        }
+    }
+    target_end
+}
+
+fn trim_chunk_window(
+    chars: &[(usize, char)],
+    text: &str,
+    start: usize,
+    end: usize,
+    config: &RagChunkingConfig,
+) -> (usize, usize) {
+    if !config.trim_whitespace || start >= end {
+        return (start, end);
+    }
+    let mut trimmed_start = start;
+    let mut trimmed_end = end;
+    while trimmed_start < trimmed_end && chars[trimmed_start].1.is_whitespace() {
+        trimmed_start += 1;
+    }
+    while trimmed_end > trimmed_start {
+        let byte = if trimmed_end == chars.len() {
+            text.len()
+        } else {
+            chars[trimmed_end].0
+        };
+        let prev = text[..byte].chars().next_back().unwrap_or_default();
+        if prev.is_whitespace() {
+            trimmed_end -= 1;
+        } else {
+            break;
+        }
+    }
+    (trimmed_start, trimmed_end)
+}
+
+fn grounded_chunk_chain(source_name: &str) -> crate::provenance::ProvenanceChain {
+    crate::provenance::ProvenanceChain::with_retrieval(source_name, now_ms())
+}
+
+fn cosine_similarity(left: &[f32], right: &[f32]) -> f32 {
+    if left.len() != right.len() || left.is_empty() {
+        return 0.0;
+    }
+    let mut dot = 0.0f32;
+    let mut left_norm = 0.0f32;
+    let mut right_norm = 0.0f32;
+    for (lhs, rhs) in left.iter().zip(right.iter()) {
+        dot += lhs * rhs;
+        left_norm += lhs * lhs;
+        right_norm += rhs * rhs;
+    }
+    if left_norm == 0.0 || right_norm == 0.0 {
+        0.0
+    } else {
+        dot / (left_norm.sqrt() * right_norm.sqrt())
     }
 }
 
@@ -697,6 +938,22 @@ mod tests {
     }
 
     #[test]
+    fn chunk_document_prefers_sentence_boundaries_and_trims_whitespace() {
+        let doc = document_from_text(
+            "doc1",
+            "memory",
+            "text/plain",
+            "Alpha sentence.  Beta sentence.\nGamma sentence.",
+        )
+        .unwrap();
+        let chunks = chunk_document_with_config(&doc, &RagChunkingConfig::new(20, 4)).unwrap();
+
+        assert!(chunks.len() >= 2);
+        assert_eq!(chunks[0].text, "Alpha sentence.");
+        assert!(!chunks[1].text.starts_with(' '));
+    }
+
+    #[test]
     fn embedder_configs_cover_openai_and_ollama() {
         let openai = EmbedderConfig::openai("text-embedding-3-small");
         assert_eq!(openai.provider, "openai");
@@ -719,6 +976,57 @@ mod tests {
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].doc_id, "doc1");
         assert!(hits[0].provenance_key.starts_with("rag_"));
+    }
+
+    #[test]
+    fn sqlite_index_returns_grounded_hits() {
+        let doc = document_from_text("doc1", "memory", "text/plain", "alpha beta gamma").unwrap();
+        let chunks = chunk_document(&doc, 8, 0).unwrap();
+        let mut index = RagSqliteIndex::open_in_memory().unwrap();
+        index.insert_document(&doc).unwrap();
+        index.insert_chunks(&chunks).unwrap();
+
+        let hits = index.search_grounded_text("alpha", 5).unwrap();
+        assert_eq!(hits.len(), 1);
+        assert!(hits[0].has_retrieval());
+        assert_eq!(hits[0].value.doc_id, "doc1");
+    }
+
+    #[test]
+    fn sqlite_index_searches_embeddings_by_similarity() {
+        let doc = document_from_text("doc1", "memory", "text/plain", "alpha beta gamma delta").unwrap();
+        let chunks = chunk_document(&doc, 6, 0).unwrap();
+        let mut index = RagSqliteIndex::open_in_memory().unwrap();
+        index.insert_document(&doc).unwrap();
+        index.insert_chunks(&chunks).unwrap();
+        index
+            .insert_embedding_vectors(&[
+                RagEmbeddingRecord {
+                    chunk_id: chunks[0].chunk_id.clone(),
+                    values: vec![1.0, 0.0],
+                },
+                RagEmbeddingRecord {
+                    chunk_id: chunks[1].chunk_id.clone(),
+                    values: vec![0.8, 0.2],
+                },
+                RagEmbeddingRecord {
+                    chunk_id: chunks[2].chunk_id.clone(),
+                    values: vec![0.0, 1.0],
+                },
+            ])
+            .unwrap();
+
+        let hits = index.search_embeddings(&[0.9, 0.1], 2).unwrap();
+        assert_eq!(hits.len(), 2);
+        assert!(hits[0].score >= hits[1].score);
+        assert_eq!(hits[0].chunk.chunk_id, chunks[0].chunk_id);
+
+        let grounded = index
+            .search_grounded_embeddings("alpha-ish", &[0.9, 0.1], 1)
+            .unwrap();
+        assert_eq!(grounded.len(), 1);
+        assert!(grounded[0].has_retrieval());
+        assert_eq!(grounded[0].value.chunk_id, chunks[0].chunk_id);
     }
 
     #[test]

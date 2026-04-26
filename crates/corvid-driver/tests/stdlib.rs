@@ -23,6 +23,11 @@ fn std_ai_imported_helpers_typecheck() {
         .and_then(std::path::Path::parent)
         .expect("repo root");
     fs::copy(repo.join("std").join("ai.cor"), dir.path().join("std").join("ai.cor")).unwrap();
+    fs::copy(
+        repo.join("std").join("effects.cor"),
+        dir.path().join("std").join("effects.cor"),
+    )
+    .unwrap();
 
     let main_path = dir.path().join("main.cor");
     let source = r#"

@@ -10,6 +10,7 @@ pub struct FileRead {
     pub contents: String,
     pub bytes: u64,
     pub elapsed_ms: u64,
+    pub effect: FileSystemEffect,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -17,6 +18,7 @@ pub struct FileWrite {
     pub path: PathBuf,
     pub bytes: u64,
     pub elapsed_ms: u64,
+    pub effect: FileSystemEffect,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -24,12 +26,21 @@ pub struct DirectoryEntry {
     pub path: PathBuf,
     pub name: String,
     pub is_dir: bool,
+    pub effect: FileSystemEffect,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FileSystemEffect {
+    pub effect_tag: String,
+    pub approval_label: String,
+    pub replay_key: String,
 }
 
 pub struct TextLineStream {
     pub path: PathBuf,
     lines: Lines<BufReader<File>>,
     pub lines_read: u64,
+    pub effect: FileSystemEffect,
 }
 
 #[derive(Clone, Default)]
@@ -71,6 +82,15 @@ impl IoRuntime {
     }
 
     pub async fn read_text(&self, path: impl AsRef<Path>) -> Result<FileRead, RuntimeError> {
+        self.read_text_with_effect(path, Self::read_effect())
+            .await
+    }
+
+    pub async fn read_text_with_effect(
+        &self,
+        path: impl AsRef<Path>,
+        effect: FileSystemEffect,
+    ) -> Result<FileRead, RuntimeError> {
         let path = path.as_ref().to_path_buf();
         let started = Instant::now();
         let contents = tokio::fs::read_to_string(&path).await.map_err(|err| {
@@ -84,6 +104,7 @@ impl IoRuntime {
             contents,
             path,
             elapsed_ms: elapsed_ms(started),
+            effect,
         })
     }
 
@@ -91,6 +112,16 @@ impl IoRuntime {
         &self,
         path: impl AsRef<Path>,
         contents: &str,
+    ) -> Result<FileWrite, RuntimeError> {
+        self.write_text_with_effect(path, contents, Self::write_effect())
+            .await
+    }
+
+    pub async fn write_text_with_effect(
+        &self,
+        path: impl AsRef<Path>,
+        contents: &str,
+        effect: FileSystemEffect,
     ) -> Result<FileWrite, RuntimeError> {
         let path = path.as_ref().to_path_buf();
         let started = Instant::now();
@@ -112,12 +143,21 @@ impl IoRuntime {
             path,
             bytes: contents.len() as u64,
             elapsed_ms: elapsed_ms(started),
+            effect,
         })
     }
 
     pub async fn list_dir(
         &self,
         path: impl AsRef<Path>,
+    ) -> Result<Vec<DirectoryEntry>, RuntimeError> {
+        self.list_dir_with_effect(path, Self::list_effect()).await
+    }
+
+    pub async fn list_dir_with_effect(
+        &self,
+        path: impl AsRef<Path>,
+        effect: FileSystemEffect,
     ) -> Result<Vec<DirectoryEntry>, RuntimeError> {
         let path = path.as_ref().to_path_buf();
         let mut entries = tokio::fs::read_dir(&path).await.map_err(|err| {
@@ -141,6 +181,7 @@ impl IoRuntime {
                 name: entry.file_name().to_string_lossy().to_string(),
                 path: entry.path(),
                 is_dir: file_type.is_dir(),
+                effect: effect.clone(),
             });
         }
         out.sort_by(|left, right| left.name.cmp(&right.name));
@@ -151,6 +192,15 @@ impl IoRuntime {
         &self,
         path: impl AsRef<Path>,
     ) -> Result<TextLineStream, RuntimeError> {
+        self.open_line_stream_with_effect(path, Self::stream_effect())
+            .await
+    }
+
+    pub async fn open_line_stream_with_effect(
+        &self,
+        path: impl AsRef<Path>,
+        effect: FileSystemEffect,
+    ) -> Result<TextLineStream, RuntimeError> {
         let path = path.as_ref().to_path_buf();
         let file = File::open(&path).await.map_err(|err| RuntimeError::ToolFailed {
             tool: "std.io".to_string(),
@@ -160,7 +210,40 @@ impl IoRuntime {
             path,
             lines: BufReader::new(file).lines(),
             lines_read: 0,
+            effect,
         })
+    }
+
+    pub fn read_effect() -> FileSystemEffect {
+        FileSystemEffect {
+            effect_tag: "std.io.read".to_string(),
+            approval_label: String::new(),
+            replay_key: "std.io.read".to_string(),
+        }
+    }
+
+    pub fn write_effect() -> FileSystemEffect {
+        FileSystemEffect {
+            effect_tag: "std.io.write".to_string(),
+            approval_label: "filesystem.write".to_string(),
+            replay_key: "std.io.write".to_string(),
+        }
+    }
+
+    pub fn list_effect() -> FileSystemEffect {
+        FileSystemEffect {
+            effect_tag: "std.io.list".to_string(),
+            approval_label: String::new(),
+            replay_key: "std.io.list".to_string(),
+        }
+    }
+
+    pub fn stream_effect() -> FileSystemEffect {
+        FileSystemEffect {
+            effect_tag: "std.io.stream".to_string(),
+            approval_label: String::new(),
+            replay_key: "std.io.stream".to_string(),
+        }
     }
 }
 
@@ -224,15 +307,18 @@ mod tests {
 
         let write = io.write_text(&path, "hello").await.unwrap();
         assert_eq!(write.bytes, 5);
+        assert_eq!(write.effect.effect_tag, "std.io.write");
 
         let read = io.read_text(&path).await.unwrap();
         assert_eq!(read.contents, "hello");
         assert_eq!(read.bytes, 5);
+        assert_eq!(read.effect.effect_tag, "std.io.read");
 
         let entries = io.list_dir(path.parent().unwrap()).await.unwrap();
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].name, "note.txt");
         assert!(!entries[0].is_dir);
+        assert_eq!(entries[0].effect.effect_tag, "std.io.list");
     }
 
     #[tokio::test]
@@ -247,6 +333,7 @@ mod tests {
         assert_eq!(stream.next_line().await.unwrap().as_deref(), Some("beta"));
         assert_eq!(stream.next_line().await.unwrap(), None);
         assert_eq!(stream.lines_read, 2);
+        assert_eq!(stream.effect.effect_tag, "std.io.stream");
     }
 
     #[test]

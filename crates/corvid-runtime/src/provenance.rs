@@ -6,6 +6,13 @@
 
 use serde::{Deserialize, Serialize};
 
+/// A value paired with an explicit provenance chain.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct GroundedValue<T> {
+    pub value: T,
+    pub provenance: ProvenanceChain,
+}
+
 /// The provenance chain: every retrieval source, prompt transformation,
 /// and agent handoff that a value passed through.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -95,6 +102,26 @@ impl ProvenanceChain {
 
     pub fn has_source(&self, name: &str) -> bool {
         self.entries.iter().any(|entry| entry.name == name)
+    }
+}
+
+impl<T> GroundedValue<T> {
+    pub fn new(value: T, provenance: ProvenanceChain) -> Self {
+        Self { value, provenance }
+    }
+
+    pub fn has_retrieval(&self) -> bool {
+        self.provenance.has_retrieval()
+    }
+
+    pub fn map<U, F>(self, map: F) -> GroundedValue<U>
+    where
+        F: FnOnce(T) -> U,
+    {
+        GroundedValue {
+            value: map(self.value),
+            provenance: self.provenance,
+        }
     }
 }
 

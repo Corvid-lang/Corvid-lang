@@ -1,5 +1,7 @@
 # Standard agent workflow envelopes.
 
+import "./effects" use EffectEnvelope, effect_envelope
+
 public type Classification:
     label: String
     confidence: Float
@@ -26,12 +28,14 @@ public type PlanStep:
     id: String
     instruction: String
     effect_summary: String
+    effect_meta: EffectEnvelope
 
 public type ToolUse:
     tool_name: String
     argument_summary: String
     approval_label: String
     approved: Bool
+    effect_meta: EffectEnvelope
 
 public type Critique:
     accepted: Bool
@@ -53,6 +57,7 @@ public type ActionRequest:
     argument_summary: String
     approval_label: String
     ready: Bool
+    effect_meta: EffectEnvelope
 
 public type ReviewVerdict:
     accepted: Bool
@@ -65,11 +70,13 @@ public type ToolLoopTurn:
     tool_name: String
     action_summary: String
     done: Bool
+    effect_meta: EffectEnvelope
 
 public type AnswerWithProvenance:
     answer: String
     provenance_key: String
     grounded: Bool
+    effect_meta: EffectEnvelope
 
 public agent classify(label: String, confidence: Float, threshold: Float) -> Classification:
     return Classification(label, confidence, threshold, confidence >= threshold)
@@ -87,10 +94,10 @@ public agent judge(winner: String, rationale: String, needs_human: Bool) -> Judg
     return Judgement(winner, rationale, needs_human)
 
 public agent plan_step(id: String, instruction: String, effect_summary: String) -> PlanStep:
-    return PlanStep(id, instruction, effect_summary)
+    return PlanStep(id, instruction, effect_summary, effect_envelope("std.agent.plan", "", "", "", "std.agent.plan"))
 
 public agent tool_use(tool_name: String, argument_summary: String, approval_label: String, approved: Bool) -> ToolUse:
-    return ToolUse(tool_name, argument_summary, approval_label, approved)
+    return ToolUse(tool_name, argument_summary, approval_label, approved, effect_envelope("std.agent.tool_use", "", approval_label, "", "std.agent.tool_use"))
 
 public agent critique(accepted: Bool, finding: String, revision_hint: String) -> Critique:
     return Critique(accepted, finding, revision_hint)
@@ -102,13 +109,13 @@ public agent route_decision(target: String, reason: String, needs_human: Bool) -
     return RouteDecision(target, reason, needs_human)
 
 public agent action_request(action_name: String, argument_summary: String, approval_label: String, ready: Bool) -> ActionRequest:
-    return ActionRequest(action_name, argument_summary, approval_label, ready)
+    return ActionRequest(action_name, argument_summary, approval_label, ready, effect_envelope("std.agent.action_request", "", approval_label, "", "std.agent.action_request"))
 
 public agent review_verdict(accepted: Bool, severity: String, comment: String) -> ReviewVerdict:
     return ReviewVerdict(accepted, severity, comment)
 
 public agent tool_loop_turn(turn_id: String, thought: String, tool_name: String, action_summary: String, done: Bool) -> ToolLoopTurn:
-    return ToolLoopTurn(turn_id, thought, tool_name, action_summary, done)
+    return ToolLoopTurn(turn_id, thought, tool_name, action_summary, done, effect_envelope("std.agent.tool_loop", "", "", "", "std.agent.tool_loop"))
 
 public agent answer_with_provenance(answer: String, provenance_key: String) -> AnswerWithProvenance:
-    return AnswerWithProvenance(answer, provenance_key, provenance_key != "")
+    return AnswerWithProvenance(answer, provenance_key, provenance_key != "", effect_envelope("std.agent.grounded_answer", provenance_key, "", "", "std.agent.grounded_answer"))

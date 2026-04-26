@@ -1,5 +1,7 @@
 # Standard structured I/O data envelopes.
 
+import "./effects" use EffectEnvelope, effect_envelope
+
 public type PathInfo:
     value: String
 
@@ -7,24 +9,27 @@ public type FileReadEnvelope:
     path_value: String
     contents: String
     bytes: Int
+    effect_meta: EffectEnvelope
 
 public type FileWriteEnvelope:
     path_value: String
     bytes: Int
+    effect_meta: EffectEnvelope
 
 public type DirectoryEntryEnvelope:
     path_value: String
     name: String
     is_dir: Bool
+    effect_meta: EffectEnvelope
 
 public agent path(value: String) -> PathInfo:
     return PathInfo(value)
 
 public agent file_read(path_value: String, contents: String, bytes: Int) -> FileReadEnvelope:
-    return FileReadEnvelope(path_value, contents, bytes)
+    return FileReadEnvelope(path_value, contents, bytes, effect_envelope("std.io.read", "", "", "", "std.io.read"))
 
 public agent file_write(path_value: String, bytes: Int) -> FileWriteEnvelope:
-    return FileWriteEnvelope(path_value, bytes)
+    return FileWriteEnvelope(path_value, bytes, effect_envelope("std.io.write", "", "filesystem.write", "", "std.io.write"))
 
 public agent directory_entry(path_value: String, name: String, is_dir: Bool) -> DirectoryEntryEnvelope:
-    return DirectoryEntryEnvelope(path_value, name, is_dir)
+    return DirectoryEntryEnvelope(path_value, name, is_dir, effect_envelope("std.io.list", "", "", "", "std.io.list"))

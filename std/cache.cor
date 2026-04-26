@@ -1,11 +1,14 @@
 # Standard cache metadata envelopes.
 
+import "./effects" use EffectEnvelope, effect_envelope
+
 public type CacheKeyEnvelope:
     namespace: String
     subject: String
     fingerprint: String
     effect_key: String
     provenance_key: String
+    effect_meta: EffectEnvelope
 
 public type CacheEntryEnvelope:
     namespace: String
@@ -13,12 +16,13 @@ public type CacheEntryEnvelope:
     fingerprint: String
     replay_safe: Bool
     invalidation_key: String
+    effect_meta: EffectEnvelope
 
 public agent cache_key(namespace: String, subject: String, fingerprint: String, effect_key: String, provenance_key: String) -> CacheKeyEnvelope:
-    return CacheKeyEnvelope(namespace, subject, fingerprint, effect_key, provenance_key)
+    return CacheKeyEnvelope(namespace, subject, fingerprint, effect_key, provenance_key, effect_envelope("std.cache.key", provenance_key, "", fingerprint, "std.cache.key"))
 
 public agent cache_entry(key: CacheKeyEnvelope, replay_safe: Bool, invalidation_key: String) -> CacheEntryEnvelope:
-    return CacheEntryEnvelope(key.namespace, key.subject, key.fingerprint, replay_safe, invalidation_key)
+    return CacheEntryEnvelope(key.namespace, key.subject, key.fingerprint, replay_safe, invalidation_key, effect_envelope("std.cache.entry", key.provenance_key, "", key.fingerprint, "std.cache.entry"))
 
 public agent cache_hit(entry: CacheEntryEnvelope) -> Bool:
     return entry.replay_safe and entry.fingerprint != ""

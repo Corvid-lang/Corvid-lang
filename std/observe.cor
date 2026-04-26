@@ -1,9 +1,12 @@
 # Standard observability envelopes.
 
+import "./effects" use EffectEnvelope, effect_envelope
+
 public type MetricCounter:
     name: String
     value: Float
     unit: String
+    effect_meta: EffectEnvelope
 
 public type CostCounter:
     llm_calls: Int
@@ -11,23 +14,27 @@ public type CostCounter:
     completion_tokens: Int
     total_tokens: Int
     cost_usd: Float
+    effect_meta: EffectEnvelope
 
 public type LatencyHistogram:
     name: String
     p50_ms: Int
     p95_ms: Int
     p99_ms: Int
+    effect_meta: EffectEnvelope
 
 public type RoutingDecision:
     prompt_name: String
     from_model: String
     to_model: String
     reason: String
+    effect_meta: EffectEnvelope
 
 public type ApprovalSummary:
     label: String
     approved: Int
     denied: Int
+    effect_meta: EffectEnvelope
 
 public type RuntimeObservationSummary:
     llm_calls: Int
@@ -36,21 +43,22 @@ public type RuntimeObservationSummary:
     cost_usd: Float
     provider_count: Int
     degraded_provider_count: Int
+    effect_meta: EffectEnvelope
 
 public agent metric_counter(name: String, value: Float, unit: String) -> MetricCounter:
-    return MetricCounter(name, value, unit)
+    return MetricCounter(name, value, unit, effect_envelope("std.observe.metric", "", "", "", "std.observe.metric"))
 
 public agent cost_counter(llm_calls: Int, prompt_tokens: Int, completion_tokens: Int, total_tokens: Int, cost_usd: Float) -> CostCounter:
-    return CostCounter(llm_calls, prompt_tokens, completion_tokens, total_tokens, cost_usd)
+    return CostCounter(llm_calls, prompt_tokens, completion_tokens, total_tokens, cost_usd, effect_envelope("std.observe.cost", "", "", "", "std.observe.cost"))
 
 public agent latency_histogram(name: String, p50_ms: Int, p95_ms: Int, p99_ms: Int) -> LatencyHistogram:
-    return LatencyHistogram(name, p50_ms, p95_ms, p99_ms)
+    return LatencyHistogram(name, p50_ms, p95_ms, p99_ms, effect_envelope("std.observe.latency", "", "", "", "std.observe.latency"))
 
 public agent routing_decision(prompt_name: String, from_model: String, to_model: String, reason: String) -> RoutingDecision:
-    return RoutingDecision(prompt_name, from_model, to_model, reason)
+    return RoutingDecision(prompt_name, from_model, to_model, reason, effect_envelope("std.observe.route", "", "", "", "std.observe.route"))
 
 public agent approval_summary(label: String, approved: Int, denied: Int) -> ApprovalSummary:
-    return ApprovalSummary(label, approved, denied)
+    return ApprovalSummary(label, approved, denied, effect_envelope("std.observe.approval", "", "", "", "std.observe.approval"))
 
 public agent runtime_summary(llm_calls: Int, local_llm_calls: Int, total_tokens: Int, cost_usd: Float, provider_count: Int, degraded_provider_count: Int) -> RuntimeObservationSummary:
-    return RuntimeObservationSummary(llm_calls, local_llm_calls, total_tokens, cost_usd, provider_count, degraded_provider_count)
+    return RuntimeObservationSummary(llm_calls, local_llm_calls, total_tokens, cost_usd, provider_count, degraded_provider_count, effect_envelope("std.observe.runtime", "", "", "", "std.observe.runtime"))

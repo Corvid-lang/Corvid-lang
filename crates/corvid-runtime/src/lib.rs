@@ -123,7 +123,7 @@ pub use http::{
     record_exchange, request_fingerprint, HttpClient, HttpHeader, HttpRequest, HttpResponse,
     HttpRetryPolicy, RecordedHttpExchange,
 };
-pub use io::{DirectoryEntry, FileRead, FileWrite, IoRuntime, TextLineStream};
+pub use io::{DirectoryEntry, FileRead, FileSystemEffect, FileWrite, IoRuntime, TextLineStream};
 pub use llm::{
     anthropic::AnthropicAdapter,
     gemini::GeminiAdapter,
@@ -139,11 +139,12 @@ pub use observe::{
     runtime_observation_summary, ApprovalObservationSummary, LatencyObservation,
     ProviderObservation, RouteObservationSummary, RuntimeObservationSummary,
 };
-pub use provenance::{ProvenanceChain, ProvenanceEntry, ProvenanceKind};
+pub use provenance::{GroundedValue, ProvenanceChain, ProvenanceEntry, ProvenanceKind};
 pub use queue::{DurableQueueRuntime, QueueJob, QueueJobStatus, QueueRuntime};
 pub use rag::{
-    chunk_document, document_from_text, load_html, load_markdown, load_pdf, EmbedderConfig, EmbeddingVector,
-    OllamaEmbedder, OpenAiEmbedder, RagChunk, RagDocument, RagEmbedder, RagSqliteIndex,
+    chunk_document, chunk_document_with_config, document_from_text, load_html, load_markdown,
+    load_pdf, EmbedderConfig, EmbeddingVector, OllamaEmbedder, OpenAiEmbedder, RagChunk,
+    RagChunkingConfig, RagDocument, RagEmbedder, RagEmbeddingRecord, RagSearchHit, RagSqliteIndex,
     OLLAMA_EMBEDDING_BASE, OPENAI_EMBEDDING_BASE,
 };
 pub use record::Recorder;

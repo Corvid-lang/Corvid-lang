@@ -1,10 +1,13 @@
 # Standard retrieval-augmented generation envelopes.
 
+import "./effects" use EffectEnvelope, effect_envelope
+
 public type RagDocumentEnvelope:
     id: String
     source: String
     media_type: String
     text: String
+    effect_meta: EffectEnvelope
 
 public type RagChunkEnvelope:
     doc_id: String
@@ -14,23 +17,33 @@ public type RagChunkEnvelope:
     start_char: Int
     end_char: Int
     provenance_key: String
+    effect_meta: EffectEnvelope
+
+public type RetrievedRagChunkEnvelope:
+    chunk: RagChunkEnvelope
+    grounded: Bool
+    source_name: String
 
 public type EmbedderEnvelope:
     provider: String
     model_name: String
     endpoint: String
+    effect_meta: EffectEnvelope
 
 public agent rag_document(id: String, source: String, media_type: String, text: String) -> RagDocumentEnvelope:
-    return RagDocumentEnvelope(id, source, media_type, text)
+    return RagDocumentEnvelope(id, source, media_type, text, effect_envelope("std.rag.document", "", "", "", "std.rag.document"))
 
 public agent rag_chunk(doc_id: String, chunk_id: String, source: String, text: String, start_char: Int, end_char: Int, provenance_key: String) -> RagChunkEnvelope:
-    return RagChunkEnvelope(doc_id, chunk_id, source, text, start_char, end_char, provenance_key)
+    return RagChunkEnvelope(doc_id, chunk_id, source, text, start_char, end_char, provenance_key, effect_envelope("std.rag.chunk", provenance_key, "", "", "std.rag.chunk"))
+
+public agent retrieved_chunk(chunk: RagChunkEnvelope, source_name: String) -> RetrievedRagChunkEnvelope:
+    return RetrievedRagChunkEnvelope(chunk, chunk.provenance_key != "", source_name)
 
 public agent openai_embedder(model_name: String) -> EmbedderEnvelope:
-    return EmbedderEnvelope("openai", model_name, "")
+    return EmbedderEnvelope("openai", model_name, "", effect_envelope("std.rag.embed", "", "", "", "std.rag.embed"))
 
 public agent ollama_embedder(model_name: String, endpoint: String) -> EmbedderEnvelope:
-    return EmbedderEnvelope("ollama", model_name, endpoint)
+    return EmbedderEnvelope("ollama", model_name, endpoint, effect_envelope("std.rag.embed", "", "", "", "std.rag.embed"))
 
 public agent chunk_is_grounded(chunk: RagChunkEnvelope) -> Bool:
     return chunk.provenance_key != ""
