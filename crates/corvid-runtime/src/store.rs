@@ -55,7 +55,15 @@ pub trait StoreBackend: Send + Sync {
         store: &str,
         key: &str,
         record: StoreRecord,
-    ) -> Result<(), RuntimeError>;
+    ) -> Result<StoreRecord, RuntimeError>;
+    fn put_record_if_revision(
+        &self,
+        kind: StoreKind,
+        store: &str,
+        key: &str,
+        expected_revision: u64,
+        record: StoreRecord,
+    ) -> Result<StoreRecord, RuntimeError>;
     fn delete(&self, kind: StoreKind, store: &str, key: &str) -> Result<(), RuntimeError>;
 
     fn get(&self, kind: StoreKind, store: &str, key: &str) -> Result<Option<Value>, RuntimeError> {
@@ -63,7 +71,8 @@ pub trait StoreBackend: Send + Sync {
     }
 
     fn put(&self, kind: StoreKind, store: &str, key: &str, value: Value) -> Result<(), RuntimeError> {
-        self.put_record(kind, store, key, StoreRecord::plain(value))
+        self.put_record(kind, store, key, StoreRecord::plain(value))?;
+        Ok(())
     }
 }
 
@@ -72,6 +81,8 @@ pub struct StoreRecord {
     pub value: Value,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub provenance: Option<ProvenanceChain>,
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub revision: u64,
 }
 
 impl StoreRecord {
@@ -79,6 +90,7 @@ impl StoreRecord {
         Self {
             value,
             provenance: None,
+            revision: 0,
         }
     }
 
@@ -86,7 +98,13 @@ impl StoreRecord {
         Self {
             value,
             provenance: Some(provenance),
+            revision: 0,
         }
+    }
+
+    fn with_revision(mut self, revision: u64) -> Self {
+        self.revision = revision;
+        self
     }
 }
 
@@ -148,8 +166,20 @@ impl StoreManager {
         store: &str,
         key: &str,
         record: StoreRecord,
-    ) -> Result<(), RuntimeError> {
+    ) -> Result<StoreRecord, RuntimeError> {
         self.backend.put_record(kind, store, key, record)
+    }
+
+    pub fn put_record_if_revision(
+        &self,
+        kind: StoreKind,
+        store: &str,
+        key: &str,
+        expected_revision: u64,
+        record: StoreRecord,
+    ) -> Result<StoreRecord, RuntimeError> {
+        self.backend
+            .put_record_if_revision(kind, store, key, expected_revision, record)
     }
 
     pub fn delete(&self, kind: StoreKind, store: &str, key: &str) -> Result<(), RuntimeError> {
@@ -179,10 +209,41 @@ impl StoreBackend for InMemoryStoreBackend {
         store: &str,
         key: &str,
         record: StoreRecord,
-    ) -> Result<(), RuntimeError> {
+    ) -> Result<StoreRecord, RuntimeError> {
         let mut values = self.values.lock().map_err(store_lock_error)?;
-        values.insert(StoreKey::new(kind, store, key), record);
-        Ok(())
+        let store_key = StoreKey::new(kind, store, key);
+        let next_revision = values
+            .get(&store_key)
+            .map(|existing| existing.revision.saturating_add(1))
+            .unwrap_or(1);
+        let record = record.with_revision(next_revision);
+        values.insert(store_key, record.clone());
+        Ok(record)
+    }
+
+    fn put_record_if_revision(
+        &self,
+        kind: StoreKind,
+        store: &str,
+        key: &str,
+        expected_revision: u64,
+        record: StoreRecord,
+    ) -> Result<StoreRecord, RuntimeError> {
+        let mut values = self.values.lock().map_err(store_lock_error)?;
+        let store_key = StoreKey::new(kind, store, key);
+        let actual_revision = values.get(&store_key).map(|existing| existing.revision);
+        if actual_revision != Some(expected_revision) {
+            return Err(store_conflict(
+                kind,
+                store,
+                key,
+                expected_revision,
+                actual_revision,
+            ));
+        }
+        let record = record.with_revision(expected_revision.saturating_add(1));
+        values.insert(store_key, record.clone());
+        Ok(record)
     }
 
     fn delete(&self, kind: StoreKind, store: &str, key: &str) -> Result<(), RuntimeError> {
@@ -207,6 +268,7 @@ impl SqliteStoreBackend {
                 key TEXT NOT NULL,
                 value_json TEXT NOT NULL,
                 provenance_json TEXT,
+                revision INTEGER NOT NULL DEFAULT 1,
                 updated_at_ms INTEGER NOT NULL,
                 PRIMARY KEY (kind, store, key)
             );
@@ -214,6 +276,10 @@ impl SqliteStoreBackend {
         )
         .map_err(sqlite_error)?;
         let _ = conn.execute("ALTER TABLE corvid_store ADD COLUMN provenance_json TEXT", []);
+        let _ = conn.execute(
+            "ALTER TABLE corvid_store ADD COLUMN revision INTEGER NOT NULL DEFAULT 1",
+            [],
+        );
         Ok(Self {
             conn: Mutex::new(conn),
         })
@@ -230,12 +296,16 @@ impl StoreBackend for SqliteStoreBackend {
         let conn = self.conn.lock().map_err(store_lock_error)?;
         let mut stmt = conn
             .prepare(
-                "SELECT value_json, provenance_json FROM corvid_store WHERE kind = ?1 AND store = ?2 AND key = ?3",
+                "SELECT value_json, provenance_json, revision FROM corvid_store WHERE kind = ?1 AND store = ?2 AND key = ?3",
             )
             .map_err(sqlite_error)?;
         let row = stmt
             .query_row((kind.as_str(), store, key), |row| {
-                Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?))
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, Option<String>>(1)?,
+                    row.get::<_, i64>(2)?,
+                ))
             })
             .map(Some)
             .or_else(|err| {
@@ -245,12 +315,16 @@ impl StoreBackend for SqliteStoreBackend {
                     Err(sqlite_error(err))
                 }
             })?;
-        row.map(|(value_json, provenance_json)| {
+        row.map(|(value_json, provenance_json, revision)| {
             let value = serde_json::from_str(&value_json).map_err(store_json_error)?;
             let provenance = provenance_json
                 .map(|json| serde_json::from_str(&json).map_err(store_json_error))
                 .transpose()?;
-            Ok(StoreRecord { value, provenance })
+            Ok(StoreRecord {
+                value,
+                provenance,
+                revision: revision.max(0) as u64,
+            })
         })
         .transpose()
     }
@@ -261,7 +335,7 @@ impl StoreBackend for SqliteStoreBackend {
         store: &str,
         key: &str,
         record: StoreRecord,
-    ) -> Result<(), RuntimeError> {
+    ) -> Result<StoreRecord, RuntimeError> {
         let value_json = serde_json::to_string(&record.value).map_err(store_json_error)?;
         let provenance_json = record
             .provenance
@@ -270,13 +344,18 @@ impl StoreBackend for SqliteStoreBackend {
             .transpose()
             .map_err(store_json_error)?;
         let conn = self.conn.lock().map_err(store_lock_error)?;
+        let current_revision = sqlite_current_revision(&conn, kind, store, key)?;
+        let next_revision = current_revision
+            .map(|revision| revision.saturating_add(1))
+            .unwrap_or(1);
         conn.execute(
             r#"
-            INSERT INTO corvid_store (kind, store, key, value_json, provenance_json, updated_at_ms)
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+            INSERT INTO corvid_store (kind, store, key, value_json, provenance_json, revision, updated_at_ms)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
             ON CONFLICT(kind, store, key)
             DO UPDATE SET value_json = excluded.value_json,
                           provenance_json = excluded.provenance_json,
+                          revision = excluded.revision,
                           updated_at_ms = excluded.updated_at_ms
             "#,
             (
@@ -285,11 +364,63 @@ impl StoreBackend for SqliteStoreBackend {
                 key,
                 value_json,
                 provenance_json,
+                next_revision as i64,
                 crate::tracing::now_ms() as i64,
             ),
         )
         .map_err(sqlite_error)?;
-        Ok(())
+        Ok(record.with_revision(next_revision))
+    }
+
+    fn put_record_if_revision(
+        &self,
+        kind: StoreKind,
+        store: &str,
+        key: &str,
+        expected_revision: u64,
+        record: StoreRecord,
+    ) -> Result<StoreRecord, RuntimeError> {
+        let value_json = serde_json::to_string(&record.value).map_err(store_json_error)?;
+        let provenance_json = record
+            .provenance
+            .as_ref()
+            .map(serde_json::to_string)
+            .transpose()
+            .map_err(store_json_error)?;
+        let conn = self.conn.lock().map_err(store_lock_error)?;
+        let actual_revision = sqlite_current_revision(&conn, kind, store, key)?;
+        if actual_revision != Some(expected_revision) {
+            return Err(store_conflict(
+                kind,
+                store,
+                key,
+                expected_revision,
+                actual_revision,
+            ));
+        }
+        let next_revision = expected_revision.saturating_add(1);
+        conn.execute(
+            r#"
+            UPDATE corvid_store
+            SET value_json = ?4,
+                provenance_json = ?5,
+                revision = ?6,
+                updated_at_ms = ?7
+            WHERE kind = ?1 AND store = ?2 AND key = ?3 AND revision = ?8
+            "#,
+            (
+                kind.as_str(),
+                store,
+                key,
+                value_json,
+                provenance_json,
+                next_revision as i64,
+                crate::tracing::now_ms() as i64,
+                expected_revision as i64,
+            ),
+        )
+        .map_err(sqlite_error)?;
+        Ok(record.with_revision(next_revision))
     }
 
     fn delete(&self, kind: StoreKind, store: &str, key: &str) -> Result<(), RuntimeError> {
@@ -330,6 +461,47 @@ fn store_json_error(err: serde_json::Error) -> RuntimeError {
 
 fn store_lock_error<T>(err: std::sync::PoisonError<T>) -> RuntimeError {
     RuntimeError::Other(format!("store lock poisoned: {err}"))
+}
+
+fn is_zero(value: &u64) -> bool {
+    *value == 0
+}
+
+fn store_conflict(
+    kind: StoreKind,
+    store: &str,
+    key: &str,
+    expected_revision: u64,
+    actual_revision: Option<u64>,
+) -> RuntimeError {
+    RuntimeError::StoreConflict {
+        kind: kind.as_str().to_string(),
+        store: store.to_string(),
+        key: key.to_string(),
+        expected_revision,
+        actual_revision,
+    }
+}
+
+fn sqlite_current_revision(
+    conn: &rusqlite::Connection,
+    kind: StoreKind,
+    store: &str,
+    key: &str,
+) -> Result<Option<u64>, RuntimeError> {
+    conn.query_row(
+        "SELECT revision FROM corvid_store WHERE kind = ?1 AND store = ?2 AND key = ?3",
+        (kind.as_str(), store, key),
+        |row| row.get::<_, i64>(0),
+    )
+    .map(|revision| Some(revision.max(0) as u64))
+    .or_else(|err| {
+        if matches!(err, rusqlite::Error::QueryReturnedNoRows) {
+            Ok(None)
+        } else {
+            Err(sqlite_error(err))
+        }
+    })
 }
 
 #[cfg(test)]
@@ -398,9 +570,66 @@ mod tests {
             .expect("get record")
             .expect("record present");
         assert_eq!(record.value, json!({"fact": "likes quiet"}));
+        assert_eq!(record.revision, 1);
         let restored = record.provenance.expect("provenance");
         assert_eq!(restored.entries.len(), 1);
         assert_eq!(restored.entries[0].kind, ProvenanceKind::Retrieval);
         assert_eq!(restored.entries[0].name, "lookup_profile");
+    }
+
+    #[test]
+    fn sqlite_store_rejects_stale_revision_writes() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("corvid-store.sqlite3");
+        let store = StoreManager::sqlite(&path).expect("open sqlite store");
+
+        let first = store
+            .put_record(
+                StoreKind::Memory,
+                "Profile",
+                "user-1",
+                StoreRecord::plain(json!({"fact": "alpha"})),
+            )
+            .expect("put first");
+        assert_eq!(first.revision, 1);
+
+        let second = store
+            .put_record_if_revision(
+                StoreKind::Memory,
+                "Profile",
+                "user-1",
+                first.revision,
+                StoreRecord::plain(json!({"fact": "beta"})),
+            )
+            .expect("put second");
+        assert_eq!(second.revision, 2);
+
+        let stale = store
+            .put_record_if_revision(
+                StoreKind::Memory,
+                "Profile",
+                "user-1",
+                first.revision,
+                StoreRecord::plain(json!({"fact": "stale"})),
+            )
+            .expect_err("stale write must fail");
+        match stale {
+            RuntimeError::StoreConflict {
+                expected_revision,
+                actual_revision,
+                ..
+            } => {
+                assert_eq!(expected_revision, 1);
+                assert_eq!(actual_revision, Some(2));
+            }
+            other => panic!("unexpected error: {other}"),
+        }
+
+        assert_eq!(
+            store
+                .get(StoreKind::Memory, "Profile", "user-1")
+                .expect("get current"),
+            Some(json!({"fact": "beta"}))
+        );
     }
 }

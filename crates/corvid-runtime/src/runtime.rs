@@ -201,10 +201,29 @@ impl Runtime {
         store: &str,
         key: &str,
         record: StoreRecord,
-    ) -> Result<(), RuntimeError> {
-        self.stores.put_record(kind, store, key, record)?;
+    ) -> Result<StoreRecord, RuntimeError> {
+        let record = self.stores.put_record(kind, store, key, record)?;
         self.emit_store_event("put", kind, store, key, None);
-        Ok(())
+        Ok(record)
+    }
+
+    pub fn store_put_record_if_revision(
+        &self,
+        kind: StoreKind,
+        store: &str,
+        key: &str,
+        expected_revision: u64,
+        record: StoreRecord,
+    ) -> Result<StoreRecord, RuntimeError> {
+        let record = self.stores.put_record_if_revision(
+            kind,
+            store,
+            key,
+            expected_revision,
+            record,
+        )?;
+        self.emit_store_event("put", kind, store, key, None);
+        Ok(record)
     }
 
     pub fn store_delete(&self, kind: StoreKind, store: &str, key: &str) -> Result<(), RuntimeError> {
@@ -1080,7 +1099,7 @@ mod tests {
             .expect("sqlite store")
             .build();
 
-        runtime
+        let written = runtime
             .store_put_record(
                 StoreKind::Memory,
                 "Profile",
@@ -1091,6 +1110,7 @@ mod tests {
                 ),
             )
             .expect("put record");
+        assert_eq!(written.revision, 1);
 
         let record = runtime
             .store_get_record(StoreKind::Memory, "Profile", "user-1")
@@ -1101,6 +1121,50 @@ mod tests {
         assert_eq!(provenance.entries.len(), 1);
         assert_eq!(provenance.entries[0].kind, ProvenanceKind::Retrieval);
         assert_eq!(provenance.entries[0].name, "profile_search");
+    }
+
+    #[test]
+    fn runtime_store_record_api_rejects_stale_revision() {
+        let runtime = Runtime::builder().build();
+        let first = runtime
+            .store_put_record(
+                StoreKind::Memory,
+                "Profile",
+                "user-1",
+                StoreRecord::plain(json!({"fact": "alpha"})),
+            )
+            .expect("put first");
+        let second = runtime
+            .store_put_record_if_revision(
+                StoreKind::Memory,
+                "Profile",
+                "user-1",
+                first.revision,
+                StoreRecord::plain(json!({"fact": "beta"})),
+            )
+            .expect("put second");
+        assert_eq!(second.revision, 2);
+
+        let err = runtime
+            .store_put_record_if_revision(
+                StoreKind::Memory,
+                "Profile",
+                "user-1",
+                first.revision,
+                StoreRecord::plain(json!({"fact": "stale"})),
+            )
+            .expect_err("stale write must fail");
+        match err {
+            RuntimeError::StoreConflict {
+                expected_revision,
+                actual_revision,
+                ..
+            } => {
+                assert_eq!(expected_revision, 1);
+                assert_eq!(actual_revision, Some(2));
+            }
+            other => panic!("unexpected error: {other}"),
+        }
     }
 
     #[tokio::test]

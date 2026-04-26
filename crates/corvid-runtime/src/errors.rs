@@ -38,6 +38,15 @@ pub enum RuntimeError {
     /// Wire-format conversion failed (Value <-> JSON marshalling).
     Marshal(String),
 
+    /// A store write was based on a stale record revision.
+    StoreConflict {
+        kind: String,
+        store: String,
+        key: String,
+        expected_revision: u64,
+        actual_revision: Option<u64>,
+    },
+
     /// No model is configured for an LLM call. Hint to set `CORVID_MODEL`
     /// or pass `model=` per call.
     NoModelConfigured,
@@ -112,6 +121,19 @@ impl fmt::Display for RuntimeError {
             }
             Self::ApprovalFailed(msg) => write!(f, "approval flow failed: {msg}"),
             Self::Marshal(msg) => write!(f, "value marshalling failed: {msg}"),
+            Self::StoreConflict {
+                kind,
+                store,
+                key,
+                expected_revision,
+                actual_revision,
+            } => write!(
+                f,
+                "store conflict for {kind} `{store}` key `{key}`: expected revision {expected_revision}, found {}",
+                actual_revision
+                    .map(|revision| revision.to_string())
+                    .unwrap_or_else(|| "missing record".to_string())
+            ),
             Self::NoModelConfigured => write!(
                 f,
                 "no LLM model configured. Set CORVID_MODEL, add `default_model = \"...\"` to corvid.toml, or pass `model=` per call."
