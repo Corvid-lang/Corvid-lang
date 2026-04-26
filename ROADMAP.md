@@ -1570,7 +1570,7 @@ The determinism-source catalog and the language's treatment of non-reproducible 
 - `std.agent` — common AI patterns: classification, extraction, summarization, ranking, adjudication, routing, planning, tool-use loops, approval-gated action, review/critique, and grounded answer generation.
 - Everything in `std.*` effect-tagged so users get the moat's benefits from day one.
 - `std.queue` — durable background jobs for long-running AI tasks, with retry, cancellation, replay hooks, budget accounting, and effect summaries.
-- `std.cache` — prompt/model/tool-result caching with replay-safe invalidation, provenance preservation, and effect-aware cache keys.
+- [x] `std.cache` prompt/model/tool-result caching with replay-safe invalidation, provenance preservation, and effect-aware cache keys.
 - `std.secrets` — explicit secret access APIs whose reads compose into the effect system and are visible to audits without leaking secret values.
 - `std.observe` — metrics, trace counters, cost counters, latency histograms, routing decisions, and approval summaries exposed through one typed observability surface.
 

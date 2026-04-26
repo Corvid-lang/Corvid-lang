@@ -100,7 +100,8 @@ pub use approvals::{
 };
 pub use calibration::{CalibrationObservation, CalibrationStats};
 pub use cache::{
-    build_cache_key, cache_entry_metadata, CacheEntryMetadata, CacheKey, CacheKeyInput,
+    build_cache_key, cache_entry_metadata, CacheEntry, CacheEntryMetadata, CacheKey,
+    CacheKeyInput, CacheRuntime,
 };
 pub use capability_contract::{
     CapabilityCheckKind, CapabilityCheckStatus, CapabilityContractCheck, CapabilityContractOptions,

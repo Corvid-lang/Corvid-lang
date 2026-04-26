@@ -1,6 +1,7 @@
 use crate::errors::RuntimeError;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
+use std::collections::HashMap;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct CacheKeyInput {
@@ -27,6 +28,56 @@ pub struct CacheEntryMetadata {
     pub key: CacheKey,
     pub replay_safe: bool,
     pub invalidation_key: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct CacheEntry {
+    pub metadata: CacheEntryMetadata,
+    pub value: Value,
+}
+
+#[derive(Debug, Default, Clone)]
+pub struct CacheRuntime {
+    entries: HashMap<String, CacheEntry>,
+}
+
+impl CacheRuntime {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn put(
+        &mut self,
+        key: CacheKey,
+        value: Value,
+        replay_safe: bool,
+        invalidation_key: Option<String>,
+    ) -> CacheEntry {
+        let entry = CacheEntry {
+            metadata: cache_entry_metadata(key.clone(), replay_safe, invalidation_key),
+            value,
+        };
+        self.entries.insert(entry_id(&key), entry.clone());
+        entry
+    }
+
+    pub fn get(&self, key: &CacheKey) -> Option<&CacheEntry> {
+        self.entries.get(&entry_id(key))
+    }
+
+    pub fn invalidate_invalidation_key(&mut self, invalidation_key: &str) -> usize {
+        self.retain(|entry| entry.metadata.invalidation_key.as_deref() != Some(invalidation_key))
+    }
+
+    pub fn invalidate_provenance_key(&mut self, provenance_key: &str) -> usize {
+        self.retain(|entry| entry.metadata.key.provenance_key.as_deref() != Some(provenance_key))
+    }
+
+    fn retain(&mut self, predicate: impl Fn(&CacheEntry) -> bool) -> usize {
+        let before = self.entries.len();
+        self.entries.retain(|_, entry| predicate(entry));
+        before - self.entries.len()
+    }
 }
 
 pub fn build_cache_key(input: CacheKeyInput) -> Result<CacheKey, RuntimeError> {
@@ -86,6 +137,10 @@ fn encode_hex(bytes: &[u8]) -> String {
     out
 }
 
+fn entry_id(key: &CacheKey) -> String {
+    format!("{}:{}:{}", key.namespace, key.subject, key.fingerprint)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -124,5 +179,59 @@ mod tests {
         .unwrap_err();
 
         assert!(err.to_string().contains("namespace"));
+    }
+
+    #[test]
+    fn cache_runtime_preserves_provenance_and_invalidates_by_policy_key() {
+        let key = build_cache_key(CacheKeyInput {
+            namespace: "prompt".to_string(),
+            subject: "answer".to_string(),
+            model: Some("gpt".to_string()),
+            effect_key: Some("llm:hosted".to_string()),
+            provenance_key: Some("doc:123".to_string()),
+            version: Some("v1".to_string()),
+            args: serde_json::json!({"q": "hello"}),
+        })
+        .unwrap();
+        let mut cache = CacheRuntime::new();
+
+        let entry = cache.put(
+            key.clone(),
+            serde_json::json!({"text": "hi"}),
+            true,
+            Some("prompt:v1".to_string()),
+        );
+
+        assert_eq!(
+            cache
+                .get(&key)
+                .and_then(|stored| stored.metadata.key.provenance_key.as_deref()),
+            Some("doc:123")
+        );
+        assert_eq!(entry.metadata.invalidation_key.as_deref(), Some("prompt:v1"));
+
+        let removed = cache.invalidate_invalidation_key("prompt:v1");
+        assert_eq!(removed, 1);
+        assert!(cache.get(&key).is_none());
+    }
+
+    #[test]
+    fn cache_runtime_invalidates_by_provenance_key() {
+        let key = build_cache_key(CacheKeyInput {
+            namespace: "tool".to_string(),
+            subject: "lookup".to_string(),
+            model: None,
+            effect_key: Some("network".to_string()),
+            provenance_key: Some("doc:stale".to_string()),
+            version: None,
+            args: serde_json::json!({"id": 1}),
+        })
+        .unwrap();
+        let mut cache = CacheRuntime::new();
+        cache.put(key.clone(), serde_json::json!({"ok": true}), false, None);
+
+        let removed = cache.invalidate_provenance_key("doc:stale");
+        assert_eq!(removed, 1);
+        assert!(cache.get(&key).is_none());
     }
 }
