@@ -1306,7 +1306,7 @@ The determinism-source catalog and the language's treatment of non-reproducible 
 
 ---
 
-### Phase 22 — C ABI + library mode (~6–8 weeks)
+### Phase 22 — C ABI + library mode (~6–8 weeks) ✅ closed
 
 **Goal.** Embed Corvid in Rust, Python, Node, Go hosts — with the AI-safety guarantees (effects, approvals, provenance, budgets) surviving into the host's type system. Corvid isn't just a callable library; it's the only embeddable language whose compile-time AI-safety contracts are observable from the host.
 
