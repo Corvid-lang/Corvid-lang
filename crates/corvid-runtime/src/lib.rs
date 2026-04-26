@@ -118,7 +118,9 @@ pub use replay::{
     ReplayMutationReport, ReplaySource, RunCompletionDivergence, SubstitutionDivergence,
 };
 pub use runtime::{Runtime, RuntimeBuilder};
-pub use store::{InMemoryStoreBackend, SqliteStoreBackend, StoreBackend, StoreKind, StoreManager};
+pub use store::{
+    InMemoryStoreBackend, SqliteStoreBackend, StoreBackend, StoreKind, StoreManager, StoreRecord,
+};
 pub use test_from_traces::{
     run_test_from_traces, Divergence, FlakeRank, ModelSwapOutcome, PromoteDecision,
     PromotePromptMode, TestFromTracesOptions, TestFromTracesReport, TestFromTracesSummary,

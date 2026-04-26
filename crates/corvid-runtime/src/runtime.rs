@@ -16,7 +16,7 @@ use crate::models::{ModelCatalog, ModelSelection, RegisteredModel};
 use crate::prompt_cache::PromptCache;
 use crate::record::Recorder;
 use crate::replay::{ReplayDifferentialReport, ReplayMutationReport, ReplaySource};
-use crate::store::{StoreKind, StoreManager};
+use crate::store::{StoreKind, StoreManager, StoreRecord};
 use crate::tools::ToolRegistry;
 use crate::tracing::{fresh_run_id, now_ms, Tracer};
 use corvid_trace_schema::{TraceEvent, WRITER_INTERPRETER};
@@ -180,6 +180,29 @@ impl Runtime {
         value: serde_json::Value,
     ) -> Result<(), RuntimeError> {
         self.stores.put(kind, store, key, value)?;
+        self.emit_store_event("put", kind, store, key, None);
+        Ok(())
+    }
+
+    pub fn store_get_record(
+        &self,
+        kind: StoreKind,
+        store: &str,
+        key: &str,
+    ) -> Result<Option<StoreRecord>, RuntimeError> {
+        let record = self.stores.get_record(kind, store, key)?;
+        self.emit_store_event("get", kind, store, key, record.as_ref().map(|r| &r.value));
+        Ok(record)
+    }
+
+    pub fn store_put_record(
+        &self,
+        kind: StoreKind,
+        store: &str,
+        key: &str,
+        record: StoreRecord,
+    ) -> Result<(), RuntimeError> {
+        self.stores.put_record(kind, store, key, record)?;
         self.emit_store_event("put", kind, store, key, None);
         Ok(())
     }
@@ -994,6 +1017,7 @@ mod tests {
     use super::*;
     use crate::approvals::{ApprovalTokenScope, ProgrammaticApprover};
     use crate::llm::mock::MockAdapter;
+    use crate::provenance::{ProvenanceChain, ProvenanceKind};
     use serde_json::json;
 
     fn rt() -> Runtime {
@@ -1045,6 +1069,38 @@ mod tests {
                 .expect("get after reopen"),
             Some(json!({"topic": "shipping"}))
         );
+    }
+
+    #[test]
+    fn runtime_store_record_api_preserves_provenance() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("runtime-store.sqlite3");
+        let runtime = Runtime::builder()
+            .sqlite_store(&path)
+            .expect("sqlite store")
+            .build();
+
+        runtime
+            .store_put_record(
+                StoreKind::Memory,
+                "Profile",
+                "user-1",
+                StoreRecord::grounded(
+                    json!({"fact": "prefers morning updates"}),
+                    ProvenanceChain::with_retrieval("profile_search", 7),
+                ),
+            )
+            .expect("put record");
+
+        let record = runtime
+            .store_get_record(StoreKind::Memory, "Profile", "user-1")
+            .expect("get record")
+            .expect("record present");
+        assert_eq!(record.value, json!({"fact": "prefers morning updates"}));
+        let provenance = record.provenance.expect("provenance");
+        assert_eq!(provenance.entries.len(), 1);
+        assert_eq!(provenance.entries[0].kind, ProvenanceKind::Retrieval);
+        assert_eq!(provenance.entries[0].name, "profile_search");
     }
 
     #[tokio::test]

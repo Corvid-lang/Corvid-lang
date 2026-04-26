@@ -7,6 +7,7 @@
 //! backend with the same contract.
 
 use crate::errors::RuntimeError;
+use crate::provenance::ProvenanceChain;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::path::Path;
@@ -42,9 +43,51 @@ impl StoreKind {
 }
 
 pub trait StoreBackend: Send + Sync {
-    fn get(&self, kind: StoreKind, store: &str, key: &str) -> Result<Option<Value>, RuntimeError>;
-    fn put(&self, kind: StoreKind, store: &str, key: &str, value: Value) -> Result<(), RuntimeError>;
+    fn get_record(
+        &self,
+        kind: StoreKind,
+        store: &str,
+        key: &str,
+    ) -> Result<Option<StoreRecord>, RuntimeError>;
+    fn put_record(
+        &self,
+        kind: StoreKind,
+        store: &str,
+        key: &str,
+        record: StoreRecord,
+    ) -> Result<(), RuntimeError>;
     fn delete(&self, kind: StoreKind, store: &str, key: &str) -> Result<(), RuntimeError>;
+
+    fn get(&self, kind: StoreKind, store: &str, key: &str) -> Result<Option<Value>, RuntimeError> {
+        Ok(self.get_record(kind, store, key)?.map(|record| record.value))
+    }
+
+    fn put(&self, kind: StoreKind, store: &str, key: &str, value: Value) -> Result<(), RuntimeError> {
+        self.put_record(kind, store, key, StoreRecord::plain(value))
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct StoreRecord {
+    pub value: Value,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provenance: Option<ProvenanceChain>,
+}
+
+impl StoreRecord {
+    pub fn plain(value: Value) -> Self {
+        Self {
+            value,
+            provenance: None,
+        }
+    }
+
+    pub fn grounded(value: Value, provenance: ProvenanceChain) -> Self {
+        Self {
+            value,
+            provenance: Some(provenance),
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -90,6 +133,25 @@ impl StoreManager {
         self.backend.put(kind, store, key, value)
     }
 
+    pub fn get_record(
+        &self,
+        kind: StoreKind,
+        store: &str,
+        key: &str,
+    ) -> Result<Option<StoreRecord>, RuntimeError> {
+        self.backend.get_record(kind, store, key)
+    }
+
+    pub fn put_record(
+        &self,
+        kind: StoreKind,
+        store: &str,
+        key: &str,
+        record: StoreRecord,
+    ) -> Result<(), RuntimeError> {
+        self.backend.put_record(kind, store, key, record)
+    }
+
     pub fn delete(&self, kind: StoreKind, store: &str, key: &str) -> Result<(), RuntimeError> {
         self.backend.delete(kind, store, key)
     }
@@ -97,18 +159,29 @@ impl StoreManager {
 
 #[derive(Default)]
 pub struct InMemoryStoreBackend {
-    values: Mutex<HashMap<StoreKey, Value>>,
+    values: Mutex<HashMap<StoreKey, StoreRecord>>,
 }
 
 impl StoreBackend for InMemoryStoreBackend {
-    fn get(&self, kind: StoreKind, store: &str, key: &str) -> Result<Option<Value>, RuntimeError> {
+    fn get_record(
+        &self,
+        kind: StoreKind,
+        store: &str,
+        key: &str,
+    ) -> Result<Option<StoreRecord>, RuntimeError> {
         let values = self.values.lock().map_err(store_lock_error)?;
         Ok(values.get(&StoreKey::new(kind, store, key)).cloned())
     }
 
-    fn put(&self, kind: StoreKind, store: &str, key: &str, value: Value) -> Result<(), RuntimeError> {
+    fn put_record(
+        &self,
+        kind: StoreKind,
+        store: &str,
+        key: &str,
+        record: StoreRecord,
+    ) -> Result<(), RuntimeError> {
         let mut values = self.values.lock().map_err(store_lock_error)?;
-        values.insert(StoreKey::new(kind, store, key), value);
+        values.insert(StoreKey::new(kind, store, key), record);
         Ok(())
     }
 
@@ -133,12 +206,14 @@ impl SqliteStoreBackend {
                 store TEXT NOT NULL,
                 key TEXT NOT NULL,
                 value_json TEXT NOT NULL,
+                provenance_json TEXT,
                 updated_at_ms INTEGER NOT NULL,
                 PRIMARY KEY (kind, store, key)
             );
             "#,
         )
         .map_err(sqlite_error)?;
+        let _ = conn.execute("ALTER TABLE corvid_store ADD COLUMN provenance_json TEXT", []);
         Ok(Self {
             conn: Mutex::new(conn),
         })
@@ -146,15 +221,22 @@ impl SqliteStoreBackend {
 }
 
 impl StoreBackend for SqliteStoreBackend {
-    fn get(&self, kind: StoreKind, store: &str, key: &str) -> Result<Option<Value>, RuntimeError> {
+    fn get_record(
+        &self,
+        kind: StoreKind,
+        store: &str,
+        key: &str,
+    ) -> Result<Option<StoreRecord>, RuntimeError> {
         let conn = self.conn.lock().map_err(store_lock_error)?;
         let mut stmt = conn
             .prepare(
-                "SELECT value_json FROM corvid_store WHERE kind = ?1 AND store = ?2 AND key = ?3",
+                "SELECT value_json, provenance_json FROM corvid_store WHERE kind = ?1 AND store = ?2 AND key = ?3",
             )
             .map_err(sqlite_error)?;
-        let value_json = stmt
-            .query_row((kind.as_str(), store, key), |row| row.get::<_, String>(0))
+        let row = stmt
+            .query_row((kind.as_str(), store, key), |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?))
+            })
             .map(Some)
             .or_else(|err| {
                 if matches!(err, rusqlite::Error::QueryReturnedNoRows) {
@@ -163,20 +245,38 @@ impl StoreBackend for SqliteStoreBackend {
                     Err(sqlite_error(err))
                 }
             })?;
-        value_json
-            .map(|json| serde_json::from_str(&json).map_err(store_json_error))
-            .transpose()
+        row.map(|(value_json, provenance_json)| {
+            let value = serde_json::from_str(&value_json).map_err(store_json_error)?;
+            let provenance = provenance_json
+                .map(|json| serde_json::from_str(&json).map_err(store_json_error))
+                .transpose()?;
+            Ok(StoreRecord { value, provenance })
+        })
+        .transpose()
     }
 
-    fn put(&self, kind: StoreKind, store: &str, key: &str, value: Value) -> Result<(), RuntimeError> {
-        let value_json = serde_json::to_string(&value).map_err(store_json_error)?;
+    fn put_record(
+        &self,
+        kind: StoreKind,
+        store: &str,
+        key: &str,
+        record: StoreRecord,
+    ) -> Result<(), RuntimeError> {
+        let value_json = serde_json::to_string(&record.value).map_err(store_json_error)?;
+        let provenance_json = record
+            .provenance
+            .as_ref()
+            .map(serde_json::to_string)
+            .transpose()
+            .map_err(store_json_error)?;
         let conn = self.conn.lock().map_err(store_lock_error)?;
         conn.execute(
             r#"
-            INSERT INTO corvid_store (kind, store, key, value_json, updated_at_ms)
-            VALUES (?1, ?2, ?3, ?4, ?5)
+            INSERT INTO corvid_store (kind, store, key, value_json, provenance_json, updated_at_ms)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6)
             ON CONFLICT(kind, store, key)
             DO UPDATE SET value_json = excluded.value_json,
+                          provenance_json = excluded.provenance_json,
                           updated_at_ms = excluded.updated_at_ms
             "#,
             (
@@ -184,6 +284,7 @@ impl StoreBackend for SqliteStoreBackend {
                 store,
                 key,
                 value_json,
+                provenance_json,
                 crate::tracing::now_ms() as i64,
             ),
         )
@@ -234,6 +335,7 @@ fn store_lock_error<T>(err: std::sync::PoisonError<T>) -> RuntimeError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::provenance::ProvenanceKind;
     use serde_json::json;
 
     #[test]
@@ -273,5 +375,32 @@ mod tests {
                 .expect("get memory"),
             Some(json!({"preference": "quiet"}))
         );
+    }
+
+    #[test]
+    fn sqlite_store_preserves_provenance_records() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("corvid-store.sqlite3");
+        let store = StoreManager::sqlite(&path).expect("open sqlite store");
+        let provenance = ProvenanceChain::with_retrieval("lookup_profile", 42);
+
+        store
+            .put_record(
+                StoreKind::Memory,
+                "Profile",
+                "user-1",
+                StoreRecord::grounded(json!({"fact": "likes quiet"}), provenance.clone()),
+            )
+            .expect("put grounded memory");
+
+        let record = store
+            .get_record(StoreKind::Memory, "Profile", "user-1")
+            .expect("get record")
+            .expect("record present");
+        assert_eq!(record.value, json!({"fact": "likes quiet"}));
+        let restored = record.provenance.expect("provenance");
+        assert_eq!(restored.entries.len(), 1);
+        assert_eq!(restored.entries[0].kind, ProvenanceKind::Retrieval);
+        assert_eq!(restored.entries[0].name, "lookup_profile");
     }
 }
