@@ -498,7 +498,7 @@ Pre-phase chat caught two limiting shortcuts in my brief and reshaped the phase 
 
 ---
 
-### Phase 20 — Effect rigor + grounding + cost + streaming (~14–16 weeks) — **THE MOAT PHASE**
+### Phase 20 — Effect rigor + grounding + cost + streaming (~14–16 weeks) ✅ closed — **THE MOAT PHASE**
 
 **Goal.** The phase that defines what makes Corvid Corvid. All compile-time, all language-level. Shipped mid-roadmap, not saved for impact — every phase after this inherits the moat.
 
