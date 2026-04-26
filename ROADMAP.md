@@ -1329,7 +1329,7 @@ The determinism-source catalog and the language's treatment of non-reproducible 
 
 **Non-scope:** WASM (Phase 23). Language-level FFI imports of other languages.
 
-### Phase 23 — WASM target (~8–10 weeks)
+### Phase 23 — WASM target (~8–10 weeks) ✅ closed
 
 **Goal.** Deploy Corvid to browsers and edge runtimes.
 
