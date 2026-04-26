@@ -38,6 +38,34 @@ public type Critique:
     finding: String
     revision_hint: String
 
+public type Summary:
+    text: String
+    style: String
+    target_audience: String
+
+public type RouteDecision:
+    target: String
+    reason: String
+    needs_human: Bool
+
+public type ActionRequest:
+    action_name: String
+    argument_summary: String
+    approval_label: String
+    ready: Bool
+
+public type ReviewVerdict:
+    accepted: Bool
+    severity: String
+    comment: String
+
+public type ToolLoopTurn:
+    turn_id: String
+    thought: String
+    tool_name: String
+    action_summary: String
+    done: Bool
+
 public type AnswerWithProvenance:
     answer: String
     provenance_key: String
@@ -66,6 +94,21 @@ public agent tool_use(tool_name: String, argument_summary: String, approval_labe
 
 public agent critique(accepted: Bool, finding: String, revision_hint: String) -> Critique:
     return Critique(accepted, finding, revision_hint)
+
+public agent summarize(text: String, style: String, target_audience: String) -> Summary:
+    return Summary(text, style, target_audience)
+
+public agent route_decision(target: String, reason: String, needs_human: Bool) -> RouteDecision:
+    return RouteDecision(target, reason, needs_human)
+
+public agent action_request(action_name: String, argument_summary: String, approval_label: String, ready: Bool) -> ActionRequest:
+    return ActionRequest(action_name, argument_summary, approval_label, ready)
+
+public agent review_verdict(accepted: Bool, severity: String, comment: String) -> ReviewVerdict:
+    return ReviewVerdict(accepted, severity, comment)
+
+public agent tool_loop_turn(turn_id: String, thought: String, tool_name: String, action_summary: String, done: Bool) -> ToolLoopTurn:
+    return ToolLoopTurn(turn_id, thought, tool_name, action_summary, done)
 
 public agent answer_with_provenance(answer: String, provenance_key: String) -> AnswerWithProvenance:
     return AnswerWithProvenance(answer, provenance_key, provenance_key != "")

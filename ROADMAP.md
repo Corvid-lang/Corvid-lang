@@ -1567,9 +1567,9 @@ The determinism-source catalog and the language's treatment of non-reproducible 
 - `std.http` — typed HTTP client with effect tags, retry semantics, timeout/budget accounting, and replay hooks where responses are recorded.
 - [x] `std.io` path helpers in the runtime: join, parent, filename, extension, extension replacement, and lexical normalization.
 - `std.io` remaining runtime pieces: streaming surfaces and explicit filesystem-effect plumbing.
-- `std.agent` — common AI patterns: classification, extraction, summarization, ranking, adjudication, routing, planning, tool-use loops, approval-gated action, review/critique, and grounded answer generation.
+- [x] `std.agent` common AI patterns: classification, extraction, summarization, ranking, adjudication, routing, planning, tool-use loops, approval-gated action, review/critique, and grounded answer generation.
 - Everything in `std.*` effect-tagged so users get the moat's benefits from day one.
-- `std.queue` — durable background jobs for long-running AI tasks, with retry, cancellation, replay hooks, budget accounting, and effect summaries.
+- [x] `std.queue` durable background jobs for long-running AI tasks, with retry, cancellation, replay hooks, budget accounting, and effect summaries.
 - [x] `std.cache` prompt/model/tool-result caching with replay-safe invalidation, provenance preservation, and effect-aware cache keys.
 - `std.secrets` — explicit secret access APIs whose reads compose into the effect system and are visible to audits without leaking secret values.
 - `std.observe` — metrics, trace counters, cost counters, latency histograms, routing decisions, and approval summaries exposed through one typed observability surface.
