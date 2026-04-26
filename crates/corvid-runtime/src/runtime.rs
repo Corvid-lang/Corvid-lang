@@ -16,7 +16,7 @@ use crate::models::{ModelCatalog, ModelSelection, RegisteredModel};
 use crate::prompt_cache::PromptCache;
 use crate::record::Recorder;
 use crate::replay::{ReplayDifferentialReport, ReplayMutationReport, ReplaySource};
-use crate::store::{StoreKind, StoreManager, StoreRecord};
+use crate::store::{StoreKind, StoreManager, StorePolicySet, StoreRecord};
 use crate::tools::ToolRegistry;
 use crate::tracing::{fresh_run_id, now_ms, Tracer};
 use corvid_trace_schema::{TraceEvent, WRITER_INTERPRETER};
@@ -195,6 +195,20 @@ impl Runtime {
         Ok(record)
     }
 
+    pub fn store_get_record_with_policy(
+        &self,
+        kind: StoreKind,
+        store: &str,
+        key: &str,
+        policy: &StorePolicySet,
+    ) -> Result<Option<StoreRecord>, RuntimeError> {
+        let record = self
+            .stores
+            .get_record_with_policy(kind, store, key, policy)?;
+        self.emit_store_event("get", kind, store, key, record.as_ref().map(|r| &r.value));
+        Ok(record)
+    }
+
     pub fn store_put_record(
         &self,
         kind: StoreKind,
@@ -228,6 +242,18 @@ impl Runtime {
 
     pub fn store_delete(&self, kind: StoreKind, store: &str, key: &str) -> Result<(), RuntimeError> {
         self.stores.delete(kind, store, key)?;
+        self.emit_store_event("delete", kind, store, key, None);
+        Ok(())
+    }
+
+    pub fn store_delete_with_policy(
+        &self,
+        kind: StoreKind,
+        store: &str,
+        key: &str,
+        policy: &StorePolicySet,
+    ) -> Result<(), RuntimeError> {
+        self.stores.delete_with_policy(kind, store, key, policy)?;
         self.emit_store_event("delete", kind, store, key, None);
         Ok(())
     }
@@ -1162,6 +1188,59 @@ mod tests {
             } => {
                 assert_eq!(expected_revision, 1);
                 assert_eq!(actual_revision, Some(2));
+            }
+            other => panic!("unexpected error: {other}"),
+        }
+    }
+
+    #[test]
+    fn runtime_store_policy_ttl_expires_records_on_read() {
+        let runtime = Runtime::builder().build();
+        runtime
+            .store_put(
+                StoreKind::Session,
+                "Conversation",
+                "thread-1",
+                json!({"topic": "shipping"}),
+            )
+            .expect("put");
+
+        assert_eq!(
+            runtime
+                .store_get_record_with_policy(
+                    StoreKind::Session,
+                    "Conversation",
+                    "thread-1",
+                    &StorePolicySet::ttl_ms(0),
+                )
+                .expect("get with ttl"),
+            None
+        );
+    }
+
+    #[test]
+    fn runtime_store_policy_legal_hold_blocks_delete() {
+        let runtime = Runtime::builder().build();
+        runtime
+            .store_put(
+                StoreKind::Memory,
+                "Profile",
+                "user-1",
+                json!({"fact": "protected"}),
+            )
+            .expect("put");
+
+        let err = runtime
+            .store_delete_with_policy(
+                StoreKind::Memory,
+                "Profile",
+                "user-1",
+                &StorePolicySet::legal_hold(),
+            )
+            .expect_err("delete must be blocked");
+        match err {
+            RuntimeError::StorePolicyViolation { policy, .. } => {
+                assert_eq!(policy, "legal_hold");
             }
             other => panic!("unexpected error: {other}"),
         }

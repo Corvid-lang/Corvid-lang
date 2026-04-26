@@ -47,6 +47,15 @@ pub enum RuntimeError {
         actual_revision: Option<u64>,
     },
 
+    /// A store operation violated a declared store policy.
+    StorePolicyViolation {
+        kind: String,
+        store: String,
+        key: String,
+        policy: String,
+        message: String,
+    },
+
     /// No model is configured for an LLM call. Hint to set `CORVID_MODEL`
     /// or pass `model=` per call.
     NoModelConfigured,
@@ -133,6 +142,16 @@ impl fmt::Display for RuntimeError {
                 actual_revision
                     .map(|revision| revision.to_string())
                     .unwrap_or_else(|| "missing record".to_string())
+            ),
+            Self::StorePolicyViolation {
+                kind,
+                store,
+                key,
+                policy,
+                message,
+            } => write!(
+                f,
+                "store policy `{policy}` rejected {kind} `{store}` key `{key}`: {message}"
             ),
             Self::NoModelConfigured => write!(
                 f,

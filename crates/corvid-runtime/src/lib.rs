@@ -119,7 +119,8 @@ pub use replay::{
 };
 pub use runtime::{Runtime, RuntimeBuilder};
 pub use store::{
-    InMemoryStoreBackend, SqliteStoreBackend, StoreBackend, StoreKind, StoreManager, StoreRecord,
+    InMemoryStoreBackend, SqliteStoreBackend, StoreBackend, StoreKind, StoreManager,
+    StorePolicySet, StoreRecord,
 };
 pub use test_from_traces::{
     run_test_from_traces, Divergence, FlakeRank, ModelSwapOutcome, PromoteDecision,

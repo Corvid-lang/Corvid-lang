@@ -1487,6 +1487,7 @@ The determinism-source catalog and the language's treatment of non-reproducible 
 - [x] Store policy hooks: `policy <name>: <value>` entries inside `session` / `memory` declarations parse into typed AST metadata and emit through ABI store contracts for retention, privacy, and approval enforcement.
 - [x] Provenance-aware store records: runtime stores can persist JSON values together with optional `ProvenanceChain` metadata, preserving grounded lineage for long-lived memory retrieval.
 - [x] Revisioned memory conflict detection: runtime stores assign monotonic record revisions and expose compare-and-set writes so stale memory updates fail with `StoreConflict` instead of silently overwriting newer facts.
+- [x] Runtime retention policy enforcement: ABI store policies can become runtime `StorePolicySet`s; TTL reads expire stale records, and legal-hold policies block deletion with typed policy errors.
 - `session { ... }` block declares per-conversation state. Compiler generates typed accessors.
 - `memory { ... }` block declares long-lived state (survives process restarts).
 - Both backed by SQLite (native) and IndexedDB (wasm).

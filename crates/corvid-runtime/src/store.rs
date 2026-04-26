@@ -8,6 +8,7 @@
 
 use crate::errors::RuntimeError;
 use crate::provenance::ProvenanceChain;
+use corvid_abi::AbiStorePolicy;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::path::Path;
@@ -83,6 +84,8 @@ pub struct StoreRecord {
     pub provenance: Option<ProvenanceChain>,
     #[serde(default, skip_serializing_if = "is_zero")]
     pub revision: u64,
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub updated_at_ms: u64,
 }
 
 impl StoreRecord {
@@ -91,6 +94,7 @@ impl StoreRecord {
             value,
             provenance: None,
             revision: 0,
+            updated_at_ms: 0,
         }
     }
 
@@ -99,12 +103,66 @@ impl StoreRecord {
             value,
             provenance: Some(provenance),
             revision: 0,
+            updated_at_ms: 0,
         }
     }
 
-    fn with_revision(mut self, revision: u64) -> Self {
+    fn with_metadata(mut self, revision: u64, updated_at_ms: u64) -> Self {
         self.revision = revision;
+        self.updated_at_ms = updated_at_ms;
         self
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct StorePolicySet {
+    pub ttl_ms: Option<u64>,
+    pub user_delete: bool,
+    pub legal_hold: bool,
+    pub approval_required: bool,
+    pub privacy_tier: Option<String>,
+}
+
+impl StorePolicySet {
+    pub fn from_abi_policies(policies: &[AbiStorePolicy]) -> Result<Self, RuntimeError> {
+        let mut set = Self::default();
+        for policy in policies {
+            set.apply_policy(&policy.name, &policy.value)?;
+        }
+        Ok(set)
+    }
+
+    pub fn ttl_ms(ttl_ms: u64) -> Self {
+        Self {
+            ttl_ms: Some(ttl_ms),
+            ..Self::default()
+        }
+    }
+
+    pub fn legal_hold() -> Self {
+        Self {
+            legal_hold: true,
+            ..Self::default()
+        }
+    }
+
+    pub fn is_expired(&self, record: &StoreRecord, now_ms: u64) -> bool {
+        self.ttl_ms
+            .map(|ttl_ms| now_ms.saturating_sub(record.updated_at_ms) >= ttl_ms)
+            .unwrap_or(false)
+    }
+
+    fn apply_policy(&mut self, name: &str, value: &Value) -> Result<(), RuntimeError> {
+        match name {
+            "retention" => self.ttl_ms = parse_ttl_policy(value)?,
+            "ttl_ms" => self.ttl_ms = Some(parse_u64_policy(name, value)?),
+            "user_delete" => self.user_delete = parse_bool_policy(name, value)?,
+            "legal_hold" => self.legal_hold = parse_bool_policy(name, value)?,
+            "approval_required" => self.approval_required = parse_bool_policy(name, value)?,
+            "privacy_tier" => self.privacy_tier = Some(parse_string_policy(name, value)?),
+            _ => {}
+        }
+        Ok(())
     }
 }
 
@@ -160,6 +218,25 @@ impl StoreManager {
         self.backend.get_record(kind, store, key)
     }
 
+    pub fn get_record_with_policy(
+        &self,
+        kind: StoreKind,
+        store: &str,
+        key: &str,
+        policy: &StorePolicySet,
+    ) -> Result<Option<StoreRecord>, RuntimeError> {
+        let record = self.backend.get_record(kind, store, key)?;
+        if record
+            .as_ref()
+            .map(|record| policy.is_expired(record, crate::tracing::now_ms()))
+            .unwrap_or(false)
+        {
+            self.backend.delete(kind, store, key)?;
+            return Ok(None);
+        }
+        Ok(record)
+    }
+
     pub fn put_record(
         &self,
         kind: StoreKind,
@@ -183,6 +260,25 @@ impl StoreManager {
     }
 
     pub fn delete(&self, kind: StoreKind, store: &str, key: &str) -> Result<(), RuntimeError> {
+        self.backend.delete(kind, store, key)
+    }
+
+    pub fn delete_with_policy(
+        &self,
+        kind: StoreKind,
+        store: &str,
+        key: &str,
+        policy: &StorePolicySet,
+    ) -> Result<(), RuntimeError> {
+        if policy.legal_hold {
+            return Err(store_policy_violation(
+                kind,
+                store,
+                key,
+                "legal_hold",
+                "record deletion is blocked while legal hold is active",
+            ));
+        }
         self.backend.delete(kind, store, key)
     }
 }
@@ -216,7 +312,7 @@ impl StoreBackend for InMemoryStoreBackend {
             .get(&store_key)
             .map(|existing| existing.revision.saturating_add(1))
             .unwrap_or(1);
-        let record = record.with_revision(next_revision);
+        let record = record.with_metadata(next_revision, crate::tracing::now_ms());
         values.insert(store_key, record.clone());
         Ok(record)
     }
@@ -241,7 +337,8 @@ impl StoreBackend for InMemoryStoreBackend {
                 actual_revision,
             ));
         }
-        let record = record.with_revision(expected_revision.saturating_add(1));
+        let record =
+            record.with_metadata(expected_revision.saturating_add(1), crate::tracing::now_ms());
         values.insert(store_key, record.clone());
         Ok(record)
     }
@@ -296,7 +393,7 @@ impl StoreBackend for SqliteStoreBackend {
         let conn = self.conn.lock().map_err(store_lock_error)?;
         let mut stmt = conn
             .prepare(
-                "SELECT value_json, provenance_json, revision FROM corvid_store WHERE kind = ?1 AND store = ?2 AND key = ?3",
+                "SELECT value_json, provenance_json, revision, updated_at_ms FROM corvid_store WHERE kind = ?1 AND store = ?2 AND key = ?3",
             )
             .map_err(sqlite_error)?;
         let row = stmt
@@ -305,6 +402,7 @@ impl StoreBackend for SqliteStoreBackend {
                     row.get::<_, String>(0)?,
                     row.get::<_, Option<String>>(1)?,
                     row.get::<_, i64>(2)?,
+                    row.get::<_, i64>(3)?,
                 ))
             })
             .map(Some)
@@ -315,7 +413,7 @@ impl StoreBackend for SqliteStoreBackend {
                     Err(sqlite_error(err))
                 }
             })?;
-        row.map(|(value_json, provenance_json, revision)| {
+        row.map(|(value_json, provenance_json, revision, updated_at_ms)| {
             let value = serde_json::from_str(&value_json).map_err(store_json_error)?;
             let provenance = provenance_json
                 .map(|json| serde_json::from_str(&json).map_err(store_json_error))
@@ -324,6 +422,7 @@ impl StoreBackend for SqliteStoreBackend {
                 value,
                 provenance,
                 revision: revision.max(0) as u64,
+                updated_at_ms: updated_at_ms.max(0) as u64,
             })
         })
         .transpose()
@@ -348,6 +447,7 @@ impl StoreBackend for SqliteStoreBackend {
         let next_revision = current_revision
             .map(|revision| revision.saturating_add(1))
             .unwrap_or(1);
+        let updated_at_ms = crate::tracing::now_ms();
         conn.execute(
             r#"
             INSERT INTO corvid_store (kind, store, key, value_json, provenance_json, revision, updated_at_ms)
@@ -365,11 +465,11 @@ impl StoreBackend for SqliteStoreBackend {
                 value_json,
                 provenance_json,
                 next_revision as i64,
-                crate::tracing::now_ms() as i64,
+                updated_at_ms as i64,
             ),
         )
         .map_err(sqlite_error)?;
-        Ok(record.with_revision(next_revision))
+        Ok(record.with_metadata(next_revision, updated_at_ms))
     }
 
     fn put_record_if_revision(
@@ -399,6 +499,7 @@ impl StoreBackend for SqliteStoreBackend {
             ));
         }
         let next_revision = expected_revision.saturating_add(1);
+        let updated_at_ms = crate::tracing::now_ms();
         conn.execute(
             r#"
             UPDATE corvid_store
@@ -415,12 +516,12 @@ impl StoreBackend for SqliteStoreBackend {
                 value_json,
                 provenance_json,
                 next_revision as i64,
-                crate::tracing::now_ms() as i64,
+                updated_at_ms as i64,
                 expected_revision as i64,
             ),
         )
         .map_err(sqlite_error)?;
-        Ok(record.with_revision(next_revision))
+        Ok(record.with_metadata(next_revision, updated_at_ms))
     }
 
     fn delete(&self, kind: StoreKind, store: &str, key: &str) -> Result<(), RuntimeError> {
@@ -483,6 +584,22 @@ fn store_conflict(
     }
 }
 
+fn store_policy_violation(
+    kind: StoreKind,
+    store: &str,
+    key: &str,
+    policy: &str,
+    message: &str,
+) -> RuntimeError {
+    RuntimeError::StorePolicyViolation {
+        kind: kind.as_str().to_string(),
+        store: store.to_string(),
+        key: key.to_string(),
+        policy: policy.to_string(),
+        message: message.to_string(),
+    }
+}
+
 fn sqlite_current_revision(
     conn: &rusqlite::Connection,
     kind: StoreKind,
@@ -502,6 +619,73 @@ fn sqlite_current_revision(
             Err(sqlite_error(err))
         }
     })
+}
+
+fn parse_ttl_policy(value: &Value) -> Result<Option<u64>, RuntimeError> {
+    if value.is_null() {
+        return Ok(None);
+    }
+    if let Some(ms) = value.as_u64() {
+        return Ok(Some(ms));
+    }
+    let raw = value
+        .as_str()
+        .ok_or_else(|| policy_parse_error("retention", value, "TTL string or millisecond number"))?;
+    if raw == "forever" || raw == "none" {
+        return Ok(None);
+    }
+    let ttl = raw
+        .strip_prefix("ttl_")
+        .ok_or_else(|| policy_parse_error("retention", value, "`ttl_<number><unit>`"))?;
+    parse_ttl_string(ttl).map(Some)
+}
+
+fn parse_ttl_string(raw: &str) -> Result<u64, RuntimeError> {
+    let split = raw
+        .find(|ch: char| !ch.is_ascii_digit())
+        .ok_or_else(|| RuntimeError::Other(format!("invalid store retention policy `ttl_{raw}`")))?;
+    let (amount, unit) = raw.split_at(split);
+    let amount = amount
+        .parse::<u64>()
+        .map_err(|_| RuntimeError::Other(format!("invalid store retention amount `{amount}`")))?;
+    let unit_ms = match unit {
+        "ms" => 1,
+        "s" => 1_000,
+        "m" => 60_000,
+        "h" => 3_600_000,
+        "d" => 86_400_000,
+        _ => {
+            return Err(RuntimeError::Other(format!(
+                "invalid store retention unit `{unit}`"
+            )))
+        }
+    };
+    Ok(amount.saturating_mul(unit_ms))
+}
+
+fn parse_u64_policy(name: &str, value: &Value) -> Result<u64, RuntimeError> {
+    value
+        .as_u64()
+        .ok_or_else(|| policy_parse_error(name, value, "unsigned integer"))
+}
+
+fn parse_bool_policy(name: &str, value: &Value) -> Result<bool, RuntimeError> {
+    value
+        .as_bool()
+        .ok_or_else(|| policy_parse_error(name, value, "boolean"))
+}
+
+fn parse_string_policy(name: &str, value: &Value) -> Result<String, RuntimeError> {
+    value
+        .as_str()
+        .map(str::to_string)
+        .ok_or_else(|| policy_parse_error(name, value, "string"))
+}
+
+fn policy_parse_error(name: &str, value: &Value, expected: &str) -> RuntimeError {
+    RuntimeError::Other(format!(
+        "invalid store policy `{name}` value {value}: expected {expected}"
+    ))
 }
 
 #[cfg(test)]
@@ -630,6 +814,94 @@ mod tests {
                 .get(StoreKind::Memory, "Profile", "user-1")
                 .expect("get current"),
             Some(json!({"fact": "beta"}))
+        );
+    }
+
+    #[test]
+    fn store_policy_set_parses_abi_policies() {
+        let policies = vec![
+            AbiStorePolicy {
+                name: "retention".to_string(),
+                value: json!("ttl_24h"),
+            },
+            AbiStorePolicy {
+                name: "legal_hold".to_string(),
+                value: json!(true),
+            },
+            AbiStorePolicy {
+                name: "privacy_tier".to_string(),
+                value: json!("restricted"),
+            },
+        ];
+
+        let policy = StorePolicySet::from_abi_policies(&policies).expect("parse policies");
+        assert_eq!(policy.ttl_ms, Some(86_400_000));
+        assert!(policy.legal_hold);
+        assert_eq!(policy.privacy_tier.as_deref(), Some("restricted"));
+    }
+
+    #[test]
+    fn store_policy_ttl_expires_records_on_read() {
+        let store = StoreManager::memory();
+        store
+            .put(
+                StoreKind::Session,
+                "Conversation",
+                "thread-1",
+                json!({"topic": "shipping"}),
+            )
+            .expect("put");
+
+        assert_eq!(
+            store
+                .get_record_with_policy(
+                    StoreKind::Session,
+                    "Conversation",
+                    "thread-1",
+                    &StorePolicySet::ttl_ms(0),
+                )
+                .expect("get with ttl"),
+            None
+        );
+        assert_eq!(
+            store
+                .get(StoreKind::Session, "Conversation", "thread-1")
+                .expect("get after expiry"),
+            None
+        );
+    }
+
+    #[test]
+    fn store_policy_legal_hold_blocks_delete() {
+        let store = StoreManager::memory();
+        store
+            .put(
+                StoreKind::Memory,
+                "Profile",
+                "user-1",
+                json!({"fact": "protected"}),
+            )
+            .expect("put");
+
+        let err = store
+            .delete_with_policy(
+                StoreKind::Memory,
+                "Profile",
+                "user-1",
+                &StorePolicySet::legal_hold(),
+            )
+            .expect_err("delete must be blocked");
+        match err {
+            RuntimeError::StorePolicyViolation { policy, .. } => {
+                assert_eq!(policy, "legal_hold");
+            }
+            other => panic!("unexpected error: {other}"),
+        }
+        assert_eq!(
+            store
+                .get(StoreKind::Memory, "Profile", "user-1")
+                .expect("record still present"),
+            Some(json!({"fact": "protected"}))
         );
     }
 }
