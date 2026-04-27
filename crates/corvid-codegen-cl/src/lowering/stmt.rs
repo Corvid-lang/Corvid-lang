@@ -89,12 +89,10 @@ fn lower_stmt(
     runtime: &RuntimeFuncs,
 ) -> Result<BlockOutcome, CodegenError> {
     match stmt {
-        IrStmt::Yield { span, .. } => {
-            Err(CodegenError::not_supported(
-                "Stream lowering not yet implemented",
-                *span,
-            ))
-        }
+        IrStmt::Yield { span, .. } => Err(CodegenError::not_supported(
+            "Stream lowering not yet implemented",
+            *span,
+        )),
         IrStmt::Return { value, span } => {
             let v = match value {
                 Some(e) => lower_expr(
@@ -299,8 +297,14 @@ fn lower_stmt(
                 })
                 .collect::<Result<Vec<_>, _>>()?;
             let approve_arg_tys = args.iter().map(|a| a.ty.clone()).collect::<Vec<_>>();
-            let trace_payload =
-                emit_trace_payload(builder, module, runtime, &approve_arg_vals, &approve_arg_tys, *span)?;
+            let trace_payload = emit_trace_payload(
+                builder,
+                module,
+                runtime,
+                &approve_arg_vals,
+                &approve_arg_tys,
+                *span,
+            )?;
 
             let label_val = emit_string_const(builder, module, runtime, label, *span)?;
             let approve_fref = module.declare_func_in_func(runtime.approve_sync, builder.func);
@@ -316,6 +320,9 @@ fn lower_stmt(
             let results: Vec<ClValue> = builder.inst_results(call).iter().copied().collect();
             emit_release(builder, module, runtime, label_val);
             emit_release(builder, module, runtime, trace_payload.type_tags);
+            for owned in trace_payload.owned_values {
+                emit_release(builder, module, runtime, owned);
+            }
             if !runtime.dup_drop_enabled {
                 for (v, arg) in approve_arg_vals.iter().zip(args.iter()) {
                     if is_refcounted_type(&arg.ty) {
@@ -437,20 +444,15 @@ fn lower_for(
     module: &mut ObjectModule,
     runtime: &RuntimeFuncs,
 ) -> Result<BlockOutcome, CodegenError> {
-    // Element type comes from the iterator's list type.
+    let string_iter = matches!(&iter.ty, Type::String);
+    let string_iter_needs_manual_cleanup = string_iter && !block_mentions_local(body, var_local);
     let elem_ty = match &iter.ty {
         Type::List(elem) => (**elem).clone(),
-        Type::String => {
-            return Err(CodegenError::not_supported(
-                "`for c in string` iteration in native code Ã¢â‚¬â€ not implemented yet (needs iterator \
-                 protocol or string-specific lowering)",
-                span,
-            ));
-        }
+        Type::String => Type::String,
         other => {
             return Err(CodegenError::cranelift(
                 format!(
-                    "`for` iterator has non-list type `{other:?}` Ã¢â‚¬â€ typecheck should have caught this"
+                    "`for` iterator has non-list/string type `{other:?}` - typecheck should have caught this"
                 ),
                 span,
             ));
@@ -459,110 +461,108 @@ fn lower_for(
     let elem_cl_ty = cl_type_for(&elem_ty, span)?;
     let elem_refcounted = is_refcounted_type(&elem_ty);
 
-    // Iter-as-bare-Local borrow peephole. Same
-    // correctness argument as 17b-1b.3's FieldAccess/Index Ã¢â‚¬â€ the
-    // loop's use of `list_ptr` (length load + per-element load +
-    // bounds arithmetic) only READS the list's memory; never
-    // mutates the list's refcount or escapes the pointer. If iter
-    // is a bare Local of the enclosing scope, we can borrow it:
-    // skip the ownership-conversion retain at lower_expr time AND
-    // skip the paired release at loop exit. The Local's binding
-    // stays Live in its enclosing scope, governed by the usual
-    // scope-exit release.
-    let (list_ptr, list_borrowed) = lower_container_maybe_borrowed(
-        builder, iter, current_return_ty, env, scope_stack, func_ids_by_def, module, runtime,
+    let (iter_ptr, iter_borrowed) = lower_container_maybe_borrowed(
+        builder,
+        iter,
+        current_return_ty,
+        env,
+        scope_stack,
+        func_ids_by_def,
+        module,
+        runtime,
     )?;
 
-    // Load length from offset 0 of the list payload.
-    let length = builder.ins().load(
-        I64,
-        cranelift_codegen::ir::MemFlags::trusted(),
-        list_ptr,
-        0,
-    );
+    let length = match &iter.ty {
+        Type::List(_) => {
+            builder
+                .ins()
+                .load(I64, cranelift_codegen::ir::MemFlags::trusted(), iter_ptr, 0)
+        }
+        Type::String => {
+            let fref = module.declare_func_in_func(runtime.string_char_len, builder.func);
+            let call = builder.ins().call(fref, &[iter_ptr]);
+            builder.inst_results(call)[0]
+        }
+        _ => unreachable!("validated above"),
+    };
 
-    // Declare + init loop variable. Starts at 0 (null if refcounted)
-    // so the release-on-rebind on the first iteration is a no-op.
     let loop_var = Variable::from_u32(*var_idx as u32);
     *var_idx += 1;
     builder.declare_var(loop_var, elem_cl_ty);
     let zero_elem = builder.ins().iconst(elem_cl_ty, 0);
     builder.def_var(loop_var, zero_elem);
     env.insert(var_local, (loop_var, elem_cl_ty));
-    // Track the loop variable in the enclosing (not yet pushed) body
-    // scope's sibling Ã¢â‚¬â€ the CURRENT scope, so it releases when the
-    // enclosing block exits. That ensures the final iteration's value
-    // gets released.
-    if elem_refcounted {
+    if elem_refcounted && !string_iter {
         if let Some(top) = scope_stack.last_mut() {
             top.push((var_local, loop_var));
         }
     }
 
-    // Declare + init index counter.
     let i_var = Variable::from_u32(*var_idx as u32);
     *var_idx += 1;
     builder.declare_var(i_var, I64);
     let zero_i = builder.ins().iconst(I64, 0);
     builder.def_var(i_var, zero_i);
 
-    // Create the four blocks.
     let header_b = builder.create_block();
     let body_b = builder.create_block();
     let step_b = builder.create_block();
     let exit_b = builder.create_block();
 
-    // Record the loop context so break/continue can find their targets.
     let scope_depth_at_entry = scope_stack.len();
     loop_stack.push(LoopCtx {
         step_block: step_b,
         exit_block: exit_b,
         scope_depth_at_entry,
+        loop_owned_local: string_iter_needs_manual_cleanup.then_some(loop_var),
     });
 
     builder.ins().jump(header_b, &[]);
 
-    // --- header ---
     builder.switch_to_block(header_b);
     let i_now = builder.use_var(i_var);
     let keep_going = builder.ins().icmp(IntCC::SignedLessThan, i_now, length);
     builder.ins().brif(keep_going, body_b, &[], exit_b, &[]);
 
-    // --- body ---
     builder.switch_to_block(body_b);
     builder.seal_block(body_b);
-    // Compute element address: list_ptr + 8 + i * 8.
-    let offset = builder.ins().imul_imm(i_now, 8);
-    let base = builder.ins().iadd_imm(list_ptr, 8);
-    let elem_addr = builder.ins().iadd(base, offset);
-    let elem_val = builder.ins().load(
-        elem_cl_ty,
-        cranelift_codegen::ir::MemFlags::trusted(),
-        elem_addr,
-        0,
-    );
-    // The loaded element is a refcounted pointer that
-    // flows into the loop variable. Declare it so Cranelift spills
-    // before any safepoint in the loop body.
+    let elem_val = match &iter.ty {
+        Type::List(_) => {
+            let offset = builder.ins().imul_imm(i_now, 8);
+            let base = builder.ins().iadd_imm(iter_ptr, 8);
+            let elem_addr = builder.ins().iadd(base, offset);
+            builder.ins().load(
+                elem_cl_ty,
+                cranelift_codegen::ir::MemFlags::trusted(),
+                elem_addr,
+                0,
+            )
+        }
+        Type::String => {
+            let fref = module.declare_func_in_func(runtime.string_char_at, builder.func);
+            let call = builder.ins().call(fref, &[iter_ptr, i_now]);
+            builder.inst_results(call)[0]
+        }
+        _ => unreachable!("validated above"),
+    };
     if elem_refcounted {
         builder.declare_value_needs_stack_map(elem_val);
     }
-    // Rebind loop-var: release old value (null-safe), retain new if
-    // refcounted, def_var. Under the .6d pass, the pass inserts a
-    // Drop on the loop variable at each iteration's natural last-use
-    // point and does not emit a fresh Dup for the new iteration
-    // element (the load above produces it with no +1 attached; the
-    // consumer patterns inside the body supply Dups as needed).
     if !runtime.dup_drop_enabled && elem_refcounted {
         let old = builder.use_var(loop_var);
-        emit_release(builder, module, runtime, old);
-        emit_retain(builder, module, runtime, elem_val);
+        if !string_iter {
+            emit_release(builder, module, runtime, old);
+            emit_retain(builder, module, runtime, elem_val);
+        }
     }
     builder.def_var(loop_var, elem_val);
 
-    // Push body scope so body-local Lets get released at end of each
-    // iteration (or on break/continue/return from inside body).
     scope_stack.push(Vec::new());
+    if string_iter {
+        if let Some(scope) = scope_stack.last_mut() {
+            scope.push((var_local, loop_var));
+        }
+    }
     let body_outcome = lower_block(
         builder,
         body,
@@ -577,50 +577,37 @@ fn lower_for(
     )?;
     match body_outcome {
         BlockOutcome::Normal => {
-            // Release body-scope locals before jumping to step.
             let body_scope = scope_stack.pop().unwrap_or_default();
             if !runtime.dup_drop_enabled {
                 for (_, v) in body_scope.iter().rev() {
                     let x = builder.use_var(*v);
                     emit_release(builder, module, runtime, x);
                 }
+            } else if string_iter_needs_manual_cleanup {
+                let current = builder.use_var(loop_var);
+                emit_release(builder, module, runtime, current);
             }
             builder.ins().jump(step_b, &[]);
         }
         BlockOutcome::Terminated => {
-            // Body returned Ã¢â‚¬â€ the return already emitted releases for
-            // all live scopes. Just pop the body scope.
             scope_stack.pop();
         }
     }
 
-    // --- step ---
     builder.switch_to_block(step_b);
     builder.seal_block(step_b);
     let i_next = builder.ins().iadd_imm(i_now, 1);
     builder.def_var(i_var, i_next);
     builder.ins().jump(header_b, &[]);
 
-    // Now both predecessors of header_b (entry + step) have been
-    // emitted, so we can seal it.
     builder.seal_block(header_b);
 
-    // --- exit ---
     builder.switch_to_block(exit_b);
     builder.seal_block(exit_b);
     loop_stack.pop();
 
-    // Release the list pointer we retained at the top Ã¢â‚¬â€ only if we
-    // actually produced a +1 (non-borrowed path). When iter was a
-    // bare Local we borrowed it and there's nothing to release.
-    // `list_borrowed = false` means the iter was a fresh-owned temp
-    // (list literal or call result), not a bare Local. The .6d pass
-    // only schedules Drops for Locals in the IR; internal expression
-    // temps are invisible to it, so the codegen must still drop the
-    // list's +1 at loop end. `list_borrowed = true` means it was a
-    // bare Local and the pass handles its lifetime.
-    if is_refcounted_type(&iter.ty) && !list_borrowed {
-        emit_release(builder, module, runtime, list_ptr);
+    if is_refcounted_type(&iter.ty) && !iter_borrowed {
+        emit_release(builder, module, runtime, iter_ptr);
     }
     Ok(BlockOutcome::Normal)
 }
@@ -656,6 +643,9 @@ fn lower_break_or_continue(
                 emit_release(builder, module, runtime, x);
             }
         }
+    } else if let Some(loop_var) = ctx.loop_owned_local {
+        let current = builder.use_var(loop_var);
+        emit_release(builder, module, runtime, current);
     }
     let target = if is_break {
         ctx.exit_block
@@ -664,6 +654,97 @@ fn lower_break_or_continue(
     };
     builder.ins().jump(target, &[]);
     Ok(BlockOutcome::Terminated)
+}
+
+fn block_mentions_local(block: &IrBlock, target: LocalId) -> bool {
+    block
+        .stmts
+        .iter()
+        .any(|stmt| stmt_mentions_local(stmt, target))
+}
+
+fn stmt_mentions_local(stmt: &IrStmt, target: LocalId) -> bool {
+    match stmt {
+        IrStmt::Let { value, .. }
+        | IrStmt::Expr { expr: value, .. }
+        | IrStmt::Yield { value, .. } => expr_mentions_local(value, target),
+        IrStmt::Return { value, .. } => value
+            .as_ref()
+            .is_some_and(|value| expr_mentions_local(value, target)),
+        IrStmt::If {
+            cond,
+            then_block,
+            else_block,
+            ..
+        } => {
+            expr_mentions_local(cond, target)
+                || block_mentions_local(then_block, target)
+                || else_block
+                    .as_ref()
+                    .is_some_and(|else_block| block_mentions_local(else_block, target))
+        }
+        IrStmt::For { iter, body, .. } => {
+            expr_mentions_local(iter, target) || block_mentions_local(body, target)
+        }
+        IrStmt::Approve { args, .. } => args.iter().any(|arg| expr_mentions_local(arg, target)),
+        IrStmt::Break { .. }
+        | IrStmt::Continue { .. }
+        | IrStmt::Pass { .. }
+        | IrStmt::Dup { .. }
+        | IrStmt::Drop { .. } => false,
+    }
+}
+
+fn expr_mentions_local(expr: &IrExpr, target: LocalId) -> bool {
+    match &expr.kind {
+        IrExprKind::Local { local_id, .. } => *local_id == target,
+        IrExprKind::Call { args, .. } => args.iter().any(|arg| expr_mentions_local(arg, target)),
+        IrExprKind::FieldAccess { target: inner, .. }
+        | IrExprKind::UnwrapGrounded { value: inner }
+        | IrExprKind::WeakNew { strong: inner }
+        | IrExprKind::WeakUpgrade { weak: inner }
+        | IrExprKind::StreamSplitBy { stream: inner, .. }
+        | IrExprKind::StreamMerge { groups: inner, .. }
+        | IrExprKind::StreamOrderedBy { stream: inner, .. }
+        | IrExprKind::StreamResumeToken { stream: inner }
+        | IrExprKind::ResumeStream { token: inner, .. }
+        | IrExprKind::ResultOk { inner }
+        | IrExprKind::ResultErr { inner }
+        | IrExprKind::OptionSome { inner }
+        | IrExprKind::Ask { prompt: inner, .. }
+        | IrExprKind::Choose { options: inner }
+        | IrExprKind::TryPropagate { inner }
+        | IrExprKind::TryRetry { body: inner, .. }
+        | IrExprKind::UnOp { operand: inner, .. }
+        | IrExprKind::WrappingUnOp { operand: inner, .. } => expr_mentions_local(inner, target),
+        IrExprKind::Index {
+            target: inner,
+            index,
+        }
+        | IrExprKind::BinOp {
+            left: inner,
+            right: index,
+            ..
+        }
+        | IrExprKind::WrappingBinOp {
+            left: inner,
+            right: index,
+            ..
+        } => expr_mentions_local(inner, target) || expr_mentions_local(index, target),
+        IrExprKind::List { items } => items.iter().any(|item| expr_mentions_local(item, target)),
+        IrExprKind::Replay {
+            trace,
+            arms,
+            else_body,
+        } => {
+            expr_mentions_local(trace, target)
+                || arms
+                    .iter()
+                    .any(|arm| expr_mentions_local(&arm.body, target))
+                || expr_mentions_local(else_body, target)
+        }
+        IrExprKind::Literal(_) | IrExprKind::Decl { .. } | IrExprKind::OptionNone => false,
+    }
 }
 
 /// bodies; both, if they fall through, `jump` to a merge block. If
@@ -792,4 +873,3 @@ fn lower_if(
     }
     Ok(BlockOutcome::Normal)
 }
-

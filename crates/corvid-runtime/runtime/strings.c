@@ -128,6 +128,51 @@ long long corvid_string_cmp(void* a_payload, void* b_payload) {
     return 0;
 }
 
+static long long corvid_utf8_char_width(unsigned char byte) {
+    if ((byte & 0x80u) == 0) return 1;
+    if ((byte & 0xE0u) == 0xC0u) return 2;
+    if ((byte & 0xF0u) == 0xE0u) return 3;
+    if ((byte & 0xF8u) == 0xF0u) return 4;
+    return 1;
+}
+
+long long corvid_string_char_len(void* s_payload) {
+    corvid_string* s = (corvid_string*)s_payload;
+    const unsigned char* bytes = (const unsigned char*)s->bytes_ptr;
+    long long remaining = s->length;
+    long long count = 0;
+    while (remaining > 0) {
+        long long width = corvid_utf8_char_width(*bytes);
+        if (width > remaining) {
+            width = remaining;
+        }
+        bytes += width;
+        remaining -= width;
+        count += 1;
+    }
+    return count;
+}
+
+void* corvid_string_char_at(void* s_payload, long long index) {
+    corvid_string* s = (corvid_string*)s_payload;
+    const unsigned char* bytes = (const unsigned char*)s->bytes_ptr;
+    long long remaining = s->length;
+    long long current = 0;
+    while (remaining > 0) {
+        long long width = corvid_utf8_char_width(*bytes);
+        if (width > remaining) {
+            width = remaining;
+        }
+        if (current == index) {
+            return alloc_string((const char*)bytes, width);
+        }
+        bytes += width;
+        remaining -= width;
+        current += 1;
+    }
+    return alloc_string("", 0);
+}
+
 /* Wrap a null-terminated C string as a refcounted Corvid String.
  * Used by the codegen-emitted main to convert argv[i] arguments into
  * String values for entry agents that take String parameters.
@@ -244,6 +289,93 @@ void* corvid_string_from_float(double v) {
     int len = snprintf(buf, sizeof(buf), "%.17g", v);
     if (len < 0) len = 0;
     void* payload = alloc_string(buf, (long long)len);
+    if (start_ns != 0) {
+        corvid_bench_prompt_render_ns_total += corvid_now_ns() - start_ns;
+    }
+    return payload;
+}
+
+static char corvid_json_hex_digit(unsigned char value) {
+    return (char)(value < 10 ? ('0' + value) : ('a' + (value - 10)));
+}
+
+void* corvid_string_json_quote(void* s_payload) {
+    uint64_t start_ns = corvid_profile_runtime_enabled() ? corvid_now_ns() : 0;
+    corvid_string* s = (corvid_string*)s_payload;
+    const unsigned char* bytes = (const unsigned char*)s->bytes_ptr;
+    long long escaped_len = 2;
+    for (long long i = 0; i < s->length; i++) {
+        unsigned char ch = bytes[i];
+        switch (ch) {
+            case '"':
+            case '\\':
+            case '\b':
+            case '\f':
+            case '\n':
+            case '\r':
+            case '\t':
+                escaped_len += 2;
+                break;
+            default:
+                escaped_len += (ch < 0x20) ? 6 : 1;
+                break;
+        }
+    }
+
+    void* payload = corvid_alloc_typed(sizeof(corvid_string) + escaped_len,
+                                       &corvid_typeinfo_String);
+    corvid_string* desc = (corvid_string*)payload;
+    char* out = (char*)payload + sizeof(corvid_string);
+    long long cursor = 0;
+    out[cursor++] = '"';
+    for (long long i = 0; i < s->length; i++) {
+        unsigned char ch = bytes[i];
+        switch (ch) {
+            case '"':
+                out[cursor++] = '\\';
+                out[cursor++] = '"';
+                break;
+            case '\\':
+                out[cursor++] = '\\';
+                out[cursor++] = '\\';
+                break;
+            case '\b':
+                out[cursor++] = '\\';
+                out[cursor++] = 'b';
+                break;
+            case '\f':
+                out[cursor++] = '\\';
+                out[cursor++] = 'f';
+                break;
+            case '\n':
+                out[cursor++] = '\\';
+                out[cursor++] = 'n';
+                break;
+            case '\r':
+                out[cursor++] = '\\';
+                out[cursor++] = 'r';
+                break;
+            case '\t':
+                out[cursor++] = '\\';
+                out[cursor++] = 't';
+                break;
+            default:
+                if (ch < 0x20) {
+                    out[cursor++] = '\\';
+                    out[cursor++] = 'u';
+                    out[cursor++] = '0';
+                    out[cursor++] = '0';
+                    out[cursor++] = corvid_json_hex_digit((unsigned char)(ch >> 4));
+                    out[cursor++] = corvid_json_hex_digit((unsigned char)(ch & 0x0f));
+                } else {
+                    out[cursor++] = (char)ch;
+                }
+                break;
+        }
+    }
+    out[cursor++] = '"';
+    desc->bytes_ptr = out;
+    desc->length = escaped_len;
     if (start_ns != 0) {
         corvid_bench_prompt_render_ns_total += corvid_now_ns() - start_ns;
     }

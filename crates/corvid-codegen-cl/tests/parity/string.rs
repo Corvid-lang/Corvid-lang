@@ -1,4 +1,4 @@
-use super::assert_parity_bool;
+use super::{assert_parity, assert_parity_bool};
 
 #[test]
 fn string_literal_equality_is_true() {
@@ -50,22 +50,10 @@ fn string_not_equal_operator() {
 
 #[test]
 fn string_ordering_lexicographic() {
-    assert_parity_bool(
-        "agent f() -> Bool:\n    return \"abc\" < \"abd\"\n",
-        true,
-    );
-    assert_parity_bool(
-        "agent f() -> Bool:\n    return \"abc\" <= \"abc\"\n",
-        true,
-    );
-    assert_parity_bool(
-        "agent f() -> Bool:\n    return \"abd\" > \"abc\"\n",
-        true,
-    );
-    assert_parity_bool(
-        "agent f() -> Bool:\n    return \"abc\" >= \"abc\"\n",
-        true,
-    );
+    assert_parity_bool("agent f() -> Bool:\n    return \"abc\" < \"abd\"\n", true);
+    assert_parity_bool("agent f() -> Bool:\n    return \"abc\" <= \"abc\"\n", true);
+    assert_parity_bool("agent f() -> Bool:\n    return \"abd\" > \"abc\"\n", true);
+    assert_parity_bool("agent f() -> Bool:\n    return \"abc\" >= \"abc\"\n", true);
 }
 
 #[test]
@@ -78,5 +66,36 @@ agent f() -> Bool:
     return s == \"foobar\"
 ",
         true,
+    );
+}
+
+#[test]
+fn string_for_loop_counts_utf8_chars() {
+    assert_parity(
+        "\
+agent f() -> Int:
+    total = 0
+    for c in \"aé🙂\":
+        total = total + 1
+    return total
+",
+        3,
+    );
+}
+
+#[test]
+fn string_for_loop_rebinds_and_uses_chars() {
+    assert_parity(
+        "\
+agent f() -> Int:
+    total = 0
+    for c in \"ab🙂\":
+        if c == \"🙂\":
+            total = total + 10
+        else:
+            total = total + 1
+    return total
+",
+        12,
     );
 }

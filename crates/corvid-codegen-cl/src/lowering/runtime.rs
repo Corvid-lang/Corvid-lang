@@ -44,6 +44,25 @@ pub(super) fn declare_runtime_funcs(
             CodegenError::cranelift(format!("declare string_cmp: {e}"), Span::new(0, 0))
         })?;
 
+    let mut char_len_sig = module.make_signature();
+    char_len_sig.params.push(AbiParam::new(I64));
+    char_len_sig.returns.push(AbiParam::new(I64));
+    let string_char_len_id = module
+        .declare_function(STRING_CHAR_LEN_SYMBOL, Linkage::Import, &char_len_sig)
+        .map_err(|e| {
+            CodegenError::cranelift(format!("declare string_char_len: {e}"), Span::new(0, 0))
+        })?;
+
+    let mut char_at_sig = module.make_signature();
+    char_at_sig.params.push(AbiParam::new(I64));
+    char_at_sig.params.push(AbiParam::new(I64));
+    char_at_sig.returns.push(AbiParam::new(I64));
+    let string_char_at_id = module
+        .declare_function(STRING_CHAR_AT_SYMBOL, Linkage::Import, &char_at_sig)
+        .map_err(|e| {
+            CodegenError::cranelift(format!("declare string_char_at: {e}"), Span::new(0, 0))
+        })?;
+
     // corvid_alloc_typed(size: i64, typeinfo: i64) -> i64
     let mut alloc_typed_sig = module.make_signature();
     alloc_typed_sig.params.push(AbiParam::new(I64));
@@ -230,21 +249,6 @@ pub(super) fn declare_runtime_funcs(
             CodegenError::cranelift(format!("declare bench_finish_trial: {e}"), Span::new(0, 0))
         })?;
 
-    // Runtime bridge imports.
-    let mut tool_call_sync_int_sig = module.make_signature();
-    tool_call_sync_int_sig.params.push(AbiParam::new(I64)); // name_ptr
-    tool_call_sync_int_sig.params.push(AbiParam::new(I64)); // name_len
-    tool_call_sync_int_sig.returns.push(AbiParam::new(I64)); // i64 result
-    let tool_call_sync_int_id = module
-        .declare_function(
-            TOOL_CALL_SYNC_INT_SYMBOL,
-            Linkage::Import,
-            &tool_call_sync_int_sig,
-        )
-        .map_err(|e| {
-            CodegenError::cranelift(format!("declare tool_call_sync_int: {e}"), Span::new(0, 0))
-        })?;
-
     let mut runtime_is_replay_sig = module.make_signature();
     runtime_is_replay_sig.returns.push(AbiParam::new(I8));
     let runtime_is_replay_id = module
@@ -331,6 +335,19 @@ pub(super) fn declare_runtime_funcs(
         .map_err(|e| {
             CodegenError::cranelift(
                 format!("declare replay_tool_call_string: {e}"),
+                Span::new(0, 0),
+            )
+        })?;
+    let replay_tool_json_sig = make_replay_tool_sig(module, Some(I64));
+    let replay_tool_call_json_id = module
+        .declare_function(
+            REPLAY_TOOL_CALL_JSON_SYMBOL,
+            Linkage::Import,
+            &replay_tool_json_sig,
+        )
+        .map_err(|e| {
+            CodegenError::cranelift(
+                format!("declare replay_tool_call_json: {e}"),
                 Span::new(0, 0),
             )
         })?;
@@ -435,6 +452,25 @@ pub(super) fn declare_runtime_funcs(
                 Span::new(0, 0),
             )
         })?;
+    let mut grounded_capture_refcounted_sig = module.make_signature();
+    grounded_capture_refcounted_sig
+        .params
+        .push(AbiParam::new(I64));
+    grounded_capture_refcounted_sig
+        .returns
+        .push(AbiParam::new(I64));
+    let grounded_capture_refcounted_handle_id = module
+        .declare_function(
+            GROUNDED_CAPTURE_REFCOUNTED_HANDLE_SYMBOL,
+            Linkage::Import,
+            &grounded_capture_refcounted_sig,
+        )
+        .map_err(|e| {
+            CodegenError::cranelift(
+                format!("declare grounded_capture_refcounted_handle: {e}"),
+                Span::new(0, 0),
+            )
+        })?;
 
     let make_grounded_attest_sig =
         |module: &mut ObjectModule, value_ty: cranelift_codegen::ir::Type| {
@@ -494,12 +530,127 @@ pub(super) fn declare_runtime_funcs(
                 Span::new(0, 0),
             )
         })?;
+    let grounded_attest_refcounted_sig = make_grounded_attest_sig(module, I64);
+    let grounded_attest_refcounted_id = module
+        .declare_function(
+            GROUNDED_ATTEST_REFCOUNTED_SYMBOL,
+            Linkage::Import,
+            &grounded_attest_refcounted_sig,
+        )
+        .map_err(|e| {
+            CodegenError::cranelift(
+                format!("declare grounded_attest_refcounted: {e}"),
+                Span::new(0, 0),
+            )
+        })?;
 
     let mut sleep_ms_sig = module.make_signature();
     sleep_ms_sig.params.push(AbiParam::new(I64));
     let sleep_ms_id = module
         .declare_function(SLEEP_MS_SYMBOL, Linkage::Import, &sleep_ms_sig)
         .map_err(|e| CodegenError::cranelift(format!("declare sleep_ms: {e}"), Span::new(0, 0)))?;
+
+    let mut json_parse_sig = module.make_signature();
+    json_parse_sig.params.push(AbiParam::new(I64));
+    json_parse_sig.returns.push(AbiParam::new(I64));
+    let json_parse_id = module
+        .declare_function(JSON_PARSE_SYMBOL, Linkage::Import, &json_parse_sig)
+        .map_err(|e| {
+            CodegenError::cranelift(format!("declare json_parse: {e}"), Span::new(0, 0))
+        })?;
+
+    let mut json_release_sig = module.make_signature();
+    json_release_sig.params.push(AbiParam::new(I64));
+    let json_release_id = module
+        .declare_function(JSON_RELEASE_SYMBOL, Linkage::Import, &json_release_sig)
+        .map_err(|e| {
+            CodegenError::cranelift(format!("declare json_release: {e}"), Span::new(0, 0))
+        })?;
+
+    let mut json_expect_int_sig = module.make_signature();
+    json_expect_int_sig.params.push(AbiParam::new(I64));
+    json_expect_int_sig.returns.push(AbiParam::new(I64));
+    let json_expect_int_id = module
+        .declare_function(
+            JSON_EXPECT_INT_SYMBOL,
+            Linkage::Import,
+            &json_expect_int_sig,
+        )
+        .map_err(|e| {
+            CodegenError::cranelift(format!("declare json_expect_int: {e}"), Span::new(0, 0))
+        })?;
+
+    let mut json_expect_float_sig = module.make_signature();
+    json_expect_float_sig.params.push(AbiParam::new(I64));
+    json_expect_float_sig.returns.push(AbiParam::new(F64));
+    let json_expect_float_id = module
+        .declare_function(
+            JSON_EXPECT_FLOAT_SYMBOL,
+            Linkage::Import,
+            &json_expect_float_sig,
+        )
+        .map_err(|e| {
+            CodegenError::cranelift(format!("declare json_expect_float: {e}"), Span::new(0, 0))
+        })?;
+
+    let mut json_expect_bool_sig = module.make_signature();
+    json_expect_bool_sig.params.push(AbiParam::new(I64));
+    json_expect_bool_sig.returns.push(AbiParam::new(I8));
+    let json_expect_bool_id = module
+        .declare_function(
+            JSON_EXPECT_BOOL_SYMBOL,
+            Linkage::Import,
+            &json_expect_bool_sig,
+        )
+        .map_err(|e| {
+            CodegenError::cranelift(format!("declare json_expect_bool: {e}"), Span::new(0, 0))
+        })?;
+
+    let mut json_expect_string_sig = module.make_signature();
+    json_expect_string_sig.params.push(AbiParam::new(I64));
+    json_expect_string_sig.returns.push(AbiParam::new(I64));
+    let json_expect_string_id = module
+        .declare_function(
+            JSON_EXPECT_STRING_SYMBOL,
+            Linkage::Import,
+            &json_expect_string_sig,
+        )
+        .map_err(|e| {
+            CodegenError::cranelift(format!("declare json_expect_string: {e}"), Span::new(0, 0))
+        })?;
+
+    let mut json_array_len_sig = module.make_signature();
+    json_array_len_sig.params.push(AbiParam::new(I64));
+    json_array_len_sig.returns.push(AbiParam::new(I64));
+    let json_array_len_id = module
+        .declare_function(JSON_ARRAY_LEN_SYMBOL, Linkage::Import, &json_array_len_sig)
+        .map_err(|e| {
+            CodegenError::cranelift(format!("declare json_array_len: {e}"), Span::new(0, 0))
+        })?;
+
+    let mut json_array_get_sig = module.make_signature();
+    json_array_get_sig.params.push(AbiParam::new(I64));
+    json_array_get_sig.params.push(AbiParam::new(I64));
+    json_array_get_sig.returns.push(AbiParam::new(I64));
+    let json_array_get_id = module
+        .declare_function(JSON_ARRAY_GET_SYMBOL, Linkage::Import, &json_array_get_sig)
+        .map_err(|e| {
+            CodegenError::cranelift(format!("declare json_array_get: {e}"), Span::new(0, 0))
+        })?;
+
+    let mut json_object_get_sig = module.make_signature();
+    json_object_get_sig.params.push(AbiParam::new(I64));
+    json_object_get_sig.params.push(AbiParam::new(I64));
+    json_object_get_sig.returns.push(AbiParam::new(I64));
+    let json_object_get_id = module
+        .declare_function(
+            JSON_OBJECT_GET_SYMBOL,
+            Linkage::Import,
+            &json_object_get_sig,
+        )
+        .map_err(|e| {
+            CodegenError::cranelift(format!("declare json_object_get: {e}"), Span::new(0, 0))
+        })?;
 
     // Stringification helpers. Each takes a typed scalar
     // and returns a Corvid String descriptor pointer (i64).
@@ -528,6 +679,15 @@ pub(super) fn declare_runtime_funcs(
         .declare_function(STRING_FROM_FLOAT_SYMBOL, Linkage::Import, &sff_sig)
         .map_err(|e| {
             CodegenError::cranelift(format!("declare string_from_float: {e}"), Span::new(0, 0))
+        })?;
+
+    let mut sjq_sig = module.make_signature();
+    sjq_sig.params.push(AbiParam::new(I64));
+    sjq_sig.returns.push(AbiParam::new(I64));
+    let string_json_quote_id = module
+        .declare_function(STRING_JSON_QUOTE_SYMBOL, Linkage::Import, &sjq_sig)
+        .map_err(|e| {
+            CodegenError::cranelift(format!("declare string_json_quote: {e}"), Span::new(0, 0))
         })?;
 
     let mut approve_sig = module.make_signature();
@@ -682,6 +842,20 @@ pub(super) fn declare_runtime_funcs(
                 Span::new(0, 0),
             )
         })?;
+    let mut trace_run_completed_json_sig = module.make_signature();
+    trace_run_completed_json_sig.params.push(AbiParam::new(I64));
+    let trace_run_completed_json_id = module
+        .declare_function(
+            TRACE_RUN_COMPLETED_JSON_SYMBOL,
+            Linkage::Import,
+            &trace_run_completed_json_sig,
+        )
+        .map_err(|e| {
+            CodegenError::cranelift(
+                format!("declare trace_run_completed_json: {e}"),
+                Span::new(0, 0),
+            )
+        })?;
 
     let mut trace_tool_call_sig = module.make_signature();
     trace_tool_call_sig.params.push(AbiParam::new(I64));
@@ -776,6 +950,21 @@ pub(super) fn declare_runtime_funcs(
                 Span::new(0, 0),
             )
         })?;
+    let mut trace_tool_result_json_sig = module.make_signature();
+    trace_tool_result_json_sig.params.push(AbiParam::new(I64));
+    trace_tool_result_json_sig.params.push(AbiParam::new(I64));
+    let trace_tool_result_json_id = module
+        .declare_function(
+            TRACE_TOOL_RESULT_JSON_SYMBOL,
+            Linkage::Import,
+            &trace_tool_result_json_sig,
+        )
+        .map_err(|e| {
+            CodegenError::cranelift(
+                format!("declare trace_tool_result_json: {e}"),
+                Span::new(0, 0),
+            )
+        })?;
 
     Ok(RuntimeFuncs {
         overflow: overflow_func_id,
@@ -784,6 +973,8 @@ pub(super) fn declare_runtime_funcs(
         string_concat: concat_id,
         string_eq: eq_id,
         string_cmp: cmp_id,
+        string_char_len: string_char_len_id,
+        string_char_at: string_char_at_id,
         alloc_typed: alloc_typed_id,
         list_destroy: list_destroy_id,
         list_trace: list_trace_id,
@@ -805,26 +996,38 @@ pub(super) fn declare_runtime_funcs(
         bench_server_enabled: bench_server_enabled_id,
         bench_next_trial: bench_next_trial_id,
         bench_finish_trial: bench_finish_trial_id,
-        tool_call_sync_int: tool_call_sync_int_id,
         runtime_is_replay: runtime_is_replay_id,
         replay_tool_call_nothing: replay_tool_call_nothing_id,
         replay_tool_call_int: replay_tool_call_int_id,
         replay_tool_call_bool: replay_tool_call_bool_id,
         replay_tool_call_float: replay_tool_call_float_id,
         replay_tool_call_string: replay_tool_call_string_id,
+        replay_tool_call_json: replay_tool_call_json_id,
         runtime_init: runtime_init_id,
         runtime_shutdown: runtime_shutdown_id,
         runtime_embed_init: embed_init_id,
         sleep_ms: sleep_ms_id,
+        json_parse: json_parse_id,
+        json_release: json_release_id,
+        json_expect_int: json_expect_int_id,
+        json_expect_float: json_expect_float_id,
+        json_expect_bool: json_expect_bool_id,
+        json_expect_string: json_expect_string_id,
+        json_array_len: json_array_len_id,
+        json_array_get: json_array_get_id,
+        json_object_get: json_object_get_id,
         string_into_cstr: string_into_cstr_id,
         begin_direct_observation: begin_direct_observation_id,
         finish_direct_observation: finish_direct_observation_id,
         grounded_capture_scalar_handle: grounded_capture_scalar_handle_id,
         grounded_capture_string_handle: grounded_capture_string_handle_id,
+        grounded_capture_refcounted_handle: grounded_capture_refcounted_handle_id,
         grounded_attest_int: grounded_attest_int_id,
         grounded_attest_bool: grounded_attest_bool_id,
         grounded_attest_float: grounded_attest_float_id,
         grounded_attest_string: grounded_attest_string_id,
+        grounded_attest_refcounted: grounded_attest_refcounted_id,
+        string_json_quote: string_json_quote_id,
         string_from_int: string_from_int_id,
         string_from_bool: string_from_bool_id,
         string_from_float: string_from_float_id,
@@ -839,12 +1042,14 @@ pub(super) fn declare_runtime_funcs(
         trace_run_completed_bool: trace_run_completed_bool_id,
         trace_run_completed_float: trace_run_completed_float_id,
         trace_run_completed_string: trace_run_completed_string_id,
+        trace_run_completed_json: trace_run_completed_json_id,
         trace_tool_call: trace_tool_call_id,
         trace_tool_result_null: trace_tool_result_null_id,
         trace_tool_result_int: trace_tool_result_int_id,
         trace_tool_result_bool: trace_tool_result_bool_id,
         trace_tool_result_float: trace_tool_result_float_id,
         trace_tool_result_string: trace_tool_result_string_id,
+        trace_tool_result_json: trace_tool_result_json_id,
         literal_counter: std::cell::Cell::new(0),
         // The unified ownership pass is the default. It produces
         // refcount-correct code
@@ -2329,6 +2534,8 @@ pub(super) const STRING_EQ_SYMBOL: &str = "corvid_string_eq";
 
 /// `long long corvid_string_cmp(void* a, void* b)` — bytewise compare.
 pub(super) const STRING_CMP_SYMBOL: &str = "corvid_string_cmp";
+pub(super) const STRING_CHAR_LEN_SYMBOL: &str = "corvid_string_char_len";
+pub(super) const STRING_CHAR_AT_SYMBOL: &str = "corvid_string_char_at";
 
 /// `void* corvid_alloc_typed(long long payload_bytes, const corvid_typeinfo* ti)`
 /// — heap-allocate an N-byte payload behind a 16-byte typed header.
@@ -2380,18 +2587,23 @@ pub(super) const BENCH_NEXT_TRIAL_SYMBOL: &str = "corvid_bench_next_trial";
 pub(super) const BENCH_FINISH_TRIAL_SYMBOL: &str = "corvid_bench_finish_trial";
 
 // Async tool dispatch bridge. Signature in Rust:
-//   corvid_tool_call_sync_int(name_ptr: *const u8, name_len: usize) -> i64
-// Returns i64::MIN on error (tool-not-found, tool-errored, non-integer
-// return). The narrow bridge only supports the `() -> Int` tool
-// signature; the typed bridge handles the general JSON arg + return
-// marshalling.
-pub(super) const TOOL_CALL_SYNC_INT_SYMBOL: &str = "corvid_tool_call_sync_int";
 pub(super) const RUNTIME_IS_REPLAY_SYMBOL: &str = "corvid_runtime_is_replay";
 pub(super) const REPLAY_TOOL_CALL_NOTHING_SYMBOL: &str = "corvid_replay_tool_call_nothing";
 pub(super) const REPLAY_TOOL_CALL_INT_SYMBOL: &str = "corvid_replay_tool_call_int";
 pub(super) const REPLAY_TOOL_CALL_BOOL_SYMBOL: &str = "corvid_replay_tool_call_bool";
 pub(super) const REPLAY_TOOL_CALL_FLOAT_SYMBOL: &str = "corvid_replay_tool_call_float";
 pub(super) const REPLAY_TOOL_CALL_STRING_SYMBOL: &str = "corvid_replay_tool_call_string";
+pub(super) const REPLAY_TOOL_CALL_JSON_SYMBOL: &str = "corvid_replay_tool_call_json";
+
+pub(super) const JSON_PARSE_SYMBOL: &str = "corvid_json_parse";
+pub(super) const JSON_RELEASE_SYMBOL: &str = "corvid_json_release";
+pub(super) const JSON_EXPECT_INT_SYMBOL: &str = "corvid_json_expect_int";
+pub(super) const JSON_EXPECT_FLOAT_SYMBOL: &str = "corvid_json_expect_float";
+pub(super) const JSON_EXPECT_BOOL_SYMBOL: &str = "corvid_json_expect_bool";
+pub(super) const JSON_EXPECT_STRING_SYMBOL: &str = "corvid_json_expect_string";
+pub(super) const JSON_ARRAY_LEN_SYMBOL: &str = "corvid_json_array_len";
+pub(super) const JSON_ARRAY_GET_SYMBOL: &str = "corvid_json_array_get";
+pub(super) const JSON_OBJECT_GET_SYMBOL: &str = "corvid_json_object_get";
 
 // Scalar-to-String stringification helpers. Used by the
 // Cranelift codegen for `IrCallKind::Prompt` lowering when a
@@ -2400,6 +2612,7 @@ pub(super) const REPLAY_TOOL_CALL_STRING_SYMBOL: &str = "corvid_replay_tool_call
 pub(super) const STRING_FROM_INT_SYMBOL: &str = "corvid_string_from_int";
 pub(super) const STRING_FROM_BOOL_SYMBOL: &str = "corvid_string_from_bool";
 pub(super) const STRING_FROM_FLOAT_SYMBOL: &str = "corvid_string_from_float";
+pub(super) const STRING_JSON_QUOTE_SYMBOL: &str = "corvid_string_json_quote";
 
 // Typed prompt-dispatch bridges. One per return type;
 // each takes 4 CorvidString args (prompt name, signature, rendered
@@ -2417,12 +2630,14 @@ pub(super) const TRACE_RUN_COMPLETED_INT_SYMBOL: &str = "corvid_trace_run_comple
 pub(super) const TRACE_RUN_COMPLETED_BOOL_SYMBOL: &str = "corvid_trace_run_completed_bool";
 pub(super) const TRACE_RUN_COMPLETED_FLOAT_SYMBOL: &str = "corvid_trace_run_completed_float";
 pub(super) const TRACE_RUN_COMPLETED_STRING_SYMBOL: &str = "corvid_trace_run_completed_string";
+pub(super) const TRACE_RUN_COMPLETED_JSON_SYMBOL: &str = "corvid_trace_run_completed_json";
 pub(super) const TRACE_TOOL_CALL_SYMBOL: &str = "corvid_trace_tool_call";
 pub(super) const TRACE_TOOL_RESULT_NULL_SYMBOL: &str = "corvid_trace_tool_result_null";
 pub(super) const TRACE_TOOL_RESULT_INT_SYMBOL: &str = "corvid_trace_tool_result_int";
 pub(super) const TRACE_TOOL_RESULT_BOOL_SYMBOL: &str = "corvid_trace_tool_result_bool";
 pub(super) const TRACE_TOOL_RESULT_FLOAT_SYMBOL: &str = "corvid_trace_tool_result_float";
 pub(super) const TRACE_TOOL_RESULT_STRING_SYMBOL: &str = "corvid_trace_tool_result_string";
+pub(super) const TRACE_TOOL_RESULT_JSON_SYMBOL: &str = "corvid_trace_tool_result_json";
 
 // Runtime bridge init/shutdown called from `corvid_init`
 // at the start of codegen-emitted `main` when the program uses any
@@ -2439,10 +2654,13 @@ pub(super) const GROUNDED_CAPTURE_SCALAR_HANDLE_SYMBOL: &str =
     "corvid_grounded_capture_scalar_handle";
 pub(super) const GROUNDED_CAPTURE_STRING_HANDLE_SYMBOL: &str =
     "corvid_grounded_capture_string_handle";
+pub(super) const GROUNDED_CAPTURE_REFCOUNTED_HANDLE_SYMBOL: &str =
+    "corvid_grounded_capture_refcounted_handle";
 pub(super) const GROUNDED_ATTEST_INT_SYMBOL: &str = "corvid_grounded_attest_int";
 pub(super) const GROUNDED_ATTEST_BOOL_SYMBOL: &str = "corvid_grounded_attest_bool";
 pub(super) const GROUNDED_ATTEST_FLOAT_SYMBOL: &str = "corvid_grounded_attest_float";
 pub(super) const GROUNDED_ATTEST_STRING_SYMBOL: &str = "corvid_grounded_attest_string";
+pub(super) const GROUNDED_ATTEST_REFCOUNTED_SYMBOL: &str = "corvid_grounded_attest_refcounted";
 
 /// Per-struct payload uses fixed 8-byte field slots for simple offset
 /// math. Tighter packing is a later optimization.
@@ -2467,6 +2685,8 @@ pub(super) struct RuntimeFuncs {
     pub string_concat: FuncId,
     pub string_eq: FuncId,
     pub string_cmp: FuncId,
+    pub string_char_len: FuncId,
+    pub string_char_at: FuncId,
     /// Single typed allocator replaces the older
     /// `alloc`/`alloc_with_destructor` pair. Signature:
     /// `(size: i64, typeinfo_ptr: i64) -> i64`.
@@ -2500,27 +2720,39 @@ pub(super) struct RuntimeFuncs {
     pub bench_server_enabled: FuncId,
     pub bench_next_trial: FuncId,
     pub bench_finish_trial: FuncId,
-    // Async tool bridge + runtime init/shutdown.
-    pub tool_call_sync_int: FuncId,
+    // Runtime init/shutdown + replay bridges.
     pub runtime_is_replay: FuncId,
     pub replay_tool_call_nothing: FuncId,
     pub replay_tool_call_int: FuncId,
     pub replay_tool_call_bool: FuncId,
     pub replay_tool_call_float: FuncId,
     pub replay_tool_call_string: FuncId,
+    pub replay_tool_call_json: FuncId,
     pub runtime_init: FuncId,
     pub runtime_shutdown: FuncId,
     pub runtime_embed_init: FuncId,
     pub sleep_ms: FuncId,
+    pub json_parse: FuncId,
+    pub json_release: FuncId,
+    pub json_expect_int: FuncId,
+    pub json_expect_float: FuncId,
+    pub json_expect_bool: FuncId,
+    pub json_expect_string: FuncId,
+    pub json_array_len: FuncId,
+    pub json_array_get: FuncId,
+    pub json_object_get: FuncId,
     pub string_into_cstr: FuncId,
     pub begin_direct_observation: FuncId,
     pub finish_direct_observation: FuncId,
     pub grounded_capture_scalar_handle: FuncId,
     pub grounded_capture_string_handle: FuncId,
+    pub grounded_capture_refcounted_handle: FuncId,
     pub grounded_attest_int: FuncId,
     pub grounded_attest_bool: FuncId,
     pub grounded_attest_float: FuncId,
     pub grounded_attest_string: FuncId,
+    pub grounded_attest_refcounted: FuncId,
+    pub string_json_quote: FuncId,
     // Scalar->String helpers for prompt-template interpolation.
     pub string_from_int: FuncId,
     pub string_from_bool: FuncId,
@@ -2537,12 +2769,14 @@ pub(super) struct RuntimeFuncs {
     pub trace_run_completed_bool: FuncId,
     pub trace_run_completed_float: FuncId,
     pub trace_run_completed_string: FuncId,
+    pub trace_run_completed_json: FuncId,
     pub trace_tool_call: FuncId,
     pub trace_tool_result_null: FuncId,
     pub trace_tool_result_int: FuncId,
     pub trace_tool_result_bool: FuncId,
     pub trace_tool_result_float: FuncId,
     pub trace_tool_result_string: FuncId,
+    pub trace_tool_result_json: FuncId,
     pub literal_counter: std::cell::Cell<u64>,
     /// When true, codegen-level scattered
     /// `emit_retain` / `emit_release` sites are skipped because the
@@ -2643,6 +2877,7 @@ pub(super) struct TracePayload {
     pub type_tags: ClValue,
     pub count: ClValue,
     pub values_ptr: ClValue,
+    pub owned_values: Vec<ClValue>,
 }
 
 pub(super) fn emit_trace_payload(
@@ -2660,6 +2895,7 @@ pub(super) fn emit_trace_payload(
         .collect::<Result<String, _>>()?;
     let type_tags = lower_string_literal(builder, module, runtime, &tags, span)?;
     let count = builder.ins().iconst(I64, values.len() as i64);
+    let mut owned_values = Vec::new();
     let values_ptr = if values.is_empty() {
         builder.ins().iconst(I64, 0)
     } else {
@@ -2683,13 +2919,10 @@ pub(super) fn emit_trace_payload(
                         builder.ins().stack_store(*value, stack_slot, offset);
                     }
                     other => {
-                        return Err(CodegenError::not_supported(
-                            format!(
-                                "native trace payload does not yet support values of type `{}`",
-                                other.display_name()
-                            ),
-                            span,
-                        ));
+                        let json =
+                            emit_json_stringify_arg(builder, module, runtime, *value, other, span)?;
+                        builder.ins().stack_store(json, stack_slot, offset);
+                        owned_values.push(json);
                     }
                 },
                 Type::Int | Type::String => {
@@ -2703,13 +2936,10 @@ pub(super) fn emit_trace_payload(
                     builder.ins().stack_store(*value, stack_slot, offset);
                 }
                 other => {
-                    return Err(CodegenError::not_supported(
-                        format!(
-                            "native trace payload does not yet support values of type `{}`",
-                            other.display_name()
-                        ),
-                        span,
-                    ));
+                    let json =
+                        emit_json_stringify_arg(builder, module, runtime, *value, other, span)?;
+                    builder.ins().stack_store(json, stack_slot, offset);
+                    owned_values.push(json);
                 }
             }
         }
@@ -2719,6 +2949,7 @@ pub(super) fn emit_trace_payload(
         type_tags,
         count,
         values_ptr,
+        owned_values,
     })
 }
 
@@ -2729,15 +2960,13 @@ fn trace_tag_for_type(ty: &Type) -> Result<char, CodegenError> {
         Type::Bool => Ok('b'),
         Type::Float => Ok('f'),
         Type::String => Ok('s'),
-        other => Err(CodegenError::not_supported(
-            format!(
-                "native trace payload does not yet support values of type `{}`",
-                other.display_name()
-            ),
-            Span::new(0, 0),
-        )),
+        _ => Ok('j'),
     }
 }
+
+/// Symbol name used by the C entry shim to pick up the runtime
+/// overflow handler. Declared here so both codegen and the shim agree.
+pub(super) const OVERFLOW_HANDLER_SYMBOL: &str = "corvid_runtime_overflow";
 
 /// Loop context entry recorded on the `loop_stack` at `for` entry,
 /// consumed by `break` / `continue` statements nested inside.
@@ -2753,77 +2982,9 @@ pub(super) struct LoopCtx {
     /// scopes from the current depth down to (but not including) this
     /// value, releasing refcounted locals as they go.
     pub scope_depth_at_entry: usize,
+    /// Native string iteration synthesizes owned per-iteration `String`
+    /// values that are not represented as source-level owned locals in
+    /// the dup/drop pass. This tracks that loop variable so
+    /// `break`/`continue` can release it explicitly when needed.
+    pub loop_owned_local: Option<Variable>,
 }
-
-/// Per-agent mutable state: the `LocalId → Variable` map, the
-/// monotonic Variable index, and the scope stack tracking refcounted
-/// locals for end-of-scope releases.
-///
-/// `scope_stack` mirrors Corvid's lexical scoping rather than
-/// Cranelift's flat-Variable model: each `if`/`else` branch pushes its
-/// own scope; locals declared inside a branch get released at branch
-/// exit; function-root locals release at function exit.
-pub(super) struct LocalsCtx {
-    /// Bound locals: id → (Cranelift variable, declared width).
-    pub env: HashMap<LocalId, (Variable, clir::Type)>,
-    /// Monotonic Variable id counter — unique per agent.
-    pub var_idx: usize,
-    /// Stack of nested scopes, innermost on top. Each scope holds the
-    /// refcounted locals declared *in that scope*.
-    pub scope_stack: Vec<Vec<(LocalId, Variable)>>,
-}
-
-impl LocalsCtx {
-    pub(super) fn new() -> Self {
-        Self {
-            env: HashMap::new(),
-            var_idx: 0,
-            scope_stack: Vec::new(),
-        }
-    }
-
-    /// Push a fresh scope onto the stack. Call at every block entry.
-    pub(super) fn enter_scope(&mut self) {
-        self.scope_stack.push(Vec::new());
-    }
-
-    /// Pop the current scope and return its refcounted locals so the
-    /// caller can emit `release` calls *before* the block terminator.
-    pub(super) fn exit_scope(&mut self) -> Vec<(LocalId, Variable)> {
-        self.scope_stack.pop().unwrap_or_default()
-    }
-
-    /// Register a refcounted local in the current scope. Called from
-    /// `IrStmt::Let` when a *new* binding (not reassignment) is made
-    /// for a String / Struct / List type.
-    pub(super) fn track_refcounted(&mut self, local_id: LocalId, var: Variable) {
-        if let Some(top) = self.scope_stack.last_mut() {
-            top.push((local_id, var));
-        }
-    }
-
-    /// Iterate over every refcounted local across all scopes,
-    /// innermost first. Used by `IrStmt::Return` to release all live
-    /// locals before transferring the return value to the caller.
-    pub(super) fn all_refcounted_innermost_first(
-        &self,
-    ) -> impl Iterator<Item = &(LocalId, Variable)> {
-        self.scope_stack.iter().rev().flat_map(|s| s.iter().rev())
-    }
-}
-
-impl Default for LocalsCtx {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-/// Symbol name used by the C entry shim to pick up the runtime
-/// overflow handler. Declared here so both codegen and the shim agree.
-pub(super) const OVERFLOW_HANDLER_SYMBOL: &str = "corvid_runtime_overflow";
-
-/// Stable symbol the C shim calls into. The codegen emits a trampoline
-/// with this name that forwards to the user-chosen entry agent. Keeps
-/// the shim source constant regardless of what the user named their
-/// agent.
-pub(super) const ENTRY_TRAMPOLINE_SYMBOL: &str = "corvid_entry";

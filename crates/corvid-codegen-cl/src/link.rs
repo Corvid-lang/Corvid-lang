@@ -62,46 +62,37 @@ pub fn link_binary(
     // on Unix). Resolved here, not in the build script, so the exact
     // filename matches the host we're linking on right now.
     //
-    // When the caller supplies a tools staticlib via `extra_tool_libs`,
-    // that lib transitively includes corvid-runtime (via rlib dep) and
-    // linking BOTH would produce LNK2005 duplicate-symbol errors —
-    // each staticlib bundles its own copy of Rust's std. Resolution:
-    // link exactly one "runtime-bearing" staticlib, either
-    // corvid-runtime standalone (tool-free programs) or the user's
-    // tools crate (tool-using programs; their staticlib brings the
-    // runtime along for the ride).
     let staticlib_dir = std::path::Path::new(env!("CORVID_STATICLIB_DIR"));
-    let runtime_staticlib_path = if compiler.is_like_msvc() {
-        staticlib_dir.join("corvid_runtime.lib")
+    let runtime_lib_name = if compiler.is_like_msvc() {
+        "corvid_runtime.lib"
     } else {
-        staticlib_dir.join("libcorvid_runtime.a")
+        "libcorvid_runtime.a"
     };
-    let link_standalone_runtime = extra_tool_libs.is_empty();
-    if link_standalone_runtime && !runtime_staticlib_path.exists() {
+    let runtime_staticlib_path = staticlib_dir.join(runtime_lib_name);
+    let fallback_runtime_staticlib_path = staticlib_dir
+        .parent()
+        .map(|parent| parent.join("release").join(runtime_lib_name));
+    let runtime_staticlib_path = if runtime_staticlib_path.exists() {
+        runtime_staticlib_path
+    } else if let Some(fallback) = fallback_runtime_staticlib_path.filter(|path| path.exists()) {
+        fallback
+    } else {
         return Err(CodegenError::link(format!(
-            "corvid-runtime staticlib missing at `{}`. Run `cargo build -p corvid-runtime --release` — this is a build-setup issue, not a codegen bug.",
+            "corvid-runtime staticlib missing at `{}` and no release fallback was found. Build `corvid-runtime` for the active profile or run `cargo build -p corvid-runtime --release`.",
             runtime_staticlib_path.display()
         )));
-    }
+    };
 
     if compiler.is_like_msvc() {
-        // MSVC: cl.exe acts as the link driver. The C runtime is
-        // already bundled into the runtime-bearing staticlib we link
-        // below, so we hand cl.exe only the Cranelift object plus
-        // that one runtime/tools library.
+        // MSVC: cl.exe acts as the link driver. Always link the
+        // standalone corvid-runtime staticlib explicitly; some
+        // tool staticlibs do not carry the runtime C objects through
+        // transitively on Windows.
         cmd.arg(object_path)
-            .arg(format!("/Fe:{}", output_path.display()));
-        // Exactly ONE runtime-bearing staticlib: either the standalone
-        // corvid-runtime (tool-free programs) or the user's tools
-        // staticlib (which transitively includes corvid-runtime via
-        // its rlib dep). Linking both triggers LNK2005 on every Rust
-        // std symbol.
-        if link_standalone_runtime {
-            cmd.arg(&runtime_staticlib_path);
-        } else {
-            for lib in extra_tool_libs {
-                cmd.arg(lib);
-            }
+            .arg(format!("/Fe:{}", output_path.display()))
+            .arg(&runtime_staticlib_path);
+        for lib in extra_tool_libs {
+            cmd.arg(lib);
         }
         cmd
             // `/link` separates cl.exe driver args from linker args.
@@ -129,19 +120,13 @@ pub fn link_binary(
             // explicitly.
             .arg("legacy_stdio_definitions.lib");
     } else {
-        // GCC/Clang: cc object.o libcorvid_runtime.a <native libs> -o output
-        // The runtime-bearing staticlib already bundles the C runtime,
-        // so just hand the linker the object + that one library.
+        // GCC/Clang: cc object.o libcorvid_runtime.a <tool-libs...> <native libs> -o output
+        // Always link the standalone runtime explicitly for the same
+        // reason as the MSVC path above.
         cmd.arg(object_path);
-        // Exactly ONE runtime-bearing staticlib (see MSVC branch above
-        // for the LNK2005 explanation — same constraint applies on
-        // Unix, just with a different linker phrasing).
-        if link_standalone_runtime {
-            cmd.arg(&runtime_staticlib_path);
-        } else {
-            for lib in extra_tool_libs {
-                cmd.arg(lib);
-            }
+        cmd.arg(&runtime_staticlib_path);
+        for lib in extra_tool_libs {
+            cmd.arg(lib);
         }
         cmd
             // System libs tokio + reqwest + rustls + Rust std need
