@@ -2420,6 +2420,9 @@ fn cmd_doctor_v2() -> Result<u8> {
     if !check_positive_u64_env("CORVID_MAX_REQUESTS", "backend graceful drain request limit") {
         ok = false;
     }
+    if !check_hex_key_env("CORVID_TOKEN_KEY", 64, "connector token encryption key") {
+        ok = false;
+    }
 
     match find_upward(&cwd, "Corvid.lock") {
         Some(path) => println!("  OK registry lockfile found at {}", path.display()),
@@ -2550,6 +2553,26 @@ fn check_positive_u64_env(name: &str, label: &str) -> bool {
                 false
             }
         },
+        Err(_) => {
+            println!("  .. {name} not set ({label})");
+            true
+        }
+    }
+}
+
+fn check_hex_key_env(name: &str, expected_len: usize, label: &str) -> bool {
+    match std::env::var(name) {
+        Ok(value)
+            if value.len() == expected_len
+                && value.chars().all(|ch| ch.is_ascii_hexdigit()) =>
+        {
+            println!("  OK {name} valid ({label})");
+            true
+        }
+        Ok(_) => {
+            println!("  XX {name} invalid ({label}); value redacted");
+            false
+        }
         Err(_) => {
             println!("  .. {name} not set ({label})");
             true
