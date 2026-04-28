@@ -1,0 +1,6 @@
+[package]
+name = "corvid-guarantees"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Canonical registry of every public Corvid guarantee — single source of truth that every Phase 35 artifact derives from."

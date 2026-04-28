@@ -5628,3 +5628,35 @@ This entry covers Slice 0 only — the ROADMAP amendment, status memory update,
 and dev-log capture. Slice 35-A (the registry data model) starts next under
 the autonomous execution protocol with one commit per slice and validation
 gate at every boundary.
+
+## 2026-04-28 - Phase 35-A: corvid-guarantees registry crate
+
+New workspace crate `corvid-guarantees` ships the canonical guarantee table
+that every later Phase 35 artifact derives from. The shape is deliberately
+minimal: three enums (`GuaranteeKind`, `GuaranteeClass`, `Phase`), a
+`Guarantee` struct holding a stable id + class + phase + description +
+explicit `out_of_scope_reason` + test-reference slices, and a static
+`GUARANTEE_REGISTRY` array.
+
+Seeded with twenty entries covering the documented moat surface: three
+approval-boundary rules, three effect-row rules, two grounding rules, two
+budget rules (one static, one runtime-checked), one confidence rule, two
+replay rules, one provenance-trace rule, two ABI-descriptor rules, three
+ABI-attestation rules, plus three explicit `OutOfScope` rows enumerating the
+honest non-defenses (host kernel compromise, signing-key compromise,
+toolchain compromise). The `OutOfScope` rows are non-negotiable — every one
+must carry a non-empty reason, and the registry validator rejects any that
+does not.
+
+The validator is a runtime function `validate_slice` that checks for
+duplicate ids, malformed ids (must match `kind_prefix.specific_promise` with
+ascii-lowercase segments), empty descriptions, missing `out_of_scope_reason`
+on `OutOfScope` entries, and present `out_of_scope_reason` on enforced
+entries. The in-crate test suite asserts the canonical registry is
+well-formed and demonstrates each rejection path. Eleven tests pass.
+
+The registry's id slugs (e.g. `approval.dangerous_call_requires_token`) are
+the stable handles that diagnostics in slice 35-B will reference, that
+`corvid contract list` in slice 35-C will print, and that `corvid claim
+--explain` in slice 35-I will report per binary. Slice 35-A introduces no
+behaviour change in the existing pipeline; it is foundation only.
