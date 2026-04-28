@@ -93,6 +93,48 @@ fn migrate_up_records_applied_state_and_status_reads_it() {
 }
 
 #[test]
+fn migrate_status_reports_changed_missing_duplicate_and_out_of_order_drift() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let migrations = dir.path().join("migrations");
+    let state = dir.path().join("target").join("corvid-migrations.json");
+    std::fs::create_dir_all(&migrations).expect("migrations dir");
+    std::fs::create_dir_all(state.parent().unwrap()).expect("state dir");
+    std::fs::write(migrations.join("0001_init.sql"), "changed\n").expect("write 0001");
+    std::fs::write(migrations.join("0001_duplicate.sql"), "duplicate\n").expect("write duplicate");
+    std::fs::write(migrations.join("0002_second.sql"), "second\n").expect("write 0002");
+    std::fs::write(
+        &state,
+        r#"{
+  "migrations": [
+    {"name":"0002_second.sql","sha256":"0000000000000000000000000000000000000000000000000000000000000000","applied_at":2},
+    {"name":"0001_init.sql","sha256":"1111111111111111111111111111111111111111111111111111111111111111","applied_at":1},
+    {"name":"0000_missing.sql","sha256":"2222222222222222222222222222222222222222222222222222222222222222","applied_at":0}
+  ]
+}"#,
+    )
+    .expect("write state");
+
+    let out = Command::new(corvid_bin())
+        .args([
+            "migrate",
+            "status",
+            "--dir",
+            migrations.to_str().unwrap(),
+            "--state",
+            state.to_str().unwrap(),
+        ])
+        .output()
+        .expect("run migrate status");
+    assert!(!out.status.success(), "drift should fail");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("drift: changed"), "{stdout}");
+    assert!(stdout.contains("drift: missing"), "{stdout}");
+    assert!(stdout.contains("drift: duplicate"), "{stdout}");
+    assert!(stdout.contains("drift: out_of_order"), "{stdout}");
+    assert!(stdout.contains("drift_found:"), "{stdout}");
+}
+
+#[test]
 fn migrate_help_lists_status_up_down() {
     let out = Command::new(corvid_bin())
         .args(["migrate", "--help"])

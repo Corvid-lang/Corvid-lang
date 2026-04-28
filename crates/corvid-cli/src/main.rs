@@ -1286,6 +1286,7 @@ fn cmd_new(name: &str) -> Result<u8> {
 fn cmd_migrate(action: &str, dir: &Path, state: &Path, dry_run: bool) -> Result<u8> {
     let migrations = scan_migration_files(dir)?;
     let mut migration_state = load_migration_state(state)?;
+    let drift = detect_migration_drift(&migrations, &migration_state);
     println!("corvid migrate {action}");
     println!("migrations: {}", dir.display());
     println!("state: {}", state.display());
@@ -1314,6 +1315,14 @@ fn cmd_migrate(action: &str, dir: &Path, state: &Path, dry_run: bool) -> Result<
             }
         }
     }
+    for item in &drift {
+        println!("drift: {} {}", item.kind, item.message);
+    }
+    if !drift.is_empty() {
+        println!("drift_found: {}", drift.len());
+        println!("state_updated: false");
+        return Ok(1);
+    }
     if action == "up" && !dry_run {
         save_migration_state(state, &migration_state)?;
         println!("state_updated: true");
@@ -1326,6 +1335,11 @@ fn cmd_migrate(action: &str, dir: &Path, state: &Path, dry_run: bool) -> Result<
 struct MigrationFile {
     name: String,
     sha256: String,
+}
+
+struct MigrationDrift {
+    kind: &'static str,
+    message: String,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -1366,6 +1380,73 @@ fn scan_migration_files(dir: &Path) -> Result<Vec<MigrationFile>> {
     }
     files.sort_by(|left, right| left.name.cmp(&right.name));
     Ok(files)
+}
+
+fn detect_migration_drift(
+    migrations: &[MigrationFile],
+    state: &MigrationState,
+) -> Vec<MigrationDrift> {
+    let mut drift = Vec::new();
+    let mut seen_versions = std::collections::HashMap::<String, String>::new();
+    for migration in migrations {
+        let version = migration_version(&migration.name);
+        if let Some(previous) = seen_versions.insert(version.clone(), migration.name.clone()) {
+            drift.push(MigrationDrift {
+                kind: "duplicate",
+                message: format!(
+                    "version `{version}` appears in `{previous}` and `{}`",
+                    migration.name
+                ),
+            });
+        }
+    }
+
+    for applied in &state.migrations {
+        match migrations.iter().find(|migration| migration.name == applied.name) {
+            Some(current) if current.sha256 != applied.sha256 => drift.push(MigrationDrift {
+                kind: "changed",
+                message: format!(
+                    "`{}` expected sha256:{}, actual sha256:{}",
+                    applied.name, applied.sha256, current.sha256
+                ),
+            }),
+            Some(_) => {}
+            None => drift.push(MigrationDrift {
+                kind: "missing",
+                message: format!("applied migration `{}` is missing from disk", applied.name),
+            }),
+        }
+    }
+
+    let file_order = migrations
+        .iter()
+        .map(|migration| migration.name.as_str())
+        .collect::<Vec<_>>();
+    let mut last_index = None;
+    for applied in &state.migrations {
+        if let Some(index) = file_order.iter().position(|name| *name == applied.name) {
+            if last_index.is_some_and(|last| index < last) {
+                drift.push(MigrationDrift {
+                    kind: "out_of_order",
+                    message: format!(
+                        "applied migration `{}` is earlier than a previously applied migration",
+                        applied.name
+                    ),
+                });
+            }
+            last_index = Some(index);
+        }
+    }
+
+    drift
+}
+
+fn migration_version(name: &str) -> String {
+    name.split_once('_')
+        .map(|(version, _)| version)
+        .or_else(|| name.split_once('.').map(|(version, _)| version))
+        .unwrap_or(name)
+        .to_string()
 }
 
 fn load_migration_state(path: &Path) -> Result<MigrationState> {
