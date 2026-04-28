@@ -1706,6 +1706,64 @@ Every Phase 36-43 slice must clear the same four gates before it can be marked d
 
 Each benchmark must separate model-provider latency from Corvid runtime overhead. Hiding LLM latency inside benchmark wins is forbidden.
 
+### Slice completion gate (no shortcuts)
+
+Every Phase 36–43 slice — and every retroactive promotion of a Phase 35 entry from `OutOfScope` to `Static`/`RuntimeChecked` — must clear every box below before the `[x]` lands. Optimistic checkmarks are how earlier phases drifted from spec; this gate exists so the same drift cannot reach the production-backend track.
+
+Maintainers paste the filled-in checklist into the dev-log entry that documents the slice. A slice without a green checklist is not done — period.
+
+**Build + test gates**
+
+- [ ] **Workspace clean.** `cargo check --workspace` and `cargo check --workspace --tests` produce zero warnings (no new `#[allow(dead_code)]` / `#[allow(unused)]` without an inline justification comment).
+- [ ] **Unit tests green.** `cargo test -p <affected-crate> --lib` is green; the new code has both positive and adversarial unit tests.
+- [ ] **Integration tests green.** Every new CLI subcommand, runtime path, or connector ships with at least one `tests/` integration test that exercises the user-facing flow end-to-end.
+- [ ] **Corpus + differential-verify green.** `cargo run -q -p corvid-cli -- verify --corpus tests/corpus` exits with the documented code (1 only on the deliberate-fail fixtures).
+- [ ] **CI workflow updated.** `.github/workflows/ci.yml` runs the new tests on every push.
+
+**Registry + claim gates (Phase 35 inheritance)**
+
+- [ ] **Registry entry.** Every new public guarantee has a `corvid_guarantees::GUARANTEE_REGISTRY` row with stable `id`, `kind`, `class` (`Static` / `RuntimeChecked` / `OutOfScope`), enforcing `Phase`, description, and — for `OutOfScope` — an explicit reason.
+- [ ] **Diagnostic tagged.** Every new contract-enforcing diagnostic uses `TypeError::with_guarantee` (or the equivalent for runtime / ABI / connector errors) with a registered id; no anonymous contract diagnostics.
+- [ ] **Test references populated.** New `Static` and `RuntimeChecked` rows carry ≥1 `positive_test_refs` and ≥1 `adversarial_test_refs` that resolve to real `fn name(` declarations. The cross-reference test in `corvid-guarantees` stays green.
+- [ ] **Claim coverage updated.** Every new declared contract pattern (new attribute, new keyword, new effect dimension, new connector method, new approval clause) is added to `validate_signed_claim_coverage` so `corvid build --sign` cannot ship an incomplete claim.
+- [ ] **`corvid claim --explain` reports it.** Any new public guarantee or contract surface shows up in `claim --explain` output for an exemplar binary.
+- [ ] **`corvid contract list` shows it.** Same for the canonical guarantee table; verified by pasting the JSON output into the dev-log entry.
+- [ ] **`docs/core-semantics.md` regenerated.** `cargo run -q -p corvid-cli -- contract regen-doc docs/core-semantics.md` runs cleanly; the drift gate test in `corvid-guarantees::render::tests::rendered_markdown_matches_committed_doc` passes.
+
+**Adversarial gates**
+
+- [ ] **Source-bypass test.** New compile-time contracts have a mutator in `crates/corvid-types/tests/source_bypass_corpus.rs` (or the phase's equivalent corpus) that proves the violation is rejected with the right `guarantee_id`.
+- [ ] **Byte-fuzz test (if ABI / attestation / on-disk format).** New parsers carry ≥100 generated mutations in the phase's byte-fuzz corpus; all rejected; benign mutations round-trip.
+- [ ] **Named threat coverage.** Every new attack class the slice introduces (approval bypass, scope escalation, replay forgery, connector contract drift, tenant crossing, prompt injection through new surface) has at least one named `must_fail` test.
+
+**AI-in-the-development-loop gate**
+
+- [ ] **AI-assisted helper named.** The slice brief names at least one LLM-pattern (RAG-grounded / generative / adversarial / agentic / assistive) helper the slice enables for maintainers — even when implementation lands in a follow-up. The helper itself runs as a Corvid program (typed effects, `@budget`, `Grounded<T>` outputs, replay-able trace).
+
+**Production-readiness gates**
+
+- [ ] **Real persistence path.** Anything the slice claims to persist actually lands in SQLite + Postgres with row-level locking; no JSON state files masquerading as databases.
+- [ ] **Crash-recovery proof.** Any "durable" / "resumable" claim ships an integration test that `SIGKILL`s the worker mid-step and asserts byte-exact resume with no double-spend / double-side-effect.
+- [ ] **Mock ≡ replay ≡ real.** Every external integration (connector, LLM, DB, OAuth) has mock + replay + real modes that share one typed surface; CI runs the same test in mock mode at minimum, real mode behind an opt-in env var.
+- [ ] **Operator runbook delta.** Slices that add an operator-visible surface (new command, new manifest, new endpoint) update the relevant runbook page in the same commit.
+- [ ] **Side-by-side comparison committed.** When the slice claims a moat dimension, a `benches/comparisons/<feature>.md` file shows the equivalent Python / TS / Go code line-by-line, with a Corvid-vs-other governance-line-count delta.
+
+**Documentation gates**
+
+- [ ] **`dev-log.md` entry.** One date-stamped entry per slice; explains *what* changed, *why*, and *how it's tested*. Filled-in checklist pasted in.
+- [ ] **`learnings.md` entry (if user-visible).** Doc-and-feature land together.
+- [ ] **`docs/security-model.md` reviewed.** If the slice changes the TCB, threat model, or non-goals, the security model is updated in the same commit.
+- [ ] **README + landing page alignment.** If the slice introduces a public claim, the wording is derivable from a runnable command. No aspirational copy.
+
+**Phase-level gates (apply when ticking the *phase* done — not the slice)**
+
+- [ ] **Every slice box ticked.** Every `[x]` slice in the phase passed the slice gate above; no carry-over of "we'll fix it in the next phase."
+- [ ] **End-to-end demo runnable.** The phase's "Done when:" sentence translates to one or more shell commands that produce the documented output on a clean clone.
+- [ ] **No silent `OutOfScope` downgrades.** If a registry entry was downgraded mid-phase, the reason is recorded in the registry AND a follow-up issue/slice is filed to promote it back.
+- [ ] **External reviewer signoff (Phase 42–43 only).** At least one developer outside the contributor list runs the phase's demo and signs off in writing on a public issue.
+
+A slice that fails any box rolls back to `[ ]`. The `[x]` is a contract, not a wish.
+
 ### Phase 36 — Production backend core (~8-10 weeks)
 
 **Goal.** Corvid can build an always-on HTTP backend without a host framework. A developer should be able to write routes, JSON APIs, middleware, health checks, configuration, secrets, structured logs, graceful shutdown, and deployment-ready binaries in Corvid itself.
@@ -1837,13 +1895,62 @@ Each benchmark must separate model-provider latency from Corvid runtime overhead
 
 **Done when:** the Personal Executive Agent backend can run daily brief generation, email triage, meeting prep, and follow-up reminders as durable jobs that survive process restart.
 
+**Libraries & frameworks (Phase 38):**
+
+- `tokio` — async worker pool (already a dep).
+- `rusqlite` + `postgres` — job-store backends with row-level locks (already deps).
+- `chrono-tz` — cron timezone correctness; DST handling is non-negotiable.
+- `tokio-cron-scheduler` *or* hand-rolled cron — must support DST + missed-fire policies (`fire_once_on_recovery` / `skip`).
+- `ulid` — monotonic job IDs.
+- `tracing` — span emission for every state transition (already a dep); OTel hooks ride on Phase 40.
+- Existing `ed25519-dalek` for job-receipt signing when the run produces a Phase 21 receipt.
+
+**Developer flow (Phase 38):**
+
+```corvid
+@budget($0.20)
+@retry(max_attempts: 3, backoff: exponential(base: 30s, cap: 5m))
+@idempotency(key: brief.user_id)
+@replayable
+job daily_brief(user_id: String) uses email_effect, summary_effect:
+    inbox = gmail.recent(user_id, since: yesterday())
+    summary = summarise(inbox)
+    approve SendBrief(user_id, summary)
+    gmail.send(user_id, summary)
+
+schedule "0 8 * * *" zone "America/New_York" -> daily_brief(every_user())
+```
+
+```bash
+corvid jobs run --queue=default --workers=4
+corvid jobs schedule list
+corvid jobs inspect <id>
+corvid jobs explain <id>          # AI-assisted root-cause from the typed trace
+corvid jobs dlq triage            # AI-assisted DLQ pattern clustering
+corvid jobs retry <id>
+corvid jobs export-trace <id>
+corvid jobs pause --queue=default
+corvid jobs drain --workers=all
+```
+
+**Phase-done checklist (Phase 38):**
+
+- [ ] `validate_signed_claim_coverage` recognises `@retry`, `@idempotency`, `@replayable`, `job`, `schedule`, and `await_approval` as declared contracts.
+- [ ] Registry rows shipped: `jobs.durable_resume`, `jobs.idempotency_key_uniqueness`, `jobs.lease_exclusivity`, `jobs.retry_budget_bound`, `jobs.cron_dst_correct`, `jobs.replayable_side_effects`, `jobs.approval_wait_resume`, `jobs.loop_bounds_enforced` — each `Static` or `RuntimeChecked`, each with positive + adversarial test refs.
+- [ ] Crash-recovery integration test: `SIGKILL` mid-step → resume with no LLM re-spend (verified by mock-LLM call counter).
+- [ ] Idempotency adversarial test: 4 concurrent workers + 100 jobs same key → exactly 1 ran.
+- [ ] DST cron test: a job scheduled for 2:30am on the spring-forward day fires according to the documented policy.
+- [ ] Replay-quarantine test: replay an old job trace, assert no real provider call left the process.
+- [ ] AI helper landed (or follow-up filed): `corvid jobs explain` (RAG-grounded) using the typed trace.
+- [ ] Side-by-side `benches/comparisons/jobs_durability.md` against Celery + BullMQ + Temporal.
+
 **Small-slice breakdown for Phase 38:**
 
 - [x] 38B1-job-envelope              Add `std.jobs` job/input/output/state envelopes.
 - [x] 38B2-enqueue-command           Add enqueue/run-one runtime path with local persisted state.
 - [x] 38B3-one-job-test              One persisted job executes once with typed input/output.
 - [x] 38C1-retry-policy-envelope     Retry/backoff/dead-letter metadata exists in stdlib.
-- [ ] 38C2-retry-runner              Runner applies retry/backoff and terminal failure.
+- [x] 38C2-retry-runner              Runner applies retry/backoff and terminal failure.
 - [ ] 38C3-dlq-inspection            CLI can inspect dead-lettered jobs.
 - [ ] 38D1-delay-support             Delayed jobs persist and wake after restart.
 - [ ] 38D2-cron-manifest             Cron schedules appear in `corvid audit`.
@@ -1891,6 +1998,66 @@ Each benchmark must separate model-provider latency from Corvid runtime overhead
 - [ ] 39J-approval-product-example   Reference backend exposes real login, tenant-safe approvals, and auditable AI actions.
 
 **Done when:** a backend can expose real user login, tenant-safe approvals, and auditable AI actions without outsourcing the core safety model to another framework.
+
+**Libraries & frameworks (Phase 39):**
+
+- `jsonwebtoken` — JWT verify (RS256, ES256, EdDSA) with JWKS caching + `kid` rotation.
+- `argon2` — password + API-key hashing (Argon2id, OWASP defaults).
+- `oauth2` *or* hand-rolled — OAuth2/OIDC client; PKCE-mandatory for public clients.
+- `ring` *or* `rustls` — primitives for HMAC, signature, key-derivation.
+- `hmac` + `sha2` — CSRF double-submit token MAC.
+- `time` (already a dep) — expiry math, clock-skew tolerance.
+- `cookie` — typed cookie parsing/serialization with `SameSite`, `HttpOnly`, `Secure` defaults.
+- `rusqlite` + `postgres` — session store, API-key store, approval queue store.
+
+**Developer flow (Phase 39):**
+
+```corvid
+auth my_api:
+    sessions: cookie("__corvid_sess", secure, http_only, same_site: lax)
+    api_keys: header("Authorization", scheme: bearer)
+    jwt: verify_rs256(jwks_url: env("JWKS_URL"))
+    csrf: double_submit("__corvid_csrf")
+
+tenant Org { id: String, plan: Plan }
+role Admin, Reviewer, Member
+permission CanIssueRefund: Admin | Reviewer
+
+@dangerous
+@requires(permission: CanIssueRefund)
+@approval(contract: RefundApproval)
+tool issue_refund(actor: Actor, order_id: String, amount: Money) -> Receipt
+
+approval RefundApproval:
+    target: order_id
+    cost_ceiling: $5000
+    data: financial
+    irreversible: true
+    expires_in: 24h
+    required_role: Admin
+    policy { actor.role == Admin && amount < $100 }
+    batch_with: same_tool, same_data_class, same_role
+```
+
+```bash
+corvid auth migrate                         # session/api-key/approval tables
+corvid auth keys issue <name> --tenant=<id>
+corvid auth keys revoke <key-id>
+corvid approvals queue --tenant=<id>
+corvid approvals explain <id>               # AI-assisted reviewer summary
+corvid approvals batch <ids...>             # batch-approve semantically-equivalent items
+corvid approvals delegate <id> --to=<actor>
+corvid approvals export --since=2026-04-01  # audit dump
+```
+
+**Phase-done checklist (Phase 39):**
+
+- [ ] `validate_signed_claim_coverage` recognises `auth`, `tenant`, `role`, `permission`, `approval`, `@requires`, `@approval` as declared contracts.
+- [ ] Registry rows shipped: `auth.session_rotation_on_privilege_change`, `auth.api_key_at_rest_hashed`, `auth.jwt_kid_rotation`, `auth.oauth_pkce_required`, `auth.csrf_double_submit`, `tenant.cross_tenant_compile_error`, `approval.policy_clause_static_check`, `approval.batch_equivalence_typed`, `approval.confused_deputy_typecheck` — every one `Static` or `RuntimeChecked` with positive + adversarial test refs.
+- [ ] Adversarial corpus enumerates ≥10 named threats: confused-deputy, tenant crossing, stale-approval replay (>expiry), session fixation, scope escalation, batch-approval drift across data classes, JWT kid downgrade, OAuth state tampering, CSRF bypass on PUT/PATCH/DELETE, role escalation via stolen approval contract.
+- [ ] Reachability analysis: a typecheck fails when any reachable path to a `@dangerous` tool lacks a matching `approve` contract whose `required_role` covers every reachable caller.
+- [ ] AI helper landed (or follow-up filed): `corvid approvals explain <id>` (assistive) — typed reviewer summary; `corvid approvals policy-suggest <tool>` (generative) — proposes a `policy { ... }` clause from the last 200 approvals.
+- [ ] Side-by-side `benches/comparisons/auth_approval.md` against Auth.js, FastAPI dependencies, Go middleware.
 
 **Small-slice breakdown for Phase 39:**
 
@@ -1943,6 +2110,41 @@ Each benchmark must separate model-provider latency from Corvid runtime overhead
 
 **Done when:** maintainers can answer "what did the agent do, why, what did it cost, who approved it, what data did it touch, and can I replay it?" from committed Corvid tooling.
 
+**Libraries & frameworks (Phase 40):**
+
+- `opentelemetry`, `opentelemetry-otlp`, `tracing-opentelemetry` — OTLP/HTTP + OTLP/gRPC export; `corvid.*` semantic conventions.
+- `prometheus` (text exposition) — `/metrics` endpoint backed by typed counters/histograms.
+- `rusqlite` FTS5 (built-in) — local trace search over the embedded trace store.
+- `sha2` (already a dep) — deterministic redaction-key derivation for eval promotion.
+- Existing `ed25519-dalek` for signing promoted-eval fixtures so their lineage is verifiable.
+
+**Developer flow (Phase 40):**
+
+```bash
+corvid observe list --since=1h --status=failed
+corvid observe show <trace-id>           # renders lineage tree + cost + approvals + guarantees
+corvid observe drift --from=<id> --to=<id>
+corvid observe explain <trace-id>        # AI-assisted root cause (RAG-grounded)
+corvid observe cost --by=guarantee_id
+corvid observe cost-optimise <agent>     # AI-assisted route/escalate suggestions (generative)
+corvid eval promote <trace-id> --redact=email,phone,name
+corvid eval drift --explain              # decompose model / input / prompt / index drift
+corvid eval generate-from-feedback <id>  # AI-assisted eval from a user "wrong answer" report
+corvid review-queue list --rank=cost-of-being-wrong
+corvid observe export --otlp=https://otel.host:4317
+corvid observe metrics --listen=:9090
+```
+
+**Phase-done checklist (Phase 40):**
+
+- [ ] Lineage IDs (`trace_id`, parent `span_id`) stored on every route / job / agent / prompt / tool / approval / DB row — verifiable by SQL `JOIN` against the trace store.
+- [ ] OTel conformance test against a docker-compose Jaeger collector passes; spans carry `corvid.guarantee_id`, `corvid.cost_usd`, `corvid.approval_id`, `corvid.replay_key` attributes.
+- [ ] Registry rows shipped: `observability.lineage_completeness`, `observability.otel_conformance`, `observability.redaction_determinism`, `eval.drift_attribution`, `eval.promotion_signed_lineage`, `review_queue.cost_of_being_wrong_ranking`, `observability.contract_aware_grouping` — `Static` or `RuntimeChecked` with positive + adversarial test refs.
+- [ ] Redaction adversarial test: promote a trace containing fake SSNs → assert zero regex matches against an SSN pattern in the resulting fixture file.
+- [ ] Drift attribution test: synthetically swap (a) the model fingerprint, (b) the prompt, (c) the retrieval index — assert the explainer reports each contribution to the drop.
+- [ ] AI helper landed (or follow-up filed): `corvid observe explain` (RAG-grounded) + `corvid eval promote` (agentic).
+- [ ] Side-by-side `benches/comparisons/observability.md` against OpenTelemetry + LangSmith / Langfuse on time-to-answer for: cost, approval, action, data-touch, replay.
+
 **Small-slice breakdown for Phase 40:**
 
 - [ ] 40B1-trace-link-ids            Request/job/agent/prompt/tool/approval/DB events share stable lineage IDs.
@@ -1991,6 +2193,57 @@ Each benchmark must separate model-provider latency from Corvid runtime overhead
 - [ ] 41J-executive-agent-connectors Personal Executive Agent uses email, calendar, tasks, chat, and files through Corvid-owned connectors.
 
 **Done when:** the Personal Executive Agent can connect to email, calendar, tasks, and files through Corvid-owned backend connectors, with explicit effects and approval contracts.
+
+**Libraries & frameworks (Phase 41):**
+
+- `reqwest` (already a dep) — HTTP client; rustls-tls feature for portability.
+- Hand-rolled clients per provider: Gmail/Workspace REST, Microsoft Graph, Slack Web API, Linear GraphQL. Reason: auto-generated crates (`google-apis-rs`, `microsoft-graph-rs`) drift faster than they ship; the no-shortcut posture demands typed contracts we own.
+- `octocrab` — GitHub API client with retry + rate-limit awareness baked in.
+- `notify` — local file-watch events for the local-files connector.
+- `tantivy` — local FTS index for personal-knowledge file search.
+- `pdf-extract` (already a dep) — PDF body extraction for indexing.
+- `ical` — calendar parsing (.ics imports + Outlook/Google calendar interop).
+- `lettre` — outbound SMTP fallback for self-hosted email gateways.
+- `hmac` + `sha2` — webhook signature verification (Slack, GitHub, Linear).
+- New shared crate `corvid-connector-runtime` — auth state, retries, rate limits, redaction, trace events, and mock/replay/real swap.
+
+**Developer flow (Phase 41):**
+
+```corvid
+import std.connectors.gmail as gmail
+import std.connectors.calendar as cal
+
+connector gmail uses oauth2_token, network_effect:
+    scopes: [gmail.modify, gmail.send]
+    rate_limit: 250_per_user_per_second
+    redact: message.body in traces
+
+agent triage(user_id: String) -> Brief uses gmail.read_metadata, summary_effect:
+    msgs: List<Grounded<Message>> = gmail.search(user_id, "is:unread newer_than:1d")
+    return summarise(msgs)
+```
+
+```bash
+corvid connectors list
+corvid connectors check --live                  # contract drift detection
+corvid connectors mock-fixture-gen <name>       # AI-assisted fixture from a real-provider sample (generative)
+corvid connectors scopes-min <source>           # AI-assisted scope minimisation (agentic)
+corvid connectors fail-sim <name>               # AI-assisted adversarial generator (adversarial)
+corvid connectors run --mode=mock|replay|real
+corvid connectors oauth init <provider>         # PKCE flow + token storage
+corvid connectors oauth rotate <token-id>
+corvid connectors verify-webhook --sig=<...>
+```
+
+**Phase-done checklist (Phase 41):**
+
+- [ ] `validate_signed_claim_coverage` recognises `connector`, `scopes`, `rate_limit`, `redact`, `webhook_signed_by` as declared contracts.
+- [ ] Registry rows shipped per connector: `connector.<name>.scope_minimum_enforced`, `connector.<name>.write_requires_approval`, `connector.<name>.rate_limit_respects_provider`, `connector.<name>.contract_drift_detected`, `connector.<name>.webhook_signature_verified`, `connector.<name>.replay_quarantine` — every entry `Static` or `RuntimeChecked` with positive + adversarial tests.
+- [ ] Mock ≡ replay ≡ real: each connector ships all three modes; CI runs the same integration test in mock by default and real behind `CORVID_PROVIDER_LIVE=1`.
+- [ ] Adversarial corpus enumerates per-connector named threats: token-scope escalation, cross-tenant message access, refresh-token replay after revocation, malformed JSON body, 429/5xx retries with `Retry-After`, expired OAuth state, webhook signature forgery.
+- [ ] Provenance test: every connector return is `Grounded<T>` whose provenance is the provider's record id; downstream code that strips provenance fails typecheck under `grounded.propagation_across_calls`.
+- [ ] AI helpers landed (or follow-ups filed): `corvid connectors mock-fixture-gen` (generative) + `corvid connectors check --live` drift narrator (RAG-grounded) + `corvid connectors fail-sim` (adversarial).
+- [ ] Side-by-side `benches/comparisons/connectors.md` against raw SDK use in Python + TypeScript on safety-line-count and time-to-write-a-new-connector.
 
 **Small-slice breakdown for Phase 41:**
 
@@ -2048,6 +2301,48 @@ Each benchmark must separate model-provider latency from Corvid runtime overhead
 
 **Done when:** external developers can clone the repo, run at least one full production-shaped backend app locally, inspect its approvals/traces/evals, and deploy it without writing a second backend in another language.
 
+**Libraries & frameworks (Phase 42, app-side):**
+
+- All Phase 41 connectors (Gmail, Workspace, M365, Slack, Linear, GitHub, local files).
+- Phase 38 durable-jobs runtime + Phase 39 auth/approval + Phase 40 observability.
+- `git2` (libgit2) — repository ingestion for Code Maintenance Agent.
+- `tree-sitter` (rust + ts + py grammars) — code parsing for the same.
+- `tantivy` *or* `meilisearch-sdk` — knowledge-app document index.
+- `lettre` — outbound SMTP for the Personal Executive Agent's notification surface.
+- `ical` — calendar import/export for the Knowledge + Executive apps.
+- `pdf-extract` (already a dep) + `tika` (optional) — knowledge-app document parsing.
+
+**Developer flow (Phase 42):**
+
+```bash
+corvid new my_app --template=executive-agent       # scaffolds routes/db/jobs/auth/connectors
+cd my_app
+corvid migrate up
+corvid run --target=server --mode=mock             # offline development with mock connectors
+corvid test                                        # eval cases + adversarial cases + replay tests
+corvid eval list
+corvid audit my_app                                # one-page operator summary (auto-generated)
+corvid claim --explain target/release/libmy_app.so # signed enforced-claim manifest
+corvid claim diff v1.0.0 v1.0.1                    # AI-assisted release diff (generative)
+corvid run --target=server --mode=real             # real-provider mode behind env vars
+```
+
+**Phase-done checklist (Phase 42, applied per app):**
+
+- [ ] App ships ≥10 tables, ≥5 migrations, foreign keys, indexes; `corvid migrate up` runs SQL (not bookkeeping).
+- [ ] Auth: sessions + API keys + per-tenant + per-role; ≥1 typed permission per dangerous tool.
+- [ ] Connectors: ≥3 in mock mode by default; ≥1 in real-provider mode behind a documented env var.
+- [ ] Approvals: ≥5 distinct approval contracts; at least one uses `policy { ... }` and one uses `batch_with`.
+- [ ] Durable jobs: ≥3 cron + ≥3 retry-policy-driven background tasks; each survives `SIGKILL` + restart in tests.
+- [ ] Evals: ≥10 cases per app; ≥3 promoted from synthetic prod traces via `corvid eval promote`.
+- [ ] Adversarial tests: ≥5 named threats per app (approval bypass, cross-tenant access, prompt injection through user input, token leakage, schema drift).
+- [ ] Operator runbook: ≥1500 lines covering setup, secrets, migrations, backups, logs, metrics, incident response, rollback.
+- [ ] Deployment manifests: Docker Compose + one PaaS (Fly/Render) + one K8s manifest per app; each smoke-deploys in CI.
+- [ ] Side-by-side `benches/comparisons/<app>.md` shows the equivalent FastAPI/LangChain or Next.js+Vercel-AI-SDK implementation line-by-line (governance lines saved + non-model orchestration latency).
+- [ ] App's signed cdylib's `corvid claim --explain` output is committed under `apps/<name>/CLAIM.md` and matches the README's shipped claims.
+- [ ] AI helpers landed (per app): app-boot operator summary (assistive); weekly adversarial-test refresh (adversarial); auto-generated PR descriptions with claim diff (generative).
+- [ ] External reviewer signoff: ≥1 developer outside the contributor list runs the app locally + signs off on a public issue.
+
 **Small-slice breakdown for Phase 42:**
 
 - [ ] 42B1-template-routes           Shared app template has routes, config, health/readiness, and generated docs.
@@ -2102,6 +2397,49 @@ Each benchmark must separate model-provider latency from Corvid runtime overhead
 - [ ] 43J-launch-package             Signed binaries, install scripts, changelog, checksums, reproducible notes, demo scripts, and incident contacts are ready.
 
 **v1.0 final cut here. Launch day.** Corvid goes online only after the defensible core and the production-backend track are both complete.
+
+**Libraries & frameworks (Phase 43):**
+
+- `oci-spec` — OCI image manifest authoring; multi-stage Dockerfile (rust-builder → distroless runtime).
+- `cargo-sbom` — SPDX SBOM generation for every release artifact.
+- `cosign` (external binary) — signed-binary publishing; release attestation chained to the Phase 35 attestation envelope.
+- Hand-rolled Dockerfile / Compose / K8s / systemd / fly.toml templates — no `helm` dep (too heavy for the v1 surface).
+- `reqwest` (already a dep) — `corvid ops show <prod-url>` introspection client.
+- `time` (already a dep) — release-channel calendar policy (nightly daily, beta weekly, stable cut by tag).
+
+**Developer flow (Phase 43):**
+
+```bash
+corvid deploy package my_app/                # Dockerfile + OCI metadata + signed attestation + SBOM
+corvid deploy compose my_app/                # docker-compose.yml + .env.example + healthchecks
+corvid deploy fly my_app/                    # fly.toml + secrets template + region plan
+corvid deploy k8s my_app/                    # Deployment + Service + Ingress + ConfigMap + Secret + HPA
+corvid deploy systemd my_app/                # service unit + sysusers + tmpfiles
+corvid release nightly                       # signed binaries + checksums + changelog
+corvid release beta v1.0.0-beta.1
+corvid release stable v1.0.0
+corvid migrate run --check                   # CI-safe dry run with full drift detection
+corvid upgrade --check                       # AI-assisted claim regression check before upgrade (agentic)
+corvid upgrade --apply                       # applies codemods + flags hand-review cases
+corvid ops show <prod-url> --key=<pubkey>    # live-binary introspection (signed by host)
+corvid ops vuln <prod-url>                   # security advisory contact + policy
+corvid claim audit                           # AI-assisted final claim audit (adversarial)
+```
+
+**Phase-done checklist (Phase 43):**
+
+- [ ] `corvid deploy package` emits a multi-stage Dockerfile + distroless runtime ≤80 MB + OCI labels (`org.opencontainers.image.source`, signed-binary fingerprint) + `HEALTHCHECK` directive + full SPDX SBOM.
+- [ ] Deployment manifests for Compose, Fly/Render, K8s (kind cluster smoke deploy in CI), and systemd are smoke-tested per release.
+- [ ] Signed-attestation chain: `corvid deploy package`'s attestation references the same DSSE envelope `corvid claim --explain` consumes; the deploy attestation and the cdylib attestation cannot drift.
+- [ ] Release channels (nightly / beta / stable) ship signed binaries + `SHA256SUMS.txt` signed by the release key; checksum file rooted in a key-rotation policy doc.
+- [ ] Reproducible-build verification: a second build on a different host produces a bit-identical signed artifact; verified by an external reproducer in CI.
+- [ ] `corvid upgrade --check` reports any guarantee that *would weaken* before applying the upgrade; integration test exercises the rejection path.
+- [ ] Live-binary introspection: `corvid ops show <prod-url>` returns a signed claim manifest + costs-since-start + approvals-pending; opt-in only; the host's public key matches the binary's signing key.
+- [ ] Final claim audit: every README / website / launch-page claim has a runnable command or test; `corvid claim audit` exits 0 with no aspirational wording flagged.
+- [ ] Beta program: ≥20 external developers shipped ≥1 backend app each; their feedback closed as code/docs/tests OR explicit non-scope; the closure rate is published.
+- [ ] Registry rows shipped: `deploy.reproducible_build`, `deploy.attestation_chain`, `deploy.sbom_completeness`, `release.signed_artifact`, `upgrade.claim_regression_check`, `ops.live_introspection_signed`, `claim.audit_runnable_artifacts` — `Static` or `RuntimeChecked`, with positive + adversarial test refs.
+- [ ] AI helpers landed: release-note generator (generative), deployment-target tailor (agentic), migration assistant (agentic), beta-feedback synthesizer (agentic), final claim audit (adversarial).
+- [ ] Side-by-side `benches/comparisons/clone_to_deploy.md` against FastAPI/LangChain + Next.js/Vercel on time-from-clone-to-production-shaped-deploy.
 
 **Small-slice breakdown for Phase 43:**
 
