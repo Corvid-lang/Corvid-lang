@@ -93,6 +93,15 @@ public type DbEncryptedToken:
     replay_key: String
     effect_meta: EffectEnvelope
 
+public type DbMigrationStatus:
+    driver: String
+    migration: String
+    checksum: String
+    status: String
+    drifted: Bool
+    replay_key: String
+    effect_meta: EffectEnvelope
+
 public agent sqlite_open(dsn: String, replay_key: String) -> DbConnection:
     return DbConnection("sqlite", dsn, replay_key, effect_envelope("std.db.open", "", "", "", replay_key))
 
@@ -161,3 +170,9 @@ public agent db_encrypted_token(token_ref: DbTokenRef, ciphertext_hash: String, 
 
 public agent db_token_redacted(token_ref: DbTokenRef) -> Bool:
     return token_ref.redacted
+
+public agent db_migration_status(driver: String, migration: String, checksum: String, status: String, drifted: Bool, replay_key: String) -> DbMigrationStatus:
+    return DbMigrationStatus(driver, migration, checksum, status, drifted, replay_key, effect_envelope("std.db.migration.status", "", driver, migration, replay_key))
+
+public agent db_migration_clean(status: DbMigrationStatus) -> Bool:
+    return not status.drifted

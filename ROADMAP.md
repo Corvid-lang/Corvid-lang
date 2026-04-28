@@ -1766,7 +1766,7 @@ Each benchmark must separate model-provider latency from Corvid runtime overhead
 - [x] 37E-migrations-drift           `corvid migrate up/down/status` supports checksums, dry runs, drift detection, and CI failure on mismatch.
 - [x] 37F-audit-log-pattern          Standard audit-log schema records actor, action, prompt/model/tool versions, approval state, cost, trace ID, and replay key.
 - [x] 37G-token-storage-boundary     Encrypted connector-token storage ships with explicit key-management boundaries and tests.
-- [ ] 37H-postgres-support           Postgres reaches parity with the SQLite query/transaction/migration subset needed by reference apps.
+- [x] 37H-postgres-support           Postgres reaches parity with the SQLite query/transaction/migration subset needed by reference apps.
 - [ ] 37I-db-effect-replay           DB reads/writes carry effect tags and replay records deterministic interaction summaries.
 - [ ] 37J-backend-state-example      Backend example persists users, tasks, approvals, traces, connector tokens, and durable agent state.
 
@@ -1787,7 +1787,7 @@ Each benchmark must separate model-provider latency from Corvid runtime overhead
 - [x] 37G3-token-redaction-tests     Traces, errors, and audit helpers never print token values.
 - [x] 37H1-postgres-design           Document Postgres parity subset and non-scope before code.
 - [x] 37H2-postgres-connection       Add Postgres connection/query envelopes matching SQLite.
-- [ ] 37H3-postgres-migration-status Postgres migration status/drift path matches SQLite subset.
+- [x] 37H3-postgres-migration-status Postgres migration status/drift path matches SQLite subset.
 - [ ] 37I1-db-effect-tags            DB read/write/migration/token/audit operations carry explicit effect tags.
 - [ ] 37I2-db-replay-summary         Replay summaries capture deterministic DB interaction metadata without raw secrets.
 - [ ] 37J1-state-example-schema      Backend state example defines users/tasks/approvals/traces/tokens tables.
