@@ -6013,3 +6013,21 @@ Validation:
 
 - Documentation-only slice; README wording is derived from the Phase
   35-H/I/J commands and `docs/security-model.md`.
+
+## 2026-04-28 - Phase 35-M: CI launch gate
+
+Slice 35-M is complete. `.github/workflows/ci.yml` now has an explicit
+`phase35-launch-gates` job that runs on push and pull request after the
+workspace test job. The job names the Phase 35 launch artifacts directly:
+ABI byte fuzz corpus, source bypass corpus, adversarial guarantee tags,
+independent ABI verifier, signed cdylib attestation tests, claim
+explanation tests, signed-build claim coverage refusal tests, and the
+core-semantics registry/doc drift gate.
+
+The drift gate regenerates `docs/core-semantics.md` into `/tmp` and
+diffs it against the committed file, so spec drift is caught by CI
+without mutating the checkout.
+
+Validation:
+
+- CI YAML reviewed against the existing workflow structure.
