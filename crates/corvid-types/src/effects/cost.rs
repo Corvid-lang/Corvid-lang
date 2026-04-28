@@ -48,7 +48,11 @@ pub fn render_cost_tree(
                 let dim = canonical_dimension_name(&constraint.dimension.name);
                 let used = tree.costs.get(&dim).copied().unwrap_or(0.0);
                 if let Some(limit) = numeric_constraint_value(constraint) {
-                    let pct = if limit > 0.0 { (used / limit) * 100.0 } else { 0.0 };
+                    let pct = if limit > 0.0 {
+                        (used / limit) * 100.0
+                    } else {
+                        0.0
+                    };
                     let status = if used <= limit { "✓" } else { "✗" };
                     lines.push(format!(
                         "{:8} budget: {:<10} used: {:<10} ({:.1}%) {status}",
@@ -95,11 +99,7 @@ impl<'a> CostAnalyzer<'a> {
 
         let agent = find_agent(self.file, agent_name)?;
         if !self.visiting.insert(agent_name.to_string()) {
-            return Some(zero_estimate(
-                agent_name,
-                CostNodeKind::Agent,
-                agent.span,
-            ));
+            return Some(zero_estimate(agent_name, CostNodeKind::Agent, agent.span));
         }
 
         let body_estimate = self.analyze_block(&agent.body, agent_name);
@@ -148,16 +148,23 @@ impl<'a> CostAnalyzer<'a> {
             corvid_ast::Stmt::Let { value, span, .. }
             | corvid_ast::Stmt::Yield { value, span }
             | corvid_ast::Stmt::Expr { expr: value, span }
-            | corvid_ast::Stmt::Approve { action: value, span } => {
+            | corvid_ast::Stmt::Approve {
+                action: value,
+                span,
+            } => {
                 let mut estimate = self.analyze_expr(value, agent_name);
                 estimate.tree.name = "stmt".into();
                 estimate.tree.kind = CostNodeKind::Sequence;
                 estimate.tree.costs = estimate.dimensions.clone();
-                estimate.tree.children = prune_children(std::mem::take(&mut estimate.tree.children));
+                estimate.tree.children =
+                    prune_children(std::mem::take(&mut estimate.tree.children));
                 estimate.tree = wrap_if_needed("stmt", estimate.tree, *span);
                 estimate
             }
-            corvid_ast::Stmt::Return { value: Some(value), span } => {
+            corvid_ast::Stmt::Return {
+                value: Some(value),
+                span,
+            } => {
                 let mut estimate = self.analyze_expr(value, agent_name);
                 estimate.tree = wrap_if_needed("return", estimate.tree, *span);
                 estimate
@@ -181,17 +188,26 @@ impl<'a> CostAnalyzer<'a> {
                 let sequence = sequence_tree(
                     "if",
                     CostNodeKind::Sequence,
-                    vec![wrap_if_needed("condition", cond_est.tree, cond.span()), branch],
+                    vec![
+                        wrap_if_needed("condition", cond_est.tree, cond.span()),
+                        branch,
+                    ],
                     *span,
                 );
                 CostEstimate {
                     dimensions: sequence.costs.clone(),
                     tree: sequence,
-                    warnings: collect_warnings(&[cond_est.warnings, then_est.warnings, else_est.warnings]),
+                    warnings: collect_warnings(&[
+                        cond_est.warnings,
+                        then_est.warnings,
+                        else_est.warnings,
+                    ]),
                     bounded: cond_est.bounded && then_est.bounded && else_est.bounded,
                 }
             }
-            corvid_ast::Stmt::For { iter, body, span, .. } => {
+            corvid_ast::Stmt::For {
+                iter, body, span, ..
+            } => {
                 let iter_est = self.analyze_expr(iter, agent_name);
                 if let Some(iterations) = static_loop_bound(iter) {
                     let body_est = self.analyze_block(body, agent_name);
@@ -199,7 +215,10 @@ impl<'a> CostAnalyzer<'a> {
                     let sequence = sequence_tree(
                         "for",
                         CostNodeKind::Sequence,
-                        vec![wrap_if_needed("iter", iter_est.tree, iter.span()), loop_tree.clone()],
+                        vec![
+                            wrap_if_needed("iter", iter_est.tree, iter.span()),
+                            loop_tree.clone(),
+                        ],
                         *span,
                     );
                     let mut warnings = iter_est.warnings;
@@ -270,7 +289,11 @@ impl<'a> CostAnalyzer<'a> {
                 }
             }
             corvid_ast::Expr::FieldAccess { target, .. } => self.analyze_expr(target, agent_name),
-            corvid_ast::Expr::Index { target, index, span } => {
+            corvid_ast::Expr::Index {
+                target,
+                index,
+                span,
+            } => {
                 let target_est = self.analyze_expr(target, agent_name);
                 let index_est = self.analyze_expr(index, agent_name);
                 let tree = sequence_tree(
@@ -286,7 +309,9 @@ impl<'a> CostAnalyzer<'a> {
                     bounded: target_est.bounded && index_est.bounded,
                 }
             }
-            corvid_ast::Expr::BinOp { left, right, span, .. } => {
+            corvid_ast::Expr::BinOp {
+                left, right, span, ..
+            } => {
                 let left_est = self.analyze_expr(left, agent_name);
                 let right_est = self.analyze_expr(right, agent_name);
                 let tree = sequence_tree(
@@ -522,7 +547,8 @@ fn prune_children(children: Vec<CostTreeNode>) -> Vec<CostTreeNode> {
 
 fn add_costs(target: &mut HashMap<String, f64>, source: &HashMap<String, f64>) {
     for dim in COST_DIMENSIONS {
-        let next = target.get(dim).copied().unwrap_or(0.0) + source.get(dim).copied().unwrap_or(0.0);
+        let next =
+            target.get(dim).copied().unwrap_or(0.0) + source.get(dim).copied().unwrap_or(0.0);
         target.insert(dim.to_string(), next);
     }
 }
@@ -575,7 +601,11 @@ fn effect_node_for_decl(
     registry: &EffectRegistry,
     _span: corvid_ast::Span,
 ) -> CostTreeNode {
-    let mut effect_names: Vec<&str> = effect_row.effects.iter().map(|effect| effect.name.name.as_str()).collect();
+    let mut effect_names: Vec<&str> = effect_row
+        .effects
+        .iter()
+        .map(|effect| effect.name.name.as_str())
+        .collect();
     if matches!(legacy_effect, Effect::Dangerous) {
         effect_names.push("dangerous");
     }
@@ -588,8 +618,16 @@ fn effect_node_for_decl(
     }
 }
 
-fn effect_node_for_prompt(prompt: &corvid_ast::PromptDecl, registry: &EffectRegistry) -> CostTreeNode {
-    let effect_names: Vec<&str> = prompt.effect_row.effects.iter().map(|effect| effect.name.name.as_str()).collect();
+fn effect_node_for_prompt(
+    prompt: &corvid_ast::PromptDecl,
+    registry: &EffectRegistry,
+) -> CostTreeNode {
+    let effect_names: Vec<&str> = prompt
+        .effect_row
+        .effects
+        .iter()
+        .map(|effect| effect.name.name.as_str())
+        .collect();
     let profile = registry.compose(&effect_names);
     CostTreeNode {
         name: prompt.name.name.clone(),
@@ -635,7 +673,10 @@ fn render_cost_tree_lines(
         node.name,
         format_numeric_dimension("cost", node.costs.get("cost").copied().unwrap_or(0.0)),
         format_numeric_dimension("tokens", node.costs.get("tokens").copied().unwrap_or(0.0)),
-        format_numeric_dimension("latency_ms", node.costs.get("latency_ms").copied().unwrap_or(0.0)),
+        format_numeric_dimension(
+            "latency_ms",
+            node.costs.get("latency_ms").copied().unwrap_or(0.0)
+        ),
     ));
 
     let next_prefix = if prefix.is_empty() {
@@ -647,12 +688,7 @@ fn render_cost_tree_lines(
     };
 
     for (index, child) in node.children.iter().enumerate() {
-        render_cost_tree_lines(
-            child,
-            &next_prefix,
-            index + 1 == node.children.len(),
-            lines,
-        );
+        render_cost_tree_lines(child, &next_prefix, index + 1 == node.children.len(), lines);
     }
 }
 

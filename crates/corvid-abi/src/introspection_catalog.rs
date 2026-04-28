@@ -1,7 +1,6 @@
 use crate::schema::{
-    AbiAgent, AbiApprovalContract, AbiAttributes, AbiBudget, AbiEffects, AbiParam,
-    AbiProjectedUsd, AbiProvenanceContract, AbiSourceSpan, CorvidAbi, ScalarTypeName,
-    TypeDescription,
+    AbiAgent, AbiApprovalContract, AbiAttributes, AbiBudget, AbiEffects, AbiParam, AbiProjectedUsd,
+    AbiProvenanceContract, AbiSourceSpan, CorvidAbi, ScalarTypeName, TypeDescription,
 };
 
 pub fn with_introspection_agents(mut abi: CorvidAbi) -> CorvidAbi {
@@ -32,11 +31,7 @@ pub fn introspection_agents() -> Vec<AbiAgent> {
                 ownership: None,
             }],
         ),
-        introspection_agent(
-            "__corvid_list_agents",
-            "__corvid_list_agents",
-            Vec::new(),
-        ),
+        introspection_agent("__corvid_list_agents", "__corvid_list_agents", Vec::new()),
         introspection_agent(
             "__corvid_find_agents_where",
             "__corvid_find_agents_where",

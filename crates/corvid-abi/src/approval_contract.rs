@@ -1,7 +1,6 @@
 use crate::effect_emit::emit_effects_from_effect_names;
 use crate::schema::{
-    AbiApprovalContract, AbiApprovalLabel, AbiApprovalSite, AbiDeclaredAt, AbiParam,
-    AbiSourceSpan,
+    AbiApprovalContract, AbiApprovalLabel, AbiApprovalSite, AbiDeclaredAt, AbiParam, AbiSourceSpan,
 };
 use crate::type_description::emit_type_description;
 use corvid_ast::{Block, Decl, Effect, Expr, File, Stmt, ToolDecl};
@@ -134,7 +133,14 @@ fn collect_contract_from_block(
                 else_block,
                 ..
             } => {
-                collect_contract_from_block(then_block, resolved, registry, tools, labels, dangerous_targets);
+                collect_contract_from_block(
+                    then_block,
+                    resolved,
+                    registry,
+                    tools,
+                    labels,
+                    dangerous_targets,
+                );
                 if let Some(else_block) = else_block {
                     collect_contract_from_block(
                         else_block,
@@ -147,7 +153,14 @@ fn collect_contract_from_block(
                 }
             }
             Stmt::For { body, .. } => {
-                collect_contract_from_block(body, resolved, registry, tools, labels, dangerous_targets);
+                collect_contract_from_block(
+                    body,
+                    resolved,
+                    registry,
+                    tools,
+                    labels,
+                    dangerous_targets,
+                );
             }
             _ => {}
         }
@@ -215,7 +228,9 @@ fn collect_sites_from_block(
             } => {
                 collect_sites_from_block(then_block, agent_name, resolved, registry, tools, out);
                 if let Some(else_block) = else_block {
-                    collect_sites_from_block(else_block, agent_name, resolved, registry, tools, out);
+                    collect_sites_from_block(
+                        else_block, agent_name, resolved, registry, tools, out,
+                    );
                 }
             }
             Stmt::For { body, .. } => {

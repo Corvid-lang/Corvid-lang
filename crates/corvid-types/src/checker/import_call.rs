@@ -7,8 +7,8 @@
 //! imported target for IR lowering.
 
 use super::{pascal_case, snake_case, Checker, ImportedCallKind, ImportedCallTarget};
-use crate::errors::{TypeError, TypeErrorKind, TypeWarning, TypeWarningKind};
 use crate::effects::{ComposedProfile, EffectRegistry};
+use crate::errors::{TypeError, TypeErrorKind, TypeWarning, TypeWarningKind};
 use crate::types::{ImportedStructType, Type};
 use corvid_ast::{AgentAttribute, Decl, Effect, Expr, Ident, Param, Span, WeakEffect};
 use corvid_resolve::{Binding, DeclKind, DefId, ModuleLookup, ResolvedModule};
@@ -139,9 +139,7 @@ impl<'a> Checker<'a> {
                     .collect::<HashMap<_, _>>(),
                 effect_names: Vec::new(),
             };
-            for violation in
-                registry.check_constraints(&profile, &import.required_constraints)
-            {
+            for violation in registry.check_constraints(&profile, &import.required_constraints) {
                 let message = violation.to_string();
                 self.errors.push(TypeError::with_guarantee(
                     TypeErrorKind::EffectConstraintViolation {
@@ -199,7 +197,8 @@ impl<'a> Checker<'a> {
                                     import.module, export.name
                                 ),
                                 dimension: "deterministic".to_string(),
-                                message: "exported agent is not marked `@deterministic`".to_string(),
+                                message: "exported agent is not marked `@deterministic`"
+                                    .to_string(),
                             },
                             import.span,
                             "effect_row.import_boundary",

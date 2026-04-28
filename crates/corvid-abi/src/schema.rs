@@ -257,15 +257,34 @@ pub struct AbiOwnership {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum TypeDescription {
-    Scalar { scalar: ScalarTypeName },
-    Struct { #[serde(rename = "struct")] name: String },
-    List { list: AbiListType },
-    Result { result: AbiResultType },
-    Option { option: AbiOptionType },
-    Grounded { grounded: AbiGroundedType },
-    Partial { partial: AbiPartialType },
-    ResumeToken { resume_token: AbiResumeTokenType },
-    Weak { weak: AbiWeakType },
+    Scalar {
+        scalar: ScalarTypeName,
+    },
+    Struct {
+        #[serde(rename = "struct")]
+        name: String,
+    },
+    List {
+        list: AbiListType,
+    },
+    Result {
+        result: AbiResultType,
+    },
+    Option {
+        option: AbiOptionType,
+    },
+    Grounded {
+        grounded: AbiGroundedType,
+    },
+    Partial {
+        partial: AbiPartialType,
+    },
+    ResumeToken {
+        resume_token: AbiResumeTokenType,
+    },
+    Weak {
+        weak: AbiWeakType,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

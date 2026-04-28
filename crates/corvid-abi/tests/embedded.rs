@@ -2,9 +2,9 @@ mod common;
 
 use common::{compile_bundle, FIXED_GENERATED_AT};
 use corvid_abi::{
-    descriptor_from_embedded_section, descriptor_to_embedded_bytes, emit_catalog_abi, hash_json_str,
-    parse_embedded_section_bytes, with_introspection_agents, CORVID_ABI_SECTION_MAGIC,
-    CORVID_ABI_VERSION,
+    descriptor_from_embedded_section, descriptor_to_embedded_bytes, emit_catalog_abi,
+    hash_json_str, parse_embedded_section_bytes, with_introspection_agents,
+    CORVID_ABI_SECTION_MAGIC, CORVID_ABI_VERSION,
 };
 
 const SOURCE: &str = r#"

@@ -86,17 +86,18 @@ impl ReplSession {
         }
     }
 
-    pub fn typecheck_turn(&self, file: &File, resolved: &Resolved, build: ReplTurnBuild) -> CheckedTurn {
+    pub fn typecheck_turn(
+        &self,
+        file: &File,
+        resolved: &Resolved,
+        build: ReplTurnBuild,
+    ) -> CheckedTurn {
         let checked = typecheck(file, resolved);
         CheckedTurn { checked, build }
     }
 }
 
-fn synthetic_agent(
-    locals: &[ReplLocal],
-    stmts: Vec<Stmt>,
-    symbols: &SymbolTable,
-) -> AgentDecl {
+fn synthetic_agent(locals: &[ReplLocal], stmts: Vec<Stmt>, symbols: &SymbolTable) -> AgentDecl {
     let span = Span::new(0, 0);
     let params = locals
         .iter()
@@ -139,17 +140,16 @@ fn type_to_type_ref(ty: &Type, symbols: &SymbolTable) -> TypeRef {
         }
         Type::ImportedStruct(imported) => named_type(imported.name.clone(), span),
         Type::List(inner) => generic_type("List", vec![type_to_type_ref(inner, symbols)], span),
-        Type::Stream(inner) => {
-            generic_type("Stream", vec![type_to_type_ref(inner, symbols)], span)
-        }
+        Type::Stream(inner) => generic_type("Stream", vec![type_to_type_ref(inner, symbols)], span),
         Type::Result(ok, err) => generic_type(
             "Result",
-            vec![type_to_type_ref(ok, symbols), type_to_type_ref(err, symbols)],
+            vec![
+                type_to_type_ref(ok, symbols),
+                type_to_type_ref(err, symbols),
+            ],
             span,
         ),
-        Type::Option(inner) => {
-            generic_type("Option", vec![type_to_type_ref(inner, symbols)], span)
-        }
+        Type::Option(inner) => generic_type("Option", vec![type_to_type_ref(inner, symbols)], span),
         Type::Weak(inner, effects) => TypeRef::Weak {
             inner: Box::new(type_to_type_ref(inner, symbols)),
             effects: if effects.is_any() {

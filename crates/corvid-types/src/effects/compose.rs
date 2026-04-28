@@ -57,9 +57,7 @@ pub(super) fn compose_dimension(
     match rule {
         CompositionRule::Sum => match (current, incoming) {
             (DimensionValue::Cost(a), DimensionValue::Cost(b)) => DimensionValue::Cost(a + b),
-            (DimensionValue::Number(a), DimensionValue::Number(b)) => {
-                DimensionValue::Number(a + b)
-            }
+            (DimensionValue::Number(a), DimensionValue::Number(b)) => DimensionValue::Number(a + b),
             _ => incoming.clone(),
         },
         CompositionRule::Max => compose_max_dimension(current, incoming, dim_name),
@@ -67,9 +65,7 @@ pub(super) fn compose_dimension(
             (DimensionValue::Number(a), DimensionValue::Number(b)) => {
                 DimensionValue::Number(a.min(*b))
             }
-            (DimensionValue::Cost(a), DimensionValue::Cost(b)) => {
-                DimensionValue::Cost(a.min(*b))
-            }
+            (DimensionValue::Cost(a), DimensionValue::Cost(b)) => DimensionValue::Cost(a.min(*b)),
             (DimensionValue::Name(a), DimensionValue::Name(b)) => {
                 // Min on Name is lattice-aware for the trust lattice.
                 // For unknown Name values, fall back to lexicographic
@@ -92,9 +88,7 @@ pub(super) fn compose_dimension(
             _ => incoming.clone(),
         },
         CompositionRule::LeastReversible => match (current, incoming) {
-            (DimensionValue::Bool(a), DimensionValue::Bool(b)) => {
-                DimensionValue::Bool(*a && *b)
-            }
+            (DimensionValue::Bool(a), DimensionValue::Bool(b)) => DimensionValue::Bool(*a && *b),
             _ => incoming.clone(),
         },
     }
@@ -148,7 +142,10 @@ fn compose_max_dimension(
     }
 }
 
-fn compose_latency_dimension(current: &DimensionValue, incoming: &DimensionValue) -> DimensionValue {
+fn compose_latency_dimension(
+    current: &DimensionValue,
+    incoming: &DimensionValue,
+) -> DimensionValue {
     match (current, incoming) {
         (
             DimensionValue::Streaming {
@@ -346,11 +343,13 @@ pub(super) fn trust_min<'a>(a: &'a str, b: &'a str) -> &'a str {
     }
 }
 
-pub(super) fn dimension_satisfies(actual: &DimensionValue, constraint: &DimensionValue, dim_name: &str) -> bool {
+pub(super) fn dimension_satisfies(
+    actual: &DimensionValue,
+    constraint: &DimensionValue,
+    dim_name: &str,
+) -> bool {
     match (actual, constraint) {
-        (DimensionValue::Cost(actual_cost), DimensionValue::Cost(budget)) => {
-            actual_cost <= budget
-        }
+        (DimensionValue::Cost(actual_cost), DimensionValue::Cost(budget)) => actual_cost <= budget,
         (DimensionValue::Bool(actual_rev), DimensionValue::Bool(required_rev)) => {
             // If constraint requires reversible (true), actual must be true.
             !required_rev || *actual_rev
@@ -456,9 +455,16 @@ pub(super) fn format_dim_value(v: &DimensionValue) -> String {
         DimensionValue::Cost(c) => format!("${c:.4}"),
         DimensionValue::Number(n) => format!("{n}"),
         DimensionValue::Streaming { backpressure } => {
-            format!("streaming(backpressure: {})", format_backpressure(backpressure))
+            format!(
+                "streaming(backpressure: {})",
+                format_backpressure(backpressure)
+            )
         }
-        DimensionValue::ConfidenceGated { threshold, above, below } => {
+        DimensionValue::ConfidenceGated {
+            threshold,
+            above,
+            below,
+        } => {
             format!("{above}_if_confident({threshold}) (below: {below})")
         }
     }
@@ -499,7 +505,10 @@ pub(super) fn latency_streaming_rank() -> u8 {
     4
 }
 
-pub(super) fn backpressure_satisfies(actual: &BackpressurePolicy, required: &BackpressurePolicy) -> bool {
+pub(super) fn backpressure_satisfies(
+    actual: &BackpressurePolicy,
+    required: &BackpressurePolicy,
+) -> bool {
     match (actual, required) {
         (_, BackpressurePolicy::Unbounded) => true,
         (BackpressurePolicy::Unbounded, BackpressurePolicy::Bounded(_)) => false,

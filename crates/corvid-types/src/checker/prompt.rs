@@ -67,11 +67,7 @@ impl<'a> Checker<'a> {
         }
 
         if let Some(param_name) = &p.cites_strictly {
-            match p
-                .params
-                .iter()
-                .find(|param| param.name.name == *param_name)
-            {
+            match p.params.iter().find(|param| param.name.name == *param_name) {
                 Some(param) => {
                     let param_ty = self.type_ref_to_type(&param.ty);
                     if !matches!(param_ty, Type::Grounded(_) | Type::Unknown) {
@@ -141,9 +137,7 @@ impl<'a> Checker<'a> {
         // [0.0, 1.0] — a confidence outside that range is ill-formed.
         if let Some(chain) = &p.progressive {
             for stage in &chain.stages {
-                if let Some(Binding::Decl(def_id)) =
-                    self.bindings.get(&stage.model.span)
-                {
+                if let Some(Binding::Decl(def_id)) = self.bindings.get(&stage.model.span) {
                     let def_id = *def_id;
                     let entry = self.symbols.get(def_id);
                     if entry.kind != corvid_resolve::DeclKind::Model {
@@ -340,8 +334,7 @@ impl<'a> Checker<'a> {
                         spec.proposer.span,
                     ));
                 } else {
-                    for (i, (outer, got)) in
-                        outer_params.iter().zip(prop_params.iter()).enumerate()
+                    for (i, (outer, got)) in outer_params.iter().zip(prop_params.iter()).enumerate()
                     {
                         if !outer.is_assignable_to(got)
                             && !matches!(outer, Type::Unknown)

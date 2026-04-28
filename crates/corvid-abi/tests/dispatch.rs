@@ -26,7 +26,11 @@ agent refund_bot(ticket: String) -> Bool:
     return classify(ticket) == "refund"
 "#,
     );
-    let prompt = abi.prompts.iter().find(|prompt| prompt.name == "classify").unwrap();
+    let prompt = abi
+        .prompts
+        .iter()
+        .find(|prompt| prompt.name == "classify")
+        .unwrap();
     match prompt.dispatch.as_ref().unwrap() {
         AbiDispatch::Progressive { stages } => {
             assert_eq!(stages.len(), 3);
@@ -55,7 +59,11 @@ agent refund_bot(ticket: String) -> Bool:
     return classify(ticket) == "refund"
 "#,
     );
-    let prompt = abi.prompts.iter().find(|prompt| prompt.name == "classify").unwrap();
+    let prompt = abi
+        .prompts
+        .iter()
+        .find(|prompt| prompt.name == "classify")
+        .unwrap();
     match prompt.dispatch.as_ref().unwrap() {
         AbiDispatch::Rollout {
             variant,
@@ -90,10 +98,20 @@ agent refund_bot(ticket: String) -> Bool:
     return classify(ticket) == "refund"
 "#,
     );
-    let prompt = abi.prompts.iter().find(|prompt| prompt.name == "classify").unwrap();
+    let prompt = abi
+        .prompts
+        .iter()
+        .find(|prompt| prompt.name == "classify")
+        .unwrap();
     match prompt.dispatch.as_ref().unwrap() {
-        AbiDispatch::Ensemble { models, vote_strategy } => {
-            assert_eq!(models, &vec!["a".to_string(), "b".to_string(), "c".to_string()]);
+        AbiDispatch::Ensemble {
+            models,
+            vote_strategy,
+        } => {
+            assert_eq!(
+                models,
+                &vec!["a".to_string(), "b".to_string(), "c".to_string()]
+            );
             assert_eq!(vote_strategy, "majority");
         }
         other => panic!("expected ensemble dispatch, got {other:?}"),
@@ -127,7 +145,11 @@ agent refund_bot(ticket: String) -> Bool:
     return verdict.contradiction
 "#,
     );
-    let prompt = abi.prompts.iter().find(|prompt| prompt.name == "classify").unwrap();
+    let prompt = abi
+        .prompts
+        .iter()
+        .find(|prompt| prompt.name == "classify")
+        .unwrap();
     match prompt.dispatch.as_ref().unwrap() {
         AbiDispatch::Adversarial {
             propose,
@@ -154,6 +176,10 @@ agent refund_bot(ticket: String) -> Bool:
     return classify(ticket) == "refund"
 "#,
     );
-    let prompt = abi.prompts.iter().find(|prompt| prompt.name == "classify").unwrap();
+    let prompt = abi
+        .prompts
+        .iter()
+        .find(|prompt| prompt.name == "classify")
+        .unwrap();
     assert!(prompt.dispatch.is_none());
 }

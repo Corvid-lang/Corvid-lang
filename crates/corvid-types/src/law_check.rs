@@ -170,12 +170,7 @@ pub fn laws_for_rule(rule: CompositionRule) -> &'static [Law] {
     }
 }
 
-fn run_law(
-    dim: &DimensionUnderTest,
-    law: Law,
-    samples: usize,
-    rng: &mut SeededRng,
-) -> Verdict {
+fn run_law(dim: &DimensionUnderTest, law: Law, samples: usize, rng: &mut SeededRng) -> Verdict {
     let rule = dim.schema.composition;
     let name = &dim.schema.name;
     for _ in 0..samples {
@@ -354,9 +349,7 @@ fn random_value(dim: &DimensionUnderTest, rng: &mut SeededRng) -> DimensionValue
     let (num_lo, num_hi) = numeric_range(dim);
     match (ty, dim.schema.composition) {
         (DimensionValueType::Bool, _) => DimensionValue::Bool(rng.bool()),
-        (DimensionValueType::Cost, _) => {
-            DimensionValue::Cost(rng.float_in_range(num_lo, num_hi))
-        }
+        (DimensionValueType::Cost, _) => DimensionValue::Cost(rng.float_in_range(num_lo, num_hi)),
         (DimensionValueType::Number, _) => {
             DimensionValue::Number(rng.float_in_range(num_lo, num_hi))
         }
@@ -380,9 +373,7 @@ fn random_value(dim: &DimensionUnderTest, rng: &mut SeededRng) -> DimensionValue
         (DimensionValueType::Name, CompositionRule::Union) => {
             DimensionValue::Name(sample_data_category(rng))
         }
-        (DimensionValueType::Name, _) => {
-            DimensionValue::Name(sample_generic_name(rng))
-        }
+        (DimensionValueType::Name, _) => DimensionValue::Name(sample_generic_name(rng)),
     }
 }
 
@@ -601,7 +592,11 @@ mod tests {
         // A mis-declared Sum dimension whose default is non-zero —
         // Sum's identity must be 0 (the additive identity). A default
         // of 5 breaks identity because x + 5 ≠ x for any x.
-        let dim = builtin("broken_sum", CompositionRule::Sum, DimensionValue::Number(5.0));
+        let dim = builtin(
+            "broken_sum",
+            CompositionRule::Sum,
+            DimensionValue::Number(5.0),
+        );
         let results = check_dimension(&dim, 1000);
         let identity = results
             .iter()

@@ -48,11 +48,17 @@ prompt cached(ticket_id: String) -> Weak<Decision, {tool_call, llm}>:
 "#;
 
 fn find_prompt<'a>(abi: &'a corvid_abi::CorvidAbi, name: &str) -> &'a corvid_abi::AbiPrompt {
-    abi.prompts.iter().find(|prompt| prompt.name == name).expect("prompt")
+    abi.prompts
+        .iter()
+        .find(|prompt| prompt.name == name)
+        .expect("prompt")
 }
 
 fn find_tool<'a>(abi: &'a corvid_abi::CorvidAbi, name: &str) -> &'a corvid_abi::AbiTool {
-    abi.tools.iter().find(|tool| tool.name == name).expect("tool")
+    abi.tools
+        .iter()
+        .find(|tool| tool.name == name)
+        .expect("tool")
 }
 
 #[test]
@@ -62,7 +68,10 @@ fn list_type_descriptor_has_element_field() {
     match &classify.return_type {
         TypeDescription::Result { result } => match result.ok.as_ref() {
             TypeDescription::List { list } => {
-                assert!(matches!(list.element.as_ref(), TypeDescription::Option { .. }));
+                assert!(matches!(
+                    list.element.as_ref(),
+                    TypeDescription::Option { .. }
+                ));
             }
             other => panic!("expected list type, got {other:?}"),
         },
@@ -78,7 +87,10 @@ fn option_type_descriptor_has_inner_field() {
         TypeDescription::Result { result } => match result.ok.as_ref() {
             TypeDescription::List { list } => match list.element.as_ref() {
                 TypeDescription::Option { option } => {
-                    assert!(matches!(option.inner.as_ref(), TypeDescription::Scalar { .. }));
+                    assert!(matches!(
+                        option.inner.as_ref(),
+                        TypeDescription::Scalar { .. }
+                    ));
                 }
                 other => panic!("expected option type, got {other:?}"),
             },
@@ -95,7 +107,10 @@ fn result_type_descriptor_has_ok_and_err_fields() {
     match &classify.return_type {
         TypeDescription::Result { result } => {
             assert!(matches!(result.ok.as_ref(), TypeDescription::List { .. }));
-            assert!(matches!(result.err.as_ref(), TypeDescription::Scalar { .. }));
+            assert!(matches!(
+                result.err.as_ref(),
+                TypeDescription::Scalar { .. }
+            ));
         }
         other => panic!("expected result type, got {other:?}"),
     }
@@ -107,7 +122,10 @@ fn grounded_type_descriptor_has_inner_field() {
     let decide = find_prompt(&abi, "decide");
     match &decide.return_type {
         TypeDescription::Grounded { grounded } => {
-            assert!(matches!(grounded.inner.as_ref(), TypeDescription::Struct { .. }));
+            assert!(matches!(
+                grounded.inner.as_ref(),
+                TypeDescription::Struct { .. }
+            ));
         }
         other => panic!("expected grounded type, got {other:?}"),
     }
@@ -119,7 +137,10 @@ fn weak_type_descriptor_has_effects_list() {
     let cached = find_prompt(&abi, "cached");
     match &cached.return_type {
         TypeDescription::Weak { weak } => {
-            assert_eq!(weak.effects, vec!["tool_call".to_string(), "llm_call".to_string()]);
+            assert_eq!(
+                weak.effects,
+                vec!["tool_call".to_string(), "llm_call".to_string()]
+            );
         }
         other => panic!("expected weak type, got {other:?}"),
     }
@@ -131,7 +152,10 @@ fn partial_type_descriptor_has_inner_field() {
     let preview = find_prompt(&abi, "preview");
     match &preview.return_type {
         TypeDescription::Partial { partial } => {
-            assert!(matches!(partial.inner.as_ref(), TypeDescription::Struct { .. }));
+            assert!(matches!(
+                partial.inner.as_ref(),
+                TypeDescription::Struct { .. }
+            ));
         }
         other => panic!("expected partial type, got {other:?}"),
     }
@@ -143,7 +167,10 @@ fn resume_token_type_descriptor_has_inner_field() {
     let checkpoint = find_tool(&abi, "checkpoint_token");
     match &checkpoint.return_type {
         TypeDescription::ResumeToken { resume_token } => {
-            assert!(matches!(resume_token.inner.as_ref(), TypeDescription::Struct { .. }));
+            assert!(matches!(
+                resume_token.inner.as_ref(),
+                TypeDescription::Struct { .. }
+            ));
         }
         other => panic!("expected resume token type, got {other:?}"),
     }
@@ -171,7 +198,10 @@ fn nested_type_descriptors_nest_structurally() {
         TypeDescription::Result { result } => match result.ok.as_ref() {
             TypeDescription::List { list } => match list.element.as_ref() {
                 TypeDescription::Option { option } => {
-                    assert!(matches!(option.inner.as_ref(), TypeDescription::Scalar { .. }));
+                    assert!(matches!(
+                        option.inner.as_ref(),
+                        TypeDescription::Scalar { .. }
+                    ));
                 }
                 other => panic!("expected nested option, got {other:?}"),
             },

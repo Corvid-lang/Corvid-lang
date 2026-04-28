@@ -59,7 +59,8 @@ impl<'a> Checker<'a> {
                 let Some(modules) = self.module_resolution else {
                     return Type::Unknown;
                 };
-                let Some(target_module) = imported_module_alias_target(module, modules, &alias.name)
+                let Some(target_module) =
+                    imported_module_alias_target(module, modules, &alias.name)
                 else {
                     return Type::Unknown;
                 };
@@ -85,9 +86,7 @@ impl<'a> Checker<'a> {
                 *span,
                 TypeContext::Imported(module),
             ),
-            TypeRef::Weak {
-                inner, effects, ..
-            } => Type::Weak(
+            TypeRef::Weak { inner, effects, .. } => Type::Weak(
                 Box::new(self.imported_type_ref_to_type(inner, module)),
                 effects.unwrap_or_else(WeakEffectRow::any),
             ),
@@ -144,7 +143,12 @@ impl<'a> Checker<'a> {
         imported_struct_type(module, target.export.def_id, &target.export.name)
     }
 
-    fn qualified_type_ref_to_type(&mut self, alias: &str, name: &str, span: corvid_ast::Span) -> Type {
+    fn qualified_type_ref_to_type(
+        &mut self,
+        alias: &str,
+        name: &str,
+        span: corvid_ast::Span,
+    ) -> Type {
         let Some(modules) = self.module_resolution else {
             self.errors.push(TypeError::new(
                 TypeErrorKind::CorvidImportNotYetResolved {
@@ -201,11 +205,7 @@ impl<'a> Checker<'a> {
         }
     }
 
-    fn named_type_in_module(
-        &self,
-        name: &str,
-        module: &corvid_resolve::ResolvedModule,
-    ) -> Type {
+    fn named_type_in_module(&self, name: &str, module: &corvid_resolve::ResolvedModule) -> Type {
         match name {
             "Int" => Type::Int,
             "Float" => Type::Float,
@@ -318,8 +318,7 @@ fn imported_module_alias_target<'a>(
                 corvid_ast::ImportSource::Corvid
                     | corvid_ast::ImportSource::RemoteCorvid
                     | corvid_ast::ImportSource::PackageCorvid
-            )
-                && import.alias.as_ref().is_some_and(|a| a.name == alias) =>
+            ) && import.alias.as_ref().is_some_and(|a| a.name == alias) =>
         {
             Some(import)
         }
@@ -329,8 +328,12 @@ fn imported_module_alias_target<'a>(
         corvid_ast::ImportSource::Corvid => {
             corvid_resolve::resolve_import_path(&module.path, &import.module)
         }
-        corvid_ast::ImportSource::RemoteCorvid => corvid_resolve::remote_import_path(&import.module),
-        corvid_ast::ImportSource::PackageCorvid => corvid_resolve::remote_import_path(&import.module),
+        corvid_ast::ImportSource::RemoteCorvid => {
+            corvid_resolve::remote_import_path(&import.module)
+        }
+        corvid_ast::ImportSource::PackageCorvid => {
+            corvid_resolve::remote_import_path(&import.module)
+        }
         corvid_ast::ImportSource::Python => return None,
     };
     modules.lookup_by_path(&child)

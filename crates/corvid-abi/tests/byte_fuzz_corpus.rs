@@ -25,10 +25,10 @@ mod common;
 
 use common::{emit_descriptor, render_descriptor};
 use corvid_abi::{
-    attestation_to_embedded_bytes, descriptor_to_embedded_bytes,
-    parse_embedded_attestation_bytes, parse_embedded_section_bytes, sign_envelope,
-    verify_envelope, CORVID_ABI_ATTESTATION_PAYLOAD_TYPE,
-    CORVID_ABI_ATTESTATION_SECTION_MAGIC, CORVID_ABI_SECTION_MAGIC,
+    attestation_to_embedded_bytes, descriptor_to_embedded_bytes, parse_embedded_attestation_bytes,
+    parse_embedded_section_bytes, sign_envelope, verify_envelope,
+    CORVID_ABI_ATTESTATION_PAYLOAD_TYPE, CORVID_ABI_ATTESTATION_SECTION_MAGIC,
+    CORVID_ABI_SECTION_MAGIC,
 };
 use ed25519_dalek::SigningKey;
 
@@ -49,7 +49,10 @@ impl Lcg {
     }
     fn next_u64(&mut self) -> u64 {
         // Numerical Recipes parameters.
-        self.0 = self.0.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        self.0 = self
+            .0
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         self.0
     }
     fn pick(&mut self, max_exclusive: usize) -> usize {
@@ -142,8 +145,7 @@ fn descriptor_section_rejects_wrong_magic() {
     // distinct on purpose: a verifier reading raw bytes can tell
     // the section type apart even without consulting the symbol
     // name.
-    mutated[..4]
-        .copy_from_slice(&CORVID_ABI_ATTESTATION_SECTION_MAGIC.to_le_bytes());
+    mutated[..4].copy_from_slice(&CORVID_ABI_ATTESTATION_SECTION_MAGIC.to_le_bytes());
     parse_embedded_section_bytes(&mutated).expect_err("attestation magic must be rejected here");
 
     // And a fully arbitrary magic.
@@ -227,9 +229,8 @@ fn attestation_section_rejects_every_truncation_under_header() {
     let header_len = 16;
     for n in 0..header_len {
         let truncated = &baseline[..n];
-        parse_embedded_attestation_bytes(truncated).expect_err(
-            "every truncation that drops part of the 16-byte header must be rejected",
-        );
+        parse_embedded_attestation_bytes(truncated)
+            .expect_err("every truncation that drops part of the 16-byte header must be rejected");
     }
 }
 
@@ -287,8 +288,7 @@ fn dsse_envelope_signature_tampering_is_rejected() {
         tampered[i] = new_byte;
         let tampered_str = String::from_utf8(tampered).expect("ascii-safe");
         as_value["signatures"][0]["sig"] = serde_json::Value::String(tampered_str);
-        let tampered_envelope =
-            serde_json::to_vec(&as_value).expect("serialize tampered envelope");
+        let tampered_envelope = serde_json::to_vec(&as_value).expect("serialize tampered envelope");
         let result = verify_envelope(
             &tampered_envelope,
             &[CORVID_ABI_ATTESTATION_PAYLOAD_TYPE],
@@ -333,8 +333,7 @@ fn dsse_envelope_payload_tampering_is_rejected() {
         tampered[i] = new_byte;
         let tampered_str = String::from_utf8(tampered).expect("ascii-safe");
         as_value["payload"] = serde_json::Value::String(tampered_str);
-        let tampered_envelope =
-            serde_json::to_vec(&as_value).expect("serialize tampered envelope");
+        let tampered_envelope = serde_json::to_vec(&as_value).expect("serialize tampered envelope");
         let result = verify_envelope(
             &tampered_envelope,
             &[CORVID_ABI_ATTESTATION_PAYLOAD_TYPE],
@@ -374,8 +373,7 @@ fn dsse_envelope_payload_type_swap_is_rejected() {
     ];
     for foreign in foreign_types {
         as_value["payloadType"] = serde_json::Value::String(foreign.to_string());
-        let tampered_envelope =
-            serde_json::to_vec(&as_value).expect("serialize tampered envelope");
+        let tampered_envelope = serde_json::to_vec(&as_value).expect("serialize tampered envelope");
         let result = verify_envelope(
             &tampered_envelope,
             &[CORVID_ABI_ATTESTATION_PAYLOAD_TYPE],

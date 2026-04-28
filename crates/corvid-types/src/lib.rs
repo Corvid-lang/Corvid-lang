@@ -26,24 +26,23 @@ pub use config::{
     CorvidConfig, CustomDimensionConfig, CustomDimensionMeta, DimensionConfigError,
     DimensionValueType, EffectSystemConfig, PackagePolicyConfig, BUILTIN_DIMENSION_NAMES,
 };
-pub use law_check::{
-    check_dimension, laws_for_rule, DimensionUnderTest, Law, LawCheckResult, Verdict,
-    DEFAULT_SAMPLES,
-};
-pub use errors::{TypeError, TypeErrorKind, TypeWarning, TypeWarningKind};
-pub use repl::{CheckedTurn, ReplLocal, ReplSession, ReplTurnBuild, REPL_RESULT_NAME};
-pub use effects::{
-    analyze_effects, check_grounded_returns, compose_dimension_public,
-    compute_worst_case_cost, render_cost_tree, AgentEffectSummary, ComposedProfile,
-    ConstraintViolation, CostEstimate, CostNodeKind, CostTreeNode, CostWarning,
-    CostWarningKind, EffectProfile, EffectRegistry, ProvenanceViolation,
-};
 pub use determinism::{
     classify_call_target, NondeterminismSource, NondeterministicBuiltin,
     KNOWN_NONDETERMINISTIC_BUILTINS,
 };
+pub use effects::{
+    analyze_effects, check_grounded_returns, compose_dimension_public, compute_worst_case_cost,
+    render_cost_tree, AgentEffectSummary, ComposedProfile, ConstraintViolation, CostEstimate,
+    CostNodeKind, CostTreeNode, CostWarning, CostWarningKind, EffectProfile, EffectRegistry,
+    ProvenanceViolation,
+};
+pub use errors::{TypeError, TypeErrorKind, TypeWarning, TypeWarningKind};
+pub use law_check::{
+    check_dimension, laws_for_rule, DimensionUnderTest, Law, LawCheckResult, Verdict,
+    DEFAULT_SAMPLES,
+};
+pub use repl::{CheckedTurn, ReplLocal, ReplSession, ReplTurnBuild, REPL_RESULT_NAME};
 pub use types::Type;
-
 
 #[cfg(test)]
 mod tests;

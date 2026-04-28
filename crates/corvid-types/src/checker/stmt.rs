@@ -25,7 +25,9 @@ impl<'a> Checker<'a> {
 
     pub(super) fn check_stmt(&mut self, s: &Stmt) {
         match s {
-            Stmt::Let { name, ty, value, .. } => {
+            Stmt::Let {
+                name, ty, value, ..
+            } => {
                 let explicit_ty = ty.as_ref().map(|t| self.type_ref_to_type(t));
                 let value_ty = self.check_expr_as(value, explicit_ty.as_ref());
                 let local_ty = match ty {
@@ -67,7 +69,12 @@ impl<'a> Checker<'a> {
                     }
                 }
             }
-            Stmt::If { cond, then_block, else_block, .. } => {
+            Stmt::If {
+                cond,
+                then_block,
+                else_block,
+                ..
+            } => {
                 let cond_ty = self.check_expr(cond);
                 if !matches!(cond_ty, Type::Bool | Type::Unknown) {
                     self.errors.push(TypeError::new(
@@ -98,11 +105,8 @@ impl<'a> Checker<'a> {
                 };
 
                 self.effect_frontier = then_frontier.merge_max(else_frontier);
-                self.weak_refresh = self.merge_weak_refresh(
-                    &entry_weak_refresh,
-                    &then_refresh,
-                    &else_refresh,
-                );
+                self.weak_refresh =
+                    self.merge_weak_refresh(&entry_weak_refresh, &then_refresh, &else_refresh);
             }
             Stmt::Yield { value, span } => {
                 let yielded = self.check_expr(value);
@@ -138,7 +142,9 @@ impl<'a> Checker<'a> {
                     }
                 }
             }
-            Stmt::For { var, iter, body, .. } => {
+            Stmt::For {
+                var, iter, body, ..
+            } => {
                 let iter_ty = self.check_expr(iter);
                 // Derive the loop variable's type from the iterable.
                 // Lists iterate their element type; Strings iterate

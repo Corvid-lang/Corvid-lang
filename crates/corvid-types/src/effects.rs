@@ -44,8 +44,7 @@ pub struct EffectRegistry {
 /// Built-in trust tiers in ascending restrictiveness order. Runtime
 /// consumers that need to mirror the checker lattice should depend on
 /// this list in tests rather than silently re-encode their own order.
-pub const BUILTIN_TRUST_TIERS: &[&str] =
-    &["autonomous", "supervisor_required", "human_required"];
+pub const BUILTIN_TRUST_TIERS: &[&str] = &["autonomous", "supervisor_required", "human_required"];
 
 /// The dimensional profile of a single declared effect.
 #[derive(Debug, Clone, Default)]
@@ -97,10 +96,7 @@ pub struct CostWarning {
 
 #[derive(Debug, Clone)]
 pub enum CostWarningKind {
-    UnboundedLoop {
-        agent: String,
-        message: String,
-    },
+    UnboundedLoop { agent: String, message: String },
 }
 
 impl EffectRegistry {
@@ -116,10 +112,7 @@ impl EffectRegistry {
     /// Built-in names remain reserved — `CorvidConfig::into_dimension_schemas`
     /// rejects any collision before this function is called. A `None`
     /// config is equivalent to `from_decls`.
-    pub fn from_decls_with_config(
-        decls: &[EffectDecl],
-        config: Option<&CorvidConfig>,
-    ) -> Self {
+    pub fn from_decls_with_config(decls: &[EffectDecl], config: Option<&CorvidConfig>) -> Self {
         let mut registry = Self::default();
 
         // Register built-in dimension schemas with default composition rules.
@@ -132,9 +125,7 @@ impl EffectRegistry {
         if let Some(cfg) = config {
             if let Ok(schemas) = cfg.into_dimension_schemas() {
                 for (schema, meta) in schemas {
-                    registry
-                        .custom_dimensions
-                        .insert(schema.name.clone(), meta);
+                    registry.custom_dimensions.insert(schema.name.clone(), meta);
                     registry.dimensions.insert(schema.name.clone(), schema);
                 }
             }
@@ -159,7 +150,9 @@ impl EffectRegistry {
 
             for dim in &decl.dimensions {
                 let dim_name = canonical_dimension_name(&dim.name.name);
-                profile.dimensions.insert(dim_name.clone(), dim.value.clone());
+                profile
+                    .dimensions
+                    .insert(dim_name.clone(), dim.value.clone());
 
                 // Infer schema from the dimension if not already registered.
                 if !registry.dimensions.contains_key(&dim_name) {
@@ -328,7 +321,10 @@ impl EffectRegistry {
             let mut dims = HashMap::new();
             dims.insert("data".into(), DimensionValue::Name(data.into()));
             if name.starts_with("writes_") {
-                dims.insert("trust".into(), DimensionValue::Name("human_required".into()));
+                dims.insert(
+                    "trust".into(),
+                    DimensionValue::Name("human_required".into()),
+                );
             }
             self.effects.insert(
                 name.into(),
@@ -342,7 +338,10 @@ impl EffectRegistry {
 
     fn register_dangerous_effect(&mut self) {
         let mut dims = HashMap::new();
-        dims.insert("trust".into(), DimensionValue::Name("human_required".into()));
+        dims.insert(
+            "trust".into(),
+            DimensionValue::Name("human_required".into()),
+        );
         dims.insert("reversible".into(), DimensionValue::Bool(false));
         self.effects.insert(
             "dangerous".into(),
@@ -356,7 +355,10 @@ impl EffectRegistry {
     fn register_human_boundary_effects(&mut self) {
         for name in ["human", "approve"] {
             let mut dims = HashMap::new();
-            dims.insert("trust".into(), DimensionValue::Name("human_required".into()));
+            dims.insert(
+                "trust".into(),
+                DimensionValue::Name("human_required".into()),
+            );
             self.effects.insert(
                 name.into(),
                 EffectProfile {
@@ -382,7 +384,9 @@ impl EffectRegistry {
 
         // Start with defaults for all known dimensions.
         for (dim_name, schema) in &self.dimensions {
-            result.dimensions.insert(dim_name.clone(), schema.default.clone());
+            result
+                .dimensions
+                .insert(dim_name.clone(), schema.default.clone());
         }
 
         // Layer each effect's dimensions using composition rules.
@@ -464,7 +468,6 @@ impl std::fmt::Display for ConstraintViolation {
     }
 }
 
-
 mod analyze;
 mod compose;
 mod cost;
@@ -472,17 +475,15 @@ mod grounded;
 
 pub use analyze::{analyze_effects, AgentEffectSummary};
 pub use compose::{canonical_dimension_name, compose_dimension_public};
+use compose::{
+    compose_dimension, default_for_dimension, dimension_satisfies, format_dim_value,
+    infer_composition_rule,
+};
 pub use cost::{
     compute_worst_case_cost, cost_path_for_dimension, format_numeric_dimension,
     numeric_constraint_value, render_cost_tree,
 };
 pub use grounded::{check_grounded_returns, ProvenanceResult, ProvenanceViolation};
-use compose::{
-    compose_dimension, default_for_dimension, dimension_satisfies, format_dim_value,
-    infer_composition_rule,
-};
-
-
 
 #[cfg(test)]
 mod tests {

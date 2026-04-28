@@ -19,15 +19,23 @@ pub struct TestBundle {
 }
 
 pub fn compile_bundle(source: &str, config_toml: Option<&str>) -> TestBundle {
-    let config = config_toml
-        .map(|text| toml::from_str::<CorvidConfig>(text).expect("parse corvid.toml"));
+    let config =
+        config_toml.map(|text| toml::from_str::<CorvidConfig>(text).expect("parse corvid.toml"));
     let tokens = lex(source).expect("lex");
     let (file, parse_errs) = parse_file(&tokens);
     assert!(parse_errs.is_empty(), "parse errors: {parse_errs:?}");
     let resolved = resolve(&file);
-    assert!(resolved.errors.is_empty(), "resolve errors: {:?}", resolved.errors);
+    assert!(
+        resolved.errors.is_empty(),
+        "resolve errors: {:?}",
+        resolved.errors
+    );
     let checked = typecheck_with_config(&file, &resolved, config.as_ref());
-    assert!(checked.errors.is_empty(), "type errors: {:?}", checked.errors);
+    assert!(
+        checked.errors.is_empty(),
+        "type errors: {:?}",
+        checked.errors
+    );
     let effect_decls = file
         .decls
         .iter()

@@ -14,8 +14,7 @@ use corvid_ast::{
     Span, ToolDecl, TypeDecl, WeakEffect, WeakEffectRow,
 };
 use corvid_resolve::{
-    resolver::MethodEntry,
-    Binding, DefId, LocalId, ReplayPatternBinding, Resolved, SymbolTable,
+    resolver::MethodEntry, Binding, DefId, LocalId, ReplayPatternBinding, Resolved, SymbolTable,
 };
 use std::collections::HashMap;
 
@@ -113,9 +112,17 @@ fn typecheck_with_everything(
     c.validate_python_import_effects(file);
     c.check_file(file);
 
-    let effect_decls: Vec<&corvid_ast::EffectDecl> = file.decls.iter().filter_map(|d| {
-        if let Decl::Effect(e) = d { Some(e) } else { None }
-    }).collect();
+    let effect_decls: Vec<&corvid_ast::EffectDecl> = file
+        .decls
+        .iter()
+        .filter_map(|d| {
+            if let Decl::Effect(e) = d {
+                Some(e)
+            } else {
+                None
+            }
+        })
+        .collect();
     for effect in &effect_decls {
         c.check_effect_decl_confidence(effect);
     }
@@ -150,13 +157,19 @@ fn typecheck_with_everything(
 
     // Dimensional effect analysis: collect effect declarations, build
     // the registry, analyze agents, and report non-cost constraint violations.
-    if !effect_decls.is_empty() || file.decls.iter().any(|d| {
-        matches!(d, Decl::Agent(a) if !a.constraints.is_empty())
-    }) {
+    if !effect_decls.is_empty()
+        || file
+            .decls
+            .iter()
+            .any(|d| matches!(d, Decl::Agent(a) if !a.constraints.is_empty()))
+    {
         let summaries = crate::effects::analyze_effects(file, resolved, &registry);
         for summary in &summaries {
             for violation in &summary.violations {
-                if matches!(violation.dimension.as_str(), "cost" | "tokens" | "latency_ms") {
+                if matches!(
+                    violation.dimension.as_str(),
+                    "cost" | "tokens" | "latency_ms"
+                ) {
                     continue;
                 }
                 c.errors.push(TypeError::with_guarantee(
@@ -193,7 +206,8 @@ fn typecheck_with_everything(
             crate::effects::compute_worst_case_cost(file, resolved, &registry, &agent.name.name)
         {
             for warning in estimate.warnings {
-                let crate::effects::CostWarningKind::UnboundedLoop { agent, message } = warning.kind;
+                let crate::effects::CostWarningKind::UnboundedLoop { agent, message } =
+                    warning.kind;
                 c.warnings.push(TypeWarning::new(
                     TypeWarningKind::UnboundedCostAnalysis { agent, message },
                     warning.span,
@@ -240,7 +254,8 @@ fn typecheck_with_everything(
     // Provenance verification: check that agents returning Grounded<T>
     // actually have a provenance path from a data: grounded source.
     {
-        let provenance_violations = crate::effects::check_grounded_returns(file, resolved, &registry);
+        let provenance_violations =
+            crate::effects::check_grounded_returns(file, resolved, &registry);
         for violation in provenance_violations {
             c.errors.push(TypeError::with_guarantee(
                 TypeErrorKind::UngroundedReturn {
@@ -447,9 +462,7 @@ impl<'a> Checker<'a> {
                     // method side-table) into the same per-kind
                     // tables free decls use, so call-resolution can
                     // dispatch uniformly.
-                    let Some(type_def_id) =
-                        resolved.symbols.lookup_def(&ext.type_name.name)
-                    else {
+                    let Some(type_def_id) = resolved.symbols.lookup_def(&ext.type_name.name) else {
                         continue;
                     };
                     let Some(method_table) = resolved.methods.get(&type_def_id) else {
@@ -540,11 +553,10 @@ impl<'a> Checker<'a> {
         }
     }
 
-
     fn has_known_approval_label(&self, label: &str) -> bool {
-        self.tools_by_id
-            .values()
-            .any(|tool| matches!(tool.effect, Effect::Dangerous) && pascal_case(&tool.name.name) == label)
+        self.tools_by_id.values().any(|tool| {
+            matches!(tool.effect, Effect::Dangerous) && pascal_case(&tool.name.name) == label
+        })
     }
 
     fn bind_params(&mut self, params: &[Param]) {
@@ -565,13 +577,9 @@ impl<'a> Checker<'a> {
     // Blocks and statements.
     // ------------------------------------------------------------
 
-
     // ------------------------------------------------------------
     // Expressions.
     // ------------------------------------------------------------
-
-
-
 }
 
 mod call;

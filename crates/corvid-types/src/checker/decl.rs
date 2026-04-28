@@ -120,7 +120,9 @@ impl<'a> Checker<'a> {
                             TypeErrorKind::ExternOwnershipMismatch {
                                 agent: a.name.name.clone(),
                                 position: format!("parameter `{}`", param.name.name),
-                                declared: ownership_label_declared(param.ownership.as_ref().unwrap()),
+                                declared: ownership_label_declared(
+                                    param.ownership.as_ref().unwrap(),
+                                ),
                                 inferred: "ambiguous".into(),
                                 reason,
                             },
@@ -173,7 +175,9 @@ impl<'a> Checker<'a> {
                         TypeErrorKind::ExternOwnershipMismatch {
                             agent: a.name.name.clone(),
                             position: "return type".into(),
-                            declared: ownership_label_declared(a.return_ownership.as_ref().unwrap()),
+                            declared: ownership_label_declared(
+                                a.return_ownership.as_ref().unwrap(),
+                            ),
                             inferred: "ambiguous".into(),
                             reason,
                         },
@@ -396,7 +400,6 @@ impl<'a> Checker<'a> {
             ));
         }
     }
-
 
     pub(super) fn check_eval(&mut self, e: &EvalDecl) {
         self.check_assertion_decl(&e.body, &e.assertions);
@@ -738,19 +741,13 @@ struct ReplayabilityViolation {
     span: Span,
 }
 
-fn collect_replayability_violations_in_block(
-    block: &Block,
-    out: &mut Vec<ReplayabilityViolation>,
-) {
+fn collect_replayability_violations_in_block(block: &Block, out: &mut Vec<ReplayabilityViolation>) {
     for stmt in &block.stmts {
         collect_replayability_violations_in_stmt(stmt, out);
     }
 }
 
-fn collect_replayability_violations_in_stmt(
-    stmt: &Stmt,
-    out: &mut Vec<ReplayabilityViolation>,
-) {
+fn collect_replayability_violations_in_stmt(stmt: &Stmt, out: &mut Vec<ReplayabilityViolation>) {
     match stmt {
         Stmt::Let { value, .. } => {
             collect_replayability_violations_in_expr(value, out);
@@ -788,10 +785,7 @@ fn collect_replayability_violations_in_stmt(
     }
 }
 
-fn collect_replayability_violations_in_expr(
-    expr: &Expr,
-    out: &mut Vec<ReplayabilityViolation>,
-) {
+fn collect_replayability_violations_in_expr(expr: &Expr, out: &mut Vec<ReplayabilityViolation>) {
     match expr {
         Expr::Call { callee, args, span } => {
             if let Some(name) = callee_name(callee) {

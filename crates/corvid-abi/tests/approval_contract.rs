@@ -57,7 +57,10 @@ fn approval_site_carries_cost_and_reversibility_from_target() {
         .find(|site| site.label == "IssueRefund")
         .expect("approval site");
     assert_eq!(site.effects.cost.as_ref().unwrap().projected_usd, 0.10);
-    assert_eq!(site.effects.reversibility.as_deref(), Some("non_reversible"));
+    assert_eq!(
+        site.effects.reversibility.as_deref(),
+        Some("non_reversible")
+    );
 }
 
 #[test]

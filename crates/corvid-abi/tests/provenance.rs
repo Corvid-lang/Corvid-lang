@@ -27,7 +27,11 @@ agent refund_bot(ticket: String) -> Bool:
     return true
 "#,
     );
-    let helper = abi.agents.iter().find(|agent| agent.name == "grounded_helper").unwrap();
+    let helper = abi
+        .agents
+        .iter()
+        .find(|agent| agent.name == "grounded_helper")
+        .unwrap();
     assert!(helper.provenance.returns_grounded);
 }
 
@@ -68,6 +72,13 @@ agent refund_bot(ticket: String) -> Bool:
     return true
 "#,
     );
-    let helper = abi.agents.iter().find(|agent| agent.name == "grounded_helper").unwrap();
-    assert_eq!(helper.provenance.grounded_param_deps, vec!["ticket".to_string()]);
+    let helper = abi
+        .agents
+        .iter()
+        .find(|agent| agent.name == "grounded_helper")
+        .unwrap();
+    assert_eq!(
+        helper.provenance.grounded_param_deps,
+        vec!["ticket".to_string()]
+    );
 }

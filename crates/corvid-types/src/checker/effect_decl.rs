@@ -12,13 +12,9 @@ impl<'a> Checker<'a> {
                         "confidence.min_threshold",
                     ));
                 }
-                (
-                    "trust",
-                    DimensionValue::ConfidenceGated {
-                        threshold,
-                        ..
-                    },
-                ) if !(0.0..=1.0).contains(threshold) => {
+                ("trust", DimensionValue::ConfidenceGated { threshold, .. })
+                    if !(0.0..=1.0).contains(threshold) =>
+                {
                     self.errors.push(TypeError::with_guarantee(
                         TypeErrorKind::InvalidConfidence { value: *threshold },
                         dim.span,

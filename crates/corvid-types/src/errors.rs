@@ -46,11 +46,7 @@ impl TypeError {
     /// is asserted at construction so an unregistered or misspelled
     /// id fails fast in tests rather than silently shipping. The
     /// release build trusts the assertion already passed in test.
-    pub fn with_guarantee(
-        kind: TypeErrorKind,
-        span: Span,
-        guarantee_id: &'static str,
-    ) -> Self {
+    pub fn with_guarantee(kind: TypeErrorKind, span: Span, guarantee_id: &'static str) -> Self {
         debug_assert!(
             corvid_guarantees::lookup(guarantee_id).is_some(),
             "TypeError::with_guarantee called with unregistered id `{guarantee_id}` \
@@ -113,10 +109,7 @@ pub enum TypeErrorKind {
     },
 
     /// A field that doesn't exist on the given struct.
-    UnknownField {
-        struct_name: String,
-        field: String,
-    },
+    UnknownField { struct_name: String, field: String },
 
     /// Calling something that isn't callable (e.g. a primitive value).
     NotCallable { got: String },
@@ -137,10 +130,7 @@ pub enum TypeErrorKind {
 
     /// `expr?` was used in a function whose return type cannot absorb the
     /// propagated error/none branch.
-    TryPropagateReturnMismatch {
-        expected: String,
-        got: String,
-    },
+    TryPropagateReturnMismatch { expected: String, got: String },
 
     /// `try expr on error retry ...` was used on a value that is neither
     /// `Result` nor `Option`.
@@ -167,19 +157,13 @@ pub enum TypeErrorKind {
     WeakUpgradeAcrossEffects { effects: Vec<String> },
 
     /// The return type declared doesn't match what the body returns.
-    ReturnTypeMismatch {
-        expected: String,
-        got: String,
-    },
+    ReturnTypeMismatch { expected: String, got: String },
 
     /// `alias.TypeName` type reference encountered, but the Corvid
     /// `.cor` import-resolver is not yet wired up. The grammar parses
     /// cleanly; what's missing is module loading + qualified-name
     /// resolution, which lands in `lang-cor-imports-basic-resolve`.
-    CorvidImportNotYetResolved {
-        alias: String,
-        name: String,
-    },
+    CorvidImportNotYetResolved { alias: String, name: String },
 
     /// `alias.Name` references an import alias that isn't declared
     /// in the current file's `import` statements. Either a typo or
@@ -201,15 +185,10 @@ pub enum TypeErrorKind {
     YieldOutsideAgent,
 
     /// An agent body used `yield` without declaring `Stream<T>`.
-    YieldRequiresStreamReturn {
-        declared: String,
-    },
+    YieldRequiresStreamReturn { declared: String },
 
     /// A yielded value did not match the agent's declared `Stream<T>`.
-    YieldReturnTypeMismatch {
-        expected: String,
-        got: String,
-    },
+    YieldReturnTypeMismatch { expected: String, got: String },
 
     /// The headline error: a `dangerous` tool was called without a matching
     /// prior `approve` in the same block.
@@ -244,17 +223,11 @@ pub enum TypeErrorKind {
     /// An agent returns `Grounded<T>` but the compiler cannot prove a
     /// provenance path from a `data: grounded` source feeds into the
     /// return value.
-    UngroundedReturn {
-        agent: String,
-        message: String,
-    },
+    UngroundedReturn { agent: String, message: String },
 
     /// A prompt-level `cites <param> strictly` clause names a parameter
     /// that does not exist on the prompt.
-    PromptCitationUnknownParam {
-        prompt: String,
-        param: String,
-    },
+    PromptCitationUnknownParam { prompt: String, param: String },
 
     /// A prompt-level `cites <param> strictly` clause can only cite a
     /// `Grounded<T>` parameter, because runtime citation verification
@@ -296,10 +269,7 @@ pub enum TypeErrorKind {
     /// `[effect-system.dimensions.*]` failed validation. Rejects
     /// unknown composition rules, unknown value-types, malformed
     /// defaults, and collisions with built-in dimension names.
-    InvalidCustomDimension {
-        dimension: String,
-        message: String,
-    },
+    InvalidCustomDimension { dimension: String, message: String },
 
     /// A `route:` arm inside a prompt points at a name that is not a
     /// `model` declaration. The runtime can only dispatch to models,
@@ -311,10 +281,7 @@ pub enum TypeErrorKind {
     },
 
     /// A `route:` arm's guard expression is not a Bool.
-    RouteGuardNotBool {
-        prompt: String,
-        got: String,
-    },
+    RouteGuardNotBool { prompt: String, got: String },
 
     ModelOutputFormatMismatch {
         prompt: String,
@@ -324,18 +291,12 @@ pub enum TypeErrorKind {
     },
 
     /// A `rollout N%` clause's percentage is outside `[0.0, 100.0]`.
-    RolloutPercentOutOfRange {
-        prompt: String,
-        got: f64,
-    },
+    RolloutPercentOutOfRange { prompt: String, got: f64 },
 
     /// An `ensemble [..]` list names the same model more than once.
     /// Voting where two slots share a model degenerates to voting
     /// over fewer opinions than intended.
-    EnsembleDuplicateModel {
-        prompt: String,
-        model: String,
-    },
+    EnsembleDuplicateModel { prompt: String, model: String },
 
     /// An `adversarial:` stage (propose / challenge / adjudicate)
     /// points at a name that is not a `prompt` declaration. Stages
@@ -413,10 +374,7 @@ pub enum TypeErrorKind {
 
     /// The compiler cannot infer a sound ownership contract for an
     /// extern-visible boundary slot without an explicit annotation.
-    AmbiguousExternOwnership {
-        agent: String,
-        position: String,
-    },
+    AmbiguousExternOwnership { agent: String, position: String },
 
     /// A user-declared ownership annotation disagrees with the
     /// compiler's inference for the same extern-visible boundary slot.
@@ -432,14 +390,9 @@ pub enum TypeErrorKind {
 #[derive(Debug, Clone, PartialEq)]
 pub enum TypeWarningKind {
     /// The cost explorer could not prove a static upper bound.
-    UnboundedCostAnalysis {
-        agent: String,
-        message: String,
-    },
+    UnboundedCostAnalysis { agent: String, message: String },
     /// An agent declared `Stream<T>` but never actually yielded.
-    StreamReturnWithoutYield {
-        agent: String,
-    },
+    StreamReturnWithoutYield { agent: String },
     /// A replay arm duplicates an earlier arm's pattern; the later
     /// arm can never match. Phase 21 slice 21-inv-E-3.
     ReplayUnreachableArm {
@@ -447,21 +400,24 @@ pub enum TypeWarningKind {
         first_arm_span: Span,
     },
     /// `effects: unsafe` on a Python import is explicit but should be reviewed.
-    UnsafePythonImport {
-        module: String,
-        message: String,
-    },
+    UnsafePythonImport { module: String, message: String },
 }
 
 impl TypeErrorKind {
     pub fn message(&self) -> String {
         match self {
-            Self::ArityMismatch { callee, expected, got } => {
-                format!(
-                    "wrong number of arguments to `{callee}`: expected {expected}, got {got}"
-                )
+            Self::ArityMismatch {
+                callee,
+                expected,
+                got,
+            } => {
+                format!("wrong number of arguments to `{callee}`: expected {expected}, got {got}")
             }
-            Self::TypeMismatch { expected, got, context } => {
+            Self::TypeMismatch {
+                expected,
+                got,
+                context,
+            } => {
                 if context.is_empty() {
                     format!("type mismatch: expected `{expected}`, got `{got}`")
                 } else {
@@ -494,7 +450,11 @@ impl TypeErrorKind {
             Self::InvalidRetryTarget { got } => {
                 format!("`try ... on error retry ...` can only be used on `Result` or `Option`, got `{got}`")
             }
-            Self::GenericArityMismatch { name, expected, got } => {
+            Self::GenericArityMismatch {
+                name,
+                expected,
+                got,
+            } => {
                 format!(
                     "wrong number of type arguments for `{name}`: expected {expected}, got {got}"
                 )
@@ -515,9 +475,7 @@ impl TypeErrorKind {
                 )
             }
             Self::ReturnTypeMismatch { expected, got } => {
-                format!(
-                    "return type mismatch: declared `{expected}`, but the body returns `{got}`"
-                )
+                format!("return type mismatch: declared `{expected}`, but the body returns `{got}`")
             }
             Self::CorvidImportNotYetResolved { alias, name } => {
                 format!(
@@ -542,7 +500,9 @@ impl TypeErrorKind {
             }
             Self::YieldOutsideAgent => "`yield` is only allowed inside agent bodies".into(),
             Self::YieldRequiresStreamReturn { declared } => {
-                format!("`yield` requires the enclosing agent to declare `Stream<T>`, got `{declared}`")
+                format!(
+                    "`yield` requires the enclosing agent to declare `Stream<T>`, got `{declared}`"
+                )
             }
             Self::YieldReturnTypeMismatch { expected, got } => {
                 format!("yield type mismatch: expected `{expected}`, got `{got}`")
@@ -599,7 +559,11 @@ impl TypeErrorKind {
             Self::InvalidCustomDimension { dimension, message } => {
                 format!("invalid custom dimension `{dimension}` in corvid.toml: {message}")
             }
-            Self::RouteTargetNotModel { prompt, target, got_kind } => {
+            Self::RouteTargetNotModel {
+                prompt,
+                target,
+                got_kind,
+            } => {
                 format!(
                     "route arm in prompt `{prompt}` points at `{target}`, which is a {got_kind}, not a `model`"
                 )
@@ -607,7 +571,12 @@ impl TypeErrorKind {
             Self::RouteGuardNotBool { prompt, got } => {
                 format!("route arm guard in prompt `{prompt}` must evaluate to `Bool`, got `{got}`")
             }
-            Self::ModelOutputFormatMismatch { prompt, model, required, got } => {
+            Self::ModelOutputFormatMismatch {
+                prompt,
+                model,
+                required,
+                got,
+            } => {
                 format!(
                     "prompt `{prompt}` requires output format `{required}`, but model `{model}` declares {}",
                     got.as_deref()
@@ -616,33 +585,63 @@ impl TypeErrorKind {
                 )
             }
             Self::RolloutPercentOutOfRange { prompt, got } => {
-                format!("rollout percentage on prompt `{prompt}` must be in [0.0, 100.0], got `{got}`")
+                format!(
+                    "rollout percentage on prompt `{prompt}` must be in [0.0, 100.0], got `{got}`"
+                )
             }
             Self::EnsembleDuplicateModel { prompt, model } => {
                 format!("ensemble on prompt `{prompt}` lists model `{model}` more than once")
             }
-            Self::AdversarialStageNotPrompt { prompt, stage, target, got_kind } => {
+            Self::AdversarialStageNotPrompt {
+                prompt,
+                stage,
+                target,
+                got_kind,
+            } => {
                 format!(
                     "adversarial `{stage}` stage in prompt `{prompt}` points at `{target}`, which is a {got_kind}, not a `prompt`"
                 )
             }
-            Self::AdversarialStageArity { prompt, stage, target, expected, got } => {
+            Self::AdversarialStageArity {
+                prompt,
+                stage,
+                target,
+                expected,
+                got,
+            } => {
                 format!(
                     "adversarial `{stage}` stage `{target}` in prompt `{prompt}` takes {got} parameter{}; expected {expected}",
                     if *got == 1 { "" } else { "s" }
                 )
             }
-            Self::AdversarialStageParamType { prompt, stage, target, index, expected, got } => {
+            Self::AdversarialStageParamType {
+                prompt,
+                stage,
+                target,
+                index,
+                expected,
+                got,
+            } => {
                 format!(
                     "adversarial `{stage}` stage `{target}` in prompt `{prompt}` parameter #{index} has type `{got}`, expected `{expected}`"
                 )
             }
-            Self::AdversarialStageReturnType { prompt, stage, target, expected, got } => {
+            Self::AdversarialStageReturnType {
+                prompt,
+                stage,
+                target,
+                expected,
+                got,
+            } => {
                 format!(
                     "adversarial `{stage}` stage `{target}` in prompt `{prompt}` returns `{got}`, expected `{expected}` to match the outer prompt's return type"
                 )
             }
-            Self::AdversarialAdjudicatorMissingContradictionField { prompt, target, got } => {
+            Self::AdversarialAdjudicatorMissingContradictionField {
+                prompt,
+                target,
+                got,
+            } => {
                 format!(
                     "adversarial `adjudicate` stage `{target}` in prompt `{prompt}` returns `{got}`, which is not a struct with a `contradiction: Bool` field"
                 )
@@ -652,7 +651,11 @@ impl TypeErrorKind {
                     "`replay <expr>:` expects `TraceId` (or a `String` path literal), got `{got}`"
                 )
             }
-            Self::ReplayArmTypeMismatch { expected, got, context } => {
+            Self::ReplayArmTypeMismatch {
+                expected,
+                got,
+                context,
+            } => {
                 format!(
                     "replay arm type mismatch in {context}: expected `{expected}` (matching the first arm), got `{got}`"
                 )
@@ -895,7 +898,10 @@ impl TypeWarningKind {
             Self::StreamReturnWithoutYield { agent } => {
                 format!("W0270: agent `{agent}` declares `Stream<T>` return but never yields")
             }
-            Self::ReplayUnreachableArm { pattern, first_arm_span } => {
+            Self::ReplayUnreachableArm {
+                pattern,
+                first_arm_span,
+            } => {
                 format!(
                     "replay arm `{pattern}` is unreachable: an earlier arm at [{}..{}] already matches the same recorded events",
                     first_arm_span.start, first_arm_span.end
@@ -927,7 +933,13 @@ impl TypeWarningKind {
 
 impl fmt::Display for TypeError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "[{}..{}] {}", self.span.start, self.span.end, self.message())?;
+        write!(
+            f,
+            "[{}..{}] {}",
+            self.span.start,
+            self.span.end,
+            self.message()
+        )?;
         if let Some(hint) = self.hint() {
             write!(f, "\n  help: {hint}")?;
         }
@@ -937,7 +949,13 @@ impl fmt::Display for TypeError {
 
 impl fmt::Display for TypeWarning {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "[{}..{}] {}", self.span.start, self.span.end, self.message())?;
+        write!(
+            f,
+            "[{}..{}] {}",
+            self.span.start,
+            self.span.end,
+            self.message()
+        )?;
         if let Some(hint) = self.hint() {
             write!(f, "\n  help: {hint}")?;
         }

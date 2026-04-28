@@ -80,7 +80,10 @@ pub fn analyze_effects(
         let violations = registry.check_constraints(&composed, &agent.constraints);
 
         // Declared effects from the agent's `uses` clause.
-        let declared: Vec<String> = agent.effect_row.effects.iter()
+        let declared: Vec<String> = agent
+            .effect_row
+            .effects
+            .iter()
             .map(|e| e.name.name.clone())
             .collect();
 
@@ -141,7 +144,12 @@ fn collect_stmt_capabilities(
         corvid_ast::Stmt::Yield { value, .. } => {
             collect_expr_capabilities(value, file, resolved, caps);
         }
-        corvid_ast::Stmt::If { cond, then_block, else_block, .. } => {
+        corvid_ast::Stmt::If {
+            cond,
+            then_block,
+            else_block,
+            ..
+        } => {
             collect_expr_capabilities(cond, file, resolved, caps);
             collect_body_capabilities(then_block, file, resolved, caps);
             if let Some(eb) = else_block {
@@ -223,7 +231,12 @@ fn collect_stmt_effects(
         corvid_ast::Stmt::Yield { value, .. } => {
             collect_expr_effects(value, file, resolved, registry, effects);
         }
-        corvid_ast::Stmt::If { cond, then_block, else_block, .. } => {
+        corvid_ast::Stmt::If {
+            cond,
+            then_block,
+            else_block,
+            ..
+        } => {
             collect_expr_effects(cond, file, resolved, registry, effects);
             collect_body_effects(then_block, file, resolved, registry, effects);
             if let Some(eb) = else_block {
@@ -332,21 +345,30 @@ fn collect_expr_effects(
     }
 }
 
-pub(super) fn find_tool<'a>(file: &'a corvid_ast::File, name: &str) -> Option<&'a corvid_ast::ToolDecl> {
+pub(super) fn find_tool<'a>(
+    file: &'a corvid_ast::File,
+    name: &str,
+) -> Option<&'a corvid_ast::ToolDecl> {
     file.decls.iter().find_map(|d| match d {
         corvid_ast::Decl::Tool(t) if t.name.name == name => Some(t),
         _ => None,
     })
 }
 
-pub(super) fn find_prompt<'a>(file: &'a corvid_ast::File, name: &str) -> Option<&'a corvid_ast::PromptDecl> {
+pub(super) fn find_prompt<'a>(
+    file: &'a corvid_ast::File,
+    name: &str,
+) -> Option<&'a corvid_ast::PromptDecl> {
     file.decls.iter().find_map(|d| match d {
         corvid_ast::Decl::Prompt(p) if p.name.name == name => Some(p),
         _ => None,
     })
 }
 
-pub(super) fn find_agent<'a>(file: &'a corvid_ast::File, name: &str) -> Option<&'a corvid_ast::AgentDecl> {
+pub(super) fn find_agent<'a>(
+    file: &'a corvid_ast::File,
+    name: &str,
+) -> Option<&'a corvid_ast::AgentDecl> {
     file.decls.iter().find_map(|d| match d {
         corvid_ast::Decl::Agent(a) if a.name.name == name => Some(a),
         _ => None,

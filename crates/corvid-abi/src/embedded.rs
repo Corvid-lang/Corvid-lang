@@ -36,7 +36,9 @@ impl fmt::Display for EmbeddedDescriptorError {
             Self::Utf8(err) => write!(f, "descriptor JSON was not valid UTF-8: {err}"),
             Self::Json(err) => write!(f, "descriptor JSON parse failed: {err}"),
             Self::HashMismatch => write!(f, "descriptor embedded hash did not match JSON payload"),
-            Self::LengthOverflow(len) => write!(f, "descriptor length {len} does not fit in memory"),
+            Self::LengthOverflow(len) => {
+                write!(f, "descriptor length {len} does not fit in memory")
+            }
             Self::VersionMismatch { found, expected } => write!(
                 f,
                 "descriptor abi_version {found} did not match current CORVID_ABI_VERSION {expected}"
@@ -78,8 +80,8 @@ pub fn parse_embedded_section_bytes(
         });
     }
     let json_len = u64::from_le_bytes(bytes[8..16].try_into().expect("len width"));
-    let json_len_usize = usize::try_from(json_len)
-        .map_err(|_| EmbeddedDescriptorError::LengthOverflow(json_len))?;
+    let json_len_usize =
+        usize::try_from(json_len).map_err(|_| EmbeddedDescriptorError::LengthOverflow(json_len))?;
     let expected_len = 16usize
         .checked_add(json_len_usize)
         .and_then(|len| len.checked_add(32))

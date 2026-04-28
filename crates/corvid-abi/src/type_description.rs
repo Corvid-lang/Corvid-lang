@@ -1,6 +1,6 @@
 use crate::schema::{
-    AbiGroundedType, AbiListType, AbiOptionType, AbiPartialType, AbiResumeTokenType,
-    AbiResultType, AbiWeakType, ScalarTypeName, TypeDescription,
+    AbiGroundedType, AbiListType, AbiOptionType, AbiPartialType, AbiResultType, AbiResumeTokenType,
+    AbiWeakType, ScalarTypeName, TypeDescription,
 };
 use corvid_ast::WeakEffect;
 use corvid_resolve::{DefId, Resolved};

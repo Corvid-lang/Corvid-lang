@@ -45,19 +45,33 @@ fn cost_emits_as_projected_usd() {
 #[test]
 fn trust_tier_emits_exact_tier_name() {
     let abi = emit_descriptor(EFFECT_SRC);
-    assert_eq!(abi.agents[0].effects.trust_tier.as_deref(), Some("human_required"));
+    assert_eq!(
+        abi.agents[0].effects.trust_tier.as_deref(),
+        Some("human_required")
+    );
 }
 
 #[test]
 fn latency_emits_p99_estimate() {
     let abi = emit_descriptor(EFFECT_SRC);
-    assert_eq!(abi.agents[0].effects.latency_ms.as_ref().unwrap().p99_estimate, 1500.0);
+    assert_eq!(
+        abi.agents[0]
+            .effects
+            .latency_ms
+            .as_ref()
+            .unwrap()
+            .p99_estimate,
+        1500.0
+    );
 }
 
 #[test]
 fn reversibility_emits_as_reversible_or_non_reversible() {
     let abi = emit_descriptor(EFFECT_SRC);
-    assert_eq!(abi.agents[0].effects.reversibility.as_deref(), Some("non_reversible"));
+    assert_eq!(
+        abi.agents[0].effects.reversibility.as_deref(),
+        Some("non_reversible")
+    );
 }
 
 #[test]
@@ -69,13 +83,24 @@ fn data_emits_as_none_ungrounded_or_grounded() {
 #[test]
 fn confidence_emits_min_expected_floor() {
     let abi = emit_descriptor(EFFECT_SRC);
-    assert_eq!(abi.agents[0].effects.confidence.as_ref().unwrap().min_expected, 0.8);
+    assert_eq!(
+        abi.agents[0]
+            .effects
+            .confidence
+            .as_ref()
+            .unwrap()
+            .min_expected,
+        0.8
+    );
 }
 
 #[test]
 fn tokens_emits_projected_count() {
     let abi = emit_descriptor(EFFECT_SRC);
-    assert_eq!(abi.agents[0].effects.tokens.as_ref().unwrap().projected, 4210.0);
+    assert_eq!(
+        abi.agents[0].effects.tokens.as_ref().unwrap().projected,
+        4210.0
+    );
 }
 
 #[test]
@@ -99,5 +124,8 @@ type = "number"
 default = "0"
 "#;
     let abi = emit_descriptor_with_config(source, Some(config));
-    assert_eq!(abi.agents[0].effects.custom["freshness"], serde_json::json!(10.0));
+    assert_eq!(
+        abi.agents[0].effects.custom["freshness"],
+        serde_json::json!(10.0)
+    );
 }

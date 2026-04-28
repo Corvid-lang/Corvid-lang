@@ -13,9 +13,7 @@
 
 use std::fmt::Write as _;
 
-use crate::{
-    by_kind, GuaranteeClass, GuaranteeKind, GUARANTEE_REGISTRY,
-};
+use crate::{by_kind, GuaranteeClass, GuaranteeKind, GUARANTEE_REGISTRY};
 
 /// Render `docs/core-semantics.md` from the canonical registry.
 ///
@@ -131,9 +129,7 @@ pub fn render_core_semantics_markdown() -> String {
          `crates/corvid-guarantees/src/lib.rs` and run:\n\n",
     );
     out.push_str("```\n");
-    out.push_str(
-        "cargo run -q -p corvid-cli -- contract regen-doc docs/core-semantics.md\n",
-    );
+    out.push_str("cargo run -q -p corvid-cli -- contract regen-doc docs/core-semantics.md\n");
     out.push_str("```\n\n");
     out.push_str(
         "Then commit the regenerated file together with the registry \

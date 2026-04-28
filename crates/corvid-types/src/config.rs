@@ -103,20 +103,11 @@ fn default_type() -> String {
 #[derive(Debug, Clone, PartialEq)]
 pub enum DimensionConfigError {
     /// Failed to parse the TOML file.
-    ParseError {
-        path: PathBuf,
-        message: String,
-    },
+    ParseError { path: PathBuf, message: String },
     /// Composition rule string wasn't one of the five archetypes.
-    UnknownComposition {
-        dimension: String,
-        got: String,
-    },
+    UnknownComposition { dimension: String, got: String },
     /// Type string wasn't one of the supported value kinds.
-    UnknownType {
-        dimension: String,
-        got: String,
-    },
+    UnknownType { dimension: String, got: String },
     /// Default value couldn't be parsed according to the declared type.
     BadDefault {
         dimension: String,

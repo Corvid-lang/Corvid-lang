@@ -50,13 +50,8 @@ pub fn check_grounded_returns(
         let grounded_locals = analyze_agent_provenance(agent, file, resolved, registry);
 
         // Check if any return statement returns a grounded value.
-        let return_is_grounded = check_return_grounded(
-            &agent.body,
-            &grounded_locals,
-            file,
-            resolved,
-            registry,
-        );
+        let return_is_grounded =
+            check_return_grounded(&agent.body, &grounded_locals, file, resolved, registry);
 
         if !return_is_grounded {
             violations.push(ProvenanceViolation {
@@ -114,7 +109,11 @@ fn analyze_stmt_provenance(
             }
         }
         corvid_ast::Stmt::Yield { .. } => {}
-        corvid_ast::Stmt::If { then_block, else_block, .. } => {
+        corvid_ast::Stmt::If {
+            then_block,
+            else_block,
+            ..
+        } => {
             for s in &then_block.stmts {
                 analyze_stmt_provenance(s, file, resolved, registry, grounded);
             }
@@ -205,9 +204,7 @@ fn expr_is_grounded(
 fn tool_is_grounded(tool: &corvid_ast::ToolDecl, registry: &EffectRegistry) -> bool {
     for eff in &tool.effect_row.effects {
         if let Some(profile) = registry.get(&eff.name.name) {
-            if profile.dimensions.get("data")
-                == Some(&DimensionValue::Name("grounded".into()))
-            {
+            if profile.dimensions.get("data") == Some(&DimensionValue::Name("grounded".into())) {
                 return true;
             }
         }
@@ -228,14 +225,21 @@ fn check_return_grounded(
 ) -> bool {
     for stmt in &block.stmts {
         match stmt {
-            corvid_ast::Stmt::Return { value: Some(expr), .. } => {
+            corvid_ast::Stmt::Return {
+                value: Some(expr), ..
+            } => {
                 if expr_is_grounded(expr, file, resolved, registry, grounded) {
                     return true;
                 }
             }
             corvid_ast::Stmt::Yield { .. } => {}
-            corvid_ast::Stmt::If { then_block, else_block, .. } => {
-                let then_grounded = check_return_grounded(then_block, grounded, file, resolved, registry);
+            corvid_ast::Stmt::If {
+                then_block,
+                else_block,
+                ..
+            } => {
+                let then_grounded =
+                    check_return_grounded(then_block, grounded, file, resolved, registry);
                 let else_grounded = else_block.as_ref().map_or(false, |eb| {
                     check_return_grounded(eb, grounded, file, resolved, registry)
                 });
