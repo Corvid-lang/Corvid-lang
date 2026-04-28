@@ -76,6 +76,23 @@ public type DbAuditWrite:
     replay_key: String
     effect_meta: EffectEnvelope
 
+public type DbTokenRef:
+    provider: String
+    account_id: String
+    token_id: String
+    key_id: String
+    redacted: Bool
+    replay_key: String
+    effect_meta: EffectEnvelope
+
+public type DbEncryptedToken:
+    token_ref: DbTokenRef
+    ciphertext_hash: String
+    algorithm: String
+    key_id: String
+    replay_key: String
+    effect_meta: EffectEnvelope
+
 public agent sqlite_open(dsn: String, replay_key: String) -> DbConnection:
     return DbConnection("sqlite", dsn, replay_key, effect_envelope("std.db.open", "", "", "", replay_key))
 
@@ -132,3 +149,12 @@ public agent db_audit_write(record: DbAuditRecord, approval_required: Bool, valu
 
 public agent db_audit_write_safe(write: DbAuditWrite) -> Bool:
     return write.value_redacted and (not write.approval_required or write.record.approval_state == "approved")
+
+public agent db_token_ref(provider: String, account_id: String, token_id: String, key_id: String, replay_key: String) -> DbTokenRef:
+    return DbTokenRef(provider, account_id, token_id, key_id, true, replay_key, effect_envelope("std.db.token.ref", "", account_id, token_id, replay_key))
+
+public agent db_encrypted_token(token_ref: DbTokenRef, ciphertext_hash: String, algorithm: String) -> DbEncryptedToken:
+    return DbEncryptedToken(token_ref, ciphertext_hash, algorithm, token_ref.key_id, token_ref.replay_key, effect_envelope("std.db.token.encrypted", "", token_ref.account_id, token_ref.token_id, token_ref.replay_key))
+
+public agent db_token_redacted(token_ref: DbTokenRef) -> Bool:
+    return token_ref.redacted

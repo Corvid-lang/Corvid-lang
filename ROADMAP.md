@@ -1782,7 +1782,7 @@ Each benchmark must separate model-provider latency from Corvid runtime overhead
 - [x] 37F1-audit-schema-envelope     Add `std.db` audit-log record envelopes for actor/action/model/tool/approval/cost/trace/replay.
 - [x] 37F2-audit-write-helper        Add helpers/tests for approval-aware audit writes and redacted values.
 - [x] 37F3-audit-example             Add a minimal backend audit-log example and regression test.
-- [ ] 37G1-token-envelope            Add token reference/encrypted-token metadata envelopes.
+- [x] 37G1-token-envelope            Add token reference/encrypted-token metadata envelopes.
 - [ ] 37G2-host-key-doctor           `corvid doctor` validates token encryption key presence/shape without printing it.
 - [ ] 37G3-token-redaction-tests     Traces, errors, and audit helpers never print token values.
 - [ ] 37H1-postgres-design           Document Postgres parity subset and non-scope before code.
