@@ -1628,6 +1628,48 @@ The determinism-source catalog and the language's treatment of non-reproducible 
 
 **Non-scope:** marketing copy, video scripts, social-media assets — those belong to Phase 33's launch materials. Phase 34 is the authoritative technical catalog; Phase 33 is the launch campaign that points to it.
 
+**Defensibility gate.** Phase 34 closes the inventions catalog. Phase 35 closes the *defensible-core* surface that the catalog rests on. v1.0 launch is gated on Phase 35.
+
+### Phase 35 — Defensible core (~6–8 weeks)
+
+**Goal.** Make Corvid's launch claim defensible under hostile public scrutiny. Every public guarantee is enumerated in a machine-readable manifest, every guarantee is backed by adversarial tests, the ABI surface is bilaterally verified, and the launch wording is derivable from shipped artifacts rather than aspirational. After Phase 35, an outside reviewer can answer "what does Corvid guarantee, what is checked statically, what is checked at runtime, what is out of scope, and how do I verify each independently?" in under ten minutes by running committed commands.
+
+**Hard dep:** every prior closed phase, especially Phase 22 (C ABI) and the signed-attestation moat extension shipped after Phase 34. Phase 35 is the launch gate — Phase 33's remaining unchecked items must reference Phase 35 artifacts (claim audit, stability contract, audit command) rather than ship parallel to them.
+
+**Why this phase exists.** External review on the path to public launch identified that while Corvid's *implementation* is real (compiler, runtime, tests, attestation), the *publicly defensible core story* is thinner than the implementation. Five concrete gaps:
+
+1. **Semantic contract is not crisply enumerated.** What is static-checked vs runtime-checked vs out-of-scope is implicit in the test suite. An outsider cannot answer it without reading the codebase.
+2. **Proof lives in tests, not in a concise core spec.** The repo has thousands of assertions; outsiders need a single readable spec that ties every public claim to a named test.
+3. **Trusted computing base is broad.** Parser, resolver, typechecker, IR lowering, codegen, runtime, ABI emit, and CLI all participate in the same trust boundary. A bug anywhere voids the launch claim.
+4. **Launch wording risks getting ahead of formal proof.** Phrasings such as "AI safety contracts are proven" need narrowing to behaviour the compiler actually enforces and that an external party can verify locally.
+5. **Adversarial coverage is thin.** Far more positive tests than must-fail tests for approval bypass, descriptor forgery, effect under-reporting, replay tampering, and import-boundary attacks.
+
+This phase closes all five end-to-end with no shortcuts: a guarantee manifest tagged in the compiler, doc generation from the manifest, a property-based fuzz corpus, an independent bilateral verifier, a sign-refusal contract, and a `corvid claim --explain` provenance command.
+
+**Slice checklist:**
+
+- [ ] 35-A-registry             `corvid-guarantees` crate: `GuaranteeKind` / `GuaranteeClass` (Static / RuntimeChecked / OutOfScope) / `Phase` enums + canonical `GUARANTEE_REGISTRY` static array. Every public Corvid guarantee enumerated with id, class, enforcing pipeline phase, description, and required test references.
+- [ ] 35-B-diag-tagging          Every contract-enforcing diagnostic in resolve / typecheck / IR-lower / codegen / runtime carries its `guarantee_id`. Build-time lint rejects untagged contract diagnostics. No contract enforcement is anonymous.
+- [ ] 35-C-contract-list         `corvid contract list` CLI subcommand emits the canonical guarantee table as JSON or human-readable. Single source of truth — every later artifact derives from this command's output.
+- [ ] 35-D-spec-generation       `xtask` regenerates `docs/core-semantics.md` from `GUARANTEE_REGISTRY`; CI fails on drift between committed doc and generated. Spec ≡ implementation, automatically. No hand-edited semantics page.
+- [ ] 35-E-test-cross-refs       Every Static guarantee carries `positive_test_refs` and `adversarial_test_refs`; build-time check rejects empty adversarial coverage on a Static guarantee. Every guarantee in the registry must point to real test functions that compile and run.
+- [ ] 35-F-fuzz-abi              Adversarial fuzz corpus over the ABI surface: `proptest`-driven byte mutators on descriptor JSON and DSSE attestation envelopes (corrupt signatures, swap payload types, mutate PAE bytes, drop required fields, inject extra symbols). ≥100 mutants per gate; each must be rejected with the documented exit code; benign mutations must round-trip.
+- [ ] 35-G-fuzz-source           Adversarial fuzz corpus over source-level bypasses: AST mutators for `@approve` re-export bypass, effect under-reporting at module boundary, `Grounded<T>` provenance loss across function calls, import-aliasing of dangerous tools. Each mutated source must fail typecheck with the diagnostic tagged to the right `guarantee_id` from slice 35-B.
+- [ ] 35-H-bilateral-verifier    Independent ABI verifier (`corvid-abi-verify` binary): parses source independently of the main pipeline, runs only the descriptor-relevant subset of resolution + typecheck, builds an independent `AbiDescriptor`, and bit-compares against the embedded one in a built cdylib. Disagreement = build rejection. Shrinks TCB to "agreement between two implementations." Separate binary, separate code path, separate review surface.
+- [ ] 35-I-claim-explain         `corvid claim --explain <cdylib>`: emits a self-contained provenance statement listing every guarantee enforced for the given binary, by id and class, plus the signing key fingerprint and verifier-agreement attestation from slice 35-H. The artifact HN threads can quote without further context.
+- [ ] 35-J-sign-refusal          `corvid build --sign` refuses to emit a signed cdylib unless every declared contract in the source maps to a `GUARANTEE_REGISTRY` entry that was actually checked in this build. No silent skips, no "we didn't run that pass on this target" downgrades. The signed artifact carries the *enforced* claim, not the *intended* claim.
+- [ ] 35-K-security-model        `docs/security-model.md`: TCB diagram (compiler + verifier + runtime + signer + ABI surface), threat model (insider/outsider, what each defends against), explicit non-goals (compromised host kernel, signing-key compromise, compiler-toolchain compromise). References slice 35-H/I/J behaviours; does not over-claim.
+- [ ] 35-L-readme-alignment      Replace any aspirational launch wording with claims derivable from `corvid claim --explain`, the adversarial corpus, and the bilateral verifier. README and landing page point at runnable commands; the wording is the *output* of the artifacts, not a separate prose layer.
+- [ ] 35-M-ci-gate               CI workflow runs the fuzz corpus + bilateral verifier + spec drift check on every push. Phase 35 artifacts are continuously enforced, not point-in-time at launch.
+
+**Non-scope:**
+
+- Formal mechanized proof of the type system (post-v1.0 research; the core-semantics manifest is the v1.0 surface).
+- Proof of cryptographic primitives — we use ed25519, SHA-256, and DSSE as standardized primitives, not redesigns.
+- Defense against compiler-toolchain compromise (we trust rustc and Cranelift; reproducible builds are a post-v1.0 hardening).
+- Defense against signing-key compromise — key management is a host responsibility, not a Corvid responsibility, and `docs/security-model.md` says so explicitly.
+- Bug-bounty program, third-party audit contract, formal launch comms — those belong to Phase 33's beta round and launch materials, not to Phase 35.
+
 **v1.0 final cut here. Launch day.**
 
 ---
@@ -1659,7 +1701,8 @@ Scoped-out of the pre-v1.0 critical path. Not abandoned — explicitly planned, 
 | v0.7 (embed + deploy) | 22, 23 | ~4 months |
 | v0.8 (dev workflow) | 24, 25, 26, 27 | ~5 months |
 | v0.9 (feature-complete) | 28, 29, 30, 31, 32 | ~5 months |
-| v1.0 (launch polish) | 33 | ~2 months |
+| v1.0 (launch polish) | 33, 34 | ~2 months |
+| v1.0 (defensible core) | 35 | ~6–8 weeks |
 
 Bottom-up sums to **~27 months** — over the 18–24 originally quoted because the bottom-up is pessimistic per phase and because Phase 20's honest slice breakdown pushed its estimate up (7 slices × ~2 weeks each vs. the earlier 12–14-week monolith). Real slip will come from Phase 20 unknowns (slice 20d's cost-analysis is novel research; slice 20e's `T?confidence` interaction with the type system is unpredictable), Phase 24 (LSP — scope tends to grow), and Phase 33 (launch polish — always longer than estimated). Build schedule with a 20% buffer; re-plan quarterly.
 
@@ -1707,3 +1750,4 @@ To keep momentum honest, ship one observable artefact at every phase boundary. E
 - **End of Phase 27** — Full developer workflow demo: write in VS Code with live type hints, `corvid add` a registry package, `corvid test` runs, `corvid eval` produces the HTML report. (v0.8)
 - **End of Phase 32** — Feature-complete: agents ask/choose humans, sessions persist to SQLite, Python libs import effect-tagged, Google + Ollama + Anthropic + OpenAI all work, `std.*` batteries included. (v0.9)
 - **End of Phase 33** — v1.0 public release: installer, website, beta-tester feedback incorporated, launch GIF, announcement.
+- **End of Phase 35** — `corvid claim --explain refund_bot.dylib` prints the binary's enforced guarantee set, signing key fingerprint, and bilateral-verifier attestation. `corvid contract list --json` round-trips into `docs/core-semantics.md` byte-for-byte. The fuzz corpus rejects 100% of mutated descriptors and bypassed sources. Independent verifier `corvid-abi-verify` rebuilds the descriptor for any signed cdylib and bit-matches the embedded one. CI re-runs all four on every push.

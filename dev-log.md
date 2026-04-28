@@ -5593,3 +5593,38 @@ proof-matrix row, spec/reference docs, tests, and explicit non-scope.
 
 This closes the Phase 34 maintenance loop so future inventions cannot remain
 hidden in code or appear only as launch prose.
+
+## 2026-04-28 - Phase 35 (Defensible core) opened as v1.0 launch gate
+
+External review on the path to public launch identified that the publicly
+defensible core story was thinner than the implementation: semantic contract
+not crisply enumerated, proof living in tests rather than a concise spec,
+broad TCB across the whole pipeline, launch wording at risk of getting ahead
+of formal proof, and adversarial coverage thin compared to positive coverage.
+
+Inserted Phase 35 in `ROADMAP.md` between Phase 34 (closed) and the v1.0 cut
+as the explicit launch gate. Layered "surface-now / proper-later" was rejected
+on no-shortcuts grounds: the surface would establish a public interpretation
+critics anchor on, the hand-coded artifacts would be thrown out for the proper
+versions later, and the surface and proper paths do not compound — they are
+independent code paths through the codebase.
+
+Phase 35 scope (13 slices, ~6–8 weeks):
+`corvid-guarantees` registry → diagnostic tagging → `corvid contract list` →
+generated `docs/core-semantics.md` → test cross-reference enforcement →
+adversarial fuzz corpus over the ABI surface → adversarial fuzz corpus over
+source-level bypasses → independent `corvid-abi-verify` binary doing a
+bilateral descriptor rebuild → `corvid claim --explain` provenance statement →
+`corvid build --sign` refusal when declared contracts have no registered check
+→ `docs/security-model.md` with TCB diagram + threat model + non-goals →
+README claim alignment derived from shipped artifacts → CI gate that re-runs
+the corpus + verifier + spec drift check on every push.
+
+Phase 33's remaining unchecked items (claim audit, stability contract, audit
+command) reference Phase 35 artifacts, so Phase 33 polish completes against
+the Phase 35 defensibility surface rather than parallel to it.
+
+This entry covers Slice 0 only — the ROADMAP amendment, status memory update,
+and dev-log capture. Slice 35-A (the registry data model) starts next under
+the autonomous execution protocol with one commit per slice and validation
+gate at every boundary.
