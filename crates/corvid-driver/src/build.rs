@@ -821,6 +821,8 @@ use std::time::{{Duration, Instant, SystemTime, UNIX_EPOCH}};
 const HANDLER: &str = "{handler}";
 const MAX_REQUEST_BYTES: usize = 4096;
 static REQUEST_COUNTER: AtomicU64 = AtomicU64::new(1);
+static REQUEST_TOTAL: AtomicU64 = AtomicU64::new(0);
+static ERROR_TOTAL: AtomicU64 = AtomicU64::new(0);
 
 fn main() -> std::io::Result<()> {{
     let host = std::env::var("CORVID_HOST").unwrap_or_else(|_| "127.0.0.1".to_string());
@@ -910,6 +912,35 @@ fn handle(mut stream: TcpStream) -> std::io::Result<()> {{
             200,
             "application/json",
             "{{\"status\":\"ok\"}}",
+            &request_id,
+            started,
+            method,
+            path,
+        );
+    }}
+    if path == "/readyz" {{
+        return respond(
+            &mut stream,
+            200,
+            "application/json",
+            "{{\"ready\":true}}",
+            &request_id,
+            started,
+            method,
+            path,
+        );
+    }}
+    if path == "/metrics" {{
+        let body = format!(
+            "{{{{\"request_total\":{{}},\"error_total\":{{}},\"runtime\":\"corvid-server\"}}}}",
+            REQUEST_TOTAL.load(Ordering::Relaxed),
+            ERROR_TOTAL.load(Ordering::Relaxed)
+        );
+        return respond(
+            &mut stream,
+            200,
+            "application/json",
+            &body,
             &request_id,
             started,
             method,
@@ -1035,6 +1066,10 @@ fn write_response(
         "HTTP/1.1 {{status}} {{reason}}\r\ncontent-type: {{content_type}}\r\ncontent-length: {{}}\r\nx-corvid-request-id: {{request_id}}\r\nconnection: close\r\n\r\n{{body}}",
         body.as_bytes().len()
     );
+    REQUEST_TOTAL.fetch_add(1, Ordering::Relaxed);
+    if status >= 400 {{
+        ERROR_TOTAL.fetch_add(1, Ordering::Relaxed);
+    }}
     trace_response(request_id, method, route, status, started);
     stream.write_all(response.as_bytes())
 }}

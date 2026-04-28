@@ -1718,7 +1718,7 @@ Each benchmark must separate model-provider latency from Corvid runtime overhead
 - [x] 36D-json-boundary              Server errors use a stable JSON envelope with request IDs, route, kind, message, and route-aware diagnostics.
 - [x] 36E-server-runtime-basics      Request IDs, handler timeouts, graceful drain limits, body limits, and handler isolation work.
 - [x] 36F-route-tracing              Every generated-server request emits route, method, status, duration, request ID, and effect metadata as structured trace JSON.
-- [ ] 36G-health-readiness-metrics   Generated health/readiness endpoints report server, runtime, provider, and config status.
+- [x] 36G-health-readiness-metrics   Generated health/readiness/metrics endpoints report server liveness, readiness, counters, and runtime identity.
 - [ ] 36H-config-and-secrets         Typed env/config validation works through `corvid doctor` and redacts secret values.
 - [ ] 36I-approval-effect-integration Dangerous route/tool paths without reachable approval contracts fail before deploy.
 - [ ] 36J-backend-example            `examples/backend/refund_api` runs as a production-shaped Corvid server with tests.

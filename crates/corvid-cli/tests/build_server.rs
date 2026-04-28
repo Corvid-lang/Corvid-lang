@@ -125,6 +125,10 @@ fn build_server_emits_runnable_local_http_binary() {
     assert!(health.contains(r#"{"status":"ok"}"#), "{health}");
     assert!(health.contains("x-corvid-request-id:"), "{health}");
 
+    let ready = http_get(addr, "/readyz");
+    assert!(ready.contains("HTTP/1.1 200 OK"), "{ready}");
+    assert!(ready.contains(r#"{"ready":true}"#), "{ready}");
+
     let root = http_get(addr, "/");
     assert!(root.contains("HTTP/1.1 200 OK"), "{root}");
     assert!(root.contains(r#""result":"hello from corvid""#), "{root}");
@@ -175,6 +179,12 @@ fn build_server_emits_runnable_local_http_binary() {
         oversized.contains(r#""kind":"body_too_large""#),
         "{oversized}"
     );
+
+    let metrics = http_get(addr, "/metrics");
+    assert!(metrics.contains("HTTP/1.1 200 OK"), "{metrics}");
+    assert!(metrics.contains(r#""request_total":"#), "{metrics}");
+    assert!(metrics.contains(r#""error_total":"#), "{metrics}");
+    assert!(metrics.contains(r#""runtime":"corvid-server""#), "{metrics}");
 
     drop(child);
 

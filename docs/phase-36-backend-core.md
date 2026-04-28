@@ -293,6 +293,12 @@ effects list with the route effect row from the manifest.
 - Generated endpoints cannot collide with user routes unless explicitly
   overridden with a compile-time warning or error.
 
+Implementation convention for 36G: the generated server reserves `/healthz`,
+`/readyz`, and `/metrics` before typed route dispatch. `/metrics` currently
+returns JSON request/error counters and runtime identity; later runtime slices
+can add latency buckets and provider/config status without changing the
+endpoint contract.
+
 ### 36H Config And Secrets
 
 - Required env vars are validated before the listener starts.
