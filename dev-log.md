@@ -5748,3 +5748,39 @@ nested under a `ContractCommand` enum mirroring the existing
 `BenchCommand` shape. Four unit tests cover the class/kind parser
 acceptance and rejection paths plus the JSON payload's count and
 out-of-scope-reason policy.
+
+## 2026-04-28 - Phase 35-D: generated `docs/core-semantics.md` with drift gate
+
+Spec ≡ implementation, automatically. The committed
+`docs/core-semantics.md` is now generated from
+`corvid_guarantees::GUARANTEE_REGISTRY` via a new
+`render_core_semantics_markdown()` function in
+`crates/corvid-guarantees/src/render.rs`. The render output is
+byte-deterministic for a given registry, and three unit tests in
+the same module enforce it:
+
+- `rendered_markdown_matches_committed_doc` — the load-bearing drift
+  gate: `include_str!("../../../docs/core-semantics.md")` must equal
+  the live render. CI fails if the registry evolves without the
+  doc being regenerated.
+- `rendered_markdown_includes_every_registered_id` — sanity check
+  that every guarantee id appears in the rendered text.
+- `rendered_markdown_emits_out_of_scope_reasons` — every `OutOfScope`
+  row carries its `Why out of scope` block in the rendered detail
+  section, mirroring the registry-side honesty rule.
+
+A new CLI subcommand `corvid contract regen-doc <output>` writes the
+rendered markdown to a path. The sanctioned update workflow when a
+guarantee's description changes or a new entry is added is now:
+
+```
+cargo run -q -p corvid-cli -- contract regen-doc docs/core-semantics.md
+```
+
+then commit the regenerated file alongside the registry change.
+There is no quiet path to evolve the spec doc away from the registry.
+
+The rendered doc opens with the auto-generated banner (with the regen
+command), then a summary table covering every row, then per-kind
+detail sections, then a closing footer documenting the regen
+workflow. With the seed registry it is 9.9 KB and 22 rows long.

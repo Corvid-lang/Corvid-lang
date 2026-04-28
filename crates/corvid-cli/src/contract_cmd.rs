@@ -16,9 +16,12 @@
 //! command never reorders the registry — declaration order in
 //! `corvid-guarantees` is the stable serialization order.
 
-use anyhow::{anyhow, Result};
+use std::path::Path;
+
+use anyhow::{anyhow, Context, Result};
 use corvid_guarantees::{
-    Guarantee, GuaranteeClass, GuaranteeKind, Phase, GUARANTEE_REGISTRY,
+    render_core_semantics_markdown, Guarantee, GuaranteeClass, GuaranteeKind, Phase,
+    GUARANTEE_REGISTRY,
 };
 use serde::Serialize;
 
@@ -51,6 +54,35 @@ pub fn run_list(json: bool, class_filter: Option<&str>, kind_filter: Option<&str
     } else {
         print_table(&rows);
     }
+    Ok(0)
+}
+
+/// Run `corvid contract regen-doc <output>`.
+///
+/// Writes the canonical `docs/core-semantics.md` rendering to the
+/// given path. The output is byte-deterministic for a given
+/// registry, so committing the result and gating CI on
+/// `corvid_guarantees::render::tests::rendered_markdown_matches_committed_doc`
+/// keeps spec ≡ implementation.
+pub fn run_regen_doc(output: &Path) -> Result<u8> {
+    let rendered = render_core_semantics_markdown();
+    if let Some(parent) = output.parent() {
+        if !parent.as_os_str().is_empty() {
+            std::fs::create_dir_all(parent).with_context(|| {
+                format!(
+                    "creating parent directory `{}` for regenerated doc",
+                    parent.display()
+                )
+            })?;
+        }
+    }
+    std::fs::write(output, &rendered)
+        .with_context(|| format!("writing regenerated doc to `{}`", output.display()))?;
+    eprintln!(
+        "wrote {} bytes to {}",
+        rendered.len(),
+        output.display()
+    );
     Ok(0)
 }
 

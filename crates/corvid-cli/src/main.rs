@@ -655,6 +655,16 @@ enum ContractCommand {
         #[arg(long, value_name = "KIND")]
         kind: Option<String>,
     },
+    /// Regenerate `docs/core-semantics.md` from the canonical
+    /// guarantee registry. Writes the rendered markdown to the given
+    /// `OUTPUT` path (typically `docs/core-semantics.md`); CI fails on
+    /// drift between the committed file and the live render, so this
+    /// command is the only sanctioned way to evolve the spec doc when
+    /// the registry changes.
+    RegenDoc {
+        /// Output path, e.g. `docs/core-semantics.md`.
+        output: PathBuf,
+    },
 }
 
 #[derive(Subcommand)]
@@ -1187,6 +1197,7 @@ fn main() -> ExitCode {
             ContractCommand::List { json, class, kind } => {
                 contract_cmd::run_list(json, class.as_deref(), kind.as_deref())
             }
+            ContractCommand::RegenDoc { output } => contract_cmd::run_regen_doc(&output),
         },
         None => {
             println!("corvid — the AI-native language compiler");

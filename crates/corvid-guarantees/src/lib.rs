@@ -20,6 +20,10 @@
 
 #![forbid(unsafe_code)]
 
+pub mod render;
+
+pub use render::render_core_semantics_markdown;
+
 use std::fmt;
 
 /// What kind of contract a guarantee enforces.
