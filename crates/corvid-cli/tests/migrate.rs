@@ -135,6 +135,42 @@ fn migrate_status_reports_changed_missing_duplicate_and_out_of_order_drift() {
 }
 
 #[test]
+fn migrate_dry_run_reports_counts_without_state_mutation() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let migrations = dir.path().join("migrations");
+    let state = dir.path().join("target").join("corvid-migrations.json");
+    std::fs::create_dir_all(&migrations).expect("migrations dir");
+    std::fs::write(migrations.join("0001_init.sql"), "create table users(id text);\n")
+        .expect("write migration");
+
+    let out = Command::new(corvid_bin())
+        .args([
+            "migrate",
+            "up",
+            "--dir",
+            migrations.to_str().unwrap(),
+            "--state",
+            state.to_str().unwrap(),
+            "--dry-run",
+        ])
+        .output()
+        .expect("run migrate up dry run");
+    assert!(
+        out.status.success(),
+        "dry-run failed:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("applied_count: 0"), "{stdout}");
+    assert!(stdout.contains("pending_count: 1"), "{stdout}");
+    assert!(stdout.contains("drift_count: 0"), "{stdout}");
+    assert!(stdout.contains("state_updated: false"), "{stdout}");
+    assert!(stdout.contains("mutation_intent: none"), "{stdout}");
+    assert!(!state.exists(), "dry-run must not write state");
+}
+
+#[test]
 fn migrate_help_lists_status_up_down() {
     let out = Command::new(corvid_bin())
         .args(["migrate", "--help"])

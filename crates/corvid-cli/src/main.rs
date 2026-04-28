@@ -1291,11 +1291,24 @@ fn cmd_migrate(action: &str, dir: &Path, state: &Path, dry_run: bool) -> Result<
     println!("migrations: {}", dir.display());
     println!("state: {}", state.display());
     println!("dry_run: {dry_run}");
+    let applied_count = migrations
+        .iter()
+        .filter(|migration| {
+            migration_state
+                .migrations
+                .iter()
+                .any(|applied| applied.name == migration.name && applied.sha256 == migration.sha256)
+        })
+        .count();
+    let pending_count = migrations.len().saturating_sub(applied_count);
+    println!("applied_count: {applied_count}");
+    println!("pending_count: {pending_count}");
+    println!("drift_count: {}", drift.len());
     if migrations.is_empty() {
         println!("migrations_found: 0");
     } else {
         println!("migrations_found: {}", migrations.len());
-        for migration in migrations {
+        for migration in &migrations {
             let applied = migration_state
                 .migrations
                 .iter()
@@ -1308,8 +1321,8 @@ fn cmd_migrate(action: &str, dir: &Path, state: &Path, dry_run: bool) -> Result<
             );
             if action == "up" && !dry_run && !applied {
                 migration_state.migrations.push(AppliedMigration {
-                    name: migration.name,
-                    sha256: migration.sha256,
+                    name: migration.name.clone(),
+                    sha256: migration.sha256.clone(),
                     applied_at: now_unix_seconds(),
                 });
             }
@@ -1329,6 +1342,16 @@ fn cmd_migrate(action: &str, dir: &Path, state: &Path, dry_run: bool) -> Result<
     } else {
         println!("state_updated: false");
     }
+    println!(
+        "mutation_intent: {}",
+        if action == "up" && !dry_run && pending_count > 0 {
+            "apply_pending"
+        } else if action == "down" && !dry_run {
+            "rollback_latest"
+        } else {
+            "none"
+        }
+    );
     Ok(0)
 }
 
