@@ -144,6 +144,11 @@ surface in the next persistence slices.
 - Missing columns produce typed diagnostics.
 - Wrong value kinds produce typed diagnostics.
 
+Implementation convention for 37C: `std.db` exposes row-decoding metadata
+envelopes now: `DbColumn`, `DbRowDecode`, `db_decode_ok`,
+`db_decode_missing_column`, and `db_decode_wrong_kind`. Runtime row materializers
+will emit these same shapes when host-backed query execution lands.
+
 ### 37D Transactions
 
 - Successful transaction scopes commit.

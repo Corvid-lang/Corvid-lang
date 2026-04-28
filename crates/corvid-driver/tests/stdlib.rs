@@ -336,7 +336,7 @@ fn std_db_imported_helpers_typecheck() {
         "db",
         true,
         r#"
-import "./std/db" use DbConnection, DbParam, DbQuery, DbResult, DbError, sqlite_open, db_param, db_query, db_execute, db_result, db_error, db_parameterized
+import "./std/db" use DbConnection, DbParam, DbQuery, DbResult, DbError, DbColumn, DbRowDecode, sqlite_open, db_param, db_query, db_execute, db_result, db_error, db_parameterized, db_column, db_decode_ok, db_decode_missing_column, db_decode_wrong_kind
 
 agent main() -> Bool:
     db = sqlite_open("file:app.db", "db:app")
@@ -345,7 +345,11 @@ agent main() -> Bool:
     write = db_execute("insert into users (id) values (?)", 1, "db:users:write")
     result = db_result(1, 0, "db:users:write")
     err = db_error("users.find", "no such table")
-    return db.driver == "sqlite" and id.name == "id" and db_parameterized(read) and write.operation == "write" and result.rows_affected == 1 and err.redacted
+    col = db_column("id", "String", "String", true)
+    ok = db_decode_ok("User")
+    missing = db_decode_missing_column("User", "email", "String")
+    wrong = db_decode_wrong_kind("User", "age", "Int", "String")
+    return db.driver == "sqlite" and id.name == "id" and db_parameterized(read) and write.operation == "write" and result.rows_affected == 1 and err.redacted and col.present and ok.ok and not missing.ok and wrong.received_kind == "String"
 "#,
     );
 }

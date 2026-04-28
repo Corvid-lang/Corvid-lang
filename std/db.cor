@@ -32,6 +32,20 @@ public type DbError:
     database_message: String
     redacted: Bool
 
+public type DbColumn:
+    name: String
+    expected_type: String
+    value_kind: String
+    present: Bool
+
+public type DbRowDecode:
+    record_type: String
+    ok: Bool
+    field_path: String
+    expected_type: String
+    received_kind: String
+    message: String
+
 public agent sqlite_open(dsn: String, replay_key: String) -> DbConnection:
     return DbConnection("sqlite", dsn, replay_key, effect_envelope("std.db.open", "", "", "", replay_key))
 
@@ -52,3 +66,15 @@ public agent db_error(query_site: String, database_message: String) -> DbError:
 
 public agent db_parameterized(query: DbQuery) -> Bool:
     return query.parameterized and query.param_count >= 0
+
+public agent db_column(name: String, expected_type: String, value_kind: String, present: Bool) -> DbColumn:
+    return DbColumn(name, expected_type, value_kind, present)
+
+public agent db_decode_ok(record_type: String) -> DbRowDecode:
+    return DbRowDecode(record_type, true, "", "", "", "")
+
+public agent db_decode_missing_column(record_type: String, field_path: String, expected_type: String) -> DbRowDecode:
+    return DbRowDecode(record_type, false, field_path, expected_type, "missing", "missing column")
+
+public agent db_decode_wrong_kind(record_type: String, field_path: String, expected_type: String, received_kind: String) -> DbRowDecode:
+    return DbRowDecode(record_type, false, field_path, expected_type, received_kind, "wrong value kind")
