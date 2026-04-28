@@ -5975,3 +5975,22 @@ Validation:
 - `cargo test -p corvid-abi-verify -- --nocapture`
 - `cargo test -p corvid-cli --test abi_attestation -- --nocapture`
 - `cargo test -p corvid-cli --test claim_cmd -- --nocapture`
+
+## 2026-04-28 - Phase 35-K: security model
+
+Slice 35-K is complete. Added `docs/security-model.md` with the signed
+cdylib launch claim, trust-boundary diagram, TCB list, attacker model,
+maintainer rules for future contract syntax, host acceptance workflow,
+and explicit non-goals. The document references the concrete slice
+35-H/I/J mechanisms: bilateral descriptor verification,
+`corvid claim --explain`, and the signed-build claim coverage gate.
+
+The document is intentionally narrower than marketing language. It says
+Corvid does not defend against a compromised host kernel, signing-key
+compromise, compiler-toolchain compromise, provider dishonesty, live
+runtime budget termination, or application policy gaps.
+
+Validation:
+
+- Documentation-only slice; reviewed against `docs/core-semantics.md`
+  and the Phase 35-H/I/J command behavior.
