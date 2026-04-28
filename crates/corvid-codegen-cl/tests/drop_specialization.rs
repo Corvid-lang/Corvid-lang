@@ -35,7 +35,15 @@ fn test_tools_lib_path() -> PathBuf {
     } else {
         "libcorvid_test_tools.a"
     };
-    workspace_root.join("target").join("release").join(name)
+    let path = workspace_root.join("target").join("release").join(name);
+    // Route the linker through `corvid_test_tools.lib` (which already
+    // bundles `corvid-runtime` transitively) instead of pairing it
+    // with the standalone `corvid_runtime.lib`. See
+    // `corvid-codegen-cl::link::link_binary`.
+    unsafe {
+        std::env::set_var("CORVID_RUNTIME_STATICLIB_OVERRIDE", &path);
+    }
+    path
 }
 
 fn ir_of(src: &str) -> corvid_ir::IrFile {

@@ -71,6 +71,15 @@ fn test_tools_lib_path() -> PathBuf {
         .status()
         .expect("build corvid-test-tools");
     assert!(status.success(), "building corvid-test-tools failed");
+    // `corvid_test_tools.lib` already bundles `corvid-runtime` as a
+    // transitive Rust dep (along with the C runtime objects) because
+    // `corvid-test-tools` lists `corvid-runtime` as a workspace dep.
+    // Routing the linker through this single Rust staticlib avoids
+    // the duplicate-`std` LNK2005 that linking it alongside the
+    // standalone `corvid_runtime.lib` produces on MSVC.
+    unsafe {
+        std::env::set_var("CORVID_RUNTIME_STATICLIB_OVERRIDE", &path);
+    }
     path
 }
 
@@ -193,6 +202,43 @@ fn normalize_event(event: &TraceEvent) -> TraceEvent {
             label: label.clone(),
             approved: *approved,
         },
+        TraceEvent::ApprovalDecision {
+            site,
+            args,
+            accepted,
+            decider,
+            rationale,
+            ..
+        } => TraceEvent::ApprovalDecision {
+            ts_ms: 0,
+            run_id: "normalized-run".into(),
+            site: site.clone(),
+            args: args.clone(),
+            accepted: *accepted,
+            decider: decider.clone(),
+            rationale: rationale.clone(),
+        },
+        TraceEvent::ApprovalTokenIssued {
+            label, args, scope, ..
+        } => TraceEvent::ApprovalTokenIssued {
+            ts_ms: 0,
+            run_id: "normalized-run".into(),
+            // The token id and timestamps are non-deterministic;
+            // collapse to canonical placeholders so two runs of
+            // the same program compare equal under normalization.
+            token_id: "normalized-token".into(),
+            label: label.clone(),
+            args: args.clone(),
+            scope: scope.clone(),
+            issued_at_ms: 0,
+            expires_at_ms: 0,
+        },
+        TraceEvent::HostEvent { name, payload, .. } => TraceEvent::HostEvent {
+            ts_ms: 0,
+            run_id: "normalized-run".into(),
+            name: name.clone(),
+            payload: payload.clone(),
+        },
         TraceEvent::SeedRead { purpose, value, .. } => TraceEvent::SeedRead {
             ts_ms: 0,
             run_id: "normalized-run".into(),
@@ -268,13 +314,23 @@ async fn refund_bot_native_trace_matches_interpreter_shape() {
         "native trace should include rollout_default_seed"
     );
 
+    // Filter out the native runtime's host-side `llm.usage` HostEvent
+    // before comparing — the interpreter tier does not emit it in this
+    // fixture, so leaving it in would assert a divergence that is
+    // about provider-usage telemetry, not record/replay
+    // determinism. Drop on both sides for symmetry.
+    fn drop_host_llm_usage(event: &TraceEvent) -> bool {
+        !matches!(event, TraceEvent::HostEvent { name, .. } if name == "llm.usage")
+    }
     let normalized_interp = interp_events
         .iter()
+        .filter(|e| drop_host_llm_usage(e))
         .map(normalize_event)
         .map(|event| serialize_event_line(&event).expect("serialize interp event"))
         .collect::<Vec<_>>();
     let normalized_native = native_events
         .iter()
+        .filter(|e| drop_host_llm_usage(e))
         .map(normalize_event)
         .map(|event| serialize_event_line(&event).expect("serialize native event"))
         .collect::<Vec<_>>();

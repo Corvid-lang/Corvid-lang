@@ -70,7 +70,16 @@ fn test_tools_lib_path() -> PathBuf {
     } else {
         "libcorvid_test_tools.a"
     };
-    workspace_root.join("target").join("release").join(name)
+    let path = workspace_root.join("target").join("release").join(name);
+    // `corvid_test_tools.lib` already bundles `corvid-runtime` as a
+    // transitive Rust dep (along with the C runtime objects); routing
+    // the linker through this single Rust staticlib avoids the
+    // duplicate-`std` LNK2005 that linking it alongside the
+    // standalone `corvid_runtime.lib` produces on MSVC.
+    unsafe {
+        std::env::set_var("CORVID_RUNTIME_STATICLIB_OVERRIDE", &path);
+    }
+    path
 }
 
 /// Run a compiled binary with the leak detector enabled. Returns

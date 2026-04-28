@@ -62,26 +62,45 @@ pub fn link_binary(
     // on Unix). Resolved here, not in the build script, so the exact
     // filename matches the host we're linking on right now.
     //
-    let staticlib_dir = std::path::Path::new(env!("CORVID_STATICLIB_DIR"));
-    let runtime_lib_name = if compiler.is_like_msvc() {
-        "corvid_runtime.lib"
-    } else {
-        "libcorvid_runtime.a"
-    };
-    let runtime_staticlib_path = staticlib_dir.join(runtime_lib_name);
-    let fallback_runtime_staticlib_path = staticlib_dir
-        .parent()
-        .map(|parent| parent.join("release").join(runtime_lib_name));
-    let runtime_staticlib_path = if runtime_staticlib_path.exists() {
-        runtime_staticlib_path
-    } else if let Some(fallback) = fallback_runtime_staticlib_path.filter(|path| path.exists()) {
-        fallback
-    } else {
-        return Err(CodegenError::link(format!(
-            "corvid-runtime staticlib missing at `{}` and no release fallback was found. Build `corvid-runtime` for the active profile or run `cargo build -p corvid-runtime --release`.",
-            runtime_staticlib_path.display()
-        )));
-    };
+    // Tests can set `CORVID_RUNTIME_STATICLIB_OVERRIDE` to point at a
+    // different staticlib that already bundles `corvid-runtime` as a
+    // transitive Rust dep (e.g. `corvid_test_tools.lib`). The
+    // override path replaces the default lib in the linker
+    // invocation; without it MSVC would see two Rust staticlibs each
+    // bundling `std` and reject the build with `LNK2005`. Outside
+    // tests this stays unset and the default runtime lib is used.
+    let runtime_staticlib_path =
+        if let Some(override_path) = std::env::var_os("CORVID_RUNTIME_STATICLIB_OVERRIDE") {
+            let path = PathBuf::from(override_path);
+            if !path.exists() {
+                return Err(CodegenError::link(format!(
+                    "CORVID_RUNTIME_STATICLIB_OVERRIDE points at non-existent path `{}`",
+                    path.display()
+                )));
+            }
+            path
+        } else {
+            let staticlib_dir = std::path::Path::new(env!("CORVID_STATICLIB_DIR"));
+            let runtime_lib_name = if compiler.is_like_msvc() {
+                "corvid_runtime.lib"
+            } else {
+                "libcorvid_runtime.a"
+            };
+            let primary = staticlib_dir.join(runtime_lib_name);
+            let fallback = staticlib_dir
+                .parent()
+                .map(|parent| parent.join("release").join(runtime_lib_name));
+            if primary.exists() {
+                primary
+            } else if let Some(fallback) = fallback.filter(|path| path.exists()) {
+                fallback
+            } else {
+                return Err(CodegenError::link(format!(
+                    "corvid-runtime staticlib missing at `{}` and no release fallback was found. Build `corvid-runtime` for the active profile or run `cargo build -p corvid-runtime --release`.",
+                    primary.display()
+                )));
+            }
+        };
 
     if compiler.is_like_msvc() {
         // MSVC: cl.exe acts as the link driver. Always link the

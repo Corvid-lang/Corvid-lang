@@ -69,6 +69,13 @@ fn test_tools_lib_path() -> PathBuf {
         .status()
         .expect("build corvid-test-tools");
     assert!(status.success(), "building corvid-test-tools failed");
+    // Route the linker through `corvid_test_tools.lib` (which already
+    // bundles `corvid-runtime` transitively) instead of pairing it
+    // with the standalone `corvid_runtime.lib`. See
+    // `corvid-codegen-cl::link::link_binary`.
+    unsafe {
+        std::env::set_var("CORVID_RUNTIME_STATICLIB_OVERRIDE", &path);
+    }
     path
 }
 
@@ -182,6 +189,40 @@ fn normalize_event(event: &TraceEvent) -> TraceEvent {
             label: label.clone(),
             approved: *approved,
         },
+        TraceEvent::ApprovalDecision {
+            site,
+            args,
+            accepted,
+            decider,
+            rationale,
+            ..
+        } => TraceEvent::ApprovalDecision {
+            ts_ms: 0,
+            run_id: "normalized-run".into(),
+            site: site.clone(),
+            args: args.clone(),
+            accepted: *accepted,
+            decider: decider.clone(),
+            rationale: rationale.clone(),
+        },
+        TraceEvent::ApprovalTokenIssued {
+            label, args, scope, ..
+        } => TraceEvent::ApprovalTokenIssued {
+            ts_ms: 0,
+            run_id: "normalized-run".into(),
+            token_id: "normalized-token".into(),
+            label: label.clone(),
+            args: args.clone(),
+            scope: scope.clone(),
+            issued_at_ms: 0,
+            expires_at_ms: 0,
+        },
+        TraceEvent::HostEvent { name, payload, .. } => TraceEvent::HostEvent {
+            ts_ms: 0,
+            run_id: "normalized-run".into(),
+            name: name.clone(),
+            payload: payload.clone(),
+        },
         TraceEvent::SeedRead { purpose, value, .. } => TraceEvent::SeedRead {
             ts_ms: 0,
             run_id: "normalized-run".into(),
@@ -202,6 +243,13 @@ fn normalize_trace(path: &Path) -> Vec<String> {
     read_events_from_path(path)
         .expect("read trace")
         .iter()
+        // Drop the host-side `llm.usage` HostEvent: it carries
+        // adapter-name-specific telemetry (`env-mock-llm` on the
+        // record run vs none on the replay run) that is orthogonal
+        // to the record/replay determinism this test is asserting.
+        .filter(|event| {
+            !matches!(event, TraceEvent::HostEvent { name, .. } if name == "llm.usage")
+        })
         .map(normalize_event)
         .map(|event| serialize_event_line(&event).expect("serialize normalized event"))
         .collect()

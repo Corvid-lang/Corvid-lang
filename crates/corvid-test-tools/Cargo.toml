@@ -7,8 +7,15 @@ description = "Mock `#[tool]` implementations for the parity harness. Test-only 
 
 [lib]
 # Staticlib so the parity harness can link it into Corvid-compiled
-# binaries alongside the corvid-runtime staticlib. The rlib
-# crate-type is not needed; nothing depends on this crate as Rust.
+# binaries. The staticlib already bundles `corvid-runtime` as a
+# transitive Rust dep (and the C runtime objects), so the parity
+# harness routes the linker through `corvid_test_tools.lib` as the
+# sole runtime-bearing Rust staticlib via the
+# `CORVID_RUNTIME_STATICLIB_OVERRIDE` env var that
+# `corvid-codegen-cl::link::link_binary` honors. That replacement
+# avoids the duplicate-`std` LNK2005 that linking
+# `corvid_test_tools.lib` alongside the standalone
+# `corvid_runtime.lib` triggers on MSVC.
 crate-type = ["staticlib"]
 # Disable `cargo test`'s test-harness binary for this crate. The
 # staticlib refs `corvid_string_from_bytes` which is only resolvable

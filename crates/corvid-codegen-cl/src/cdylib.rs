@@ -266,6 +266,23 @@ fn link_static_archive(object_path: &Path, output_path: &Path) -> Result<(), Cod
 }
 
 fn runtime_staticlib_path(compiler: &cc::Tool) -> Result<PathBuf, CodegenError> {
+    // Tests can route through `CORVID_RUNTIME_STATICLIB_OVERRIDE` to
+    // pick a Rust staticlib that already bundles `corvid-runtime`
+    // transitively (e.g. `corvid_test_tools.lib`). Linking the
+    // override on its own avoids the duplicate-`std` LNK2005 that
+    // pairing it with the standalone `corvid_runtime.lib` would
+    // produce on MSVC. Outside tests this stays unset and the
+    // default lib is built and used.
+    if let Some(override_path) = std::env::var_os("CORVID_RUNTIME_STATICLIB_OVERRIDE") {
+        let path = PathBuf::from(override_path);
+        if !path.exists() {
+            return Err(CodegenError::link(format!(
+                "CORVID_RUNTIME_STATICLIB_OVERRIDE points at non-existent path `{}`",
+                path.display()
+            )));
+        }
+        return Ok(path);
+    }
     let staticlib_dir = Path::new(env!("CORVID_STATICLIB_DIR"));
     let runtime_staticlib_path = if compiler.is_like_msvc() {
         staticlib_dir.join("corvid_runtime.lib")

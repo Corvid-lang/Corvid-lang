@@ -75,6 +75,13 @@ fn test_tools_lib_path() -> PathBuf {
         .status()
         .expect("build corvid-test-tools");
     assert!(status.success(), "building corvid-test-tools failed");
+    // Route the linker through `corvid_test_tools.lib` (which already
+    // bundles `corvid-runtime` transitively) instead of pairing it
+    // with the standalone `corvid_runtime.lib`. See
+    // `corvid-codegen-cl::link::link_binary`.
+    unsafe {
+        std::env::set_var("CORVID_RUNTIME_STATICLIB_OVERRIDE", &path);
+    }
     path
 }
 
