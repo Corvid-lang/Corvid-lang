@@ -40,6 +40,7 @@ pub mod capability_contract;
 pub mod catalog;
 pub mod catalog_c_api;
 pub mod citation;
+pub mod db;
 pub mod effect_filter;
 pub mod ensemble;
 pub mod env;
@@ -115,6 +116,10 @@ pub use catalog::{
     CorvidPreFlight, CorvidPreFlightStatus, CorvidTrustTier,
 };
 pub use corvid_trace_schema::{TraceEvent, WRITER_INTERPRETER, WRITER_NATIVE};
+pub use db::{
+    decode_i64 as db_decode_i64, decode_string as db_decode_string, DbCell, DbDecodeError,
+    DbExecuteResult, DbQueryRows, DbValue, SqliteDbRuntime,
+};
 pub use effect_filter::CorvidFindAgentsStatus;
 pub use ensemble::{majority_vote, weighted_vote, EnsembleVoteOutcome};
 pub use env::{find_dotenv_walking, load_dotenv, load_dotenv_walking};
