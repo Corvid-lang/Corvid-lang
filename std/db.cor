@@ -96,6 +96,9 @@ public type DbEncryptedToken:
 public agent sqlite_open(dsn: String, replay_key: String) -> DbConnection:
     return DbConnection("sqlite", dsn, replay_key, effect_envelope("std.db.open", "", "", "", replay_key))
 
+public agent postgres_open(dsn: String, replay_key: String) -> DbConnection:
+    return DbConnection("postgres", dsn, replay_key, effect_envelope("std.db.open", "", "", "", replay_key))
+
 public agent db_param(name: String, value_kind: String, redacted: Bool) -> DbParam:
     return DbParam(name, value_kind, redacted)
 

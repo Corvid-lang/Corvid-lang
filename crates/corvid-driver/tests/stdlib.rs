@@ -358,10 +358,11 @@ fn std_db_imported_helpers_typecheck() {
         "db",
         true,
         r#"
-import "./std/db" use DbConnection, DbParam, DbQuery, DbResult, DbError, DbColumn, DbRowDecode, DbTransaction, DbAuditRecord, DbAuditWrite, DbTokenRef, DbEncryptedToken, sqlite_open, db_param, db_query, db_execute, db_result, db_error, db_parameterized, db_column, db_decode_ok, db_decode_missing_column, db_decode_wrong_kind, db_transaction, db_transaction_commit, db_transaction_rollback, db_transaction_nested_rejected, db_audit_record, db_audit_approved, db_audit_write, db_audit_write_safe, db_token_ref, db_encrypted_token, db_token_redacted
+import "./std/db" use DbConnection, DbParam, DbQuery, DbResult, DbError, DbColumn, DbRowDecode, DbTransaction, DbAuditRecord, DbAuditWrite, DbTokenRef, DbEncryptedToken, sqlite_open, postgres_open, db_param, db_query, db_execute, db_result, db_error, db_parameterized, db_column, db_decode_ok, db_decode_missing_column, db_decode_wrong_kind, db_transaction, db_transaction_commit, db_transaction_rollback, db_transaction_nested_rejected, db_audit_record, db_audit_approved, db_audit_write, db_audit_write_safe, db_token_ref, db_encrypted_token, db_token_redacted
 
 agent main() -> Bool:
     db = sqlite_open("file:app.db", "db:app")
+    pg = postgres_open("postgres://localhost/app", "db:pg")
     id = db_param("id", "String", false)
     read = db_query("select id from users where id = ?", 1, "db:users:read")
     write = db_execute("insert into users (id) values (?)", 1, "db:users:write")
@@ -379,7 +380,7 @@ agent main() -> Bool:
     audit_write = db_audit_write(audit, true, true)
     token = db_token_ref("gmail", "acct-1", "tok-1", "key-1", "replay-token-1")
     encrypted = db_encrypted_token(token, "sha256:ciphertext", "xchacha20poly1305")
-    return db.driver == "sqlite" and id.name == "id" and db_parameterized(read) and write.operation == "write" and result.rows_affected == 1 and err.redacted and col.present and ok.ok and not missing.ok and wrong.received_kind == "String" and committed.status == "committed" and rolled_back.status == "rolled_back" and db_transaction_nested_rejected(nested) and db_audit_approved(audit) and db_audit_write_safe(audit_write) and db_token_redacted(token) and encrypted.key_id == "key-1"
+    return db.driver == "sqlite" and pg.driver == "postgres" and id.name == "id" and db_parameterized(read) and write.operation == "write" and result.rows_affected == 1 and err.redacted and col.present and ok.ok and not missing.ok and wrong.received_kind == "String" and committed.status == "committed" and rolled_back.status == "rolled_back" and db_transaction_nested_rejected(nested) and db_audit_approved(audit) and db_audit_write_safe(audit_write) and db_token_redacted(token) and encrypted.key_id == "key-1"
 "#,
     );
 }
