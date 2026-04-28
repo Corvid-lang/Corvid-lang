@@ -1919,7 +1919,7 @@ A slice that fails any box rolls back to `[ ]`. The `[x]` is a contract, not a w
 - [x] 38C-retry-backoff-dlq          Jobs support retry policies, backoff, terminal failure, and dead-letter inspection.
 - [x] 38D-delayed-jobs-cron          Delayed jobs and cron schedules persist, recover after restart, and appear in `corvid audit`.
 - [x] 38E-leases-concurrency-idempotency Jobs use leases, concurrency limits, and idempotency keys to avoid duplicate dangerous work.
-- [ ] 38F-agent-step-checkpoints     Durable agent runs checkpoint steps, tool-call results, and partial outputs.
+- [x] 38F-agent-step-checkpoints     Durable agent runs checkpoint steps, tool-call results, and partial outputs.
 - [ ] 38G-approval-wait-resume       Jobs can pause on approval, resume after approve/deny/expire, and record the audit transition.
 - [ ] 38H-loop-bounds                Max steps, wall time, spend, and tool calls are enforced for job-backed agent loops.
 - [ ] 38I-job-ops-commands           Operators can pause queues, drain workers, inspect, retry, cancel, and export job traces.
@@ -1991,7 +1991,7 @@ corvid jobs drain --workers=all
 - [x] 38E2-concurrency-limits        Queue and job-type concurrency limits are enforced.
 - [x] 38E3-idempotency-keys          Duplicate dangerous jobs collapse or fail predictably.
 - [x] 38F1-checkpoint-schema         Agent step/tool/partial-output checkpoints are durable.
-- [ ] 38F2-resume-agent-run          Agent run resumes from last checkpoint after crash.
+- [x] 38F2-resume-agent-run          Agent run resumes from last checkpoint after crash.
 - [ ] 38G1-approval-wait-state       Jobs can enter approval-wait state with expiry.
 - [ ] 38G2-approval-resume           Approve/deny/expire transitions resume or stop jobs and write audit events.
 - [ ] 38H1-loop-budget-controls      Max steps, wall time, spend, and tool-call limits are enforced.

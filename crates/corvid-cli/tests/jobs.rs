@@ -407,6 +407,30 @@ fn jobs_checkpoint_cli_records_agent_tool_and_partial_outputs() {
     assert!(stdout.contains("kind: tool_result"), "{stdout}");
     assert!(stdout.contains("kind: partial_output"), "{stdout}");
     assert!(stdout.contains("label: gmail.search"), "{stdout}");
+
+    let resume = Command::new(corvid_bin())
+        .args([
+            "jobs",
+            "checkpoint",
+            "resume",
+            "--state",
+            state.to_str().unwrap(),
+            "--job",
+            "job_1",
+        ])
+        .output()
+        .expect("run checkpoint resume");
+    assert!(
+        resume.status.success(),
+        "checkpoint resume failed:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&resume.stdout),
+        String::from_utf8_lossy(&resume.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&resume.stdout);
+    assert!(stdout.contains("checkpoint_count: 3"), "{stdout}");
+    assert!(stdout.contains("next_sequence: 4"), "{stdout}");
+    assert!(stdout.contains("last_kind: partial_output"), "{stdout}");
+    assert!(stdout.contains("last_label: draft"), "{stdout}");
 }
 
 #[test]

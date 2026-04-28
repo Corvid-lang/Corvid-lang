@@ -150,6 +150,14 @@ pub struct JobCheckpoint {
     pub created_ms: u64,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct JobResumeState {
+    pub job: QueueJob,
+    pub checkpoints: Vec<JobCheckpoint>,
+    pub last_checkpoint: Option<JobCheckpoint>,
+    pub next_sequence: u64,
+}
+
 #[derive(Clone, Default)]
 pub struct QueueRuntime {
     next_id: Arc<AtomicU64>,
@@ -947,6 +955,24 @@ impl DurableQueueRuntime {
             );
         }
         Ok(checkpoints)
+    }
+
+    pub fn resume_state(&self, job_id: &str) -> Result<JobResumeState, RuntimeError> {
+        let job = self
+            .get(job_id)?
+            .ok_or_else(|| RuntimeError::Other(format!("std.queue job `{job_id}` not found")))?;
+        let checkpoints = self.list_checkpoints(job_id)?;
+        let last_checkpoint = checkpoints.last().cloned();
+        let next_sequence = last_checkpoint
+            .as_ref()
+            .map(|checkpoint| checkpoint.sequence.saturating_add(1))
+            .unwrap_or(1);
+        Ok(JobResumeState {
+            job,
+            checkpoints,
+            last_checkpoint,
+            next_sequence,
+        })
     }
 
     fn set_concurrency_limit(
@@ -1913,6 +1939,59 @@ mod tests {
         assert_eq!(checkpoints[0].kind, JobCheckpointKind::AgentStep);
         assert_eq!(checkpoints[1].label, "gmail.search");
         assert_eq!(checkpoints[2].payload["chars"], 120);
+    }
+
+    #[test]
+    fn durable_queue_resume_state_survives_restart_and_expired_lease() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("jobs.sqlite");
+        let job_id = {
+            let queue = DurableQueueRuntime::open(&path).unwrap();
+            let job = queue
+                .enqueue("agent_run", serde_json::json!({"goal": "brief"}), 1, 0.5, None, None)
+                .unwrap();
+            let leased = queue
+                .lease_next_at("worker-a", 10, 10_000)
+                .unwrap()
+                .expect("lease");
+            assert_eq!(leased.id, job.id);
+            queue
+                .record_checkpoint(
+                    &job.id,
+                    JobCheckpointKind::AgentStep,
+                    "plan",
+                    serde_json::json!({"step": 1}),
+                    Some("sha256:plan".to_string()),
+                )
+                .unwrap();
+            queue
+                .record_checkpoint(
+                    &job.id,
+                    JobCheckpointKind::ToolResult,
+                    "gmail.search",
+                    serde_json::json!({"result_count": 3}),
+                    Some("sha256:gmail".to_string()),
+                )
+                .unwrap();
+            job.id
+        };
+
+        let queue = DurableQueueRuntime::open(&path).unwrap();
+        let resume = queue.resume_state(&job_id).unwrap();
+        assert_eq!(resume.job.status, QueueJobStatus::Leased);
+        assert_eq!(resume.checkpoints.len(), 2);
+        assert_eq!(resume.next_sequence, 3);
+        assert_eq!(
+            resume.last_checkpoint.as_ref().map(|checkpoint| checkpoint.label.as_str()),
+            Some("gmail.search")
+        );
+
+        let reclaimed = queue
+            .lease_next_at("worker-b", 10, 10_011)
+            .unwrap()
+            .expect("reclaimed after restart");
+        assert_eq!(reclaimed.id, job_id);
+        assert_eq!(reclaimed.lease_owner.as_deref(), Some("worker-b"));
     }
 
     #[test]

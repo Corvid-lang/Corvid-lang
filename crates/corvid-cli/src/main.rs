@@ -1352,6 +1352,9 @@ fn main() -> ExitCode {
                 JobsCheckpointCommand::List { state, job } => {
                     cmd_jobs_checkpoint_list(&state, &job)
                 }
+                JobsCheckpointCommand::Resume { state, job } => {
+                    cmd_jobs_checkpoint_resume(&state, &job)
+                }
             },
             JobsCommand::Dlq { state } => cmd_jobs_dlq(&state),
         },
@@ -1776,6 +1779,26 @@ fn cmd_jobs_checkpoint_list(state: &Path, job_id: &str) -> Result<u8> {
     println!("checkpoint_count: {}", checkpoints.len());
     for checkpoint in checkpoints {
         print_checkpoint_summary(&checkpoint);
+    }
+    Ok(0)
+}
+
+fn cmd_jobs_checkpoint_resume(state: &Path, job_id: &str) -> Result<u8> {
+    let queue = DurableQueueRuntime::open(state)?;
+    let resume = queue.resume_state(job_id)?;
+    println!("corvid jobs checkpoint resume");
+    println!("state: {}", state.display());
+    println!("job: {}", resume.job.id);
+    println!("status: {}", resume.job.status.as_str());
+    println!("checkpoint_count: {}", resume.checkpoints.len());
+    println!("next_sequence: {}", resume.next_sequence);
+    if let Some(checkpoint) = resume.last_checkpoint {
+        println!("last_checkpoint: {}", checkpoint.id);
+        println!("last_kind: {}", checkpoint.kind.as_str());
+        println!("last_label: {}", checkpoint.label);
+        println!("last_sequence: {}", checkpoint.sequence);
+    } else {
+        println!("last_checkpoint: ");
     }
     Ok(0)
 }
@@ -3230,6 +3253,15 @@ enum JobsCheckpointCommand {
     },
     /// List durable checkpoints for a job.
     List {
+        /// SQLite state file used by the durable local queue.
+        #[arg(long, value_name = "PATH", default_value = "target/corvid-jobs.sqlite")]
+        state: PathBuf,
+        /// Job id.
+        #[arg(long)]
+        job: String,
+    },
+    /// Show the restart resume point for a job.
+    Resume {
         /// SQLite state file used by the durable local queue.
         #[arg(long, value_name = "PATH", default_value = "target/corvid-jobs.sqlite")]
         state: PathBuf,
