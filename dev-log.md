@@ -6048,3 +6048,20 @@ Validation:
 
 - Documentation-only slice; checked against the Phase 36 roadmap scope and the
   existing Phase 35 signed-claim/security model posture.
+
+## 2026-04-28 - Phase 36B: minimal server target
+
+Slice 36B is complete. `corvid build --target=server` now accepts the
+existing native entrypoint convention (a single agent, or an agent named
+`main`) and emits a runnable local HTTP server binary under `target/server`.
+
+The generated server is intentionally minimal and transitional: it listens on
+`CORVID_HOST` / `CORVID_PORT`, prints the bound address, serves `GET /healthz`,
+and serves `GET /` by invoking the compiled Corvid native handler binary and
+returning its output as JSON. This gives Phase 36 a real runnable backend
+target before typed `server` / `route` declarations land in 36C.
+
+Validation:
+
+- `cargo check -p corvid-driver -p corvid-cli`
+- `cargo test -p corvid-cli --test build_server -- --nocapture`

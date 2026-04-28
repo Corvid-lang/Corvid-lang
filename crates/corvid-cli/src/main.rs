@@ -62,8 +62,9 @@ use routing_report::{build_report, render_report as render_routing_report, Routi
 
 #[allow(unused_imports)]
 use corvid_driver::{
-    build_native_to_disk, build_spec_site, build_target_to_disk, build_to_disk, build_wasm_to_disk,
-    compile, compile_with_config, diff_snapshots, file_github_issues_for_escapes,
+    build_native_to_disk, build_server_to_disk, build_spec_site, build_target_to_disk,
+    build_to_disk, build_wasm_to_disk, compile, compile_with_config, diff_snapshots,
+    file_github_issues_for_escapes,
     inspect_import_semantics, load_corvid_config_for, load_corvid_config_with_path_for,
     load_dotenv_walking, render_adversarial_report, render_all_pretty,
     render_dimension_verification_report, render_effect_diff, render_import_semantic_summaries,
@@ -91,7 +92,7 @@ enum Command {
     /// emits target/wasm/ with `.wasm`, JS loader, and TypeScript types.
     Build {
         file: PathBuf,
-        /// Output target. `python` (default), `native`, `wasm`, `cdylib`, or `staticlib`.
+        /// Output target. `python` (default), `native`, `server`, `wasm`, `cdylib`, or `staticlib`.
         #[arg(long, default_value = "python")]
         target: String,
         /// Path to a compiled `#[tool]` staticlib. When provided,
@@ -1334,6 +1335,25 @@ fn cmd_build(
                 Ok(1)
             }
         }
+        "server" => {
+            if header || abi_descriptor {
+                anyhow::bail!(
+                    "`--header`, `--abi-descriptor`, and `--all-artifacts` are only valid for library targets"
+                );
+            }
+            let out = build_server_to_disk(file, &extra_libs_owned)
+                .with_context(|| format!("failed to build `{}` (server)", file.display()))?;
+            if let Some(path) = out.output_path {
+                println!("built: {} -> {}", file.display(), path.display());
+                if let Some(handler) = out.handler_path {
+                    println!("handler: {}", handler.display());
+                }
+                Ok(0)
+            } else {
+                eprint!("{}", render_all_pretty(&out.diagnostics, file, &out.source));
+                Ok(1)
+            }
+        }
         "wasm" => {
             if tools_lib.is_some() {
                 anyhow::bail!(
@@ -1391,7 +1411,7 @@ fn cmd_build(
         }
         other => {
             anyhow::bail!(
-                "unknown target `{other}`; valid: `python` (default), `native`, `wasm`, `cdylib`, `staticlib`"
+                "unknown target `{other}`; valid: `python` (default), `native`, `server`, `wasm`, `cdylib`, `staticlib`"
             )
         }
     }

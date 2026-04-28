@@ -215,11 +215,17 @@ signed server claims in one path.
 
 ### 36B Minimal Server Target
 
+Implementation convention for 36B only: before `server` declarations land, the
+server target accepts the existing native entrypoint shape (a single agent, or
+an agent named `main`) and exposes it at `GET /`. The generated server also
+serves `GET /healthz`. Later slices replace this convention with typed
+`server` / `route` declarations without removing the target.
+
 - `corvid build --target=server examples/backend/hello_server/main.cor`
   produces a runnable binary.
 - Running the binary with `CORVID_PORT=0` prints the bound address.
 - `GET /healthz` returns 200.
-- One user route returns a typed JSON response.
+- `GET /` invokes the compiled Corvid entrypoint and returns a JSON response.
 - Unsupported high-level server syntax fails with a clear diagnostic rather
   than silently compiling.
 

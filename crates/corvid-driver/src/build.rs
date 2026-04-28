@@ -116,6 +116,13 @@ pub struct NativeBuildOutput {
     pub diagnostics: Vec<Diagnostic>,
 }
 
+pub struct ServerBuildOutput {
+    pub source: String,
+    pub output_path: Option<PathBuf>,
+    pub handler_path: Option<PathBuf>,
+    pub diagnostics: Vec<Diagnostic>,
+}
+
 pub struct TargetBuildOutput {
     pub source: String,
     pub output_path: Option<PathBuf>,
@@ -593,6 +600,52 @@ pub fn build_wasm_to_disk(source_path: &Path) -> anyhow::Result<WasmBuildOutput>
     }
 }
 
+pub fn build_server_to_disk(
+    source_path: &Path,
+    extra_tool_libs: &[&Path],
+) -> anyhow::Result<ServerBuildOutput> {
+    let native = build_native_to_disk(source_path, extra_tool_libs)?;
+    let Some(handler_path) = native.output_path else {
+        return Ok(ServerBuildOutput {
+            source: native.source,
+            output_path: None,
+            handler_path: None,
+            diagnostics: native.diagnostics,
+        });
+    };
+
+    let server_dir = server_output_dir_for(source_path);
+    std::fs::create_dir_all(&server_dir)?;
+    let stem = source_path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("program");
+    let source_rs = server_dir.join(format!("{stem}_server.rs"));
+    let output_path = server_binary_path_for(&server_dir, stem);
+    std::fs::write(&source_rs, render_minimal_server_source(&handler_path))?;
+
+    let rustc = std::env::var_os("RUSTC").unwrap_or_else(|| "rustc".into());
+    let status = std::process::Command::new(rustc)
+        .arg("--edition=2021")
+        .arg(&source_rs)
+        .arg("-o")
+        .arg(&output_path)
+        .status()
+        .map_err(|err| anyhow::anyhow!("failed to invoke rustc for server wrapper: {err}"))?;
+    if !status.success() {
+        return Err(anyhow::anyhow!(
+            "server wrapper compilation failed with status {status}"
+        ));
+    }
+
+    Ok(ServerBuildOutput {
+        source: native.source,
+        output_path: Some(output_path),
+        handler_path: Some(handler_path),
+        diagnostics: Vec::new(),
+    })
+}
+
 pub fn build_catalog_descriptor_for_source(source_path: &Path) -> anyhow::Result<AbiBuildOutput> {
     let source = std::fs::read_to_string(source_path)
         .map_err(|e| anyhow::anyhow!("cannot read `{}`: {}", source_path.display(), e))?;
@@ -731,6 +784,112 @@ pub(super) fn target_output_dir_for(source_path: &Path, target: BuildTarget) -> 
             parent.join("target").join("release")
         }
     }
+}
+
+pub(super) fn server_output_dir_for(source_path: &Path) -> PathBuf {
+    let mut ancestor: Option<&Path> = source_path.parent();
+    while let Some(dir) = ancestor {
+        if dir.file_name().map(|n| n == "src").unwrap_or(false) {
+            if let Some(project_root) = dir.parent() {
+                return project_root.join("target").join("server");
+            }
+        }
+        ancestor = dir.parent();
+    }
+    let parent = source_path.parent().unwrap_or_else(|| Path::new("."));
+    parent.join("target").join("server")
+}
+
+fn server_binary_path_for(out_dir: &Path, stem: &str) -> PathBuf {
+    if cfg!(windows) {
+        out_dir.join(format!("{stem}_server.exe"))
+    } else {
+        out_dir.join(format!("{stem}_server"))
+    }
+}
+
+fn render_minimal_server_source(handler_path: &Path) -> String {
+    let handler = handler_path.to_string_lossy().replace('\\', "\\\\");
+    format!(
+        r#"use std::io::{{Read, Write}};
+use std::net::{{TcpListener, TcpStream}};
+use std::process::Command;
+use std::time::Instant;
+
+const HANDLER: &str = "{handler}";
+
+fn main() -> std::io::Result<()> {{
+    let host = std::env::var("CORVID_HOST").unwrap_or_else(|_| "127.0.0.1".to_string());
+    let port = std::env::var("CORVID_PORT").unwrap_or_else(|_| "8080".to_string());
+    let listener = TcpListener::bind(format!("{{host}}:{{port}}"))?;
+    let addr = listener.local_addr()?;
+    println!("listening: http://{{addr}}");
+    for stream in listener.incoming() {{
+        match stream {{
+            Ok(stream) => {{
+                let _ = handle(stream);
+            }}
+            Err(err) => eprintln!("accept error: {{err}}"),
+        }}
+    }}
+    Ok(())
+}}
+
+fn handle(mut stream: TcpStream) -> std::io::Result<()> {{
+    let started = Instant::now();
+    let mut buf = [0u8; 4096];
+    let n = stream.read(&mut buf)?;
+    let req = String::from_utf8_lossy(&buf[..n]);
+    let first = req.lines().next().unwrap_or("");
+    let mut parts = first.split_whitespace();
+    let method = parts.next().unwrap_or("");
+    let path = parts.next().unwrap_or("/");
+    if method != "GET" {{
+        return respond(&mut stream, 405, "text/plain", "method not allowed", started);
+    }}
+    if path == "/healthz" {{
+        return respond(&mut stream, 200, "application/json", "{{\"status\":\"ok\"}}", started);
+    }}
+    let output = Command::new(HANDLER).output();
+    match output {{
+        Ok(out) if out.status.success() => {{
+            let body = String::from_utf8_lossy(&out.stdout).trim().to_string();
+            let json = format!("{{{{\"result\":{{:?}}}}}}", body);
+            respond(&mut stream, 200, "application/json", &json, started)
+        }}
+        Ok(out) => {{
+            let err = String::from_utf8_lossy(&out.stderr).trim().to_string();
+            let body = format!("{{{{\"error\":{{:?}}}}}}", err);
+            respond(&mut stream, 500, "application/json", &body, started)
+        }}
+        Err(err) => {{
+            let body = format!("{{{{\"error\":{{:?}}}}}}", err.to_string());
+            respond(&mut stream, 500, "application/json", &body, started)
+        }}
+    }}
+}}
+
+fn respond(
+    stream: &mut TcpStream,
+    status: u16,
+    content_type: &str,
+    body: &str,
+    started: Instant,
+) -> std::io::Result<()> {{
+    let reason = match status {{
+        200 => "OK",
+        405 => "Method Not Allowed",
+        _ => "Internal Server Error",
+    }};
+    let request_id = format!("req-{{:?}}", started.elapsed().as_nanos());
+    let response = format!(
+        "HTTP/1.1 {{status}} {{reason}}\r\ncontent-type: {{content_type}}\r\ncontent-length: {{}}\r\nx-corvid-request-id: {{request_id}}\r\nconnection: close\r\n\r\n{{body}}",
+        body.as_bytes().len()
+    );
+    stream.write_all(response.as_bytes())
+}}
+"#
+    )
 }
 
 pub(super) fn wasm_output_dir_for(source_path: &Path) -> PathBuf {
