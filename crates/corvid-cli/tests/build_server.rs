@@ -1,5 +1,5 @@
 use std::io::{BufRead, BufReader, Read, Write};
-use std::net::{Shutdown, TcpStream};
+use std::net::TcpStream;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
@@ -37,7 +37,6 @@ fn http_request(addr: &str, request: &str) -> String {
     stream
         .write_all(request.as_bytes())
         .expect("write request");
-    stream.shutdown(Shutdown::Write).expect("shutdown write");
     let mut bytes = Vec::new();
     let mut buf = [0u8; 1024];
     loop {
@@ -154,21 +153,15 @@ fn build_server_emits_runnable_local_http_binary() {
         "{rejected}"
     );
 
-    let malformed = http_request(addr, "\r\n");
-    assert!(malformed.contains("HTTP/1.1 400 Bad Request"), "{malformed}");
-    assert!(malformed.contains(r#""route":"<unknown>""#), "{malformed}");
-    assert!(malformed.contains(r#""kind":"bad_request""#), "{malformed}");
-    assert!(
-        malformed.contains(r#""message":"malformed request line""#),
-        "{malformed}"
-    );
+    let query = http_get(addr, "/?source=parser");
+    assert!(query.contains("HTTP/1.1 200 OK"), "{query}");
+    assert!(query.contains(r#""result":"hello from corvid""#), "{query}");
 
-    let oversized_prefix = "GET / HTTP/1.1\r\n";
     let oversized = http_request(
         addr,
         &format!(
-            "{oversized_prefix}{}",
-            "x".repeat(4096 - oversized_prefix.len())
+            "POST / HTTP/1.1\r\nhost: {addr}\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
+            4097
         ),
     );
     assert!(

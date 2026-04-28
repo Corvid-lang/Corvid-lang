@@ -620,23 +620,39 @@ pub fn build_server_to_disk(
         .file_stem()
         .and_then(|s| s.to_str())
         .unwrap_or("program");
-    let source_rs = server_dir.join(format!("{stem}_server.rs"));
+    let source_rs = server_dir.join("src").join("main.rs");
     let output_path = server_binary_path_for(&server_dir, stem);
-    std::fs::write(&source_rs, render_minimal_server_source(&handler_path))?;
+    std::fs::create_dir_all(source_rs.parent().expect("server source dir"))?;
+    std::fs::write(&source_rs, render_axum_server_source(&handler_path))?;
+    std::fs::write(
+        server_dir.join("Cargo.toml"),
+        render_server_cargo_toml(&server_package_name(stem)),
+    )?;
 
-    let rustc = std::env::var_os("RUSTC").unwrap_or_else(|| "rustc".into());
-    let status = std::process::Command::new(rustc)
-        .arg("--edition=2021")
-        .arg(&source_rs)
-        .arg("-o")
-        .arg(&output_path)
+    let cargo = std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into());
+    let status = std::process::Command::new(cargo)
+        .arg("build")
+        .arg("--release")
+        .arg("--manifest-path")
+        .arg(server_dir.join("Cargo.toml"))
         .status()
-        .map_err(|err| anyhow::anyhow!("failed to invoke rustc for server wrapper: {err}"))?;
+        .map_err(|err| anyhow::anyhow!("failed to invoke cargo for server wrapper: {err}"))?;
     if !status.success() {
         return Err(anyhow::anyhow!(
             "server wrapper compilation failed with status {status}"
         ));
     }
+    let built = server_dir
+        .join("target")
+        .join("release")
+        .join(server_binary_name_for_package(&server_package_name(stem)));
+    std::fs::copy(&built, &output_path).map_err(|err| {
+        anyhow::anyhow!(
+            "failed to copy server wrapper `{}` to `{}`: {err}",
+            built.display(),
+            output_path.display()
+        )
+    })?;
 
     Ok(ServerBuildOutput {
         source: native.source,
@@ -806,6 +822,405 @@ fn server_binary_path_for(out_dir: &Path, stem: &str) -> PathBuf {
     } else {
         out_dir.join(format!("{stem}_server"))
     }
+}
+
+fn server_binary_name_for_package(package: &str) -> String {
+    if cfg!(windows) {
+        format!("{package}.exe")
+    } else {
+        package.to_string()
+    }
+}
+
+fn server_package_name(stem: &str) -> String {
+    let mut out = String::from("corvid_generated_");
+    for ch in stem.chars() {
+        if ch.is_ascii_alphanumeric() || ch == '_' || ch == '-' {
+            out.push(ch);
+        } else {
+            out.push('_');
+        }
+    }
+    out
+}
+
+fn render_server_cargo_toml(package: &str) -> String {
+    format!(
+        r#"[package]
+name = "{package}"
+version = "0.0.0"
+edition = "2021"
+
+[workspace]
+
+[dependencies]
+axum = "0.7"
+tokio = {{ version = "1", features = ["full"] }}
+tower-http = {{ version = "0.6", features = ["compression-full", "cors", "trace"] }}
+"#
+    )
+}
+
+fn render_axum_server_source(handler_path: &Path) -> String {
+    let handler = handler_path.to_string_lossy().replace('\\', "\\\\");
+    format!(
+        r#"use axum::extract::State;
+use axum::http::{{HeaderValue, Method, Request, StatusCode}};
+use axum::response::{{IntoResponse, Response}};
+use axum::routing::get;
+use axum::Router;
+use std::io::Read;
+use std::process::{{Command, Stdio}};
+use std::sync::atomic::{{AtomicU64, Ordering}};
+use std::sync::{{Arc, Mutex}};
+use std::time::{{Duration, Instant, SystemTime, UNIX_EPOCH}};
+use tokio::net::TcpListener;
+use tokio::sync::oneshot;
+use tower_http::compression::CompressionLayer;
+use tower_http::cors::CorsLayer;
+use tower_http::trace::TraceLayer;
+
+const HANDLER: &str = "{handler}";
+const MAX_REQUEST_BYTES: usize = 4096;
+static REQUEST_COUNTER: AtomicU64 = AtomicU64::new(1);
+static REQUEST_TOTAL: AtomicU64 = AtomicU64::new(0);
+static ERROR_TOTAL: AtomicU64 = AtomicU64::new(0);
+
+#[derive(Clone)]
+struct AppState {{
+    max_requests: Option<u64>,
+    handled_requests: Arc<AtomicU64>,
+    shutdown: Arc<Mutex<Option<oneshot::Sender<()>>>>,
+}}
+
+#[tokio::main]
+async fn main() -> std::io::Result<()> {{
+    let host = std::env::var("CORVID_HOST").unwrap_or_else(|_| "127.0.0.1".to_string());
+    let port = std::env::var("CORVID_PORT").unwrap_or_else(|_| "8080".to_string());
+    validate_runtime_config()?;
+    let listener = TcpListener::bind(format!("{{host}}:{{port}}")).await?;
+    let addr = listener.local_addr()?;
+    let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
+    let state = AppState {{
+        max_requests: max_requests(),
+        handled_requests: Arc::new(AtomicU64::new(0)),
+        shutdown: Arc::new(Mutex::new(Some(shutdown_tx))),
+    }};
+    let app = Router::new()
+        .route("/healthz", get(healthz))
+        .route("/readyz", get(readyz))
+        .route("/metrics", get(metrics))
+        .fallback(handle_app)
+        .layer(CompressionLayer::new())
+        .layer(CorsLayer::permissive())
+        .layer(TraceLayer::new_for_http())
+        .with_state(state);
+    println!("listening: http://{{addr}}");
+    axum::serve(listener, app)
+        .with_graceful_shutdown(async {{
+            let _ = shutdown_rx.await;
+        }})
+        .await
+        .map_err(|err| std::io::Error::new(std::io::ErrorKind::Other, err.to_string()))?;
+    Ok(())
+}}
+
+async fn healthz(State(state): State<AppState>, request: Request<axum::body::Body>) -> Response {{
+    complete(
+        state,
+        "GET",
+        request.uri().path(),
+        200,
+        "application/json",
+        "{{\"status\":\"ok\"}}".to_string(),
+        request_id(),
+        Instant::now(),
+    )
+}}
+
+async fn readyz(State(state): State<AppState>, request: Request<axum::body::Body>) -> Response {{
+    complete(
+        state,
+        "GET",
+        request.uri().path(),
+        200,
+        "application/json",
+        "{{\"ready\":true}}".to_string(),
+        request_id(),
+        Instant::now(),
+    )
+}}
+
+async fn metrics(State(state): State<AppState>, request: Request<axum::body::Body>) -> Response {{
+    let body = format!(
+        "{{{{\"request_total\":{{}},\"error_total\":{{}},\"runtime\":\"corvid-server\"}}}}",
+        REQUEST_TOTAL.load(Ordering::Relaxed),
+        ERROR_TOTAL.load(Ordering::Relaxed)
+    );
+    complete(
+        state,
+        "GET",
+        request.uri().path(),
+        200,
+        "application/json",
+        body,
+        request_id(),
+        Instant::now(),
+    )
+}}
+
+async fn handle_app(
+    State(state): State<AppState>,
+    method: Method,
+    request: Request<axum::body::Body>,
+) -> Response {{
+    let started = Instant::now();
+    let request_id = request_id();
+    let method_text = method.as_str().to_string();
+    let path = request.uri().path().to_string();
+    let content_length = request
+        .headers()
+        .get(axum::http::header::CONTENT_LENGTH)
+        .and_then(|header| header.to_str().ok())
+        .and_then(|header| header.parse::<usize>().ok())
+        .unwrap_or(0);
+    if content_length > MAX_REQUEST_BYTES {{
+        return error_response(
+            state,
+            413,
+            &method_text,
+            &path,
+            "body_too_large",
+            "request exceeds server body limit",
+            request_id,
+            started,
+        );
+    }}
+    if method != Method::GET {{
+        return error_response(
+            state,
+            405,
+            &method_text,
+            &path,
+            "method_not_allowed",
+            "method not allowed",
+            request_id,
+            started,
+        );
+    }}
+    let output = run_handler(handler_timeout());
+    match output {{
+        Ok(out) if out.status_success => {{
+            let body = out.stdout.trim().to_string();
+            let json = format!("{{{{\"result\":{{:?}}}}}}", body);
+            complete(state, &method_text, &path, 200, "application/json", json, request_id, started)
+        }}
+        Ok(out) => {{
+            let err = out.stderr.trim().to_string();
+            error_response(
+                state,
+                500,
+                &method_text,
+                &path,
+                "handler_failed",
+                if err.is_empty() {{ "handler failed" }} else {{ &err }},
+                request_id,
+                started,
+            )
+        }}
+        Err(HandlerError::TimedOut) => error_response(
+            state,
+            504,
+            &method_text,
+            &path,
+            "handler_timeout",
+            "handler timed out",
+            request_id,
+            started,
+        ),
+        Err(HandlerError::Spawn(err)) => error_response(
+            state,
+            500,
+            &method_text,
+            &path,
+            "handler_spawn_failed",
+            &err,
+            request_id,
+            started,
+        ),
+    }}
+}}
+
+fn error_response(
+    state: AppState,
+    status: u16,
+    method: &str,
+    route: &str,
+    kind: &str,
+    message: &str,
+    request_id: String,
+    started: Instant,
+) -> Response {{
+    let body = format!(
+        "{{{{\"request_id\":{{}},\"route\":{{}},\"kind\":{{}},\"message\":{{}},\"duration_ms\":{{}}}}}}",
+        json_string(&request_id),
+        json_string(route),
+        json_string(kind),
+        json_string(message),
+        started.elapsed().as_millis()
+    );
+    complete(state, method, route, status, "application/json", body, request_id, started)
+}}
+
+fn complete(
+    state: AppState,
+    method: &str,
+    route: &str,
+    status: u16,
+    content_type: &str,
+    body: String,
+    request_id: String,
+    started: Instant,
+) -> Response {{
+    REQUEST_TOTAL.fetch_add(1, Ordering::Relaxed);
+    if status >= 400 {{
+        ERROR_TOTAL.fetch_add(1, Ordering::Relaxed);
+    }}
+    trace_response(&request_id, method, route, status, started);
+    maybe_shutdown(&state);
+    let mut response = (StatusCode::from_u16(status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR), body).into_response();
+    let headers = response.headers_mut();
+    headers.insert(axum::http::header::CONTENT_TYPE, HeaderValue::from_str(content_type).unwrap());
+    headers.insert("x-corvid-request-id", HeaderValue::from_str(&request_id).unwrap());
+    headers.insert(axum::http::header::CONNECTION, HeaderValue::from_static("close"));
+    response
+}}
+
+fn maybe_shutdown(state: &AppState) {{
+    let handled = state.handled_requests.fetch_add(1, Ordering::Relaxed) + 1;
+    if matches!(state.max_requests, Some(limit) if handled >= limit) {{
+        if let Some(sender) = state.shutdown.lock().unwrap().take() {{
+            let _ = sender.send(());
+        }}
+    }}
+}}
+
+fn trace_response(request_id: &str, method: &str, route: &str, status: u16, started: Instant) {{
+    eprintln!(
+        "{{{{\"event\":\"corvid.server.request\",\"request_id\":{{}},\"method\":{{}},\"route\":{{}},\"status\":{{}},\"duration_ms\":{{}},\"effects\":[]}}}}",
+        json_string(request_id),
+        json_string(method),
+        json_string(route),
+        status,
+        started.elapsed().as_millis()
+    );
+}}
+
+struct HandlerOutput {{
+    status_success: bool,
+    stdout: String,
+    stderr: String,
+}}
+
+enum HandlerError {{
+    Spawn(String),
+    TimedOut,
+}}
+
+fn run_handler(timeout: Duration) -> Result<HandlerOutput, HandlerError> {{
+    if timeout.is_zero() {{
+        return Err(HandlerError::TimedOut);
+    }}
+    let mut child = Command::new(HANDLER)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|err| HandlerError::Spawn(err.to_string()))?;
+    let started = Instant::now();
+    loop {{
+        match child.try_wait() {{
+            Ok(Some(status)) => {{
+                let mut stdout = String::new();
+                let mut stderr = String::new();
+                if let Some(mut pipe) = child.stdout.take() {{
+                    let _ = pipe.read_to_string(&mut stdout);
+                }}
+                if let Some(mut pipe) = child.stderr.take() {{
+                    let _ = pipe.read_to_string(&mut stderr);
+                }}
+                return Ok(HandlerOutput {{
+                    status_success: status.success(),
+                    stdout,
+                    stderr,
+                }});
+            }}
+            Ok(None) if started.elapsed() >= timeout => {{
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(HandlerError::TimedOut);
+            }}
+            Ok(None) => std::thread::sleep(Duration::from_millis(5)),
+            Err(err) => return Err(HandlerError::Spawn(err.to_string())),
+        }}
+    }}
+}}
+
+fn handler_timeout() -> Duration {{
+    let millis = std::env::var("CORVID_HANDLER_TIMEOUT_MS")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .unwrap_or(30_000);
+    Duration::from_millis(millis)
+}}
+
+fn max_requests() -> Option<u64> {{
+    std::env::var("CORVID_MAX_REQUESTS")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .filter(|limit| *limit > 0)
+}}
+
+fn validate_runtime_config() -> std::io::Result<()> {{
+    if let Ok(port) = std::env::var("CORVID_PORT") {{
+        if port.parse::<u16>().is_err() {{
+            return Err(invalid_config("CORVID_PORT", "expected integer port 0-65535"));
+        }}
+    }}
+    if let Ok(timeout) = std::env::var("CORVID_HANDLER_TIMEOUT_MS") {{
+        if timeout.parse::<u64>().is_err() {{
+            return Err(invalid_config("CORVID_HANDLER_TIMEOUT_MS", "expected unsigned integer milliseconds"));
+        }}
+    }}
+    if let Ok(limit) = std::env::var("CORVID_MAX_REQUESTS") {{
+        match limit.parse::<u64>() {{
+            Ok(value) if value > 0 => {{}}
+            _ => return Err(invalid_config("CORVID_MAX_REQUESTS", "expected positive unsigned integer")),
+        }}
+    }}
+    Ok(())
+}}
+
+fn invalid_config(name: &str, reason: &str) -> std::io::Error {{
+    std::io::Error::new(
+        std::io::ErrorKind::InvalidInput,
+        format!("backend config {{name}} invalid: {{reason}} (value redacted)"),
+    )
+}}
+
+fn request_id() -> String {{
+    let counter = REQUEST_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or(0);
+    format!("req-{{now}}-{{counter}}")
+}}
+
+fn json_string(value: &str) -> String {{
+    format!("{{value:?}}")
+}}
+"#
+    )
 }
 
 fn render_minimal_server_source(handler_path: &Path) -> String {
