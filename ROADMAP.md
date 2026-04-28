@@ -1805,7 +1805,7 @@ Each benchmark must separate model-provider latency from Corvid runtime overhead
 
 - [x] 37K-real-stdlib-db-runtime     Corvid-facing DB helpers execute SQLite queries/transactions through the runtime with typed decode errors.
 - [ ] 37L-real-postgres-runtime      Postgres connection/query/transaction/migration path uses a real Postgres client and parity tests.
-- [ ] 37M-migration-down-execution   `corvid migrate down` executes reviewed rollback SQL or fails clearly when no rollback exists.
+- [x] 37M-migration-down-execution   `corvid migrate down` executes reviewed rollback SQL or fails clearly when no rollback exists.
 
 ### Phase 38 — Jobs, schedules, and durable agent execution (~8-10 weeks)
 

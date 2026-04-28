@@ -1245,10 +1245,11 @@ fn main() -> ExitCode {
             } => cmd_migrate("up", &dir, &state, &database, dry_run),
             MigrateCommand::Down {
                 dir,
+                down_dir,
                 state,
                 database,
                 dry_run,
-            } => cmd_migrate("down", &dir, &state, &database, dry_run),
+            } => cmd_migrate_down(&dir, &down_dir, &state, &database, dry_run),
         },
         Some(Command::Jobs { command }) => match command {
             JobsCommand::Enqueue {
@@ -1391,6 +1392,62 @@ fn cmd_migrate(
     Ok(0)
 }
 
+fn cmd_migrate_down(
+    dir: &Path,
+    down_dir: &Path,
+    state: &Path,
+    database: &Path,
+    dry_run: bool,
+) -> Result<u8> {
+    let migrations = scan_migration_files(dir)?;
+    let mut migration_state = load_migration_state(state)?;
+    let drift = detect_migration_drift(&migrations, &migration_state);
+    println!("corvid migrate down");
+    println!("migrations: {}", dir.display());
+    println!("down_migrations: {}", down_dir.display());
+    println!("state: {}", state.display());
+    println!("database: {}", database.display());
+    println!("dry_run: {dry_run}");
+    println!("applied_count: {}", migration_state.migrations.len());
+    println!("drift_count: {}", drift.len());
+    for item in &drift {
+        println!("drift: {} {}", item.kind, item.message);
+    }
+    if !drift.is_empty() {
+        println!("drift_found: {}", drift.len());
+        println!("state_updated: false");
+        return Ok(1);
+    }
+    let Some(latest) = migration_state.migrations.last().cloned() else {
+        println!("rollback: none");
+        println!("state_updated: false");
+        println!("mutation_intent: none");
+        return Ok(0);
+    };
+    let rollback = rollback_migration_path(down_dir, &latest.name);
+    println!("rollback: {}", latest.name);
+    println!("rollback_sql: {}", rollback.display());
+    if !rollback.exists() {
+        println!("state_updated: false");
+        return Err(anyhow::anyhow!(
+            "missing rollback SQL `{}` for `{}`",
+            rollback.display(),
+            latest.name
+        ));
+    }
+    if dry_run {
+        println!("state_updated: false");
+        println!("mutation_intent: rollback_latest");
+        return Ok(0);
+    }
+    execute_rollback_sql(database, &rollback, &latest.name)?;
+    migration_state.migrations.pop();
+    save_migration_state(state, &migration_state)?;
+    println!("state_updated: true");
+    println!("mutation_intent: rollback_latest");
+    Ok(0)
+}
+
 fn cmd_jobs_enqueue(
     state: &Path,
     task: &str,
@@ -1484,7 +1541,7 @@ struct MigrationState {
     migrations: Vec<AppliedMigration>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct AppliedMigration {
     name: String,
     sha256: String,
@@ -2632,6 +2689,9 @@ enum MigrateCommand {
         /// Directory containing ordered `.sql` migration files.
         #[arg(long, value_name = "DIR", default_value = "migrations")]
         dir: PathBuf,
+        /// Directory containing reviewed rollback SQL files named `<migration>.down.sql`.
+        #[arg(long, value_name = "DIR", default_value = "migrations/down")]
+        down_dir: PathBuf,
         /// State file used to record applied migration checksums.
         #[arg(
             long,
@@ -2685,6 +2745,25 @@ fn apply_pending_sql_migrations(
             applied_at: now_unix_seconds(),
         });
     }
+    Ok(())
+}
+
+fn rollback_migration_path(down_dir: &Path, applied_name: &str) -> PathBuf {
+    down_dir.join(format!("{applied_name}.down.sql"))
+}
+
+fn execute_rollback_sql(database: &Path, rollback: &Path, applied_name: &str) -> Result<()> {
+    let sql = std::fs::read_to_string(rollback)
+        .with_context(|| format!("cannot read rollback SQL `{}`", rollback.display()))?;
+    let mut conn = Connection::open(database)
+        .with_context(|| format!("cannot open migration database `{}`", database.display()))?;
+    let tx = conn
+        .transaction()
+        .with_context(|| format!("cannot start rollback transaction for `{applied_name}`"))?;
+    tx.execute_batch(&sql)
+        .with_context(|| format!("cannot execute rollback for `{applied_name}`"))?;
+    tx.commit()
+        .with_context(|| format!("cannot commit rollback for `{applied_name}`"))?;
     Ok(())
 }
 

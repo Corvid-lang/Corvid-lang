@@ -185,6 +185,144 @@ fn migrate_up_does_not_record_state_when_sql_fails() {
 }
 
 #[test]
+fn migrate_down_executes_reviewed_rollback_sql() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let migrations = dir.path().join("migrations");
+    let down_dir = migrations.join("down");
+    let state = dir.path().join("target").join("corvid-migrations.json");
+    let database = dir.path().join("target").join("app.sqlite");
+    std::fs::create_dir_all(&down_dir).expect("down migrations dir");
+    std::fs::write(
+        migrations.join("0001_init.sql"),
+        "create table users(id text primary key);\n",
+    )
+    .expect("write migration");
+    std::fs::write(
+        down_dir.join("0001_init.sql.down.sql"),
+        "drop table users;\n",
+    )
+    .expect("write down migration");
+
+    let up = Command::new(corvid_bin())
+        .args([
+            "migrate",
+            "up",
+            "--dir",
+            migrations.to_str().unwrap(),
+            "--state",
+            state.to_str().unwrap(),
+            "--database",
+            database.to_str().unwrap(),
+        ])
+        .output()
+        .expect("run migrate up");
+    assert!(up.status.success(), "up failed: {}", String::from_utf8_lossy(&up.stderr));
+
+    let down = Command::new(corvid_bin())
+        .args([
+            "migrate",
+            "down",
+            "--dir",
+            migrations.to_str().unwrap(),
+            "--down-dir",
+            down_dir.to_str().unwrap(),
+            "--state",
+            state.to_str().unwrap(),
+            "--database",
+            database.to_str().unwrap(),
+        ])
+        .output()
+        .expect("run migrate down");
+    assert!(
+        down.status.success(),
+        "down failed:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&down.stdout),
+        String::from_utf8_lossy(&down.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&down.stdout);
+    assert!(stdout.contains("state_updated: true"), "{stdout}");
+    assert!(stdout.contains("mutation_intent: rollback_latest"), "{stdout}");
+
+    let conn = rusqlite::Connection::open(&database).expect("open migrated database");
+    let table_count: i64 = conn
+        .query_row(
+            "select count(*) from sqlite_master where type = 'table' and name = 'users'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("query sqlite schema");
+    assert_eq!(table_count, 0, "rollback SQL should drop users table");
+
+    let status = Command::new(corvid_bin())
+        .args([
+            "migrate",
+            "status",
+            "--dir",
+            migrations.to_str().unwrap(),
+            "--state",
+            state.to_str().unwrap(),
+            "--database",
+            database.to_str().unwrap(),
+        ])
+        .output()
+        .expect("run migrate status");
+    let stdout = String::from_utf8_lossy(&status.stdout);
+    assert!(stdout.contains("status:pending"), "{stdout}");
+}
+
+#[test]
+fn migrate_down_fails_without_reviewed_rollback_sql() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let migrations = dir.path().join("migrations");
+    let down_dir = migrations.join("down");
+    let state = dir.path().join("target").join("corvid-migrations.json");
+    let database = dir.path().join("target").join("app.sqlite");
+    std::fs::create_dir_all(&migrations).expect("migrations dir");
+    std::fs::write(
+        migrations.join("0001_init.sql"),
+        "create table users(id text primary key);\n",
+    )
+    .expect("write migration");
+
+    let up = Command::new(corvid_bin())
+        .args([
+            "migrate",
+            "up",
+            "--dir",
+            migrations.to_str().unwrap(),
+            "--state",
+            state.to_str().unwrap(),
+            "--database",
+            database.to_str().unwrap(),
+        ])
+        .output()
+        .expect("run migrate up");
+    assert!(up.status.success(), "up failed: {}", String::from_utf8_lossy(&up.stderr));
+
+    let down = Command::new(corvid_bin())
+        .args([
+            "migrate",
+            "down",
+            "--dir",
+            migrations.to_str().unwrap(),
+            "--down-dir",
+            down_dir.to_str().unwrap(),
+            "--state",
+            state.to_str().unwrap(),
+            "--database",
+            database.to_str().unwrap(),
+        ])
+        .output()
+        .expect("run migrate down");
+    assert!(!down.status.success(), "missing rollback should fail");
+    assert!(
+        String::from_utf8_lossy(&down.stderr).contains("missing rollback SQL"),
+        "stderr={}",
+        String::from_utf8_lossy(&down.stderr)
+    );
+}
+
+#[test]
 fn migrate_status_reports_changed_missing_duplicate_and_out_of_order_drift() {
     let dir = tempfile::tempdir().expect("tempdir");
     let migrations = dir.path().join("migrations");
