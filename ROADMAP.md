@@ -1712,7 +1712,7 @@ Each benchmark must separate model-provider latency from Corvid runtime overhead
 
 **Slice checklist:**
 
-- [ ] 36A-backend-design-brief       `docs/phase-36-backend-core.md` defines backend syntax, runtime ownership, non-scope, route examples, and acceptance tests before code.
+- [x] 36A-backend-design-brief       `docs/phase-36-backend-core.md` defines backend syntax, runtime ownership, non-scope, route examples, and acceptance tests before code.
 - [ ] 36B-minimal-server-target      `corvid build --target=server` accepts one backend entrypoint and emits a runnable local server binary.
 - [ ] 36C-typed-route-model          GET/POST routes have typed path/query/body/response shapes and compile-time validation.
 - [ ] 36D-json-boundary              Request JSON decode and response JSON encode have typed errors and route-aware diagnostics.

@@ -6031,3 +6031,20 @@ without mutating the checkout.
 Validation:
 
 - CI YAML reviewed against the existing workflow structure.
+- `cargo test -p corvid-abi --test byte_fuzz_corpus -- --nocapture`
+
+## 2026-04-28 - Phase 36A: backend core design brief
+
+Slice 36A is complete. Added `docs/phase-36-backend-core.md` as the
+implementation brief for production backend core before syntax or runtime code
+lands.
+
+The brief defines the target `server` / `route` surface, route-scoped values,
+runtime ownership, route manifest shape, typed error model, AI-native contract
+rules, Phase 36 non-scope, acceptance tests for slices 36B through 36J, and
+the benchmark posture against FastAPI, Express/Fastify, and Go HTTP.
+
+Validation:
+
+- Documentation-only slice; checked against the Phase 36 roadmap scope and the
+  existing Phase 35 signed-claim/security model posture.
