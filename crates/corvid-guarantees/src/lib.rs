@@ -236,8 +236,13 @@ pub static GUARANTEE_REGISTRY: &[Guarantee] = &[
              token lexically in scope; otherwise the typechecker rejects \
              the program.",
         out_of_scope_reason: "",
-        positive_test_refs: &[],
-        adversarial_test_refs: &[],
+        positive_test_refs: &[
+            "crates/corvid-types/src/tests.rs::dangerous_tool_with_matching_approve_is_ok",
+        ],
+        adversarial_test_refs: &[
+            "crates/corvid-types/src/tests.rs::dangerous_tool_without_approve_is_compile_error",
+            "crates/corvid-types/src/tests.rs::tagged_unapproved_dangerous_call_carries_approval_guarantee_id",
+        ],
     },
     Guarantee {
         id: "approval.token_lexical_only",
@@ -249,19 +254,32 @@ pub static GUARANTEE_REGISTRY: &[Guarantee] = &[
              stored in fields, or passed across opaque boundaries to \
              unlock a call site outside the original `approve` block.",
         out_of_scope_reason: "",
-        positive_test_refs: &[],
-        adversarial_test_refs: &[],
+        positive_test_refs: &[
+            "crates/corvid-types/src/tests.rs::outer_approve_authorizes_inner_call",
+        ],
+        adversarial_test_refs: &[
+            "crates/corvid-types/src/tests.rs::approve_does_not_leak_out_of_if_branch",
+            "crates/corvid-types/src/tests.rs::mutation_nested_inner_approve_does_not_authorize_outer_call",
+        ],
     },
     Guarantee {
         id: "approval.dangerous_marker_preserved",
         kind: GuaranteeKind::Approval,
-        class: GuaranteeClass::Static,
+        class: GuaranteeClass::OutOfScope,
         phase: Phase::Resolve,
         description:
             "A `@dangerous` marker cannot be erased by re-exporting or \
              aliasing the tool through another module — every public \
              alias preserves the original danger annotation.",
-        out_of_scope_reason: "",
+        out_of_scope_reason:
+            "Cross-module re-export / aliasing of dangerous tools is \
+             enforced today only implicitly through symbol propagation \
+             in the resolver — there is no dedicated diagnostic site \
+             distinct from `approval.dangerous_call_requires_token`. \
+             Slice 35-G's source-level bypass fuzz corpus will add an \
+             explicit re-export-bypass mutator that exercises the \
+             marker preservation path; once that lands this entry can \
+             be promoted back to `Static` with concrete tests.",
         positive_test_refs: &[],
         adversarial_test_refs: &[],
     },
@@ -276,8 +294,13 @@ pub static GUARANTEE_REGISTRY: &[Guarantee] = &[
              actually produced by its body (including effects of called \
              functions); under-reporting is a compile error.",
         out_of_scope_reason: "",
-        positive_test_refs: &[],
-        adversarial_test_refs: &[],
+        positive_test_refs: &[
+            "crates/corvid-types/src/tests.rs::mutation_tool_uses_declared_effect_is_ok",
+        ],
+        adversarial_test_refs: &[
+            "crates/corvid-types/src/tests.rs::mutation_baseline_trust_violation_exists",
+            "crates/corvid-types/src/tests.rs::mutation_multiple_effects_on_one_tool_compose_cost_and_trust",
+        ],
     },
     Guarantee {
         id: "effect_row.caller_propagation",
@@ -289,8 +312,12 @@ pub static GUARANTEE_REGISTRY: &[Guarantee] = &[
              they declare a wider row; callers cannot silently shrink the \
              effect surface.",
         out_of_scope_reason: "",
-        positive_test_refs: &[],
-        adversarial_test_refs: &[],
+        positive_test_refs: &[
+            "crates/corvid-types/src/tests.rs::sub_agent_costs_propagate_into_outer_agent",
+        ],
+        adversarial_test_refs: &[
+            "crates/corvid-types/src/tests.rs::mutation_inner_agent_effects_propagate_to_outer_agent",
+        ],
     },
     Guarantee {
         id: "effect_row.import_boundary",
@@ -302,8 +329,12 @@ pub static GUARANTEE_REGISTRY: &[Guarantee] = &[
              an importer cannot use a re-exported function with a \
              stripped or weakened effect row.",
         out_of_scope_reason: "",
-        positive_test_refs: &[],
-        adversarial_test_refs: &[],
+        positive_test_refs: &[
+            "crates/corvid-types/src/tests.rs::python_import_with_unsafe_effect_warns",
+        ],
+        adversarial_test_refs: &[
+            "crates/corvid-types/src/tests.rs::python_import_without_effects_is_rejected",
+        ],
     },
     // ----- Grounded<T> --------------------------------------------
     Guarantee {
@@ -315,8 +346,12 @@ pub static GUARANTEE_REGISTRY: &[Guarantee] = &[
             "Constructing a `Grounded<T>` value requires citing a source; \
              unsourced `Grounded` construction is a compile error.",
         out_of_scope_reason: "",
-        positive_test_refs: &[],
-        adversarial_test_refs: &[],
+        positive_test_refs: &[
+            "crates/corvid-types/src/tests.rs::mutation_direct_grounded_return_with_retrieval_chain_is_ok",
+        ],
+        adversarial_test_refs: &[
+            "crates/corvid-types/src/tests.rs::mutation_grounded_return_without_retrieval_errors",
+        ],
     },
     Guarantee {
         id: "grounded.propagation_across_calls",
@@ -328,8 +363,13 @@ pub static GUARANTEE_REGISTRY: &[Guarantee] = &[
              `Grounded<T>` returned from a callee retains its citation \
              chain into the caller without separate annotation.",
         out_of_scope_reason: "",
-        positive_test_refs: &[],
-        adversarial_test_refs: &[],
+        positive_test_refs: &[
+            "crates/corvid-types/src/tests.rs::mutation_intermediate_local_preserves_grounded_provenance",
+            "crates/corvid-types/src/tests.rs::mutation_cross_agent_grounded_provenance_flows",
+        ],
+        adversarial_test_refs: &[
+            "crates/corvid-types/src/tests.rs::mutation_ungrounded_prompt_inputs_do_not_create_grounded_output",
+        ],
     },
     // ----- Budgets ------------------------------------------------
     Guarantee {
@@ -342,8 +382,14 @@ pub static GUARANTEE_REGISTRY: &[Guarantee] = &[
              statically known per-call costs along any reachable path \
              exceeds `$X`.",
         out_of_scope_reason: "",
-        positive_test_refs: &[],
-        adversarial_test_refs: &[],
+        positive_test_refs: &[
+            "crates/corvid-types/src/tests.rs::multi_dimensional_budget_within_bound_is_clean",
+            "crates/corvid-types/src/tests.rs::mutation_budget_within_limit_is_ok",
+        ],
+        adversarial_test_refs: &[
+            "crates/corvid-types/src/tests.rs::multi_dimensional_budget_violation_reports_path",
+            "crates/corvid-types/src/tests.rs::mutation_budget_exceeded_is_effect_violation",
+        ],
     },
     Guarantee {
         id: "budget.runtime_termination",
@@ -375,8 +421,14 @@ pub static GUARANTEE_REGISTRY: &[Guarantee] = &[
              carrying a confidence tag to meet `X`; lower-confidence \
              inputs are rejected at the call site.",
         out_of_scope_reason: "",
-        positive_test_refs: &[],
-        adversarial_test_refs: &[],
+        positive_test_refs: &[
+            "crates/corvid-types/src/tests.rs::min_confidence_passes_when_composed_confidence_meets_floor",
+            "crates/corvid-types/src/tests.rs::tagged_invalid_confidence_carries_confidence_guarantee_id",
+        ],
+        adversarial_test_refs: &[
+            "crates/corvid-types/src/tests.rs::min_confidence_fires_when_composed_confidence_below_floor",
+            "crates/corvid-types/src/tests.rs::effect_confidence_out_of_range_is_rejected",
+        ],
     },
     // ----- Replay -------------------------------------------------
     Guarantee {
@@ -390,8 +442,14 @@ pub static GUARANTEE_REGISTRY: &[Guarantee] = &[
              same compiled binary; non-deterministic divergence raises \
              the documented replay-divergence error.",
         out_of_scope_reason: "",
-        positive_test_refs: &[],
-        adversarial_test_refs: &[],
+        positive_test_refs: &[
+            "crates/corvid-types/src/tests.rs::replayable_agent_with_pure_body_compiles_clean",
+            "crates/corvid-types/src/tests.rs::deterministic_agent_with_pure_body_compiles_clean",
+        ],
+        adversarial_test_refs: &[
+            "crates/corvid-types/src/tests.rs::deterministic_agent_calling_tool_is_rejected",
+            "crates/corvid-types/src/tests.rs::deterministic_agent_calling_prompt_is_rejected",
+        ],
     },
     Guarantee {
         id: "replay.trace_signature",
@@ -403,8 +461,13 @@ pub static GUARANTEE_REGISTRY: &[Guarantee] = &[
              whose signature `corvid receipt verify` checks against the \
              supplied verifying key.",
         out_of_scope_reason: "",
-        positive_test_refs: &[],
-        adversarial_test_refs: &[],
+        positive_test_refs: &[
+            "crates/corvid-cli/tests/receipt_signing.rs::sign_then_verify_roundtrips_end_to_end",
+        ],
+        adversarial_test_refs: &[
+            "crates/corvid-cli/tests/receipt_signing.rs::verify_rejects_envelope_signed_with_different_key",
+            "crates/corvid-cli/tests/receipt_signing.rs::verify_rejects_tampered_payload",
+        ],
     },
     // ----- Provenance / receipts ----------------------------------
     Guarantee {
@@ -418,8 +481,13 @@ pub static GUARANTEE_REGISTRY: &[Guarantee] = &[
              verifying key, with a non-zero exit and the documented \
              `verification failed` message.",
         out_of_scope_reason: "",
-        positive_test_refs: &[],
-        adversarial_test_refs: &[],
+        positive_test_refs: &[
+            "crates/corvid-cli/tests/receipt_signing.rs::sign_then_verify_roundtrips_end_to_end",
+        ],
+        adversarial_test_refs: &[
+            "crates/corvid-cli/tests/receipt_signing.rs::verify_rejects_envelope_signed_with_different_key",
+            "crates/corvid-cli/tests/receipt_signing.rs::verify_rejects_tampered_payload",
+        ],
     },
     // ----- ABI descriptor -----------------------------------------
     Guarantee {
@@ -432,19 +500,32 @@ pub static GUARANTEE_REGISTRY: &[Guarantee] = &[
              `CORVID_ABI_DESCRIPTOR` symbol whose payload is the canonical \
              effect/approval/provenance surface for the compiled program.",
         out_of_scope_reason: "",
-        positive_test_refs: &[],
-        adversarial_test_refs: &[],
+        positive_test_refs: &[
+            "crates/corvid-codegen-cl/tests/cdylib_emission.rs::cdylib_target_produces_shared_library_file",
+            "crates/corvid-codegen-cl/tests/cdylib_emission.rs::cdylib_symbol_is_resolvable_via_dlopen",
+        ],
+        adversarial_test_refs: &[
+            "crates/corvid-cli/tests/build_cdylib.rs::cli_build_cdylib_fails_cleanly_on_non_scalar_signature",
+        ],
     },
     Guarantee {
         id: "abi_descriptor.byte_determinism",
         kind: GuaranteeKind::AbiDescriptor,
-        class: GuaranteeClass::Static,
+        class: GuaranteeClass::OutOfScope,
         phase: Phase::Codegen,
         description:
             "Two byte-identical Corvid sources compiled with the same \
              toolchain version produce byte-identical descriptor JSON; \
              the descriptor is canonical, not pretty-printed.",
-        out_of_scope_reason: "",
+        out_of_scope_reason:
+            "Today's coverage proves the canonical-hash function is \
+             stable (`abi_hash_matches_embedded_descriptor_hash` in \
+             `crates/corvid-cli/tests/abi_cmd.rs`), but a dedicated \
+             cross-build byte-identical comparison test is not yet \
+             checked in. Slice 35-F's descriptor + attestation byte \
+             fuzzer will add the explicit determinism harness; once \
+             that lands this entry promotes back to `Static` with the \
+             corresponding test refs.",
         positive_test_refs: &[],
         adversarial_test_refs: &[],
     },
@@ -460,8 +541,12 @@ pub static GUARANTEE_REGISTRY: &[Guarantee] = &[
              verifying key, exiting 1 with `attestation verification \
              failed`.",
         out_of_scope_reason: "",
-        positive_test_refs: &[],
-        adversarial_test_refs: &[],
+        positive_test_refs: &[
+            "crates/corvid-cli/tests/abi_attestation.rs::signed_cdylib_verifies_against_matching_key",
+        ],
+        adversarial_test_refs: &[
+            "crates/corvid-cli/tests/abi_attestation.rs::signed_cdylib_rejects_wrong_key",
+        ],
     },
     Guarantee {
         id: "abi_attestation.descriptor_match",
@@ -474,8 +559,12 @@ pub static GUARANTEE_REGISTRY: &[Guarantee] = &[
              `CORVID_ABI_DESCRIPTOR`; mismatch is rejected even when \
              the signature is valid.",
         out_of_scope_reason: "",
-        positive_test_refs: &[],
-        adversarial_test_refs: &[],
+        positive_test_refs: &[
+            "crates/corvid-cli/tests/abi_attestation.rs::signed_cdylib_verifies_against_matching_key",
+        ],
+        adversarial_test_refs: &[
+            "crates/corvid-cli/tests/abi_attestation.rs::signed_cdylib_rejects_wrong_key",
+        ],
     },
     Guarantee {
         id: "abi_attestation.absent_reports_unsigned",
@@ -488,8 +577,12 @@ pub static GUARANTEE_REGISTRY: &[Guarantee] = &[
              `unsigned` message, leaving the host policy to decide \
              whether to accept it.",
         out_of_scope_reason: "",
-        positive_test_refs: &[],
-        adversarial_test_refs: &[],
+        positive_test_refs: &[
+            "crates/corvid-cli/tests/abi_attestation.rs::signed_cdylib_verifies_against_matching_key",
+        ],
+        adversarial_test_refs: &[
+            "crates/corvid-cli/tests/abi_attestation.rs::unsigned_cdylib_reports_absent_attestation",
+        ],
     },
     // ----- Platform: explicit non-defenses ------------------------
     Guarantee {
@@ -820,5 +913,154 @@ mod tests {
         for phase in Phase::ALL {
             assert_eq!(format!("{phase}"), phase.slug());
         }
+    }
+
+    // ----------------------------------------------------------------
+    // Phase 35-E: cross-reference enforcement.
+    //
+    // Every Static / RuntimeChecked guarantee must have at least one
+    // positive test ref AND at least one adversarial test ref. Every
+    // populated test ref must follow the format
+    // `<file_path>::<fn_name>` and refer to a function that actually
+    // exists in the named file.
+    //
+    // OutOfScope guarantees are exempt from the test-ref requirement
+    // — they are explicit non-defenses; the `out_of_scope_reason` is
+    // their proof. Slice 35-A's `validate_slice` already enforces
+    // that exemption is honest.
+    // ----------------------------------------------------------------
+
+    fn split_test_ref(test_ref: &str) -> Option<(&str, &str)> {
+        let mut parts = test_ref.rsplitn(2, "::");
+        let fn_name = parts.next()?;
+        let file_path = parts.next()?;
+        if file_path.is_empty() || fn_name.is_empty() {
+            return None;
+        }
+        Some((file_path, fn_name))
+    }
+
+    /// Read the file at `file_path` (interpreted relative to the
+    /// workspace root, which is the `corvid-guarantees` crate's
+    /// great-grandparent dir during tests).
+    fn read_file_under_workspace(file_path: &str) -> Result<String, String> {
+        // CARGO_MANIFEST_DIR is .../crates/corvid-guarantees during
+        // `cargo test`. Walk up two levels to hit the workspace root.
+        let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let workspace_root = manifest_dir
+            .parent()
+            .and_then(|p| p.parent())
+            .ok_or_else(|| {
+                format!(
+                    "could not derive workspace root from CARGO_MANIFEST_DIR `{}`",
+                    manifest_dir.display()
+                )
+            })?;
+        let abs = workspace_root.join(file_path);
+        std::fs::read_to_string(&abs).map_err(|e| {
+            format!(
+                "could not read `{}` (resolved to `{}`): {e}",
+                file_path,
+                abs.display()
+            )
+        })
+    }
+
+    #[test]
+    fn every_enforced_guarantee_has_positive_and_adversarial_test_refs() {
+        let mut missing: Vec<String> = Vec::new();
+        for g in GUARANTEE_REGISTRY {
+            if g.class == GuaranteeClass::OutOfScope {
+                continue;
+            }
+            if g.positive_test_refs.is_empty() {
+                missing.push(format!(
+                    "guarantee `{}` (class {}) has zero positive_test_refs",
+                    g.id,
+                    g.class.slug()
+                ));
+            }
+            if g.adversarial_test_refs.is_empty() {
+                missing.push(format!(
+                    "guarantee `{}` (class {}) has zero adversarial_test_refs",
+                    g.id,
+                    g.class.slug()
+                ));
+            }
+        }
+        assert!(
+            missing.is_empty(),
+            "phase 35-E test-coverage gap:\n  - {}\n\nEither downgrade the \
+             guarantee to OutOfScope with an explicit reason or add tests \
+             before promoting it back.",
+            missing.join("\n  - ")
+        );
+    }
+
+    #[test]
+    fn every_test_ref_has_well_formed_path() {
+        let mut malformed: Vec<String> = Vec::new();
+        for g in GUARANTEE_REGISTRY {
+            for r in g.positive_test_refs.iter().chain(g.adversarial_test_refs.iter()) {
+                if split_test_ref(r).is_none() {
+                    malformed.push(format!(
+                        "guarantee `{}`: test_ref `{}` is not in `<file>::<fn>` form",
+                        g.id, r
+                    ));
+                }
+            }
+        }
+        assert!(
+            malformed.is_empty(),
+            "phase 35-E malformed test refs:\n  - {}",
+            malformed.join("\n  - ")
+        );
+    }
+
+    #[test]
+    fn every_test_ref_resolves_to_a_real_test_function() {
+        // Group refs by file so each file is read once.
+        use std::collections::BTreeMap;
+        let mut by_file: BTreeMap<&'static str, Vec<(&'static str, &'static str)>> =
+            BTreeMap::new();
+        for g in GUARANTEE_REGISTRY {
+            for r in g.positive_test_refs.iter().chain(g.adversarial_test_refs.iter()) {
+                let (file, func) = split_test_ref(r).expect(
+                    "every_test_ref_has_well_formed_path enforces the shape; \
+                     this should already pass before reaching here",
+                );
+                by_file.entry(file).or_default().push((g.id, func));
+            }
+        }
+
+        let mut missing: Vec<String> = Vec::new();
+        for (file, refs) in &by_file {
+            let body = match read_file_under_workspace(file) {
+                Ok(s) => s,
+                Err(e) => {
+                    for (gid, func) in refs {
+                        missing.push(format!(
+                            "guarantee `{gid}`: cannot read `{file}` to verify \
+                             `{func}` exists ({e})"
+                        ));
+                    }
+                    continue;
+                }
+            };
+            for (gid, func) in refs {
+                let needle = format!("fn {func}(");
+                if !body.contains(&needle) {
+                    missing.push(format!(
+                        "guarantee `{gid}`: test function `{func}` not found in `{file}` \
+                         (looked for literal `{needle}`)"
+                    ));
+                }
+            }
+        }
+        assert!(
+            missing.is_empty(),
+            "phase 35-E unresolved test refs:\n  - {}",
+            missing.join("\n  - ")
+        );
     }
 }

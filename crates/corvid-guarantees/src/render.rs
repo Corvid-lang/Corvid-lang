@@ -101,6 +101,22 @@ pub fn render_core_semantics_markdown() -> String {
             if g.class == GuaranteeClass::OutOfScope && !g.out_of_scope_reason.is_empty() {
                 let _ = writeln!(out, "> **Why out of scope:** {}\n", g.out_of_scope_reason);
             }
+            if !g.positive_test_refs.is_empty() || !g.adversarial_test_refs.is_empty() {
+                if !g.positive_test_refs.is_empty() {
+                    out.push_str("**Positive tests:**\n\n");
+                    for r in g.positive_test_refs {
+                        let _ = writeln!(out, "- `{r}`");
+                    }
+                    out.push('\n');
+                }
+                if !g.adversarial_test_refs.is_empty() {
+                    out.push_str("**Adversarial tests:**\n\n");
+                    for r in g.adversarial_test_refs {
+                        let _ = writeln!(out, "- `{r}`");
+                    }
+                    out.push('\n');
+                }
+            }
         }
     }
 

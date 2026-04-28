@@ -5784,3 +5784,52 @@ The rendered doc opens with the auto-generated banner (with the regen
 command), then a summary table covering every row, then per-kind
 detail sections, then a closing footer documenting the regen
 workflow. With the seed registry it is 9.9 KB and 22 rows long.
+
+## 2026-04-28 - Phase 35-E: cross-reference enforcement and honest gap downgrades
+
+Every enforced guarantee now points at a positive test that proves it
+allows a valid program AND an adversarial test that proves it rejects
+a violating one. Test references are stored in
+`Guarantee::positive_test_refs` and `Guarantee::adversarial_test_refs`
+as `<file_path>::<fn_name>` strings, and three new in-crate tests
+enforce them:
+
+- `every_enforced_guarantee_has_positive_and_adversarial_test_refs`
+  rejects any Static or RuntimeChecked guarantee with empty test_ref
+  slices.
+- `every_test_ref_has_well_formed_path` rejects test refs that do
+  not split cleanly into file path + function name.
+- `every_test_ref_resolves_to_a_real_test_function` reads the named
+  file under the workspace root and greps for `fn <name>(`. A test
+  ref pointing at a non-existent function is a build failure.
+
+Populated 17 enforced guarantees with concrete test refs spanning
+`crates/corvid-types/src/tests.rs` (the typecheck-side diagnostics
+for approval, effect rows, grounded provenance, budget,
+confidence, and replay determinism), `crates/corvid-cli/tests/`
+(the runtime-side end-to-end tests for trace receipt signature,
+provenance trace receipt, and ABI attestation), and
+`crates/corvid-codegen-cl/tests/cdylib_emission.rs` (descriptor
+emission). Every populated test ref is verified by the cross-ref
+test to actually exist.
+
+Two guarantees were honestly downgraded to `OutOfScope` rather than
+shipped with hand-waving test_refs:
+
+- `approval.dangerous_marker_preserved` — cross-module re-export of
+  dangerous tools is enforced today only implicitly through symbol
+  propagation; there is no dedicated diagnostic site distinct from
+  `approval.dangerous_call_requires_token`. Slice 35-G's source-level
+  bypass fuzz corpus will add the explicit re-export-bypass mutator
+  and promote this back to Static.
+- `abi_descriptor.byte_determinism` — the canonical-hash function is
+  proven stable, but a dedicated cross-build byte-identical
+  comparison test is not yet checked in. Slice 35-F's descriptor
+  byte fuzzer will add the explicit determinism harness and promote
+  this back to Static.
+
+`docs/core-semantics.md` was regenerated to include the test
+references inline in each guarantee's detail section, taking the
+file from 9.9 KB / 22 rows to 15.5 KB / 22 rows. The drift gate
+holds the regenerated doc against the registry. Tests in
+`corvid-guarantees`: 17 passed; workspace check clean.
