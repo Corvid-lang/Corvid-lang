@@ -14,7 +14,6 @@ use super::compose::capability_max;
 use super::{ComposedProfile, ConstraintViolation, EffectRegistry};
 use corvid_ast::DimensionValue;
 use corvid_resolve::DefId;
-use std::collections::HashSet;
 
 // ---- Call-graph effect analyzer ----
 

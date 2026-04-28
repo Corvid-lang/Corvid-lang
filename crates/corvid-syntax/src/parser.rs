@@ -7,15 +7,7 @@
 
 use crate::errors::{ParseError, ParseErrorKind};
 use crate::token::{TokKind, Token};
-use corvid_ast::{
-    AdversarialSpec, AgentDecl, Backoff, BackpressurePolicy, BinaryOp, Block, Decl,
-    DimensionDecl, DimensionValue, Effect, EffectConstraint, EffectDecl, EffectRef, EffectRow,
-    EnsembleSpec, EvalAssert, EvalDecl, Expr, ExtendDecl, ExtendMethod, ExtendMethodKind, Field,
-    File, Ident, ImportDecl, ImportSource, Literal, ModelDecl, ModelField, Param,
-    ProgressiveChain, ProgressiveStage, PromptDecl, PromptStreamSettings, RolloutSpec, RouteArm,
-    RoutePattern, RouteTable, Span, Stmt, ToolDecl, TypeDecl, TypeRef, UnaryOp, Visibility,
-    VoteStrategy, WeakEffect, WeakEffectRow,
-};
+use corvid_ast::{Block, Decl, Expr, File, Span, Stmt};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum ReplItem {

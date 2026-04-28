@@ -1,6 +1,6 @@
-    use super::*;
-    use crate::lex;
-    use corvid_ast::{BinaryOp, Expr, Literal, UnaryOp};
+use super::*;
+use crate::lex;
+use corvid_ast::{Backoff, BackpressurePolicy, BinaryOp, Expr, Literal, ToolDecl, UnaryOp};
 
     fn parse(src: &str) -> Expr {
         let tokens = lex(src).expect("lex failed");

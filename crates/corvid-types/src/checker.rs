@@ -10,13 +10,12 @@
 use crate::errors::{TypeError, TypeErrorKind, TypeWarning, TypeWarningKind};
 use crate::types::Type;
 use corvid_ast::{
-    AgentDecl, BinaryOp, Block, Decl, Effect, EvalAssert, EvalDecl, Expr, ExtendMethodKind, File,
-    FixtureDecl, Ident, Literal, MockDecl, ModelDecl, Param, PromptDecl, Span, Stmt, TestDecl,
-    ToolDecl, TypeDecl, TypeRef, UnaryOp, WeakEffect, WeakEffectRow,
+    AgentDecl, Decl, Effect, ExtendMethodKind, File, FixtureDecl, ModelDecl, Param, PromptDecl,
+    Span, ToolDecl, TypeDecl, WeakEffect, WeakEffectRow,
 };
 use corvid_resolve::{
-    resolver::{MethodEntry, MethodKind},
-    Binding, BuiltIn, DeclKind, DefId, LocalId, ReplayPatternBinding, Resolved, SymbolTable,
+    resolver::MethodEntry,
+    Binding, DefId, LocalId, ReplayPatternBinding, Resolved, SymbolTable,
 };
 use std::collections::HashMap;
 

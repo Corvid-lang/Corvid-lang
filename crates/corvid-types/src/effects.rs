@@ -16,12 +16,8 @@
 //! the composed dimensional profile. Constraints on the agent (e.g.,
 //! `@budget($1.00)`) are then checked against the composed profile.
 
-use corvid_ast::{
-    BackpressurePolicy, CompositionRule, DimensionSchema, DimensionValue, Effect,
-    EffectConstraint, EffectDecl,
-};
-use corvid_resolve::DefId;
-use std::collections::{HashMap, HashSet};
+use corvid_ast::{CompositionRule, DimensionSchema, DimensionValue, EffectConstraint, EffectDecl};
+use std::collections::HashMap;
 
 use crate::config::{CorvidConfig, CustomDimensionMeta};
 
@@ -481,11 +477,9 @@ pub use cost::{
     numeric_constraint_value, render_cost_tree,
 };
 pub use grounded::{check_grounded_returns, ProvenanceResult, ProvenanceViolation};
-use analyze::{find_agent, find_prompt, find_tool};
 use compose::{
-    backpressure_satisfies, capability_max, compose_dimension, default_for_dimension,
-    dimension_satisfies, format_backpressure, format_dim_value, infer_composition_rule,
-    latency_max, latency_rank, latency_streaming_rank, trust_max, trust_min,
+    compose_dimension, default_for_dimension, dimension_satisfies, format_dim_value,
+    infer_composition_rule,
 };
 
 

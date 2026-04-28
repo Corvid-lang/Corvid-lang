@@ -12,16 +12,12 @@
 //! decomposition.
 
 use super::analyze::{find_agent, find_prompt, find_tool};
-use super::compose::{
-    canonical_dimension_name, default_for_dimension, format_backpressure, format_dim_value,
-    infer_composition_rule, latency_max, latency_rank, latency_streaming_rank,
-};
+use super::compose::canonical_dimension_name;
 use super::{
     ComposedProfile, CostEstimate, CostNodeKind, CostTreeNode, CostWarning, CostWarningKind,
     EffectRegistry,
 };
 use corvid_ast::{DimensionValue, Effect, EffectConstraint};
-use corvid_resolve::{Binding, DeclKind};
 use std::collections::{HashMap, HashSet};
 
 // ---- Worst-case cost analysis ----
