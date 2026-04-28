@@ -1788,7 +1788,7 @@ Each benchmark must separate model-provider latency from Corvid runtime overhead
 - [x] 37H1-postgres-design           Document Postgres parity subset and non-scope before code.
 - [x] 37H2-postgres-connection       Add Postgres connection/query envelopes matching SQLite.
 - [x] 37H3-postgres-migration-status Postgres migration status/drift path matches SQLite subset.
-- [ ] 37I1-db-effect-tags            DB read/write/migration/token/audit operations carry explicit effect tags.
+- [x] 37I1-db-effect-tags            DB read/write/migration/token/audit operations carry explicit effect tags.
 - [ ] 37I2-db-replay-summary         Replay summaries capture deterministic DB interaction metadata without raw secrets.
 - [ ] 37J1-state-example-schema      Backend state example defines users/tasks/approvals/traces/tokens tables.
 - [ ] 37J2-state-example-tests       Example migration, query, audit, token, and replay tests pass.

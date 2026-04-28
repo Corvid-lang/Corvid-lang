@@ -102,6 +102,12 @@ public type DbMigrationStatus:
     replay_key: String
     effect_meta: EffectEnvelope
 
+public type DbEffectTag:
+    operation: String
+    effect_name: String
+    replay_key: String
+    effect_meta: EffectEnvelope
+
 public agent sqlite_open(dsn: String, replay_key: String) -> DbConnection:
     return DbConnection("sqlite", dsn, replay_key, effect_envelope("std.db.open", "", "", "", replay_key))
 
@@ -176,3 +182,9 @@ public agent db_migration_status(driver: String, migration: String, checksum: St
 
 public agent db_migration_clean(status: DbMigrationStatus) -> Bool:
     return not status.drifted
+
+public agent db_effect_tag(operation: String, replay_key: String) -> DbEffectTag:
+    return DbEffectTag(operation, "std.db." + operation, replay_key, effect_envelope("std.db.effect", "", operation, "", replay_key))
+
+public agent db_effect_is_write(tag: DbEffectTag) -> Bool:
+    return tag.operation == "write" or tag.operation == "migration" or tag.operation == "token" or tag.operation == "audit"
