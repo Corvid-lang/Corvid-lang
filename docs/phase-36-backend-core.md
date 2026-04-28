@@ -335,6 +335,12 @@ slice.
 - The example has a README showing local run, test, config, and signed-claim
   verification commands.
 
+Implementation convention for 36J: `examples/backend/refund_api/src/refund_api.cor`
+is the full typed refund API contract with the approval-gated `POST /refunds`
+route. `examples/backend/refund_api/src/main.cor` is the runnable transitional
+server entrypoint used by `corvid build --target=server` until typed route
+dispatch is lowered into the server binary.
+
 ## Benchmark Posture
 
 The Phase 36 benchmark compares the refund API against FastAPI,

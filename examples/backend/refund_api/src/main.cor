@@ -1,0 +1,22 @@
+type RefundRequest:
+    order_id: String
+    amount: Float
+    reason: String
+
+type RefundResponse:
+    receipt_id: String
+    status: String
+
+type RefundStatus:
+    service: String
+    mode: String
+
+agent refund_status() -> RefundStatus:
+    return RefundStatus("refund_api", "server")
+
+server refund_api:
+    route GET "/status" -> json RefundStatus:
+        return refund_status()
+
+agent main() -> String:
+    return "refund_api server contract loaded"

@@ -288,3 +288,37 @@ fn build_server_emits_runnable_local_http_binary() {
     assert!(traces.contains(r#""status":200"#), "{traces}");
     assert!(traces.contains(r#""effects":[]"#), "{traces}");
 }
+
+#[test]
+fn refund_api_backend_example_checks_and_builds() {
+    let repo = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let example = repo.join("examples").join("backend").join("refund_api");
+
+    let contract = example.join("src").join("refund_api.cor");
+    let check = run_corvid(
+        &["check".to_string(), contract.to_string_lossy().into_owned()],
+        &repo,
+    );
+    assert!(
+        check.status.success(),
+        "refund contract check failed:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&check.stdout),
+        String::from_utf8_lossy(&check.stderr)
+    );
+
+    let entrypoint = example.join("src").join("main.cor");
+    let build = run_corvid(
+        &[
+            "build".to_string(),
+            entrypoint.to_string_lossy().into_owned(),
+            "--target=server".to_string(),
+        ],
+        &repo,
+    );
+    assert!(
+        build.status.success(),
+        "refund server build failed:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&build.stdout),
+        String::from_utf8_lossy(&build.stderr)
+    );
+}

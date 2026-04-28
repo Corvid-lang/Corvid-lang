@@ -1,0 +1,34 @@
+type RefundRequest:
+    order_id: String
+    amount: Float
+    reason: String
+
+type RefundResponse:
+    receipt_id: String
+    status: String
+
+type RefundStatus:
+    service: String
+    mode: String
+
+effect transfer_money:
+    cost: $0.05
+    trust: human_required
+    reversible: false
+    data: financial
+
+tool issue_refund(req: RefundRequest) -> String dangerous uses transfer_money
+
+agent approve_refund(req: RefundRequest) -> RefundResponse uses transfer_money:
+    approve IssueRefund(req)
+    receipt_id = issue_refund(req)
+    return RefundResponse(receipt_id, "approved")
+
+agent refund_status() -> RefundStatus:
+    return RefundStatus("refund_api", "contract")
+
+server refund_api:
+    route GET "/status" -> json RefundStatus:
+        return refund_status()
+    route POST "/refunds" body RefundRequest -> json RefundResponse uses transfer_money:
+        return approve_refund(body)
