@@ -1745,7 +1745,7 @@ Each benchmark must separate model-provider latency from Corvid runtime overhead
 
 - [x] 36K-real-http-runtime          Replace the hand-rolled request-line parser with a production HTTP runtime/parser and route tests for HTTP/1.1 edge cases.
 - [x] 36L-middleware-pipeline        Auth, rate-limit, tracing, CORS, compression, request logging, and effect-aware policy middleware run in a declared order.
-- [ ] 36M-shutdown-timeout-tests     Graceful shutdown, request timeout, body-limit, and handler-isolation behavior is covered by integration tests.
+- [x] 36M-shutdown-timeout-tests     Graceful shutdown, request timeout, body-limit, and handler-isolation behavior is covered by integration tests.
 
 ### Phase 37 — Persistence, migrations, and state (~8-10 weeks)
 

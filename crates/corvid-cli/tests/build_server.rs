@@ -94,7 +94,13 @@ fn build_server_emits_runnable_local_http_binary() {
         .join("target")
         .join("server")
         .join(server_binary_name("hello"));
+    let handler = dir
+        .path()
+        .join("target")
+        .join("bin")
+        .join(if cfg!(windows) { "hello.exe" } else { "hello" });
     assert!(server.exists(), "missing server binary at {}", server.display());
+    assert!(handler.exists(), "missing handler binary at {}", handler.display());
 
     let child = Command::new(&server)
         .env("CORVID_PORT", "0")
@@ -275,6 +281,44 @@ fn build_server_emits_runnable_local_http_binary() {
     );
     assert!(limited.contains(r#""kind":"rate_limited""#), "{limited}");
     drop(rate_child);
+
+    let hidden_handler = handler.with_extension("missing");
+    std::fs::rename(&handler, &hidden_handler).expect("hide handler binary");
+    let isolated_child = Command::new(&server)
+        .env("CORVID_PORT", "0")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn handler-isolation server");
+    let mut isolated_child = ChildGuard(isolated_child);
+    let stdout = isolated_child
+        .0
+        .stdout
+        .take()
+        .expect("handler-isolation server stdout");
+    let mut reader = BufReader::new(stdout);
+    let mut line = String::new();
+    let start = Instant::now();
+    while line.is_empty() && start.elapsed() < Duration::from_secs(10) {
+        reader
+            .read_line(&mut line)
+            .expect("read handler-isolation listening line");
+    }
+    let isolated_addr = line
+        .trim()
+        .strip_prefix("listening: http://")
+        .expect("handler-isolation listening prefix");
+    let failed_handler = http_get(isolated_addr, "/");
+    assert!(
+        failed_handler.contains("HTTP/1.1 500 Internal Server Error"),
+        "{failed_handler}"
+    );
+    assert!(
+        failed_handler.contains(r#""kind":"handler_spawn_failed""#),
+        "{failed_handler}"
+    );
+    drop(isolated_child);
+    std::fs::rename(&hidden_handler, &handler).expect("restore handler binary");
 
     let invalid_config = Command::new(&server)
         .env("CORVID_PORT", "0")
