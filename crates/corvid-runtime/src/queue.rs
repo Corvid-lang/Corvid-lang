@@ -323,6 +323,14 @@ impl DurableQueueRuntime {
         Ok(jobs)
     }
 
+    pub fn dead_lettered(&self) -> Result<Vec<QueueJob>, RuntimeError> {
+        Ok(self
+            .list()?
+            .into_iter()
+            .filter(|job| job.status == QueueJobStatus::DeadLettered)
+            .collect())
+    }
+
     pub fn cancel(&self, id: &str) -> Result<QueueJob, RuntimeError> {
         let now = now_ms();
         let updated = self
@@ -680,5 +688,8 @@ mod tests {
         assert_eq!(dead.attempts, 1);
         assert_eq!(dead.failure_fingerprint.as_deref(), Some("sha256:failure-2"));
         assert!(dead.next_run_ms.is_none());
+        let dlq = queue.dead_lettered().unwrap();
+        assert_eq!(dlq.len(), 1);
+        assert_eq!(dlq[0].id, terminal.id);
     }
 }

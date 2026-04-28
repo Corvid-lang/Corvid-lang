@@ -1275,7 +1275,18 @@ fn main() -> ExitCode {
                 state,
                 output_kind,
                 output_fingerprint,
-            } => cmd_jobs_run_one(&state, output_kind, output_fingerprint),
+                fail_kind,
+                fail_fingerprint,
+                retry_base_ms,
+            } => cmd_jobs_run_one(
+                &state,
+                output_kind,
+                output_fingerprint,
+                fail_kind,
+                fail_fingerprint,
+                retry_base_ms,
+            ),
+            JobsCommand::Dlq { state } => cmd_jobs_dlq(&state),
         },
         Some(Command::Bench { command }) => match command {
             BenchCommand::Compare {
@@ -1486,11 +1497,23 @@ fn cmd_jobs_run_one(
     state: &Path,
     output_kind: Option<String>,
     output_fingerprint: Option<String>,
+    fail_kind: Option<String>,
+    fail_fingerprint: Option<String>,
+    retry_base_ms: u64,
 ) -> Result<u8> {
     let queue = DurableQueueRuntime::open(state)?;
     println!("corvid jobs run-one");
     println!("state: {}", state.display());
-    match queue.run_one_with_output(output_kind, output_fingerprint)? {
+    let result = if let Some(kind) = fail_kind {
+        queue.run_one_failed(
+            kind,
+            fail_fingerprint.unwrap_or_else(|| "sha256:redacted-failure".to_string()),
+            retry_base_ms,
+        )?
+    } else {
+        queue.run_one_with_output(output_kind, output_fingerprint)?
+    };
+    match result {
         Some(job) => {
             print_job_summary(&job);
             Ok(0)
@@ -1500,6 +1523,26 @@ fn cmd_jobs_run_one(
             Ok(0)
         }
     }
+}
+
+fn cmd_jobs_dlq(state: &Path) -> Result<u8> {
+    let queue = DurableQueueRuntime::open(state)?;
+    let jobs = queue.dead_lettered()?;
+    println!("corvid jobs dlq");
+    println!("state: {}", state.display());
+    println!("dead_lettered_count: {}", jobs.len());
+    for job in jobs {
+        println!(
+            "dead_lettered: {} task:{} attempts:{} failure_kind:{} failure_fingerprint:{} replay_key:{}",
+            job.id,
+            job.task,
+            job.attempts,
+            job.failure_kind.as_deref().unwrap_or(""),
+            job.failure_fingerprint.as_deref().unwrap_or(""),
+            job.replay_key.as_deref().unwrap_or("")
+        );
+    }
+    Ok(0)
 }
 
 fn print_job_summary(job: &QueueJob) {
@@ -1522,6 +1565,11 @@ fn print_job_summary(job: &QueueJob) {
     println!(
         "output_fingerprint: {}",
         job.output_fingerprint.as_deref().unwrap_or("")
+    );
+    println!("failure_kind: {}", job.failure_kind.as_deref().unwrap_or(""));
+    println!(
+        "failure_fingerprint: {}",
+        job.failure_fingerprint.as_deref().unwrap_or("")
     );
 }
 
@@ -2807,6 +2855,21 @@ enum JobsCommand {
         /// Redacted output fingerprint recorded after the job completes.
         #[arg(long)]
         output_fingerprint: Option<String>,
+        /// Record this run as a failed attempt with the given redacted kind.
+        #[arg(long)]
+        fail_kind: Option<String>,
+        /// Redacted failure fingerprint for failed attempts.
+        #[arg(long)]
+        fail_fingerprint: Option<String>,
+        /// Base backoff in milliseconds for failed attempts.
+        #[arg(long, default_value = "1000")]
+        retry_base_ms: u64,
+    },
+    /// Inspect terminally failed local jobs.
+    Dlq {
+        /// SQLite state file used by the durable local queue.
+        #[arg(long, value_name = "PATH", default_value = "target/corvid-jobs.sqlite")]
+        state: PathBuf,
     },
 }
 
