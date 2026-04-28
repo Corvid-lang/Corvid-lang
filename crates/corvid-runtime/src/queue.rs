@@ -14,6 +14,7 @@ use std::sync::{Arc, Mutex};
 pub enum QueueJobStatus {
     Pending,
     Leased,
+    ApprovalWait,
     RetryWait,
     Running,
     Succeeded,
@@ -27,6 +28,7 @@ impl QueueJobStatus {
         match self {
             Self::Pending => "pending",
             Self::Leased => "leased",
+            Self::ApprovalWait => "approval_wait",
             Self::RetryWait => "retry_wait",
             Self::Running => "running",
             Self::Succeeded => "succeeded",
@@ -57,6 +59,9 @@ pub struct QueueJob {
     pub next_run_ms: Option<u64>,
     pub lease_owner: Option<String>,
     pub lease_expires_ms: Option<u64>,
+    pub approval_id: Option<String>,
+    pub approval_expires_ms: Option<u64>,
+    pub approval_reason: Option<String>,
     pub created_ms: u64,
     pub updated_ms: u64,
 }
@@ -258,6 +263,9 @@ impl QueueRuntime {
             next_run_ms,
             lease_owner: None,
             lease_expires_ms: None,
+            approval_id: None,
+            approval_expires_ms: None,
+            approval_reason: None,
             created_ms: now,
             updated_ms: now,
         };
@@ -403,6 +411,9 @@ impl DurableQueueRuntime {
             next_run_ms,
             lease_owner: None,
             lease_expires_ms: None,
+            approval_id: None,
+            approval_expires_ms: None,
+            approval_reason: None,
             created_ms: now,
             updated_ms: now,
         };
@@ -414,8 +425,8 @@ impl DurableQueueRuntime {
             .unwrap()
             .execute(
                 "insert into queue_jobs
-                 (id, task, payload_json, input_schema, status, attempts, max_retries, budget_usd, effect_summary, replay_key, idempotency_key, output_kind, output_fingerprint, failure_kind, failure_fingerprint, next_run_ms, lease_owner, lease_expires_ms, created_ms, updated_ms)
-                 values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20)",
+                 (id, task, payload_json, input_schema, status, attempts, max_retries, budget_usd, effect_summary, replay_key, idempotency_key, output_kind, output_fingerprint, failure_kind, failure_fingerprint, next_run_ms, lease_owner, lease_expires_ms, approval_id, approval_expires_ms, approval_reason, created_ms, updated_ms)
+                 values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23)",
                 params![
                     job.id,
                     job.task,
@@ -435,6 +446,9 @@ impl DurableQueueRuntime {
                     job.next_run_ms.map(|value| value as i64),
                     job.lease_owner,
                     job.lease_expires_ms.map(|value| value as i64),
+                    job.approval_id,
+                    job.approval_expires_ms.map(|value| value as i64),
+                    job.approval_reason,
                     job.created_ms as i64,
                     job.updated_ms as i64,
                 ],
@@ -507,6 +521,9 @@ impl DurableQueueRuntime {
             next_run_ms,
             lease_owner: None,
             lease_expires_ms: None,
+            approval_id: None,
+            approval_expires_ms: None,
+            approval_reason: None,
             created_ms: now,
             updated_ms: now,
         };
@@ -519,8 +536,8 @@ impl DurableQueueRuntime {
             .unwrap()
             .execute(
                 "insert into queue_jobs
-                 (id, task, payload_json, input_schema, status, attempts, max_retries, budget_usd, effect_summary, replay_key, idempotency_key, output_kind, output_fingerprint, failure_kind, failure_fingerprint, next_run_ms, lease_owner, lease_expires_ms, created_ms, updated_ms)
-                 values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20)",
+                 (id, task, payload_json, input_schema, status, attempts, max_retries, budget_usd, effect_summary, replay_key, idempotency_key, output_kind, output_fingerprint, failure_kind, failure_fingerprint, next_run_ms, lease_owner, lease_expires_ms, approval_id, approval_expires_ms, approval_reason, created_ms, updated_ms)
+                 values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23)",
                 params![
                     job.id,
                     job.task,
@@ -540,6 +557,9 @@ impl DurableQueueRuntime {
                     job.next_run_ms.map(|value| value as i64),
                     job.lease_owner,
                     job.lease_expires_ms.map(|value| value as i64),
+                    job.approval_id,
+                    job.approval_expires_ms.map(|value| value as i64),
+                    job.approval_reason,
                     job.created_ms as i64,
                     job.updated_ms as i64,
                 ],
@@ -563,7 +583,7 @@ impl DurableQueueRuntime {
         let mut stmt = conn
             .prepare(
                 "select id, task, payload_json, input_schema, status, attempts, max_retries, budget_usd,
-                        effect_summary, replay_key, idempotency_key, output_kind, output_fingerprint, failure_kind, failure_fingerprint, next_run_ms, lease_owner, lease_expires_ms, created_ms, updated_ms
+                        effect_summary, replay_key, idempotency_key, output_kind, output_fingerprint, failure_kind, failure_fingerprint, next_run_ms, lease_owner, lease_expires_ms, approval_id, approval_expires_ms, approval_reason, created_ms, updated_ms
                  from queue_jobs where id = ?1",
             )
             .map_err(|err| RuntimeError::Other(format!("failed to prepare durable queue read: {err}")))?;
@@ -589,20 +609,20 @@ impl DurableQueueRuntime {
         let mut stmt = conn
             .prepare(
                 "select id, task, payload_json, input_schema, status, attempts, max_retries, budget_usd,
-                        effect_summary, replay_key, idempotency_key, output_kind, output_fingerprint, failure_kind, failure_fingerprint, next_run_ms, lease_owner, lease_expires_ms, created_ms, updated_ms
+                        effect_summary, replay_key, idempotency_key, output_kind, output_fingerprint, failure_kind, failure_fingerprint, next_run_ms, lease_owner, lease_expires_ms, approval_id, approval_expires_ms, approval_reason, created_ms, updated_ms
                  from queue_jobs where idempotency_key = ?1",
             )
             .map_err(|err| RuntimeError::Other(format!("failed to prepare idempotency read: {err}")))?;
-        let mut rows = stmt
-            .query(params![idempotency_key])
-            .map_err(|err| RuntimeError::Other(format!("failed to query idempotency key: {err}")))?;
+        let mut rows = stmt.query(params![idempotency_key]).map_err(|err| {
+            RuntimeError::Other(format!("failed to query idempotency key: {err}"))
+        })?;
         if let Some(row) = rows
             .next()
-            .map_err(|err| RuntimeError::Other(format!("failed to read idempotency row: {err}")))? {
-            Ok(Some(
-                read_job_row(row)
-                    .map_err(|err| RuntimeError::Other(format!("failed to decode idempotent job: {err}")))?,
-            ))
+            .map_err(|err| RuntimeError::Other(format!("failed to read idempotency row: {err}")))?
+        {
+            Ok(Some(read_job_row(row).map_err(|err| {
+                RuntimeError::Other(format!("failed to decode idempotent job: {err}"))
+            })?))
         } else {
             Ok(None)
         }
@@ -613,7 +633,7 @@ impl DurableQueueRuntime {
         let mut stmt = conn
             .prepare(
                 "select id, task, payload_json, input_schema, status, attempts, max_retries, budget_usd,
-                        effect_summary, replay_key, idempotency_key, output_kind, output_fingerprint, failure_kind, failure_fingerprint, next_run_ms, lease_owner, lease_expires_ms, created_ms, updated_ms
+                        effect_summary, replay_key, idempotency_key, output_kind, output_fingerprint, failure_kind, failure_fingerprint, next_run_ms, lease_owner, lease_expires_ms, approval_id, approval_expires_ms, approval_reason, created_ms, updated_ms
                  from queue_jobs order by created_ms, id",
             )
             .map_err(|err| RuntimeError::Other(format!("failed to prepare durable queue list: {err}")))?;
@@ -637,6 +657,14 @@ impl DurableQueueRuntime {
             .collect())
     }
 
+    pub fn approval_waiting(&self) -> Result<Vec<QueueJob>, RuntimeError> {
+        Ok(self
+            .list()?
+            .into_iter()
+            .filter(|job| job.status == QueueJobStatus::ApprovalWait)
+            .collect())
+    }
+
     pub fn upsert_schedule(
         &self,
         manifest: QueueScheduleManifest,
@@ -654,7 +682,9 @@ impl DurableQueueRuntime {
         }
         let now = now_ms();
         let payload_json = serde_json::to_string(&manifest.payload).map_err(|err| {
-            RuntimeError::Other(format!("failed to serialize durable schedule payload: {err}"))
+            RuntimeError::Other(format!(
+                "failed to serialize durable schedule payload: {err}"
+            ))
         })?;
         let budget_usd = if manifest.budget_usd.is_finite() && manifest.budget_usd > 0.0 {
             manifest.budget_usd
@@ -707,8 +737,9 @@ impl DurableQueueRuntime {
                 ],
             )
             .map_err(|err| RuntimeError::Other(format!("failed to upsert schedule: {err}")))?;
-        self.get_schedule(&manifest.id)?
-            .ok_or_else(|| RuntimeError::Other(format!("schedule `{}` not found after upsert", manifest.id)))
+        self.get_schedule(&manifest.id)?.ok_or_else(|| {
+            RuntimeError::Other(format!("schedule `{}` not found after upsert", manifest.id))
+        })
     }
 
     pub fn get_schedule(&self, id: &str) -> Result<Option<QueueScheduleManifest>, RuntimeError> {
@@ -724,11 +755,11 @@ impl DurableQueueRuntime {
             .map_err(|err| RuntimeError::Other(format!("failed to query schedule: {err}")))?;
         if let Some(row) = rows
             .next()
-            .map_err(|err| RuntimeError::Other(format!("failed to read schedule row: {err}")))? {
-            Ok(Some(
-                read_schedule_row(row)
-                    .map_err(|err| RuntimeError::Other(format!("failed to decode schedule: {err}")))?,
-            ))
+            .map_err(|err| RuntimeError::Other(format!("failed to read schedule row: {err}")))?
+        {
+            Ok(Some(read_schedule_row(row).map_err(|err| {
+                RuntimeError::Other(format!("failed to decode schedule: {err}"))
+            })?))
         } else {
             Ok(None)
         }
@@ -748,7 +779,9 @@ impl DurableQueueRuntime {
         let mut schedules = Vec::new();
         for row in rows {
             schedules.push(
-                row.map_err(|err| RuntimeError::Other(format!("failed to decode schedule: {err}")))?,
+                row.map_err(|err| {
+                    RuntimeError::Other(format!("failed to decode schedule: {err}"))
+                })?,
             );
         }
         Ok(schedules)
@@ -853,8 +886,12 @@ impl DurableQueueRuntime {
     pub fn list_concurrency_limits(&self) -> Result<Vec<QueueConcurrencyLimit>, RuntimeError> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn
-            .prepare("select scope, max_leased, updated_ms from queue_concurrency_limits order by scope")
-            .map_err(|err| RuntimeError::Other(format!("failed to prepare concurrency limit list: {err}")))?;
+            .prepare(
+                "select scope, max_leased, updated_ms from queue_concurrency_limits order by scope",
+            )
+            .map_err(|err| {
+                RuntimeError::Other(format!("failed to prepare concurrency limit list: {err}"))
+            })?;
         let rows = stmt
             .query_map([], |row| {
                 Ok(QueueConcurrencyLimit {
@@ -863,12 +900,14 @@ impl DurableQueueRuntime {
                     updated_ms: row.get::<_, i64>(2)? as u64,
                 })
             })
-            .map_err(|err| RuntimeError::Other(format!("failed to list concurrency limits: {err}")))?;
+            .map_err(|err| {
+                RuntimeError::Other(format!("failed to list concurrency limits: {err}"))
+            })?;
         let mut limits = Vec::new();
         for row in rows {
-            limits.push(
-                row.map_err(|err| RuntimeError::Other(format!("failed to decode concurrency limit: {err}")))?,
-            );
+            limits.push(row.map_err(|err| {
+                RuntimeError::Other(format!("failed to decode concurrency limit: {err}"))
+            })?);
         }
         Ok(limits)
     }
@@ -882,7 +921,9 @@ impl DurableQueueRuntime {
         payload_fingerprint: Option<String>,
     ) -> Result<JobCheckpoint, RuntimeError> {
         if self.get(job_id)?.is_none() {
-            return Err(RuntimeError::Other(format!("std.queue job `{job_id}` not found")));
+            return Err(RuntimeError::Other(format!(
+                "std.queue job `{job_id}` not found"
+            )));
         }
         let label = label.into();
         if label.trim().is_empty() {
@@ -891,9 +932,9 @@ impl DurableQueueRuntime {
             ));
         }
         let mut conn = self.conn.lock().unwrap();
-        let tx = conn
-            .transaction()
-            .map_err(|err| RuntimeError::Other(format!("failed to start checkpoint transaction: {err}")))?;
+        let tx = conn.transaction().map_err(|err| {
+            RuntimeError::Other(format!("failed to start checkpoint transaction: {err}"))
+        })?;
         let sequence = tx
             .query_row(
                 "select coalesce(max(sequence), 0) + 1 from queue_job_checkpoints where job_id = ?1",
@@ -950,9 +991,9 @@ impl DurableQueueRuntime {
             .map_err(|err| RuntimeError::Other(format!("failed to list checkpoints: {err}")))?;
         let mut checkpoints = Vec::new();
         for row in rows {
-            checkpoints.push(
-                row.map_err(|err| RuntimeError::Other(format!("failed to decode checkpoint: {err}")))?,
-            );
+            checkpoints.push(row.map_err(|err| {
+                RuntimeError::Other(format!("failed to decode checkpoint: {err}"))
+            })?);
         }
         Ok(checkpoints)
     }
@@ -1050,7 +1091,11 @@ impl DurableQueueRuntime {
             ));
         }
         let lease_expires = now.saturating_add(ttl_ms.max(1));
-        for candidate in self.list()?.into_iter().filter(|job| eligible_to_lease(job, now)) {
+        for candidate in self
+            .list()?
+            .into_iter()
+            .filter(|job| eligible_to_lease(job, now))
+        {
             if !self.concurrency_allows(&candidate.task, now)? {
                 continue;
             }
@@ -1068,7 +1113,9 @@ impl DurableQueueRuntime {
                        )",
                     params![candidate.id, worker_id, lease_expires as i64, now as i64],
                 )
-                .map_err(|err| RuntimeError::Other(format!("failed to lease durable queue job: {err}")))?;
+                .map_err(|err| {
+                    RuntimeError::Other(format!("failed to lease durable queue job: {err}"))
+                })?;
             if updated == 1 {
                 return self.get(&candidate.id);
             }
@@ -1171,7 +1218,64 @@ impl DurableQueueRuntime {
                     now as i64,
                 ],
             )
-            .map_err(|err| RuntimeError::Other(format!("failed to fail leased queue job: {err}")))?;
+            .map_err(|err| {
+                RuntimeError::Other(format!("failed to fail leased queue job: {err}"))
+            })?;
+        if updated == 0 {
+            return Err(RuntimeError::Other(format!(
+                "std.queue job `{id}` is not leased by `{worker_id}`"
+            )));
+        }
+        self.get(id)?
+            .ok_or_else(|| RuntimeError::Other(format!("std.queue job `{id}` not found")))
+    }
+
+    pub fn enter_approval_wait(
+        &self,
+        id: &str,
+        worker_id: &str,
+        approval_id: impl Into<String>,
+        approval_expires_ms: u64,
+        approval_reason: impl Into<String>,
+    ) -> Result<QueueJob, RuntimeError> {
+        let approval_id = approval_id.into();
+        let approval_reason = approval_reason.into();
+        if approval_id.trim().is_empty() {
+            return Err(RuntimeError::Other(
+                "std.queue approval id must not be empty".to_string(),
+            ));
+        }
+        if approval_reason.trim().is_empty() {
+            return Err(RuntimeError::Other(
+                "std.queue approval reason must not be empty".to_string(),
+            ));
+        }
+        let now = now_ms();
+        let updated = self
+            .conn
+            .lock()
+            .unwrap()
+            .execute(
+                "update queue_jobs
+                 set status = 'approval_wait',
+                     approval_id = ?3,
+                     approval_expires_ms = ?4,
+                     approval_reason = ?5,
+                     next_run_ms = null,
+                     lease_owner = null,
+                     lease_expires_ms = null,
+                     updated_ms = ?6
+                 where id = ?1 and status = 'leased' and lease_owner = ?2",
+                params![
+                    id,
+                    worker_id,
+                    approval_id,
+                    approval_expires_ms as i64,
+                    approval_reason,
+                    now as i64,
+                ],
+            )
+            .map_err(|err| RuntimeError::Other(format!("failed to enter approval wait: {err}")))?;
         if updated == 0 {
             return Err(RuntimeError::Other(format!(
                 "std.queue job `{id}` is not leased by `{worker_id}`"
@@ -1219,9 +1323,11 @@ impl DurableQueueRuntime {
     ) -> Result<Option<QueueJob>, RuntimeError> {
         let event_id = format!("{}:{fire_ms}", schedule.id);
         let mut conn = self.conn.lock().unwrap();
-        let tx = conn
-            .transaction()
-            .map_err(|err| RuntimeError::Other(format!("failed to start schedule recovery transaction: {err}")))?;
+        let tx = conn.transaction().map_err(|err| {
+            RuntimeError::Other(format!(
+                "failed to start schedule recovery transaction: {err}"
+            ))
+        })?;
         let inserted = tx
             .execute(
                 "insert or ignore into queue_schedule_fires (event_id, schedule_id, fire_ms, job_id, created_ms)
@@ -1230,19 +1336,26 @@ impl DurableQueueRuntime {
             )
             .map_err(|err| RuntimeError::Other(format!("failed to record schedule fire: {err}")))?;
         if inserted == 0 {
-            tx.commit()
-                .map_err(|err| RuntimeError::Other(format!("failed to commit duplicate schedule fire record: {err}")))?;
+            tx.commit().map_err(|err| {
+                RuntimeError::Other(format!(
+                    "failed to commit duplicate schedule fire record: {err}"
+                ))
+            })?;
             return Ok(None);
         }
         let mut payload = serde_json::Map::new();
-        payload.insert("schedule_id".to_string(), Value::String(schedule.id.clone()));
+        payload.insert(
+            "schedule_id".to_string(),
+            Value::String(schedule.id.clone()),
+        );
         payload.insert(
             "scheduled_fire_ms".to_string(),
             Value::Number(serde_json::Number::from(fire_ms)),
         );
         payload.insert("payload".to_string(), schedule.payload.clone());
-        tx.commit()
-            .map_err(|err| RuntimeError::Other(format!("failed to commit schedule fire record: {err}")))?;
+        tx.commit().map_err(|err| {
+            RuntimeError::Other(format!("failed to commit schedule fire record: {err}"))
+        })?;
         drop(conn);
         let replay_key = schedule
             .replay_key_prefix
@@ -1264,7 +1377,9 @@ impl DurableQueueRuntime {
                 "update queue_schedule_fires set job_id = ?2 where event_id = ?1",
                 params![event_id, job.id],
             )
-            .map_err(|err| RuntimeError::Other(format!("failed to link schedule fire to job: {err}")))?;
+            .map_err(|err| {
+                RuntimeError::Other(format!("failed to link schedule fire to job: {err}"))
+            })?;
         Ok(Some(job))
     }
 
@@ -1309,6 +1424,9 @@ impl DurableQueueRuntime {
                     next_run_ms integer,
                     lease_owner text,
                     lease_expires_ms integer,
+                    approval_id text,
+                    approval_expires_ms integer,
+                    approval_reason text,
                     created_ms integer not null,
                     updated_ms integer not null
                 );
@@ -1368,6 +1486,9 @@ impl DurableQueueRuntime {
         self.ensure_column("next_run_ms", "integer")?;
         self.ensure_column("lease_owner", "text")?;
         self.ensure_column("lease_expires_ms", "integer")?;
+        self.ensure_column("approval_id", "text")?;
+        self.ensure_column("approval_expires_ms", "integer")?;
+        self.ensure_column("approval_reason", "text")?;
         self.conn
             .lock()
             .unwrap()
@@ -1449,8 +1570,11 @@ fn read_job_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<QueueJob> {
         next_run_ms: row.get::<_, Option<i64>>(15)?.map(|value| value as u64),
         lease_owner: row.get(16)?,
         lease_expires_ms: row.get::<_, Option<i64>>(17)?.map(|value| value as u64),
-        created_ms: row.get::<_, i64>(18)? as u64,
-        updated_ms: row.get::<_, i64>(19)? as u64,
+        approval_id: row.get(18)?,
+        approval_expires_ms: row.get::<_, Option<i64>>(19)?.map(|value| value as u64),
+        approval_reason: row.get(20)?,
+        created_ms: row.get::<_, i64>(21)? as u64,
+        updated_ms: row.get::<_, i64>(22)? as u64,
     })
 }
 
@@ -1491,6 +1615,7 @@ fn read_checkpoint_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<JobCheckpoin
 fn parse_status(status: &str) -> QueueJobStatus {
     match status {
         "leased" => QueueJobStatus::Leased,
+        "approval_wait" => QueueJobStatus::ApprovalWait,
         "retry_wait" => QueueJobStatus::RetryWait,
         "running" => QueueJobStatus::Running,
         "succeeded" => QueueJobStatus::Succeeded,
@@ -1535,12 +1660,18 @@ fn missed_fire_times(
         return Ok(Vec::new());
     }
     let expression = normalize_cron(&schedule.cron)?;
-    let cron = Schedule::from_str(&expression)
-        .map_err(|err| RuntimeError::Other(format!("invalid cron expression `{}`: {err}", schedule.cron)))?;
-    let zone = schedule
-        .zone
-        .parse::<Tz>()
-        .map_err(|err| RuntimeError::Other(format!("invalid schedule timezone `{}`: {err}", schedule.zone)))?;
+    let cron = Schedule::from_str(&expression).map_err(|err| {
+        RuntimeError::Other(format!(
+            "invalid cron expression `{}`: {err}",
+            schedule.cron
+        ))
+    })?;
+    let zone = schedule.zone.parse::<Tz>().map_err(|err| {
+        RuntimeError::Other(format!(
+            "invalid schedule timezone `{}`: {err}",
+            schedule.zone
+        ))
+    })?;
     let start_ms = schedule
         .last_fire_ms
         .unwrap_or(schedule.last_checked_ms)
@@ -1548,7 +1679,9 @@ fn missed_fire_times(
     let start = Utc
         .timestamp_millis_opt(start_ms as i64)
         .single()
-        .ok_or_else(|| RuntimeError::Other(format!("invalid schedule recovery start `{start_ms}`")))?;
+        .ok_or_else(|| {
+            RuntimeError::Other(format!("invalid schedule recovery start `{start_ms}`"))
+        })?;
     let end = Utc
         .timestamp_millis_opt(now as i64)
         .single()
@@ -1583,19 +1716,19 @@ fn normalize_cron(cron: &str) -> Result<String, RuntimeError> {
     }
 }
 
-fn read_concurrency_limit(
-    conn: &Connection,
-    scope: &str,
-) -> Result<Option<u64>, RuntimeError> {
+fn read_concurrency_limit(conn: &Connection, scope: &str) -> Result<Option<u64>, RuntimeError> {
     let mut stmt = conn
         .prepare("select max_leased from queue_concurrency_limits where scope = ?1")
-        .map_err(|err| RuntimeError::Other(format!("failed to prepare concurrency limit read: {err}")))?;
+        .map_err(|err| {
+            RuntimeError::Other(format!("failed to prepare concurrency limit read: {err}"))
+        })?;
     let mut rows = stmt
         .query(params![scope])
         .map_err(|err| RuntimeError::Other(format!("failed to query concurrency limit: {err}")))?;
     if let Some(row) = rows
         .next()
-        .map_err(|err| RuntimeError::Other(format!("failed to read concurrency limit: {err}")))? {
+        .map_err(|err| RuntimeError::Other(format!("failed to read concurrency limit: {err}")))?
+    {
         Ok(Some(row.get::<_, i64>(0).map_err(|err| {
             RuntimeError::Other(format!("failed to decode concurrency limit: {err}"))
         })? as u64))
@@ -1633,10 +1766,9 @@ fn eligible_to_run(job: &QueueJob) -> bool {
 
 fn eligible_to_lease(job: &QueueJob, now: u64) -> bool {
     match job.status {
-        QueueJobStatus::Pending | QueueJobStatus::RetryWait => job
-            .next_run_ms
-            .map(|next| next <= now)
-            .unwrap_or(true),
+        QueueJobStatus::Pending | QueueJobStatus::RetryWait => {
+            job.next_run_ms.map(|next| next <= now).unwrap_or(true)
+        }
         QueueJobStatus::Leased => job
             .lease_expires_ms
             .map(|expires| expires <= now)
@@ -1855,8 +1987,12 @@ mod tests {
 
         let limits = queue.list_concurrency_limits().unwrap();
         assert_eq!(limits.len(), 2);
-        assert!(limits.iter().any(|limit| limit.scope == "global" && limit.limit == 1));
-        assert!(limits.iter().any(|limit| limit.scope == "task:email" && limit.limit == 1));
+        assert!(limits
+            .iter()
+            .any(|limit| limit.scope == "global" && limit.limit == 1));
+        assert!(limits
+            .iter()
+            .any(|limit| limit.scope == "task:email" && limit.limit == 1));
     }
 
     #[test]
@@ -1900,7 +2036,14 @@ mod tests {
     fn durable_queue_records_ordered_agent_checkpoints() {
         let queue = DurableQueueRuntime::open_in_memory().unwrap();
         let job = queue
-            .enqueue("agent_run", serde_json::json!({"goal": "brief"}), 1, 0.5, None, None)
+            .enqueue(
+                "agent_run",
+                serde_json::json!({"goal": "brief"}),
+                1,
+                0.5,
+                None,
+                None,
+            )
             .unwrap();
 
         let step = queue
@@ -1948,7 +2091,14 @@ mod tests {
         let job_id = {
             let queue = DurableQueueRuntime::open(&path).unwrap();
             let job = queue
-                .enqueue("agent_run", serde_json::json!({"goal": "brief"}), 1, 0.5, None, None)
+                .enqueue(
+                    "agent_run",
+                    serde_json::json!({"goal": "brief"}),
+                    1,
+                    0.5,
+                    None,
+                    None,
+                )
                 .unwrap();
             let leased = queue
                 .lease_next_at("worker-a", 10, 10_000)
@@ -1982,7 +2132,10 @@ mod tests {
         assert_eq!(resume.checkpoints.len(), 2);
         assert_eq!(resume.next_sequence, 3);
         assert_eq!(
-            resume.last_checkpoint.as_ref().map(|checkpoint| checkpoint.label.as_str()),
+            resume
+                .last_checkpoint
+                .as_ref()
+                .map(|checkpoint| checkpoint.label.as_str()),
             Some("gmail.search")
         );
 
@@ -1992,6 +2145,65 @@ mod tests {
             .expect("reclaimed after restart");
         assert_eq!(reclaimed.id, job_id);
         assert_eq!(reclaimed.lease_owner.as_deref(), Some("worker-b"));
+    }
+
+    #[test]
+    fn durable_queue_enters_approval_wait_and_survives_restart() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("jobs.sqlite");
+        let approval_expires_ms = now_ms().saturating_add(600_000);
+        let job_id = {
+            let queue = DurableQueueRuntime::open(&path).unwrap();
+            let job = queue
+                .enqueue(
+                    "send_email",
+                    serde_json::json!({"draft": "d1"}),
+                    1,
+                    0.25,
+                    Some("email:write approve:send".to_string()),
+                    Some("replay:email:d1".to_string()),
+                )
+                .unwrap();
+            let leased = queue
+                .lease_next_at("worker-a", 60_000, now_ms())
+                .unwrap()
+                .expect("lease");
+            assert_eq!(leased.id, job.id);
+            let waiting = queue
+                .enter_approval_wait(
+                    &job.id,
+                    "worker-a",
+                    "approval:send:d1",
+                    approval_expires_ms,
+                    "send external email draft d1",
+                )
+                .unwrap();
+            assert_eq!(waiting.status, QueueJobStatus::ApprovalWait);
+            assert_eq!(waiting.approval_id.as_deref(), Some("approval:send:d1"));
+            assert_eq!(waiting.approval_expires_ms, Some(approval_expires_ms));
+            assert_eq!(
+                waiting.approval_reason.as_deref(),
+                Some("send external email draft d1")
+            );
+            assert!(waiting.lease_owner.is_none());
+            assert!(waiting.lease_expires_ms.is_none());
+            assert!(
+                queue
+                    .lease_next_at("worker-b", 60_000, now_ms())
+                    .unwrap()
+                    .is_none(),
+                "approval-wait jobs must not be leased as runnable work"
+            );
+            job.id
+        };
+
+        let queue = DurableQueueRuntime::open(&path).unwrap();
+        let stored = queue.get(&job_id).unwrap().expect("stored job");
+        assert_eq!(stored.status, QueueJobStatus::ApprovalWait);
+        assert_eq!(stored.approval_id.as_deref(), Some("approval:send:d1"));
+        assert_eq!(stored.approval_expires_ms, Some(approval_expires_ms));
+        assert_eq!(queue.approval_waiting().unwrap().len(), 1);
+        assert!(queue.lease_next("worker-c", 60_000).unwrap().is_none());
     }
 
     #[test]

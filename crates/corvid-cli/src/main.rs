@@ -950,6 +950,23 @@ enum CapsuleCommand {
 }
 
 fn main() -> ExitCode {
+    match std::thread::Builder::new()
+        .name("corvid-cli".to_string())
+        .stack_size(16 * 1024 * 1024)
+        .spawn(main_impl)
+    {
+        Ok(handle) => handle.join().unwrap_or_else(|_| {
+            eprintln!("error: corvid CLI worker thread panicked");
+            ExitCode::from(101)
+        }),
+        Err(err) => {
+            eprintln!("error: failed to start corvid CLI worker thread: {err}");
+            ExitCode::from(2)
+        }
+    }
+}
+
+fn main_impl() -> ExitCode {
     let cli = Cli::parse();
 
     let result = match cli.command {
@@ -1292,6 +1309,22 @@ fn main() -> ExitCode {
                 fail_fingerprint,
                 retry_base_ms,
             ),
+            JobsCommand::WaitApproval {
+                state,
+                worker_id,
+                lease_ttl_ms,
+                approval_id,
+                approval_expires_ms,
+                approval_reason,
+            } => cmd_jobs_wait_approval(
+                &state,
+                &worker_id,
+                lease_ttl_ms,
+                &approval_id,
+                approval_expires_ms,
+                &approval_reason,
+            ),
+            JobsCommand::Approvals { state } => cmd_jobs_approvals(&state),
             JobsCommand::Schedule { command } => match command {
                 JobsScheduleCommand::Add {
                     state,
@@ -1604,6 +1637,44 @@ fn cmd_jobs_run_one(
     }
 }
 
+fn cmd_jobs_wait_approval(
+    state: &Path,
+    worker_id: &str,
+    lease_ttl_ms: u64,
+    approval_id: &str,
+    approval_expires_ms: u64,
+    approval_reason: &str,
+) -> Result<u8> {
+    let queue = DurableQueueRuntime::open(state)?;
+    println!("corvid jobs wait-approval");
+    println!("state: {}", state.display());
+    let Some(job) = queue.lease_next(worker_id, lease_ttl_ms)? else {
+        println!("job: none");
+        return Ok(0);
+    };
+    let waiting = queue.enter_approval_wait(
+        &job.id,
+        worker_id,
+        approval_id,
+        approval_expires_ms,
+        approval_reason,
+    )?;
+    print_job_summary(&waiting);
+    Ok(0)
+}
+
+fn cmd_jobs_approvals(state: &Path) -> Result<u8> {
+    let queue = DurableQueueRuntime::open(state)?;
+    let jobs = queue.approval_waiting()?;
+    println!("corvid jobs approvals");
+    println!("state: {}", state.display());
+    println!("approval_wait_count: {}", jobs.len());
+    for job in jobs {
+        print_job_summary(&job);
+    }
+    Ok(0)
+}
+
 fn cmd_jobs_dlq(state: &Path) -> Result<u8> {
     let queue = DurableQueueRuntime::open(state)?;
     let jobs = queue.dead_lettered()?;
@@ -1757,13 +1828,8 @@ fn cmd_jobs_checkpoint_add(
 ) -> Result<u8> {
     let queue = DurableQueueRuntime::open(state)?;
     let payload = serde_json::from_str(payload).context("checkpoint payload must be valid JSON")?;
-    let checkpoint = queue.record_checkpoint(
-        job_id,
-        kind.into(),
-        label,
-        payload,
-        payload_fingerprint,
-    )?;
+    let checkpoint =
+        queue.record_checkpoint(job_id, kind.into(), label, payload, payload_fingerprint)?;
     println!("corvid jobs checkpoint add");
     println!("state: {}", state.display());
     print_checkpoint_summary(&checkpoint);
@@ -1887,6 +1953,17 @@ fn print_job_summary(job: &QueueJob) {
         job.lease_expires_ms
             .map(|value| value.to_string())
             .unwrap_or_default()
+    );
+    println!("approval_id: {}", job.approval_id.as_deref().unwrap_or(""));
+    println!(
+        "approval_expires_ms: {}",
+        job.approval_expires_ms
+            .map(|value| value.to_string())
+            .unwrap_or_default()
+    );
+    println!(
+        "approval_reason: {}",
+        job.approval_reason.as_deref().unwrap_or("")
     );
 }
 
@@ -3187,6 +3264,33 @@ enum JobsCommand {
         /// Base backoff in milliseconds for failed attempts.
         #[arg(long, default_value = "1000")]
         retry_base_ms: u64,
+    },
+    /// Lease the next runnable job and pause it on a human approval boundary.
+    WaitApproval {
+        /// SQLite state file used by the durable local queue.
+        #[arg(long, value_name = "PATH", default_value = "target/corvid-jobs.sqlite")]
+        state: PathBuf,
+        /// Worker identity that owns the short lease before the approval wait starts.
+        #[arg(long, default_value = "corvid-approval-wait")]
+        worker_id: String,
+        /// Lease TTL while atomically moving the job into approval-wait.
+        #[arg(long, default_value = "300000")]
+        lease_ttl_ms: u64,
+        /// Stable approval request id supplied by the approval product surface.
+        #[arg(long)]
+        approval_id: String,
+        /// Absolute Unix epoch milliseconds when the approval request expires.
+        #[arg(long)]
+        approval_expires_ms: u64,
+        /// Human-readable reason preserved with the durable job state.
+        #[arg(long)]
+        approval_reason: String,
+    },
+    /// List jobs paused on approval.
+    Approvals {
+        /// SQLite state file used by the durable local queue.
+        #[arg(long, value_name = "PATH", default_value = "target/corvid-jobs.sqlite")]
+        state: PathBuf,
     },
     /// Manage durable cron schedules and restart recovery.
     Schedule {

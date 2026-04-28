@@ -1993,7 +1993,7 @@ corvid jobs drain --workers=all
 - [x] 38E3-idempotency-keys          Duplicate dangerous jobs collapse or fail predictably.
 - [x] 38F1-checkpoint-schema         Agent step/tool/partial-output checkpoints are durable.
 - [x] 38F2-resume-agent-run          Agent run resumes from last checkpoint after crash.
-- [ ] 38G1-approval-wait-state       Jobs can enter approval-wait state with expiry.
+- [x] 38G1-approval-wait-state       Jobs can enter approval-wait state with expiry.
 - [ ] 38G2-approval-resume           Approve/deny/expire transitions resume or stop jobs and write audit events.
 - [ ] 38H1-loop-budget-controls      Max steps, wall time, spend, and tool-call limits are enforced.
 - [ ] 38H2-stall-escalation          Stalled loops escalate or terminate with trace evidence.

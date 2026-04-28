@@ -222,7 +222,10 @@ fn jobs_schedule_recovers_missed_fire_after_restart() {
     assert!(stdout.contains("corvid jobs schedule recover"), "{stdout}");
     assert!(stdout.contains("scanned: 1"), "{stdout}");
     assert!(stdout.contains("enqueued: 1"), "{stdout}");
-    assert!(stdout.contains("recovery: schedule:daily_brief"), "{stdout}");
+    assert!(
+        stdout.contains("recovery: schedule:daily_brief"),
+        "{stdout}"
+    );
 
     let run = Command::new(corvid_bin())
         .args(["jobs", "run-one", "--state", state.to_str().unwrap()])
@@ -236,7 +239,10 @@ fn jobs_schedule_recovers_missed_fire_after_restart() {
     );
     let stdout = String::from_utf8_lossy(&run.stdout);
     assert!(stdout.contains("task: daily_brief"), "{stdout}");
-    assert!(stdout.contains("replay_key: schedule:daily_brief:"), "{stdout}");
+    assert!(
+        stdout.contains("replay_key: schedule:daily_brief:"),
+        "{stdout}"
+    );
 }
 
 #[test]
@@ -283,7 +289,10 @@ fn jobs_limit_cli_persists_concurrency_limits() {
     );
     let stdout = String::from_utf8_lossy(&list.stdout);
     assert!(stdout.contains("limit_count: 1"), "{stdout}");
-    assert!(stdout.contains("limit: scope:task:email max_leased:2"), "{stdout}");
+    assert!(
+        stdout.contains("limit: scope:task:email max_leased:2"),
+        "{stdout}"
+    );
 }
 
 #[test]
@@ -291,7 +300,10 @@ fn jobs_idempotency_key_collapses_duplicate_enqueue() {
     let dir = tempfile::tempdir().expect("tempdir");
     let state = dir.path().join("jobs.sqlite");
 
-    for payload in ["{\"invoice\":\"i1\"}", "{\"invoice\":\"i1\",\"changed\":true}"] {
+    for payload in [
+        "{\"invoice\":\"i1\"}",
+        "{\"invoice\":\"i1\",\"changed\":true}",
+    ] {
         let enqueue = Command::new(corvid_bin())
             .args([
                 "jobs",
@@ -431,6 +443,110 @@ fn jobs_checkpoint_cli_records_agent_tool_and_partial_outputs() {
     assert!(stdout.contains("next_sequence: 4"), "{stdout}");
     assert!(stdout.contains("last_kind: partial_output"), "{stdout}");
     assert!(stdout.contains("last_label: draft"), "{stdout}");
+}
+
+#[test]
+fn jobs_wait_approval_pauses_and_lists_approval_wait_jobs() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let state = dir.path().join("jobs.sqlite");
+
+    let enqueue = Command::new(corvid_bin())
+        .args([
+            "jobs",
+            "enqueue",
+            "--state",
+            state.to_str().unwrap(),
+            "--task",
+            "send_email",
+            "--payload",
+            "{\"draft\":\"d1\"}",
+            "--effect-summary",
+            "email:write approve:send",
+            "--replay-key",
+            "replay:email:d1",
+        ])
+        .output()
+        .expect("run jobs enqueue");
+    assert!(
+        enqueue.status.success(),
+        "enqueue failed:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&enqueue.stdout),
+        String::from_utf8_lossy(&enqueue.stderr)
+    );
+
+    let wait = Command::new(corvid_bin())
+        .args([
+            "jobs",
+            "wait-approval",
+            "--state",
+            state.to_str().unwrap(),
+            "--worker-id",
+            "worker-a",
+            "--approval-id",
+            "approval:send:d1",
+            "--approval-expires-ms",
+            "4102444800000",
+            "--approval-reason",
+            "send external email draft d1",
+        ])
+        .output()
+        .expect("run approval wait");
+    assert!(
+        wait.status.success(),
+        "approval wait failed:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&wait.stdout),
+        String::from_utf8_lossy(&wait.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&wait.stdout);
+    assert!(stdout.contains("corvid jobs wait-approval"), "{stdout}");
+    assert!(stdout.contains("status: approval_wait"), "{stdout}");
+    assert!(stdout.contains("approval_id: approval:send:d1"), "{stdout}");
+    assert!(
+        stdout.contains("approval_expires_ms: 4102444800000"),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("approval_reason: send external email draft d1"),
+        "{stdout}"
+    );
+    assert!(stdout.contains("lease_owner: "), "{stdout}");
+
+    let run = Command::new(corvid_bin())
+        .args(["jobs", "run-one", "--state", state.to_str().unwrap()])
+        .output()
+        .expect("run jobs run-one");
+    assert!(
+        run.status.success(),
+        "run-one failed:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&run.stdout),
+        String::from_utf8_lossy(&run.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&run.stdout);
+    assert!(stdout.contains("job: none"), "{stdout}");
+
+    let approvals = Command::new(corvid_bin())
+        .args(["jobs", "approvals", "--state", state.to_str().unwrap()])
+        .output()
+        .expect("list approval waits");
+    assert!(
+        approvals.status.success(),
+        "approvals failed:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&approvals.stdout),
+        String::from_utf8_lossy(&approvals.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&approvals.stdout);
+    assert!(stdout.contains("approval_wait_count: 1"), "{stdout}");
+    assert!(stdout.contains("task: send_email"), "{stdout}");
+
+    let conn = Connection::open(&state).expect("open jobs db");
+    let status: String = conn
+        .query_row(
+            "select status from queue_jobs where id = 'job_1'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("read status");
+    assert_eq!(status, "approval_wait");
 }
 
 #[test]
