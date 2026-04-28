@@ -336,7 +336,7 @@ fn std_db_imported_helpers_typecheck() {
         "db",
         true,
         r#"
-import "./std/db" use DbConnection, DbParam, DbQuery, DbResult, DbError, DbColumn, DbRowDecode, sqlite_open, db_param, db_query, db_execute, db_result, db_error, db_parameterized, db_column, db_decode_ok, db_decode_missing_column, db_decode_wrong_kind
+import "./std/db" use DbConnection, DbParam, DbQuery, DbResult, DbError, DbColumn, DbRowDecode, DbTransaction, sqlite_open, db_param, db_query, db_execute, db_result, db_error, db_parameterized, db_column, db_decode_ok, db_decode_missing_column, db_decode_wrong_kind, db_transaction, db_transaction_commit, db_transaction_rollback, db_transaction_nested_rejected
 
 agent main() -> Bool:
     db = sqlite_open("file:app.db", "db:app")
@@ -349,7 +349,11 @@ agent main() -> Bool:
     ok = db_decode_ok("User")
     missing = db_decode_missing_column("User", "email", "String")
     wrong = db_decode_wrong_kind("User", "age", "Int", "String")
-    return db.driver == "sqlite" and id.name == "id" and db_parameterized(read) and write.operation == "write" and result.rows_affected == 1 and err.redacted and col.present and ok.ok and not missing.ok and wrong.received_kind == "String"
+    tx = db_transaction("tx-1", "open", false, "db:tx:1")
+    committed = db_transaction_commit(tx)
+    rolled_back = db_transaction_rollback(tx)
+    nested = db_transaction("tx-2", "rejected", true, "db:tx:2")
+    return db.driver == "sqlite" and id.name == "id" and db_parameterized(read) and write.operation == "write" and result.rows_affected == 1 and err.redacted and col.present and ok.ok and not missing.ok and wrong.received_kind == "String" and committed.status == "committed" and rolled_back.status == "rolled_back" and db_transaction_nested_rejected(nested)
 "#,
     );
 }

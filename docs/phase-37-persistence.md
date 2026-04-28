@@ -155,6 +155,11 @@ will emit these same shapes when host-backed query execution lands.
 - Failed transaction scopes roll back.
 - Nested transaction policy is enforced.
 
+Implementation convention for 37D: `std.db` exposes transaction metadata
+envelopes now: `DbTransaction`, commit/rollback helpers, and a nested-rejection
+helper. Runtime transaction scopes will emit these same shapes when host-backed
+database execution lands.
+
 ### 37E Migrations Drift
 
 - `corvid migrate up/down/status` supports checksums.

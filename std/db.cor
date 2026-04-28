@@ -46,6 +46,13 @@ public type DbRowDecode:
     received_kind: String
     message: String
 
+public type DbTransaction:
+    id: String
+    status: String
+    nested: Bool
+    replay_key: String
+    effect_meta: EffectEnvelope
+
 public agent sqlite_open(dsn: String, replay_key: String) -> DbConnection:
     return DbConnection("sqlite", dsn, replay_key, effect_envelope("std.db.open", "", "", "", replay_key))
 
@@ -78,3 +85,15 @@ public agent db_decode_missing_column(record_type: String, field_path: String, e
 
 public agent db_decode_wrong_kind(record_type: String, field_path: String, expected_type: String, received_kind: String) -> DbRowDecode:
     return DbRowDecode(record_type, false, field_path, expected_type, received_kind, "wrong value kind")
+
+public agent db_transaction(id: String, status: String, nested: Bool, replay_key: String) -> DbTransaction:
+    return DbTransaction(id, status, nested, replay_key, effect_envelope("std.db.transaction", "", "", "", replay_key))
+
+public agent db_transaction_commit(tx: DbTransaction) -> DbTransaction:
+    return DbTransaction(tx.id, "committed", tx.nested, tx.replay_key, tx.effect_meta)
+
+public agent db_transaction_rollback(tx: DbTransaction) -> DbTransaction:
+    return DbTransaction(tx.id, "rolled_back", tx.nested, tx.replay_key, tx.effect_meta)
+
+public agent db_transaction_nested_rejected(tx: DbTransaction) -> Bool:
+    return tx.nested
