@@ -1842,7 +1842,7 @@ Each benchmark must separate model-provider latency from Corvid runtime overhead
 - [x] 38B1-job-envelope              Add `std.jobs` job/input/output/state envelopes.
 - [x] 38B2-enqueue-command           Add enqueue/run-one runtime path with local persisted state.
 - [x] 38B3-one-job-test              One persisted job executes once with typed input/output.
-- [ ] 38C1-retry-policy-envelope     Retry/backoff/dead-letter metadata exists in stdlib.
+- [x] 38C1-retry-policy-envelope     Retry/backoff/dead-letter metadata exists in stdlib.
 - [ ] 38C2-retry-runner              Runner applies retry/backoff and terminal failure.
 - [ ] 38C3-dlq-inspection            CLI can inspect dead-lettered jobs.
 - [ ] 38D1-delay-support             Delayed jobs persist and wake after restart.

@@ -371,16 +371,18 @@ fn std_jobs_imported_helpers_typecheck() {
         "jobs",
         true,
         r#"
-import "./std/jobs" use JobInputEnvelope, JobOutputEnvelope, JobStateEnvelope, job_input, job_output, pending_job_state, leased_job_state, running_job_state, succeeded_job_state, job_can_start, job_needs_approval, job_metadata_redacted
+import "./std/jobs" use JobInputEnvelope, JobOutputEnvelope, JobRetryPolicy, JobDeadLetterEnvelope, JobStateEnvelope, job_input, job_output, retry_policy, retry_policy_valid, dead_letter, dead_letter_redacted, pending_job_state, leased_job_state, running_job_state, succeeded_job_state, job_can_start, job_needs_approval, job_metadata_redacted
 
 agent main() -> Bool:
     input = job_input("daily_brief", "sha256:input", "DailyBriefInput")
     output = job_output("sha256:output", "DailyBriefOutput")
+    policy = retry_policy(3, "exponential", 1000, 60000, "jobs:dead")
     pending = pending_job_state("job-1", "executive", "daily_brief", 3, 0.25, true, "daily:user-1", "replay-job-1")
     leased = leased_job_state(pending)
     running = running_job_state(leased)
     done = succeeded_job_state(running)
-    return job_can_start(pending) and job_needs_approval(pending) and job_metadata_redacted(input, output) and leased.status == "leased" and running.attempts == 1 and done.status == "succeeded"
+    letter = dead_letter(running, "provider_timeout", "sha256:failure")
+    return retry_policy_valid(policy) and dead_letter_redacted(letter) and job_can_start(pending) and job_needs_approval(pending) and job_metadata_redacted(input, output) and leased.status == "leased" and running.attempts == 1 and done.status == "succeeded"
 "#,
     );
 }

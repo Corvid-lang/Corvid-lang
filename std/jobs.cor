@@ -13,6 +13,23 @@ public type JobOutputEnvelope:
     output_kind: String
     redacted: Bool
 
+public type JobRetryPolicy:
+    max_attempts: Int
+    backoff_kind: String
+    base_delay_ms: Int
+    max_delay_ms: Int
+    dead_letter_queue: String
+
+public type JobDeadLetterEnvelope:
+    id: String
+    queue_name: String
+    job_kind: String
+    attempts: Int
+    failure_kind: String
+    failure_fingerprint: String
+    replay_key: String
+    effect_meta: EffectEnvelope
+
 public type JobStateEnvelope:
     id: String
     queue_name: String
@@ -31,6 +48,18 @@ public agent job_input(job_kind: String, input_fingerprint: String, schema_name:
 
 public agent job_output(output_fingerprint: String, output_kind: String) -> JobOutputEnvelope:
     return JobOutputEnvelope(output_fingerprint, output_kind, true)
+
+public agent retry_policy(max_attempts: Int, backoff_kind: String, base_delay_ms: Int, max_delay_ms: Int, dead_letter_queue: String) -> JobRetryPolicy:
+    return JobRetryPolicy(max_attempts, backoff_kind, base_delay_ms, max_delay_ms, dead_letter_queue)
+
+public agent retry_policy_valid(policy: JobRetryPolicy) -> Bool:
+    return policy.max_attempts > 0 and policy.base_delay_ms >= 0 and policy.max_delay_ms >= policy.base_delay_ms
+
+public agent dead_letter(job: JobStateEnvelope, failure_kind: String, failure_fingerprint: String) -> JobDeadLetterEnvelope:
+    return JobDeadLetterEnvelope(job.id, job.queue_name, job.job_kind, job.attempts, failure_kind, failure_fingerprint, job.replay_key, effect_envelope("std.jobs.dead_letter", "", job.queue_name, job.job_kind, job.replay_key))
+
+public agent dead_letter_redacted(letter: JobDeadLetterEnvelope) -> Bool:
+    return letter.failure_fingerprint != ""
 
 public agent job_state(id: String, queue_name: String, job_kind: String, status: String, attempts: Int, max_attempts: Int, budget_usd: Float, approval_required: Bool, idempotency_key: String, replay_key: String) -> JobStateEnvelope:
     return JobStateEnvelope(id, queue_name, job_kind, status, attempts, max_attempts, budget_usd, approval_required, idempotency_key, replay_key, effect_envelope("std.jobs.state", "", queue_name, job_kind, replay_key))
