@@ -168,3 +168,218 @@ fn std_effects_compiles_as_corvid_source() {
     compile_to_ir_with_config_at_path(&source, &source_path, None)
         .expect("std.effects should compile as a standalone Corvid module");
 }
+
+// ---------------------------------------------------------------
+// Imported-helpers typecheck tests. Each exercises the full
+// public surface of one std/*.cor module from a user-side
+// `main.cor` and asserts the program goes through lex / parse /
+// resolve / typecheck / IR lowering cleanly. Catches the failure
+// mode where a stdlib module's exported types or agent
+// signatures drift away from what user code expects.
+// ---------------------------------------------------------------
+
+/// Stage `std/<name>.cor` (and optionally its `std/effects.cor`
+/// transitive dep) into a tempdir and compile a user-side
+/// `main.cor` against it. Asserts the IR pipeline succeeds.
+fn assert_imported_helpers_typecheck(module_name: &str, with_effects_dep: bool, main_source: &str) {
+    let dir = tempfile::tempdir().unwrap();
+    fs::create_dir_all(dir.path().join("std")).unwrap();
+    let repo = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(std::path::Path::parent)
+        .expect("repo root");
+    let module_filename = format!("{module_name}.cor");
+    fs::copy(
+        repo.join("std").join(&module_filename),
+        dir.path().join("std").join(&module_filename),
+    )
+    .unwrap_or_else(|e| panic!("copy std/{module_filename}: {e}"));
+    if with_effects_dep {
+        fs::copy(
+            repo.join("std").join("effects.cor"),
+            dir.path().join("std").join("effects.cor"),
+        )
+        .unwrap_or_else(|e| panic!("copy std/effects.cor: {e}"));
+    }
+    let main_path = dir.path().join("main.cor");
+    fs::write(&main_path, main_source).unwrap();
+    compile_to_ir_with_config_at_path(main_source, &main_path, None).unwrap_or_else(|errors| {
+        panic!(
+            "program importing std.{module_name} helpers should compile, got: {errors:?}"
+        )
+    });
+}
+
+#[test]
+fn std_http_imported_helpers_typecheck() {
+    assert_imported_helpers_typecheck(
+        "http",
+        true,
+        r#"
+import "./std/http" use HttpHeader, HttpRequestEnvelope, HttpResponseEnvelope, http_get, http_post_json, http_with_retry, http_with_timeout, http_ok
+
+agent main() -> Bool:
+    req = http_get("https://api.example.com/v1/health")
+    posted = http_post_json("https://api.example.com/v1/widgets", "{}")
+    retried = http_with_retry(req, 3)
+    bounded = http_with_timeout(retried, 5000)
+    response = HttpResponseEnvelope(200, "ok", 1, 12, bounded.effect_meta)
+    header = HttpHeader("X-Trace-Id", "abc123")
+    return http_ok(response) and header.name != "" and posted.method_name == "POST"
+"#,
+    );
+}
+
+#[test]
+fn std_io_imported_helpers_typecheck() {
+    assert_imported_helpers_typecheck(
+        "io",
+        true,
+        r#"
+import "./std/io" use PathInfo, FileReadEnvelope, FileWriteEnvelope, DirectoryEntryEnvelope, path, file_read, file_write, directory_entry
+
+agent main() -> Bool:
+    p = path("/tmp/data.txt")
+    r = file_read(p.value, "hello", 5)
+    w = file_write(p.value, 5)
+    entry = directory_entry(p.value, "data.txt", false)
+    return r.bytes == 5 and w.bytes == 5 and not entry.is_dir
+"#,
+    );
+}
+
+#[test]
+fn std_secrets_imported_helpers_typecheck() {
+    assert_imported_helpers_typecheck(
+        "secrets",
+        true,
+        r#"
+import "./std/secrets" use SecretReadEnvelope, secret_present, secret_missing
+
+agent main() -> Bool:
+    have = secret_present("ANTHROPIC_API_KEY")
+    miss = secret_missing("UNSET_KEY")
+    return have.present and not miss.present
+"#,
+    );
+}
+
+#[test]
+fn std_observe_imported_helpers_typecheck() {
+    assert_imported_helpers_typecheck(
+        "observe",
+        true,
+        r#"
+import "./std/observe" use MetricCounter, CostCounter, LatencyHistogram, RoutingDecision, ApprovalSummary, RuntimeObservationSummary, metric_counter, cost_counter, latency_histogram, routing_decision, approval_summary, runtime_summary
+
+agent main() -> Bool:
+    m = metric_counter("requests", 1.0, "count")
+    c = cost_counter(1, 100, 50, 150, 0.01)
+    l = latency_histogram("api", 100, 200, 300)
+    r = routing_decision("classify", "fast", "deep", "low_confidence")
+    a = approval_summary("IssueRefund", 5, 1)
+    s = runtime_summary(10, 2, 1500, 0.05, 3, 0)
+    return m.value == 1.0 and c.total_tokens == 150 and l.p99_ms == 300 and r.to_model == "deep" and a.approved == 5 and s.cost_usd > 0.0
+"#,
+    );
+}
+
+#[test]
+fn std_cache_imported_helpers_typecheck() {
+    assert_imported_helpers_typecheck(
+        "cache",
+        true,
+        r#"
+import "./std/cache" use CacheKeyEnvelope, CacheEntryEnvelope, cache_key, cache_entry, cache_hit
+
+agent main() -> Bool:
+    k = cache_key("answers", "weather", "fp-1", "std.http.request", "prov-1")
+    entry = cache_entry(k, true, "weather:fp-1")
+    return cache_hit(entry)
+"#,
+    );
+}
+
+#[test]
+fn std_queue_imported_helpers_typecheck() {
+    assert_imported_helpers_typecheck(
+        "queue",
+        true,
+        r#"
+import "./std/queue" use QueueJobEnvelope, queued_job, pending_job, canceled_job
+
+agent main() -> Bool:
+    pending = pending_job("job-1", "summarize", 3, 0.50, "std.ai", "std.queue.job")
+    queued = queued_job("job-2", "extract", "running", 5, 1.00, "std.ai", "std.queue.job")
+    cancel = canceled_job(queued)
+    return pending.status == "pending" and queued.status == "running" and cancel.status == "canceled"
+"#,
+    );
+}
+
+#[test]
+fn std_agent_imported_helpers_typecheck() {
+    assert_imported_helpers_typecheck(
+        "agent",
+        true,
+        r#"
+import "./std/agent" use Classification, Extraction, Ranking, Judgement, PlanStep, ToolUse, Critique, Summary, RouteDecision, ActionRequest, ReviewVerdict, ToolLoopTurn, AnswerWithProvenance, classify, extraction_ok, extraction_error, rank, judge, plan_step, tool_use, critique, summarize, route_decision, action_request, review_verdict, tool_loop_turn, answer_with_provenance
+
+agent main() -> Bool:
+    c = classify("positive", 0.9, 0.7)
+    ok = extraction_ok("Address", "{...}")
+    bad = extraction_error("Address", "missing zip")
+    rk = rank("doc-1", 0.85, "topic match")
+    j = judge("answer-A", "more grounded", false)
+    p = plan_step("step-1", "fetch context", "std.rag.search")
+    t = tool_use("issue_refund", "ord_1", "IssueRefund", true)
+    cr = critique(true, "well grounded", "")
+    s = summarize("body", "concise", "operator")
+    rd = route_decision("escalate", "uncertain", true)
+    ar = action_request("send", "to=user", "Send", true)
+    rv = review_verdict(true, "minor", "fine")
+    tl = tool_loop_turn("t-1", "consider options", "search", "rank", false)
+    awp = answer_with_provenance("yes", "doc-1#chunk-2")
+    return c.accepted and ok.valid and not bad.valid and rk.score > 0.0 and not j.needs_human and p.id == "step-1" and t.approved and cr.accepted and s.style == "concise" and rd.needs_human and ar.ready and rv.accepted and not tl.done and awp.grounded
+"#,
+    );
+}
+
+#[test]
+fn std_rag_imported_helpers_typecheck() {
+    assert_imported_helpers_typecheck(
+        "rag",
+        true,
+        r#"
+import "./std/rag" use RagDocumentEnvelope, RagChunkEnvelope, RetrievedRagChunkEnvelope, EmbedderEnvelope, rag_document, rag_chunk, retrieved_chunk, openai_embedder, ollama_embedder, chunk_is_grounded
+
+agent main() -> Bool:
+    doc = rag_document("doc-1", "manual.pdf", "application/pdf", "page text")
+    chunk = rag_chunk(doc.id, "chunk-1", doc.source, "page text", 0, 9, "manual.pdf#1")
+    retrieved = retrieved_chunk(chunk, "manual")
+    openai = openai_embedder("text-embedding-3-small")
+    ollama = ollama_embedder("nomic-embed-text", "http://localhost:11434")
+    return chunk_is_grounded(chunk) and retrieved.grounded and openai.provider == "openai" and ollama.provider == "ollama"
+"#,
+    );
+}
+
+#[test]
+fn std_effects_imported_helpers_typecheck() {
+    // std/effects.cor has no transitive deps — it's the leaf
+    // module every other std/* sits on top of.
+    assert_imported_helpers_typecheck(
+        "effects",
+        false,
+        r#"
+import "./std/effects" use EffectTag, EffectBudget, EffectEnvelope, effect_tag, effect_budget, effect_envelope, replay_safe, approval_required
+
+agent main() -> Bool:
+    tag = effect_tag("std.http.request", "network", "untrusted", "public", "stable")
+    budget = effect_budget(0.10, 5000, 1000)
+    safe_env = effect_envelope("std.http.request", "prov-1", "", "fp-1", "std.http.request")
+    gated_env = effect_envelope("std.refund.issue", "prov-2", "IssueRefund", "fp-2", "std.refund.issue")
+    return replay_safe(safe_env) and approval_required(gated_env) and tag.name != "" and budget.cost_usd > 0.0
+"#,
+    );
+}
