@@ -620,6 +620,11 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
+    /// Inspect and apply checked-in database migrations.
+    Migrate {
+        #[command(subcommand)]
+        command: MigrateCommand,
+    },
     /// Inspect published orchestration-overhead benchmark archives.
     Bench {
         #[command(subcommand)]
@@ -1216,6 +1221,23 @@ fn main() -> ExitCode {
         Some(Command::Repl) => cmd_repl(),
         Some(Command::Doctor) => cmd_doctor_v2(),
         Some(Command::Audit { file, json }) => audit_cmd::run_audit(&file, json),
+        Some(Command::Migrate { command }) => match command {
+            MigrateCommand::Status {
+                dir,
+                state,
+                dry_run,
+            } => cmd_migrate("status", &dir, &state, dry_run),
+            MigrateCommand::Up {
+                dir,
+                state,
+                dry_run,
+            } => cmd_migrate("up", &dir, &state, dry_run),
+            MigrateCommand::Down {
+                dir,
+                state,
+                dry_run,
+            } => cmd_migrate("down", &dir, &state, dry_run),
+        },
         Some(Command::Bench { command }) => match command {
             BenchCommand::Compare {
                 target,
@@ -1256,6 +1278,15 @@ fn cmd_new(name: &str) -> Result<u8> {
     println!("  cd {name}");
     println!("  pip install corvid-runtime");
     println!("  corvid run src/main.cor");
+    Ok(0)
+}
+
+fn cmd_migrate(action: &str, dir: &Path, state: &Path, dry_run: bool) -> Result<u8> {
+    println!("corvid migrate {action}");
+    println!("migrations: {}", dir.display());
+    println!("state: {}", state.display());
+    println!("dry_run: {dry_run}");
+    println!("migration scanning lands in 37E2; no state was changed");
     Ok(0)
 }
 
@@ -2222,6 +2253,46 @@ fn command_output(program: &str, args: &[&str]) -> Option<String> {
                 None
             }
         })
+}
+
+#[derive(Subcommand)]
+enum MigrateCommand {
+    /// Report applied, pending, and drifted migrations.
+    Status {
+        /// Directory containing ordered `.sql` migration files.
+        #[arg(long, value_name = "DIR", default_value = "migrations")]
+        dir: PathBuf,
+        /// State file used to record applied migration checksums.
+        #[arg(long, value_name = "PATH", default_value = "target/corvid-migrations.json")]
+        state: PathBuf,
+        /// Show what would be checked without writing state.
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// Apply pending migrations in order.
+    Up {
+        /// Directory containing ordered `.sql` migration files.
+        #[arg(long, value_name = "DIR", default_value = "migrations")]
+        dir: PathBuf,
+        /// State file used to record applied migration checksums.
+        #[arg(long, value_name = "PATH", default_value = "target/corvid-migrations.json")]
+        state: PathBuf,
+        /// Report pending migrations without applying them.
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// Roll back the latest migration when a down migration exists.
+    Down {
+        /// Directory containing ordered `.sql` migration files.
+        #[arg(long, value_name = "DIR", default_value = "migrations")]
+        dir: PathBuf,
+        /// State file used to record applied migration checksums.
+        #[arg(long, value_name = "PATH", default_value = "target/corvid-migrations.json")]
+        state: PathBuf,
+        /// Report the rollback candidate without mutating state.
+        #[arg(long)]
+        dry_run: bool,
+    },
 }
 
 fn check_u16_env(name: &str, label: &str) -> bool {
