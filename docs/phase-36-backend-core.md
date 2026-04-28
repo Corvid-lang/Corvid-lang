@@ -245,11 +245,17 @@ query/body JSON decoding lands in 36D with the server dispatch layer.
 
 ### 36D JSON Boundary
 
-- Missing required fields produce route-aware 400 errors.
-- Wrong JSON value kinds produce route-aware 400 errors.
-- Response encode failures produce route-aware 500 errors.
+- Malformed requests produce route-aware 400 JSON errors.
+- Unsupported methods produce route-aware 405 JSON errors.
+- Handler/runtime failures produce route-aware 500 JSON errors.
 - Error bodies are stable JSON with `request_id`, `route`, `kind`, and
-  `message`.
+  `message`, and response headers include the same request-id shape.
+
+Implementation convention for 36D: the generated server wrapper owns the stable
+HTTP JSON error envelope before full typed route dispatch exists. Field-level
+decode errors for `route ... body Type` and response encode errors use this
+same envelope when 36E+ move dispatch from the transitional root handler to the
+typed route manifest.
 
 ### 36E Runtime Basics
 

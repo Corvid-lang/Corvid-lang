@@ -1,5 +1,5 @@
 use std::io::{BufRead, BufReader, Read, Write};
-use std::net::TcpStream;
+use std::net::{Shutdown, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
@@ -29,16 +29,15 @@ fn run_corvid(args: &[String], cwd: &Path) -> std::process::Output {
         .expect("run corvid")
 }
 
-fn http_get(addr: &str, path: &str) -> String {
+fn http_request(addr: &str, request: &str) -> String {
     let mut stream = TcpStream::connect(addr).expect("connect server");
     stream
         .set_read_timeout(Some(Duration::from_secs(5)))
         .expect("read timeout");
-    write!(
-        stream,
-        "GET {path} HTTP/1.1\r\nhost: {addr}\r\nconnection: close\r\n\r\n"
-    )
-    .expect("write request");
+    stream
+        .write_all(request.as_bytes())
+        .expect("write request");
+    stream.shutdown(Shutdown::Write).expect("shutdown write");
     let mut bytes = Vec::new();
     let mut buf = [0u8; 1024];
     loop {
@@ -53,6 +52,13 @@ fn http_get(addr: &str, path: &str) -> String {
         }
     }
     String::from_utf8_lossy(&bytes).into_owned()
+}
+
+fn http_get(addr: &str, path: &str) -> String {
+    http_request(
+        addr,
+        &format!("GET {path} HTTP/1.1\r\nhost: {addr}\r\nconnection: close\r\n\r\n"),
+    )
 }
 
 struct ChildGuard(std::process::Child);
@@ -122,6 +128,36 @@ fn build_server_emits_runnable_local_http_binary() {
     let root = http_get(addr, "/");
     assert!(root.contains("HTTP/1.1 200 OK"), "{root}");
     assert!(root.contains(r#""result":"hello from corvid""#), "{root}");
+
+    let rejected = http_request(
+        addr,
+        &format!("POST / HTTP/1.1\r\nhost: {addr}\r\nconnection: close\r\n\r\n"),
+    );
+    assert!(
+        rejected.contains("HTTP/1.1 405 Method Not Allowed"),
+        "{rejected}"
+    );
+    assert!(rejected.contains("content-type: application/json"), "{rejected}");
+    assert!(rejected.contains("x-corvid-request-id: req-"), "{rejected}");
+    assert!(rejected.contains(r#""request_id":"req-"#), "{rejected}");
+    assert!(rejected.contains(r#""route":"/""#), "{rejected}");
+    assert!(
+        rejected.contains(r#""kind":"method_not_allowed""#),
+        "{rejected}"
+    );
+    assert!(
+        rejected.contains(r#""message":"method not allowed""#),
+        "{rejected}"
+    );
+
+    let malformed = http_request(addr, "\r\n");
+    assert!(malformed.contains("HTTP/1.1 400 Bad Request"), "{malformed}");
+    assert!(malformed.contains(r#""route":"<unknown>""#), "{malformed}");
+    assert!(malformed.contains(r#""kind":"bad_request""#), "{malformed}");
+    assert!(
+        malformed.contains(r#""message":"malformed request line""#),
+        "{malformed}"
+    );
 
     drop(child);
 }

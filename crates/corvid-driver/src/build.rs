@@ -839,13 +839,41 @@ fn handle(mut stream: TcpStream) -> std::io::Result<()> {{
     let started = Instant::now();
     let mut buf = [0u8; 4096];
     let n = stream.read(&mut buf)?;
+    if n == 0 {{
+        return respond_error(
+            &mut stream,
+            400,
+            "<unknown>",
+            "bad_request",
+            "empty request",
+            started,
+        );
+    }}
     let req = String::from_utf8_lossy(&buf[..n]);
     let first = req.lines().next().unwrap_or("");
     let mut parts = first.split_whitespace();
     let method = parts.next().unwrap_or("");
     let path = parts.next().unwrap_or("/");
+    let version = parts.next().unwrap_or("");
+    if method.is_empty() || path.is_empty() || version.is_empty() {{
+        return respond_error(
+            &mut stream,
+            400,
+            "<unknown>",
+            "bad_request",
+            "malformed request line",
+            started,
+        );
+    }}
     if method != "GET" {{
-        return respond(&mut stream, 405, "text/plain", "method not allowed", started);
+        return respond_error(
+            &mut stream,
+            405,
+            path,
+            "method_not_allowed",
+            "method not allowed",
+            started,
+        );
     }}
     if path == "/healthz" {{
         return respond(&mut stream, 200, "application/json", "{{\"status\":\"ok\"}}", started);
@@ -859,14 +887,51 @@ fn handle(mut stream: TcpStream) -> std::io::Result<()> {{
         }}
         Ok(out) => {{
             let err = String::from_utf8_lossy(&out.stderr).trim().to_string();
-            let body = format!("{{{{\"error\":{{:?}}}}}}", err);
-            respond(&mut stream, 500, "application/json", &body, started)
+            respond_error(
+                &mut stream,
+                500,
+                path,
+                "handler_failed",
+                if err.is_empty() {{ "handler failed" }} else {{ &err }},
+                started,
+            )
         }}
         Err(err) => {{
-            let body = format!("{{{{\"error\":{{:?}}}}}}", err.to_string());
-            respond(&mut stream, 500, "application/json", &body, started)
+            respond_error(
+                &mut stream,
+                500,
+                path,
+                "handler_spawn_failed",
+                &err.to_string(),
+                started,
+            )
         }}
     }}
+}}
+
+fn respond_error(
+    stream: &mut TcpStream,
+    status: u16,
+    route: &str,
+    kind: &str,
+    message: &str,
+    started: Instant,
+) -> std::io::Result<()> {{
+    let request_id = request_id(started);
+    let body = format!(
+        "{{{{\"request_id\":{{}},\"route\":{{}},\"kind\":{{}},\"message\":{{}}}}}}",
+        json_string(&request_id),
+        json_string(route),
+        json_string(kind),
+        json_string(message)
+    );
+    write_response(
+        stream,
+        status,
+        "application/json",
+        &body,
+        &request_id,
+    )
 }}
 
 fn respond(
@@ -876,17 +941,36 @@ fn respond(
     body: &str,
     started: Instant,
 ) -> std::io::Result<()> {{
+    let request_id = request_id(started);
+    write_response(stream, status, content_type, body, &request_id)
+}}
+
+fn write_response(
+    stream: &mut TcpStream,
+    status: u16,
+    content_type: &str,
+    body: &str,
+    request_id: &str,
+) -> std::io::Result<()> {{
     let reason = match status {{
         200 => "OK",
+        400 => "Bad Request",
         405 => "Method Not Allowed",
         _ => "Internal Server Error",
     }};
-    let request_id = format!("req-{{:?}}", started.elapsed().as_nanos());
     let response = format!(
         "HTTP/1.1 {{status}} {{reason}}\r\ncontent-type: {{content_type}}\r\ncontent-length: {{}}\r\nx-corvid-request-id: {{request_id}}\r\nconnection: close\r\n\r\n{{body}}",
         body.as_bytes().len()
     );
     stream.write_all(response.as_bytes())
+}}
+
+fn request_id(started: Instant) -> String {{
+    format!("req-{{:?}}", started.elapsed().as_nanos())
+}}
+
+fn json_string(value: &str) -> String {{
+    format!("{{value:?}}")
 }}
 "#
     )
