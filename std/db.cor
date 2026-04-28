@@ -108,6 +108,16 @@ public type DbEffectTag:
     replay_key: String
     effect_meta: EffectEnvelope
 
+public type DbReplaySummary:
+    operation: String
+    driver: String
+    query_fingerprint: String
+    row_count: Int
+    rows_affected: Int
+    redacted: Bool
+    replay_key: String
+    effect_meta: EffectEnvelope
+
 public agent sqlite_open(dsn: String, replay_key: String) -> DbConnection:
     return DbConnection("sqlite", dsn, replay_key, effect_envelope("std.db.open", "", "", "", replay_key))
 
@@ -188,3 +198,9 @@ public agent db_effect_tag(operation: String, replay_key: String) -> DbEffectTag
 
 public agent db_effect_is_write(tag: DbEffectTag) -> Bool:
     return tag.operation == "write" or tag.operation == "migration" or tag.operation == "token" or tag.operation == "audit"
+
+public agent db_replay_summary(operation: String, driver: String, query_fingerprint: String, row_count: Int, rows_affected: Int, replay_key: String) -> DbReplaySummary:
+    return DbReplaySummary(operation, driver, query_fingerprint, row_count, rows_affected, true, replay_key, effect_envelope("std.db.replay", "", driver, query_fingerprint, replay_key))
+
+public agent db_replay_redacted(summary: DbReplaySummary) -> Bool:
+    return summary.redacted
