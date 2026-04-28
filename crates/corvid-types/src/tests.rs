@@ -167,6 +167,46 @@ server refund_api:
     );
 }
 
+#[test]
+fn server_route_dangerous_tool_requires_approval() {
+    let src = r#"
+type Receipt:
+    id: String
+
+tool issue_refund(id: String) -> Receipt dangerous
+
+server refund_api:
+    route POST "/refunds/{id}" -> json Receipt:
+        return issue_refund(path.id)
+"#;
+    let c = check(src);
+    assert!(
+        c.errors.iter().any(|e| matches!(
+            e.kind,
+            TypeErrorKind::UnapprovedDangerousCall { ref tool, .. } if tool == "issue_refund"
+        )),
+        "expected route dangerous-tool approval error, got {:?}",
+        c.errors
+    );
+}
+
+#[test]
+fn server_route_approve_authorizes_dangerous_tool() {
+    let src = r#"
+type Receipt:
+    id: String
+
+tool issue_refund(id: String) -> Receipt dangerous
+
+server refund_api:
+    route POST "/refunds/{id}" -> json Receipt:
+        approve IssueRefund(path.id)
+        return issue_refund(path.id)
+"#;
+    let c = check(src);
+    assert!(c.errors.is_empty(), "errors: {:?}", c.errors);
+}
+
 const MUTATION_APPROVAL_BASE: &str = r#"
 type Receipt:
     id: String

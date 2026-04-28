@@ -319,6 +319,13 @@ catch bad backend env without starting a server.
 - Route manifests mark approval-required routes.
 - Signed server builds refuse incomplete route contract claims.
 
+Implementation convention for 36I: route bodies are checked through the same
+approval-token path as agent bodies. A route-local direct call to a dangerous
+tool without `approve <ToolLabel>(...)` fails typechecking with
+`approval.dangerous_call_requires_token`; the matching approval authorizes the
+call. Imported route claim metadata lands with the route manifest/signing
+slice.
+
 ### 36J Backend Example
 
 - `examples/backend/refund_api` starts locally.

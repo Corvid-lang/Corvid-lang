@@ -1720,7 +1720,7 @@ Each benchmark must separate model-provider latency from Corvid runtime overhead
 - [x] 36F-route-tracing              Every generated-server request emits route, method, status, duration, request ID, and effect metadata as structured trace JSON.
 - [x] 36G-health-readiness-metrics   Generated health/readiness/metrics endpoints report server liveness, readiness, counters, and runtime identity.
 - [x] 36H-config-and-secrets         Typed backend env validation works at server startup and through `corvid doctor` with redacted invalid values.
-- [ ] 36I-approval-effect-integration Dangerous route/tool paths without reachable approval contracts fail before deploy.
+- [x] 36I-approval-effect-integration Dangerous route/tool paths without reachable route-local approval contracts fail before deploy.
 - [ ] 36J-backend-example            `examples/backend/refund_api` runs as a production-shaped Corvid server with tests.
 
 **Done when:** `examples/backend/refund_api` runs as a production-shaped server, passes route tests, emits traces, enforces approval gates, validates env/config through `corvid doctor`, and builds with `corvid build --target=server`.
