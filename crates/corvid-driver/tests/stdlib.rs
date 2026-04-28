@@ -131,6 +131,19 @@ fn std_queue_compiles_as_corvid_source() {
 }
 
 #[test]
+fn std_jobs_compiles_as_corvid_source() {
+    let repo = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(std::path::Path::parent)
+        .expect("repo root");
+    let source_path = repo.join("std").join("jobs.cor");
+    let source = fs::read_to_string(&source_path).expect("std/jobs.cor");
+
+    compile_to_ir_with_config_at_path(&source, &source_path, None)
+        .expect("std.jobs should compile as a standalone Corvid module");
+}
+
+#[test]
 fn std_agent_compiles_as_corvid_source() {
     let repo = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
@@ -348,6 +361,26 @@ agent main() -> Bool:
     queued = queued_job("job-2", "extract", "running", 5, 1.00, "std.ai", "std.queue.job")
     cancel = canceled_job(queued)
     return pending.status == "pending" and queued.status == "running" and cancel.status == "canceled"
+"#,
+    );
+}
+
+#[test]
+fn std_jobs_imported_helpers_typecheck() {
+    assert_imported_helpers_typecheck(
+        "jobs",
+        true,
+        r#"
+import "./std/jobs" use JobInputEnvelope, JobOutputEnvelope, JobStateEnvelope, job_input, job_output, pending_job_state, leased_job_state, running_job_state, succeeded_job_state, job_can_start, job_needs_approval, job_metadata_redacted
+
+agent main() -> Bool:
+    input = job_input("daily_brief", "sha256:input", "DailyBriefInput")
+    output = job_output("sha256:output", "DailyBriefOutput")
+    pending = pending_job_state("job-1", "executive", "daily_brief", 3, 0.25, true, "daily:user-1", "replay-job-1")
+    leased = leased_job_state(pending)
+    running = running_job_state(leased)
+    done = succeeded_job_state(running)
+    return job_can_start(pending) and job_needs_approval(pending) and job_metadata_redacted(input, output) and leased.status == "leased" and running.attempts == 1 and done.status == "succeeded"
 "#,
     );
 }

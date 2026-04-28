@@ -99,6 +99,14 @@ in-process queue foundation for enqueue and cancel operations. Each operation
 emits `std.queue.*` trace events so long-running AI work can be audited and later
 backed by a durable store without changing the job contract.
 
+## `std.jobs`
+
+`std/jobs.cor` defines durable job input, output, and lifecycle-state envelopes
+for persisted backend work. Job metadata carries redacted input/output
+fingerprints, queue name, job kind, status, attempts, budget, approval
+requirement, idempotency key, effect metadata, and replay key so AI work can be
+audited before and after execution.
+
 ## `std.agent`
 
 `std/agent.cor` defines pure typed envelopes for common AI application patterns:

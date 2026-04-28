@@ -1,0 +1,57 @@
+# Standard durable job envelopes.
+
+import "./effects" use EffectEnvelope, effect_envelope
+
+public type JobInputEnvelope:
+    job_kind: String
+    input_fingerprint: String
+    schema_name: String
+    redacted: Bool
+
+public type JobOutputEnvelope:
+    output_fingerprint: String
+    output_kind: String
+    redacted: Bool
+
+public type JobStateEnvelope:
+    id: String
+    queue_name: String
+    job_kind: String
+    status: String
+    attempts: Int
+    max_attempts: Int
+    budget_usd: Float
+    approval_required: Bool
+    idempotency_key: String
+    replay_key: String
+    effect_meta: EffectEnvelope
+
+public agent job_input(job_kind: String, input_fingerprint: String, schema_name: String) -> JobInputEnvelope:
+    return JobInputEnvelope(job_kind, input_fingerprint, schema_name, true)
+
+public agent job_output(output_fingerprint: String, output_kind: String) -> JobOutputEnvelope:
+    return JobOutputEnvelope(output_fingerprint, output_kind, true)
+
+public agent job_state(id: String, queue_name: String, job_kind: String, status: String, attempts: Int, max_attempts: Int, budget_usd: Float, approval_required: Bool, idempotency_key: String, replay_key: String) -> JobStateEnvelope:
+    return JobStateEnvelope(id, queue_name, job_kind, status, attempts, max_attempts, budget_usd, approval_required, idempotency_key, replay_key, effect_envelope("std.jobs.state", "", queue_name, job_kind, replay_key))
+
+public agent pending_job_state(id: String, queue_name: String, job_kind: String, max_attempts: Int, budget_usd: Float, approval_required: Bool, idempotency_key: String, replay_key: String) -> JobStateEnvelope:
+    return job_state(id, queue_name, job_kind, "pending", 0, max_attempts, budget_usd, approval_required, idempotency_key, replay_key)
+
+public agent leased_job_state(job: JobStateEnvelope) -> JobStateEnvelope:
+    return job_state(job.id, job.queue_name, job.job_kind, "leased", job.attempts, job.max_attempts, job.budget_usd, job.approval_required, job.idempotency_key, job.replay_key)
+
+public agent running_job_state(job: JobStateEnvelope) -> JobStateEnvelope:
+    return job_state(job.id, job.queue_name, job.job_kind, "running", job.attempts + 1, job.max_attempts, job.budget_usd, job.approval_required, job.idempotency_key, job.replay_key)
+
+public agent succeeded_job_state(job: JobStateEnvelope) -> JobStateEnvelope:
+    return job_state(job.id, job.queue_name, job.job_kind, "succeeded", job.attempts, job.max_attempts, job.budget_usd, job.approval_required, job.idempotency_key, job.replay_key)
+
+public agent job_can_start(job: JobStateEnvelope) -> Bool:
+    return job.status == "pending" and job.attempts < job.max_attempts
+
+public agent job_needs_approval(job: JobStateEnvelope) -> Bool:
+    return job.approval_required
+
+public agent job_metadata_redacted(input: JobInputEnvelope, output: JobOutputEnvelope) -> Bool:
+    return input.redacted and output.redacted

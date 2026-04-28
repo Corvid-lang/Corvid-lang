@@ -1826,7 +1826,7 @@ Each benchmark must separate model-provider latency from Corvid runtime overhead
 
 **Small-slice breakdown for Phase 38:**
 
-- [ ] 38B1-job-envelope              Add `std.jobs` job/input/output/state envelopes.
+- [x] 38B1-job-envelope              Add `std.jobs` job/input/output/state envelopes.
 - [ ] 38B2-enqueue-command           Add enqueue/run-one runtime path with local persisted state.
 - [ ] 38B3-one-job-test              One persisted job executes once with typed input/output.
 - [ ] 38C1-retry-policy-envelope     Retry/backoff/dead-letter metadata exists in stdlib.
