@@ -118,7 +118,7 @@ pub use catalog::{
 pub use corvid_trace_schema::{TraceEvent, WRITER_INTERPRETER, WRITER_NATIVE};
 pub use db::{
     decode_i64 as db_decode_i64, decode_string as db_decode_string, DbCell, DbDecodeError,
-    DbExecuteResult, DbQueryRows, DbValue, SqliteDbRuntime,
+    DbExecuteResult, DbQueryRows, DbValue, PostgresDbRuntime, SqliteDbRuntime,
 };
 pub use effect_filter::CorvidFindAgentsStatus;
 pub use ensemble::{majority_vote, weighted_vote, EnsembleVoteOutcome};

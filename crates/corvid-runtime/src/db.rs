@@ -55,6 +55,10 @@ pub struct SqliteDbRuntime {
     conn: Mutex<Connection>,
 }
 
+pub struct PostgresDbRuntime {
+    client: Mutex<postgres::Client>,
+}
+
 impl SqliteDbRuntime {
     pub fn open(path: impl AsRef<Path>) -> Result<Self, RuntimeError> {
         let conn = Connection::open(path.as_ref()).map_err(|err| {
@@ -141,6 +145,72 @@ impl SqliteDbRuntime {
     }
 }
 
+impl PostgresDbRuntime {
+    pub fn connect(dsn: &str) -> Result<Self, RuntimeError> {
+        let client = postgres::Client::connect(dsn, postgres::NoTls)
+            .map_err(redacted_postgres_error)?;
+        Ok(Self {
+            client: Mutex::new(client),
+        })
+    }
+
+    pub fn execute(&self, sql: &str, params: &[DbValue]) -> Result<DbExecuteResult, RuntimeError> {
+        let params = params
+            .iter()
+            .map(db_value_to_postgres_param)
+            .collect::<Vec<_>>();
+        let param_refs = params
+            .iter()
+            .map(|value| value as &(dyn postgres::types::ToSql + Sync))
+            .collect::<Vec<_>>();
+        let rows_affected = self
+            .client
+            .lock()
+            .unwrap()
+            .execute(sql, &param_refs)
+            .map_err(redacted_postgres_error)?;
+        Ok(DbExecuteResult { rows_affected })
+    }
+
+    pub fn query(&self, sql: &str, params: &[DbValue]) -> Result<DbQueryRows, RuntimeError> {
+        let params = params
+            .iter()
+            .map(db_value_to_postgres_param)
+            .collect::<Vec<_>>();
+        let param_refs = params
+            .iter()
+            .map(|value| value as &(dyn postgres::types::ToSql + Sync))
+            .collect::<Vec<_>>();
+        let rows = self
+            .client
+            .lock()
+            .unwrap()
+            .query(sql, &param_refs)
+            .map_err(redacted_postgres_error)?;
+        let mut collected = Vec::new();
+        for row in rows {
+            let mut cells = BTreeMap::new();
+            for column in row.columns() {
+                let name = column.name().to_string();
+                let value = postgres_cell_value(&row, &name);
+                cells.insert(
+                    name,
+                    DbCell {
+                        kind: value.kind().to_string(),
+                        value,
+                        redacted: false,
+                    },
+                );
+            }
+            collected.push(cells);
+        }
+        Ok(DbQueryRows {
+            row_count: collected.len(),
+            rows: collected,
+        })
+    }
+}
+
 pub fn decode_string(
     row: &BTreeMap<String, DbCell>,
     field: &str,
@@ -190,6 +260,68 @@ fn db_value_to_sql_value(value: &DbValue) -> rusqlite::types::Value {
     }
 }
 
+#[derive(Debug)]
+enum PostgresParam {
+    Null(Option<String>),
+    Integer(i64),
+    Float(f64),
+    Text(String),
+    Bool(bool),
+}
+
+impl postgres::types::ToSql for PostgresParam {
+    fn to_sql(
+        &self,
+        ty: &postgres::types::Type,
+        out: &mut postgres::types::private::BytesMut,
+    ) -> Result<postgres::types::IsNull, Box<dyn std::error::Error + Sync + Send>> {
+        match self {
+            Self::Null(value) => value.to_sql(ty, out),
+            Self::Integer(value) => value.to_sql(ty, out),
+            Self::Float(value) => value.to_sql(ty, out),
+            Self::Text(value) => value.to_sql(ty, out),
+            Self::Bool(value) => value.to_sql(ty, out),
+        }
+    }
+
+    fn accepts(_ty: &postgres::types::Type) -> bool {
+        true
+    }
+
+    postgres::types::to_sql_checked!();
+}
+
+fn db_value_to_postgres_param(value: &DbValue) -> PostgresParam {
+    match value {
+        DbValue::Null => PostgresParam::Null(None),
+        DbValue::Integer(value) => PostgresParam::Integer(*value),
+        DbValue::Float(value) => PostgresParam::Float(*value),
+        DbValue::Text(value) => PostgresParam::Text(value.clone()),
+        DbValue::Bool(value) => PostgresParam::Bool(*value),
+    }
+}
+
+fn postgres_cell_value(row: &postgres::Row, name: &str) -> DbValue {
+    if let Ok(value) = row.try_get::<_, Option<String>>(name) {
+        return value.map(DbValue::Text).unwrap_or(DbValue::Null);
+    }
+    if let Ok(value) = row.try_get::<_, Option<i64>>(name) {
+        return value.map(DbValue::Integer).unwrap_or(DbValue::Null);
+    }
+    if let Ok(value) = row.try_get::<_, Option<i32>>(name) {
+        return value
+            .map(|value| DbValue::Integer(i64::from(value)))
+            .unwrap_or(DbValue::Null);
+    }
+    if let Ok(value) = row.try_get::<_, Option<f64>>(name) {
+        return value.map(DbValue::Float).unwrap_or(DbValue::Null);
+    }
+    if let Ok(value) = row.try_get::<_, Option<bool>>(name) {
+        return value.map(DbValue::Bool).unwrap_or(DbValue::Null);
+    }
+    DbValue::Text("<unsupported:redacted>".to_string())
+}
+
 fn db_value_from_ref(value: rusqlite::types::ValueRef<'_>) -> DbValue {
     match value {
         rusqlite::types::ValueRef::Null => DbValue::Null,
@@ -204,6 +336,10 @@ fn db_value_from_ref(value: rusqlite::types::ValueRef<'_>) -> DbValue {
 
 fn redacted_sql_error(err: rusqlite::Error) -> RuntimeError {
     RuntimeError::Other(format!("std.db sqlite error: {err}; values redacted"))
+}
+
+fn redacted_postgres_error(err: postgres::Error) -> RuntimeError {
+    RuntimeError::Other(format!("std.db postgres error: {err}; values redacted"))
 }
 
 #[cfg(test)]
@@ -270,5 +406,18 @@ mod tests {
         assert_eq!(missing.received_kind, "missing");
         let wrong = decode_string(&rows.rows[0], "id").expect_err("wrong kind");
         assert_eq!(wrong.received_kind, "Int");
+    }
+
+    #[test]
+    fn postgres_runtime_uses_real_driver_and_redacts_connection_error() {
+        let err = match PostgresDbRuntime::connect(
+            "host=127.0.0.1 port=1 user=corvid dbname=corvid connect_timeout=1",
+        ) {
+            Ok(_) => panic!("port 1 should not accept postgres"),
+            Err(err) => err,
+        };
+        let rendered = err.to_string();
+        assert!(rendered.contains("std.db postgres error"), "{rendered}");
+        assert!(rendered.contains("values redacted"), "{rendered}");
     }
 }

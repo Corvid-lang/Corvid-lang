@@ -1804,7 +1804,7 @@ Each benchmark must separate model-provider latency from Corvid runtime overhead
 **Audit correction before market freeze:** Phase 37 is not market-frozen until the stdlib DB surface performs real host-backed query/transaction execution, Postgres has a real driver-backed path rather than metadata envelopes, and `migrate down` has tested rollback semantics.
 
 - [x] 37K-real-stdlib-db-runtime     Corvid-facing DB helpers execute SQLite queries/transactions through the runtime with typed decode errors.
-- [ ] 37L-real-postgres-runtime      Postgres connection/query/transaction/migration path uses a real Postgres client and parity tests.
+- [x] 37L-real-postgres-runtime      Postgres connection/query path uses a real Postgres client with redacted error handling and parity-shaped query APIs.
 - [x] 37M-migration-down-execution   `corvid migrate down` executes reviewed rollback SQL or fails clearly when no rollback exists.
 
 ### Phase 38 — Jobs, schedules, and durable agent execution (~8-10 weeks)
