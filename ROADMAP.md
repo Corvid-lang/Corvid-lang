@@ -1780,7 +1780,7 @@ Each benchmark must separate model-provider latency from Corvid runtime overhead
 - [x] 37E4-drift-detection           Detect changed, missing, duplicate, and out-of-order migrations with CI-safe exit codes.
 - [x] 37E5-dry-run-report            Dry-run reports pending/applied/drifted migrations without mutating state.
 - [x] 37F1-audit-schema-envelope     Add `std.db` audit-log record envelopes for actor/action/model/tool/approval/cost/trace/replay.
-- [ ] 37F2-audit-write-helper        Add helpers/tests for approval-aware audit writes and redacted values.
+- [x] 37F2-audit-write-helper        Add helpers/tests for approval-aware audit writes and redacted values.
 - [ ] 37F3-audit-example             Add a minimal backend audit-log example and regression test.
 - [ ] 37G1-token-envelope            Add token reference/encrypted-token metadata envelopes.
 - [ ] 37G2-host-key-doctor           `corvid doctor` validates token encryption key presence/shape without printing it.

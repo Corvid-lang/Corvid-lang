@@ -69,6 +69,13 @@ public type DbAuditRecord:
     replay_key: String
     effect_meta: EffectEnvelope
 
+public type DbAuditWrite:
+    record: DbAuditRecord
+    approval_required: Bool
+    value_redacted: Bool
+    replay_key: String
+    effect_meta: EffectEnvelope
+
 public agent sqlite_open(dsn: String, replay_key: String) -> DbConnection:
     return DbConnection("sqlite", dsn, replay_key, effect_envelope("std.db.open", "", "", "", replay_key))
 
@@ -119,3 +126,9 @@ public agent db_audit_record(actor: String, action: String, subject: String, rou
 
 public agent db_audit_approved(record: DbAuditRecord) -> Bool:
     return record.approval_state == "approved"
+
+public agent db_audit_write(record: DbAuditRecord, approval_required: Bool, value_redacted: Bool) -> DbAuditWrite:
+    return DbAuditWrite(record, approval_required, value_redacted, record.replay_key, effect_envelope("std.db.audit.write", "", record.actor, record.subject, record.replay_key))
+
+public agent db_audit_write_safe(write: DbAuditWrite) -> Bool:
+    return write.value_redacted and (not write.approval_required or write.record.approval_state == "approved")
