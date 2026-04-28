@@ -326,6 +326,90 @@ fn jobs_idempotency_key_collapses_duplicate_enqueue() {
 }
 
 #[test]
+fn jobs_checkpoint_cli_records_agent_tool_and_partial_outputs() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let state = dir.path().join("jobs.sqlite");
+
+    let enqueue = Command::new(corvid_bin())
+        .args([
+            "jobs",
+            "enqueue",
+            "--state",
+            state.to_str().unwrap(),
+            "--task",
+            "agent_run",
+            "--payload",
+            "{\"goal\":\"brief\"}",
+        ])
+        .output()
+        .expect("run jobs enqueue");
+    assert!(
+        enqueue.status.success(),
+        "enqueue failed:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&enqueue.stdout),
+        String::from_utf8_lossy(&enqueue.stderr)
+    );
+
+    for (kind, label, payload) in [
+        ("agent-step", "plan", "{\"step\":1}"),
+        ("tool-result", "gmail.search", "{\"result_count\":3}"),
+        ("partial-output", "draft", "{\"chars\":120}"),
+    ] {
+        let checkpoint = Command::new(corvid_bin())
+            .args([
+                "jobs",
+                "checkpoint",
+                "add",
+                "--state",
+                state.to_str().unwrap(),
+                "--job",
+                "job_1",
+                "--kind",
+                kind,
+                "--label",
+                label,
+                "--payload",
+                payload,
+                "--payload-fingerprint",
+                "sha256:redacted",
+            ])
+            .output()
+            .expect("run checkpoint add");
+        assert!(
+            checkpoint.status.success(),
+            "checkpoint failed:\nstdout={}\nstderr={}",
+            String::from_utf8_lossy(&checkpoint.stdout),
+            String::from_utf8_lossy(&checkpoint.stderr)
+        );
+    }
+
+    let list = Command::new(corvid_bin())
+        .args([
+            "jobs",
+            "checkpoint",
+            "list",
+            "--state",
+            state.to_str().unwrap(),
+            "--job",
+            "job_1",
+        ])
+        .output()
+        .expect("run checkpoint list");
+    assert!(
+        list.status.success(),
+        "checkpoint list failed:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&list.stdout),
+        String::from_utf8_lossy(&list.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&list.stdout);
+    assert!(stdout.contains("checkpoint_count: 3"), "{stdout}");
+    assert!(stdout.contains("kind: agent_step"), "{stdout}");
+    assert!(stdout.contains("kind: tool_result"), "{stdout}");
+    assert!(stdout.contains("kind: partial_output"), "{stdout}");
+    assert!(stdout.contains("label: gmail.search"), "{stdout}");
+}
+
+#[test]
 fn jobs_dlq_inspects_dead_lettered_jobs() {
     let dir = tempfile::tempdir().expect("tempdir");
     let state = dir.path().join("jobs.sqlite");

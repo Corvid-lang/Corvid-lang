@@ -58,7 +58,7 @@ use corvid_differential_verify::{
     render_corpus_grid, render_report, shrink_program, verify_corpus,
 };
 use corvid_runtime::queue::{
-    DurableQueueRuntime, QueueJob, QueueScheduleManifest, ScheduleMissedPolicy,
+    DurableQueueRuntime, JobCheckpointKind, QueueJob, QueueScheduleManifest, ScheduleMissedPolicy,
 };
 use cost_frontier::{build_frontier, render_frontier as render_cost_frontier, CostFrontierOptions};
 use routing_report::{build_report, render_report as render_routing_report, RoutingReportOptions};
@@ -1333,6 +1333,26 @@ fn main() -> ExitCode {
                 } => cmd_jobs_limit_set(&state, scope, task.as_deref(), max_leased),
                 JobsLimitCommand::List { state } => cmd_jobs_limit_list(&state),
             },
+            JobsCommand::Checkpoint { command } => match command {
+                JobsCheckpointCommand::Add {
+                    state,
+                    job,
+                    kind,
+                    label,
+                    payload,
+                    payload_fingerprint,
+                } => cmd_jobs_checkpoint_add(
+                    &state,
+                    &job,
+                    kind,
+                    &label,
+                    &payload,
+                    payload_fingerprint,
+                ),
+                JobsCheckpointCommand::List { state, job } => {
+                    cmd_jobs_checkpoint_list(&state, &job)
+                }
+            },
             JobsCommand::Dlq { state } => cmd_jobs_dlq(&state),
         },
         Some(Command::Bench { command }) => match command {
@@ -1722,6 +1742,55 @@ fn cmd_jobs_limit_list(state: &Path) -> Result<u8> {
         );
     }
     Ok(0)
+}
+
+fn cmd_jobs_checkpoint_add(
+    state: &Path,
+    job_id: &str,
+    kind: CheckpointKindArg,
+    label: &str,
+    payload: &str,
+    payload_fingerprint: Option<String>,
+) -> Result<u8> {
+    let queue = DurableQueueRuntime::open(state)?;
+    let payload = serde_json::from_str(payload).context("checkpoint payload must be valid JSON")?;
+    let checkpoint = queue.record_checkpoint(
+        job_id,
+        kind.into(),
+        label,
+        payload,
+        payload_fingerprint,
+    )?;
+    println!("corvid jobs checkpoint add");
+    println!("state: {}", state.display());
+    print_checkpoint_summary(&checkpoint);
+    Ok(0)
+}
+
+fn cmd_jobs_checkpoint_list(state: &Path, job_id: &str) -> Result<u8> {
+    let queue = DurableQueueRuntime::open(state)?;
+    let checkpoints = queue.list_checkpoints(job_id)?;
+    println!("corvid jobs checkpoint list");
+    println!("state: {}", state.display());
+    println!("job: {job_id}");
+    println!("checkpoint_count: {}", checkpoints.len());
+    for checkpoint in checkpoints {
+        print_checkpoint_summary(&checkpoint);
+    }
+    Ok(0)
+}
+
+fn print_checkpoint_summary(checkpoint: &corvid_runtime::queue::JobCheckpoint) {
+    println!("checkpoint: {}", checkpoint.id);
+    println!("job: {}", checkpoint.job_id);
+    println!("sequence: {}", checkpoint.sequence);
+    println!("kind: {}", checkpoint.kind.as_str());
+    println!("label: {}", checkpoint.label);
+    println!(
+        "payload_fingerprint: {}",
+        checkpoint.payload_fingerprint.as_deref().unwrap_or("")
+    );
+    println!("created_ms: {}", checkpoint.created_ms);
 }
 
 fn print_schedule_summary(schedule: &QueueScheduleManifest) {
@@ -3106,11 +3175,67 @@ enum JobsCommand {
         #[command(subcommand)]
         command: JobsLimitCommand,
     },
+    /// Record and inspect durable job checkpoints.
+    Checkpoint {
+        #[command(subcommand)]
+        command: JobsCheckpointCommand,
+    },
     /// Inspect terminally failed local jobs.
     Dlq {
         /// SQLite state file used by the durable local queue.
         #[arg(long, value_name = "PATH", default_value = "target/corvid-jobs.sqlite")]
         state: PathBuf,
+    },
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum CheckpointKindArg {
+    AgentStep,
+    ToolResult,
+    PartialOutput,
+}
+
+impl From<CheckpointKindArg> for JobCheckpointKind {
+    fn from(value: CheckpointKindArg) -> Self {
+        match value {
+            CheckpointKindArg::AgentStep => JobCheckpointKind::AgentStep,
+            CheckpointKindArg::ToolResult => JobCheckpointKind::ToolResult,
+            CheckpointKindArg::PartialOutput => JobCheckpointKind::PartialOutput,
+        }
+    }
+}
+
+#[derive(Subcommand)]
+enum JobsCheckpointCommand {
+    /// Record a durable checkpoint for a job.
+    Add {
+        /// SQLite state file used by the durable local queue.
+        #[arg(long, value_name = "PATH", default_value = "target/corvid-jobs.sqlite")]
+        state: PathBuf,
+        /// Job id.
+        #[arg(long)]
+        job: String,
+        /// Checkpoint kind.
+        #[arg(long, value_enum)]
+        kind: CheckpointKindArg,
+        /// Human-readable step/tool/output label.
+        #[arg(long)]
+        label: String,
+        /// Redacted JSON payload for the checkpoint.
+        #[arg(long, default_value = "{}")]
+        payload: String,
+        /// Redacted payload fingerprint.
+        #[arg(long)]
+        payload_fingerprint: Option<String>,
+    },
+    /// List durable checkpoints for a job.
+    List {
+        /// SQLite state file used by the durable local queue.
+        #[arg(long, value_name = "PATH", default_value = "target/corvid-jobs.sqlite")]
+        state: PathBuf,
+        /// Job id.
+        #[arg(long)]
+        job: String,
     },
 }
 

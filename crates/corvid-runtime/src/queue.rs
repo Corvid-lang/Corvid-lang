@@ -121,6 +121,35 @@ pub struct QueueConcurrencyLimit {
     pub updated_ms: u64,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum JobCheckpointKind {
+    AgentStep,
+    ToolResult,
+    PartialOutput,
+}
+
+impl JobCheckpointKind {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::AgentStep => "agent_step",
+            Self::ToolResult => "tool_result",
+            Self::PartialOutput => "partial_output",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct JobCheckpoint {
+    pub id: String,
+    pub job_id: String,
+    pub sequence: u64,
+    pub kind: JobCheckpointKind,
+    pub label: String,
+    pub payload: Value,
+    pub payload_fingerprint: Option<String>,
+    pub created_ms: u64,
+}
+
 #[derive(Clone, Default)]
 pub struct QueueRuntime {
     next_id: Arc<AtomicU64>,
@@ -836,6 +865,90 @@ impl DurableQueueRuntime {
         Ok(limits)
     }
 
+    pub fn record_checkpoint(
+        &self,
+        job_id: &str,
+        kind: JobCheckpointKind,
+        label: impl Into<String>,
+        payload: Value,
+        payload_fingerprint: Option<String>,
+    ) -> Result<JobCheckpoint, RuntimeError> {
+        if self.get(job_id)?.is_none() {
+            return Err(RuntimeError::Other(format!("std.queue job `{job_id}` not found")));
+        }
+        let label = label.into();
+        if label.trim().is_empty() {
+            return Err(RuntimeError::Other(
+                "std.queue checkpoint label must not be empty".to_string(),
+            ));
+        }
+        let mut conn = self.conn.lock().unwrap();
+        let tx = conn
+            .transaction()
+            .map_err(|err| RuntimeError::Other(format!("failed to start checkpoint transaction: {err}")))?;
+        let sequence = tx
+            .query_row(
+                "select coalesce(max(sequence), 0) + 1 from queue_job_checkpoints where job_id = ?1",
+                params![job_id],
+                |row| row.get::<_, i64>(0),
+            )
+            .map_err(|err| RuntimeError::Other(format!("failed to allocate checkpoint sequence: {err}")))?
+            as u64;
+        let id = format!("{job_id}:checkpoint:{sequence}");
+        let payload_json = serde_json::to_string(&payload).map_err(|err| {
+            RuntimeError::Other(format!("failed to serialize checkpoint payload: {err}"))
+        })?;
+        let now = now_ms();
+        tx.execute(
+            "insert into queue_job_checkpoints
+             (id, job_id, sequence, kind, label, payload_json, payload_fingerprint, created_ms)
+             values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            params![
+                id,
+                job_id,
+                sequence as i64,
+                kind.as_str(),
+                label,
+                payload_json,
+                payload_fingerprint,
+                now as i64,
+            ],
+        )
+        .map_err(|err| RuntimeError::Other(format!("failed to insert checkpoint: {err}")))?;
+        tx.commit()
+            .map_err(|err| RuntimeError::Other(format!("failed to commit checkpoint: {err}")))?;
+        Ok(JobCheckpoint {
+            id,
+            job_id: job_id.to_string(),
+            sequence,
+            kind,
+            label,
+            payload,
+            payload_fingerprint,
+            created_ms: now,
+        })
+    }
+
+    pub fn list_checkpoints(&self, job_id: &str) -> Result<Vec<JobCheckpoint>, RuntimeError> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn
+            .prepare(
+                "select id, job_id, sequence, kind, label, payload_json, payload_fingerprint, created_ms
+                 from queue_job_checkpoints where job_id = ?1 order by sequence",
+            )
+            .map_err(|err| RuntimeError::Other(format!("failed to prepare checkpoint list: {err}")))?;
+        let rows = stmt
+            .query_map(params![job_id], read_checkpoint_row)
+            .map_err(|err| RuntimeError::Other(format!("failed to list checkpoints: {err}")))?;
+        let mut checkpoints = Vec::new();
+        for row in rows {
+            checkpoints.push(
+                row.map_err(|err| RuntimeError::Other(format!("failed to decode checkpoint: {err}")))?,
+            );
+        }
+        Ok(checkpoints)
+    }
+
     fn set_concurrency_limit(
         &self,
         scope: &str,
@@ -1204,7 +1317,18 @@ impl DurableQueueRuntime {
                     scope text primary key,
                     max_leased integer not null,
                     updated_ms integer not null
-                );",
+                );
+                create table if not exists queue_job_checkpoints (
+                    id text primary key,
+                    job_id text not null,
+                    sequence integer not null,
+                    kind text not null,
+                    label text not null,
+                    payload_json text not null,
+                    payload_fingerprint text,
+                    created_ms integer not null
+                );
+                create unique index if not exists queue_job_checkpoints_sequence on queue_job_checkpoints(job_id, sequence);",
             )
             .map_err(|err| {
                 RuntimeError::Other(format!("failed to initialize durable queue: {err}"))
@@ -1324,6 +1448,20 @@ fn read_schedule_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<QueueScheduleM
     })
 }
 
+fn read_checkpoint_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<JobCheckpoint> {
+    let payload_json: String = row.get(5)?;
+    Ok(JobCheckpoint {
+        id: row.get(0)?,
+        job_id: row.get(1)?,
+        sequence: row.get::<_, i64>(2)? as u64,
+        kind: parse_checkpoint_kind(&row.get::<_, String>(3)?),
+        label: row.get(4)?,
+        payload: serde_json::from_str(&payload_json).unwrap_or(Value::Null),
+        payload_fingerprint: row.get(6)?,
+        created_ms: row.get::<_, i64>(7)? as u64,
+    })
+}
+
 fn parse_status(status: &str) -> QueueJobStatus {
     match status {
         "leased" => QueueJobStatus::Leased,
@@ -1342,6 +1480,14 @@ fn parse_missed_policy(policy: &str) -> ScheduleMissedPolicy {
         "skip_missed" => ScheduleMissedPolicy::SkipMissed,
         "enqueue_all_bounded" => ScheduleMissedPolicy::EnqueueAllBounded,
         _ => ScheduleMissedPolicy::FireOnceOnRecovery,
+    }
+}
+
+fn parse_checkpoint_kind(kind: &str) -> JobCheckpointKind {
+    match kind {
+        "tool_result" => JobCheckpointKind::ToolResult,
+        "partial_output" => JobCheckpointKind::PartialOutput,
+        _ => JobCheckpointKind::AgentStep,
     }
 }
 
@@ -1722,6 +1868,51 @@ mod tests {
         assert!(duplicate.payload.get("changed").is_none());
         assert_eq!(duplicate.idempotency_key.as_deref(), Some("charge:i1"));
         assert_eq!(queue.list().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn durable_queue_records_ordered_agent_checkpoints() {
+        let queue = DurableQueueRuntime::open_in_memory().unwrap();
+        let job = queue
+            .enqueue("agent_run", serde_json::json!({"goal": "brief"}), 1, 0.5, None, None)
+            .unwrap();
+
+        let step = queue
+            .record_checkpoint(
+                &job.id,
+                JobCheckpointKind::AgentStep,
+                "plan",
+                serde_json::json!({"step": 1}),
+                Some("sha256:plan".to_string()),
+            )
+            .unwrap();
+        let tool = queue
+            .record_checkpoint(
+                &job.id,
+                JobCheckpointKind::ToolResult,
+                "gmail.search",
+                serde_json::json!({"result_count": 3}),
+                Some("sha256:gmail".to_string()),
+            )
+            .unwrap();
+        let partial = queue
+            .record_checkpoint(
+                &job.id,
+                JobCheckpointKind::PartialOutput,
+                "draft",
+                serde_json::json!({"chars": 120}),
+                None,
+            )
+            .unwrap();
+
+        assert_eq!(step.sequence, 1);
+        assert_eq!(tool.sequence, 2);
+        assert_eq!(partial.sequence, 3);
+        let checkpoints = queue.list_checkpoints(&job.id).unwrap();
+        assert_eq!(checkpoints.len(), 3);
+        assert_eq!(checkpoints[0].kind, JobCheckpointKind::AgentStep);
+        assert_eq!(checkpoints[1].label, "gmail.search");
+        assert_eq!(checkpoints[2].payload["chars"], 120);
     }
 
     #[test]
