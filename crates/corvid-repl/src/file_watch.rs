@@ -105,12 +105,14 @@ impl FileWatchManager {
         changes
     }
 
+    #[allow(dead_code)]
     pub fn is_watching(&self, path: &Path) -> bool {
         path.canonicalize()
             .map(|c| self.watched.contains_key(&c))
             .unwrap_or(false)
     }
 
+    #[allow(dead_code)]
     pub fn watched_paths(&self) -> Vec<PathBuf> {
         self.watched.keys().cloned().collect()
     }

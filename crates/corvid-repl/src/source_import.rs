@@ -2,7 +2,7 @@
 //! REPL session, with selective import and automatic dependency
 //! resolution.
 
-use corvid_ast::{Decl, File, Span};
+use corvid_ast::{Decl, File};
 use corvid_resolve::{build_dep_graph, decl_name, resolve, DepGraph, Resolved};
 use corvid_syntax::{lex, parse_file};
 use std::collections::HashSet;

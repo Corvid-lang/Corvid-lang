@@ -25,6 +25,7 @@ fn env_i64(key: &str) -> i64 {
         })
 }
 
+#[allow(dead_code)]
 fn env_bool(key: &str) -> bool {
     match std::env::var(key).ok().as_deref() {
         Some("1") | Some("true") | Some("True") => true,
@@ -35,6 +36,7 @@ fn env_bool(key: &str) -> bool {
     }
 }
 
+#[allow(dead_code)]
 fn env_f64(key: &str) -> f64 {
     std::env::var(key)
         .ok()
@@ -46,6 +48,7 @@ fn env_f64(key: &str) -> f64 {
         })
 }
 
+#[allow(dead_code)]
 fn env_string(key: &str) -> String {
     std::env::var(key).unwrap_or_else(|_| {
         panic!("corvid-test-tools: env var `{key}` is missing")

@@ -96,6 +96,7 @@ pub(super) struct StackComponent {
     pub signature_status: SignatureStatus,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub(super) enum SignatureStatus {
@@ -158,6 +159,7 @@ pub(super) struct Anomaly {
     pub fingerprint: String,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub(super) enum AnomalyClass {
@@ -194,6 +196,7 @@ pub(super) enum AnomalyClass {
     PredictionMismatch,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub(super) enum AnomalySeverity {

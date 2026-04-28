@@ -742,6 +742,7 @@ impl Repl {
         }
     }
 
+    #[allow(dead_code)]
     fn eval_turn_recording<W: Write>(
         &mut self,
         ir: &IrFile,

@@ -83,6 +83,7 @@ pub(super) struct DsseEnvelope {
 }
 
 /// Errors surfaced by the signing / verification path.
+#[allow(dead_code)]
 #[derive(Debug)]
 pub(super) enum SignError {
     KeyFileRead {
@@ -307,6 +308,7 @@ pub(super) fn sign_envelope(
 /// Backward-compatible wrapper: sign a Corvid receipt payload
 /// with the `application/vnd.corvid-receipt+json` payloadType.
 /// Retained so existing callers + tests don't break.
+#[cfg(test)]
 pub(super) fn sign_receipt(payload: &[u8], key: &SigningKey, key_id: &str) -> DsseEnvelope {
     sign_envelope(payload, CORVID_RECEIPT_PAYLOAD_TYPE, key, key_id)
 }

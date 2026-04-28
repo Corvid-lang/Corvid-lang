@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use async_trait::async_trait;
 use corvid_runtime::TraceEvent;
 use corvid_shadow_daemon::{

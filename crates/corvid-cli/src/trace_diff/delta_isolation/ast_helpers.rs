@@ -15,8 +15,8 @@
 //! one function that does need the compiler.
 
 use corvid_ast::{AgentDecl, Decl, File};
-
-use super::super::narrative::compute_diff_summary;
+#[cfg(test)]
+use crate::trace_diff::compute_diff_summary;
 
 /// Find the first agent declaration with the given name. Returns
 /// `None` when no top-level `agent <name>` declaration exists —

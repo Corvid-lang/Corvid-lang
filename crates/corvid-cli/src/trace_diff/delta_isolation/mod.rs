@@ -211,6 +211,7 @@ pub(crate) struct IsolationInput {
 /// Errors from the isolation pipeline. Each variant carries
 /// enough context for the caller's attribution record to
 /// surface a specific reason for a non-minimal subset.
+#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum IsolationError {
     /// Lexing or parsing the input source failed. Attribution

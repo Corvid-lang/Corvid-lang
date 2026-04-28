@@ -12,6 +12,7 @@ use std::collections::{BTreeSet, HashMap};
 #[derive(Debug, Clone)]
 pub struct ApprovalAnalysis {
     pub contract: AbiApprovalContract,
+    #[allow(dead_code)]
     pub dangerous_targets: Vec<String>,
 }
 

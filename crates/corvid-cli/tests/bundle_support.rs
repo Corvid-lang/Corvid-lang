@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use base64::Engine as _;
 use corvid_trace_schema::{write_events_to_path, TraceEvent, SCHEMA_VERSION, WRITER_NATIVE};
 use ed25519_dalek::{Signer, SigningKey};

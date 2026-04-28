@@ -178,6 +178,7 @@ mod tests {
         path
     }
 
+    #[allow(dead_code)]
     fn edge(
         node_id: &str,
         parents: &[&str],

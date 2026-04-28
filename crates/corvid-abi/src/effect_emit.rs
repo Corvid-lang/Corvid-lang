@@ -5,6 +5,7 @@ use corvid_ast::DimensionValue;
 use corvid_types::{ComposedProfile, EffectProfile};
 use serde_json::{Number, Value};
 
+#[allow(dead_code)]
 pub fn emit_effects_from_profile(profile: &EffectProfile) -> AbiEffects {
     let mut out = AbiEffects::default();
     for (name, value) in &profile.dimensions {

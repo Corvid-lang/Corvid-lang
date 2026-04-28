@@ -82,7 +82,9 @@ pub(crate) fn store(
 
 pub(crate) struct StoredReceipt {
     pub(crate) hash: String,
+    #[allow(dead_code)]
     pub(crate) receipt_path: PathBuf,
+    #[allow(dead_code)]
     pub(crate) envelope_path: PathBuf,
 }
 

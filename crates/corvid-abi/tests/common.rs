@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use corvid_abi::{emit_abi, render_descriptor_json, CorvidAbi, EmitOptions};
 use corvid_ast::File;
 use corvid_ir::{lower, IrFile};

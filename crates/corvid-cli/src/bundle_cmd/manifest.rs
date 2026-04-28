@@ -297,6 +297,7 @@ pub fn compare_bytes(label: &str, expected: &[u8], actual: &[u8]) -> Result<()> 
     );
 }
 
+#[allow(dead_code)]
 pub fn compare_paths(label: &str, expected_path: &Path, actual_path: &Path) -> Result<()> {
     let expected =
         fs::read(expected_path).with_context(|| format!("read expected `{}`", expected_path.display()))?;

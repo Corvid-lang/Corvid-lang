@@ -40,7 +40,9 @@ pub struct TraceMocks {
 pub struct TraceImportResult {
     pub decls: Vec<Decl>,
     pub runtime: Runtime,
+    #[allow(dead_code)]
     pub tool_count: usize,
+    #[allow(dead_code)]
     pub prompt_count: usize,
     pub tool_names: Vec<String>,
     pub prompt_names: Vec<String>,
