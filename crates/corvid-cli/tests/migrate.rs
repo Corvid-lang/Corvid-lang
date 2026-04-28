@@ -42,6 +42,57 @@ fn migrate_status_lists_ordered_sql_files_with_checksums() {
 }
 
 #[test]
+fn migrate_up_records_applied_state_and_status_reads_it() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let migrations = dir.path().join("migrations");
+    let state = dir.path().join("target").join("corvid-migrations.json");
+    std::fs::create_dir_all(&migrations).expect("migrations dir");
+    std::fs::write(migrations.join("0001_init.sql"), "create table users(id text);\n")
+        .expect("write migration");
+
+    let up = Command::new(corvid_bin())
+        .args([
+            "migrate",
+            "up",
+            "--dir",
+            migrations.to_str().unwrap(),
+            "--state",
+            state.to_str().unwrap(),
+        ])
+        .output()
+        .expect("run migrate up");
+    assert!(
+        up.status.success(),
+        "up failed:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&up.stdout),
+        String::from_utf8_lossy(&up.stderr)
+    );
+    let up_stdout = String::from_utf8_lossy(&up.stdout);
+    assert!(up_stdout.contains("state_updated: true"), "{up_stdout}");
+    assert!(state.exists(), "state file should be written");
+
+    let status = Command::new(corvid_bin())
+        .args([
+            "migrate",
+            "status",
+            "--dir",
+            migrations.to_str().unwrap(),
+            "--state",
+            state.to_str().unwrap(),
+        ])
+        .output()
+        .expect("run migrate status");
+    assert!(
+        status.status.success(),
+        "status failed:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&status.stdout),
+        String::from_utf8_lossy(&status.stderr)
+    );
+    let status_stdout = String::from_utf8_lossy(&status.stdout);
+    assert!(status_stdout.contains("status:applied"), "{status_stdout}");
+}
+
+#[test]
 fn migrate_help_lists_status_up_down() {
     let out = Command::new(corvid_bin())
         .args(["migrate", "--help"])
@@ -87,6 +138,6 @@ fn migrate_subcommands_accept_dry_run_shape() {
         let stdout = String::from_utf8_lossy(&out.stdout);
         assert!(stdout.contains(&format!("corvid migrate {action}")), "{stdout}");
         assert!(stdout.contains("dry_run: true"), "{stdout}");
-        assert!(stdout.contains("no state was changed"), "{stdout}");
+        assert!(stdout.contains("state_updated: false"), "{stdout}");
     }
 }

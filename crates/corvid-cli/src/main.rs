@@ -60,6 +60,7 @@ use corvid_differential_verify::{
 use cost_frontier::{build_frontier, render_frontier as render_cost_frontier, CostFrontierOptions};
 use routing_report::{build_report, render_report as render_routing_report, RoutingReportOptions};
 use sha2::{Digest, Sha256};
+use serde::{Deserialize, Serialize};
 
 #[allow(unused_imports)]
 use corvid_driver::{
@@ -1284,6 +1285,7 @@ fn cmd_new(name: &str) -> Result<u8> {
 
 fn cmd_migrate(action: &str, dir: &Path, state: &Path, dry_run: bool) -> Result<u8> {
     let migrations = scan_migration_files(dir)?;
+    let mut migration_state = load_migration_state(state)?;
     println!("corvid migrate {action}");
     println!("migrations: {}", dir.display());
     println!("state: {}", state.display());
@@ -1293,19 +1295,49 @@ fn cmd_migrate(action: &str, dir: &Path, state: &Path, dry_run: bool) -> Result<
     } else {
         println!("migrations_found: {}", migrations.len());
         for migration in migrations {
+            let applied = migration_state
+                .migrations
+                .iter()
+                .any(|applied| applied.name == migration.name && applied.sha256 == migration.sha256);
             println!(
-                "migration: {} sha256:{}",
-                migration.name, migration.sha256
+                "migration: {} sha256:{} status:{}",
+                migration.name,
+                migration.sha256,
+                if applied { "applied" } else { "pending" }
             );
+            if action == "up" && !dry_run && !applied {
+                migration_state.migrations.push(AppliedMigration {
+                    name: migration.name,
+                    sha256: migration.sha256,
+                    applied_at: now_unix_seconds(),
+                });
+            }
         }
     }
-    println!("state persistence lands in 37E3; no state was changed");
+    if action == "up" && !dry_run {
+        save_migration_state(state, &migration_state)?;
+        println!("state_updated: true");
+    } else {
+        println!("state_updated: false");
+    }
     Ok(0)
 }
 
 struct MigrationFile {
     name: String,
     sha256: String,
+}
+
+#[derive(Debug, Default, Serialize, Deserialize)]
+struct MigrationState {
+    migrations: Vec<AppliedMigration>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct AppliedMigration {
+    name: String,
+    sha256: String,
+    applied_at: u64,
 }
 
 fn scan_migration_files(dir: &Path) -> Result<Vec<MigrationFile>> {
@@ -1334,6 +1366,33 @@ fn scan_migration_files(dir: &Path) -> Result<Vec<MigrationFile>> {
     }
     files.sort_by(|left, right| left.name.cmp(&right.name));
     Ok(files)
+}
+
+fn load_migration_state(path: &Path) -> Result<MigrationState> {
+    if !path.exists() {
+        return Ok(MigrationState::default());
+    }
+    let bytes = std::fs::read(path)
+        .with_context(|| format!("cannot read migration state `{}`", path.display()))?;
+    serde_json::from_slice(&bytes)
+        .with_context(|| format!("cannot parse migration state `{}`", path.display()))
+}
+
+fn save_migration_state(path: &Path, state: &MigrationState) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("cannot create migration state dir `{}`", parent.display()))?;
+    }
+    let json = serde_json::to_vec_pretty(state).context("cannot serialize migration state")?;
+    std::fs::write(path, json)
+        .with_context(|| format!("cannot write migration state `{}`", path.display()))
+}
+
+fn now_unix_seconds() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
+        .unwrap_or(0)
 }
 
 fn cmd_check(file: &Path) -> Result<u8> {

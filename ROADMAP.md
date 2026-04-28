@@ -1776,7 +1776,7 @@ Each benchmark must separate model-provider latency from Corvid runtime overhead
 
 - [x] 37E1-migrate-command-shape     Add `corvid migrate status/up/down --dry-run` command shape and help text.
 - [x] 37E2-migration-file-scan       Discover ordered checked-in SQL migrations and compute stable SHA-256 checksums.
-- [ ] 37E3-migration-state-store     Record applied migrations, timestamps, and checksums in a local state store.
+- [x] 37E3-migration-state-store     Record applied migrations, timestamps, and checksums in a local state store.
 - [ ] 37E4-drift-detection           Detect changed, missing, duplicate, and out-of-order migrations with CI-safe exit codes.
 - [ ] 37E5-dry-run-report            Dry-run reports pending/applied/drifted migrations without mutating state.
 - [ ] 37F1-audit-schema-envelope     Add `std.db` audit-log record envelopes for actor/action/model/tool/approval/cost/trace/replay.
