@@ -813,10 +813,14 @@ fn render_minimal_server_source(handler_path: &Path) -> String {
     format!(
         r#"use std::io::{{Read, Write}};
 use std::net::{{TcpListener, TcpStream}};
-use std::process::Command;
-use std::time::Instant;
+use std::process::{{Command, Stdio}};
+use std::sync::atomic::{{AtomicU64, Ordering}};
+use std::thread;
+use std::time::{{Duration, Instant, SystemTime, UNIX_EPOCH}};
 
 const HANDLER: &str = "{handler}";
+const MAX_REQUEST_BYTES: usize = 4096;
+static REQUEST_COUNTER: AtomicU64 = AtomicU64::new(1);
 
 fn main() -> std::io::Result<()> {{
     let host = std::env::var("CORVID_HOST").unwrap_or_else(|_| "127.0.0.1".to_string());
@@ -824,10 +828,16 @@ fn main() -> std::io::Result<()> {{
     let listener = TcpListener::bind(format!("{{host}}:{{port}}"))?;
     let addr = listener.local_addr()?;
     println!("listening: http://{{addr}}");
+    let max_requests = max_requests();
+    let mut handled_requests = 0u64;
     for stream in listener.incoming() {{
         match stream {{
             Ok(stream) => {{
                 let _ = handle(stream);
+                handled_requests += 1;
+                if matches!(max_requests, Some(limit) if handled_requests >= limit) {{
+                    break;
+                }}
             }}
             Err(err) => eprintln!("accept error: {{err}}"),
         }}
@@ -837,7 +847,8 @@ fn main() -> std::io::Result<()> {{
 
 fn handle(mut stream: TcpStream) -> std::io::Result<()> {{
     let started = Instant::now();
-    let mut buf = [0u8; 4096];
+    let request_id = request_id();
+    let mut buf = [0u8; MAX_REQUEST_BYTES];
     let n = stream.read(&mut buf)?;
     if n == 0 {{
         return respond_error(
@@ -846,10 +857,22 @@ fn handle(mut stream: TcpStream) -> std::io::Result<()> {{
             "<unknown>",
             "bad_request",
             "empty request",
+            &request_id,
             started,
         );
     }}
     let req = String::from_utf8_lossy(&buf[..n]);
+    if n == MAX_REQUEST_BYTES && !req.contains("\r\n\r\n") {{
+        return respond_error(
+            &mut stream,
+            413,
+            "<unknown>",
+            "body_too_large",
+            "request exceeds server body limit",
+            &request_id,
+            started,
+        );
+    }}
     let first = req.lines().next().unwrap_or("");
     let mut parts = first.split_whitespace();
     let method = parts.next().unwrap_or("");
@@ -862,6 +885,7 @@ fn handle(mut stream: TcpStream) -> std::io::Result<()> {{
             "<unknown>",
             "bad_request",
             "malformed request line",
+            &request_id,
             started,
         );
     }}
@@ -872,37 +896,49 @@ fn handle(mut stream: TcpStream) -> std::io::Result<()> {{
             path,
             "method_not_allowed",
             "method not allowed",
+            &request_id,
             started,
         );
     }}
     if path == "/healthz" {{
-        return respond(&mut stream, 200, "application/json", "{{\"status\":\"ok\"}}", started);
+        return respond(&mut stream, 200, "application/json", "{{\"status\":\"ok\"}}", &request_id);
     }}
-    let output = Command::new(HANDLER).output();
+    let output = run_handler(handler_timeout());
     match output {{
-        Ok(out) if out.status.success() => {{
-            let body = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        Ok(out) if out.status_success => {{
+            let body = out.stdout.trim().to_string();
             let json = format!("{{{{\"result\":{{:?}}}}}}", body);
-            respond(&mut stream, 200, "application/json", &json, started)
+            respond(&mut stream, 200, "application/json", &json, &request_id)
         }}
         Ok(out) => {{
-            let err = String::from_utf8_lossy(&out.stderr).trim().to_string();
+            let err = out.stderr.trim().to_string();
             respond_error(
                 &mut stream,
                 500,
                 path,
                 "handler_failed",
                 if err.is_empty() {{ "handler failed" }} else {{ &err }},
+                &request_id,
                 started,
             )
         }}
-        Err(err) => {{
+        Err(HandlerError::TimedOut) => respond_error(
+            &mut stream,
+            504,
+            path,
+            "handler_timeout",
+            "handler timed out",
+            &request_id,
+            started,
+        ),
+        Err(HandlerError::Spawn(err)) => {{
             respond_error(
                 &mut stream,
                 500,
                 path,
                 "handler_spawn_failed",
-                &err.to_string(),
+                &err,
+                &request_id,
                 started,
             )
         }}
@@ -915,15 +951,16 @@ fn respond_error(
     route: &str,
     kind: &str,
     message: &str,
+    request_id: &str,
     started: Instant,
 ) -> std::io::Result<()> {{
-    let request_id = request_id(started);
     let body = format!(
-        "{{{{\"request_id\":{{}},\"route\":{{}},\"kind\":{{}},\"message\":{{}}}}}}",
-        json_string(&request_id),
+        "{{{{\"request_id\":{{}},\"route\":{{}},\"kind\":{{}},\"message\":{{}},\"duration_ms\":{{}}}}}}",
+        json_string(request_id),
         json_string(route),
         json_string(kind),
-        json_string(message)
+        json_string(message),
+        started.elapsed().as_millis()
     );
     write_response(
         stream,
@@ -939,9 +976,8 @@ fn respond(
     status: u16,
     content_type: &str,
     body: &str,
-    started: Instant,
+    request_id: &str,
 ) -> std::io::Result<()> {{
-    let request_id = request_id(started);
     write_response(stream, status, content_type, body, &request_id)
 }}
 
@@ -955,7 +991,9 @@ fn write_response(
     let reason = match status {{
         200 => "OK",
         400 => "Bad Request",
+        413 => "Payload Too Large",
         405 => "Method Not Allowed",
+        504 => "Gateway Timeout",
         _ => "Internal Server Error",
     }};
     let response = format!(
@@ -965,8 +1003,77 @@ fn write_response(
     stream.write_all(response.as_bytes())
 }}
 
-fn request_id(started: Instant) -> String {{
-    format!("req-{{:?}}", started.elapsed().as_nanos())
+struct HandlerOutput {{
+    status_success: bool,
+    stdout: String,
+    stderr: String,
+}}
+
+enum HandlerError {{
+    Spawn(String),
+    TimedOut,
+}}
+
+fn run_handler(timeout: Duration) -> Result<HandlerOutput, HandlerError> {{
+    if timeout.is_zero() {{
+        return Err(HandlerError::TimedOut);
+    }}
+    let mut child = Command::new(HANDLER)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|err| HandlerError::Spawn(err.to_string()))?;
+    let started = Instant::now();
+    loop {{
+        match child.try_wait() {{
+            Ok(Some(status)) => {{
+                let mut stdout = String::new();
+                let mut stderr = String::new();
+                if let Some(mut pipe) = child.stdout.take() {{
+                    let _ = pipe.read_to_string(&mut stdout);
+                }}
+                if let Some(mut pipe) = child.stderr.take() {{
+                    let _ = pipe.read_to_string(&mut stderr);
+                }}
+                return Ok(HandlerOutput {{
+                    status_success: status.success(),
+                    stdout,
+                    stderr,
+                }});
+            }}
+            Ok(None) if started.elapsed() >= timeout => {{
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(HandlerError::TimedOut);
+            }}
+            Ok(None) => thread::sleep(Duration::from_millis(5)),
+            Err(err) => return Err(HandlerError::Spawn(err.to_string())),
+        }}
+    }}
+}}
+
+fn handler_timeout() -> Duration {{
+    let millis = std::env::var("CORVID_HANDLER_TIMEOUT_MS")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .unwrap_or(30_000);
+    Duration::from_millis(millis)
+}}
+
+fn max_requests() -> Option<u64> {{
+    std::env::var("CORVID_MAX_REQUESTS")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .filter(|limit| *limit > 0)
+}}
+
+fn request_id() -> String {{
+    let counter = REQUEST_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or(0);
+    format!("req-{{now}}-{{counter}}")
 }}
 
 fn json_string(value: &str) -> String {{

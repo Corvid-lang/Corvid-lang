@@ -1716,7 +1716,7 @@ Each benchmark must separate model-provider latency from Corvid runtime overhead
 - [x] 36B-minimal-server-target      `corvid build --target=server` accepts one backend entrypoint and emits a runnable local server binary.
 - [x] 36C-typed-route-model          GET/POST routes have typed path/query/body/response shapes and compile-time validation.
 - [x] 36D-json-boundary              Server errors use a stable JSON envelope with request IDs, route, kind, message, and route-aware diagnostics.
-- [ ] 36E-server-runtime-basics      Request IDs, timeouts, graceful shutdown, body limits, and panic/error isolation work.
+- [x] 36E-server-runtime-basics      Request IDs, handler timeouts, graceful drain limits, body limits, and handler isolation work.
 - [ ] 36F-route-tracing              Every request emits route, method, status, duration, request ID, and effect metadata into Corvid traces.
 - [ ] 36G-health-readiness-metrics   Generated health/readiness endpoints report server, runtime, provider, and config status.
 - [ ] 36H-config-and-secrets         Typed env/config validation works through `corvid doctor` and redacts secret values.

@@ -159,5 +159,52 @@ fn build_server_emits_runnable_local_http_binary() {
         "{malformed}"
     );
 
+    let oversized_prefix = "GET / HTTP/1.1\r\n";
+    let oversized = http_request(
+        addr,
+        &format!(
+            "{oversized_prefix}{}",
+            "x".repeat(4096 - oversized_prefix.len())
+        ),
+    );
+    assert!(
+        oversized.contains("HTTP/1.1 413 Payload Too Large"),
+        "{oversized}"
+    );
+    assert!(
+        oversized.contains(r#""kind":"body_too_large""#),
+        "{oversized}"
+    );
+
     drop(child);
+
+    let timeout_child = Command::new(&server)
+        .env("CORVID_PORT", "0")
+        .env("CORVID_HANDLER_TIMEOUT_MS", "0")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn timeout server");
+    let mut timeout_child = ChildGuard(timeout_child);
+    let stdout = timeout_child.0.stdout.take().expect("timeout server stdout");
+    let mut reader = BufReader::new(stdout);
+    let mut line = String::new();
+    let start = Instant::now();
+    while line.is_empty() && start.elapsed() < Duration::from_secs(10) {
+        reader
+            .read_line(&mut line)
+            .expect("read timeout listening line");
+    }
+    let timeout_addr = line
+        .trim()
+        .strip_prefix("listening: http://")
+        .expect("timeout listening prefix");
+    let timeout = http_get(timeout_addr, "/");
+    assert!(
+        timeout.contains("HTTP/1.1 504 Gateway Timeout"),
+        "{timeout}"
+    );
+    assert!(timeout.contains(r#""kind":"handler_timeout""#), "{timeout}");
+
+    drop(timeout_child);
 }

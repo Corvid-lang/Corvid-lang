@@ -260,10 +260,17 @@ typed route manifest.
 ### 36E Runtime Basics
 
 - Request ids are unique per request and returned in a response header.
-- Timeout produces a controlled 504.
+- Handler timeout produces a controlled 504.
 - Body limit produces a controlled 413.
-- Route panic/trap does not crash the process.
-- Shutdown drains in-flight requests up to a configured grace period.
+- Handler failures are isolated from the server process.
+- `CORVID_MAX_REQUESTS` gives the generated single-process server a graceful
+  drain-and-exit path for test and supervisor-controlled shutdown.
+
+Implementation convention for 36E: the transitional generated server remains
+std-only and synchronous, but the runtime boundary now has the production
+failure modes later route dispatch will reuse: request IDs from a process-wide
+counter/time pair, `CORVID_HANDLER_TIMEOUT_MS`, bounded request reads, stable
+JSON 413/504 errors, and subprocess isolation for compiled Corvid handlers.
 
 ### 36F Route Tracing
 
