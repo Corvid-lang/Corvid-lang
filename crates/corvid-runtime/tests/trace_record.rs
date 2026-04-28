@@ -43,7 +43,11 @@ fn build_record_library() -> BuiltLibrary {
 
 fn test_tools_lib_path() -> PathBuf {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let workspace_root = manifest_dir.ancestors().nth(2).expect("workspace root").to_path_buf();
+    let workspace_root = manifest_dir
+        .ancestors()
+        .nth(2)
+        .expect("workspace root")
+        .to_path_buf();
     let name = if cfg!(windows) {
         "corvid_test_tools.lib"
     } else {
@@ -87,9 +91,17 @@ fn build_library_from_source(
     let (file, parse_errors) = parse_file(&tokens);
     assert!(parse_errors.is_empty(), "parse errors: {parse_errors:?}");
     let resolved = resolve(&file);
-    assert!(resolved.errors.is_empty(), "resolve errors: {:?}", resolved.errors);
+    assert!(
+        resolved.errors.is_empty(),
+        "resolve errors: {:?}",
+        resolved.errors
+    );
     let checked = typecheck(&file, &resolved);
-    assert!(checked.errors.is_empty(), "type errors: {:?}", checked.errors);
+    assert!(
+        checked.errors.is_empty(),
+        "type errors: {:?}",
+        checked.errors
+    );
     let effect_decls = file
         .decls
         .iter()
@@ -124,6 +136,7 @@ fn build_library_from_source(
         BuildTarget::Cdylib,
         extra_libs,
         Some(embedded.as_slice()),
+        None,
     )
     .expect("build cdylib");
 
@@ -156,9 +169,12 @@ fn prompt_call_agent_records_trace_events_for_embedded_cdylib() {
                 *mut u64,
                 *mut CorvidApprovalRequired,
             ) -> CorvidCallStatus,
-        > = lib.get(b"corvid_call_agent").expect("resolve corvid_call_agent");
-        let free_result: libloading::Symbol<unsafe extern "C" fn(*mut c_char)> =
-            lib.get(b"corvid_free_result").expect("resolve corvid_free_result");
+        > = lib
+            .get(b"corvid_call_agent")
+            .expect("resolve corvid_call_agent");
+        let free_result: libloading::Symbol<unsafe extern "C" fn(*mut c_char)> = lib
+            .get(b"corvid_free_result")
+            .expect("resolve corvid_free_result");
 
         let agent = CString::new("classify").unwrap();
         let args = CString::new("[\"great service\"]").unwrap();
@@ -232,9 +248,12 @@ fn prompt_call_agent_replays_recorded_trace_on_windows() {
                 *mut u64,
                 *mut CorvidApprovalRequired,
             ) -> CorvidCallStatus,
-        > = lib.get(b"corvid_call_agent").expect("resolve corvid_call_agent");
-        let free_result: libloading::Symbol<unsafe extern "C" fn(*mut c_char)> =
-            lib.get(b"corvid_free_result").expect("resolve corvid_free_result");
+        > = lib
+            .get(b"corvid_call_agent")
+            .expect("resolve corvid_call_agent");
+        let free_result: libloading::Symbol<unsafe extern "C" fn(*mut c_char)> = lib
+            .get(b"corvid_free_result")
+            .expect("resolve corvid_free_result");
 
         let agent = CString::new("classify").unwrap();
         let args = CString::new("[\"great service\"]").unwrap();
@@ -263,7 +282,10 @@ fn prompt_call_agent_replays_recorded_trace_on_windows() {
 
         std::env::set_var("CORVID_REPLAY_TRACE_PATH", &record_path);
         std::env::set_var("CORVID_TRACE_DISABLE", "1");
-        std::env::set_var("CORVID_TEST_MOCK_LLM_REPLIES", "{\"classify_prompt\":\"negative\"}");
+        std::env::set_var(
+            "CORVID_TEST_MOCK_LLM_REPLIES",
+            "{\"classify_prompt\":\"negative\"}",
+        );
 
         let mut replay_result = std::ptr::null_mut();
         let mut replay_result_len = 0usize;
@@ -311,8 +333,9 @@ fn direct_exported_symbol_accepts_explicit_observation_pointer() {
         let classify: libloading::Symbol<
             unsafe extern "C" fn(*const c_char, *mut u64) -> *const c_char,
         > = lib.get(b"classify").expect("resolve classify");
-        let free_string: libloading::Symbol<unsafe extern "C" fn(*const c_char)> =
-            lib.get(b"corvid_free_string").expect("resolve corvid_free_string");
+        let free_string: libloading::Symbol<unsafe extern "C" fn(*const c_char)> = lib
+            .get(b"corvid_free_string")
+            .expect("resolve corvid_free_string");
 
         let arg = CString::new("great service").unwrap();
         let mut observation = 0u64;
@@ -342,7 +365,9 @@ fn generic_call_agent_handles_approval_required_path_on_windows() {
                 *mut u64,
                 *mut CorvidApprovalRequired,
             ) -> CorvidCallStatus,
-        > = lib.get(b"corvid_call_agent").expect("resolve corvid_call_agent");
+        > = lib
+            .get(b"corvid_call_agent")
+            .expect("resolve corvid_call_agent");
 
         let agent = CString::new("maybe_dangerous").unwrap();
         let args = CString::new("[true,\"vip\"]").unwrap();
@@ -384,7 +409,10 @@ fn generic_call_agent_handles_approval_required_path_on_windows() {
         assert!(result.is_null());
         assert_eq!(result_len, 0);
         assert_eq!(observation, 0);
-        assert_eq!(CStr::from_ptr(approval.site_name).to_str().unwrap(), "EchoString");
+        assert_eq!(
+            CStr::from_ptr(approval.site_name).to_str().unwrap(),
+            "EchoString"
+        );
 
         std::mem::forget(lib);
     }
@@ -445,9 +473,7 @@ fn approval_request_args_for(events: &[TraceEvent], label: &str) -> Vec<Vec<serd
     events
         .iter()
         .filter_map(|event| match event {
-            TraceEvent::ApprovalRequest {
-                label: l, args, ..
-            } if l == label => Some(args.clone()),
+            TraceEvent::ApprovalRequest { label: l, args, .. } if l == label => Some(args.clone()),
             _ => None,
         })
         .collect()
@@ -501,9 +527,12 @@ fn run_agent_via_cdylib(built: &BuiltLibrary, agent_name: &str, args_json: &str)
                 *mut u64,
                 *mut CorvidApprovalRequired,
             ) -> CorvidCallStatus,
-        > = lib.get(b"corvid_call_agent").expect("resolve corvid_call_agent");
-        let free_result: libloading::Symbol<unsafe extern "C" fn(*mut c_char)> =
-            lib.get(b"corvid_free_result").expect("resolve corvid_free_result");
+        > = lib
+            .get(b"corvid_call_agent")
+            .expect("resolve corvid_call_agent");
+        let free_result: libloading::Symbol<unsafe extern "C" fn(*mut c_char)> = lib
+            .get(b"corvid_free_result")
+            .expect("resolve corvid_free_result");
 
         register(Some(always_accept), std::ptr::null_mut());
 
@@ -557,7 +586,11 @@ fn approve_with_struct_arg_records_struct_as_json() {
     let events = read_events_from_path(&trace_path).expect("read trace");
     validate_supported_schema(&events).expect("validate trace");
     let approvals = approval_request_args_for(&events, "IssueRefund");
-    assert_eq!(approvals.len(), 1, "expected one IssueRefund approval, got {approvals:?}");
+    assert_eq!(
+        approvals.len(),
+        1,
+        "expected one IssueRefund approval, got {approvals:?}"
+    );
     assert_eq!(
         approvals[0],
         vec![serde_json::json!({"id": "r-001", "amount": 42})],
@@ -567,11 +600,8 @@ fn approve_with_struct_arg_records_struct_as_json() {
 
 #[test]
 fn approve_with_list_arg_records_list_as_json() {
-    let built = build_library_from_source(
-        APPROVE_LIST_SRC,
-        "tests/trace_record/approve_list.cor",
-        &[],
-    );
+    let built =
+        build_library_from_source(APPROVE_LIST_SRC, "tests/trace_record/approve_list.cor", &[]);
     let trace_dir = tempfile::tempdir().expect("trace tempdir");
     let trace_path = trace_dir.path().join("approve_list.jsonl");
     unsafe {
@@ -607,7 +637,11 @@ fn approve_with_option_arg_records_some_and_none_distinctly() {
     let events = read_events_from_path(&trace_path).expect("read trace");
     validate_supported_schema(&events).expect("validate trace");
     let approvals = approval_request_args_for(&events, "MaybeSend");
-    assert_eq!(approvals.len(), 2, "expected two MaybeSend approvals (Some + None)");
+    assert_eq!(
+        approvals.len(),
+        2,
+        "expected two MaybeSend approvals (Some + None)"
+    );
     assert_eq!(
         approvals[0],
         vec![serde_json::json!("vip")],

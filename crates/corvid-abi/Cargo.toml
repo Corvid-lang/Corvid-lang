@@ -14,6 +14,12 @@ serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 sha2 = "0.10"
 libloading = "0.8"
+# DSSE-signed ABI attestations. The cdylib build path signs the
+# embedded descriptor here; corvid-cli's trace_diff signing
+# primitives live on top of these for receipt signing too.
+ed25519-dalek = { version = "2", features = ["std", "rand_core"] }
+base64 = "0.22"
+hex = "0.4"
 
 [dev-dependencies]
 corvid-syntax = { workspace = true }

@@ -25,9 +25,8 @@ use std::path::{Path, PathBuf};
 ///     `target/py/<stem>.py` relative to that `src/`.
 ///   * Otherwise, output goes alongside the source in `./target/py/<stem>.py`.
 pub fn build_to_disk(source_path: &Path) -> anyhow::Result<BuildOutput> {
-    let source = std::fs::read_to_string(source_path).map_err(|e| {
-        anyhow::anyhow!("cannot read `{}`: {}", source_path.display(), e)
-    })?;
+    let source = std::fs::read_to_string(source_path)
+        .map_err(|e| anyhow::anyhow!("cannot read `{}`: {}", source_path.display(), e))?;
 
     let config = load_corvid_config_for(source_path);
     let result = compile_with_config_at_path(&source, source_path, config.as_ref());
@@ -69,9 +68,8 @@ pub fn build_native_to_disk(
     source_path: &Path,
     extra_tool_libs: &[&Path],
 ) -> anyhow::Result<NativeBuildOutput> {
-    let source = std::fs::read_to_string(source_path).map_err(|e| {
-        anyhow::anyhow!("cannot read `{}`: {}", source_path.display(), e)
-    })?;
+    let source = std::fs::read_to_string(source_path)
+        .map_err(|e| anyhow::anyhow!("cannot read `{}`: {}", source_path.display(), e))?;
 
     let config = load_corvid_config_for(source_path);
     match compile_to_ir_with_config_at_path(&source, source_path, config.as_ref()) {
@@ -94,13 +92,9 @@ pub fn build_native_to_disk(
             // Empty tools-lib list = no user tool crates linked — tool-using
             // programs fail at link time with an unresolved-symbol
             // error that surfaces the missing tool by name.
-            let produced = corvid_codegen_cl::build_native_to_disk(
-                &ir,
-                &stem,
-                &requested,
-                extra_tool_libs,
-            )
-            .map_err(|e| anyhow::anyhow!("native codegen failed: {e}"))?;
+            let produced =
+                corvid_codegen_cl::build_native_to_disk(&ir, &stem, &requested, extra_tool_libs)
+                    .map_err(|e| anyhow::anyhow!("native codegen failed: {e}"))?;
             Ok(NativeBuildOutput {
                 source,
                 output_path: Some(produced),
@@ -161,9 +155,8 @@ pub fn build_target_to_disk(
     emit_abi_descriptor: bool,
     extra_tool_libs: &[&Path],
 ) -> anyhow::Result<TargetBuildOutput> {
-    let source = std::fs::read_to_string(source_path).map_err(|e| {
-        anyhow::anyhow!("cannot read `{}`: {}", source_path.display(), e)
-    })?;
+    let source = std::fs::read_to_string(source_path)
+        .map_err(|e| anyhow::anyhow!("cannot read `{}`: {}", source_path.display(), e))?;
 
     let config = load_corvid_config_for(source_path);
     match build_frontend_bundle(&source, source_path, config.as_ref()) {
@@ -188,14 +181,12 @@ pub fn build_target_to_disk(
                 None
             };
             let produced = match target {
-                BuildTarget::Native => {
-                    corvid_codegen_cl::build_native_to_disk(
-                        &frontend.ir,
-                        &stem,
-                        &requested,
-                        extra_tool_libs,
-                    )
-                }
+                BuildTarget::Native => corvid_codegen_cl::build_native_to_disk(
+                    &frontend.ir,
+                    &stem,
+                    &requested,
+                    extra_tool_libs,
+                ),
                 BuildTarget::Cdylib | BuildTarget::Staticlib => {
                     corvid_codegen_cl::build_library_to_disk(
                         &frontend.ir,
@@ -206,6 +197,7 @@ pub fn build_target_to_disk(
                         catalog_descriptor
                             .as_ref()
                             .map(|descriptor| descriptor.embedded_bytes.as_slice()),
+                        None,
                     )
                 }
             }
@@ -256,9 +248,8 @@ pub fn build_target_to_disk(
 }
 
 pub fn build_wasm_to_disk(source_path: &Path) -> anyhow::Result<WasmBuildOutput> {
-    let source = std::fs::read_to_string(source_path).map_err(|e| {
-        anyhow::anyhow!("cannot read `{}`: {}", source_path.display(), e)
-    })?;
+    let source = std::fs::read_to_string(source_path)
+        .map_err(|e| anyhow::anyhow!("cannot read `{}`: {}", source_path.display(), e))?;
 
     let config = load_corvid_config_for(source_path);
     match build_frontend_bundle(&source, source_path, config.as_ref()) {
@@ -301,9 +292,8 @@ pub fn build_wasm_to_disk(source_path: &Path) -> anyhow::Result<WasmBuildOutput>
 }
 
 pub fn build_catalog_descriptor_for_source(source_path: &Path) -> anyhow::Result<AbiBuildOutput> {
-    let source = std::fs::read_to_string(source_path).map_err(|e| {
-        anyhow::anyhow!("cannot read `{}`: {}", source_path.display(), e)
-    })?;
+    let source = std::fs::read_to_string(source_path)
+        .map_err(|e| anyhow::anyhow!("cannot read `{}`: {}", source_path.display(), e))?;
     let config = load_corvid_config_for(source_path);
     match build_frontend_bundle(&source, source_path, config.as_ref()) {
         Err(diagnostics) => Ok(AbiBuildOutput {

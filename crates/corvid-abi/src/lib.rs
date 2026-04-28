@@ -1,14 +1,21 @@
-mod canonical_hash;
-mod embedded;
-mod introspection_catalog;
 mod approval_contract;
+mod attestation;
+mod canonical_hash;
 mod effect_emit;
+mod embedded;
 mod emit;
+mod introspection_catalog;
 mod provenance_emit;
 mod schema;
+mod signing;
 mod tool_contract;
 mod type_description;
 
+pub use attestation::{
+    attestation_to_embedded_bytes, parse_embedded_attestation_bytes, EmbeddedAttestationError,
+    EmbeddedAttestationSection, CORVID_ABI_ATTESTATION_PAYLOAD_TYPE,
+    CORVID_ABI_ATTESTATION_SECTION_MAGIC, CORVID_ABI_ATTESTATION_SYMBOL,
+};
 pub use canonical_hash::{hash_abi, hash_json_bytes, hash_json_str};
 pub use embedded::{
     descriptor_from_embedded_section, descriptor_to_embedded_bytes, parse_embedded_section_bytes,
@@ -22,11 +29,14 @@ pub use schema::{
     AbiCostEnvelope, AbiDeclaredAt, AbiDestructor, AbiDestructorKind, AbiDispatch, AbiEffects,
     AbiField, AbiGroundedType, AbiLatencyMs, AbiListType, AbiMinExpected, AbiOptionType,
     AbiOwnership, AbiOwnershipMode, AbiParam, AbiProgressiveStage, AbiProjectedTokens,
-    AbiProjectedUsd, AbiPrompt, AbiProvenanceContract, AbiResultType, AbiRouteArm,
-    AbiSourceSpan, AbiStore, AbiStoreAccessor, AbiStoreAccessorKind, AbiStoreEffects,
-    AbiStorePolicy, AbiTool, AbiToolContract, AbiToolDomainEffect, AbiTypeDecl, AbiVersionError,
-    AbiWeakType, CorvidAbi, ScalarTypeName, TypeDescription, CORVID_ABI_VERSION,
-    MIN_SUPPORTED_ABI_VERSION,
+    AbiProjectedUsd, AbiPrompt, AbiProvenanceContract, AbiResultType, AbiRouteArm, AbiSourceSpan,
+    AbiStore, AbiStoreAccessor, AbiStoreAccessorKind, AbiStoreEffects, AbiStorePolicy, AbiTool,
+    AbiToolContract, AbiToolDomainEffect, AbiTypeDecl, AbiVersionError, AbiWeakType, CorvidAbi,
+    ScalarTypeName, TypeDescription, CORVID_ABI_VERSION, MIN_SUPPORTED_ABI_VERSION,
+};
+pub use signing::{
+    load_signing_key, load_verifying_key, pae, sign_envelope, verify_envelope, DsseEnvelope,
+    DsseSignature, KeySource, SignError, VerifyError,
 };
 
 use std::io;

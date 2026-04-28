@@ -54,9 +54,17 @@ fn frontend_of(src: &str) -> FrontendBundle {
     let (file, parse_errors) = parse_file(&tokens);
     assert!(parse_errors.is_empty(), "parse errors: {parse_errors:?}");
     let resolved = resolve(&file);
-    assert!(resolved.errors.is_empty(), "resolve errors: {:?}", resolved.errors);
+    assert!(
+        resolved.errors.is_empty(),
+        "resolve errors: {:?}",
+        resolved.errors
+    );
     let checked = typecheck(&file, &resolved);
-    assert!(checked.errors.is_empty(), "type errors: {:?}", checked.errors);
+    assert!(
+        checked.errors.is_empty(),
+        "type errors: {:?}",
+        checked.errors
+    );
     let effect_decls = file
         .decls
         .iter()
@@ -105,6 +113,7 @@ fn build_cdylib(src: &str, stem: &str) -> PathBuf {
         BuildTarget::Cdylib,
         &[],
         Some(embedded.as_slice()),
+        None,
     )
     .expect("build cdylib");
     let keep = tmp.keep();
@@ -128,9 +137,13 @@ fn test_tools_lib_path() -> PathBuf {
         .expect("build corvid-test-tools");
     assert!(status.success(), "building corvid-test-tools failed");
     let path = if cfg!(windows) {
-        root.join("target").join("release").join("corvid_test_tools.lib")
+        root.join("target")
+            .join("release")
+            .join("corvid_test_tools.lib")
     } else {
-        root.join("target").join("release").join("libcorvid_test_tools.a")
+        root.join("target")
+            .join("release")
+            .join("libcorvid_test_tools.a")
     };
     // Route the linker through `corvid_test_tools.lib` (which already
     // bundles `corvid-runtime` transitively) instead of pairing it
@@ -147,7 +160,10 @@ fn build_cdylib_with_extra_libs(src: &str, stem: &str, extra_libs: &[PathBuf]) -
     let tmp = tempfile::tempdir().unwrap();
     let out = tmp.path().join(stem);
     let embedded = embedded_descriptor_bytes(&bundle, src);
-    let extra_lib_refs = extra_libs.iter().map(|path| path.as_path()).collect::<Vec<_>>();
+    let extra_lib_refs = extra_libs
+        .iter()
+        .map(|path| path.as_path())
+        .collect::<Vec<_>>();
     let produced = build_library_to_disk(
         &bundle.ir,
         stem,
@@ -155,6 +171,7 @@ fn build_cdylib_with_extra_libs(src: &str, stem: &str, extra_libs: &[PathBuf]) -
         BuildTarget::Cdylib,
         &extra_lib_refs,
         Some(embedded.as_slice()),
+        None,
     )
     .expect("build cdylib");
     let keep = tmp.keep();
@@ -166,8 +183,16 @@ fn build_staticlib(src: &str, stem: &str) -> PathBuf {
     let bundle = frontend_of(src);
     let tmp = tempfile::tempdir().unwrap();
     let out = tmp.path().join(stem);
-    let produced = build_library_to_disk(&bundle.ir, stem, &out, BuildTarget::Staticlib, &[], None)
-        .expect("build staticlib");
+    let produced = build_library_to_disk(
+        &bundle.ir,
+        stem,
+        &out,
+        BuildTarget::Staticlib,
+        &[],
+        None,
+        None,
+    )
+    .expect("build staticlib");
     let keep = tmp.keep();
     assert!(keep.exists());
     produced
@@ -184,7 +209,11 @@ fn load_library_leaked(path: &Path) -> &'static Library {
 #[test]
 fn cdylib_target_produces_shared_library_file() {
     let produced = build_cdylib(BOOL_SRC, "refund_bot_cdylib");
-    assert!(produced.exists(), "missing shared library: {}", produced.display());
+    assert!(
+        produced.exists(),
+        "missing shared library: {}",
+        produced.display()
+    );
 }
 
 #[test]
@@ -242,6 +271,7 @@ fn cdylib_minimal_c_harness_calls_and_returns_correct_value() {
         BuildTarget::Cdylib,
         &[],
         Some(embedded.as_slice()),
+        None,
     )
     .expect("build cdylib");
     let header = emit_header(
@@ -257,9 +287,7 @@ fn cdylib_minimal_c_harness_calls_and_returns_correct_value() {
     std::fs::write(&harness_path, c_harness_source(&header_path, &lib_path)).unwrap();
     let harness_bin = compile_c_harness(&harness_path, tmp.path());
 
-    let output = Command::new(&harness_bin)
-        .output()
-        .expect("run c harness");
+    let output = Command::new(&harness_bin).output().expect("run c harness");
     assert!(
         output.status.success(),
         "c harness failed: stdout={} stderr={}",
@@ -276,10 +304,12 @@ fn cdylib_string_param_roundtrip() {
     // SAFETY: symbols are loaded from the just-built library and invoked with valid ABI values.
     unsafe {
         let lib = load_library_leaked(&produced);
-        let echo: libloading::Symbol<unsafe extern "C" fn(*const c_char, *mut u64) -> *const c_char> =
-            lib.get(b"echo_name").expect("resolve echo_name");
-        let free: libloading::Symbol<unsafe extern "C" fn(*const c_char)> =
-            lib.get(b"corvid_free_string").expect("resolve corvid_free_string");
+        let echo: libloading::Symbol<
+            unsafe extern "C" fn(*const c_char, *mut u64) -> *const c_char,
+        > = lib.get(b"echo_name").expect("resolve echo_name");
+        let free: libloading::Symbol<unsafe extern "C" fn(*const c_char)> = lib
+            .get(b"corvid_free_string")
+            .expect("resolve corvid_free_string");
         let input = CString::new("Grüße").unwrap();
         let mut observation = 0u64;
         let output_ptr = echo(input.as_ptr(), &mut observation as *mut u64);
@@ -323,17 +353,16 @@ fn cdylib_bool_maps_to_c99_bool_size() {
 #[test]
 fn cdylib_grounded_string_return_exposes_attestation_handle() {
     let tools_lib = test_tools_lib_path();
-    let produced = build_cdylib_with_extra_libs(
-        GROUNDED_STRING_SRC,
-        "grounded_lookup_cdylib",
-        &[tools_lib],
-    );
+    let produced =
+        build_cdylib_with_extra_libs(GROUNDED_STRING_SRC, "grounded_lookup_cdylib", &[tools_lib]);
     // SAFETY: symbols are loaded from the just-built library and invoked with valid ABI values.
     unsafe {
         let lib = load_library_leaked(&produced);
         let grounded_lookup: libloading::Symbol<
             unsafe extern "C" fn(*const c_char, *mut u64, *mut u64) -> *const c_char,
-        > = lib.get(b"grounded_lookup").expect("resolve grounded_lookup");
+        > = lib
+            .get(b"grounded_lookup")
+            .expect("resolve grounded_lookup");
         let grounded_sources: libloading::Symbol<
             unsafe extern "C" fn(u64, *mut *const c_char, usize) -> i32,
         > = lib
@@ -345,8 +374,9 @@ fn cdylib_grounded_string_return_exposes_attestation_handle() {
         let grounded_release: libloading::Symbol<unsafe extern "C" fn(u64)> = lib
             .get(b"corvid_grounded_release")
             .expect("resolve corvid_grounded_release");
-        let free: libloading::Symbol<unsafe extern "C" fn(*const c_char)> =
-            lib.get(b"corvid_free_string").expect("resolve corvid_free_string");
+        let free: libloading::Symbol<unsafe extern "C" fn(*const c_char)> = lib
+            .get(b"corvid_free_string")
+            .expect("resolve corvid_free_string");
 
         let input = CString::new("lookup-me").unwrap();
         let mut handle = 0u64;

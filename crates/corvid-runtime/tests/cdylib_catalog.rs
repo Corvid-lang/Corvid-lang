@@ -1,20 +1,22 @@
-use std::ffi::{c_char, CStr, CString};
-use std::path::PathBuf;
-use std::process::Command;
 use corvid_abi::{
     descriptor_from_embedded_section, descriptor_to_embedded_bytes, emit_catalog_abi,
     read_embedded_section_from_library, CorvidAbi, EmitOptions,
 };
 use corvid_codegen_cl::{build_library_to_disk, BuildTarget};
 use corvid_resolve::resolve;
+use corvid_runtime::approver_bridge::{
+    CorvidApproverLoadStatus, CorvidPredicateResult, CorvidPredicateStatus,
+};
 use corvid_runtime::{
     CorvidAgentHandle, CorvidApprovalDecision, CorvidApprovalRequired, CorvidCallStatus,
     CorvidFindAgentsResult, CorvidFindAgentsStatus, CorvidPreFlightStatus,
 };
-use corvid_runtime::approver_bridge::{CorvidApproverLoadStatus, CorvidPredicateResult, CorvidPredicateStatus};
 use corvid_syntax::{lex, parse_file};
 use corvid_types::{typecheck, EffectRegistry};
 use libloading::Library;
+use std::ffi::{c_char, CStr, CString};
+use std::path::PathBuf;
+use std::process::Command;
 use tempfile::TempDir;
 
 const CATALOG_SRC: &str = r#"
@@ -51,7 +53,11 @@ struct BuiltLibrary {
 
 fn test_tools_lib_path() -> PathBuf {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let workspace_root = manifest_dir.ancestors().nth(2).expect("workspace root").to_path_buf();
+    let workspace_root = manifest_dir
+        .ancestors()
+        .nth(2)
+        .expect("workspace root")
+        .to_path_buf();
     let name = if cfg!(windows) {
         "corvid_test_tools.lib"
     } else {
@@ -82,9 +88,17 @@ fn build_catalog_library() -> BuiltLibrary {
     let (file, parse_errors) = parse_file(&tokens);
     assert!(parse_errors.is_empty(), "parse errors: {parse_errors:?}");
     let resolved = resolve(&file);
-    assert!(resolved.errors.is_empty(), "resolve errors: {:?}", resolved.errors);
+    assert!(
+        resolved.errors.is_empty(),
+        "resolve errors: {:?}",
+        resolved.errors
+    );
     let checked = typecheck(&file, &resolved);
-    assert!(checked.errors.is_empty(), "type errors: {:?}", checked.errors);
+    assert!(
+        checked.errors.is_empty(),
+        "type errors: {:?}",
+        checked.errors
+    );
     let effect_decls = file
         .decls
         .iter()
@@ -119,6 +133,7 @@ fn build_catalog_library() -> BuiltLibrary {
         BuildTarget::Cdylib,
         &[test_tools_lib_path().as_path()],
         Some(embedded.as_slice()),
+        None,
     )
     .expect("build cdylib");
 
@@ -156,10 +171,10 @@ fn embedded_section_roundtrips_from_built_library() {
 
 #[test]
 fn two_builds_of_same_source_produce_identical_embedded_descriptor_sections() {
-    let left = read_embedded_section_from_library(&build_catalog_library().path)
-        .expect("left section");
-    let right = read_embedded_section_from_library(&build_catalog_library().path)
-        .expect("right section");
+    let left =
+        read_embedded_section_from_library(&build_catalog_library().path).expect("left section");
+    let right =
+        read_embedded_section_from_library(&build_catalog_library().path).expect("right section");
     assert_eq!(left.json, right.json);
     assert_eq!(left.sha256, right.sha256);
 }
@@ -169,8 +184,9 @@ fn corvid_abi_verify_matches_and_rejects_one_bit_flip() {
     let built = build_catalog_library();
     unsafe {
         let lib = Library::new(&built.path).expect("load library");
-        let verify: libloading::Symbol<unsafe extern "C" fn(*const u8) -> i32> =
-            lib.get(b"corvid_abi_verify").expect("resolve corvid_abi_verify");
+        let verify: libloading::Symbol<unsafe extern "C" fn(*const u8) -> i32> = lib
+            .get(b"corvid_abi_verify")
+            .expect("resolve corvid_abi_verify");
         let section = read_embedded_section_from_library(&built.path).expect("embedded");
         assert_eq!(verify(section.sha256.as_ptr()), 1);
         let mut flipped = section.sha256;
@@ -185,9 +201,9 @@ fn corvid_list_agents_lists_declaration_order_and_introspection_entries() {
     let built = build_catalog_library();
     unsafe {
         let lib = Library::new(&built.path).expect("load library");
-        let list: libloading::Symbol<
-            unsafe extern "C" fn(*mut CorvidAgentHandle, usize) -> usize,
-        > = lib.get(b"corvid_list_agents").expect("resolve corvid_list_agents");
+        let list: libloading::Symbol<unsafe extern "C" fn(*mut CorvidAgentHandle, usize) -> usize> =
+            lib.get(b"corvid_list_agents")
+                .expect("resolve corvid_list_agents");
 
         let total = list(std::ptr::null_mut(), 0);
         assert!(total >= 10, "expected user agents + introspection entries");
@@ -215,7 +231,10 @@ fn corvid_list_agents_lists_declaration_order_and_introspection_entries() {
         let copied = list(handles.as_mut_ptr(), handles.len());
         assert_eq!(copied, total);
 
-        let names = handles.iter().map(|handle| load_string(handle.name)).collect::<Vec<_>>();
+        let names = handles
+            .iter()
+            .map(|handle| load_string(handle.name))
+            .collect::<Vec<_>>();
         assert_eq!(names[0], "__corvid_abi_descriptor_json");
         assert_eq!(names[1], "__corvid_abi_verify");
         assert_eq!(names[2], "__corvid_list_agents");
@@ -248,28 +267,50 @@ fn corvid_pre_flight_validates_args_and_rejects_unsupported_sigs_without_dispatc
 
         let lib = Library::new(&built.path).expect("load library");
         let preflight: libloading::Symbol<
-            unsafe extern "C" fn(*const c_char, *const c_char, usize) -> corvid_runtime::CorvidPreFlight,
-        > = lib.get(b"corvid_pre_flight").expect("resolve corvid_pre_flight");
+            unsafe extern "C" fn(
+                *const c_char,
+                *const c_char,
+                usize,
+            ) -> corvid_runtime::CorvidPreFlight,
+        > = lib
+            .get(b"corvid_pre_flight")
+            .expect("resolve corvid_pre_flight");
 
         let classify = CString::new("classify").unwrap();
         let ok_args = CString::new("[\"great service\"]").unwrap();
-        let ok = preflight(classify.as_ptr(), ok_args.as_ptr(), ok_args.as_bytes().len());
+        let ok = preflight(
+            classify.as_ptr(),
+            ok_args.as_ptr(),
+            ok_args.as_bytes().len(),
+        );
         assert_eq!(ok.status, CorvidPreFlightStatus::Ok);
         assert_eq!(ok.requires_approval, 0);
         assert!(!ok.effect_row_json.is_null());
 
         let wrong_arity = CString::new("[]").unwrap();
-        let arity = preflight(classify.as_ptr(), wrong_arity.as_ptr(), wrong_arity.as_bytes().len());
+        let arity = preflight(
+            classify.as_ptr(),
+            wrong_arity.as_ptr(),
+            wrong_arity.as_bytes().len(),
+        );
         assert_eq!(arity.status, CorvidPreFlightStatus::BadArgs);
         assert!(load_string(arity.bad_args_message).contains("arity mismatch"));
 
         let wrong_type = CString::new("[42]").unwrap();
-        let bad_type = preflight(classify.as_ptr(), wrong_type.as_ptr(), wrong_type.as_bytes().len());
+        let bad_type = preflight(
+            classify.as_ptr(),
+            wrong_type.as_ptr(),
+            wrong_type.as_bytes().len(),
+        );
         assert_eq!(bad_type.status, CorvidPreFlightStatus::BadArgs);
 
         let helper = CString::new("helper_wrap").unwrap();
         let helper_args = CString::new("[[\"a\"]]").unwrap();
-        let unsupported = preflight(helper.as_ptr(), helper_args.as_ptr(), helper_args.as_bytes().len());
+        let unsupported = preflight(
+            helper.as_ptr(),
+            helper_args.as_ptr(),
+            helper_args.as_bytes().len(),
+        );
         assert_eq!(unsupported.status, CorvidPreFlightStatus::UnsupportedSig);
         std::mem::forget(lib);
     }
@@ -281,7 +322,10 @@ fn corvid_call_agent_handles_happy_path_bad_args_and_approval_flow() {
     unsafe {
         std::env::set_var("CORVID_MODEL", "mock-1");
         std::env::set_var("CORVID_TEST_MOCK_LLM", "1");
-        std::env::set_var("CORVID_TEST_MOCK_LLM_REPLIES", "{\"classify_prompt\":\"positive\"}");
+        std::env::set_var(
+            "CORVID_TEST_MOCK_LLM_REPLIES",
+            "{\"classify_prompt\":\"positive\"}",
+        );
 
         let lib = Library::new(&built.path).expect("load library");
         let call_agent: libloading::Symbol<
@@ -294,7 +338,9 @@ fn corvid_call_agent_handles_happy_path_bad_args_and_approval_flow() {
                 *mut u64,
                 *mut CorvidApprovalRequired,
             ) -> CorvidCallStatus,
-        > = lib.get(b"corvid_call_agent").expect("resolve corvid_call_agent");
+        > = lib
+            .get(b"corvid_call_agent")
+            .expect("resolve corvid_call_agent");
         let register: libloading::Symbol<
             unsafe extern "C" fn(
                 Option<
@@ -308,8 +354,9 @@ fn corvid_call_agent_handles_happy_path_bad_args_and_approval_flow() {
         > = lib
             .get(b"corvid_register_approver")
             .expect("resolve corvid_register_approver");
-        let free_result: libloading::Symbol<unsafe extern "C" fn(*mut c_char)> =
-            lib.get(b"corvid_free_result").expect("resolve corvid_free_result");
+        let free_result: libloading::Symbol<unsafe extern "C" fn(*mut c_char)> = lib
+            .get(b"corvid_free_result")
+            .expect("resolve corvid_free_result");
 
         let mut result = std::ptr::null_mut();
         let mut result_len = 0usize;
@@ -395,9 +442,12 @@ fn corvid_mark_preapproved_request_allows_direct_dangerous_call_without_callback
             .expect("resolve corvid_mark_preapproved_request");
         let direct: libloading::Symbol<
             unsafe extern "C" fn(bool, *const c_char, *mut u64) -> *const c_char,
-        > = lib.get(b"maybe_dangerous").expect("resolve maybe_dangerous");
-        let free_string: libloading::Symbol<unsafe extern "C" fn(*const c_char)> =
-            lib.get(b"corvid_free_string").expect("resolve corvid_free_string");
+        > = lib
+            .get(b"maybe_dangerous")
+            .expect("resolve maybe_dangerous");
+        let free_string: libloading::Symbol<unsafe extern "C" fn(*const c_char)> = lib
+            .get(b"corvid_free_string")
+            .expect("resolve corvid_free_string");
 
         let label = CString::new("EchoString").unwrap();
         let approval_args = CString::new("[\"vip\"]").unwrap();
@@ -431,9 +481,9 @@ fn corvid_find_agents_where_filters_in_live_catalog_order() {
     let built = build_catalog_library();
     unsafe {
         let lib = Library::new(&built.path).expect("load library");
-        let list: libloading::Symbol<
-            unsafe extern "C" fn(*mut CorvidAgentHandle, usize) -> usize,
-        > = lib.get(b"corvid_list_agents").expect("resolve corvid_list_agents");
+        let list: libloading::Symbol<unsafe extern "C" fn(*mut CorvidAgentHandle, usize) -> usize> =
+            lib.get(b"corvid_list_agents")
+                .expect("resolve corvid_list_agents");
         let find: libloading::Symbol<
             unsafe extern "C" fn(*const c_char, usize, *mut usize, usize) -> CorvidFindAgentsResult,
         > = lib
@@ -493,7 +543,8 @@ fn corvid_find_agents_where_filters_in_live_catalog_order() {
         assert_eq!(bad.status, CorvidFindAgentsStatus::OpMismatch);
         assert!(!bad.error_message.is_null());
 
-        let missing_filter = CString::new(r#"{"dim":"does_not_exist","op":"eq","value":true}"#).unwrap();
+        let missing_filter =
+            CString::new(r#"{"dim":"does_not_exist","op":"eq","value":true}"#).unwrap();
         let missing = find(
             missing_filter.as_ptr(),
             missing_filter.as_bytes().len(),
@@ -521,7 +572,10 @@ agent approve_site(site: ApprovalSite, args: ApprovalArgs, ctx: ApprovalContext)
     unsafe {
         std::env::set_var("CORVID_MODEL", "mock-1");
         std::env::set_var("CORVID_TEST_MOCK_LLM", "1");
-        std::env::set_var("CORVID_TEST_MOCK_LLM_REPLIES", "{\"classify_prompt\":\"positive\"}");
+        std::env::set_var(
+            "CORVID_TEST_MOCK_LLM_REPLIES",
+            "{\"classify_prompt\":\"positive\"}",
+        );
 
         let lib = Library::new(&built.path).expect("load library");
         let register_source: libloading::Symbol<
@@ -529,8 +583,9 @@ agent approve_site(site: ApprovalSite, args: ApprovalArgs, ctx: ApprovalContext)
         > = lib
             .get(b"corvid_register_approver_from_source")
             .expect("resolve corvid_register_approver_from_source");
-        let clear_source: libloading::Symbol<unsafe extern "C" fn()> =
-            lib.get(b"corvid_clear_approver").expect("resolve corvid_clear_approver");
+        let clear_source: libloading::Symbol<unsafe extern "C" fn()> = lib
+            .get(b"corvid_clear_approver")
+            .expect("resolve corvid_clear_approver");
         let predicate_json: libloading::Symbol<
             unsafe extern "C" fn(*const c_char, *mut usize) -> *const c_char,
         > = lib
@@ -551,19 +606,25 @@ agent approve_site(site: ApprovalSite, args: ApprovalArgs, ctx: ApprovalContext)
                 *mut u64,
                 *mut CorvidApprovalRequired,
             ) -> CorvidCallStatus,
-        > = lib.get(b"corvid_call_agent").expect("resolve corvid_call_agent");
+        > = lib
+            .get(b"corvid_call_agent")
+            .expect("resolve corvid_call_agent");
         let list_agents: libloading::Symbol<
             unsafe extern "C" fn(*mut CorvidAgentHandle, usize) -> usize,
-        > = lib.get(b"corvid_list_agents").expect("resolve corvid_list_agents");
+        > = lib
+            .get(b"corvid_list_agents")
+            .expect("resolve corvid_list_agents");
         let signature_json: libloading::Symbol<
             unsafe extern "C" fn(*const c_char, *mut usize) -> *const c_char,
         > = lib
             .get(b"corvid_agent_signature_json")
             .expect("resolve corvid_agent_signature_json");
-        let verify: libloading::Symbol<unsafe extern "C" fn(*const u8) -> i32> =
-            lib.get(b"corvid_abi_verify").expect("resolve corvid_abi_verify");
-        let free_result: libloading::Symbol<unsafe extern "C" fn(*mut c_char)> =
-            lib.get(b"corvid_free_result").expect("resolve corvid_free_result");
+        let verify: libloading::Symbol<unsafe extern "C" fn(*const u8) -> i32> = lib
+            .get(b"corvid_abi_verify")
+            .expect("resolve corvid_abi_verify");
+        let free_result: libloading::Symbol<unsafe extern "C" fn(*mut c_char)> = lib
+            .get(b"corvid_free_result")
+            .expect("resolve corvid_free_result");
 
         let baseline_count = list_agents(std::ptr::null_mut(), 0);
         let approver_path_c = CString::new(approver_path.to_string_lossy().to_string()).unwrap();
@@ -601,7 +662,10 @@ agent approve_site(site: ApprovalSite, args: ApprovalArgs, ctx: ApprovalContext)
             .position(|handle| load_string(handle.name) == "__corvid_approver")
             .expect("overlay approver present");
         assert_eq!(overlay_index, 7);
-        assert_eq!(load_string(handles[overlay_index].symbol), "__corvid_approver");
+        assert_eq!(
+            load_string(handles[overlay_index].symbol),
+            "__corvid_approver"
+        );
         assert_eq!(handles[overlay_index].trust_tier, 0);
         assert_eq!(handles[overlay_index].dangerous, 0);
         assert_eq!(handles[overlay_index].pub_extern_c, 0);

@@ -1,6 +1,8 @@
 use crate::errors::CodegenError;
 use crate::link::binary_path_for;
-use crate::target::{object_extension, shared_library_path_for, static_library_path_for, BuildTarget};
+use crate::target::{
+    object_extension, shared_library_path_for, static_library_path_for, BuildTarget,
+};
 use corvid_ir::{IrExternAbi, IrFile};
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -12,6 +14,7 @@ pub fn build_library_to_disk(
     build_target: BuildTarget,
     extra_tool_libs: &[&Path],
     embedded_descriptor: Option<&[u8]>,
+    embedded_attestation: Option<&[u8]>,
 ) -> Result<PathBuf, CodegenError> {
     if !ir
         .agents
@@ -55,12 +58,22 @@ pub fn build_library_to_disk(
     let object_path = obj_dir
         .path()
         .join(format!("{module_name}.{}", object_extension()));
-    crate::compile_to_object(ir, module_name, &object_path, None, embedded_descriptor)?;
+    crate::compile_to_object(
+        ir,
+        module_name,
+        &object_path,
+        None,
+        embedded_descriptor,
+        embedded_attestation,
+    )?;
 
     match build_target {
-        BuildTarget::Cdylib => {
-            link_shared_library(&object_path, &out_path, extra_tool_libs, exported_symbols(ir))?
-        }
+        BuildTarget::Cdylib => link_shared_library(
+            &object_path,
+            &out_path,
+            extra_tool_libs,
+            exported_symbols(ir, embedded_attestation.is_some()),
+        )?,
         BuildTarget::Staticlib => link_static_archive(&object_path, &out_path)?,
         BuildTarget::Native => unreachable!("library builder called with native target"),
     }
@@ -68,28 +81,27 @@ pub fn build_library_to_disk(
     Ok(out_path)
 }
 
-fn exported_symbols(ir: &IrFile) -> Vec<String> {
+fn exported_symbols(ir: &IrFile, has_attestation: bool) -> Vec<String> {
     let mut exports = ir
         .agents
         .iter()
         .filter(|agent| matches!(agent.extern_abi, Some(IrExternAbi::C)))
         .map(|agent| agent.name.clone())
         .collect::<Vec<_>>();
-    if ir
-        .agents
-        .iter()
-        .any(|agent| {
-            matches!(agent.extern_abi, Some(IrExternAbi::C))
-                && match &agent.return_ty {
-                    corvid_types::Type::String => true,
-                    corvid_types::Type::Grounded(inner) => {
-                        matches!(&**inner, corvid_types::Type::String)
-                    }
-                    _ => false,
+    if ir.agents.iter().any(|agent| {
+        matches!(agent.extern_abi, Some(IrExternAbi::C))
+            && match &agent.return_ty {
+                corvid_types::Type::String => true,
+                corvid_types::Type::Grounded(inner) => {
+                    matches!(&**inner, corvid_types::Type::String)
                 }
-        })
-    {
+                _ => false,
+            }
+    }) {
         exports.push("corvid_free_string".into());
+    }
+    if has_attestation {
+        exports.push(corvid_abi::CORVID_ABI_ATTESTATION_SYMBOL.to_string());
     }
     exports.extend(
         [
@@ -203,9 +215,9 @@ fn link_shared_library(
         cmd.arg("-o").arg(output_path);
     }
 
-    let output = cmd
-        .output()
-        .map_err(|e| CodegenError::link(format!("spawn linker `{}`: {e}", compiler.path().display())))?;
+    let output = cmd.output().map_err(|e| {
+        CodegenError::link(format!("spawn linker `{}`: {e}", compiler.path().display()))
+    })?;
     if !output.status.success() {
         return Err(CodegenError::link(format!(
             "shared-library linker exited {}: {}{}",
@@ -236,7 +248,12 @@ fn link_static_archive(object_path: &Path, output_path: &Path) -> Result<(), Cod
             .arg(format!("/OUT:{}", output_path.display()))
             .arg(object_path)
             .output()
-            .map_err(|e| CodegenError::link(format!("spawn static librarian `{}`: {e}", lib_exe.display())))?;
+            .map_err(|e| {
+                CodegenError::link(format!(
+                    "spawn static librarian `{}`: {e}",
+                    lib_exe.display()
+                ))
+            })?;
         if !output.status.success() {
             return Err(CodegenError::link(format!(
                 "static librarian exited {}: {}{}",
@@ -317,10 +334,9 @@ fn build_runtime_staticlib(
     if profile.eq_ignore_ascii_case("release") {
         cmd.arg("--release");
     }
-    let output = cmd
-        .current_dir(workspace_root)
-        .output()
-        .map_err(|err| CodegenError::link(format!("spawn `cargo build -p corvid-runtime`: {err}")))?;
+    let output = cmd.current_dir(workspace_root).output().map_err(|err| {
+        CodegenError::link(format!("spawn `cargo build -p corvid-runtime`: {err}"))
+    })?;
     if !output.status.success() {
         return Err(CodegenError::link(format!(
             "auto-build of corvid-runtime staticlib for `{}` failed: {}{}",
