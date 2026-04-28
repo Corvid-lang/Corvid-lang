@@ -603,6 +603,24 @@ pub static GUARANTEE_REGISTRY: &[Guarantee] = &[
             "crates/corvid-cli/tests/abi_attestation.rs::unsigned_cdylib_reports_absent_attestation",
         ],
     },
+    Guarantee {
+        id: "abi_attestation.sign_requires_claim_coverage",
+        kind: GuaranteeKind::AbiAttestation,
+        class: GuaranteeClass::Static,
+        phase: Phase::Codegen,
+        description:
+            "`corvid build --target=cdylib --sign` refuses to sign when \
+             any contract declared by the source lacks a non-out-of-scope \
+             guarantee id in the descriptor's signed claim set.",
+        out_of_scope_reason: "",
+        positive_test_refs: &[
+            "crates/corvid-driver/src/build.rs::signed_claim_coverage_accepts_registered_contracts",
+        ],
+        adversarial_test_refs: &[
+            "crates/corvid-driver/src/build.rs::signed_claim_coverage_rejects_missing_declared_contract_id",
+            "crates/corvid-driver/src/build.rs::signed_claim_coverage_rejects_out_of_scope_contract_id",
+        ],
+    },
     // ----- Platform: explicit non-defenses ------------------------
     Guarantee {
         id: "platform.host_kernel_compromise",
@@ -656,6 +674,38 @@ pub static GUARANTEE_REGISTRY: &[Guarantee] = &[
         adversarial_test_refs: &[],
     },
 ];
+
+/// Guarantee ids carried by every signed cdylib ABI descriptor.
+///
+/// This list excludes guarantees whose subject is not a cdylib
+/// artifact, such as receipt-envelope verification, and excludes
+/// explicit non-defenses. The build signing gate checks source
+/// declarations against this set before it emits a DSSE attestation.
+pub const SIGNED_CDYLIB_CLAIM_GUARANTEE_IDS: &[&str] = &[
+    "approval.dangerous_call_requires_token",
+    "approval.token_lexical_only",
+    "approval.dangerous_marker_preserved",
+    "effect_row.body_completeness",
+    "effect_row.caller_propagation",
+    "effect_row.import_boundary",
+    "grounded.provenance_required",
+    "grounded.propagation_across_calls",
+    "budget.compile_time_ceiling",
+    "confidence.min_threshold",
+    "replay.deterministic_pure_path",
+    "abi_descriptor.cdylib_emission",
+    "abi_descriptor.byte_determinism",
+    "abi_descriptor.bilateral_source_match",
+    "abi_attestation.envelope_signature",
+    "abi_attestation.descriptor_match",
+    "abi_attestation.sign_requires_claim_coverage",
+];
+
+pub fn signed_cdylib_claim_guarantees() -> impl Iterator<Item = &'static Guarantee> {
+    SIGNED_CDYLIB_CLAIM_GUARANTEE_IDS
+        .iter()
+        .filter_map(|id| lookup(id))
+}
 
 /// Look up a guarantee by its stable id.
 pub fn lookup(id: &str) -> Option<&'static Guarantee> {
@@ -843,6 +893,21 @@ mod tests {
             GUARANTEE_REGISTRY.len(),
             "every entry must belong to exactly one kind"
         );
+    }
+
+    #[test]
+    fn signed_cdylib_claim_ids_resolve_to_enforced_guarantees() {
+        let mut seen = std::collections::BTreeSet::new();
+        for id in SIGNED_CDYLIB_CLAIM_GUARANTEE_IDS {
+            assert!(seen.insert(*id), "duplicate signed cdylib claim id `{id}`");
+            let guarantee =
+                lookup(id).unwrap_or_else(|| panic!("signed cdylib claim id `{id}` is not registered"));
+            assert_ne!(
+                guarantee.class,
+                GuaranteeClass::OutOfScope,
+                "signed cdylib claim id `{id}` must be enforced"
+            );
+        }
     }
 
     #[test]

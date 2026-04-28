@@ -26,13 +26,14 @@ pub use emit::{emit_abi, normalize_source_path, EmitOptions};
 pub use introspection_catalog::{introspection_agents, with_introspection_agents};
 pub use schema::{
     AbiAgent, AbiApprovalContract, AbiApprovalLabel, AbiApprovalSite, AbiAttributes, AbiBudget,
-    AbiCostEnvelope, AbiDeclaredAt, AbiDestructor, AbiDestructorKind, AbiDispatch, AbiEffects,
-    AbiField, AbiGroundedType, AbiLatencyMs, AbiListType, AbiMinExpected, AbiOptionType,
-    AbiOwnership, AbiOwnershipMode, AbiParam, AbiProgressiveStage, AbiProjectedTokens,
-    AbiProjectedUsd, AbiPrompt, AbiProvenanceContract, AbiResultType, AbiRouteArm, AbiSourceSpan,
-    AbiStore, AbiStoreAccessor, AbiStoreAccessorKind, AbiStoreEffects, AbiStorePolicy, AbiTool,
-    AbiToolContract, AbiToolDomainEffect, AbiTypeDecl, AbiVersionError, AbiWeakType, CorvidAbi,
-    ScalarTypeName, TypeDescription, CORVID_ABI_VERSION, MIN_SUPPORTED_ABI_VERSION,
+    AbiClaimGuarantee, AbiCostEnvelope, AbiDeclaredAt, AbiDestructor, AbiDestructorKind,
+    AbiDispatch, AbiEffects, AbiField, AbiGroundedType, AbiLatencyMs, AbiListType, AbiMinExpected,
+    AbiOptionType, AbiOwnership, AbiOwnershipMode, AbiParam, AbiProgressiveStage,
+    AbiProjectedTokens, AbiProjectedUsd, AbiPrompt, AbiProvenanceContract, AbiResultType,
+    AbiRouteArm, AbiSourceSpan, AbiStore, AbiStoreAccessor, AbiStoreAccessorKind, AbiStoreEffects,
+    AbiStorePolicy, AbiTool, AbiToolContract, AbiToolDomainEffect, AbiTypeDecl, AbiVersionError,
+    AbiWeakType, CorvidAbi, ScalarTypeName, TypeDescription, CORVID_ABI_VERSION,
+    MIN_SUPPORTED_ABI_VERSION,
 };
 pub use signing::{
     load_signing_key, load_verifying_key, pae, sign_envelope, verify_envelope, DsseEnvelope,

@@ -5944,3 +5944,34 @@ Validation:
 
 - `cargo check -p corvid-cli`
 - `cargo test -p corvid-cli --test claim_cmd -- --nocapture`
+
+## 2026-04-28 - Phase 35-J: signed build claim-coverage refusal
+
+Slice 35-J is complete. ABI descriptors now carry a
+`claim_guarantees` array: the concrete guarantee ids, classes, kinds,
+and phases that a signed cdylib is allowed to claim. `corvid claim
+--explain` now prints that descriptor-carried claim set instead of
+reconstructing an aspirational global list from the current registry.
+
+The `corvid build --target=cdylib --sign` path now runs a claim coverage
+gate before emitting the DSSE attestation. The gate rejects signing when
+the descriptor claim set is empty, names an unknown guarantee id, names
+an `OutOfScope` guarantee, or omits a guarantee required by source-level
+contracts such as dangerous tools, effect rows, `Grounded<T>`,
+`@budget`, confidence thresholds, replayability, and the cdylib ABI
+attestation/descriptor surface. Features whose signed guarantee is not
+registered yet, such as `@wrapping` or advanced prompt dispatch policy,
+fail closed instead of being silently signed.
+
+The guarantee registry now includes
+`abi_attestation.sign_requires_claim_coverage`, and the generated core
+semantics document is updated from the registry.
+
+Validation:
+
+- `cargo check -p corvid-driver`
+- `cargo test -p corvid-driver signed_claim_coverage -- --nocapture`
+- `cargo test -p corvid-guarantees`
+- `cargo test -p corvid-abi-verify -- --nocapture`
+- `cargo test -p corvid-cli --test abi_attestation -- --nocapture`
+- `cargo test -p corvid-cli --test claim_cmd -- --nocapture`

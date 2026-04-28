@@ -6,7 +6,7 @@ use crate::schema::{
     AbiDestructorKind, AbiDispatch, AbiEffects, AbiField, AbiOwnership, AbiOwnershipMode, AbiParam,
     AbiProgressiveStage, AbiPrompt, AbiProvenanceContract, AbiRouteArm, AbiSourceSpan, AbiStore,
     AbiStoreAccessor, AbiStoreAccessorKind, AbiStoreEffects, AbiStorePolicy, AbiTool, AbiTypeDecl,
-    CorvidAbi,
+    AbiClaimGuarantee, CorvidAbi,
 };
 use crate::tool_contract::emit_tool_contract;
 use crate::type_description::emit_type_description;
@@ -146,8 +146,20 @@ pub fn emit_abi(
         types,
         stores,
         approval_sites,
+        claim_guarantees: emit_claim_guarantees(),
         extra: Default::default(),
     }
+}
+
+fn emit_claim_guarantees() -> Vec<AbiClaimGuarantee> {
+    corvid_guarantees::signed_cdylib_claim_guarantees()
+        .map(|guarantee| AbiClaimGuarantee {
+            id: guarantee.id.to_string(),
+            kind: guarantee.kind.slug().to_string(),
+            class: guarantee.class.slug().to_string(),
+            phase: guarantee.phase.slug().to_string(),
+        })
+        .collect()
 }
 
 fn emit_store(store: &StoreDecl, resolved: &Resolved) -> AbiStore {

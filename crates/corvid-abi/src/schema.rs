@@ -28,6 +28,8 @@ pub struct CorvidAbi {
     pub stores: Vec<AbiStore>,
     #[serde(default)]
     pub approval_sites: Vec<AbiApprovalSite>,
+    #[serde(default)]
+    pub claim_guarantees: Vec<AbiClaimGuarantee>,
     #[serde(flatten, default)]
     pub extra: BTreeMap<String, Value>,
 }
@@ -44,6 +46,14 @@ impl CorvidAbi {
             })
         }
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AbiClaimGuarantee {
+    pub id: String,
+    pub kind: String,
+    pub class: String,
+    pub phase: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

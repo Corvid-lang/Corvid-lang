@@ -73,16 +73,10 @@ pub fn run_claim_explain(
         println!("  {line}");
     }
     println!("enforced_guarantees:");
-    for guarantee in GUARANTEE_REGISTRY
-        .iter()
-        .filter(|g| g.class != GuaranteeClass::OutOfScope)
-    {
+    for guarantee in &descriptor.claim_guarantees {
         println!(
             "  - id: {}; class: {}; kind: {}; phase: {}",
-            guarantee.id,
-            guarantee.class.slug(),
-            guarantee.kind.slug(),
-            guarantee.phase.slug()
+            guarantee.id, guarantee.class, guarantee.kind, guarantee.phase
         );
     }
     println!("non_defenses:");

@@ -16,6 +16,7 @@ corvid-codegen-cl = { workspace = true }
 corvid-codegen-wasm = { workspace = true }
 corvid-c-header = { workspace = true }
 corvid-abi = { workspace = true }
+corvid-guarantees = { workspace = true }
 corvid-runtime = { workspace = true }
 corvid-trace-schema = { workspace = true }
 corvid-vm = { workspace = true }

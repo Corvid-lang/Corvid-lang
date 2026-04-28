@@ -36,6 +36,7 @@ Per the no-shortcuts rule, every `out_of_scope` entry carries an explicit reason
 | `abi_attestation.envelope_signature` | abi_attestation | runtime_checked | abi_verify |
 | `abi_attestation.descriptor_match` | abi_attestation | runtime_checked | abi_verify |
 | `abi_attestation.absent_reports_unsigned` | abi_attestation | runtime_checked | abi_verify |
+| `abi_attestation.sign_requires_claim_coverage` | abi_attestation | static | codegen |
 | `platform.host_kernel_compromise` | platform | out_of_scope | platform |
 | `platform.signing_key_compromise` | platform | out_of_scope | platform |
 | `platform.toolchain_compromise` | platform | out_of_scope | platform |
@@ -355,6 +356,21 @@ After signature validation, the recovered attestation payload must bit-match the
 **Adversarial tests:**
 
 - `crates/corvid-cli/tests/abi_attestation.rs::unsigned_cdylib_reports_absent_attestation`
+
+#### `abi_attestation.sign_requires_claim_coverage`
+- **class**: static
+- **phase**: codegen
+
+`corvid build --target=cdylib --sign` refuses to sign when any contract declared by the source lacks a non-out-of-scope guarantee id in the descriptor's signed claim set.
+
+**Positive tests:**
+
+- `crates/corvid-driver/src/build.rs::signed_claim_coverage_accepts_registered_contracts`
+
+**Adversarial tests:**
+
+- `crates/corvid-driver/src/build.rs::signed_claim_coverage_rejects_missing_declared_contract_id`
+- `crates/corvid-driver/src/build.rs::signed_claim_coverage_rejects_out_of_scope_contract_id`
 
 ### Platform — explicit non-defenses
 
