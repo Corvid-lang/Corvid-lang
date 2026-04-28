@@ -59,6 +59,7 @@ use corvid_differential_verify::{
 };
 use cost_frontier::{build_frontier, render_frontier as render_cost_frontier, CostFrontierOptions};
 use routing_report::{build_report, render_report as render_routing_report, RoutingReportOptions};
+use sha2::{Digest, Sha256};
 
 #[allow(unused_imports)]
 use corvid_driver::{
@@ -1282,12 +1283,57 @@ fn cmd_new(name: &str) -> Result<u8> {
 }
 
 fn cmd_migrate(action: &str, dir: &Path, state: &Path, dry_run: bool) -> Result<u8> {
+    let migrations = scan_migration_files(dir)?;
     println!("corvid migrate {action}");
     println!("migrations: {}", dir.display());
     println!("state: {}", state.display());
     println!("dry_run: {dry_run}");
-    println!("migration scanning lands in 37E2; no state was changed");
+    if migrations.is_empty() {
+        println!("migrations_found: 0");
+    } else {
+        println!("migrations_found: {}", migrations.len());
+        for migration in migrations {
+            println!(
+                "migration: {} sha256:{}",
+                migration.name, migration.sha256
+            );
+        }
+    }
+    println!("state persistence lands in 37E3; no state was changed");
     Ok(0)
+}
+
+struct MigrationFile {
+    name: String,
+    sha256: String,
+}
+
+fn scan_migration_files(dir: &Path) -> Result<Vec<MigrationFile>> {
+    if !dir.exists() {
+        return Ok(Vec::new());
+    }
+    let mut files = Vec::new();
+    for entry in std::fs::read_dir(dir)
+        .with_context(|| format!("cannot read migrations directory `{}`", dir.display()))?
+    {
+        let entry =
+            entry.with_context(|| format!("cannot read entry under `{}`", dir.display()))?;
+        let path = entry.path();
+        if path.extension().and_then(|ext| ext.to_str()) != Some("sql") {
+            continue;
+        }
+        let bytes = std::fs::read(&path)
+            .with_context(|| format!("cannot read migration `{}`", path.display()))?;
+        let name = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("<invalid>")
+            .to_string();
+        let sha256 = hex::encode(Sha256::digest(&bytes));
+        files.push(MigrationFile { name, sha256 });
+    }
+    files.sort_by(|left, right| left.name.cmp(&right.name));
+    Ok(files)
 }
 
 fn cmd_check(file: &Path) -> Result<u8> {

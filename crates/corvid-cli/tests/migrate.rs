@@ -6,6 +6,42 @@ fn corvid_bin() -> PathBuf {
 }
 
 #[test]
+fn migrate_status_lists_ordered_sql_files_with_checksums() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let migrations = dir.path().join("migrations");
+    std::fs::create_dir_all(&migrations).expect("migrations dir");
+    std::fs::write(migrations.join("0002_add_tasks.sql"), "create table tasks(id text);\n")
+        .expect("write migration 2");
+    std::fs::write(migrations.join("0001_init.sql"), "create table users(id text);\n")
+        .expect("write migration 1");
+    std::fs::write(migrations.join("README.md"), "ignored\n").expect("write ignored");
+
+    let out = Command::new(corvid_bin())
+        .args([
+            "migrate",
+            "status",
+            "--dir",
+            migrations.to_str().unwrap(),
+            "--dry-run",
+        ])
+        .output()
+        .expect("run migrate status");
+    assert!(
+        out.status.success(),
+        "status failed:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("migrations_found: 2"), "{stdout}");
+    let first = stdout.find("0001_init.sql").expect("0001 listed");
+    let second = stdout.find("0002_add_tasks.sql").expect("0002 listed");
+    assert!(first < second, "{stdout}");
+    assert!(stdout.contains("sha256:"), "{stdout}");
+    assert!(!stdout.contains("README.md"), "{stdout}");
+}
+
+#[test]
 fn migrate_help_lists_status_up_down() {
     let out = Command::new(corvid_bin())
         .args(["migrate", "--help"])
