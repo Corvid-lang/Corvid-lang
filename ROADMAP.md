@@ -1785,7 +1785,7 @@ Each benchmark must separate model-provider latency from Corvid runtime overhead
 - [x] 37G1-token-envelope            Add token reference/encrypted-token metadata envelopes.
 - [x] 37G2-host-key-doctor           `corvid doctor` validates token encryption key presence/shape without printing it.
 - [x] 37G3-token-redaction-tests     Traces, errors, and audit helpers never print token values.
-- [ ] 37H1-postgres-design           Document Postgres parity subset and non-scope before code.
+- [x] 37H1-postgres-design           Document Postgres parity subset and non-scope before code.
 - [ ] 37H2-postgres-connection       Add Postgres connection/query envelopes matching SQLite.
 - [ ] 37H3-postgres-migration-status Postgres migration status/drift path matches SQLite subset.
 - [ ] 37I1-db-effect-tags            DB read/write/migration/token/audit operations carry explicit effect tags.

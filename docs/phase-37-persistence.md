@@ -181,6 +181,20 @@ database execution lands.
 - Postgres supports the same query, decode, transaction, and migration subset
   needed by reference apps.
 
+Implementation convention for 37H: Postgres parity means the same Corvid-level
+contracts as SQLite, not every database feature. The v1 subset is:
+
+- connection metadata and redacted diagnostics
+- parameterized query/execute envelopes
+- typed row decode success/missing-column/wrong-kind envelopes
+- explicit transaction commit/rollback/nested-rejection metadata
+- migration status/checksum/drift reports
+- audit-log and token-reference metadata
+
+Non-scope for 37H: connection pooling, LISTEN/NOTIFY, advisory locks,
+replication, PostGIS, stored procedures, bulk copy, and database-specific ORM
+abstractions. Those can arrive later without changing the Phase 37 contract.
+
 ### 37I DB Effect Replay
 
 - DB reads and writes carry effect tags.
