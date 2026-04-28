@@ -71,7 +71,86 @@ fn jobs_enqueue_and_run_one_persist_state() {
     assert!(stdout.contains("status: succeeded"), "{stdout}");
     assert!(stdout.contains("attempts: 1"), "{stdout}");
     assert!(stdout.contains("output_kind: DailyBriefOutput"), "{stdout}");
-    assert!(stdout.contains("output_fingerprint: sha256:daily-output"), "{stdout}");
+    assert!(
+        stdout.contains("output_fingerprint: sha256:daily-output"),
+        "{stdout}"
+    );
+}
+
+#[test]
+fn jobs_delay_persists_and_skips_until_ready() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let state = dir.path().join("jobs.sqlite");
+
+    let delayed = Command::new(corvid_bin())
+        .args([
+            "jobs",
+            "enqueue",
+            "--state",
+            state.to_str().unwrap(),
+            "--task",
+            "scheduled_digest",
+            "--payload",
+            "{\"team\":\"eng\"}",
+            "--delay-ms",
+            "60000",
+        ])
+        .output()
+        .expect("run delayed jobs enqueue");
+    assert!(
+        delayed.status.success(),
+        "delayed enqueue failed:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&delayed.stdout),
+        String::from_utf8_lossy(&delayed.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&delayed.stdout);
+    assert!(stdout.contains("task: scheduled_digest"), "{stdout}");
+    assert!(stdout.contains("next_run_ms: "), "{stdout}");
+
+    let skipped = Command::new(corvid_bin())
+        .args(["jobs", "run-one", "--state", state.to_str().unwrap()])
+        .output()
+        .expect("run jobs run-one before delay");
+    assert!(
+        skipped.status.success(),
+        "run-one failed:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&skipped.stdout),
+        String::from_utf8_lossy(&skipped.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&skipped.stdout);
+    assert!(stdout.contains("job: none"), "{stdout}");
+
+    let immediate = Command::new(corvid_bin())
+        .args([
+            "jobs",
+            "enqueue",
+            "--state",
+            state.to_str().unwrap(),
+            "--task",
+            "immediate_digest",
+        ])
+        .output()
+        .expect("run immediate jobs enqueue");
+    assert!(
+        immediate.status.success(),
+        "immediate enqueue failed:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&immediate.stdout),
+        String::from_utf8_lossy(&immediate.stderr)
+    );
+
+    let run = Command::new(corvid_bin())
+        .args(["jobs", "run-one", "--state", state.to_str().unwrap()])
+        .output()
+        .expect("run jobs run-one after immediate enqueue");
+    assert!(
+        run.status.success(),
+        "run-one failed:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&run.stdout),
+        String::from_utf8_lossy(&run.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&run.stdout);
+    assert!(stdout.contains("task: immediate_digest"), "{stdout}");
+    assert!(!stdout.contains("task: scheduled_digest"), "{stdout}");
 }
 
 #[test]
@@ -126,7 +205,10 @@ fn jobs_dlq_inspects_dead_lettered_jobs() {
     );
     let stdout = String::from_utf8_lossy(&failed.stdout);
     assert!(stdout.contains("status: dead_lettered"), "{stdout}");
-    assert!(stdout.contains("failure_fingerprint: sha256:failure"), "{stdout}");
+    assert!(
+        stdout.contains("failure_fingerprint: sha256:failure"),
+        "{stdout}"
+    );
 
     let dlq = Command::new(corvid_bin())
         .args(["jobs", "dlq", "--state", state.to_str().unwrap()])
@@ -143,6 +225,9 @@ fn jobs_dlq_inspects_dead_lettered_jobs() {
     assert!(stdout.contains("dead_lettered_count: 1"), "{stdout}");
     assert!(stdout.contains("task:send_email"), "{stdout}");
     assert!(stdout.contains("failure_kind:provider_timeout"), "{stdout}");
-    assert!(stdout.contains("failure_fingerprint:sha256:failure"), "{stdout}");
+    assert!(
+        stdout.contains("failure_fingerprint:sha256:failure"),
+        "{stdout}"
+    );
     assert!(stdout.contains("replay_key:replay:email:d1"), "{stdout}");
 }

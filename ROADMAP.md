@@ -1951,8 +1951,8 @@ corvid jobs drain --workers=all
 - [x] 38B3-one-job-test              One persisted job executes once with typed input/output.
 - [x] 38C1-retry-policy-envelope     Retry/backoff/dead-letter metadata exists in stdlib.
 - [x] 38C2-retry-runner              Runner applies retry/backoff and terminal failure.
-- [ ] 38C3-dlq-inspection            CLI can inspect dead-lettered jobs.
-- [ ] 38D1-delay-support             Delayed jobs persist and wake after restart.
+- [x] 38C3-dlq-inspection            CLI can inspect dead-lettered jobs.
+- [x] 38D1-delay-support             Delayed jobs persist and wake after restart.
 - [ ] 38D2-cron-manifest             Cron schedules appear in `corvid audit`.
 - [ ] 38D3-scheduler-recovery        Scheduler recovers missed/pending jobs after restart.
 - [ ] 38E1-lease-model               Job leases prevent duplicate workers.

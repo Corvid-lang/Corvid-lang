@@ -1261,6 +1261,7 @@ fn main() -> ExitCode {
                 budget_usd,
                 effect_summary,
                 replay_key,
+                delay_ms,
             } => cmd_jobs_enqueue(
                 &state,
                 &task,
@@ -1270,6 +1271,7 @@ fn main() -> ExitCode {
                 budget_usd,
                 effect_summary,
                 replay_key,
+                delay_ms,
             ),
             JobsCommand::RunOne {
                 state,
@@ -1468,6 +1470,7 @@ fn cmd_jobs_enqueue(
     budget_usd: f64,
     effect_summary: Option<String>,
     replay_key: Option<String>,
+    delay_ms: u64,
 ) -> Result<u8> {
     if let Some(parent) = state
         .parent()
@@ -1478,7 +1481,12 @@ fn cmd_jobs_enqueue(
     }
     let queue = DurableQueueRuntime::open(state)?;
     let payload = serde_json::from_str(payload).context("jobs payload must be valid JSON")?;
-    let job = queue.enqueue_typed(
+    let next_run_ms = if delay_ms == 0 {
+        None
+    } else {
+        Some(corvid_runtime::tracing::now_ms().saturating_add(delay_ms))
+    };
+    let job = queue.enqueue_typed_at(
         task,
         payload,
         input_schema,
@@ -1486,6 +1494,7 @@ fn cmd_jobs_enqueue(
         budget_usd,
         effect_summary,
         replay_key,
+        next_run_ms,
     )?;
     println!("corvid jobs enqueue");
     println!("state: {}", state.display());
@@ -1566,10 +1575,19 @@ fn print_job_summary(job: &QueueJob) {
         "output_fingerprint: {}",
         job.output_fingerprint.as_deref().unwrap_or("")
     );
-    println!("failure_kind: {}", job.failure_kind.as_deref().unwrap_or(""));
+    println!(
+        "failure_kind: {}",
+        job.failure_kind.as_deref().unwrap_or("")
+    );
     println!(
         "failure_fingerprint: {}",
         job.failure_fingerprint.as_deref().unwrap_or("")
+    );
+    println!(
+        "next_run_ms: {}",
+        job.next_run_ms
+            .map(|value| value.to_string())
+            .unwrap_or_default()
     );
 }
 
@@ -2843,6 +2861,9 @@ enum JobsCommand {
         /// Replay key linking the job to trace/replay metadata.
         #[arg(long)]
         replay_key: Option<String>,
+        /// Persist the job for a future run after this many milliseconds.
+        #[arg(long, default_value = "0")]
+        delay_ms: u64,
     },
     /// Execute the first pending local job and persist the result metadata.
     RunOne {

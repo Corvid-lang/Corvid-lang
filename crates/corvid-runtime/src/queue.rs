@@ -93,6 +93,29 @@ impl QueueRuntime {
         effect_summary: Option<String>,
         replay_key: Option<String>,
     ) -> Result<QueueJob, RuntimeError> {
+        self.enqueue_typed_at(
+            task,
+            payload,
+            input_schema,
+            max_retries,
+            budget_usd,
+            effect_summary,
+            replay_key,
+            None,
+        )
+    }
+
+    pub fn enqueue_typed_at(
+        &self,
+        task: impl Into<String>,
+        payload: Value,
+        input_schema: Option<String>,
+        max_retries: u64,
+        budget_usd: f64,
+        effect_summary: Option<String>,
+        replay_key: Option<String>,
+        next_run_ms: Option<u64>,
+    ) -> Result<QueueJob, RuntimeError> {
         let task = task.into();
         if task.trim().is_empty() {
             return Err(RuntimeError::Other(
@@ -102,7 +125,9 @@ impl QueueRuntime {
         let now = now_ms();
         let id = format!(
             "job_{}",
-            self.next_id.fetch_add(1, Ordering::Relaxed).saturating_add(1)
+            self.next_id
+                .fetch_add(1, Ordering::Relaxed)
+                .saturating_add(1)
         );
         let job = QueueJob {
             id: id.clone(),
@@ -123,7 +148,7 @@ impl QueueRuntime {
             output_fingerprint: None,
             failure_kind: None,
             failure_fingerprint: None,
-            next_run_ms: None,
+            next_run_ms,
             created_ms: now,
             updated_ms: now,
         };
@@ -209,6 +234,29 @@ impl DurableQueueRuntime {
         effect_summary: Option<String>,
         replay_key: Option<String>,
     ) -> Result<QueueJob, RuntimeError> {
+        self.enqueue_typed_at(
+            task,
+            payload,
+            input_schema,
+            max_retries,
+            budget_usd,
+            effect_summary,
+            replay_key,
+            None,
+        )
+    }
+
+    pub fn enqueue_typed_at(
+        &self,
+        task: impl Into<String>,
+        payload: Value,
+        input_schema: Option<String>,
+        max_retries: u64,
+        budget_usd: f64,
+        effect_summary: Option<String>,
+        replay_key: Option<String>,
+        next_run_ms: Option<u64>,
+    ) -> Result<QueueJob, RuntimeError> {
         let task = task.into();
         if task.trim().is_empty() {
             return Err(RuntimeError::Other(
@@ -218,7 +266,9 @@ impl DurableQueueRuntime {
         let now = now_ms();
         let id = format!(
             "job_{}",
-            self.next_id.fetch_add(1, Ordering::Relaxed).saturating_add(1)
+            self.next_id
+                .fetch_add(1, Ordering::Relaxed)
+                .saturating_add(1)
         );
         let budget_usd = if budget_usd.is_finite() && budget_usd > 0.0 {
             budget_usd
@@ -240,7 +290,7 @@ impl DurableQueueRuntime {
             output_fingerprint: None,
             failure_kind: None,
             failure_fingerprint: None,
-            next_run_ms: None,
+            next_run_ms,
             created_ms: now,
             updated_ms: now,
         };
@@ -287,16 +337,15 @@ impl DurableQueueRuntime {
                  from queue_jobs where id = ?1",
             )
             .map_err(|err| RuntimeError::Other(format!("failed to prepare durable queue read: {err}")))?;
-        let mut rows = stmt
-            .query(params![id])
-            .map_err(|err| RuntimeError::Other(format!("failed to query durable queue job: {err}")))?;
-        if let Some(row) = rows
-            .next()
-            .map_err(|err| RuntimeError::Other(format!("failed to read durable queue row: {err}")))? {
-            Ok(Some(
-                read_job_row(row)
-                    .map_err(|err| RuntimeError::Other(format!("failed to decode durable queue job: {err}")))?,
-            ))
+        let mut rows = stmt.query(params![id]).map_err(|err| {
+            RuntimeError::Other(format!("failed to query durable queue job: {err}"))
+        })?;
+        if let Some(row) = rows.next().map_err(|err| {
+            RuntimeError::Other(format!("failed to read durable queue row: {err}"))
+        })? {
+            Ok(Some(read_job_row(row).map_err(|err| {
+                RuntimeError::Other(format!("failed to decode durable queue job: {err}"))
+            })?))
         } else {
             Ok(None)
         }
@@ -311,14 +360,14 @@ impl DurableQueueRuntime {
                  from queue_jobs order by created_ms, id",
             )
             .map_err(|err| RuntimeError::Other(format!("failed to prepare durable queue list: {err}")))?;
-        let rows = stmt
-            .query_map([], read_job_row)
-            .map_err(|err| RuntimeError::Other(format!("failed to list durable queue jobs: {err}")))?;
+        let rows = stmt.query_map([], read_job_row).map_err(|err| {
+            RuntimeError::Other(format!("failed to list durable queue jobs: {err}"))
+        })?;
         let mut jobs = Vec::new();
         for row in rows {
-            jobs.push(
-                row.map_err(|err| RuntimeError::Other(format!("failed to decode durable queue job: {err}")))?,
-            );
+            jobs.push(row.map_err(|err| {
+                RuntimeError::Other(format!("failed to decode durable queue job: {err}"))
+            })?);
         }
         Ok(jobs)
     }
@@ -341,9 +390,13 @@ impl DurableQueueRuntime {
                 "update queue_jobs set status = 'canceled', updated_ms = ?2 where id = ?1",
                 params![id, now as i64],
             )
-            .map_err(|err| RuntimeError::Other(format!("failed to cancel durable queue job: {err}")))?;
+            .map_err(|err| {
+                RuntimeError::Other(format!("failed to cancel durable queue job: {err}"))
+            })?;
         if updated == 0 {
-            return Err(RuntimeError::Other(format!("std.queue job `{id}` not found")));
+            return Err(RuntimeError::Other(format!(
+                "std.queue job `{id}` not found"
+            )));
         }
         self.get(id)?
             .ok_or_else(|| RuntimeError::Other(format!("std.queue job `{id}` not found")))
@@ -358,10 +411,7 @@ impl DurableQueueRuntime {
         output_kind: Option<String>,
         output_fingerprint: Option<String>,
     ) -> Result<Option<QueueJob>, RuntimeError> {
-        let pending = self
-            .list()?
-            .into_iter()
-            .find(eligible_to_run);
+        let pending = self.list()?.into_iter().find(eligible_to_run);
         let Some(mut job) = pending else {
             return Ok(None);
         };
@@ -375,7 +425,7 @@ impl DurableQueueRuntime {
             .lock()
             .unwrap()
             .execute(
-                "update queue_jobs set status = ?2, attempts = ?3, output_kind = ?4, output_fingerprint = ?5, updated_ms = ?6 where id = ?1 and status = 'pending'",
+                "update queue_jobs set status = ?2, attempts = ?3, output_kind = ?4, output_fingerprint = ?5, next_run_ms = null, updated_ms = ?6 where id = ?1 and status in ('pending', 'retry_wait')",
                 params![job.id, job.status.as_str(), job.attempts as i64, job.output_kind, job.output_fingerprint, job.updated_ms as i64],
             )
             .map_err(|err| RuntimeError::Other(format!("failed to run durable queue job: {err}")))?;
@@ -390,10 +440,7 @@ impl DurableQueueRuntime {
         failure_fingerprint: impl Into<String>,
         base_delay_ms: u64,
     ) -> Result<Option<QueueJob>, RuntimeError> {
-        let pending = self
-            .list()?
-            .into_iter()
-            .find(eligible_to_run);
+        let pending = self.list()?.into_iter().find(eligible_to_run);
         let Some(mut job) = pending else {
             return Ok(None);
         };
@@ -457,7 +504,9 @@ impl DurableQueueRuntime {
                 create index if not exists queue_jobs_status on queue_jobs(status);
                 create index if not exists queue_jobs_replay_key on queue_jobs(replay_key);",
             )
-            .map_err(|err| RuntimeError::Other(format!("failed to initialize durable queue: {err}")))?;
+            .map_err(|err| {
+                RuntimeError::Other(format!("failed to initialize durable queue: {err}"))
+            })?;
         self.ensure_column("input_schema", "text")?;
         self.ensure_column("output_kind", "text")?;
         self.ensure_column("output_fingerprint", "text")?;
@@ -471,20 +520,31 @@ impl DurableQueueRuntime {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn
             .prepare("pragma table_info(queue_jobs)")
-            .map_err(|err| RuntimeError::Other(format!("failed to inspect durable queue schema: {err}")))?;
+            .map_err(|err| {
+                RuntimeError::Other(format!("failed to inspect durable queue schema: {err}"))
+            })?;
         let columns = stmt
             .query_map([], |row| row.get::<_, String>(1))
-            .map_err(|err| RuntimeError::Other(format!("failed to inspect durable queue columns: {err}")))?;
+            .map_err(|err| {
+                RuntimeError::Other(format!("failed to inspect durable queue columns: {err}"))
+            })?;
         for column in columns {
-            if column
-                .map_err(|err| RuntimeError::Other(format!("failed to read durable queue column: {err}")))?
-                == name
+            if column.map_err(|err| {
+                RuntimeError::Other(format!("failed to read durable queue column: {err}"))
+            })? == name
             {
                 return Ok(());
             }
         }
-        conn.execute(&format!("alter table queue_jobs add column {name} {ty}"), [])
-            .map_err(|err| RuntimeError::Other(format!("failed to migrate durable queue column `{name}`: {err}")))?;
+        conn.execute(
+            &format!("alter table queue_jobs add column {name} {ty}"),
+            [],
+        )
+        .map_err(|err| {
+            RuntimeError::Other(format!(
+                "failed to migrate durable queue column `{name}`: {err}"
+            ))
+        })?;
         Ok(())
     }
 
@@ -542,11 +602,8 @@ fn parse_status(status: &str) -> QueueJobStatus {
 
 fn eligible_to_run(job: &QueueJob) -> bool {
     match job.status {
-        QueueJobStatus::Pending => true,
-        QueueJobStatus::RetryWait => job
-            .next_run_ms
-            .map(|next| next <= now_ms())
-            .unwrap_or(true),
+        QueueJobStatus::Pending => job.next_run_ms.map(|next| next <= now_ms()).unwrap_or(true),
+        QueueJobStatus::RetryWait => job.next_run_ms.map(|next| next <= now_ms()).unwrap_or(true),
         _ => false,
     }
 }
@@ -572,7 +629,10 @@ mod tests {
         assert_eq!(job.status, QueueJobStatus::Pending);
         assert_eq!(job.max_retries, 3);
         assert_eq!(job.effect_summary.as_deref(), Some("llm+io"));
-        assert_eq!(queue.get(&job.id).unwrap().replay_key.as_deref(), Some("trace:1"));
+        assert_eq!(
+            queue.get(&job.id).unwrap().replay_key.as_deref(),
+            Some("trace:1")
+        );
 
         let canceled = queue.cancel(&job.id).unwrap();
         assert_eq!(canceled.status, QueueJobStatus::Canceled);
@@ -631,13 +691,56 @@ mod tests {
         assert_eq!(ran.attempts, 1);
         assert_eq!(ran.input_schema.as_deref(), Some("DailyBriefInput"));
         assert_eq!(ran.output_kind.as_deref(), Some("DailyBriefOutput"));
-        assert_eq!(ran.output_fingerprint.as_deref(), Some("sha256:daily-output"));
+        assert_eq!(
+            ran.output_fingerprint.as_deref(),
+            Some("sha256:daily-output")
+        );
 
         let fetched = queue.get(&job.id).unwrap().unwrap();
         assert_eq!(fetched.status, QueueJobStatus::Succeeded);
         assert_eq!(fetched.attempts, 1);
         assert_eq!(fetched.output_kind.as_deref(), Some("DailyBriefOutput"));
         assert!(queue.run_one().unwrap().is_none());
+    }
+
+    #[test]
+    fn durable_queue_delays_jobs_until_next_run() {
+        let queue = DurableQueueRuntime::open_in_memory().unwrap();
+        let future = now_ms().saturating_add(60_000);
+        let delayed = queue
+            .enqueue_typed_at(
+                "scheduled_digest",
+                serde_json::json!({"team": "eng"}),
+                Some("DigestInput".to_string()),
+                1,
+                0.25,
+                Some("llm+email".to_string()),
+                Some("replay:digest".to_string()),
+                Some(future),
+            )
+            .unwrap();
+        let immediate = queue
+            .enqueue(
+                "immediate_digest",
+                serde_json::json!({"team": "ops"}),
+                1,
+                0.25,
+                None,
+                None,
+            )
+            .unwrap();
+
+        let ran = queue.run_one().unwrap().expect("immediate job");
+        assert_eq!(ran.id, immediate.id);
+        assert_eq!(ran.status, QueueJobStatus::Succeeded);
+        assert!(
+            queue.run_one().unwrap().is_none(),
+            "future job should not run"
+        );
+
+        let stored = queue.get(&delayed.id).unwrap().unwrap();
+        assert_eq!(stored.status, QueueJobStatus::Pending);
+        assert_eq!(stored.next_run_ms, Some(future));
     }
 
     #[test]
@@ -662,12 +765,18 @@ mod tests {
         assert_eq!(retry.status, QueueJobStatus::RetryWait);
         assert_eq!(retry.attempts, 1);
         assert_eq!(retry.failure_kind.as_deref(), Some("provider_timeout"));
-        assert_eq!(retry.failure_fingerprint.as_deref(), Some("sha256:failure-1"));
+        assert_eq!(
+            retry.failure_fingerprint.as_deref(),
+            Some("sha256:failure-1")
+        );
         assert!(retry.next_run_ms.is_some());
 
         let stored = queue.get(&job.id).unwrap().unwrap();
         assert_eq!(stored.status, QueueJobStatus::RetryWait);
-        assert!(queue.run_one().unwrap().is_none(), "backoff should delay retry");
+        assert!(
+            queue.run_one().unwrap().is_none(),
+            "backoff should delay retry"
+        );
 
         let terminal = queue
             .enqueue(
@@ -686,7 +795,10 @@ mod tests {
         assert_eq!(dead.id, terminal.id);
         assert_eq!(dead.status, QueueJobStatus::DeadLettered);
         assert_eq!(dead.attempts, 1);
-        assert_eq!(dead.failure_fingerprint.as_deref(), Some("sha256:failure-2"));
+        assert_eq!(
+            dead.failure_fingerprint.as_deref(),
+            Some("sha256:failure-2")
+        );
         assert!(dead.next_run_ms.is_none());
         let dlq = queue.dead_lettered().unwrap();
         assert_eq!(dlq.len(), 1);
