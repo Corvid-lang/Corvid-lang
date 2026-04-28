@@ -218,6 +218,40 @@ fn build_server_emits_runnable_local_http_binary() {
 
     drop(timeout_child);
 
+    let invalid_config = Command::new(&server)
+        .env("CORVID_PORT", "0")
+        .env("CORVID_HANDLER_TIMEOUT_MS", "super-secret-invalid")
+        .output()
+        .expect("run invalid config server");
+    assert!(!invalid_config.status.success());
+    let invalid_stderr = String::from_utf8_lossy(&invalid_config.stderr);
+    assert!(
+        invalid_stderr.contains("CORVID_HANDLER_TIMEOUT_MS invalid"),
+        "{invalid_stderr}"
+    );
+    assert!(invalid_stderr.contains("value redacted"), "{invalid_stderr}");
+    assert!(
+        !invalid_stderr.contains("super-secret-invalid"),
+        "{invalid_stderr}"
+    );
+
+    let doctor = Command::new(corvid_bin())
+        .arg("doctor")
+        .env("CORVID_HANDLER_TIMEOUT_MS", "super-secret-invalid")
+        .output()
+        .expect("run doctor");
+    assert!(!doctor.status.success());
+    let doctor_stdout = String::from_utf8_lossy(&doctor.stdout);
+    assert!(
+        doctor_stdout.contains("CORVID_HANDLER_TIMEOUT_MS invalid"),
+        "{doctor_stdout}"
+    );
+    assert!(doctor_stdout.contains("value redacted"), "{doctor_stdout}");
+    assert!(
+        !doctor_stdout.contains("super-secret-invalid"),
+        "{doctor_stdout}"
+    );
+
     let trace_child = Command::new(&server)
         .env("CORVID_PORT", "0")
         .env("CORVID_MAX_REQUESTS", "1")

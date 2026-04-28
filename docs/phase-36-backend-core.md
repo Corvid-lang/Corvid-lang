@@ -306,6 +306,12 @@ endpoint contract.
 - Invalid typed env vars fail startup with redacted diagnostics.
 - `corvid doctor` reports missing backend config without printing secrets.
 
+Implementation convention for 36H: generated servers validate backend runtime
+env before binding the listener: `CORVID_PORT`, `CORVID_HANDLER_TIMEOUT_MS`,
+and `CORVID_MAX_REQUESTS` are parsed as typed values and invalid values fail
+startup with the value redacted. `corvid doctor` mirrors those checks so CI can
+catch bad backend env without starting a server.
+
 ### 36I Approval/Effect Integration
 
 - A dangerous route path without approval fails before deploy.

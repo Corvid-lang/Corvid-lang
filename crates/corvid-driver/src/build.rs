@@ -827,6 +827,7 @@ static ERROR_TOTAL: AtomicU64 = AtomicU64::new(0);
 fn main() -> std::io::Result<()> {{
     let host = std::env::var("CORVID_HOST").unwrap_or_else(|_| "127.0.0.1".to_string());
     let port = std::env::var("CORVID_PORT").unwrap_or_else(|_| "8080".to_string());
+    validate_runtime_config()?;
     let listener = TcpListener::bind(format!("{{host}}:{{port}}"))?;
     let addr = listener.local_addr()?;
     println!("listening: http://{{addr}}");
@@ -1147,6 +1148,33 @@ fn max_requests() -> Option<u64> {{
         .ok()
         .and_then(|value| value.parse::<u64>().ok())
         .filter(|limit| *limit > 0)
+}}
+
+fn validate_runtime_config() -> std::io::Result<()> {{
+    if let Ok(port) = std::env::var("CORVID_PORT") {{
+        if port.parse::<u16>().is_err() {{
+            return Err(invalid_config("CORVID_PORT", "expected integer port 0-65535"));
+        }}
+    }}
+    if let Ok(timeout) = std::env::var("CORVID_HANDLER_TIMEOUT_MS") {{
+        if timeout.parse::<u64>().is_err() {{
+            return Err(invalid_config("CORVID_HANDLER_TIMEOUT_MS", "expected unsigned integer milliseconds"));
+        }}
+    }}
+    if let Ok(limit) = std::env::var("CORVID_MAX_REQUESTS") {{
+        match limit.parse::<u64>() {{
+            Ok(value) if value > 0 => {{}}
+            _ => return Err(invalid_config("CORVID_MAX_REQUESTS", "expected positive unsigned integer")),
+        }}
+    }}
+    Ok(())
+}}
+
+fn invalid_config(name: &str, reason: &str) -> std::io::Error {{
+    std::io::Error::new(
+        std::io::ErrorKind::InvalidInput,
+        format!("backend config {{name}} invalid: {{reason}} (value redacted)"),
+    )
 }}
 
 fn request_id() -> String {{

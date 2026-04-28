@@ -2171,6 +2171,16 @@ fn cmd_doctor_v2() -> Result<u8> {
         None => println!("  .. CORVID_APPROVER not set"),
     }
 
+    if !check_u16_env("CORVID_PORT", "backend listen port") {
+        ok = false;
+    }
+    if !check_u64_env("CORVID_HANDLER_TIMEOUT_MS", "backend handler timeout") {
+        ok = false;
+    }
+    if !check_positive_u64_env("CORVID_MAX_REQUESTS", "backend graceful drain request limit") {
+        ok = false;
+    }
+
     match find_upward(&cwd, "Corvid.lock") {
         Some(path) => println!("  OK registry lockfile found at {}", path.display()),
         None => println!("  .. no Corvid.lock found from cwd upward"),
@@ -2212,6 +2222,59 @@ fn command_output(program: &str, args: &[&str]) -> Option<String> {
                 None
             }
         })
+}
+
+fn check_u16_env(name: &str, label: &str) -> bool {
+    match std::env::var(name) {
+        Ok(value) if value.parse::<u16>().is_ok() => {
+            println!("  OK {name} valid ({label})");
+            true
+        }
+        Ok(_) => {
+            println!("  XX {name} invalid ({label}); value redacted");
+            false
+        }
+        Err(_) => {
+            println!("  .. {name} not set ({label})");
+            true
+        }
+    }
+}
+
+fn check_u64_env(name: &str, label: &str) -> bool {
+    match std::env::var(name) {
+        Ok(value) if value.parse::<u64>().is_ok() => {
+            println!("  OK {name} valid ({label})");
+            true
+        }
+        Ok(_) => {
+            println!("  XX {name} invalid ({label}); value redacted");
+            false
+        }
+        Err(_) => {
+            println!("  .. {name} not set ({label})");
+            true
+        }
+    }
+}
+
+fn check_positive_u64_env(name: &str, label: &str) -> bool {
+    match std::env::var(name) {
+        Ok(value) => match value.parse::<u64>() {
+            Ok(parsed) if parsed > 0 => {
+                println!("  OK {name} valid ({label})");
+                true
+            }
+            _ => {
+                println!("  XX {name} invalid ({label}); value redacted");
+                false
+            }
+        },
+        Err(_) => {
+            println!("  .. {name} not set ({label})");
+            true
+        }
+    }
 }
 
 fn find_upward(start: &Path, name: &str) -> Option<PathBuf> {
