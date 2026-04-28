@@ -207,4 +207,40 @@ fn build_server_emits_runnable_local_http_binary() {
     assert!(timeout.contains(r#""kind":"handler_timeout""#), "{timeout}");
 
     drop(timeout_child);
+
+    let trace_child = Command::new(&server)
+        .env("CORVID_PORT", "0")
+        .env("CORVID_MAX_REQUESTS", "1")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn trace server");
+    let mut trace_child = ChildGuard(trace_child);
+    let stdout = trace_child.0.stdout.take().expect("trace server stdout");
+    let mut stderr = trace_child.0.stderr.take().expect("trace server stderr");
+    let mut reader = BufReader::new(stdout);
+    let mut line = String::new();
+    let start = Instant::now();
+    while line.is_empty() && start.elapsed() < Duration::from_secs(10) {
+        reader
+            .read_line(&mut line)
+            .expect("read trace listening line");
+    }
+    let trace_addr = line
+        .trim()
+        .strip_prefix("listening: http://")
+        .expect("trace listening prefix");
+    let traced = http_get(trace_addr, "/healthz");
+    assert!(traced.contains("HTTP/1.1 200 OK"), "{traced}");
+    let _ = trace_child.0.wait();
+    let mut traces = String::new();
+    stderr.read_to_string(&mut traces).expect("read traces");
+    assert!(
+        traces.contains(r#""event":"corvid.server.request""#),
+        "{traces}"
+    );
+    assert!(traces.contains(r#""method":"GET""#), "{traces}");
+    assert!(traces.contains(r#""route":"/healthz""#), "{traces}");
+    assert!(traces.contains(r#""status":200"#), "{traces}");
+    assert!(traces.contains(r#""effects":[]"#), "{traces}");
 }

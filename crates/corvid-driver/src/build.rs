@@ -855,6 +855,7 @@ fn handle(mut stream: TcpStream) -> std::io::Result<()> {{
             &mut stream,
             400,
             "<unknown>",
+            "<unknown>",
             "bad_request",
             "empty request",
             &request_id,
@@ -866,6 +867,7 @@ fn handle(mut stream: TcpStream) -> std::io::Result<()> {{
         return respond_error(
             &mut stream,
             413,
+            "<unknown>",
             "<unknown>",
             "body_too_large",
             "request exceeds server body limit",
@@ -883,6 +885,7 @@ fn handle(mut stream: TcpStream) -> std::io::Result<()> {{
             &mut stream,
             400,
             "<unknown>",
+            "<unknown>",
             "bad_request",
             "malformed request line",
             &request_id,
@@ -893,6 +896,7 @@ fn handle(mut stream: TcpStream) -> std::io::Result<()> {{
         return respond_error(
             &mut stream,
             405,
+            method,
             path,
             "method_not_allowed",
             "method not allowed",
@@ -901,20 +905,39 @@ fn handle(mut stream: TcpStream) -> std::io::Result<()> {{
         );
     }}
     if path == "/healthz" {{
-        return respond(&mut stream, 200, "application/json", "{{\"status\":\"ok\"}}", &request_id);
+        return respond(
+            &mut stream,
+            200,
+            "application/json",
+            "{{\"status\":\"ok\"}}",
+            &request_id,
+            started,
+            method,
+            path,
+        );
     }}
     let output = run_handler(handler_timeout());
     match output {{
         Ok(out) if out.status_success => {{
             let body = out.stdout.trim().to_string();
             let json = format!("{{{{\"result\":{{:?}}}}}}", body);
-            respond(&mut stream, 200, "application/json", &json, &request_id)
+            respond(
+                &mut stream,
+                200,
+                "application/json",
+                &json,
+                &request_id,
+                started,
+                method,
+                path,
+            )
         }}
         Ok(out) => {{
             let err = out.stderr.trim().to_string();
             respond_error(
                 &mut stream,
                 500,
+                method,
                 path,
                 "handler_failed",
                 if err.is_empty() {{ "handler failed" }} else {{ &err }},
@@ -925,6 +948,7 @@ fn handle(mut stream: TcpStream) -> std::io::Result<()> {{
         Err(HandlerError::TimedOut) => respond_error(
             &mut stream,
             504,
+            method,
             path,
             "handler_timeout",
             "handler timed out",
@@ -935,6 +959,7 @@ fn handle(mut stream: TcpStream) -> std::io::Result<()> {{
             respond_error(
                 &mut stream,
                 500,
+                method,
                 path,
                 "handler_spawn_failed",
                 &err,
@@ -948,6 +973,7 @@ fn handle(mut stream: TcpStream) -> std::io::Result<()> {{
 fn respond_error(
     stream: &mut TcpStream,
     status: u16,
+    method: &str,
     route: &str,
     kind: &str,
     message: &str,
@@ -968,6 +994,9 @@ fn respond_error(
         "application/json",
         &body,
         &request_id,
+        started,
+        method,
+        route,
     )
 }}
 
@@ -977,8 +1006,11 @@ fn respond(
     content_type: &str,
     body: &str,
     request_id: &str,
+    started: Instant,
+    method: &str,
+    route: &str,
 ) -> std::io::Result<()> {{
-    write_response(stream, status, content_type, body, &request_id)
+    write_response(stream, status, content_type, body, &request_id, started, method, route)
 }}
 
 fn write_response(
@@ -987,6 +1019,9 @@ fn write_response(
     content_type: &str,
     body: &str,
     request_id: &str,
+    started: Instant,
+    method: &str,
+    route: &str,
 ) -> std::io::Result<()> {{
     let reason = match status {{
         200 => "OK",
@@ -1000,7 +1035,19 @@ fn write_response(
         "HTTP/1.1 {{status}} {{reason}}\r\ncontent-type: {{content_type}}\r\ncontent-length: {{}}\r\nx-corvid-request-id: {{request_id}}\r\nconnection: close\r\n\r\n{{body}}",
         body.as_bytes().len()
     );
+    trace_response(request_id, method, route, status, started);
     stream.write_all(response.as_bytes())
+}}
+
+fn trace_response(request_id: &str, method: &str, route: &str, status: u16, started: Instant) {{
+    eprintln!(
+        "{{{{\"event\":\"corvid.server.request\",\"request_id\":{{}},\"method\":{{}},\"route\":{{}},\"status\":{{}},\"duration_ms\":{{}},\"effects\":[]}}}}",
+        json_string(request_id),
+        json_string(method),
+        json_string(route),
+        status,
+        started.elapsed().as_millis()
+    );
 }}
 
 struct HandlerOutput {{

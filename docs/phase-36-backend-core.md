@@ -279,6 +279,12 @@ JSON 413/504 errors, and subprocess isolation for compiled Corvid handlers.
   and effect metadata.
 - Failed decode and timeout cases are traced.
 
+Implementation convention for 36F: the generated server emits one structured
+JSON completion event per request to stderr with event name
+`corvid.server.request`, `request_id`, `method`, `route`, `status`,
+`duration_ms`, and `effects`. Typed route dispatch will replace the empty
+effects list with the route effect row from the manifest.
+
 ### 36G Health, Readiness, Metrics
 
 - `/healthz` reports process liveness.
