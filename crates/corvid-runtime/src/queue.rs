@@ -9,9 +9,11 @@ use std::sync::{Arc, Mutex};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum QueueJobStatus {
     Pending,
+    RetryWait,
     Running,
     Succeeded,
     Failed,
+    DeadLettered,
     Canceled,
 }
 
@@ -19,9 +21,11 @@ impl QueueJobStatus {
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::Pending => "pending",
+            Self::RetryWait => "retry_wait",
             Self::Running => "running",
             Self::Succeeded => "succeeded",
             Self::Failed => "failed",
+            Self::DeadLettered => "dead_lettered",
             Self::Canceled => "canceled",
         }
     }
@@ -41,6 +45,9 @@ pub struct QueueJob {
     pub replay_key: Option<String>,
     pub output_kind: Option<String>,
     pub output_fingerprint: Option<String>,
+    pub failure_kind: Option<String>,
+    pub failure_fingerprint: Option<String>,
+    pub next_run_ms: Option<u64>,
     pub created_ms: u64,
     pub updated_ms: u64,
 }
@@ -114,6 +121,9 @@ impl QueueRuntime {
             replay_key,
             output_kind: None,
             output_fingerprint: None,
+            failure_kind: None,
+            failure_fingerprint: None,
+            next_run_ms: None,
             created_ms: now,
             updated_ms: now,
         };
@@ -228,6 +238,9 @@ impl DurableQueueRuntime {
             replay_key,
             output_kind: None,
             output_fingerprint: None,
+            failure_kind: None,
+            failure_fingerprint: None,
+            next_run_ms: None,
             created_ms: now,
             updated_ms: now,
         };
@@ -239,8 +252,8 @@ impl DurableQueueRuntime {
             .unwrap()
             .execute(
                 "insert into queue_jobs
-                 (id, task, payload_json, input_schema, status, attempts, max_retries, budget_usd, effect_summary, replay_key, output_kind, output_fingerprint, created_ms, updated_ms)
-                 values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+                 (id, task, payload_json, input_schema, status, attempts, max_retries, budget_usd, effect_summary, replay_key, output_kind, output_fingerprint, failure_kind, failure_fingerprint, next_run_ms, created_ms, updated_ms)
+                 values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
                 params![
                     job.id,
                     job.task,
@@ -254,6 +267,9 @@ impl DurableQueueRuntime {
                     job.replay_key,
                     job.output_kind,
                     job.output_fingerprint,
+                    job.failure_kind,
+                    job.failure_fingerprint,
+                    job.next_run_ms.map(|value| value as i64),
                     job.created_ms as i64,
                     job.updated_ms as i64,
                 ],
@@ -267,7 +283,7 @@ impl DurableQueueRuntime {
         let mut stmt = conn
             .prepare(
                 "select id, task, payload_json, input_schema, status, attempts, max_retries, budget_usd,
-                        effect_summary, replay_key, output_kind, output_fingerprint, created_ms, updated_ms
+                        effect_summary, replay_key, output_kind, output_fingerprint, failure_kind, failure_fingerprint, next_run_ms, created_ms, updated_ms
                  from queue_jobs where id = ?1",
             )
             .map_err(|err| RuntimeError::Other(format!("failed to prepare durable queue read: {err}")))?;
@@ -291,7 +307,7 @@ impl DurableQueueRuntime {
         let mut stmt = conn
             .prepare(
                 "select id, task, payload_json, input_schema, status, attempts, max_retries, budget_usd,
-                        effect_summary, replay_key, output_kind, output_fingerprint, created_ms, updated_ms
+                        effect_summary, replay_key, output_kind, output_fingerprint, failure_kind, failure_fingerprint, next_run_ms, created_ms, updated_ms
                  from queue_jobs order by created_ms, id",
             )
             .map_err(|err| RuntimeError::Other(format!("failed to prepare durable queue list: {err}")))?;
@@ -337,7 +353,7 @@ impl DurableQueueRuntime {
         let pending = self
             .list()?
             .into_iter()
-            .find(|job| job.status == QueueJobStatus::Pending);
+            .find(eligible_to_run);
         let Some(mut job) = pending else {
             return Ok(None);
         };
@@ -355,6 +371,52 @@ impl DurableQueueRuntime {
                 params![job.id, job.status.as_str(), job.attempts as i64, job.output_kind, job.output_fingerprint, job.updated_ms as i64],
             )
             .map_err(|err| RuntimeError::Other(format!("failed to run durable queue job: {err}")))?;
+        self.get(&job.id)?
+            .map(Some)
+            .ok_or_else(|| RuntimeError::Other(format!("std.queue job `{}` not found", job.id)))
+    }
+
+    pub fn run_one_failed(
+        &self,
+        failure_kind: impl Into<String>,
+        failure_fingerprint: impl Into<String>,
+        base_delay_ms: u64,
+    ) -> Result<Option<QueueJob>, RuntimeError> {
+        let pending = self
+            .list()?
+            .into_iter()
+            .find(eligible_to_run);
+        let Some(mut job) = pending else {
+            return Ok(None);
+        };
+        let now = now_ms();
+        job.attempts = job.attempts.saturating_add(1);
+        job.failure_kind = Some(failure_kind.into());
+        job.failure_fingerprint = Some(failure_fingerprint.into());
+        job.updated_ms = now;
+        if job.attempts <= job.max_retries {
+            job.status = QueueJobStatus::RetryWait;
+            job.next_run_ms = Some(now.saturating_add(base_delay_ms.saturating_mul(job.attempts)));
+        } else {
+            job.status = QueueJobStatus::DeadLettered;
+            job.next_run_ms = None;
+        }
+        self.conn
+            .lock()
+            .unwrap()
+            .execute(
+                "update queue_jobs set status = ?2, attempts = ?3, failure_kind = ?4, failure_fingerprint = ?5, next_run_ms = ?6, updated_ms = ?7 where id = ?1 and status in ('pending', 'retry_wait')",
+                params![
+                    job.id,
+                    job.status.as_str(),
+                    job.attempts as i64,
+                    job.failure_kind,
+                    job.failure_fingerprint,
+                    job.next_run_ms.map(|value| value as i64),
+                    job.updated_ms as i64
+                ],
+            )
+            .map_err(|err| RuntimeError::Other(format!("failed to record durable queue failure: {err}")))?;
         self.get(&job.id)?
             .map(Some)
             .ok_or_else(|| RuntimeError::Other(format!("std.queue job `{}` not found", job.id)))
@@ -378,6 +440,9 @@ impl DurableQueueRuntime {
                     replay_key text,
                     output_kind text,
                     output_fingerprint text,
+                    failure_kind text,
+                    failure_fingerprint text,
+                    next_run_ms integer,
                     created_ms integer not null,
                     updated_ms integer not null
                 );
@@ -388,6 +453,9 @@ impl DurableQueueRuntime {
         self.ensure_column("input_schema", "text")?;
         self.ensure_column("output_kind", "text")?;
         self.ensure_column("output_fingerprint", "text")?;
+        self.ensure_column("failure_kind", "text")?;
+        self.ensure_column("failure_fingerprint", "text")?;
+        self.ensure_column("next_run_ms", "integer")?;
         Ok(())
     }
 
@@ -444,18 +512,34 @@ fn read_job_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<QueueJob> {
         replay_key: row.get(9)?,
         output_kind: row.get(10)?,
         output_fingerprint: row.get(11)?,
-        created_ms: row.get::<_, i64>(12)? as u64,
-        updated_ms: row.get::<_, i64>(13)? as u64,
+        failure_kind: row.get(12)?,
+        failure_fingerprint: row.get(13)?,
+        next_run_ms: row.get::<_, Option<i64>>(14)?.map(|value| value as u64),
+        created_ms: row.get::<_, i64>(15)? as u64,
+        updated_ms: row.get::<_, i64>(16)? as u64,
     })
 }
 
 fn parse_status(status: &str) -> QueueJobStatus {
     match status {
+        "retry_wait" => QueueJobStatus::RetryWait,
         "running" => QueueJobStatus::Running,
         "succeeded" => QueueJobStatus::Succeeded,
         "failed" => QueueJobStatus::Failed,
+        "dead_lettered" => QueueJobStatus::DeadLettered,
         "canceled" => QueueJobStatus::Canceled,
         _ => QueueJobStatus::Pending,
+    }
+}
+
+fn eligible_to_run(job: &QueueJob) -> bool {
+    match job.status {
+        QueueJobStatus::Pending => true,
+        QueueJobStatus::RetryWait => job
+            .next_run_ms
+            .map(|next| next <= now_ms())
+            .unwrap_or(true),
+        _ => false,
     }
 }
 
@@ -546,5 +630,55 @@ mod tests {
         assert_eq!(fetched.attempts, 1);
         assert_eq!(fetched.output_kind.as_deref(), Some("DailyBriefOutput"));
         assert!(queue.run_one().unwrap().is_none());
+    }
+
+    #[test]
+    fn durable_queue_records_retry_wait_and_dead_letter() {
+        let queue = DurableQueueRuntime::open_in_memory().unwrap();
+        let job = queue
+            .enqueue(
+                "send_email",
+                serde_json::json!({"draft": "d1"}),
+                1,
+                1.0,
+                Some("llm+email".to_string()),
+                Some("replay:email".to_string()),
+            )
+            .unwrap();
+
+        let retry = queue
+            .run_one_failed("provider_timeout", "sha256:failure-1", 1000)
+            .unwrap()
+            .expect("retry job");
+        assert_eq!(retry.id, job.id);
+        assert_eq!(retry.status, QueueJobStatus::RetryWait);
+        assert_eq!(retry.attempts, 1);
+        assert_eq!(retry.failure_kind.as_deref(), Some("provider_timeout"));
+        assert_eq!(retry.failure_fingerprint.as_deref(), Some("sha256:failure-1"));
+        assert!(retry.next_run_ms.is_some());
+
+        let stored = queue.get(&job.id).unwrap().unwrap();
+        assert_eq!(stored.status, QueueJobStatus::RetryWait);
+        assert!(queue.run_one().unwrap().is_none(), "backoff should delay retry");
+
+        let terminal = queue
+            .enqueue(
+                "send_email",
+                serde_json::json!({"draft": "d2"}),
+                0,
+                1.0,
+                Some("llm+email".to_string()),
+                Some("replay:email:dead".to_string()),
+            )
+            .unwrap();
+        let dead = queue
+            .run_one_failed("provider_timeout", "sha256:failure-2", 0)
+            .unwrap()
+            .expect("dead-letter job");
+        assert_eq!(dead.id, terminal.id);
+        assert_eq!(dead.status, QueueJobStatus::DeadLettered);
+        assert_eq!(dead.attempts, 1);
+        assert_eq!(dead.failure_fingerprint.as_deref(), Some("sha256:failure-2"));
+        assert!(dead.next_run_ms.is_none());
     }
 }
