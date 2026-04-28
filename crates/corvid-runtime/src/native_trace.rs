@@ -52,6 +52,21 @@ unsafe fn decode_slot_json(slot_ptr: *const u8, tag: char) -> Value {
             let descriptor = unsafe { *(slot_ptr as *const i64) };
             Value::String(unsafe { borrow_descriptor_string(descriptor) })
         }
+        'j' => {
+            // Non-scalar args land here: codegen-cl built a JSON
+            // string for the value via the corvid_json_buffer_*
+            // helpers and stored a Corvid String descriptor
+            // pointer in the slot. Parse it back into a structured
+            // Value so the trace event preserves the same shape the
+            // program saw.
+            let descriptor = unsafe { *(slot_ptr as *const i64) };
+            let json_text = unsafe { borrow_descriptor_string(descriptor) };
+            serde_json::from_str::<Value>(&json_text).unwrap_or_else(|err| {
+                panic!(
+                    "native trace 'j'-tagged slot held malformed JSON `{json_text}`: {err}"
+                )
+            })
+        }
         other => panic!("unsupported native trace value tag `{other}`"),
     }
 }
@@ -207,6 +222,62 @@ mod tests {
     use super::decode_trace_values;
     use serde_json::json;
 
+    extern "C" {
+        fn corvid_json_buffer_new() -> *mut std::ffi::c_void;
+        fn corvid_json_buffer_finish(buf: *mut std::ffi::c_void) -> *mut std::ffi::c_void;
+        fn corvid_json_buffer_append_raw(
+            buf: *mut std::ffi::c_void,
+            desc: *mut std::ffi::c_void,
+        );
+        fn corvid_json_buffer_append_int(buf: *mut std::ffi::c_void, value: i64);
+        fn corvid_json_buffer_append_float(buf: *mut std::ffi::c_void, value: f64);
+        fn corvid_json_buffer_append_bool(buf: *mut std::ffi::c_void, value: i8);
+        fn corvid_json_buffer_append_null(buf: *mut std::ffi::c_void);
+        fn corvid_json_buffer_append_string(
+            buf: *mut std::ffi::c_void,
+            desc: *mut std::ffi::c_void,
+        );
+    }
+
+    /// Drop a Corvid String descriptor obtained through these tests.
+    /// Matches `ffi_bridge.rs`'s extern signature byte-for-byte (the
+    /// pointer width of `*const u8` and `*mut c_void` is identical on
+    /// every supported target) so rustc does not warn about a
+    /// duplicate `corvid_release` extern with a different signature.
+    unsafe fn corvid_release(payload: *mut std::ffi::c_void) {
+        extern "C" {
+            fn corvid_release(descriptor: *const u8);
+        }
+        corvid_release(payload as *const u8);
+    }
+
+    /// Same trick for `corvid_string_from_bytes` — `ffi_bridge.rs`
+    /// declares it returning `*const u8`; cast to `*mut c_void` here
+    /// so the test code reads as one consistent pointer kind.
+    unsafe fn corvid_string_from_bytes(bytes: *const u8, len: i64) -> *mut std::ffi::c_void {
+        extern "C" {
+            fn corvid_string_from_bytes(bytes: *const u8, length: i64) -> *const u8;
+        }
+        corvid_string_from_bytes(bytes, len) as *mut std::ffi::c_void
+    }
+
+    /// Borrow the bytes inside a Corvid String descriptor without
+    /// changing its refcount. The String descriptor layout has
+    /// bytes_ptr at offset 0 and length at offset 8.
+    unsafe fn descriptor_text(desc: *mut std::ffi::c_void) -> String {
+        let bytes_ptr = *(desc as *const *const u8);
+        let length = *((desc as *const u8).add(8) as *const i64);
+        let slice = std::slice::from_raw_parts(bytes_ptr, length as usize);
+        std::str::from_utf8(slice).expect("utf8").to_owned()
+    }
+
+    /// Allocate a fresh Corvid String via the runtime's regular
+    /// allocator so the JSON helpers see the same descriptor layout
+    /// codegen would feed them.
+    unsafe fn make_string(s: &str) -> *mut std::ffi::c_void {
+        corvid_string_from_bytes(s.as_ptr(), s.len() as i64)
+    }
+
     #[test]
     fn decode_trace_values_handles_scalar_tags() {
         let ints = [7_i64, 1_i64];
@@ -220,5 +291,122 @@ mod tests {
         let values =
             unsafe { decode_trace_values("f", 1, floats.as_ptr() as usize as i64) };
         assert_eq!(values, vec![json!(3.5)]);
+    }
+
+    #[test]
+    fn json_buffer_roundtrips_struct_shape() {
+        // Mirrors what codegen emits for `Refund(id="r-001", amount=42)`:
+        // open delimiter + field-name literals + scalar appends + close.
+        unsafe {
+            let buf = corvid_json_buffer_new();
+            let open_id = make_string("{\"id\":");
+            corvid_json_buffer_append_raw(buf, open_id);
+            let id_value = make_string("r-001");
+            corvid_json_buffer_append_string(buf, id_value);
+            let next_amount = make_string(",\"amount\":");
+            corvid_json_buffer_append_raw(buf, next_amount);
+            corvid_json_buffer_append_int(buf, 42);
+            let close = make_string("}");
+            corvid_json_buffer_append_raw(buf, close);
+            let result = corvid_json_buffer_finish(buf);
+            let text = descriptor_text(result);
+            corvid_release(result);
+            corvid_release(open_id);
+            corvid_release(id_value);
+            corvid_release(next_amount);
+            corvid_release(close);
+            assert_eq!(text, r#"{"id":"r-001","amount":42}"#);
+        }
+    }
+
+    #[test]
+    fn json_buffer_escapes_string_payload() {
+        unsafe {
+            let buf = corvid_json_buffer_new();
+            let s = make_string("a\"b\\c\nd");
+            corvid_json_buffer_append_string(buf, s);
+            let result = corvid_json_buffer_finish(buf);
+            let text = descriptor_text(result);
+            corvid_release(result);
+            corvid_release(s);
+            assert_eq!(text, "\"a\\\"b\\\\c\\nd\"");
+        }
+    }
+
+    #[test]
+    fn json_buffer_emits_null_for_non_finite_floats() {
+        unsafe {
+            let buf = corvid_json_buffer_new();
+            corvid_json_buffer_append_float(buf, f64::NAN);
+            let nan_result = corvid_json_buffer_finish(buf);
+            let nan_text = descriptor_text(nan_result);
+            corvid_release(nan_result);
+            assert_eq!(nan_text, "null");
+
+            let buf = corvid_json_buffer_new();
+            corvid_json_buffer_append_float(buf, f64::INFINITY);
+            let inf_result = corvid_json_buffer_finish(buf);
+            let inf_text = descriptor_text(inf_result);
+            corvid_release(inf_result);
+            assert_eq!(inf_text, "null");
+
+            let buf = corvid_json_buffer_new();
+            corvid_json_buffer_append_null(buf);
+            let null_result = corvid_json_buffer_finish(buf);
+            let null_text = descriptor_text(null_result);
+            corvid_release(null_result);
+            assert_eq!(null_text, "null");
+        }
+    }
+
+    #[test]
+    fn json_buffer_renders_bools_and_finite_floats_round_trip_through_serde() {
+        unsafe {
+            let buf = corvid_json_buffer_new();
+            let open = make_string("{\"flag\":");
+            corvid_json_buffer_append_raw(buf, open);
+            corvid_json_buffer_append_bool(buf, 1);
+            let next = make_string(",\"ratio\":");
+            corvid_json_buffer_append_raw(buf, next);
+            corvid_json_buffer_append_float(buf, 0.25);
+            let close = make_string("}");
+            corvid_json_buffer_append_raw(buf, close);
+            let result = corvid_json_buffer_finish(buf);
+            let text = descriptor_text(result);
+            corvid_release(result);
+            corvid_release(open);
+            corvid_release(next);
+            corvid_release(close);
+            let parsed: serde_json::Value =
+                serde_json::from_str(&text).expect("buffer output must be valid JSON");
+            assert_eq!(parsed, json!({"flag": true, "ratio": 0.25}));
+        }
+    }
+
+    #[test]
+    fn decode_trace_values_handles_j_tag_via_descriptor_pointer() {
+        // Build a JSON String through the same surface codegen uses,
+        // place its descriptor pointer in a single 8-byte slot, and
+        // confirm the trace decoder routes 'j' through serde_json.
+        unsafe {
+            let buf = corvid_json_buffer_new();
+            let open = make_string("{\"id\":");
+            corvid_json_buffer_append_raw(buf, open);
+            let id_val = make_string("r-001");
+            corvid_json_buffer_append_string(buf, id_val);
+            let close = make_string("}");
+            corvid_json_buffer_append_raw(buf, close);
+            let json_desc = corvid_json_buffer_finish(buf);
+
+            let slot: i64 = json_desc as usize as i64;
+            let values = decode_trace_values("j", 1, &slot as *const i64 as usize as i64);
+
+            corvid_release(json_desc);
+            corvid_release(open);
+            corvid_release(id_val);
+            corvid_release(close);
+
+            assert_eq!(values, vec![json!({"id": "r-001"})]);
+        }
     }
 }
