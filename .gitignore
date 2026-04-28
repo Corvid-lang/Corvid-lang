@@ -22,6 +22,9 @@ benches/corvid/generated/
 # Snapshot test pending
 **/*.snap.new
 
+# MSVC object files leaked from cdylib_emission tests by cl.exe
+crates/corvid-codegen-cl/*.obj
+
 # Python
 __pycache__/
 *.pyc
