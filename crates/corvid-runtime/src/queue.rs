@@ -13,6 +13,7 @@ use std::sync::{Arc, Mutex};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum QueueJobStatus {
     Pending,
+    Leased,
     RetryWait,
     Running,
     Succeeded,
@@ -25,6 +26,7 @@ impl QueueJobStatus {
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::Pending => "pending",
+            Self::Leased => "leased",
             Self::RetryWait => "retry_wait",
             Self::Running => "running",
             Self::Succeeded => "succeeded",
@@ -52,6 +54,8 @@ pub struct QueueJob {
     pub failure_kind: Option<String>,
     pub failure_fingerprint: Option<String>,
     pub next_run_ms: Option<u64>,
+    pub lease_owner: Option<String>,
+    pub lease_expires_ms: Option<u64>,
     pub created_ms: u64,
     pub updated_ms: u64,
 }
@@ -206,6 +210,8 @@ impl QueueRuntime {
             failure_kind: None,
             failure_fingerprint: None,
             next_run_ms,
+            lease_owner: None,
+            lease_expires_ms: None,
             created_ms: now,
             updated_ms: now,
         };
@@ -348,6 +354,8 @@ impl DurableQueueRuntime {
             failure_kind: None,
             failure_fingerprint: None,
             next_run_ms,
+            lease_owner: None,
+            lease_expires_ms: None,
             created_ms: now,
             updated_ms: now,
         };
@@ -359,8 +367,8 @@ impl DurableQueueRuntime {
             .unwrap()
             .execute(
                 "insert into queue_jobs
-                 (id, task, payload_json, input_schema, status, attempts, max_retries, budget_usd, effect_summary, replay_key, output_kind, output_fingerprint, failure_kind, failure_fingerprint, next_run_ms, created_ms, updated_ms)
-                 values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
+                 (id, task, payload_json, input_schema, status, attempts, max_retries, budget_usd, effect_summary, replay_key, output_kind, output_fingerprint, failure_kind, failure_fingerprint, next_run_ms, lease_owner, lease_expires_ms, created_ms, updated_ms)
+                 values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)",
                 params![
                     job.id,
                     job.task,
@@ -377,6 +385,8 @@ impl DurableQueueRuntime {
                     job.failure_kind,
                     job.failure_fingerprint,
                     job.next_run_ms.map(|value| value as i64),
+                    job.lease_owner,
+                    job.lease_expires_ms.map(|value| value as i64),
                     job.created_ms as i64,
                     job.updated_ms as i64,
                 ],
@@ -390,7 +400,7 @@ impl DurableQueueRuntime {
         let mut stmt = conn
             .prepare(
                 "select id, task, payload_json, input_schema, status, attempts, max_retries, budget_usd,
-                        effect_summary, replay_key, output_kind, output_fingerprint, failure_kind, failure_fingerprint, next_run_ms, created_ms, updated_ms
+                        effect_summary, replay_key, output_kind, output_fingerprint, failure_kind, failure_fingerprint, next_run_ms, lease_owner, lease_expires_ms, created_ms, updated_ms
                  from queue_jobs where id = ?1",
             )
             .map_err(|err| RuntimeError::Other(format!("failed to prepare durable queue read: {err}")))?;
@@ -413,7 +423,7 @@ impl DurableQueueRuntime {
         let mut stmt = conn
             .prepare(
                 "select id, task, payload_json, input_schema, status, attempts, max_retries, budget_usd,
-                        effect_summary, replay_key, output_kind, output_fingerprint, failure_kind, failure_fingerprint, next_run_ms, created_ms, updated_ms
+                        effect_summary, replay_key, output_kind, output_fingerprint, failure_kind, failure_fingerprint, next_run_ms, lease_owner, lease_expires_ms, created_ms, updated_ms
                  from queue_jobs order by created_ms, id",
             )
             .map_err(|err| RuntimeError::Other(format!("failed to prepare durable queue list: {err}")))?;
@@ -656,32 +666,146 @@ impl DurableQueueRuntime {
         self.run_one_with_output(None, None)
     }
 
+    pub fn lease_next(
+        &self,
+        worker_id: impl Into<String>,
+        ttl_ms: u64,
+    ) -> Result<Option<QueueJob>, RuntimeError> {
+        self.lease_next_at(worker_id, ttl_ms, now_ms())
+    }
+
+    pub fn lease_next_at(
+        &self,
+        worker_id: impl Into<String>,
+        ttl_ms: u64,
+        now: u64,
+    ) -> Result<Option<QueueJob>, RuntimeError> {
+        let worker_id = worker_id.into();
+        if worker_id.trim().is_empty() {
+            return Err(RuntimeError::Other(
+                "std.queue lease worker id must not be empty".to_string(),
+            ));
+        }
+        let lease_expires = now.saturating_add(ttl_ms.max(1));
+        for candidate in self.list()?.into_iter().filter(|job| eligible_to_lease(job, now)) {
+            let updated = self
+                .conn
+                .lock()
+                .unwrap()
+                .execute(
+                    "update queue_jobs
+                     set status = 'leased', lease_owner = ?2, lease_expires_ms = ?3, updated_ms = ?4
+                     where id = ?1
+                       and (
+                         status in ('pending', 'retry_wait')
+                         or (status = 'leased' and coalesce(lease_expires_ms, 0) <= ?4)
+                       )",
+                    params![candidate.id, worker_id, lease_expires as i64, now as i64],
+                )
+                .map_err(|err| RuntimeError::Other(format!("failed to lease durable queue job: {err}")))?;
+            if updated == 1 {
+                return self.get(&candidate.id);
+            }
+        }
+        Ok(None)
+    }
+
+    pub fn complete_leased(
+        &self,
+        id: &str,
+        worker_id: &str,
+        output_kind: Option<String>,
+        output_fingerprint: Option<String>,
+    ) -> Result<QueueJob, RuntimeError> {
+        let now = now_ms();
+        let updated = self
+            .conn
+            .lock()
+            .unwrap()
+            .execute(
+                "update queue_jobs
+                 set status = 'succeeded', attempts = attempts + 1, output_kind = ?3, output_fingerprint = ?4,
+                     next_run_ms = null, lease_owner = null, lease_expires_ms = null, updated_ms = ?5
+                 where id = ?1 and status = 'leased' and lease_owner = ?2",
+                params![id, worker_id, output_kind, output_fingerprint, now as i64],
+            )
+            .map_err(|err| RuntimeError::Other(format!("failed to complete leased queue job: {err}")))?;
+        if updated == 0 {
+            return Err(RuntimeError::Other(format!(
+                "std.queue job `{id}` is not leased by `{worker_id}`"
+            )));
+        }
+        self.get(id)?
+            .ok_or_else(|| RuntimeError::Other(format!("std.queue job `{id}` not found")))
+    }
+
+    pub fn fail_leased(
+        &self,
+        id: &str,
+        worker_id: &str,
+        failure_kind: impl Into<String>,
+        failure_fingerprint: impl Into<String>,
+        base_delay_ms: u64,
+    ) -> Result<QueueJob, RuntimeError> {
+        let mut job = self
+            .get(id)?
+            .ok_or_else(|| RuntimeError::Other(format!("std.queue job `{id}` not found")))?;
+        if job.status != QueueJobStatus::Leased || job.lease_owner.as_deref() != Some(worker_id) {
+            return Err(RuntimeError::Other(format!(
+                "std.queue job `{id}` is not leased by `{worker_id}`"
+            )));
+        }
+        let now = now_ms();
+        job.attempts = job.attempts.saturating_add(1);
+        job.failure_kind = Some(failure_kind.into());
+        job.failure_fingerprint = Some(failure_fingerprint.into());
+        if job.attempts <= job.max_retries {
+            job.status = QueueJobStatus::RetryWait;
+            job.next_run_ms = Some(now.saturating_add(base_delay_ms.saturating_mul(job.attempts)));
+        } else {
+            job.status = QueueJobStatus::DeadLettered;
+            job.next_run_ms = None;
+        }
+        let updated = self
+            .conn
+            .lock()
+            .unwrap()
+            .execute(
+                "update queue_jobs
+                 set status = ?3, attempts = ?4, failure_kind = ?5, failure_fingerprint = ?6,
+                     next_run_ms = ?7, lease_owner = null, lease_expires_ms = null, updated_ms = ?8
+                 where id = ?1 and status = 'leased' and lease_owner = ?2",
+                params![
+                    id,
+                    worker_id,
+                    job.status.as_str(),
+                    job.attempts as i64,
+                    job.failure_kind,
+                    job.failure_fingerprint,
+                    job.next_run_ms.map(|value| value as i64),
+                    now as i64,
+                ],
+            )
+            .map_err(|err| RuntimeError::Other(format!("failed to fail leased queue job: {err}")))?;
+        if updated == 0 {
+            return Err(RuntimeError::Other(format!(
+                "std.queue job `{id}` is not leased by `{worker_id}`"
+            )));
+        }
+        self.get(id)?
+            .ok_or_else(|| RuntimeError::Other(format!("std.queue job `{id}` not found")))
+    }
+
     pub fn run_one_with_output(
         &self,
         output_kind: Option<String>,
         output_fingerprint: Option<String>,
     ) -> Result<Option<QueueJob>, RuntimeError> {
-        let pending = self.list()?.into_iter().find(eligible_to_run);
-        let Some(mut job) = pending else {
+        let Some(job) = self.lease_next("corvid-run-one", 300_000)? else {
             return Ok(None);
         };
-        let now = now_ms();
-        job.status = QueueJobStatus::Succeeded;
-        job.attempts = job.attempts.saturating_add(1);
-        job.output_kind = output_kind;
-        job.output_fingerprint = output_fingerprint;
-        job.updated_ms = now;
-        self.conn
-            .lock()
-            .unwrap()
-            .execute(
-                "update queue_jobs set status = ?2, attempts = ?3, output_kind = ?4, output_fingerprint = ?5, next_run_ms = null, updated_ms = ?6 where id = ?1 and status in ('pending', 'retry_wait')",
-                params![job.id, job.status.as_str(), job.attempts as i64, job.output_kind, job.output_fingerprint, job.updated_ms as i64],
-            )
-            .map_err(|err| RuntimeError::Other(format!("failed to run durable queue job: {err}")))?;
-        self.get(&job.id)?
+        self.complete_leased(&job.id, "corvid-run-one", output_kind, output_fingerprint)
             .map(Some)
-            .ok_or_else(|| RuntimeError::Other(format!("std.queue job `{}` not found", job.id)))
     }
 
     pub fn run_one_failed(
@@ -690,41 +814,17 @@ impl DurableQueueRuntime {
         failure_fingerprint: impl Into<String>,
         base_delay_ms: u64,
     ) -> Result<Option<QueueJob>, RuntimeError> {
-        let pending = self.list()?.into_iter().find(eligible_to_run);
-        let Some(mut job) = pending else {
+        let Some(job) = self.lease_next("corvid-run-one", 300_000)? else {
             return Ok(None);
         };
-        let now = now_ms();
-        job.attempts = job.attempts.saturating_add(1);
-        job.failure_kind = Some(failure_kind.into());
-        job.failure_fingerprint = Some(failure_fingerprint.into());
-        job.updated_ms = now;
-        if job.attempts <= job.max_retries {
-            job.status = QueueJobStatus::RetryWait;
-            job.next_run_ms = Some(now.saturating_add(base_delay_ms.saturating_mul(job.attempts)));
-        } else {
-            job.status = QueueJobStatus::DeadLettered;
-            job.next_run_ms = None;
-        }
-        self.conn
-            .lock()
-            .unwrap()
-            .execute(
-                "update queue_jobs set status = ?2, attempts = ?3, failure_kind = ?4, failure_fingerprint = ?5, next_run_ms = ?6, updated_ms = ?7 where id = ?1 and status in ('pending', 'retry_wait')",
-                params![
-                    job.id,
-                    job.status.as_str(),
-                    job.attempts as i64,
-                    job.failure_kind,
-                    job.failure_fingerprint,
-                    job.next_run_ms.map(|value| value as i64),
-                    job.updated_ms as i64
-                ],
-            )
-            .map_err(|err| RuntimeError::Other(format!("failed to record durable queue failure: {err}")))?;
-        self.get(&job.id)?
-            .map(Some)
-            .ok_or_else(|| RuntimeError::Other(format!("std.queue job `{}` not found", job.id)))
+        self.fail_leased(
+            &job.id,
+            "corvid-run-one",
+            failure_kind,
+            failure_fingerprint,
+            base_delay_ms,
+        )
+        .map(Some)
     }
 
     fn enqueue_schedule_fire(
@@ -821,6 +921,8 @@ impl DurableQueueRuntime {
                     failure_kind text,
                     failure_fingerprint text,
                     next_run_ms integer,
+                    lease_owner text,
+                    lease_expires_ms integer,
                     created_ms integer not null,
                     updated_ms integer not null
                 );
@@ -861,6 +963,8 @@ impl DurableQueueRuntime {
         self.ensure_column("failure_kind", "text")?;
         self.ensure_column("failure_fingerprint", "text")?;
         self.ensure_column("next_run_ms", "integer")?;
+        self.ensure_column("lease_owner", "text")?;
+        self.ensure_column("lease_expires_ms", "integer")?;
         Ok(())
     }
 
@@ -931,8 +1035,10 @@ fn read_job_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<QueueJob> {
         failure_kind: row.get(12)?,
         failure_fingerprint: row.get(13)?,
         next_run_ms: row.get::<_, Option<i64>>(14)?.map(|value| value as u64),
-        created_ms: row.get::<_, i64>(15)? as u64,
-        updated_ms: row.get::<_, i64>(16)? as u64,
+        lease_owner: row.get(15)?,
+        lease_expires_ms: row.get::<_, Option<i64>>(16)?.map(|value| value as u64),
+        created_ms: row.get::<_, i64>(17)? as u64,
+        updated_ms: row.get::<_, i64>(18)? as u64,
     })
 }
 
@@ -958,6 +1064,7 @@ fn read_schedule_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<QueueScheduleM
 
 fn parse_status(status: &str) -> QueueJobStatus {
     match status {
+        "leased" => QueueJobStatus::Leased,
         "retry_wait" => QueueJobStatus::RetryWait,
         "running" => QueueJobStatus::Running,
         "succeeded" => QueueJobStatus::Succeeded,
@@ -1046,6 +1153,20 @@ fn eligible_to_run(job: &QueueJob) -> bool {
     match job.status {
         QueueJobStatus::Pending => job.next_run_ms.map(|next| next <= now_ms()).unwrap_or(true),
         QueueJobStatus::RetryWait => job.next_run_ms.map(|next| next <= now_ms()).unwrap_or(true),
+        _ => false,
+    }
+}
+
+fn eligible_to_lease(job: &QueueJob, now: u64) -> bool {
+    match job.status {
+        QueueJobStatus::Pending | QueueJobStatus::RetryWait => job
+            .next_run_ms
+            .map(|next| next <= now)
+            .unwrap_or(true),
+        QueueJobStatus::Leased => job
+            .lease_expires_ms
+            .map(|expires| expires <= now)
+            .unwrap_or(true),
         _ => false,
     }
 }
@@ -1143,6 +1264,75 @@ mod tests {
         assert_eq!(fetched.attempts, 1);
         assert_eq!(fetched.output_kind.as_deref(), Some("DailyBriefOutput"));
         assert!(queue.run_one().unwrap().is_none());
+    }
+
+    #[test]
+    fn durable_queue_leases_prevent_duplicate_workers() {
+        let queue = DurableQueueRuntime::open_in_memory().unwrap();
+        let job = queue
+            .enqueue(
+                "dangerous_send",
+                serde_json::json!({"draft": "d1"}),
+                1,
+                2.0,
+                Some("email_send".to_string()),
+                Some("replay:send:d1".to_string()),
+            )
+            .unwrap();
+
+        let leased = queue
+            .lease_next_at("worker-a", 60_000, 1_000_000)
+            .unwrap()
+            .expect("worker-a lease");
+        assert_eq!(leased.id, job.id);
+        assert_eq!(leased.status, QueueJobStatus::Leased);
+        assert_eq!(leased.lease_owner.as_deref(), Some("worker-a"));
+        assert_eq!(leased.lease_expires_ms, Some(1_060_000));
+
+        assert!(
+            queue
+                .lease_next_at("worker-b", 60_000, 1_000_001)
+                .unwrap()
+                .is_none(),
+            "second worker must not lease an active lease"
+        );
+        let wrong_owner = queue.complete_leased(&job.id, "worker-b", None, None);
+        assert!(wrong_owner.is_err(), "non-owner completion must fail");
+
+        let succeeded = queue
+            .complete_leased(
+                &job.id,
+                "worker-a",
+                Some("SendOutput".to_string()),
+                Some("sha256:send".to_string()),
+            )
+            .unwrap();
+        assert_eq!(succeeded.status, QueueJobStatus::Succeeded);
+        assert!(succeeded.lease_owner.is_none());
+        assert!(succeeded.lease_expires_ms.is_none());
+        assert_eq!(succeeded.attempts, 1);
+    }
+
+    #[test]
+    fn durable_queue_expired_lease_can_be_reclaimed() {
+        let queue = DurableQueueRuntime::open_in_memory().unwrap();
+        let job = queue
+            .enqueue("brief", serde_json::json!({}), 1, 0.1, None, None)
+            .unwrap();
+
+        let first = queue
+            .lease_next_at("worker-a", 10, 2_000)
+            .unwrap()
+            .expect("first lease");
+        assert_eq!(first.id, job.id);
+
+        let reclaimed = queue
+            .lease_next_at("worker-b", 10, 2_011)
+            .unwrap()
+            .expect("reclaimed lease");
+        assert_eq!(reclaimed.id, job.id);
+        assert_eq!(reclaimed.lease_owner.as_deref(), Some("worker-b"));
+        assert_eq!(reclaimed.lease_expires_ms, Some(2_021));
     }
 
     #[test]

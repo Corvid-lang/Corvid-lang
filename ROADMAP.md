@@ -1987,7 +1987,7 @@ corvid jobs drain --workers=all
 - [x] 38D1-delay-support             Delayed jobs persist and wake after restart.
 - [x] 38D2-cron-manifest             Cron schedules appear in `corvid audit`.
 - [x] 38D3-scheduler-recovery        Scheduler recovers missed/pending jobs after restart.
-- [ ] 38E1-lease-model               Job leases prevent duplicate workers.
+- [x] 38E1-lease-model               Job leases prevent duplicate workers.
 - [ ] 38E2-concurrency-limits        Queue and job-type concurrency limits are enforced.
 - [ ] 38E3-idempotency-keys          Duplicate dangerous jobs collapse or fail predictably.
 - [ ] 38F1-checkpoint-schema         Agent step/tool/partial-output checkpoints are durable.

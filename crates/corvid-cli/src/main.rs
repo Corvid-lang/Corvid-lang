@@ -1728,6 +1728,13 @@ fn print_job_summary(job: &QueueJob) {
             .map(|value| value.to_string())
             .unwrap_or_default()
     );
+    println!("lease_owner: {}", job.lease_owner.as_deref().unwrap_or(""));
+    println!(
+        "lease_expires_ms: {}",
+        job.lease_expires_ms
+            .map(|value| value.to_string())
+            .unwrap_or_default()
+    );
 }
 
 struct MigrationFile {
