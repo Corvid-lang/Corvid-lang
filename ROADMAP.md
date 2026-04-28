@@ -1607,6 +1607,22 @@ The determinism-source catalog and the language's treatment of non-reproducible 
 - Launch materials: 2-minute GIF/video showing the time-travel replay moment + effect-checker catching a bug + compile-time cost budget. HN + Reddit + ProductHunt announcement drafts reviewed with 3 external readers.
 - Beta round: 20 external developers build something real in Corvid; their feedback gates the final cut.
 
+**Slice checklist:**
+
+- [x] 33A-installer-foundation       Unix and PowerShell install scripts plus documented `cargo install` path are checked in.
+- [x] 33B-docs-foundation            Launch reference, tutorial, cookbook, and migration-from-Python docs exist in `docs/`.
+- [x] 33C-claim-audit-foundation     Launch claims are linked to runnable commands or committed artifacts.
+- [x] 33D-audit-command              `corvid audit` reports approval, replay, budget, secret, money-moving, grounding, and semantic-effect risks.
+- [x] 33E-stability-contract         Syntax, type system, CLI, stdlib, and benchmark claim stability policy is documented.
+- [x] 33F-doctor-launch-checks       `corvid doctor` checks provider keys, local models, replay storage, approvals, wasm/native toolchains, registry lock, and platform prerequisites.
+- [x] 33G-benchmark-compare          `corvid bench compare python|js` uses committed benchmark archives and separates model latency from orchestration overhead.
+- [x] 33H-repro-scripts              Benchmark and bundle claim reproduction scripts are checked in.
+- [ ] 33I-platform-parity            Windows, Linux, and macOS installer/doctor/parity harness are green.
+- [ ] 33J-website-playground         Website, docs site, benchmark page, blog shell, and WASM playground are live from committed assets.
+- [ ] 33K-reference-demo-pack        One-command demo apps have tests, evals, traces, and benchmark notes.
+- [ ] 33L-launch-materials           GIF/video, launch drafts, and external-reader review are complete.
+- [ ] 33M-beta-feedback              20 external-developer feedback items are closed as code/docs/tests or explicit non-scope.
+
 ### Phase 34 — Inventions readme + landing page (~2 weeks) ✅ closed
 
 **Goal.** Every Corvid invention documented in one place, visible from the repo's front door. The README and landing page must answer: "what does this language do that no other language does?" — in code, not in prose.
@@ -1756,6 +1772,28 @@ Each benchmark must separate model-provider latency from Corvid runtime overhead
 
 **Done when:** a Corvid backend can persist users, tasks, approvals, traces, connector tokens, and durable agent state through typed migrations and tests.
 
+**Small-slice breakdown for remaining Phase 37 work:**
+
+- [ ] 37E1-migrate-command-shape     Add `corvid migrate status/up/down --dry-run` command shape and help text.
+- [ ] 37E2-migration-file-scan       Discover ordered checked-in SQL migrations and compute stable SHA-256 checksums.
+- [ ] 37E3-migration-state-store     Record applied migrations, timestamps, and checksums in a local state store.
+- [ ] 37E4-drift-detection           Detect changed, missing, duplicate, and out-of-order migrations with CI-safe exit codes.
+- [ ] 37E5-dry-run-report            Dry-run reports pending/applied/drifted migrations without mutating state.
+- [ ] 37F1-audit-schema-envelope     Add `std.db` audit-log record envelopes for actor/action/model/tool/approval/cost/trace/replay.
+- [ ] 37F2-audit-write-helper        Add helpers/tests for approval-aware audit writes and redacted values.
+- [ ] 37F3-audit-example             Add a minimal backend audit-log example and regression test.
+- [ ] 37G1-token-envelope            Add token reference/encrypted-token metadata envelopes.
+- [ ] 37G2-host-key-doctor           `corvid doctor` validates token encryption key presence/shape without printing it.
+- [ ] 37G3-token-redaction-tests     Traces, errors, and audit helpers never print token values.
+- [ ] 37H1-postgres-design           Document Postgres parity subset and non-scope before code.
+- [ ] 37H2-postgres-connection       Add Postgres connection/query envelopes matching SQLite.
+- [ ] 37H3-postgres-migration-status Postgres migration status/drift path matches SQLite subset.
+- [ ] 37I1-db-effect-tags            DB read/write/migration/token/audit operations carry explicit effect tags.
+- [ ] 37I2-db-replay-summary         Replay summaries capture deterministic DB interaction metadata without raw secrets.
+- [ ] 37J1-state-example-schema      Backend state example defines users/tasks/approvals/traces/tokens tables.
+- [ ] 37J2-state-example-tests       Example migration, query, audit, token, and replay tests pass.
+- [ ] 37J3-state-runbook             Example documents backups, migration rollback, redaction, and operator checks.
+
 ### Phase 38 — Jobs, schedules, and durable agent execution (~8-10 weeks)
 
 **Goal.** Corvid can run long-lived backend work safely: scheduled jobs, retrying jobs, background queues, idempotent actions, failure recovery, and bounded agent loops.
@@ -1785,6 +1823,30 @@ Each benchmark must separate model-provider latency from Corvid runtime overhead
 - [ ] 38J-executive-agent-jobs       Personal Executive Agent daily brief, meeting prep, triage, and follow-up jobs survive process restart.
 
 **Done when:** the Personal Executive Agent backend can run daily brief generation, email triage, meeting prep, and follow-up reminders as durable jobs that survive process restart.
+
+**Small-slice breakdown for Phase 38:**
+
+- [ ] 38B1-job-envelope              Add `std.jobs` job/input/output/state envelopes.
+- [ ] 38B2-enqueue-command           Add enqueue/run-one runtime path with local persisted state.
+- [ ] 38B3-one-job-test              One persisted job executes once with typed input/output.
+- [ ] 38C1-retry-policy-envelope     Retry/backoff/dead-letter metadata exists in stdlib.
+- [ ] 38C2-retry-runner              Runner applies retry/backoff and terminal failure.
+- [ ] 38C3-dlq-inspection            CLI can inspect dead-lettered jobs.
+- [ ] 38D1-delay-support             Delayed jobs persist and wake after restart.
+- [ ] 38D2-cron-manifest             Cron schedules appear in `corvid audit`.
+- [ ] 38D3-scheduler-recovery        Scheduler recovers missed/pending jobs after restart.
+- [ ] 38E1-lease-model               Job leases prevent duplicate workers.
+- [ ] 38E2-concurrency-limits        Queue and job-type concurrency limits are enforced.
+- [ ] 38E3-idempotency-keys          Duplicate dangerous jobs collapse or fail predictably.
+- [ ] 38F1-checkpoint-schema         Agent step/tool/partial-output checkpoints are durable.
+- [ ] 38F2-resume-agent-run          Agent run resumes from last checkpoint after crash.
+- [ ] 38G1-approval-wait-state       Jobs can enter approval-wait state with expiry.
+- [ ] 38G2-approval-resume           Approve/deny/expire transitions resume or stop jobs and write audit events.
+- [ ] 38H1-loop-budget-controls      Max steps, wall time, spend, and tool-call limits are enforced.
+- [ ] 38H2-stall-escalation          Stalled loops escalate or terminate with trace evidence.
+- [ ] 38I1-job-ops-cli               Pause/drain/inspect/retry/cancel/export commands work locally.
+- [ ] 38J1-exec-agent-job-spec       Personal Executive Agent job definitions are written and checked.
+- [ ] 38J2-exec-agent-restart-proof  Daily brief/meeting prep/follow-up jobs survive restart in tests.
 
 ### Phase 39 — Auth, identity, and human approval product surface (~8-10 weeks)
 
@@ -1817,6 +1879,27 @@ Each benchmark must separate model-provider latency from Corvid runtime overhead
 
 **Done when:** a backend can expose real user login, tenant-safe approvals, and auditable AI actions without outsourcing the core safety model to another framework.
 
+**Small-slice breakdown for Phase 39:**
+
+- [ ] 39B1-actor-envelope            Add typed actor/session/api-key envelopes.
+- [ ] 39B2-session-runtime           Session auth resolves an actor into route/job/trace context.
+- [ ] 39B3-api-key-runtime           API-key auth supports service actors and redacted diagnostics.
+- [ ] 39C1-jwt-verify-contract       JWT verification surface and failure diagnostics are defined.
+- [ ] 39C2-oauth-callback-state      OAuth callback state/token references are typed and replay/audit visible.
+- [ ] 39D1-tenant-role-model         User/org/role/permission records and helpers are typed.
+- [ ] 39D2-permission-propagation    Permissions propagate through routes, jobs, tools, and traces.
+- [ ] 39E1-approval-store            Approval queue persistence schema and stdlib envelopes exist.
+- [ ] 39E2-approval-api              Create/list/inspect/approve/deny/expire/comment/delegate APIs work.
+- [ ] 39E3-approval-audit            Every approval transition writes audit and trace evidence.
+- [ ] 39F1-contract-generation       Dangerous tools generate typed approval contract records.
+- [ ] 39F2-contract-policy-check     Required role/expiry/irreversibility/cost/data rules are enforced.
+- [ ] 39G1-ui-payload-schema         Approval UI payload schema is stable and frontend-agnostic.
+- [ ] 39G2-ui-contract-tests         Payloads can be rendered without parsing traces.
+- [ ] 39H1-reachability-analysis     Compiler checks route/job/tool paths for reachable approvals.
+- [ ] 39H2-reachability-bypass-tests Confused-deputy, tenant-crossing, stale replay, and privilege escalation tests fail closed.
+- [ ] 39J1-auth-example              Reference backend has login/API-key auth.
+- [ ] 39J2-approval-product-example  Reference backend exposes tenant-safe approvals and auditable AI actions.
+
 ### Phase 40 — Agent observability, evals, and production monitoring (~6-8 weeks)
 
 **Goal.** Corvid gives maintainers the operational visibility needed to trust AI systems in production: traces, metrics, evals, cost, latency, drift, and human review.
@@ -1846,6 +1929,23 @@ Each benchmark must separate model-provider latency from Corvid runtime overhead
 - [ ] 40I-maintainer-runbook         Docs show how maintainers answer cost, action, approval, data-touch, and replay questions from tooling.
 
 **Done when:** maintainers can answer "what did the agent do, why, what did it cost, who approved it, what data did it touch, and can I replay it?" from committed Corvid tooling.
+
+**Small-slice breakdown for Phase 40:**
+
+- [ ] 40B1-trace-link-ids            Request/job/agent/prompt/tool/approval/DB events share stable lineage IDs.
+- [ ] 40B2-lineage-render            Local command renders the lineage tree for one run.
+- [ ] 40C1-otel-schema               OTel span/metric/log mapping is documented and tested.
+- [ ] 40C2-otel-exporter             Exporter emits request/job/LLM/tool/approval/error/retry/cost/replay data.
+- [ ] 40D1-observe-list              `corvid observe list` shows local runs, failures, costs, approvals, and hot spots.
+- [ ] 40D2-observe-show              `corvid observe show <id>` explains one run with contract-aware grouping.
+- [ ] 40E1-trace-redaction           Production trace slices can be redacted deterministically.
+- [ ] 40E2-eval-promotion            Redacted trace slices become regression/eval fixtures.
+- [ ] 40F1-drift-metrics             Schema/confidence/cost/latency/denial/tool-error drift is computed.
+- [ ] 40F2-drift-report              Drift report is human-readable and CI-friendly.
+- [ ] 40G1-review-queue-envelope     Human-review queue records link to trace/audit IDs.
+- [ ] 40G2-review-queue-ops          Low-confidence/high-risk outputs enter review and resolve with audit evidence.
+- [ ] 40H1-guarantee-grouping        Incidents group by guarantee/effect/budget/provenance/approval rule.
+- [ ] 40I1-operator-questions        Runbook maps common maintainer questions to exact commands.
 
 ### Phase 41 — Production connectors (~8-12 weeks)
 
@@ -1878,6 +1978,27 @@ Each benchmark must separate model-provider latency from Corvid runtime overhead
 - [ ] 41J-executive-agent-connectors Personal Executive Agent uses email, calendar, tasks, chat, and files through Corvid-owned connectors.
 
 **Done when:** the Personal Executive Agent can connect to email, calendar, tasks, and files through Corvid-owned backend connectors, with explicit effects and approval contracts.
+
+**Small-slice breakdown for Phase 41:**
+
+- [ ] 41B1-manifest-parser           Connector manifest parser validates scopes/effects/data classes/approval/replay/rate limits.
+- [ ] 41B2-connector-runtime         Shared runtime handles auth state, retry, rate limits, redaction, trace events, and mock mode.
+- [ ] 41B3-connector-test-kit        Mock/replay fixture harness is reusable across connectors.
+- [ ] 41C1-gmail-read-search         Gmail read/search metadata works with mock and real-provider env docs.
+- [ ] 41C2-gmail-draft-send         Draft/send is approval-gated and replay-visible.
+- [ ] 41D1-ms365-mail-calendar       Outlook mail/calendar basics work through Graph auth.
+- [ ] 41D2-ms365-tenant-scopes       Tenant-aware scopes and token refresh are tested.
+- [ ] 41E1-calendar-availability     Availability and event read paths work.
+- [ ] 41E2-calendar-write-approval   Event create/update/cancel and external invites require approval.
+- [ ] 41F1-slack-read-thread         Slack channel/DM/thread reads work with workspace scoping.
+- [ ] 41F2-slack-send-approval       Draft/send flows require approval and preserve audit evidence.
+- [ ] 41G1-linear-github-read        Linear/GitHub issue read/search flows work.
+- [ ] 41G2-linear-github-write       Create/update/comment flows are approval-gated.
+- [ ] 41H1-files-index-read          Local file indexing/read permissions/provenance snippets work.
+- [ ] 41H2-files-write-approval      File write/update/delete requires approval and records provenance.
+- [ ] 41I1-all-mocks                 Every connector has mock mode and deterministic replay fixtures.
+- [ ] 41J1-exec-agent-connector-plan Personal Executive Agent connector wiring is specified.
+- [ ] 41J2-exec-agent-connector-proof Email/calendar/tasks/chat/files all run through connector mocks in tests.
 
 ### Phase 42 — Production reference applications (~10-14 weeks)
 
@@ -1914,6 +2035,28 @@ Each benchmark must separate model-provider latency from Corvid runtime overhead
 
 **Done when:** external developers can clone the repo, run at least one full production-shaped backend app locally, inspect its approvals/traces/evals, and deploy it without writing a second backend in another language.
 
+**Small-slice breakdown for Phase 42:**
+
+- [ ] 42B1-template-routes           Shared app template has routes, config, health/readiness, and generated docs.
+- [ ] 42B2-template-state            Template has DB migrations, seed data, jobs, auth, and connector mocks.
+- [ ] 42B3-template-ops              Template has traces, evals, deployment manifest, and runbook skeleton.
+- [ ] 42C1-exec-agent-data-model     Personal Executive Agent schemas/migrations/jobs/connectors are defined.
+- [ ] 42C2-exec-agent-inbox          Inbox triage and draft replies work in mock connector mode.
+- [ ] 42C3-exec-agent-calendar       Scheduling, meeting prep, daily brief, and follow-ups run as durable jobs.
+- [ ] 42C4-exec-agent-approval       Sends/edits are approval-gated and auditable.
+- [ ] 42C5-exec-agent-hardening      Replay, evals, adversarial tests, and runbook are complete.
+- [ ] 42D1-knowledge-ingestion       Knowledge app ingests docs with provenance and private/local mode.
+- [ ] 42D2-knowledge-search-answer   Grounded search, citations, feedback evals, and answer provenance work.
+- [ ] 42E1-finance-readonly          Finance app aggregates read-only data and explains budgets/subscriptions.
+- [ ] 42E2-finance-approval-audit    Payment intents are approval-gated with strict non-advice and audit posture.
+- [ ] 42F1-support-triage            Support app triages tickets and drafts policy-grounded replies.
+- [ ] 42F2-support-approvals-sla     Refund/escalation approvals, SLA jobs, and eval dashboard work.
+- [ ] 42G1-code-ingestion-triage     Code app ingests repos, triages issues, and labels CI-aware risk.
+- [ ] 42G2-code-write-approval       Review comments/patch proposals/write actions require approval.
+- [ ] 42H1-hardening-pack            Every app has seed data, mocks, replay tests, adversarial tests, env docs, security model, and runbook.
+- [ ] 42I1-external-trial-one        One external developer runs an app locally and feedback is triaged.
+- [ ] 42I2-external-trial-close      Feedback closes as code/docs/tests or explicit non-scope.
+
 ### Phase 43 — Packaging, deployment, and market readiness (~6-8 weeks)
 
 **Goal.** Corvid is ready to go online as a product for developers and maintainers: installable, deployable, operable, documented, and honest under scrutiny.
@@ -1946,6 +2089,27 @@ Each benchmark must separate model-provider latency from Corvid runtime overhead
 - [ ] 43J-launch-package             Signed binaries, install scripts, changelog, checksums, reproducible notes, demo scripts, and incident contacts are ready.
 
 **v1.0 final cut here. Launch day.** Corvid goes online only after the defensible core and the production-backend track are both complete.
+
+**Small-slice breakdown for Phase 43:**
+
+- [ ] 43B1-package-dockerfile        `corvid deploy package` emits Dockerfile and OCI metadata.
+- [ ] 43B2-package-runtime-config    Package includes health/readiness config, migration runner, env schema, and startup checks.
+- [ ] 43B3-package-attestation       Package includes signed build attestation and verification docs.
+- [ ] 43C1-compose-manifest          Docker Compose deploy works for one reference app.
+- [ ] 43C2-paas-manifest             Fly/Render-style single-service deploy works.
+- [ ] 43C3-k8s-systemd-manifests     Kubernetes and systemd manifests work or are explicitly scoped.
+- [ ] 43D1-release-policy            Nightly/beta/stable SemVer and stability policy are documented.
+- [ ] 43D2-release-automation        Release channel automation produces signed artifacts and changelog entries.
+- [ ] 43E1-syntax-stdlib-migrator    Syntax and stdlib migration tooling exists.
+- [ ] 43E2-schema-trace-migrator     Schema, trace-format, and connector-manifest migrations exist.
+- [ ] 43F1-maintainer-runbooks       Release checklist, advisory process, compatibility policy, CI gates, benchmark reproduction, and claim review docs are complete.
+- [ ] 43G1-developer-tutorials       Backend, Personal Executive Agent, connector, approval, observability, and production checklist docs are complete.
+- [ ] 43H1-beta-intake               20 external developers are onboarded with issue templates and feedback labels.
+- [ ] 43H2-beta-closure              Beta feedback is closed as code/docs/tests or explicit non-scope.
+- [ ] 43I1-claim-inventory           README, website, launch page, docs, and `corvid claim --explain` claims are inventoried.
+- [ ] 43I2-claim-alignment           All launch claims align with runnable artifacts and no aspirational wording remains.
+- [ ] 43J1-release-artifacts         Signed binaries, install scripts, checksums, changelog, and reproducible notes are ready.
+- [ ] 43J2-launch-rehearsal          Demo scripts, incident contacts, rollback plan, and final smoke tests are complete.
 
 ---
 
