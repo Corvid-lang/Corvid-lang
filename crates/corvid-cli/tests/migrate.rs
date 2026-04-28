@@ -171,6 +171,40 @@ fn migrate_dry_run_reports_counts_without_state_mutation() {
 }
 
 #[test]
+fn state_app_migration_schema_reports_pending() {
+    let repo = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let migrations = repo
+        .join("examples")
+        .join("backend")
+        .join("state_app")
+        .join("migrations");
+    let state_dir = tempfile::tempdir().expect("tempdir");
+    let state = state_dir.path().join("corvid-migrations.json");
+
+    let out = Command::new(corvid_bin())
+        .args([
+            "migrate",
+            "status",
+            "--dir",
+            migrations.to_str().unwrap(),
+            "--state",
+            state.to_str().unwrap(),
+            "--dry-run",
+        ])
+        .output()
+        .expect("run state app migration status");
+    assert!(
+        out.status.success(),
+        "status failed:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("0001_core_state.sql"), "{stdout}");
+    assert!(stdout.contains("pending_count: 1"), "{stdout}");
+}
+
+#[test]
 fn migrate_help_lists_status_up_down() {
     let out = Command::new(corvid_bin())
         .args(["migrate", "--help"])

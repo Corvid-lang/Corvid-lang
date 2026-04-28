@@ -417,6 +417,38 @@ fn backend_audit_log_example_typechecks() {
 }
 
 #[test]
+fn backend_state_app_example_typechecks() {
+    let dir = tempfile::tempdir().unwrap();
+    let repo = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(std::path::Path::parent)
+        .expect("repo root");
+    fs::create_dir_all(dir.path().join("std")).unwrap();
+    fs::copy(
+        repo.join("std").join("db.cor"),
+        dir.path().join("std").join("db.cor"),
+    )
+    .unwrap();
+    fs::copy(
+        repo.join("std").join("effects.cor"),
+        dir.path().join("std").join("effects.cor"),
+    )
+    .unwrap();
+    let source_path = repo
+        .join("examples")
+        .join("backend")
+        .join("state_app")
+        .join("src")
+        .join("main.cor");
+    let staged_path = dir.path().join("main.cor");
+    fs::copy(&source_path, &staged_path).unwrap();
+    let source = fs::read_to_string(&staged_path).expect("state app example");
+
+    compile_to_ir_with_config_at_path(&source, &staged_path, None)
+        .expect("backend state app example should compile");
+}
+
+#[test]
 fn std_agent_imported_helpers_typecheck() {
     assert_imported_helpers_typecheck(
         "agent",

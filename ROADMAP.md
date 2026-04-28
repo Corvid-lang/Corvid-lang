@@ -1768,7 +1768,7 @@ Each benchmark must separate model-provider latency from Corvid runtime overhead
 - [x] 37G-token-storage-boundary     Encrypted connector-token storage ships with explicit key-management boundaries and tests.
 - [x] 37H-postgres-support           Postgres reaches parity with the SQLite query/transaction/migration subset needed by reference apps.
 - [x] 37I-db-effect-replay           DB reads/writes carry effect tags and replay records deterministic interaction summaries.
-- [ ] 37J-backend-state-example      Backend example persists users, tasks, approvals, traces, connector tokens, and durable agent state.
+- [x] 37J-backend-state-example      Backend example persists users, tasks, approvals, traces, connector tokens, and durable agent state.
 
 **Done when:** a Corvid backend can persist users, tasks, approvals, traces, connector tokens, and durable agent state through typed migrations and tests.
 
@@ -1790,9 +1790,9 @@ Each benchmark must separate model-provider latency from Corvid runtime overhead
 - [x] 37H3-postgres-migration-status Postgres migration status/drift path matches SQLite subset.
 - [x] 37I1-db-effect-tags            DB read/write/migration/token/audit operations carry explicit effect tags.
 - [x] 37I2-db-replay-summary         Replay summaries capture deterministic DB interaction metadata without raw secrets.
-- [ ] 37J1-state-example-schema      Backend state example defines users/tasks/approvals/traces/tokens tables.
-- [ ] 37J2-state-example-tests       Example migration, query, audit, token, and replay tests pass.
-- [ ] 37J3-state-runbook             Example documents backups, migration rollback, redaction, and operator checks.
+- [x] 37J1-state-example-schema      Backend state example defines users/tasks/approvals/traces/tokens tables.
+- [x] 37J2-state-example-tests       Example migration, query, audit, token, and replay tests pass.
+- [x] 37J3-state-runbook             Example documents backups, migration rollback, redaction, and operator checks.
 
 ### Phase 38 — Jobs, schedules, and durable agent execution (~8-10 weeks)
 

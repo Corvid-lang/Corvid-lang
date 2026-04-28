@@ -1,0 +1,13 @@
+import "./std/db" use DbQuery, DbAuditRecord, DbAuditWrite, DbTokenRef, DbEncryptedToken, DbReplaySummary, DbMigrationStatus, sqlite_open, db_query, db_execute, db_audit_record, db_audit_write, db_audit_write_safe, db_token_ref, db_encrypted_token, db_token_redacted, db_replay_summary, db_replay_redacted, db_migration_status, db_migration_clean
+
+agent main() -> Bool:
+    db = sqlite_open("file:state-app.db", "state-app:db:open")
+    task_read = db_query("select id, user_id, title, status from tasks where user_id = ?", 1, "state-app:tasks:read")
+    approval_write = db_execute("insert into approvals (id, actor_id, action, subject, state, trace_id) values (?, ?, ?, ?, ?, ?)", 6, "state-app:approvals:write")
+    audit = db_audit_record("user-1", "task.followup", "task-1", "/tasks/follow-up", "job-1", "personal_executive_agent", "prompt-v1", "model-safe", "send_email", "approved", 0.03, "trace-1", "replay-approval-1")
+    audit_write = db_audit_write(audit, true, true)
+    token = db_token_ref("gmail", "user-1", "token-1", "key-1", "replay-token-1")
+    encrypted = db_encrypted_token(token, "sha256:ciphertext-hash", "xchacha20poly1305")
+    replay_summary = db_replay_summary("write", db.driver, "sha256:approval-write", 0, 1, "replay-db-1")
+    migration = db_migration_status("sqlite", "0001_core_state.sql", "sha256:pending", "pending", false, "state-app:migration:0001")
+    return task_read.parameterized and approval_write.operation == "write" and db_audit_write_safe(audit_write) and db_token_redacted(token) and encrypted.key_id == "key-1" and db_replay_redacted(replay_summary) and db_migration_clean(migration)
