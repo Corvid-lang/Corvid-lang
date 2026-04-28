@@ -1263,6 +1263,7 @@ fn main() -> ExitCode {
                 budget_usd,
                 effect_summary,
                 replay_key,
+                idempotency_key,
                 delay_ms,
             } => cmd_jobs_enqueue(
                 &state,
@@ -1273,6 +1274,7 @@ fn main() -> ExitCode {
                 budget_usd,
                 effect_summary,
                 replay_key,
+                idempotency_key,
                 delay_ms,
             ),
             JobsCommand::RunOne {
@@ -1513,6 +1515,7 @@ fn cmd_jobs_enqueue(
     budget_usd: f64,
     effect_summary: Option<String>,
     replay_key: Option<String>,
+    idempotency_key: Option<String>,
     delay_ms: u64,
 ) -> Result<u8> {
     if let Some(parent) = state
@@ -1529,7 +1532,7 @@ fn cmd_jobs_enqueue(
     } else {
         Some(corvid_runtime::tracing::now_ms().saturating_add(delay_ms))
     };
-    let job = queue.enqueue_typed_at(
+    let job = queue.enqueue_typed_idempotent(
         task,
         payload,
         input_schema,
@@ -1537,6 +1540,7 @@ fn cmd_jobs_enqueue(
         budget_usd,
         effect_summary,
         replay_key,
+        idempotency_key,
         next_run_ms,
     )?;
     println!("corvid jobs enqueue");
@@ -1762,6 +1766,10 @@ fn print_job_summary(job: &QueueJob) {
         job.effect_summary.as_deref().unwrap_or("")
     );
     println!("replay_key: {}", job.replay_key.as_deref().unwrap_or(""));
+    println!(
+        "idempotency_key: {}",
+        job.idempotency_key.as_deref().unwrap_or("")
+    );
     println!("output_kind: {}", job.output_kind.as_deref().unwrap_or(""));
     println!(
         "output_fingerprint: {}",
@@ -3060,6 +3068,9 @@ enum JobsCommand {
         /// Replay key linking the job to trace/replay metadata.
         #[arg(long)]
         replay_key: Option<String>,
+        /// Idempotency key; duplicate enqueues return the existing job.
+        #[arg(long)]
+        idempotency_key: Option<String>,
         /// Persist the job for a future run after this many milliseconds.
         #[arg(long, default_value = "0")]
         delay_ms: u64,

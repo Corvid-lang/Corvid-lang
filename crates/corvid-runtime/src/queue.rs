@@ -49,6 +49,7 @@ pub struct QueueJob {
     pub budget_usd: f64,
     pub effect_summary: Option<String>,
     pub replay_key: Option<String>,
+    pub idempotency_key: Option<String>,
     pub output_kind: Option<String>,
     pub output_fingerprint: Option<String>,
     pub failure_kind: Option<String>,
@@ -212,6 +213,7 @@ impl QueueRuntime {
             },
             effect_summary,
             replay_key,
+            idempotency_key: None,
             output_kind: None,
             output_fingerprint: None,
             failure_kind: None,
@@ -356,6 +358,7 @@ impl DurableQueueRuntime {
             budget_usd,
             effect_summary,
             replay_key,
+            idempotency_key: None,
             output_kind: None,
             output_fingerprint: None,
             failure_kind: None,
@@ -374,8 +377,8 @@ impl DurableQueueRuntime {
             .unwrap()
             .execute(
                 "insert into queue_jobs
-                 (id, task, payload_json, input_schema, status, attempts, max_retries, budget_usd, effect_summary, replay_key, output_kind, output_fingerprint, failure_kind, failure_fingerprint, next_run_ms, lease_owner, lease_expires_ms, created_ms, updated_ms)
-                 values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)",
+                 (id, task, payload_json, input_schema, status, attempts, max_retries, budget_usd, effect_summary, replay_key, idempotency_key, output_kind, output_fingerprint, failure_kind, failure_fingerprint, next_run_ms, lease_owner, lease_expires_ms, created_ms, updated_ms)
+                 values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20)",
                 params![
                     job.id,
                     job.task,
@@ -387,6 +390,7 @@ impl DurableQueueRuntime {
                     job.budget_usd,
                     job.effect_summary,
                     job.replay_key,
+                    job.idempotency_key,
                     job.output_kind,
                     job.output_fingerprint,
                     job.failure_kind,
@@ -402,12 +406,127 @@ impl DurableQueueRuntime {
         Ok(job)
     }
 
+    pub fn enqueue_typed_idempotent(
+        &self,
+        task: impl Into<String>,
+        payload: Value,
+        input_schema: Option<String>,
+        max_retries: u64,
+        budget_usd: f64,
+        effect_summary: Option<String>,
+        replay_key: Option<String>,
+        idempotency_key: Option<String>,
+        next_run_ms: Option<u64>,
+    ) -> Result<QueueJob, RuntimeError> {
+        let Some(idempotency_key) = idempotency_key.filter(|key| !key.trim().is_empty()) else {
+            return self.enqueue_typed_at(
+                task,
+                payload,
+                input_schema,
+                max_retries,
+                budget_usd,
+                effect_summary,
+                replay_key,
+                next_run_ms,
+            );
+        };
+        if let Some(existing) = self.get_by_idempotency_key(&idempotency_key)? {
+            return Ok(existing);
+        }
+        let task = task.into();
+        if task.trim().is_empty() {
+            return Err(RuntimeError::Other(
+                "std.queue task name must not be empty".to_string(),
+            ));
+        }
+        let now = now_ms();
+        let id = format!(
+            "job_{}",
+            self.next_id
+                .fetch_add(1, Ordering::Relaxed)
+                .saturating_add(1)
+        );
+        let budget_usd = if budget_usd.is_finite() && budget_usd > 0.0 {
+            budget_usd
+        } else {
+            0.0
+        };
+        let job = QueueJob {
+            id: id.clone(),
+            task,
+            payload,
+            input_schema,
+            status: QueueJobStatus::Pending,
+            attempts: 0,
+            max_retries,
+            budget_usd,
+            effect_summary,
+            replay_key,
+            idempotency_key: Some(idempotency_key.clone()),
+            output_kind: None,
+            output_fingerprint: None,
+            failure_kind: None,
+            failure_fingerprint: None,
+            next_run_ms,
+            lease_owner: None,
+            lease_expires_ms: None,
+            created_ms: now,
+            updated_ms: now,
+        };
+        let payload_json = serde_json::to_string(&job.payload).map_err(|err| {
+            RuntimeError::Other(format!("failed to serialize durable queue payload: {err}"))
+        })?;
+        let inserted = self
+            .conn
+            .lock()
+            .unwrap()
+            .execute(
+                "insert into queue_jobs
+                 (id, task, payload_json, input_schema, status, attempts, max_retries, budget_usd, effect_summary, replay_key, idempotency_key, output_kind, output_fingerprint, failure_kind, failure_fingerprint, next_run_ms, lease_owner, lease_expires_ms, created_ms, updated_ms)
+                 values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20)",
+                params![
+                    job.id,
+                    job.task,
+                    payload_json,
+                    job.input_schema,
+                    job.status.as_str(),
+                    job.attempts as i64,
+                    job.max_retries as i64,
+                    job.budget_usd,
+                    job.effect_summary,
+                    job.replay_key,
+                    job.idempotency_key,
+                    job.output_kind,
+                    job.output_fingerprint,
+                    job.failure_kind,
+                    job.failure_fingerprint,
+                    job.next_run_ms.map(|value| value as i64),
+                    job.lease_owner,
+                    job.lease_expires_ms.map(|value| value as i64),
+                    job.created_ms as i64,
+                    job.updated_ms as i64,
+                ],
+            );
+        match inserted {
+            Ok(_) => Ok(job),
+            Err(err) => {
+                if let Some(existing) = self.get_by_idempotency_key(&idempotency_key)? {
+                    Ok(existing)
+                } else {
+                    Err(RuntimeError::Other(format!(
+                        "failed to insert idempotent durable queue job: {err}"
+                    )))
+                }
+            }
+        }
+    }
+
     pub fn get(&self, id: &str) -> Result<Option<QueueJob>, RuntimeError> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn
             .prepare(
                 "select id, task, payload_json, input_schema, status, attempts, max_retries, budget_usd,
-                        effect_summary, replay_key, output_kind, output_fingerprint, failure_kind, failure_fingerprint, next_run_ms, lease_owner, lease_expires_ms, created_ms, updated_ms
+                        effect_summary, replay_key, idempotency_key, output_kind, output_fingerprint, failure_kind, failure_fingerprint, next_run_ms, lease_owner, lease_expires_ms, created_ms, updated_ms
                  from queue_jobs where id = ?1",
             )
             .map_err(|err| RuntimeError::Other(format!("failed to prepare durable queue read: {err}")))?;
@@ -425,12 +544,39 @@ impl DurableQueueRuntime {
         }
     }
 
+    pub fn get_by_idempotency_key(
+        &self,
+        idempotency_key: &str,
+    ) -> Result<Option<QueueJob>, RuntimeError> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn
+            .prepare(
+                "select id, task, payload_json, input_schema, status, attempts, max_retries, budget_usd,
+                        effect_summary, replay_key, idempotency_key, output_kind, output_fingerprint, failure_kind, failure_fingerprint, next_run_ms, lease_owner, lease_expires_ms, created_ms, updated_ms
+                 from queue_jobs where idempotency_key = ?1",
+            )
+            .map_err(|err| RuntimeError::Other(format!("failed to prepare idempotency read: {err}")))?;
+        let mut rows = stmt
+            .query(params![idempotency_key])
+            .map_err(|err| RuntimeError::Other(format!("failed to query idempotency key: {err}")))?;
+        if let Some(row) = rows
+            .next()
+            .map_err(|err| RuntimeError::Other(format!("failed to read idempotency row: {err}")))? {
+            Ok(Some(
+                read_job_row(row)
+                    .map_err(|err| RuntimeError::Other(format!("failed to decode idempotent job: {err}")))?,
+            ))
+        } else {
+            Ok(None)
+        }
+    }
+
     pub fn list(&self) -> Result<Vec<QueueJob>, RuntimeError> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn
             .prepare(
                 "select id, task, payload_json, input_schema, status, attempts, max_retries, budget_usd,
-                        effect_summary, replay_key, output_kind, output_fingerprint, failure_kind, failure_fingerprint, next_run_ms, lease_owner, lease_expires_ms, created_ms, updated_ms
+                        effect_summary, replay_key, idempotency_key, output_kind, output_fingerprint, failure_kind, failure_fingerprint, next_run_ms, lease_owner, lease_expires_ms, created_ms, updated_ms
                  from queue_jobs order by created_ms, id",
             )
             .map_err(|err| RuntimeError::Other(format!("failed to prepare durable queue list: {err}")))?;
@@ -1016,6 +1162,7 @@ impl DurableQueueRuntime {
                     budget_usd real not null,
                     effect_summary text,
                     replay_key text,
+                    idempotency_key text,
                     output_kind text,
                     output_fingerprint text,
                     failure_kind text,
@@ -1063,6 +1210,7 @@ impl DurableQueueRuntime {
                 RuntimeError::Other(format!("failed to initialize durable queue: {err}"))
             })?;
         self.ensure_column("input_schema", "text")?;
+        self.ensure_column("idempotency_key", "text")?;
         self.ensure_column("output_kind", "text")?;
         self.ensure_column("output_fingerprint", "text")?;
         self.ensure_column("failure_kind", "text")?;
@@ -1070,6 +1218,14 @@ impl DurableQueueRuntime {
         self.ensure_column("next_run_ms", "integer")?;
         self.ensure_column("lease_owner", "text")?;
         self.ensure_column("lease_expires_ms", "integer")?;
+        self.conn
+            .lock()
+            .unwrap()
+            .execute(
+                "create unique index if not exists queue_jobs_idempotency_key on queue_jobs(idempotency_key) where idempotency_key is not null",
+                [],
+            )
+            .map_err(|err| RuntimeError::Other(format!("failed to initialize idempotency index: {err}")))?;
         Ok(())
     }
 
@@ -1135,15 +1291,16 @@ fn read_job_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<QueueJob> {
         budget_usd: row.get(7)?,
         effect_summary: row.get(8)?,
         replay_key: row.get(9)?,
-        output_kind: row.get(10)?,
-        output_fingerprint: row.get(11)?,
-        failure_kind: row.get(12)?,
-        failure_fingerprint: row.get(13)?,
-        next_run_ms: row.get::<_, Option<i64>>(14)?.map(|value| value as u64),
-        lease_owner: row.get(15)?,
-        lease_expires_ms: row.get::<_, Option<i64>>(16)?.map(|value| value as u64),
-        created_ms: row.get::<_, i64>(17)? as u64,
-        updated_ms: row.get::<_, i64>(18)? as u64,
+        idempotency_key: row.get(10)?,
+        output_kind: row.get(11)?,
+        output_fingerprint: row.get(12)?,
+        failure_kind: row.get(13)?,
+        failure_fingerprint: row.get(14)?,
+        next_run_ms: row.get::<_, Option<i64>>(15)?.map(|value| value as u64),
+        lease_owner: row.get(16)?,
+        lease_expires_ms: row.get::<_, Option<i64>>(17)?.map(|value| value as u64),
+        created_ms: row.get::<_, i64>(18)? as u64,
+        updated_ms: row.get::<_, i64>(19)? as u64,
     })
 }
 
@@ -1528,6 +1685,43 @@ mod tests {
         assert_eq!(limits.len(), 2);
         assert!(limits.iter().any(|limit| limit.scope == "global" && limit.limit == 1));
         assert!(limits.iter().any(|limit| limit.scope == "task:email" && limit.limit == 1));
+    }
+
+    #[test]
+    fn durable_queue_idempotency_key_collapses_duplicate_jobs() {
+        let queue = DurableQueueRuntime::open_in_memory().unwrap();
+        let first = queue
+            .enqueue_typed_idempotent(
+                "charge_card",
+                serde_json::json!({"invoice": "i1"}),
+                Some("ChargeInput".to_string()),
+                1,
+                10.0,
+                Some("payment".to_string()),
+                Some("replay:charge:i1".to_string()),
+                Some("charge:i1".to_string()),
+                None,
+            )
+            .unwrap();
+        let duplicate = queue
+            .enqueue_typed_idempotent(
+                "charge_card",
+                serde_json::json!({"invoice": "i1", "changed": true}),
+                Some("ChargeInput".to_string()),
+                1,
+                10.0,
+                Some("payment".to_string()),
+                Some("replay:charge:i1:duplicate".to_string()),
+                Some("charge:i1".to_string()),
+                None,
+            )
+            .unwrap();
+
+        assert_eq!(first.id, duplicate.id);
+        assert_eq!(duplicate.payload["invoice"], "i1");
+        assert!(duplicate.payload.get("changed").is_none());
+        assert_eq!(duplicate.idempotency_key.as_deref(), Some("charge:i1"));
+        assert_eq!(queue.list().unwrap().len(), 1);
     }
 
     #[test]

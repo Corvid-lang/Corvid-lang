@@ -287,6 +287,45 @@ fn jobs_limit_cli_persists_concurrency_limits() {
 }
 
 #[test]
+fn jobs_idempotency_key_collapses_duplicate_enqueue() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let state = dir.path().join("jobs.sqlite");
+
+    for payload in ["{\"invoice\":\"i1\"}", "{\"invoice\":\"i1\",\"changed\":true}"] {
+        let enqueue = Command::new(corvid_bin())
+            .args([
+                "jobs",
+                "enqueue",
+                "--state",
+                state.to_str().unwrap(),
+                "--task",
+                "charge_card",
+                "--payload",
+                payload,
+                "--idempotency-key",
+                "charge:i1",
+            ])
+            .output()
+            .expect("run idempotent enqueue");
+        assert!(
+            enqueue.status.success(),
+            "enqueue failed:\nstdout={}\nstderr={}",
+            String::from_utf8_lossy(&enqueue.stdout),
+            String::from_utf8_lossy(&enqueue.stderr)
+        );
+        let stdout = String::from_utf8_lossy(&enqueue.stdout);
+        assert!(stdout.contains("job: job_1"), "{stdout}");
+        assert!(stdout.contains("idempotency_key: charge:i1"), "{stdout}");
+    }
+
+    let conn = Connection::open(&state).expect("open jobs db");
+    let count: i64 = conn
+        .query_row("select count(*) from queue_jobs", [], |row| row.get(0))
+        .expect("count jobs");
+    assert_eq!(count, 1);
+}
+
+#[test]
 fn jobs_dlq_inspects_dead_lettered_jobs() {
     let dir = tempfile::tempdir().expect("tempdir");
     let state = dir.path().join("jobs.sqlite");
