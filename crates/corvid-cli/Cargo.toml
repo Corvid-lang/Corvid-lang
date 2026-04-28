@@ -41,6 +41,7 @@ base64 = "0.22"
 wasmparser = "0.244.0"
 dirs = "5"
 hex = "0.4"
+rusqlite = { version = "0.31", features = ["bundled"] }
 
 [dev-dependencies]
 cc = "1"

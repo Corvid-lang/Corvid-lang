@@ -10,10 +10,16 @@ fn migrate_status_lists_ordered_sql_files_with_checksums() {
     let dir = tempfile::tempdir().expect("tempdir");
     let migrations = dir.path().join("migrations");
     std::fs::create_dir_all(&migrations).expect("migrations dir");
-    std::fs::write(migrations.join("0002_add_tasks.sql"), "create table tasks(id text);\n")
-        .expect("write migration 2");
-    std::fs::write(migrations.join("0001_init.sql"), "create table users(id text);\n")
-        .expect("write migration 1");
+    std::fs::write(
+        migrations.join("0002_add_tasks.sql"),
+        "create table tasks(id text);\n",
+    )
+    .expect("write migration 2");
+    std::fs::write(
+        migrations.join("0001_init.sql"),
+        "create table users(id text);\n",
+    )
+    .expect("write migration 1");
     std::fs::write(migrations.join("README.md"), "ignored\n").expect("write ignored");
 
     let out = Command::new(corvid_bin())
@@ -46,9 +52,13 @@ fn migrate_up_records_applied_state_and_status_reads_it() {
     let dir = tempfile::tempdir().expect("tempdir");
     let migrations = dir.path().join("migrations");
     let state = dir.path().join("target").join("corvid-migrations.json");
+    let database = dir.path().join("target").join("app.sqlite");
     std::fs::create_dir_all(&migrations).expect("migrations dir");
-    std::fs::write(migrations.join("0001_init.sql"), "create table users(id text);\n")
-        .expect("write migration");
+    std::fs::write(
+        migrations.join("0001_init.sql"),
+        "create table users(id text);\n",
+    )
+    .expect("write migration");
 
     let up = Command::new(corvid_bin())
         .args([
@@ -58,6 +68,8 @@ fn migrate_up_records_applied_state_and_status_reads_it() {
             migrations.to_str().unwrap(),
             "--state",
             state.to_str().unwrap(),
+            "--database",
+            database.to_str().unwrap(),
         ])
         .output()
         .expect("run migrate up");
@@ -79,6 +91,8 @@ fn migrate_up_records_applied_state_and_status_reads_it() {
             migrations.to_str().unwrap(),
             "--state",
             state.to_str().unwrap(),
+            "--database",
+            database.to_str().unwrap(),
         ])
         .output()
         .expect("run migrate status");
@@ -90,6 +104,84 @@ fn migrate_up_records_applied_state_and_status_reads_it() {
     );
     let status_stdout = String::from_utf8_lossy(&status.stdout);
     assert!(status_stdout.contains("status:applied"), "{status_stdout}");
+}
+
+#[test]
+fn migrate_up_executes_sql_against_sqlite_database() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let migrations = dir.path().join("migrations");
+    let state = dir.path().join("target").join("corvid-migrations.json");
+    let database = dir.path().join("target").join("app.sqlite");
+    std::fs::create_dir_all(&migrations).expect("migrations dir");
+    std::fs::write(
+        migrations.join("0001_init.sql"),
+        "create table users(id text primary key, email text not null);\n",
+    )
+    .expect("write migration");
+
+    let up = Command::new(corvid_bin())
+        .args([
+            "migrate",
+            "up",
+            "--dir",
+            migrations.to_str().unwrap(),
+            "--state",
+            state.to_str().unwrap(),
+            "--database",
+            database.to_str().unwrap(),
+        ])
+        .output()
+        .expect("run migrate up");
+    assert!(
+        up.status.success(),
+        "up failed:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&up.stdout),
+        String::from_utf8_lossy(&up.stderr)
+    );
+
+    let conn = rusqlite::Connection::open(&database).expect("open migrated database");
+    let table_count: i64 = conn
+        .query_row(
+            "select count(*) from sqlite_master where type = 'table' and name = 'users'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("query sqlite schema");
+    assert_eq!(table_count, 1, "migration SQL should create users table");
+    assert!(
+        state.exists(),
+        "state file should be written after SQL succeeds"
+    );
+}
+
+#[test]
+fn migrate_up_does_not_record_state_when_sql_fails() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let migrations = dir.path().join("migrations");
+    let state = dir.path().join("target").join("corvid-migrations.json");
+    let database = dir.path().join("target").join("app.sqlite");
+    std::fs::create_dir_all(&migrations).expect("migrations dir");
+    std::fs::write(migrations.join("0001_broken.sql"), "create table broken(\n")
+        .expect("write migration");
+
+    let up = Command::new(corvid_bin())
+        .args([
+            "migrate",
+            "up",
+            "--dir",
+            migrations.to_str().unwrap(),
+            "--state",
+            state.to_str().unwrap(),
+            "--database",
+            database.to_str().unwrap(),
+        ])
+        .output()
+        .expect("run migrate up");
+    assert!(!up.status.success(), "broken migration should fail");
+    assert!(
+        !state.exists(),
+        "state file must not be written when SQL execution fails"
+    );
 }
 
 #[test]
@@ -140,8 +232,11 @@ fn migrate_dry_run_reports_counts_without_state_mutation() {
     let migrations = dir.path().join("migrations");
     let state = dir.path().join("target").join("corvid-migrations.json");
     std::fs::create_dir_all(&migrations).expect("migrations dir");
-    std::fs::write(migrations.join("0001_init.sql"), "create table users(id text);\n")
-        .expect("write migration");
+    std::fs::write(
+        migrations.join("0001_init.sql"),
+        "create table users(id text);\n",
+    )
+    .expect("write migration");
 
     let out = Command::new(corvid_bin())
         .args([
@@ -248,7 +343,10 @@ fn migrate_subcommands_accept_dry_run_shape() {
             String::from_utf8_lossy(&out.stderr)
         );
         let stdout = String::from_utf8_lossy(&out.stdout);
-        assert!(stdout.contains(&format!("corvid migrate {action}")), "{stdout}");
+        assert!(
+            stdout.contains(&format!("corvid migrate {action}")),
+            "{stdout}"
+        );
         assert!(stdout.contains("dry_run: true"), "{stdout}");
         assert!(stdout.contains("state_updated: false"), "{stdout}");
     }

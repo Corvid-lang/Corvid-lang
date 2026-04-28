@@ -1741,6 +1741,12 @@ Each benchmark must separate model-provider latency from Corvid runtime overhead
 
 **Done when:** `examples/backend/refund_api` runs as a production-shaped server, passes route tests, emits traces, enforces approval gates, validates env/config through `corvid doctor`, and builds with `corvid build --target=server`.
 
+**Audit correction before market freeze:** Phase 36 is not market-frozen until the generated server uses a real HTTP parser/runtime boundary, has an actual middleware pipeline, and proves graceful shutdown plus handler timeouts under tests.
+
+- [ ] 36K-real-http-runtime          Replace the hand-rolled request-line parser with a production HTTP runtime/parser and route tests for HTTP/1.1 edge cases.
+- [ ] 36L-middleware-pipeline        Auth, rate-limit, tracing, CORS, compression, request logging, and effect-aware policy middleware run in a declared order.
+- [ ] 36M-shutdown-timeout-tests     Graceful shutdown, request timeout, body-limit, and handler-isolation behavior is covered by integration tests.
+
 ### Phase 37 — Persistence, migrations, and state (~8-10 weeks)
 
 **Goal.** Corvid can own durable application state: tables, records, transactions, migrations, encrypted secrets/tokens, audit logs, and query APIs.
@@ -1779,6 +1785,7 @@ Each benchmark must separate model-provider latency from Corvid runtime overhead
 - [x] 37E3-migration-state-store     Record applied migrations, timestamps, and checksums in a local state store.
 - [x] 37E4-drift-detection           Detect changed, missing, duplicate, and out-of-order migrations with CI-safe exit codes.
 - [x] 37E5-dry-run-report            Dry-run reports pending/applied/drifted migrations without mutating state.
+- [x] 37E6-sqlite-sql-execution      `corvid migrate up` executes pending SQL transactionally against SQLite before recording applied state.
 - [x] 37F1-audit-schema-envelope     Add `std.db` audit-log record envelopes for actor/action/model/tool/approval/cost/trace/replay.
 - [x] 37F2-audit-write-helper        Add helpers/tests for approval-aware audit writes and redacted values.
 - [x] 37F3-audit-example             Add a minimal backend audit-log example and regression test.
@@ -1793,6 +1800,12 @@ Each benchmark must separate model-provider latency from Corvid runtime overhead
 - [x] 37J1-state-example-schema      Backend state example defines users/tasks/approvals/traces/tokens tables.
 - [x] 37J2-state-example-tests       Example migration, query, audit, token, and replay tests pass.
 - [x] 37J3-state-runbook             Example documents backups, migration rollback, redaction, and operator checks.
+
+**Audit correction before market freeze:** Phase 37 is not market-frozen until the stdlib DB surface performs real host-backed query/transaction execution, Postgres has a real driver-backed path rather than metadata envelopes, and `migrate down` has tested rollback semantics.
+
+- [ ] 37K-real-stdlib-db-runtime     Corvid-facing DB helpers execute SQLite queries/transactions through the runtime with typed decode errors.
+- [ ] 37L-real-postgres-runtime      Postgres connection/query/transaction/migration path uses a real Postgres client and parity tests.
+- [ ] 37M-migration-down-execution   `corvid migrate down` executes reviewed rollback SQL or fails clearly when no rollback exists.
 
 ### Phase 38 — Jobs, schedules, and durable agent execution (~8-10 weeks)
 

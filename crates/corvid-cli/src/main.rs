@@ -60,21 +60,22 @@ use corvid_differential_verify::{
 use corvid_runtime::queue::{DurableQueueRuntime, QueueJob};
 use cost_frontier::{build_frontier, render_frontier as render_cost_frontier, CostFrontierOptions};
 use routing_report::{build_report, render_report as render_routing_report, RoutingReportOptions};
-use sha2::{Digest, Sha256};
+use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 #[allow(unused_imports)]
 use corvid_driver::{
     build_native_to_disk, build_server_to_disk, build_spec_site, build_target_to_disk,
     build_to_disk, build_wasm_to_disk, compile, compile_with_config, diff_snapshots,
-    file_github_issues_for_escapes,
-    inspect_import_semantics, load_corvid_config_for, load_corvid_config_with_path_for,
-    load_dotenv_walking, render_adversarial_report, render_all_pretty,
-    render_dimension_verification_report, render_effect_diff, render_import_semantic_summaries,
-    render_law_check_report, render_spec_report, render_spec_site_report, render_test_report,
-    run_adversarial_suite, run_dimension_verification, run_law_checks, run_native,
-    run_tests_at_path_with_options, run_with_target, scaffold_new, snapshot_revision, test_options,
-    verify_spec_examples, BuildTarget, RunTarget, VerdictKind, DEFAULT_SAMPLES,
+    file_github_issues_for_escapes, inspect_import_semantics, load_corvid_config_for,
+    load_corvid_config_with_path_for, load_dotenv_walking, render_adversarial_report,
+    render_all_pretty, render_dimension_verification_report, render_effect_diff,
+    render_import_semantic_summaries, render_law_check_report, render_spec_report,
+    render_spec_site_report, render_test_report, run_adversarial_suite, run_dimension_verification,
+    run_law_checks, run_native, run_tests_at_path_with_options, run_with_target, scaffold_new,
+    snapshot_revision, test_options, verify_spec_examples, BuildTarget, RunTarget, VerdictKind,
+    DEFAULT_SAMPLES,
 };
 
 #[derive(Parser)]
@@ -1233,18 +1234,21 @@ fn main() -> ExitCode {
             MigrateCommand::Status {
                 dir,
                 state,
+                database,
                 dry_run,
-            } => cmd_migrate("status", &dir, &state, dry_run),
+            } => cmd_migrate("status", &dir, &state, &database, dry_run),
             MigrateCommand::Up {
                 dir,
                 state,
+                database,
                 dry_run,
-            } => cmd_migrate("up", &dir, &state, dry_run),
+            } => cmd_migrate("up", &dir, &state, &database, dry_run),
             MigrateCommand::Down {
                 dir,
                 state,
+                database,
                 dry_run,
-            } => cmd_migrate("down", &dir, &state, dry_run),
+            } => cmd_migrate("down", &dir, &state, &database, dry_run),
         },
         Some(Command::Jobs { command }) => match command {
             JobsCommand::Enqueue {
@@ -1315,13 +1319,20 @@ fn cmd_new(name: &str) -> Result<u8> {
     Ok(0)
 }
 
-fn cmd_migrate(action: &str, dir: &Path, state: &Path, dry_run: bool) -> Result<u8> {
+fn cmd_migrate(
+    action: &str,
+    dir: &Path,
+    state: &Path,
+    database: &Path,
+    dry_run: bool,
+) -> Result<u8> {
     let migrations = scan_migration_files(dir)?;
     let mut migration_state = load_migration_state(state)?;
     let drift = detect_migration_drift(&migrations, &migration_state);
     println!("corvid migrate {action}");
     println!("migrations: {}", dir.display());
     println!("state: {}", state.display());
+    println!("database: {}", database.display());
     println!("dry_run: {dry_run}");
     let applied_count = migrations
         .iter()
@@ -1341,23 +1352,15 @@ fn cmd_migrate(action: &str, dir: &Path, state: &Path, dry_run: bool) -> Result<
     } else {
         println!("migrations_found: {}", migrations.len());
         for migration in &migrations {
-            let applied = migration_state
-                .migrations
-                .iter()
-                .any(|applied| applied.name == migration.name && applied.sha256 == migration.sha256);
+            let applied = migration_state.migrations.iter().any(|applied| {
+                applied.name == migration.name && applied.sha256 == migration.sha256
+            });
             println!(
                 "migration: {} sha256:{} status:{}",
                 migration.name,
                 migration.sha256,
                 if applied { "applied" } else { "pending" }
             );
-            if action == "up" && !dry_run && !applied {
-                migration_state.migrations.push(AppliedMigration {
-                    name: migration.name.clone(),
-                    sha256: migration.sha256.clone(),
-                    applied_at: now_unix_seconds(),
-                });
-            }
         }
     }
     for item in &drift {
@@ -1369,6 +1372,7 @@ fn cmd_migrate(action: &str, dir: &Path, state: &Path, dry_run: bool) -> Result<
         return Ok(1);
     }
     if action == "up" && !dry_run {
+        apply_pending_sql_migrations(database, &migrations, &mut migration_state)?;
         save_migration_state(state, &migration_state)?;
         println!("state_updated: true");
     } else {
@@ -1397,7 +1401,10 @@ fn cmd_jobs_enqueue(
     effect_summary: Option<String>,
     replay_key: Option<String>,
 ) -> Result<u8> {
-    if let Some(parent) = state.parent().filter(|parent| !parent.as_os_str().is_empty()) {
+    if let Some(parent) = state
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    {
         std::fs::create_dir_all(parent)
             .with_context(|| format!("failed to create jobs state dir `{}`", parent.display()))?;
     }
@@ -1441,7 +1448,10 @@ fn cmd_jobs_run_one(
 fn print_job_summary(job: &QueueJob) {
     println!("job: {}", job.id);
     println!("task: {}", job.task);
-    println!("input_schema: {}", job.input_schema.as_deref().unwrap_or(""));
+    println!(
+        "input_schema: {}",
+        job.input_schema.as_deref().unwrap_or("")
+    );
     println!("status: {}", job.status.as_str());
     println!("attempts: {}", job.attempts);
     println!("max_retries: {}", job.max_retries);
@@ -1461,6 +1471,7 @@ fn print_job_summary(job: &QueueJob) {
 struct MigrationFile {
     name: String,
     sha256: String,
+    path: PathBuf,
 }
 
 struct MigrationDrift {
@@ -1502,7 +1513,7 @@ fn scan_migration_files(dir: &Path) -> Result<Vec<MigrationFile>> {
             .unwrap_or("<invalid>")
             .to_string();
         let sha256 = hex::encode(Sha256::digest(&bytes));
-        files.push(MigrationFile { name, sha256 });
+        files.push(MigrationFile { name, sha256, path });
     }
     files.sort_by(|left, right| left.name.cmp(&right.name));
     Ok(files)
@@ -1528,7 +1539,10 @@ fn detect_migration_drift(
     }
 
     for applied in &state.migrations {
-        match migrations.iter().find(|migration| migration.name == applied.name) {
+        match migrations
+            .iter()
+            .find(|migration| migration.name == applied.name)
+        {
             Some(current) if current.sha256 != applied.sha256 => drift.push(MigrationDrift {
                 kind: "changed",
                 message: format!(
@@ -2520,7 +2534,10 @@ fn cmd_doctor_v2() -> Result<u8> {
     if !check_u64_env("CORVID_HANDLER_TIMEOUT_MS", "backend handler timeout") {
         ok = false;
     }
-    if !check_positive_u64_env("CORVID_MAX_REQUESTS", "backend graceful drain request limit") {
+    if !check_positive_u64_env(
+        "CORVID_MAX_REQUESTS",
+        "backend graceful drain request limit",
+    ) {
         ok = false;
     }
     if !check_hex_key_env("CORVID_TOKEN_KEY", 64, "connector token encryption key") {
@@ -2578,8 +2595,15 @@ enum MigrateCommand {
         #[arg(long, value_name = "DIR", default_value = "migrations")]
         dir: PathBuf,
         /// State file used to record applied migration checksums.
-        #[arg(long, value_name = "PATH", default_value = "target/corvid-migrations.json")]
+        #[arg(
+            long,
+            value_name = "PATH",
+            default_value = "target/corvid-migrations.json"
+        )]
         state: PathBuf,
+        /// SQLite database file migrations are checked against.
+        #[arg(long, value_name = "PATH", default_value = "target/corvid.sqlite")]
+        database: PathBuf,
         /// Show what would be checked without writing state.
         #[arg(long)]
         dry_run: bool,
@@ -2590,8 +2614,15 @@ enum MigrateCommand {
         #[arg(long, value_name = "DIR", default_value = "migrations")]
         dir: PathBuf,
         /// State file used to record applied migration checksums.
-        #[arg(long, value_name = "PATH", default_value = "target/corvid-migrations.json")]
+        #[arg(
+            long,
+            value_name = "PATH",
+            default_value = "target/corvid-migrations.json"
+        )]
         state: PathBuf,
+        /// SQLite database file migrations are executed against.
+        #[arg(long, value_name = "PATH", default_value = "target/corvid.sqlite")]
+        database: PathBuf,
         /// Report pending migrations without applying them.
         #[arg(long)]
         dry_run: bool,
@@ -2602,12 +2633,59 @@ enum MigrateCommand {
         #[arg(long, value_name = "DIR", default_value = "migrations")]
         dir: PathBuf,
         /// State file used to record applied migration checksums.
-        #[arg(long, value_name = "PATH", default_value = "target/corvid-migrations.json")]
+        #[arg(
+            long,
+            value_name = "PATH",
+            default_value = "target/corvid-migrations.json"
+        )]
         state: PathBuf,
+        /// SQLite database file associated with migration state.
+        #[arg(long, value_name = "PATH", default_value = "target/corvid.sqlite")]
+        database: PathBuf,
         /// Report the rollback candidate without mutating state.
         #[arg(long)]
         dry_run: bool,
     },
+}
+
+fn apply_pending_sql_migrations(
+    database: &Path,
+    migrations: &[MigrationFile],
+    state: &mut MigrationState,
+) -> Result<()> {
+    if let Some(parent) = database
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("cannot create database dir `{}`", parent.display()))?;
+    }
+    let mut conn = Connection::open(database)
+        .with_context(|| format!("cannot open migration database `{}`", database.display()))?;
+    for migration in migrations {
+        let applied = state
+            .migrations
+            .iter()
+            .any(|applied| applied.name == migration.name && applied.sha256 == migration.sha256);
+        if applied {
+            continue;
+        }
+        let sql = std::fs::read_to_string(&migration.path)
+            .with_context(|| format!("cannot read migration SQL `{}`", migration.path.display()))?;
+        let tx = conn
+            .transaction()
+            .with_context(|| format!("cannot start transaction for `{}`", migration.name))?;
+        tx.execute_batch(&sql)
+            .with_context(|| format!("cannot execute migration `{}`", migration.name))?;
+        tx.commit()
+            .with_context(|| format!("cannot commit migration `{}`", migration.name))?;
+        state.migrations.push(AppliedMigration {
+            name: migration.name.clone(),
+            sha256: migration.sha256.clone(),
+            applied_at: now_unix_seconds(),
+        });
+    }
+    Ok(())
 }
 
 #[derive(Subcommand)]
@@ -2709,8 +2787,7 @@ fn check_positive_u64_env(name: &str, label: &str) -> bool {
 fn check_hex_key_env(name: &str, expected_len: usize, label: &str) -> bool {
     match std::env::var(name) {
         Ok(value)
-            if value.len() == expected_len
-                && value.chars().all(|ch| ch.is_ascii_hexdigit()) =>
+            if value.len() == expected_len && value.chars().all(|ch| ch.is_ascii_hexdigit()) =>
         {
             println!("  OK {name} valid ({label})");
             true
