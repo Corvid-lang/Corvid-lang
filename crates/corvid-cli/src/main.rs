@@ -1251,6 +1251,7 @@ fn main() -> ExitCode {
                 state,
                 task,
                 payload,
+                input_schema,
                 max_retries,
                 budget_usd,
                 effect_summary,
@@ -1259,12 +1260,17 @@ fn main() -> ExitCode {
                 &state,
                 &task,
                 &payload,
+                input_schema,
                 max_retries,
                 budget_usd,
                 effect_summary,
                 replay_key,
             ),
-            JobsCommand::RunOne { state } => cmd_jobs_run_one(&state),
+            JobsCommand::RunOne {
+                state,
+                output_kind,
+                output_fingerprint,
+            } => cmd_jobs_run_one(&state, output_kind, output_fingerprint),
         },
         Some(Command::Bench { command }) => match command {
             BenchCommand::Compare {
@@ -1385,6 +1391,7 @@ fn cmd_jobs_enqueue(
     state: &Path,
     task: &str,
     payload: &str,
+    input_schema: Option<String>,
     max_retries: u64,
     budget_usd: f64,
     effect_summary: Option<String>,
@@ -1396,9 +1403,10 @@ fn cmd_jobs_enqueue(
     }
     let queue = DurableQueueRuntime::open(state)?;
     let payload = serde_json::from_str(payload).context("jobs payload must be valid JSON")?;
-    let job = queue.enqueue(
+    let job = queue.enqueue_typed(
         task,
         payload,
+        input_schema,
         max_retries,
         budget_usd,
         effect_summary,
@@ -1410,11 +1418,15 @@ fn cmd_jobs_enqueue(
     Ok(0)
 }
 
-fn cmd_jobs_run_one(state: &Path) -> Result<u8> {
+fn cmd_jobs_run_one(
+    state: &Path,
+    output_kind: Option<String>,
+    output_fingerprint: Option<String>,
+) -> Result<u8> {
     let queue = DurableQueueRuntime::open(state)?;
     println!("corvid jobs run-one");
     println!("state: {}", state.display());
-    match queue.run_one()? {
+    match queue.run_one_with_output(output_kind, output_fingerprint)? {
         Some(job) => {
             print_job_summary(&job);
             Ok(0)
@@ -1429,6 +1441,7 @@ fn cmd_jobs_run_one(state: &Path) -> Result<u8> {
 fn print_job_summary(job: &QueueJob) {
     println!("job: {}", job.id);
     println!("task: {}", job.task);
+    println!("input_schema: {}", job.input_schema.as_deref().unwrap_or(""));
     println!("status: {}", job.status.as_str());
     println!("attempts: {}", job.attempts);
     println!("max_retries: {}", job.max_retries);
@@ -1438,6 +1451,11 @@ fn print_job_summary(job: &QueueJob) {
         job.effect_summary.as_deref().unwrap_or("")
     );
     println!("replay_key: {}", job.replay_key.as_deref().unwrap_or(""));
+    println!("output_kind: {}", job.output_kind.as_deref().unwrap_or(""));
+    println!(
+        "output_fingerprint: {}",
+        job.output_fingerprint.as_deref().unwrap_or("")
+    );
 }
 
 struct MigrationFile {
@@ -2605,6 +2623,9 @@ enum JobsCommand {
         /// Redacted JSON input payload for the job.
         #[arg(long, default_value = "{}")]
         payload: String,
+        /// Typed input schema name carried with the persisted job.
+        #[arg(long)]
+        input_schema: Option<String>,
         /// Maximum retry count available to later retry policies.
         #[arg(long, default_value = "3")]
         max_retries: u64,
@@ -2623,6 +2644,12 @@ enum JobsCommand {
         /// SQLite state file used by the durable local queue.
         #[arg(long, value_name = "PATH", default_value = "target/corvid-jobs.sqlite")]
         state: PathBuf,
+        /// Typed output kind recorded after the job completes.
+        #[arg(long)]
+        output_kind: Option<String>,
+        /// Redacted output fingerprint recorded after the job completes.
+        #[arg(long)]
+        output_fingerprint: Option<String>,
     },
 }
 

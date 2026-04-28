@@ -1812,7 +1812,7 @@ Each benchmark must separate model-provider latency from Corvid runtime overhead
 **Slice checklist:**
 
 - [x] 38A-jobs-design-brief          `docs/phase-38-jobs.md` defines queue semantics, durability model, scheduler model, approval waits, replay behavior, and non-scope.
-- [ ] 38B-enqueue-run-one-job        Runtime can enqueue and execute one persisted background job with typed input/output.
+- [x] 38B-enqueue-run-one-job        Runtime can enqueue and execute one persisted background job with typed input/output.
 - [ ] 38C-retry-backoff-dlq          Jobs support retry policies, backoff, terminal failure, and dead-letter inspection.
 - [ ] 38D-delayed-jobs-cron          Delayed jobs and cron schedules persist, recover after restart, and appear in `corvid audit`.
 - [ ] 38E-leases-concurrency-idempotency Jobs use leases, concurrency limits, and idempotency keys to avoid duplicate dangerous work.
@@ -1828,7 +1828,7 @@ Each benchmark must separate model-provider latency from Corvid runtime overhead
 
 - [x] 38B1-job-envelope              Add `std.jobs` job/input/output/state envelopes.
 - [x] 38B2-enqueue-command           Add enqueue/run-one runtime path with local persisted state.
-- [ ] 38B3-one-job-test              One persisted job executes once with typed input/output.
+- [x] 38B3-one-job-test              One persisted job executes once with typed input/output.
 - [ ] 38C1-retry-policy-envelope     Retry/backoff/dead-letter metadata exists in stdlib.
 - [ ] 38C2-retry-runner              Runner applies retry/backoff and terminal failure.
 - [ ] 38C3-dlq-inspection            CLI can inspect dead-lettered jobs.

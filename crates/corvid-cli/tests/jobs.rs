@@ -20,6 +20,8 @@ fn jobs_enqueue_and_run_one_persist_state() {
             "daily_brief",
             "--payload",
             "{\"user\":\"u1\"}",
+            "--input-schema",
+            "DailyBriefInput",
             "--max-retries",
             "2",
             "--budget-usd",
@@ -40,11 +42,21 @@ fn jobs_enqueue_and_run_one_persist_state() {
     let stdout = String::from_utf8_lossy(&enqueue.stdout);
     assert!(stdout.contains("corvid jobs enqueue"), "{stdout}");
     assert!(stdout.contains("task: daily_brief"), "{stdout}");
+    assert!(stdout.contains("input_schema: DailyBriefInput"), "{stdout}");
     assert!(stdout.contains("status: pending"), "{stdout}");
     assert!(stdout.contains("effect_summary: llm+db"), "{stdout}");
 
     let run = Command::new(corvid_bin())
-        .args(["jobs", "run-one", "--state", state.to_str().unwrap()])
+        .args([
+            "jobs",
+            "run-one",
+            "--state",
+            state.to_str().unwrap(),
+            "--output-kind",
+            "DailyBriefOutput",
+            "--output-fingerprint",
+            "sha256:daily-output",
+        ])
         .output()
         .expect("run jobs run-one");
     assert!(
@@ -58,4 +70,6 @@ fn jobs_enqueue_and_run_one_persist_state() {
     assert!(stdout.contains("task: daily_brief"), "{stdout}");
     assert!(stdout.contains("status: succeeded"), "{stdout}");
     assert!(stdout.contains("attempts: 1"), "{stdout}");
+    assert!(stdout.contains("output_kind: DailyBriefOutput"), "{stdout}");
+    assert!(stdout.contains("output_fingerprint: sha256:daily-output"), "{stdout}");
 }

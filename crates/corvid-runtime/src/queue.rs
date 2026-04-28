@@ -32,12 +32,15 @@ pub struct QueueJob {
     pub id: String,
     pub task: String,
     pub payload: Value,
+    pub input_schema: Option<String>,
     pub status: QueueJobStatus,
     pub attempts: u64,
     pub max_retries: u64,
     pub budget_usd: f64,
     pub effect_summary: Option<String>,
     pub replay_key: Option<String>,
+    pub output_kind: Option<String>,
+    pub output_fingerprint: Option<String>,
     pub created_ms: u64,
     pub updated_ms: u64,
 }
@@ -62,6 +65,27 @@ impl QueueRuntime {
         effect_summary: Option<String>,
         replay_key: Option<String>,
     ) -> Result<QueueJob, RuntimeError> {
+        self.enqueue_typed(
+            task,
+            payload,
+            None,
+            max_retries,
+            budget_usd,
+            effect_summary,
+            replay_key,
+        )
+    }
+
+    pub fn enqueue_typed(
+        &self,
+        task: impl Into<String>,
+        payload: Value,
+        input_schema: Option<String>,
+        max_retries: u64,
+        budget_usd: f64,
+        effect_summary: Option<String>,
+        replay_key: Option<String>,
+    ) -> Result<QueueJob, RuntimeError> {
         let task = task.into();
         if task.trim().is_empty() {
             return Err(RuntimeError::Other(
@@ -77,6 +101,7 @@ impl QueueRuntime {
             id: id.clone(),
             task,
             payload,
+            input_schema,
             status: QueueJobStatus::Pending,
             attempts: 0,
             max_retries,
@@ -87,6 +112,8 @@ impl QueueRuntime {
             },
             effect_summary,
             replay_key,
+            output_kind: None,
+            output_fingerprint: None,
             created_ms: now,
             updated_ms: now,
         };
@@ -151,6 +178,27 @@ impl DurableQueueRuntime {
         effect_summary: Option<String>,
         replay_key: Option<String>,
     ) -> Result<QueueJob, RuntimeError> {
+        self.enqueue_typed(
+            task,
+            payload,
+            None,
+            max_retries,
+            budget_usd,
+            effect_summary,
+            replay_key,
+        )
+    }
+
+    pub fn enqueue_typed(
+        &self,
+        task: impl Into<String>,
+        payload: Value,
+        input_schema: Option<String>,
+        max_retries: u64,
+        budget_usd: f64,
+        effect_summary: Option<String>,
+        replay_key: Option<String>,
+    ) -> Result<QueueJob, RuntimeError> {
         let task = task.into();
         if task.trim().is_empty() {
             return Err(RuntimeError::Other(
@@ -171,12 +219,15 @@ impl DurableQueueRuntime {
             id: id.clone(),
             task,
             payload,
+            input_schema,
             status: QueueJobStatus::Pending,
             attempts: 0,
             max_retries,
             budget_usd,
             effect_summary,
             replay_key,
+            output_kind: None,
+            output_fingerprint: None,
             created_ms: now,
             updated_ms: now,
         };
@@ -188,18 +239,21 @@ impl DurableQueueRuntime {
             .unwrap()
             .execute(
                 "insert into queue_jobs
-                 (id, task, payload_json, status, attempts, max_retries, budget_usd, effect_summary, replay_key, created_ms, updated_ms)
-                 values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                 (id, task, payload_json, input_schema, status, attempts, max_retries, budget_usd, effect_summary, replay_key, output_kind, output_fingerprint, created_ms, updated_ms)
+                 values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
                 params![
                     job.id,
                     job.task,
                     payload_json,
+                    job.input_schema,
                     job.status.as_str(),
                     job.attempts as i64,
                     job.max_retries as i64,
                     job.budget_usd,
                     job.effect_summary,
                     job.replay_key,
+                    job.output_kind,
+                    job.output_fingerprint,
                     job.created_ms as i64,
                     job.updated_ms as i64,
                 ],
@@ -212,8 +266,8 @@ impl DurableQueueRuntime {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn
             .prepare(
-                "select id, task, payload_json, status, attempts, max_retries, budget_usd,
-                        effect_summary, replay_key, created_ms, updated_ms
+                "select id, task, payload_json, input_schema, status, attempts, max_retries, budget_usd,
+                        effect_summary, replay_key, output_kind, output_fingerprint, created_ms, updated_ms
                  from queue_jobs where id = ?1",
             )
             .map_err(|err| RuntimeError::Other(format!("failed to prepare durable queue read: {err}")))?;
@@ -236,8 +290,8 @@ impl DurableQueueRuntime {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn
             .prepare(
-                "select id, task, payload_json, status, attempts, max_retries, budget_usd,
-                        effect_summary, replay_key, created_ms, updated_ms
+                "select id, task, payload_json, input_schema, status, attempts, max_retries, budget_usd,
+                        effect_summary, replay_key, output_kind, output_fingerprint, created_ms, updated_ms
                  from queue_jobs order by created_ms, id",
             )
             .map_err(|err| RuntimeError::Other(format!("failed to prepare durable queue list: {err}")))?;
@@ -272,6 +326,14 @@ impl DurableQueueRuntime {
     }
 
     pub fn run_one(&self) -> Result<Option<QueueJob>, RuntimeError> {
+        self.run_one_with_output(None, None)
+    }
+
+    pub fn run_one_with_output(
+        &self,
+        output_kind: Option<String>,
+        output_fingerprint: Option<String>,
+    ) -> Result<Option<QueueJob>, RuntimeError> {
         let pending = self
             .list()?
             .into_iter()
@@ -282,13 +344,15 @@ impl DurableQueueRuntime {
         let now = now_ms();
         job.status = QueueJobStatus::Succeeded;
         job.attempts = job.attempts.saturating_add(1);
+        job.output_kind = output_kind;
+        job.output_fingerprint = output_fingerprint;
         job.updated_ms = now;
         self.conn
             .lock()
             .unwrap()
             .execute(
-                "update queue_jobs set status = ?2, attempts = ?3, updated_ms = ?4 where id = ?1 and status = 'pending'",
-                params![job.id, job.status.as_str(), job.attempts as i64, job.updated_ms as i64],
+                "update queue_jobs set status = ?2, attempts = ?3, output_kind = ?4, output_fingerprint = ?5, updated_ms = ?6 where id = ?1 and status = 'pending'",
+                params![job.id, job.status.as_str(), job.attempts as i64, job.output_kind, job.output_fingerprint, job.updated_ms as i64],
             )
             .map_err(|err| RuntimeError::Other(format!("failed to run durable queue job: {err}")))?;
         self.get(&job.id)?
@@ -305,12 +369,15 @@ impl DurableQueueRuntime {
                     id text primary key,
                     task text not null,
                     payload_json text not null,
+                    input_schema text,
                     status text not null,
                     attempts integer not null,
                     max_retries integer not null,
                     budget_usd real not null,
                     effect_summary text,
                     replay_key text,
+                    output_kind text,
+                    output_fingerprint text,
                     created_ms integer not null,
                     updated_ms integer not null
                 );
@@ -318,6 +385,30 @@ impl DurableQueueRuntime {
                 create index if not exists queue_jobs_replay_key on queue_jobs(replay_key);",
             )
             .map_err(|err| RuntimeError::Other(format!("failed to initialize durable queue: {err}")))?;
+        self.ensure_column("input_schema", "text")?;
+        self.ensure_column("output_kind", "text")?;
+        self.ensure_column("output_fingerprint", "text")?;
+        Ok(())
+    }
+
+    fn ensure_column(&self, name: &str, ty: &str) -> Result<(), RuntimeError> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn
+            .prepare("pragma table_info(queue_jobs)")
+            .map_err(|err| RuntimeError::Other(format!("failed to inspect durable queue schema: {err}")))?;
+        let columns = stmt
+            .query_map([], |row| row.get::<_, String>(1))
+            .map_err(|err| RuntimeError::Other(format!("failed to inspect durable queue columns: {err}")))?;
+        for column in columns {
+            if column
+                .map_err(|err| RuntimeError::Other(format!("failed to read durable queue column: {err}")))?
+                == name
+            {
+                return Ok(());
+            }
+        }
+        conn.execute(&format!("alter table queue_jobs add column {name} {ty}"), [])
+            .map_err(|err| RuntimeError::Other(format!("failed to migrate durable queue column `{name}`: {err}")))?;
         Ok(())
     }
 
@@ -338,20 +429,23 @@ impl DurableQueueRuntime {
 }
 
 fn read_job_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<QueueJob> {
-    let status: String = row.get(3)?;
+    let status: String = row.get(4)?;
     let payload_json: String = row.get(2)?;
     Ok(QueueJob {
         id: row.get(0)?,
         task: row.get(1)?,
         payload: serde_json::from_str(&payload_json).unwrap_or(Value::Null),
+        input_schema: row.get(3)?,
         status: parse_status(&status),
-        attempts: row.get::<_, i64>(4)? as u64,
-        max_retries: row.get::<_, i64>(5)? as u64,
-        budget_usd: row.get(6)?,
-        effect_summary: row.get(7)?,
-        replay_key: row.get(8)?,
-        created_ms: row.get::<_, i64>(9)? as u64,
-        updated_ms: row.get::<_, i64>(10)? as u64,
+        attempts: row.get::<_, i64>(5)? as u64,
+        max_retries: row.get::<_, i64>(6)? as u64,
+        budget_usd: row.get(7)?,
+        effect_summary: row.get(8)?,
+        replay_key: row.get(9)?,
+        output_kind: row.get(10)?,
+        output_fingerprint: row.get(11)?,
+        created_ms: row.get::<_, i64>(12)? as u64,
+        updated_ms: row.get::<_, i64>(13)? as u64,
     })
 }
 
@@ -422,9 +516,10 @@ mod tests {
     fn durable_queue_run_one_persists_success() {
         let queue = DurableQueueRuntime::open_in_memory().unwrap();
         let job = queue
-            .enqueue(
+            .enqueue_typed(
                 "daily_brief",
                 serde_json::json!({"user": "u1"}),
+                Some("DailyBriefInput".to_string()),
                 2,
                 0.5,
                 Some("llm+db".to_string()),
@@ -432,14 +527,24 @@ mod tests {
             )
             .unwrap();
 
-        let ran = queue.run_one().unwrap().expect("pending job");
+        let ran = queue
+            .run_one_with_output(
+                Some("DailyBriefOutput".to_string()),
+                Some("sha256:daily-output".to_string()),
+            )
+            .unwrap()
+            .expect("pending job");
         assert_eq!(ran.id, job.id);
         assert_eq!(ran.status, QueueJobStatus::Succeeded);
         assert_eq!(ran.attempts, 1);
+        assert_eq!(ran.input_schema.as_deref(), Some("DailyBriefInput"));
+        assert_eq!(ran.output_kind.as_deref(), Some("DailyBriefOutput"));
+        assert_eq!(ran.output_fingerprint.as_deref(), Some("sha256:daily-output"));
 
         let fetched = queue.get(&job.id).unwrap().unwrap();
         assert_eq!(fetched.status, QueueJobStatus::Succeeded);
         assert_eq!(fetched.attempts, 1);
+        assert_eq!(fetched.output_kind.as_deref(), Some("DailyBriefOutput"));
         assert!(queue.run_one().unwrap().is_none());
     }
 }
