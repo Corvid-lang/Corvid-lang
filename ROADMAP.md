@@ -1764,7 +1764,7 @@ Each benchmark must separate model-provider latency from Corvid runtime overhead
 - [x] 37C-typed-row-decoding         `std.db` exposes typed row decode envelopes for success, missing columns, and wrong value kinds.
 - [x] 37D-transactions               `std.db` exposes transaction envelopes for commit, rollback, and nested-scope rejection metadata.
 - [x] 37E-migrations-drift           `corvid migrate up/down/status` supports checksums, dry runs, drift detection, and CI failure on mismatch.
-- [ ] 37F-audit-log-pattern          Standard audit-log schema records actor, action, prompt/model/tool versions, approval state, cost, trace ID, and replay key.
+- [x] 37F-audit-log-pattern          Standard audit-log schema records actor, action, prompt/model/tool versions, approval state, cost, trace ID, and replay key.
 - [ ] 37G-token-storage-boundary     Encrypted connector-token storage ships with explicit key-management boundaries and tests.
 - [ ] 37H-postgres-support           Postgres reaches parity with the SQLite query/transaction/migration subset needed by reference apps.
 - [ ] 37I-db-effect-replay           DB reads/writes carry effect tags and replay records deterministic interaction summaries.
@@ -1781,7 +1781,7 @@ Each benchmark must separate model-provider latency from Corvid runtime overhead
 - [x] 37E5-dry-run-report            Dry-run reports pending/applied/drifted migrations without mutating state.
 - [x] 37F1-audit-schema-envelope     Add `std.db` audit-log record envelopes for actor/action/model/tool/approval/cost/trace/replay.
 - [x] 37F2-audit-write-helper        Add helpers/tests for approval-aware audit writes and redacted values.
-- [ ] 37F3-audit-example             Add a minimal backend audit-log example and regression test.
+- [x] 37F3-audit-example             Add a minimal backend audit-log example and regression test.
 - [ ] 37G1-token-envelope            Add token reference/encrypted-token metadata envelopes.
 - [ ] 37G2-host-key-doctor           `corvid doctor` validates token encryption key presence/shape without printing it.
 - [ ] 37G3-token-redaction-tests     Traces, errors, and audit helpers never print token values.

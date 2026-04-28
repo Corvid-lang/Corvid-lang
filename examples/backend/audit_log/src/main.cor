@@ -1,0 +1,7 @@
+import "./std/effects" use EffectEnvelope
+import "./std/db" use DbAuditRecord, DbAuditWrite, db_audit_record, db_audit_write, db_audit_write_safe
+
+agent main() -> Bool:
+    record = db_audit_record("user-1", "refund.requested", "order-1", "/refunds", "job-1", "approve_refund", "prompt-v1", "model-a", "issue_refund", "approved", 0.05, "trace-1", "replay-1")
+    write = db_audit_write(record, true, true)
+    return db_audit_write_safe(write)
