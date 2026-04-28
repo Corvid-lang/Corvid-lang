@@ -23,6 +23,28 @@ agent refund(id: String) -> Receipt:
 
 Remove the `approve` line and the program does not compile. Increase the composed cost above `$1.00` and the program does not compile. Return `Grounded<T>` without retrieval provenance and the program does not compile. That is the point: AI safety is not an SDK convention; it is part of the language.
 
+## Verifiable Launch Surface
+
+Corvid's strongest production claim is not prose; it is a signed cdylib
+workflow that emits externally checkable artifacts:
+
+```bash
+cargo run -q -p corvid-cli -- build app.cor --target=cdylib --sign=key.hex
+cargo run -q -p corvid-cli -- claim --explain target/release/libapp.so --key pub.hex --source app.cor
+cargo run -q -p corvid-abi-verify -- --source app.cor target/release/libapp.so
+cargo run -q -p corvid-cli -- receipt verify-abi target/release/libapp.so --key pub.hex
+```
+
+Those commands are the public claim boundary:
+
+- `corvid build --sign` refuses to sign when source-declared contracts are not covered by registered, non-`out_of_scope` guarantee ids.
+- The cdylib embeds `CORVID_ABI_DESCRIPTOR` and, when signed, `CORVID_ABI_ATTESTATION`.
+- `corvid claim --explain` prints the descriptor-carried guarantee ids, signing-key fingerprint, and source/binary descriptor agreement when `--key` and `--source` are supplied.
+- `corvid-abi-verify` independently rebuilds the ABI descriptor from source and byte-compares it with the cdylib.
+- `corvid receipt verify-abi` verifies the DSSE attestation and descriptor match.
+
+For the exact trust boundary and non-goals, read [docs/security-model.md](./docs/security-model.md). For the canonical guarantee table, read [docs/core-semantics.md](./docs/core-semantics.md).
+
 Run the shipped invention tour:
 
 ```bash
@@ -461,7 +483,7 @@ The language is designed as one compiler pipeline with multiple execution tiers.
 
 ## Status
 
-Corvid is pre-v1.0 and under active development. The compiler, interpreter, effect system, model substrate, streaming substrate, replay/bundle infrastructure, and native backend work are in the repository today. Some backend paths intentionally reject newer high-level features until parity work lands; those boundaries are documented as non-scope instead of hidden.
+Corvid is pre-v1.0 and under active development. The compiler, interpreter, effect system, model substrate, streaming substrate, replay/bundle infrastructure, native backend, signed cdylib attestation, bilateral ABI verifier, and claim explanation workflow are in the repository today. Some backend paths intentionally reject newer high-level features until parity work lands; signed builds fail closed when contract-like syntax is not mapped to a registered guarantee.
 
 Use the roadmap for source-of-truth status:
 
@@ -494,6 +516,8 @@ If `cargo fmt --check` fails because `cargo-fmt` is not installed, install the R
 - [ROADMAP.md](./ROADMAP.md): build plan and shipped slices.
 - [docs/inventions.md](./docs/inventions.md): standalone invention catalog and proof matrix.
 - [docs/effects-spec/](./docs/effects-spec/): AI-native effect system, grounding, budgets, confidence, streaming, model substrate, replay, and verification specs.
+- [docs/core-semantics.md](./docs/core-semantics.md): generated guarantee registry with ids, classes, phases, and test references.
+- [docs/security-model.md](./docs/security-model.md): signed artifact trust boundary, host acceptance workflow, and explicit non-goals.
 - [docs/bundle-format.md](./docs/bundle-format.md): signed bundle and receipt format.
 - [ARCHITECTURE.md](./ARCHITECTURE.md): compiler design and repo structure.
 - [CONTRIBUTING.md](./CONTRIBUTING.md): project rules and contribution expectations.

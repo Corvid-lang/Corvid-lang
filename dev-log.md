@@ -5994,3 +5994,22 @@ Validation:
 
 - Documentation-only slice; reviewed against `docs/core-semantics.md`
   and the Phase 35-H/I/J command behavior.
+
+## 2026-04-28 - Phase 35-L: README claim alignment
+
+Slice 35-L is complete. The README now has a "Verifiable Launch
+Surface" section that states the signed cdylib claim in terms of the
+runnable commands that produce or verify it: `corvid build --sign`,
+`corvid claim --explain`, `corvid-abi-verify`, and `corvid receipt
+verify-abi`.
+
+The production-status wording now mentions the signed cdylib
+attestation, bilateral ABI verifier, and claim explanation workflow,
+and it says signed builds fail closed when contract-like syntax is not
+mapped to a registered guarantee. The resource list now links the
+generated core-semantics registry and the security model.
+
+Validation:
+
+- Documentation-only slice; README wording is derived from the Phase
+  35-H/I/J commands and `docs/security-model.md`.
