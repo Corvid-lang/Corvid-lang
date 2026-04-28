@@ -57,7 +57,9 @@ use clap::{Parser, Subcommand, ValueEnum};
 use corvid_differential_verify::{
     render_corpus_grid, render_report, shrink_program, verify_corpus,
 };
-use corvid_runtime::queue::{DurableQueueRuntime, QueueJob};
+use corvid_runtime::queue::{
+    DurableQueueRuntime, QueueJob, QueueScheduleManifest, ScheduleMissedPolicy,
+};
 use cost_frontier::{build_frontier, render_frontier as render_cost_frontier, CostFrontierOptions};
 use routing_report::{build_report, render_report as render_routing_report, RoutingReportOptions};
 use rusqlite::Connection;
@@ -1288,6 +1290,38 @@ fn main() -> ExitCode {
                 fail_fingerprint,
                 retry_base_ms,
             ),
+            JobsCommand::Schedule { command } => match command {
+                JobsScheduleCommand::Add {
+                    state,
+                    id,
+                    cron,
+                    zone,
+                    task,
+                    payload,
+                    max_retries,
+                    budget_usd,
+                    effect_summary,
+                    replay_key_prefix,
+                    missed_policy,
+                } => cmd_jobs_schedule_add(
+                    &state,
+                    &id,
+                    &cron,
+                    &zone,
+                    &task,
+                    &payload,
+                    max_retries,
+                    budget_usd,
+                    effect_summary,
+                    replay_key_prefix,
+                    missed_policy,
+                ),
+                JobsScheduleCommand::List { state } => cmd_jobs_schedule_list(&state),
+                JobsScheduleCommand::Recover {
+                    state,
+                    max_missed_per_schedule,
+                } => cmd_jobs_schedule_recover(&state, max_missed_per_schedule),
+            },
             JobsCommand::Dlq { state } => cmd_jobs_dlq(&state),
         },
         Some(Command::Bench { command }) => match command {
@@ -1552,6 +1586,111 @@ fn cmd_jobs_dlq(state: &Path) -> Result<u8> {
         );
     }
     Ok(0)
+}
+
+fn cmd_jobs_schedule_add(
+    state: &Path,
+    id: &str,
+    cron: &str,
+    zone: &str,
+    task: &str,
+    payload: &str,
+    max_retries: u64,
+    budget_usd: f64,
+    effect_summary: Option<String>,
+    replay_key_prefix: Option<String>,
+    missed_policy: SchedulePolicyArg,
+) -> Result<u8> {
+    if let Some(parent) = state
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("failed to create jobs state dir `{}`", parent.display()))?;
+    }
+    let queue = DurableQueueRuntime::open(state)?;
+    let payload = serde_json::from_str(payload).context("schedule payload must be valid JSON")?;
+    let now = corvid_runtime::tracing::now_ms();
+    let schedule = queue.upsert_schedule(QueueScheduleManifest {
+        id: id.to_string(),
+        cron: cron.to_string(),
+        zone: zone.to_string(),
+        task: task.to_string(),
+        payload,
+        max_retries,
+        budget_usd,
+        effect_summary,
+        replay_key_prefix,
+        missed_policy: missed_policy.into(),
+        last_checked_ms: now,
+        last_fire_ms: None,
+        created_ms: now,
+        updated_ms: now,
+    })?;
+    println!("corvid jobs schedule add");
+    println!("state: {}", state.display());
+    print_schedule_summary(&schedule);
+    Ok(0)
+}
+
+fn cmd_jobs_schedule_list(state: &Path) -> Result<u8> {
+    let queue = DurableQueueRuntime::open(state)?;
+    let schedules = queue.list_schedules()?;
+    println!("corvid jobs schedule list");
+    println!("state: {}", state.display());
+    println!("schedule_count: {}", schedules.len());
+    for schedule in schedules {
+        print_schedule_summary(&schedule);
+    }
+    Ok(0)
+}
+
+fn cmd_jobs_schedule_recover(state: &Path, max_missed_per_schedule: usize) -> Result<u8> {
+    let queue = DurableQueueRuntime::open(state)?;
+    let report = queue.recover_schedules(max_missed_per_schedule)?;
+    println!("corvid jobs schedule recover");
+    println!("state: {}", state.display());
+    println!("scanned: {}", report.scanned);
+    println!("enqueued: {}", report.enqueued);
+    println!("skipped: {}", report.skipped);
+    for recovery in report.recoveries {
+        println!(
+            "recovery: schedule:{} task:{} fire_ms:{} action:{} job:{} policy:{}",
+            recovery.schedule_id,
+            recovery.task,
+            recovery.fire_ms,
+            recovery.action,
+            recovery.job_id.as_deref().unwrap_or(""),
+            recovery.policy.as_str()
+        );
+    }
+    Ok(0)
+}
+
+fn print_schedule_summary(schedule: &QueueScheduleManifest) {
+    println!("schedule: {}", schedule.id);
+    println!("cron: {}", schedule.cron);
+    println!("zone: {}", schedule.zone);
+    println!("task: {}", schedule.task);
+    println!("missed_policy: {}", schedule.missed_policy.as_str());
+    println!("last_checked_ms: {}", schedule.last_checked_ms);
+    println!(
+        "last_fire_ms: {}",
+        schedule
+            .last_fire_ms
+            .map(|value| value.to_string())
+            .unwrap_or_default()
+    );
+    println!("max_retries: {}", schedule.max_retries);
+    println!("budget_usd: {:.4}", schedule.budget_usd);
+    println!(
+        "effect_summary: {}",
+        schedule.effect_summary.as_deref().unwrap_or("")
+    );
+    println!(
+        "replay_key_prefix: {}",
+        schedule.replay_key_prefix.as_deref().unwrap_or("")
+    );
 }
 
 fn print_job_summary(job: &QueueJob) {
@@ -2886,11 +3025,88 @@ enum JobsCommand {
         #[arg(long, default_value = "1000")]
         retry_base_ms: u64,
     },
+    /// Manage durable cron schedules and restart recovery.
+    Schedule {
+        #[command(subcommand)]
+        command: JobsScheduleCommand,
+    },
     /// Inspect terminally failed local jobs.
     Dlq {
         /// SQLite state file used by the durable local queue.
         #[arg(long, value_name = "PATH", default_value = "target/corvid-jobs.sqlite")]
         state: PathBuf,
+    },
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum SchedulePolicyArg {
+    SkipMissed,
+    FireOnceOnRecovery,
+    EnqueueAllBounded,
+}
+
+impl From<SchedulePolicyArg> for ScheduleMissedPolicy {
+    fn from(value: SchedulePolicyArg) -> Self {
+        match value {
+            SchedulePolicyArg::SkipMissed => ScheduleMissedPolicy::SkipMissed,
+            SchedulePolicyArg::FireOnceOnRecovery => ScheduleMissedPolicy::FireOnceOnRecovery,
+            SchedulePolicyArg::EnqueueAllBounded => ScheduleMissedPolicy::EnqueueAllBounded,
+        }
+    }
+}
+
+#[derive(Subcommand)]
+enum JobsScheduleCommand {
+    /// Add or update a durable cron schedule.
+    Add {
+        /// SQLite state file used by the durable local queue.
+        #[arg(long, value_name = "PATH", default_value = "target/corvid-jobs.sqlite")]
+        state: PathBuf,
+        /// Stable schedule id.
+        #[arg(long)]
+        id: String,
+        /// Cron expression. Five-field expressions are accepted and normalized to second=0.
+        #[arg(long)]
+        cron: String,
+        /// IANA timezone, such as UTC or America/New_York.
+        #[arg(long, default_value = "UTC")]
+        zone: String,
+        /// Job kind or task name to enqueue when the schedule fires.
+        #[arg(long)]
+        task: String,
+        /// Redacted JSON payload embedded into each recovered job.
+        #[arg(long, default_value = "{}")]
+        payload: String,
+        /// Maximum retry count for jobs created by this schedule.
+        #[arg(long, default_value = "3")]
+        max_retries: u64,
+        /// Budget carried into jobs created by this schedule.
+        #[arg(long, default_value = "0")]
+        budget_usd: f64,
+        /// Human-readable effect summary for audit and operations output.
+        #[arg(long)]
+        effect_summary: Option<String>,
+        /// Prefix used to create deterministic replay keys per scheduled fire.
+        #[arg(long)]
+        replay_key_prefix: Option<String>,
+        /// Missed-fire policy applied after restart.
+        #[arg(long, value_enum, default_value = "fire-once-on-recovery")]
+        missed_policy: SchedulePolicyArg,
+    },
+    /// List durable cron schedules.
+    List {
+        /// SQLite state file used by the durable local queue.
+        #[arg(long, value_name = "PATH", default_value = "target/corvid-jobs.sqlite")]
+        state: PathBuf,
+    },
+    /// Recover missed schedule fires after restart.
+    Recover {
+        /// SQLite state file used by the durable local queue.
+        #[arg(long, value_name = "PATH", default_value = "target/corvid-jobs.sqlite")]
+        state: PathBuf,
+        /// Maximum missed fires to inspect per schedule.
+        #[arg(long, default_value = "16")]
+        max_missed_per_schedule: usize,
     },
 }
 

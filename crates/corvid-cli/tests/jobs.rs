@@ -1,6 +1,8 @@
 use std::path::PathBuf;
 use std::process::Command;
 
+use rusqlite::Connection;
+
 fn corvid_bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_corvid"))
 }
@@ -151,6 +153,90 @@ fn jobs_delay_persists_and_skips_until_ready() {
     let stdout = String::from_utf8_lossy(&run.stdout);
     assert!(stdout.contains("task: immediate_digest"), "{stdout}");
     assert!(!stdout.contains("task: scheduled_digest"), "{stdout}");
+}
+
+#[test]
+fn jobs_schedule_recovers_missed_fire_after_restart() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let state = dir.path().join("jobs.sqlite");
+
+    let add = Command::new(corvid_bin())
+        .args([
+            "jobs",
+            "schedule",
+            "add",
+            "--state",
+            state.to_str().unwrap(),
+            "--id",
+            "daily_brief",
+            "--cron",
+            "* * * * *",
+            "--zone",
+            "UTC",
+            "--task",
+            "daily_brief",
+            "--payload",
+            "{\"user\":\"u1\"}",
+            "--effect-summary",
+            "llm+email",
+            "--replay-key-prefix",
+            "schedule:daily_brief",
+        ])
+        .output()
+        .expect("run jobs schedule add");
+    assert!(
+        add.status.success(),
+        "schedule add failed:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&add.stdout),
+        String::from_utf8_lossy(&add.stderr)
+    );
+
+    let conn = Connection::open(&state).expect("open schedule db");
+    let now = corvid_runtime::tracing::now_ms();
+    conn.execute(
+        "update queue_schedules set last_checked_ms = ?1, last_fire_ms = null where id = 'daily_brief'",
+        [now.saturating_sub(5 * 60_000) as i64],
+    )
+    .expect("rewind schedule cursor");
+    drop(conn);
+
+    let recover = Command::new(corvid_bin())
+        .args([
+            "jobs",
+            "schedule",
+            "recover",
+            "--state",
+            state.to_str().unwrap(),
+            "--max-missed-per-schedule",
+            "8",
+        ])
+        .output()
+        .expect("run jobs schedule recover");
+    assert!(
+        recover.status.success(),
+        "schedule recover failed:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&recover.stdout),
+        String::from_utf8_lossy(&recover.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&recover.stdout);
+    assert!(stdout.contains("corvid jobs schedule recover"), "{stdout}");
+    assert!(stdout.contains("scanned: 1"), "{stdout}");
+    assert!(stdout.contains("enqueued: 1"), "{stdout}");
+    assert!(stdout.contains("recovery: schedule:daily_brief"), "{stdout}");
+
+    let run = Command::new(corvid_bin())
+        .args(["jobs", "run-one", "--state", state.to_str().unwrap()])
+        .output()
+        .expect("run recovered job");
+    assert!(
+        run.status.success(),
+        "run-one failed:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&run.stdout),
+        String::from_utf8_lossy(&run.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&run.stdout);
+    assert!(stdout.contains("task: daily_brief"), "{stdout}");
+    assert!(stdout.contains("replay_key: schedule:daily_brief:"), "{stdout}");
 }
 
 #[test]

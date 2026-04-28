@@ -1916,8 +1916,8 @@ A slice that fails any box rolls back to `[ ]`. The `[x]` is a contract, not a w
 
 - [x] 38A-jobs-design-brief          `docs/phase-38-jobs.md` defines queue semantics, durability model, scheduler model, approval waits, replay behavior, and non-scope.
 - [x] 38B-enqueue-run-one-job        Runtime can enqueue and execute one persisted background job with typed input/output.
-- [ ] 38C-retry-backoff-dlq          Jobs support retry policies, backoff, terminal failure, and dead-letter inspection.
-- [ ] 38D-delayed-jobs-cron          Delayed jobs and cron schedules persist, recover after restart, and appear in `corvid audit`.
+- [x] 38C-retry-backoff-dlq          Jobs support retry policies, backoff, terminal failure, and dead-letter inspection.
+- [x] 38D-delayed-jobs-cron          Delayed jobs and cron schedules persist, recover after restart, and appear in `corvid audit`.
 - [ ] 38E-leases-concurrency-idempotency Jobs use leases, concurrency limits, and idempotency keys to avoid duplicate dangerous work.
 - [ ] 38F-agent-step-checkpoints     Durable agent runs checkpoint steps, tool-call results, and partial outputs.
 - [ ] 38G-approval-wait-resume       Jobs can pause on approval, resume after approve/deny/expire, and record the audit transition.
@@ -1986,7 +1986,7 @@ corvid jobs drain --workers=all
 - [x] 38C3-dlq-inspection            CLI can inspect dead-lettered jobs.
 - [x] 38D1-delay-support             Delayed jobs persist and wake after restart.
 - [x] 38D2-cron-manifest             Cron schedules appear in `corvid audit`.
-- [ ] 38D3-scheduler-recovery        Scheduler recovers missed/pending jobs after restart.
+- [x] 38D3-scheduler-recovery        Scheduler recovers missed/pending jobs after restart.
 - [ ] 38E1-lease-model               Job leases prevent duplicate workers.
 - [ ] 38E2-concurrency-limits        Queue and job-type concurrency limits are enforced.
 - [ ] 38E3-idempotency-keys          Duplicate dangerous jobs collapse or fail predictably.

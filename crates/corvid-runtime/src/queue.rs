@@ -1,8 +1,12 @@
 use crate::errors::RuntimeError;
 use crate::tracing::now_ms;
+use chrono::{TimeZone, Utc};
+use chrono_tz::Tz;
+use cron::Schedule;
 use rusqlite::{params, Connection};
 use serde_json::Value;
 use std::collections::BTreeMap;
+use std::str::FromStr;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -50,6 +54,59 @@ pub struct QueueJob {
     pub next_run_ms: Option<u64>,
     pub created_ms: u64,
     pub updated_ms: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScheduleMissedPolicy {
+    SkipMissed,
+    FireOnceOnRecovery,
+    EnqueueAllBounded,
+}
+
+impl ScheduleMissedPolicy {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::SkipMissed => "skip_missed",
+            Self::FireOnceOnRecovery => "fire_once_on_recovery",
+            Self::EnqueueAllBounded => "enqueue_all_bounded",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct QueueScheduleManifest {
+    pub id: String,
+    pub cron: String,
+    pub zone: String,
+    pub task: String,
+    pub payload: Value,
+    pub max_retries: u64,
+    pub budget_usd: f64,
+    pub effect_summary: Option<String>,
+    pub replay_key_prefix: Option<String>,
+    pub missed_policy: ScheduleMissedPolicy,
+    pub last_checked_ms: u64,
+    pub last_fire_ms: Option<u64>,
+    pub created_ms: u64,
+    pub updated_ms: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ScheduleRecovery {
+    pub schedule_id: String,
+    pub task: String,
+    pub fire_ms: u64,
+    pub job_id: Option<String>,
+    pub policy: ScheduleMissedPolicy,
+    pub action: String,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SchedulerRecoveryReport {
+    pub scanned: usize,
+    pub enqueued: usize,
+    pub skipped: usize,
+    pub recoveries: Vec<ScheduleRecovery>,
 }
 
 #[derive(Clone, Default)]
@@ -380,6 +437,199 @@ impl DurableQueueRuntime {
             .collect())
     }
 
+    pub fn upsert_schedule(
+        &self,
+        manifest: QueueScheduleManifest,
+    ) -> Result<QueueScheduleManifest, RuntimeError> {
+        validate_schedule(&manifest.cron, &manifest.zone)?;
+        if manifest.id.trim().is_empty() {
+            return Err(RuntimeError::Other(
+                "std.queue schedule id must not be empty".to_string(),
+            ));
+        }
+        if manifest.task.trim().is_empty() {
+            return Err(RuntimeError::Other(
+                "std.queue schedule task must not be empty".to_string(),
+            ));
+        }
+        let now = now_ms();
+        let payload_json = serde_json::to_string(&manifest.payload).map_err(|err| {
+            RuntimeError::Other(format!("failed to serialize durable schedule payload: {err}"))
+        })?;
+        let budget_usd = if manifest.budget_usd.is_finite() && manifest.budget_usd > 0.0 {
+            manifest.budget_usd
+        } else {
+            0.0
+        };
+        let created_ms = if manifest.created_ms == 0 {
+            now
+        } else {
+            manifest.created_ms
+        };
+        let last_checked_ms = if manifest.last_checked_ms == 0 {
+            now
+        } else {
+            manifest.last_checked_ms
+        };
+        self.conn
+            .lock()
+            .unwrap()
+            .execute(
+                "insert into queue_schedules
+                 (id, cron, zone, task, payload_json, max_retries, budget_usd, effect_summary, replay_key_prefix, missed_policy, last_checked_ms, last_fire_ms, created_ms, updated_ms)
+                 values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
+                 on conflict(id) do update set
+                   cron = excluded.cron,
+                   zone = excluded.zone,
+                   task = excluded.task,
+                   payload_json = excluded.payload_json,
+                   max_retries = excluded.max_retries,
+                   budget_usd = excluded.budget_usd,
+                   effect_summary = excluded.effect_summary,
+                   replay_key_prefix = excluded.replay_key_prefix,
+                   missed_policy = excluded.missed_policy,
+                   updated_ms = excluded.updated_ms",
+                params![
+                    manifest.id,
+                    manifest.cron,
+                    manifest.zone,
+                    manifest.task,
+                    payload_json,
+                    manifest.max_retries as i64,
+                    budget_usd,
+                    manifest.effect_summary,
+                    manifest.replay_key_prefix,
+                    manifest.missed_policy.as_str(),
+                    last_checked_ms as i64,
+                    manifest.last_fire_ms.map(|value| value as i64),
+                    created_ms as i64,
+                    now as i64,
+                ],
+            )
+            .map_err(|err| RuntimeError::Other(format!("failed to upsert schedule: {err}")))?;
+        self.get_schedule(&manifest.id)?
+            .ok_or_else(|| RuntimeError::Other(format!("schedule `{}` not found after upsert", manifest.id)))
+    }
+
+    pub fn get_schedule(&self, id: &str) -> Result<Option<QueueScheduleManifest>, RuntimeError> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn
+            .prepare(
+                "select id, cron, zone, task, payload_json, max_retries, budget_usd, effect_summary, replay_key_prefix, missed_policy, last_checked_ms, last_fire_ms, created_ms, updated_ms
+                 from queue_schedules where id = ?1",
+            )
+            .map_err(|err| RuntimeError::Other(format!("failed to prepare schedule read: {err}")))?;
+        let mut rows = stmt
+            .query(params![id])
+            .map_err(|err| RuntimeError::Other(format!("failed to query schedule: {err}")))?;
+        if let Some(row) = rows
+            .next()
+            .map_err(|err| RuntimeError::Other(format!("failed to read schedule row: {err}")))? {
+            Ok(Some(
+                read_schedule_row(row)
+                    .map_err(|err| RuntimeError::Other(format!("failed to decode schedule: {err}")))?,
+            ))
+        } else {
+            Ok(None)
+        }
+    }
+
+    pub fn list_schedules(&self) -> Result<Vec<QueueScheduleManifest>, RuntimeError> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn
+            .prepare(
+                "select id, cron, zone, task, payload_json, max_retries, budget_usd, effect_summary, replay_key_prefix, missed_policy, last_checked_ms, last_fire_ms, created_ms, updated_ms
+                 from queue_schedules order by id",
+            )
+            .map_err(|err| RuntimeError::Other(format!("failed to prepare schedule list: {err}")))?;
+        let rows = stmt
+            .query_map([], read_schedule_row)
+            .map_err(|err| RuntimeError::Other(format!("failed to list schedules: {err}")))?;
+        let mut schedules = Vec::new();
+        for row in rows {
+            schedules.push(
+                row.map_err(|err| RuntimeError::Other(format!("failed to decode schedule: {err}")))?,
+            );
+        }
+        Ok(schedules)
+    }
+
+    pub fn recover_schedules(
+        &self,
+        max_missed_per_schedule: usize,
+    ) -> Result<SchedulerRecoveryReport, RuntimeError> {
+        self.recover_schedules_at(now_ms(), max_missed_per_schedule)
+    }
+
+    pub fn recover_schedules_at(
+        &self,
+        now: u64,
+        max_missed_per_schedule: usize,
+    ) -> Result<SchedulerRecoveryReport, RuntimeError> {
+        let schedules = self.list_schedules()?;
+        let mut report = SchedulerRecoveryReport {
+            scanned: schedules.len(),
+            ..SchedulerRecoveryReport::default()
+        };
+        for schedule in schedules {
+            let due = missed_fire_times(&schedule, now, max_missed_per_schedule)?;
+            if due.is_empty() {
+                self.mark_schedule_checked(&schedule.id, now, schedule.last_fire_ms)?;
+                continue;
+            }
+            match schedule.missed_policy {
+                ScheduleMissedPolicy::SkipMissed => {
+                    report.skipped = report.skipped.saturating_add(due.len());
+                    for fire_ms in &due {
+                        report.recoveries.push(ScheduleRecovery {
+                            schedule_id: schedule.id.clone(),
+                            task: schedule.task.clone(),
+                            fire_ms: *fire_ms,
+                            job_id: None,
+                            policy: schedule.missed_policy,
+                            action: "skipped".to_string(),
+                        });
+                    }
+                    self.mark_schedule_checked(&schedule.id, now, due.last().copied())?;
+                }
+                ScheduleMissedPolicy::FireOnceOnRecovery => {
+                    let Some(&fire_ms) = due.last() else { continue };
+                    if let Some(job) = self.enqueue_schedule_fire(&schedule, fire_ms)? {
+                        report.enqueued = report.enqueued.saturating_add(1);
+                        report.recoveries.push(ScheduleRecovery {
+                            schedule_id: schedule.id.clone(),
+                            task: schedule.task.clone(),
+                            fire_ms,
+                            job_id: Some(job.id),
+                            policy: schedule.missed_policy,
+                            action: "enqueued".to_string(),
+                        });
+                    }
+                    self.mark_schedule_checked(&schedule.id, now, Some(fire_ms))?;
+                }
+                ScheduleMissedPolicy::EnqueueAllBounded => {
+                    let mut last_fire = schedule.last_fire_ms;
+                    for fire_ms in due {
+                        last_fire = Some(fire_ms);
+                        if let Some(job) = self.enqueue_schedule_fire(&schedule, fire_ms)? {
+                            report.enqueued = report.enqueued.saturating_add(1);
+                            report.recoveries.push(ScheduleRecovery {
+                                schedule_id: schedule.id.clone(),
+                                task: schedule.task.clone(),
+                                fire_ms,
+                                job_id: Some(job.id),
+                                policy: schedule.missed_policy,
+                                action: "enqueued".to_string(),
+                            });
+                        }
+                    }
+                    self.mark_schedule_checked(&schedule.id, now, last_fire)?;
+                }
+            }
+        }
+        Ok(report)
+    }
+
     pub fn cancel(&self, id: &str) -> Result<QueueJob, RuntimeError> {
         let now = now_ms();
         let updated = self
@@ -477,6 +727,79 @@ impl DurableQueueRuntime {
             .ok_or_else(|| RuntimeError::Other(format!("std.queue job `{}` not found", job.id)))
     }
 
+    fn enqueue_schedule_fire(
+        &self,
+        schedule: &QueueScheduleManifest,
+        fire_ms: u64,
+    ) -> Result<Option<QueueJob>, RuntimeError> {
+        let event_id = format!("{}:{fire_ms}", schedule.id);
+        let mut conn = self.conn.lock().unwrap();
+        let tx = conn
+            .transaction()
+            .map_err(|err| RuntimeError::Other(format!("failed to start schedule recovery transaction: {err}")))?;
+        let inserted = tx
+            .execute(
+                "insert or ignore into queue_schedule_fires (event_id, schedule_id, fire_ms, job_id, created_ms)
+                 values (?1, ?2, ?3, '', ?4)",
+                params![event_id, schedule.id, fire_ms as i64, now_ms() as i64],
+            )
+            .map_err(|err| RuntimeError::Other(format!("failed to record schedule fire: {err}")))?;
+        if inserted == 0 {
+            tx.commit()
+                .map_err(|err| RuntimeError::Other(format!("failed to commit duplicate schedule fire record: {err}")))?;
+            return Ok(None);
+        }
+        let mut payload = serde_json::Map::new();
+        payload.insert("schedule_id".to_string(), Value::String(schedule.id.clone()));
+        payload.insert(
+            "scheduled_fire_ms".to_string(),
+            Value::Number(serde_json::Number::from(fire_ms)),
+        );
+        payload.insert("payload".to_string(), schedule.payload.clone());
+        tx.commit()
+            .map_err(|err| RuntimeError::Other(format!("failed to commit schedule fire record: {err}")))?;
+        drop(conn);
+        let replay_key = schedule
+            .replay_key_prefix
+            .as_ref()
+            .map(|prefix| format!("{prefix}:{fire_ms}"));
+        let job = self.enqueue_typed(
+            schedule.task.clone(),
+            Value::Object(payload),
+            None,
+            schedule.max_retries,
+            schedule.budget_usd,
+            schedule.effect_summary.clone(),
+            replay_key,
+        )?;
+        self.conn
+            .lock()
+            .unwrap()
+            .execute(
+                "update queue_schedule_fires set job_id = ?2 where event_id = ?1",
+                params![event_id, job.id],
+            )
+            .map_err(|err| RuntimeError::Other(format!("failed to link schedule fire to job: {err}")))?;
+        Ok(Some(job))
+    }
+
+    fn mark_schedule_checked(
+        &self,
+        schedule_id: &str,
+        checked_ms: u64,
+        last_fire_ms: Option<u64>,
+    ) -> Result<(), RuntimeError> {
+        self.conn
+            .lock()
+            .unwrap()
+            .execute(
+                "update queue_schedules set last_checked_ms = ?2, last_fire_ms = coalesce(?3, last_fire_ms), updated_ms = ?2 where id = ?1",
+                params![schedule_id, checked_ms as i64, last_fire_ms.map(|value| value as i64)],
+            )
+            .map_err(|err| RuntimeError::Other(format!("failed to update schedule recovery cursor: {err}")))?;
+        Ok(())
+    }
+
     fn init(&self) -> Result<(), RuntimeError> {
         self.conn
             .lock()
@@ -502,7 +825,32 @@ impl DurableQueueRuntime {
                     updated_ms integer not null
                 );
                 create index if not exists queue_jobs_status on queue_jobs(status);
-                create index if not exists queue_jobs_replay_key on queue_jobs(replay_key);",
+                create index if not exists queue_jobs_replay_key on queue_jobs(replay_key);
+                create table if not exists queue_schedules (
+                    id text primary key,
+                    cron text not null,
+                    zone text not null,
+                    task text not null,
+                    payload_json text not null,
+                    max_retries integer not null,
+                    budget_usd real not null,
+                    effect_summary text,
+                    replay_key_prefix text,
+                    missed_policy text not null,
+                    last_checked_ms integer not null,
+                    last_fire_ms integer,
+                    created_ms integer not null,
+                    updated_ms integer not null
+                );
+                create index if not exists queue_schedules_task on queue_schedules(task);
+                create table if not exists queue_schedule_fires (
+                    event_id text primary key,
+                    schedule_id text not null,
+                    fire_ms integer not null,
+                    job_id text not null,
+                    created_ms integer not null
+                );
+                create unique index if not exists queue_schedule_fires_unique on queue_schedule_fires(schedule_id, fire_ms);",
             )
             .map_err(|err| {
                 RuntimeError::Other(format!("failed to initialize durable queue: {err}"))
@@ -588,6 +936,26 @@ fn read_job_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<QueueJob> {
     })
 }
 
+fn read_schedule_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<QueueScheduleManifest> {
+    let payload_json: String = row.get(4)?;
+    Ok(QueueScheduleManifest {
+        id: row.get(0)?,
+        cron: row.get(1)?,
+        zone: row.get(2)?,
+        task: row.get(3)?,
+        payload: serde_json::from_str(&payload_json).unwrap_or(Value::Null),
+        max_retries: row.get::<_, i64>(5)? as u64,
+        budget_usd: row.get(6)?,
+        effect_summary: row.get(7)?,
+        replay_key_prefix: row.get(8)?,
+        missed_policy: parse_missed_policy(&row.get::<_, String>(9)?),
+        last_checked_ms: row.get::<_, i64>(10)? as u64,
+        last_fire_ms: row.get::<_, Option<i64>>(11)?.map(|value| value as u64),
+        created_ms: row.get::<_, i64>(12)? as u64,
+        updated_ms: row.get::<_, i64>(13)? as u64,
+    })
+}
+
 fn parse_status(status: &str) -> QueueJobStatus {
     match status {
         "retry_wait" => QueueJobStatus::RetryWait,
@@ -597,6 +965,80 @@ fn parse_status(status: &str) -> QueueJobStatus {
         "dead_lettered" => QueueJobStatus::DeadLettered,
         "canceled" => QueueJobStatus::Canceled,
         _ => QueueJobStatus::Pending,
+    }
+}
+
+fn parse_missed_policy(policy: &str) -> ScheduleMissedPolicy {
+    match policy {
+        "skip_missed" => ScheduleMissedPolicy::SkipMissed,
+        "enqueue_all_bounded" => ScheduleMissedPolicy::EnqueueAllBounded,
+        _ => ScheduleMissedPolicy::FireOnceOnRecovery,
+    }
+}
+
+fn validate_schedule(cron: &str, zone: &str) -> Result<(), RuntimeError> {
+    let expression = normalize_cron(cron)?;
+    Schedule::from_str(&expression)
+        .map_err(|err| RuntimeError::Other(format!("invalid cron expression `{cron}`: {err}")))?;
+    zone.parse::<Tz>()
+        .map_err(|err| RuntimeError::Other(format!("invalid schedule timezone `{zone}`: {err}")))?;
+    Ok(())
+}
+
+fn missed_fire_times(
+    schedule: &QueueScheduleManifest,
+    now: u64,
+    max_missed_per_schedule: usize,
+) -> Result<Vec<u64>, RuntimeError> {
+    if now <= schedule.last_checked_ms || max_missed_per_schedule == 0 {
+        return Ok(Vec::new());
+    }
+    let expression = normalize_cron(&schedule.cron)?;
+    let cron = Schedule::from_str(&expression)
+        .map_err(|err| RuntimeError::Other(format!("invalid cron expression `{}`: {err}", schedule.cron)))?;
+    let zone = schedule
+        .zone
+        .parse::<Tz>()
+        .map_err(|err| RuntimeError::Other(format!("invalid schedule timezone `{}`: {err}", schedule.zone)))?;
+    let start_ms = schedule
+        .last_fire_ms
+        .unwrap_or(schedule.last_checked_ms)
+        .saturating_add(1);
+    let start = Utc
+        .timestamp_millis_opt(start_ms as i64)
+        .single()
+        .ok_or_else(|| RuntimeError::Other(format!("invalid schedule recovery start `{start_ms}`")))?;
+    let end = Utc
+        .timestamp_millis_opt(now as i64)
+        .single()
+        .ok_or_else(|| RuntimeError::Other(format!("invalid schedule recovery end `{now}`")))?;
+    let start_local = start.with_timezone(&zone);
+    let end_local = end.with_timezone(&zone);
+    let mut fires = Vec::new();
+    for fire in cron.after(&start_local).take(max_missed_per_schedule) {
+        if fire > end_local {
+            break;
+        }
+        fires.push(fire.with_timezone(&Utc).timestamp_millis() as u64);
+    }
+    Ok(fires)
+}
+
+fn normalize_cron(cron: &str) -> Result<String, RuntimeError> {
+    let fields = cron.split_whitespace().collect::<Vec<_>>();
+    match fields.len() {
+        5 => Ok(format!(
+            "0 {} {} {} {} {} *",
+            fields[0], fields[1], fields[2], fields[3], fields[4]
+        )),
+        6 => Ok(format!(
+            "{} {} {} {} {} {} *",
+            fields[0], fields[1], fields[2], fields[3], fields[4], fields[5]
+        )),
+        7 => Ok(cron.to_string()),
+        _ => Err(RuntimeError::Other(format!(
+            "invalid cron expression `{cron}`: expected 5, 6, or 7 fields"
+        ))),
     }
 }
 
@@ -741,6 +1183,106 @@ mod tests {
         let stored = queue.get(&delayed.id).unwrap().unwrap();
         assert_eq!(stored.status, QueueJobStatus::Pending);
         assert_eq!(stored.next_run_ms, Some(future));
+    }
+
+    #[test]
+    fn durable_scheduler_recovers_latest_missed_fire_after_restart() {
+        let queue = DurableQueueRuntime::open_in_memory().unwrap();
+        let start = Utc
+            .with_ymd_and_hms(2026, 4, 29, 8, 0, 0)
+            .single()
+            .unwrap()
+            .timestamp_millis() as u64;
+        let now = Utc
+            .with_ymd_and_hms(2026, 4, 29, 8, 5, 30)
+            .single()
+            .unwrap()
+            .timestamp_millis() as u64;
+
+        queue
+            .upsert_schedule(QueueScheduleManifest {
+                id: "daily_brief".to_string(),
+                cron: "* * * * *".to_string(),
+                zone: "UTC".to_string(),
+                task: "daily_brief".to_string(),
+                payload: serde_json::json!({"user": "u1"}),
+                max_retries: 2,
+                budget_usd: 0.5,
+                effect_summary: Some("llm+email".to_string()),
+                replay_key_prefix: Some("schedule:daily_brief".to_string()),
+                missed_policy: ScheduleMissedPolicy::FireOnceOnRecovery,
+                last_checked_ms: start,
+                last_fire_ms: None,
+                created_ms: start,
+                updated_ms: start,
+            })
+            .unwrap();
+
+        let report = queue.recover_schedules_at(now, 100).unwrap();
+        assert_eq!(report.scanned, 1);
+        assert_eq!(report.enqueued, 1);
+        assert_eq!(report.recoveries.len(), 1);
+        assert_eq!(report.recoveries[0].action, "enqueued");
+
+        let jobs = queue.list().unwrap();
+        assert_eq!(jobs.len(), 1);
+        assert_eq!(jobs[0].task, "daily_brief");
+        assert_eq!(jobs[0].payload["schedule_id"], "daily_brief");
+        assert_eq!(
+            jobs[0].replay_key.as_deref(),
+            Some(format!("schedule:daily_brief:{}", report.recoveries[0].fire_ms).as_str())
+        );
+
+        let duplicate = queue.recover_schedules_at(now, 100).unwrap();
+        assert_eq!(duplicate.enqueued, 0);
+        assert_eq!(queue.list().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn durable_scheduler_enqueues_all_bounded_and_skips_by_policy() {
+        let queue = DurableQueueRuntime::open_in_memory().unwrap();
+        let start = Utc
+            .with_ymd_and_hms(2026, 4, 29, 8, 0, 0)
+            .single()
+            .unwrap()
+            .timestamp_millis() as u64;
+        let now = Utc
+            .with_ymd_and_hms(2026, 4, 29, 8, 5, 0)
+            .single()
+            .unwrap()
+            .timestamp_millis() as u64;
+
+        for (id, policy) in [
+            ("all", ScheduleMissedPolicy::EnqueueAllBounded),
+            ("skip", ScheduleMissedPolicy::SkipMissed),
+        ] {
+            queue
+                .upsert_schedule(QueueScheduleManifest {
+                    id: id.to_string(),
+                    cron: "* * * * *".to_string(),
+                    zone: "UTC".to_string(),
+                    task: format!("{id}_task"),
+                    payload: serde_json::json!({}),
+                    max_retries: 1,
+                    budget_usd: 0.0,
+                    effect_summary: None,
+                    replay_key_prefix: Some(format!("schedule:{id}")),
+                    missed_policy: policy,
+                    last_checked_ms: start,
+                    last_fire_ms: None,
+                    created_ms: start,
+                    updated_ms: start,
+                })
+                .unwrap();
+        }
+
+        let report = queue.recover_schedules_at(now, 2).unwrap();
+        assert_eq!(report.scanned, 2);
+        assert_eq!(report.enqueued, 2);
+        assert_eq!(report.skipped, 2);
+        let jobs = queue.list().unwrap();
+        assert_eq!(jobs.len(), 2);
+        assert!(jobs.iter().all(|job| job.task == "all_task"));
     }
 
     #[test]
