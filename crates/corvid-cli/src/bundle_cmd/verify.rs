@@ -152,6 +152,7 @@ fn verify_rebuild(loaded: &LoadedManifest) -> Result<()> {
         loaded.header_path().is_some(),
         true,
         &tool_refs,
+        None,
     )
     .with_context(|| format!("rebuild cdylib from `{}`", loaded.primary_source_path().display()))?;
     if !build_output.diagnostics.is_empty() {

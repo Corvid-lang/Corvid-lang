@@ -116,6 +116,19 @@ pub struct TargetBuildOutput {
     pub header_path: Option<PathBuf>,
     pub abi_descriptor_path: Option<PathBuf>,
     pub diagnostics: Vec<Diagnostic>,
+    /// True when an ed25519 attestation envelope was signed and
+    /// embedded into the cdylib at this build. False for unsigned
+    /// builds, every non-cdylib target, and any frontend-error path.
+    pub signed: bool,
+}
+
+/// Caller-provided signing material for the cdylib path. CLI parses
+/// the key + label once at flag-parse time and hands the resolved
+/// pair to the driver; the driver does not re-touch env vars or key
+/// files itself.
+pub struct SigningRequest {
+    pub key: ed25519_dalek::SigningKey,
+    pub key_id: String,
 }
 
 pub struct WasmBuildOutput {
@@ -154,7 +167,13 @@ pub fn build_target_to_disk(
     emit_header: bool,
     emit_abi_descriptor: bool,
     extra_tool_libs: &[&Path],
+    signing: Option<SigningRequest>,
 ) -> anyhow::Result<TargetBuildOutput> {
+    if signing.is_some() && !matches!(target, BuildTarget::Cdylib) {
+        return Err(anyhow::anyhow!(
+            "signing is only supported for cdylib targets — descriptor attestations are bound to the embedded cdylib descriptor symbol"
+        ));
+    }
     let source = std::fs::read_to_string(source_path)
         .map_err(|e| anyhow::anyhow!("cannot read `{}`: {}", source_path.display(), e))?;
 
@@ -166,6 +185,7 @@ pub fn build_target_to_disk(
             header_path: None,
             abi_descriptor_path: None,
             diagnostics,
+            signed: false,
         }),
         Ok(frontend) => {
             let out_dir = target_output_dir_for(source_path, target);
@@ -180,6 +200,27 @@ pub fn build_target_to_disk(
             } else {
                 None
             };
+            // Sign the descriptor JSON now so the envelope is locked
+            // before any codegen happens. The DSSE PAE binds the
+            // signature to (payloadType, payload), so even if the
+            // verifier later sees a binary with a tampered descriptor
+            // section, the signature won't match the recovered
+            // payload.
+            let attestation_bytes = match (&catalog_descriptor, &signing) {
+                (Some(descriptor), Some(req)) => {
+                    let envelope = corvid_abi::sign_envelope(
+                        descriptor.json.as_bytes(),
+                        corvid_abi::CORVID_ABI_ATTESTATION_PAYLOAD_TYPE,
+                        &req.key,
+                        &req.key_id,
+                    );
+                    let envelope_json = serde_json::to_vec(&envelope)
+                        .map_err(|e| anyhow::anyhow!("serialize attestation envelope: {e}"))?;
+                    Some(corvid_abi::attestation_to_embedded_bytes(&envelope_json))
+                }
+                _ => None,
+            };
+            let signed = attestation_bytes.is_some();
             let produced = match target {
                 BuildTarget::Native => corvid_codegen_cl::build_native_to_disk(
                     &frontend.ir,
@@ -197,7 +238,7 @@ pub fn build_target_to_disk(
                         catalog_descriptor
                             .as_ref()
                             .map(|descriptor| descriptor.embedded_bytes.as_slice()),
-                        None,
+                        attestation_bytes.as_deref(),
                     )
                 }
             }
@@ -242,6 +283,7 @@ pub fn build_target_to_disk(
                 header_path,
                 abi_descriptor_path,
                 diagnostics: Vec::new(),
+                signed,
             })
         }
     }

@@ -119,7 +119,7 @@ pub use trace_fresh::run_fresh_from_source_async;
 pub use build::{
     build_catalog_descriptor_for_source, build_native_to_disk, build_target_to_disk,
     build_to_disk, build_wasm_to_disk, AbiBuildOutput, BuildOutput, BuildTarget,
-    NativeBuildOutput, TargetBuildOutput, WasmBuildOutput,
+    NativeBuildOutput, SigningRequest, TargetBuildOutput, WasmBuildOutput,
 };
 pub use diagnostic::{summarize_diagnostics, Diagnostic};
 pub use law::{

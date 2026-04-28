@@ -107,6 +107,20 @@ enum Command {
         /// Emit every supported companion artifact for the selected target.
         #[arg(long)]
         all_artifacts: bool,
+        /// Sign the cdylib's embedded ABI descriptor and add a parallel
+        /// `CORVID_ABI_ATTESTATION` symbol carrying a DSSE envelope. Hosts
+        /// can verify the signature against an ed25519 public key with
+        /// `corvid receipt verify-abi`. Accepts a path to a 64-char hex or
+        /// 32-byte raw seed; falls back to `CORVID_SIGNING_KEY` env var
+        /// when unset. Only valid for `cdylib` target.
+        #[arg(long, value_name = "KEY_PATH")]
+        sign: Option<PathBuf>,
+        /// Opaque key identifier embedded in the DSSE envelope's
+        /// `keyid` field. Free-form; typically a fingerprint or
+        /// human-readable label. Defaults to "build-key" when
+        /// `--sign` is used.
+        #[arg(long, value_name = "ID")]
+        key_id: Option<String>,
     },
     /// Build and run a Corvid source file. Picks the native AOT tier
     /// when the program stays within the current native command-line
@@ -630,6 +644,22 @@ enum ReceiptCommand {
         #[arg(long, value_name = "KEY_PATH")]
         key: PathBuf,
     },
+    /// Verify the embedded `CORVID_ABI_ATTESTATION` of a Corvid
+    /// cdylib against an ed25519 verifying key. Confirms the
+    /// signature is valid AND that the recovered descriptor JSON
+    /// matches the `CORVID_ABI_DESCRIPTOR` symbol — tampering with
+    /// either side is detected. Exits 0 on verified, 2 on absent
+    /// (no attestation symbol — host policy decides), 1 on every
+    /// other failure (signature mismatch / descriptor drift /
+    /// malformed envelope).
+    VerifyAbi {
+        /// Path to the cdylib `.so` / `.dll` / `.dylib`.
+        cdylib: PathBuf,
+        /// Path to the ed25519 verifying key (64 hex chars or
+        /// 32 raw bytes).
+        #[arg(long, value_name = "KEY_PATH")]
+        key: PathBuf,
+    },
 }
 
 #[derive(Subcommand)]
@@ -842,6 +872,8 @@ fn main() -> ExitCode {
             header,
             abi_descriptor,
             all_artifacts,
+            sign,
+            key_id,
         }) => cmd_build(
             &file,
             &target,
@@ -849,6 +881,8 @@ fn main() -> ExitCode {
             header,
             abi_descriptor,
             all_artifacts,
+            sign.as_deref(),
+            key_id.as_deref(),
         ),
         Some(Command::Run {
             file,
@@ -1077,6 +1111,9 @@ fn main() -> ExitCode {
             ReceiptCommand::Verify { envelope, key } => {
                 receipt_cmd::run_verify(&envelope, &key)
             }
+            ReceiptCommand::VerifyAbi { cdylib, key } => {
+                receipt_cmd::run_verify_abi(&cdylib, &key)
+            }
         },
         Some(Command::Package { command }) => match command {
             PackageCommand::Metadata {
@@ -1161,6 +1198,8 @@ fn cmd_build(
     header: bool,
     abi_descriptor: bool,
     all_artifacts: bool,
+    sign_key_path: Option<&Path>,
+    key_id: Option<&str>,
 ) -> Result<u8> {
     let header = header || all_artifacts;
     let abi_descriptor = abi_descriptor || all_artifacts;
@@ -1171,6 +1210,11 @@ fn cmd_build(
                 lib.display()
             );
         }
+    }
+    if sign_key_path.is_some() && target != "cdylib" {
+        anyhow::bail!(
+            "`--sign` is only valid for `--target=cdylib` — descriptor attestations are bound to the embedded cdylib descriptor symbol"
+        );
     }
     let extra_libs_owned: Vec<&Path> = tools_lib.iter().copied().collect();
     match target {
@@ -1245,6 +1289,8 @@ fn cmd_build(
             &extra_libs_owned,
             header,
             abi_descriptor,
+            sign_key_path,
+            key_id,
         ),
         "staticlib" => {
             if abi_descriptor {
@@ -1256,6 +1302,8 @@ fn cmd_build(
                 &extra_libs_owned,
                 header,
                 false,
+                None,
+                None,
             )
         }
         other => {
@@ -1272,9 +1320,37 @@ fn cmd_build_library(
     tools_libs: &[&Path],
     header: bool,
     abi_descriptor: bool,
+    sign_key_path: Option<&Path>,
+    key_id: Option<&str>,
 ) -> Result<u8> {
-    let out =
-        build_target_to_disk(file, target, header, abi_descriptor, tools_libs).with_context(|| {
+    // Resolve the signing key once at flag-parse time. The driver
+    // stays string-typed; key parsing belongs at the CLI boundary
+    // so failure modes surface with `--sign`'s context.
+    let signing = match sign_key_path {
+        Some(path) => {
+            let key = corvid_abi::load_signing_key(&corvid_abi::KeySource::Path(path.to_path_buf()))
+                .with_context(|| {
+                    format!("loading --sign key from `{}`", path.display())
+                })?;
+            Some(corvid_driver::SigningRequest {
+                key,
+                key_id: key_id.unwrap_or("build-key").to_string(),
+            })
+        }
+        None => match std::env::var("CORVID_SIGNING_KEY") {
+            Ok(value) if !value.is_empty() => {
+                let key = corvid_abi::load_signing_key(&corvid_abi::KeySource::Env(value))
+                    .context("loading signing key from CORVID_SIGNING_KEY env var")?;
+                Some(corvid_driver::SigningRequest {
+                    key,
+                    key_id: key_id.unwrap_or("build-key").to_string(),
+                })
+            }
+            _ => None,
+        },
+    };
+    let out = build_target_to_disk(file, target, header, abi_descriptor, tools_libs, signing)
+        .with_context(|| {
             format!(
                 "failed to build `{}` ({})",
                 file.display(),
@@ -1292,6 +1368,9 @@ fn cmd_build_library(
         }
         if let Some(abi_descriptor_path) = out.abi_descriptor_path {
             println!("abi descriptor: {}", abi_descriptor_path.display());
+        }
+        if out.signed {
+            println!("attestation: signed (CORVID_ABI_ATTESTATION embedded)");
         }
         Ok(0)
     } else {
@@ -1816,6 +1895,7 @@ fn cmd_routing_report(
 // corvid doctor
 // ------------------------------------------------------------
 
+#[allow(dead_code)]
 fn cmd_doctor() -> Result<u8> {
     use corvid_driver::load_dotenv_walking;
 
