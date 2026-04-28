@@ -5868,3 +5868,79 @@ Doc regenerated; drift gate continues to hold.
 
 Tests: 12 (corvid-abi byte_fuzz_corpus) + 17 (corvid-guarantees);
 workspace check clean.
+
+## 2026-04-28 - Phase 35-G: adversarial source bypass corpus
+
+Slice 35-G is complete. The source-level bypass corpus now exercises
+approval removal, malformed approval shapes, lexical approval escape,
+mock/import aliasing of dangerous tools, Python import boundary
+under-reporting, effect-row under-reporting, `Grounded<T>` provenance
+loss, budget overrun, invalid confidence, and deterministic/replay
+purity violations.
+
+Each mutator must fail through the user-facing lex -> parse -> resolve
+-> typecheck path and surface a diagnostic tagged with the relevant
+`guarantee_id`. This turns the Phase 35-B diagnostic tags into
+adversarial proof instead of metadata. The registry now promotes
+`approval.dangerous_marker_preserved` from `OutOfScope` to `Static`
+because the corpus exercises dangerous marker preservation through
+aliasing paths, including an imported-use alias of a dangerous tool.
+
+Validation:
+
+- `cargo test -p corvid-types --test source_bypass_corpus -- --nocapture`
+- `cargo test -p corvid-types adversarial_source_mutator -- --nocapture`
+- `cargo test -p corvid-guarantees`
+
+## 2026-04-28 - Phase 35-H: independent ABI descriptor verifier
+
+Slice 35-H is complete. Added the `corvid-abi-verify` workspace
+binary crate. The verifier rebuilds the ABI descriptor from source
+through the descriptor-relevant frontend path (lex, parse, resolve,
+typecheck, IR lowering, ABI emission), reads `CORVID_ABI_DESCRIPTOR`
+from a cdylib, and byte-compares the rebuilt descriptor JSON against
+the embedded descriptor JSON. It does not call the normal
+`corvid build` command or cdylib codegen path.
+
+The verifier supports local Corvid imports by using the module loader
+for graph construction, then typechecking and lowering the descriptor
+surface itself. The imported-agent test exposed a real ABI emission
+bug: linked/imported helper agents could appear in IR while the ABI
+emitter assumed every IR agent had a root AST declaration. Fixed the
+emitter with an IR-only fallback descriptor for imported/helper agents
+instead of panicking.
+
+The guarantee registry now includes
+`abi_descriptor.bilateral_source_match`, and `docs/core-semantics.md`
+is regenerated from that registry. This gives external reviewers a
+named proof artifact for "the source descriptor and embedded cdylib
+descriptor agree."
+
+Validation:
+
+- `cargo test -p corvid-abi-verify -- --nocapture`
+- `cargo test -p corvid-abi --lib`
+- `cargo test -p corvid-guarantees`
+
+## 2026-04-28 - Phase 35-I: quoteable cdylib claim explanation
+
+Slice 35-I is complete. Added `corvid claim --explain <cdylib>` as a
+top-level CLI command. The command reads the embedded
+`CORVID_ABI_DESCRIPTOR`, prints the binary's ABI version, compiler
+version, source path, descriptor SHA-256, and public surface counts,
+then lists every non-`OutOfScope` guarantee from
+`GUARANTEE_REGISTRY` by id, class, kind, and enforcing phase.
+
+The command is deliberately honest about proof state. With only a
+cdylib it reports present-but-not-verified attestation data and marks
+source descriptor agreement as not verified. With `--key <pubkey>` it
+verifies the embedded DSSE ABI attestation and prints the SHA-256
+fingerprint of the verifying key. With `--source <file.cor>` it runs
+the independent slice 35-H verifier and reports descriptor agreement.
+Requested verification failures return exit 1 while still rendering the
+claim fields needed for diagnosis.
+
+Validation:
+
+- `cargo check -p corvid-cli`
+- `cargo test -p corvid-cli --test claim_cmd -- --nocapture`

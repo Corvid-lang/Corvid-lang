@@ -11,6 +11,7 @@ path = "src/main.rs"
 
 [dependencies]
 corvid-abi = { workspace = true }
+corvid-abi-verify = { workspace = true }
 corvid-ast = { workspace = true }
 corvid-bind = { workspace = true }
 corvid-driver = { workspace = true }

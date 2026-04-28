@@ -18,7 +18,7 @@ Per the no-shortcuts rule, every `out_of_scope` entry carries an explicit reason
 |----|------|-------|-------|
 | `approval.dangerous_call_requires_token` | approval | static | typecheck |
 | `approval.token_lexical_only` | approval | static | typecheck |
-| `approval.dangerous_marker_preserved` | approval | out_of_scope | resolve |
+| `approval.dangerous_marker_preserved` | approval | static | typecheck |
 | `effect_row.body_completeness` | effect_row | static | typecheck |
 | `effect_row.caller_propagation` | effect_row | static | typecheck |
 | `effect_row.import_boundary` | effect_row | static | resolve |
@@ -32,6 +32,7 @@ Per the no-shortcuts rule, every `out_of_scope` entry carries an explicit reason
 | `provenance_trace.receipt_signature` | provenance_trace | runtime_checked | runtime |
 | `abi_descriptor.cdylib_emission` | abi_descriptor | static | codegen |
 | `abi_descriptor.byte_determinism` | abi_descriptor | static | codegen |
+| `abi_descriptor.bilateral_source_match` | abi_descriptor | runtime_checked | abi_verify |
 | `abi_attestation.envelope_signature` | abi_attestation | runtime_checked | abi_verify |
 | `abi_attestation.descriptor_match` | abi_attestation | runtime_checked | abi_verify |
 | `abi_attestation.absent_reports_unsigned` | abi_attestation | runtime_checked | abi_verify |
@@ -74,12 +75,19 @@ Approval tokens are lexically scoped — they cannot be returned, stored in fiel
 - `crates/corvid-types/src/tests.rs::mutation_nested_inner_approve_does_not_authorize_outer_call`
 
 #### `approval.dangerous_marker_preserved`
-- **class**: out_of_scope
-- **phase**: resolve
+- **class**: static
+- **phase**: typecheck
 
 A `@dangerous` marker cannot be erased by re-exporting or aliasing the tool through another module — every public alias preserves the original danger annotation.
 
-> **Why out of scope:** Cross-module re-export / aliasing of dangerous tools is enforced today only implicitly through symbol propagation in the resolver — there is no dedicated diagnostic site distinct from `approval.dangerous_call_requires_token`. Slice 35-G's source-level bypass fuzz corpus will add an explicit re-export-bypass mutator that exercises the marker preservation path; once that lands this entry can be promoted back to `Static` with concrete tests.
+**Positive tests:**
+
+- `crates/corvid-types/tests/source_bypass_corpus.rs::baseline_for_alias_compiles_clean`
+
+**Adversarial tests:**
+
+- `crates/corvid-types/src/tests.rs::adversarial_source_mutator_import_use_alias_dangerous_tool_is_tagged`
+- `crates/corvid-types/tests/source_bypass_corpus.rs::mutator_drops_approve_through_mock_alias_triggers_token_guarantee`
 
 ### Effect rows
 
@@ -282,6 +290,21 @@ Two byte-identical Corvid sources compiled with the same toolchain version produ
 **Adversarial tests:**
 
 - `crates/corvid-abi/tests/byte_fuzz_corpus.rs::descriptor_section_rejects_random_byte_flips`
+
+#### `abi_descriptor.bilateral_source_match`
+- **class**: runtime_checked
+- **phase**: abi_verify
+
+`corvid-abi-verify --source <file> <cdylib>` independently rebuilds the ABI descriptor from source and byte-compares it against the embedded `CORVID_ABI_DESCRIPTOR` symbol; mismatch is rejected before host acceptance.
+
+**Positive tests:**
+
+- `crates/corvid-abi-verify/src/lib.rs::verifier_accepts_matching_cdylib_descriptor`
+- `crates/corvid-abi-verify/src/lib.rs::verifier_accepts_matching_cdylib_with_imported_agent`
+
+**Adversarial tests:**
+
+- `crates/corvid-abi-verify/src/lib.rs::verifier_rejects_source_descriptor_mismatch`
 
 ### ABI attestation
 

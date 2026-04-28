@@ -1,0 +1,28 @@
+[package]
+name = "corvid-abi-verify"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "corvid-abi-verify"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = { workspace = true }
+clap = { workspace = true }
+corvid-abi = { workspace = true }
+corvid-ast = { workspace = true }
+corvid-driver = { workspace = true }
+corvid-ir = { workspace = true }
+corvid-resolve = { workspace = true }
+corvid-syntax = { workspace = true }
+corvid-types = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

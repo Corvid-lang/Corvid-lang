@@ -265,23 +265,20 @@ pub static GUARANTEE_REGISTRY: &[Guarantee] = &[
     Guarantee {
         id: "approval.dangerous_marker_preserved",
         kind: GuaranteeKind::Approval,
-        class: GuaranteeClass::OutOfScope,
-        phase: Phase::Resolve,
+        class: GuaranteeClass::Static,
+        phase: Phase::TypeCheck,
         description:
             "A `@dangerous` marker cannot be erased by re-exporting or \
              aliasing the tool through another module — every public \
              alias preserves the original danger annotation.",
-        out_of_scope_reason:
-            "Cross-module re-export / aliasing of dangerous tools is \
-             enforced today only implicitly through symbol propagation \
-             in the resolver — there is no dedicated diagnostic site \
-             distinct from `approval.dangerous_call_requires_token`. \
-             Slice 35-G's source-level bypass fuzz corpus will add an \
-             explicit re-export-bypass mutator that exercises the \
-             marker preservation path; once that lands this entry can \
-             be promoted back to `Static` with concrete tests.",
-        positive_test_refs: &[],
-        adversarial_test_refs: &[],
+        out_of_scope_reason: "",
+        positive_test_refs: &[
+            "crates/corvid-types/tests/source_bypass_corpus.rs::baseline_for_alias_compiles_clean",
+        ],
+        adversarial_test_refs: &[
+            "crates/corvid-types/src/tests.rs::adversarial_source_mutator_import_use_alias_dangerous_tool_is_tagged",
+            "crates/corvid-types/tests/source_bypass_corpus.rs::mutator_drops_approve_through_mock_alias_triggers_token_guarantee",
+        ],
     },
     // ----- Effect rows --------------------------------------------
     Guarantee {
@@ -524,6 +521,25 @@ pub static GUARANTEE_REGISTRY: &[Guarantee] = &[
         ],
         adversarial_test_refs: &[
             "crates/corvid-abi/tests/byte_fuzz_corpus.rs::descriptor_section_rejects_random_byte_flips",
+        ],
+    },
+    Guarantee {
+        id: "abi_descriptor.bilateral_source_match",
+        kind: GuaranteeKind::AbiDescriptor,
+        class: GuaranteeClass::RuntimeChecked,
+        phase: Phase::AbiVerify,
+        description:
+            "`corvid-abi-verify --source <file> <cdylib>` independently \
+             rebuilds the ABI descriptor from source and byte-compares it \
+             against the embedded `CORVID_ABI_DESCRIPTOR` symbol; mismatch \
+             is rejected before host acceptance.",
+        out_of_scope_reason: "",
+        positive_test_refs: &[
+            "crates/corvid-abi-verify/src/lib.rs::verifier_accepts_matching_cdylib_descriptor",
+            "crates/corvid-abi-verify/src/lib.rs::verifier_accepts_matching_cdylib_with_imported_agent",
+        ],
+        adversarial_test_refs: &[
+            "crates/corvid-abi-verify/src/lib.rs::verifier_rejects_source_descriptor_mismatch",
         ],
     },
     // ----- ABI attestation ----------------------------------------
@@ -794,8 +810,7 @@ mod tests {
 
     #[test]
     fn lookup_finds_known_entry() {
-        let g = lookup("approval.dangerous_call_requires_token")
-            .expect("entry exists");
+        let g = lookup("approval.dangerous_call_requires_token").expect("entry exists");
         assert_eq!(g.kind, GuaranteeKind::Approval);
         assert_eq!(g.class, GuaranteeClass::Static);
     }
@@ -849,10 +864,7 @@ mod tests {
 
     #[test]
     fn duplicate_id_rejected() {
-        let entries = [
-            GUARANTEE_REGISTRY[0],
-            GUARANTEE_REGISTRY[0],
-        ];
+        let entries = [GUARANTEE_REGISTRY[0], GUARANTEE_REGISTRY[0]];
         let err = validate_slice(&entries).expect_err("duplicate must fail");
         assert!(matches!(err, RegistryError::DuplicateId(_)));
     }
@@ -1004,7 +1016,11 @@ mod tests {
     fn every_test_ref_has_well_formed_path() {
         let mut malformed: Vec<String> = Vec::new();
         for g in GUARANTEE_REGISTRY {
-            for r in g.positive_test_refs.iter().chain(g.adversarial_test_refs.iter()) {
+            for r in g
+                .positive_test_refs
+                .iter()
+                .chain(g.adversarial_test_refs.iter())
+            {
                 if split_test_ref(r).is_none() {
                     malformed.push(format!(
                         "guarantee `{}`: test_ref `{}` is not in `<file>::<fn>` form",
@@ -1027,7 +1043,11 @@ mod tests {
         let mut by_file: BTreeMap<&'static str, Vec<(&'static str, &'static str)>> =
             BTreeMap::new();
         for g in GUARANTEE_REGISTRY {
-            for r in g.positive_test_refs.iter().chain(g.adversarial_test_refs.iter()) {
+            for r in g
+                .positive_test_refs
+                .iter()
+                .chain(g.adversarial_test_refs.iter())
+            {
                 let (file, func) = split_test_ref(r).expect(
                     "every_test_ref_has_well_formed_path enforces the shape; \
                      this should already pass before reaching here",

@@ -2,10 +2,11 @@ use crate::approval_contract::{analyze_agent_approval_contract, collect_all_appr
 use crate::effect_emit::{dim_to_json, emit_effects_from_composed, emit_effects_from_effect_names};
 use crate::provenance_emit::emit_provenance_contract;
 use crate::schema::{
-    AbiAgent, AbiAttributes, AbiBudget, AbiCostEnvelope, AbiDestructor, AbiDestructorKind,
-    AbiDispatch, AbiField, AbiOwnership, AbiOwnershipMode, AbiParam, AbiProgressiveStage,
-    AbiPrompt, AbiRouteArm, AbiSourceSpan, AbiStore, AbiStoreAccessor, AbiStoreAccessorKind,
-    AbiStoreEffects, AbiStorePolicy, AbiTool, AbiTypeDecl, CorvidAbi,
+    AbiAgent, AbiApprovalContract, AbiAttributes, AbiBudget, AbiCostEnvelope, AbiDestructor,
+    AbiDestructorKind, AbiDispatch, AbiEffects, AbiField, AbiOwnership, AbiOwnershipMode, AbiParam,
+    AbiProgressiveStage, AbiPrompt, AbiProvenanceContract, AbiRouteArm, AbiSourceSpan, AbiStore,
+    AbiStoreAccessor, AbiStoreAccessorKind, AbiStoreEffects, AbiStorePolicy, AbiTool, AbiTypeDecl,
+    CorvidAbi,
 };
 use crate::tool_contract::emit_tool_contract;
 use crate::type_description::emit_type_description;
@@ -280,14 +281,13 @@ fn emit_agent(
     prompt_map: &HashMap<corvid_resolve::DefId, &IrPrompt>,
     opts: &EmitOptions<'_>,
 ) -> AbiAgent {
-    let ast_agent = file
-        .decls
-        .iter()
-        .find_map(|decl| match decl {
-            Decl::Agent(ast_agent) if ast_agent.name.name == agent.name => Some(ast_agent),
-            _ => None,
-        })
-        .expect("agent present in AST");
+    let ast_agent = file.decls.iter().find_map(|decl| match decl {
+        Decl::Agent(ast_agent) if ast_agent.name.name == agent.name => Some(ast_agent),
+        _ => None,
+    });
+    let Some(ast_agent) = ast_agent else {
+        return emit_ir_only_agent(agent, resolved);
+    };
     let summary = summaries.get(&agent.id);
     let approval = analyze_agent_approval_contract(file, resolved, registry, ast_agent);
     let effects = summary
@@ -345,6 +345,46 @@ fn emit_agent(
         dispatch: infer_agent_dispatch(agent, prompt_map),
         approval_contract: approval.contract,
         provenance: emit_provenance_contract(ast_agent, &declared_return_ty),
+    }
+}
+
+fn emit_ir_only_agent(agent: &IrAgent, resolved: &Resolved) -> AbiAgent {
+    AbiAgent {
+        name: agent.name.clone(),
+        symbol: format!("corvid_agent_{}", agent.name),
+        source_span: source_span(agent.span),
+        source_line: 0,
+        params: agent
+            .params
+            .iter()
+            .map(|param| AbiParam {
+                name: param.name.clone(),
+                ty: emit_type_description(&param.ty, resolved),
+                ownership: None,
+            })
+            .collect(),
+        return_type: emit_type_description(&agent.return_ty, resolved),
+        return_ownership: None,
+        effects: AbiEffects::default(),
+        attributes: AbiAttributes {
+            replayable: false,
+            deterministic: false,
+            dangerous: false,
+            pub_extern_c: matches!(agent.extern_abi, Some(corvid_ir::IrExternAbi::C)),
+        },
+        budget: agent
+            .cost_budget
+            .map(|usd_per_call| AbiBudget { usd_per_call }),
+        required_capability: None,
+        dispatch: None,
+        approval_contract: AbiApprovalContract {
+            required: false,
+            labels: Vec::new(),
+        },
+        provenance: AbiProvenanceContract {
+            returns_grounded: matches!(agent.return_ty, Type::Grounded(_)),
+            grounded_param_deps: Vec::new(),
+        },
     }
 }
 

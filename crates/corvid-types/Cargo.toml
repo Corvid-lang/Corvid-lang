@@ -14,3 +14,4 @@ toml = { workspace = true }
 
 [dev-dependencies]
 corvid-syntax = { workspace = true }
+corvid-guarantees = { workspace = true }

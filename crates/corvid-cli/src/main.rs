@@ -26,6 +26,7 @@
 //!   corvid trace list         list traces under target/trace/
 //!   corvid trace show <id>    print a recorded trace as formatted JSON
 //!   corvid trace dag <id>     render provenance DAG as Graphviz DOT
+//!   corvid claim --explain <lib>  explain the guarantees claimed by a cdylib
 
 mod abi_cmd;
 mod approver_cmd;
@@ -34,6 +35,7 @@ mod bench_cmd;
 mod bind_cmd;
 mod bundle_cmd;
 mod capsule_cmd;
+mod claim_cmd;
 mod contract_cmd;
 mod cost_frontier;
 mod eval_cmd;
@@ -42,10 +44,10 @@ mod receipt_cmd;
 mod replay;
 mod routing_report;
 mod test_from_traces;
+mod tour;
 mod trace_cmd;
 mod trace_dag;
 mod trace_diff;
-mod tour;
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -55,9 +57,7 @@ use clap::{Parser, Subcommand, ValueEnum};
 use corvid_differential_verify::{
     render_corpus_grid, render_report, shrink_program, verify_corpus,
 };
-use cost_frontier::{
-    build_frontier, render_frontier as render_cost_frontier, CostFrontierOptions,
-};
+use cost_frontier::{build_frontier, render_frontier as render_cost_frontier, CostFrontierOptions};
 use routing_report::{build_report, render_report as render_routing_report, RoutingReportOptions};
 
 #[allow(unused_imports)]
@@ -65,12 +65,12 @@ use corvid_driver::{
     build_native_to_disk, build_spec_site, build_target_to_disk, build_to_disk, build_wasm_to_disk,
     compile, compile_with_config, diff_snapshots, file_github_issues_for_escapes,
     inspect_import_semantics, load_corvid_config_for, load_corvid_config_with_path_for,
-    load_dotenv_walking, render_all_pretty, render_dimension_verification_report,
-    render_adversarial_report, render_effect_diff, render_import_semantic_summaries,
+    load_dotenv_walking, render_adversarial_report, render_all_pretty,
+    render_dimension_verification_report, render_effect_diff, render_import_semantic_summaries,
     render_law_check_report, render_spec_report, render_spec_site_report, render_test_report,
     run_adversarial_suite, run_dimension_verification, run_law_checks, run_native,
-    run_tests_at_path_with_options, run_with_target, scaffold_new, snapshot_revision,
-    test_options, verify_spec_examples, BuildTarget, RunTarget, VerdictKind, DEFAULT_SAMPLES,
+    run_tests_at_path_with_options, run_with_target, scaffold_new, snapshot_revision, test_options,
+    verify_spec_examples, BuildTarget, RunTarget, VerdictKind, DEFAULT_SAMPLES,
 };
 
 #[derive(Parser)]
@@ -229,7 +229,7 @@ enum Command {
             long,
             requires = "from_traces",
             conflicts_with = "replay_model",
-            conflicts_with = "flake_detect",
+            conflicts_with = "flake_detect"
         )]
         promote: bool,
         /// For `--from-traces`: flake-detection mode. Replay each
@@ -588,6 +588,25 @@ enum Command {
         #[command(subcommand)]
         command: PackageCommand,
     },
+    /// Emit a self-contained provenance statement for a Corvid cdylib.
+    Claim {
+        /// Print the claim explanation. Kept as an explicit flag so
+        /// command transcripts read as `corvid claim --explain <cdylib>`.
+        #[arg(long)]
+        explain: bool,
+        /// Path to the cdylib `.so` / `.dll` / `.dylib`.
+        cdylib: PathBuf,
+        /// Optional ed25519 verifying key. When supplied, the claim
+        /// verifies the embedded ABI attestation and prints the key
+        /// fingerprint.
+        #[arg(long, value_name = "KEY_PATH")]
+        key: Option<PathBuf>,
+        /// Optional Corvid source file. When supplied, the claim
+        /// independently rebuilds the ABI descriptor and proves it
+        /// byte-matches the cdylib descriptor.
+        #[arg(long, value_name = "SOURCE")]
+        source: Option<PathBuf>,
+    },
     /// Start the interactive Corvid REPL.
     Repl,
     /// Check the local environment for required tools.
@@ -621,7 +640,11 @@ enum BenchCommand {
         /// Comparison target: `python`, `js`, or `typescript`.
         target: String,
         /// Benchmark session id under `benches/results/`.
-        #[arg(long, value_name = "SESSION", default_value = "2026-04-17-marketable-session")]
+        #[arg(
+            long,
+            value_name = "SESSION",
+            default_value = "2026-04-17-marketable-session"
+        )]
         session: String,
         /// Emit structured JSON.
         #[arg(long)]
@@ -852,8 +875,12 @@ enum TraceCommand {
 
 #[derive(Subcommand)]
 enum AbiCommand {
-    Dump { library: PathBuf },
-    Hash { source: PathBuf },
+    Dump {
+        library: PathBuf,
+    },
+    Hash {
+        source: PathBuf,
+    },
     Verify {
         library: PathBuf,
         #[arg(long, value_name = "HEX")]
@@ -953,19 +980,17 @@ fn main() -> ExitCode {
             flake_detect,
         }) => {
             if let Some(dir) = from_traces {
-                test_from_traces::run_test_from_traces(
-                    test_from_traces::TestFromTracesArgs {
-                        trace_dir: &dir,
-                        source: from_traces_source.as_deref(),
-                        replay_model: replay_model.as_deref(),
-                        only_dangerous,
-                        only_prompt: only_prompt.as_deref(),
-                        only_tool: only_tool.as_deref(),
-                        since: since.as_deref(),
-                        promote,
-                        flake_detect,
-                    },
-                )
+                test_from_traces::run_test_from_traces(test_from_traces::TestFromTracesArgs {
+                    trace_dir: &dir,
+                    source: from_traces_source.as_deref(),
+                    replay_model: replay_model.as_deref(),
+                    only_dangerous,
+                    only_prompt: only_prompt.as_deref(),
+                    only_tool: only_tool.as_deref(),
+                    since: since.as_deref(),
+                    promote,
+                    flake_detect,
+                })
             } else {
                 cmd_test(
                     target.as_deref(),
@@ -977,9 +1002,11 @@ fn main() -> ExitCode {
                 )
             }
         }
-        Some(Command::Verify { corpus, shrink, json }) => {
-            cmd_verify(corpus.as_deref(), shrink.as_deref(), json)
-        }
+        Some(Command::Verify {
+            corpus,
+            shrink,
+            json,
+        }) => cmd_verify(corpus.as_deref(), shrink.as_deref(), json),
         Some(Command::EffectDiff { before, after }) => cmd_effect_diff(&before, &after),
         Some(Command::AddDimension { spec, registry }) => {
             cmd_add_dimension(&spec, registry.as_deref())
@@ -1154,12 +1181,8 @@ fn main() -> ExitCode {
         }
         Some(Command::Receipt { command }) => match command {
             ReceiptCommand::Show { hash } => receipt_cmd::run_show(&hash),
-            ReceiptCommand::Verify { envelope, key } => {
-                receipt_cmd::run_verify(&envelope, &key)
-            }
-            ReceiptCommand::VerifyAbi { cdylib, key } => {
-                receipt_cmd::run_verify_abi(&cdylib, &key)
-            }
+            ReceiptCommand::Verify { envelope, key } => receipt_cmd::run_verify(&envelope, &key),
+            ReceiptCommand::VerifyAbi { cdylib, key } => receipt_cmd::run_verify_abi(&cdylib, &key),
         },
         Some(Command::Package { command }) => match command {
             PackageCommand::Metadata {
@@ -1183,6 +1206,12 @@ fn main() -> ExitCode {
                 key_id,
             } => cmd_package_publish(&source, &name, &version, &out, &url_base, &key, &key_id),
         },
+        Some(Command::Claim {
+            explain,
+            cdylib,
+            key,
+            source,
+        }) => claim_cmd::run_claim_explain(&cdylib, explain, key.as_deref(), source.as_deref()),
         Some(Command::Repl) => cmd_repl(),
         Some(Command::Doctor) => cmd_doctor_v2(),
         Some(Command::Audit { file, json }) => audit_cmd::run_audit(&file, json),
@@ -1346,7 +1375,9 @@ fn cmd_build(
         ),
         "staticlib" => {
             if abi_descriptor {
-                anyhow::bail!("`--abi-descriptor` and `--all-artifacts` are only valid for `cdylib`");
+                anyhow::bail!(
+                    "`--abi-descriptor` and `--all-artifacts` are only valid for `cdylib`"
+                );
             }
             cmd_build_library(
                 file,
@@ -1380,10 +1411,9 @@ fn cmd_build_library(
     // so failure modes surface with `--sign`'s context.
     let signing = match sign_key_path {
         Some(path) => {
-            let key = corvid_abi::load_signing_key(&corvid_abi::KeySource::Path(path.to_path_buf()))
-                .with_context(|| {
-                    format!("loading --sign key from `{}`", path.display())
-                })?;
+            let key =
+                corvid_abi::load_signing_key(&corvid_abi::KeySource::Path(path.to_path_buf()))
+                    .with_context(|| format!("loading --sign key from `{}`", path.display()))?;
             Some(corvid_driver::SigningRequest {
                 key,
                 key_id: key_id.unwrap_or("build-key").to_string(),
@@ -1499,9 +1529,9 @@ fn cmd_verify(corpus: Option<&Path>, shrink: Option<&Path>, json: bool) -> Resul
             }
             Ok(0)
         }
-        (None, None) => anyhow::bail!(
-            "use `corvid verify --corpus <dir>` or `corvid verify --shrink <file>`"
-        ),
+        (None, None) => {
+            anyhow::bail!("use `corvid verify --corpus <dir>` or `corvid verify --shrink <file>`")
+        }
         (Some(_), Some(_)) => unreachable!("clap enforces conflicts"),
     }
 }
@@ -1633,13 +1663,14 @@ fn cmd_test_dimensions() -> Result<u8> {
     let law_failures = report
         .laws
         .iter()
-        .filter(|r| matches!(
-            r.verdict,
-            corvid_driver::LawVerdict::CounterExample { .. }
-        ))
+        .filter(|r| matches!(r.verdict, corvid_driver::LawVerdict::CounterExample { .. }))
         .count();
     let proof_failures = report.proofs.iter().filter(|p| p.failed()).count();
-    Ok(if law_failures == 0 && proof_failures == 0 { 0 } else { 1 })
+    Ok(if law_failures == 0 && proof_failures == 0 {
+        0
+    } else {
+        1
+    })
 }
 
 fn cmd_test_spec() -> Result<u8> {
@@ -1649,7 +1680,10 @@ fn cmd_test_spec() -> Result<u8> {
             "`docs/effects-spec/` not found; run `corvid test spec` from the repository root"
         );
     }
-    println!("corvid test spec — verify every fenced corvid block in {}\n", spec_dir.display());
+    println!(
+        "corvid test spec — verify every fenced corvid block in {}\n",
+        spec_dir.display()
+    );
     let verdicts = verify_spec_examples(&spec_dir)
         .with_context(|| format!("failed to verify `{}`", spec_dir.display()))?;
     print!("{}", render_spec_report(&verdicts));
@@ -1704,7 +1738,10 @@ fn cmd_test_rewrites() -> Result<u8> {
     );
     let matrix = corvid_differential_verify::fuzz::build_coverage_matrix()
         .context("preserved-semantics rewrite verification failed")?;
-    print!("{}", corvid_differential_verify::fuzz::render_coverage_matrix(&matrix));
+    print!(
+        "{}",
+        corvid_differential_verify::fuzz::render_coverage_matrix(&matrix)
+    );
     println!();
     Ok(0)
 }
@@ -1737,8 +1774,7 @@ fn cmd_effect_diff(before: &str, after: &str) -> Result<u8> {
     print!("{}", render_effect_diff(&diff));
     // Exit 1 when the diff is non-empty so CI can gate on
     // "unexpected effect-shape drift" if the user wants it.
-    let any_change =
-        !diff.added.is_empty() || !diff.removed.is_empty() || !diff.changed.is_empty();
+    let any_change = !diff.added.is_empty() || !diff.removed.is_empty() || !diff.changed.is_empty();
     Ok(if any_change { 1 } else { 0 })
 }
 
@@ -1747,16 +1783,12 @@ fn cmd_effect_diff(before: &str, after: &str) -> Result<u8> {
 // ------------------------------------------------------------
 
 fn cmd_add_dimension(spec: &str, registry: Option<&str>) -> Result<u8> {
-    let project_dir =
-        std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let project_dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     println!("corvid add-dimension {spec}\n");
     let outcome = corvid_driver::install_dimension_with_registry(spec, &project_dir, registry)?;
     match outcome {
         corvid_driver::AddDimensionOutcome::Added { name, target } => {
-            println!(
-                "installed `{name}` into {}",
-                target.display()
-            );
+            println!("installed `{name}` into {}", target.display());
             println!("run `corvid test dimensions` to re-verify every dimension.");
             Ok(0)
         }
@@ -1768,8 +1800,7 @@ fn cmd_add_dimension(spec: &str, registry: Option<&str>) -> Result<u8> {
 }
 
 fn cmd_add_package(spec: &str, registry: Option<&str>) -> Result<u8> {
-    let project_dir =
-        std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let project_dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     println!("corvid add {spec}\n");
     let outcome = corvid_driver::add_package(spec, &project_dir, registry)?;
     match outcome {
@@ -1806,7 +1837,11 @@ fn cmd_remove_package(name: &str) -> Result<u8> {
         } => {
             println!(
                 "removed `{name}` (manifest: {}, lock entries: {})",
-                if manifest_updated { "updated" } else { "unchanged" },
+                if manifest_updated {
+                    "updated"
+                } else {
+                    "unchanged"
+                },
                 lock_entries_removed
             );
             println!("lockfile: {}", lockfile.display());
@@ -1885,7 +1920,10 @@ fn cmd_package_metadata(
     if json {
         println!("{}", serde_json::to_string_pretty(&metadata)?);
     } else {
-        print!("{}", corvid_driver::render_package_metadata_markdown(&metadata));
+        print!(
+            "{}",
+            corvid_driver::render_package_metadata_markdown(&metadata)
+        );
     }
     Ok(0)
 }
@@ -1986,17 +2024,13 @@ fn cmd_doctor() -> Result<u8> {
     // Cross-check: model prefix vs. available keys.
     if let Some(m) = &model {
         if m.starts_with("claude-") && std::env::var("ANTHROPIC_API_KEY").is_err() {
-            println!(
-                "  ✗ CORVID_MODEL is `{m}` but ANTHROPIC_API_KEY is not set"
-            );
+            println!("  ✗ CORVID_MODEL is `{m}` but ANTHROPIC_API_KEY is not set");
         }
         let openai_prefixes = ["gpt-", "o1-", "o3-", "o4-"];
         if openai_prefixes.iter().any(|p| m.starts_with(p))
             && std::env::var("OPENAI_API_KEY").is_err()
         {
-            println!(
-                "  ✗ CORVID_MODEL is `{m}` but OPENAI_API_KEY is not set"
-            );
+            println!("  ✗ CORVID_MODEL is `{m}` but OPENAI_API_KEY is not set");
         }
     }
 
@@ -2106,7 +2140,10 @@ fn cmd_doctor_v2() -> Result<u8> {
     if trace_dir.exists() {
         println!("  OK replay storage present at {}", trace_dir.display());
     } else {
-        println!("  .. replay storage not initialized yet (expected at {})", trace_dir.display());
+        println!(
+            "  .. replay storage not initialized yet (expected at {})",
+            trace_dir.display()
+        );
     }
 
     match std::env::var("CORVID_APPROVER").ok() {
@@ -2119,8 +2156,8 @@ fn cmd_doctor_v2() -> Result<u8> {
         None => println!("  .. no Corvid.lock found from cwd upward"),
     }
 
-    let has_python = command_succeeds("python3", &["--version"])
-        || command_succeeds("python", &["--version"]);
+    let has_python =
+        command_succeeds("python3", &["--version"]) || command_succeeds("python", &["--version"]);
     println!(
         "  .. {}",
         if has_python {

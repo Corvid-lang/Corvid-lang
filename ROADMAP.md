@@ -110,7 +110,7 @@ Carry-overs explicitly tracked elsewhere:
 - Streaming `Stream<T>` → Phase 20 (moat phase)
 - Google / Ollama adapters → Phase 31
 - Effect-tagged `import python` → Phase 30
-- Async-native concurrent multi-agent execution → Post-v1.0 (deliberately out of pre-v1.0 scope; see bottom of this file)
+- Distributed concurrent multi-agent orchestration → Post-v1.0 (Phase 38 now covers durable single-backend jobs and agent runs; cross-service multi-agent graphs remain out of pre-v1.0 scope)
 
 **v0.2 complete. ~219 tests green.**
 
@@ -266,7 +266,7 @@ Ordering principles (applied without exception):
 2. **Themed releases, not feature-soup versions.** Each version has a narrative — v0.4 is "native tier useful," v0.5 is "GP feel," v0.6 is "moat + replay," v0.7 is "embed + deploy." Users upgrade for a coherent story per cut, not a grab-bag of unrelated features. Mixing moat and table stakes inside one version fragments the upgrade pitch.
 3. **Moat lands early relative to the total roadmap.** Phase 20 is the mid-point of pre-v1.0, not the end. Every phase after Phase 20 inherits the moat and strengthens it rather than being moat-less GP-polish work that ships without Corvid-ness.
 4. **Version cut-lines are explicit.** Every phase is tagged to the version it ships in. `v1.0` is a calendar commitment, not a feature list.
-5. **Speculative scope moved post-v1.0.** Features that are "enterprise maturity" or "optimization on top of v1.0 capability" (multi-agent durable execution, hot reload, prompt-aware compilation optimization) do not sit in the pre-v1.0 critical path.
+5. **Speculative scope moved post-v1.0.** Features that are "enterprise maturity" or "optimization on top of v1.0 capability" (distributed multi-agent orchestration, hot reload, prompt-aware compilation optimization) do not sit in the pre-v1.0 critical path. Durable single-backend jobs and resumable agent runs are now part of the production-backend track because real AI applications need them before launch.
 
 ---
 
@@ -1628,13 +1628,13 @@ The determinism-source catalog and the language's treatment of non-reproducible 
 
 **Non-scope:** marketing copy, video scripts, social-media assets — those belong to Phase 33's launch materials. Phase 34 is the authoritative technical catalog; Phase 33 is the launch campaign that points to it.
 
-**Defensibility gate.** Phase 34 closes the inventions catalog. Phase 35 closes the *defensible-core* surface that the catalog rests on. v1.0 launch is gated on Phase 35.
+**Defensibility gate.** Phase 34 closes the inventions catalog. Phase 35 closes the *defensible-core* surface that the catalog rests on. Public launch is gated on Phase 35 plus the production-backend market track below; Corvid does not go online as a language for real AI applications until it can build and operate a full backend product itself.
 
 ### Phase 35 — Defensible core (~6–8 weeks)
 
 **Goal.** Make Corvid's launch claim defensible under hostile public scrutiny. Every public guarantee is enumerated in a machine-readable manifest, every guarantee is backed by adversarial tests, the ABI surface is bilaterally verified, and the launch wording is derivable from shipped artifacts rather than aspirational. After Phase 35, an outside reviewer can answer "what does Corvid guarantee, what is checked statically, what is checked at runtime, what is out of scope, and how do I verify each independently?" in under ten minutes by running committed commands.
 
-**Hard dep:** every prior closed phase, especially Phase 22 (C ABI) and the signed-attestation moat extension shipped after Phase 34. Phase 35 is the launch gate — Phase 33's remaining unchecked items must reference Phase 35 artifacts (claim audit, stability contract, audit command) rather than ship parallel to them.
+**Hard dep:** every prior closed phase, especially Phase 22 (C ABI) and the signed-attestation moat extension shipped after Phase 34. Phase 35 is the defensibility gate — Phase 33's remaining unchecked items must reference Phase 35 artifacts (claim audit, stability contract, audit command) rather than ship parallel to them.
 
 **Why this phase exists.** External review on the path to public launch identified that while Corvid's *implementation* is real (compiler, runtime, tests, attestation), the *publicly defensible core story* is thinner than the implementation. Five concrete gaps:
 
@@ -1648,15 +1648,15 @@ This phase closes all five end-to-end with no shortcuts: a guarantee manifest ta
 
 **Slice checklist:**
 
-- [ ] 35-A-registry             `corvid-guarantees` crate: `GuaranteeKind` / `GuaranteeClass` (Static / RuntimeChecked / OutOfScope) / `Phase` enums + canonical `GUARANTEE_REGISTRY` static array. Every public Corvid guarantee enumerated with id, class, enforcing pipeline phase, description, and required test references.
-- [ ] 35-B-diag-tagging          Every contract-enforcing diagnostic in resolve / typecheck / IR-lower / codegen / runtime carries its `guarantee_id`. Build-time lint rejects untagged contract diagnostics. No contract enforcement is anonymous.
-- [ ] 35-C-contract-list         `corvid contract list` CLI subcommand emits the canonical guarantee table as JSON or human-readable. Single source of truth — every later artifact derives from this command's output.
-- [ ] 35-D-spec-generation       `xtask` regenerates `docs/core-semantics.md` from `GUARANTEE_REGISTRY`; CI fails on drift between committed doc and generated. Spec ≡ implementation, automatically. No hand-edited semantics page.
-- [ ] 35-E-test-cross-refs       Every Static guarantee carries `positive_test_refs` and `adversarial_test_refs`; build-time check rejects empty adversarial coverage on a Static guarantee. Every guarantee in the registry must point to real test functions that compile and run.
-- [ ] 35-F-fuzz-abi              Adversarial fuzz corpus over the ABI surface: `proptest`-driven byte mutators on descriptor JSON and DSSE attestation envelopes (corrupt signatures, swap payload types, mutate PAE bytes, drop required fields, inject extra symbols). ≥100 mutants per gate; each must be rejected with the documented exit code; benign mutations must round-trip.
-- [ ] 35-G-fuzz-source           Adversarial fuzz corpus over source-level bypasses: AST mutators for `@approve` re-export bypass, effect under-reporting at module boundary, `Grounded<T>` provenance loss across function calls, import-aliasing of dangerous tools. Each mutated source must fail typecheck with the diagnostic tagged to the right `guarantee_id` from slice 35-B.
-- [ ] 35-H-bilateral-verifier    Independent ABI verifier (`corvid-abi-verify` binary): parses source independently of the main pipeline, runs only the descriptor-relevant subset of resolution + typecheck, builds an independent `AbiDescriptor`, and bit-compares against the embedded one in a built cdylib. Disagreement = build rejection. Shrinks TCB to "agreement between two implementations." Separate binary, separate code path, separate review surface.
-- [ ] 35-I-claim-explain         `corvid claim --explain <cdylib>`: emits a self-contained provenance statement listing every guarantee enforced for the given binary, by id and class, plus the signing key fingerprint and verifier-agreement attestation from slice 35-H. The artifact HN threads can quote without further context.
+- [x] 35-A-registry             `corvid-guarantees` crate: `GuaranteeKind` / `GuaranteeClass` (Static / RuntimeChecked / OutOfScope) / `Phase` enums + canonical `GUARANTEE_REGISTRY` static array. Every public Corvid guarantee enumerated with id, class, enforcing pipeline phase, description, and required test references.
+- [x] 35-B-diag-tagging          Every contract-enforcing diagnostic in resolve / typecheck / IR-lower / codegen / runtime carries its `guarantee_id`. Build-time lint rejects untagged contract diagnostics. No contract enforcement is anonymous.
+- [x] 35-C-contract-list         `corvid contract list` CLI subcommand emits the canonical guarantee table as JSON or human-readable. Single source of truth — every later artifact derives from this command's output.
+- [x] 35-D-spec-generation       `xtask` regenerates `docs/core-semantics.md` from `GUARANTEE_REGISTRY`; CI fails on drift between committed doc and generated. Spec ≡ implementation, automatically. No hand-edited semantics page.
+- [x] 35-E-test-cross-refs       Every Static guarantee carries `positive_test_refs` and `adversarial_test_refs`; build-time check rejects empty adversarial coverage on a Static guarantee. Every guarantee in the registry must point to real test functions that compile and run.
+- [x] 35-F-fuzz-abi              Adversarial fuzz corpus over the ABI surface: `proptest`-driven byte mutators on descriptor JSON and DSSE attestation envelopes (corrupt signatures, swap payload types, mutate PAE bytes, drop required fields, inject extra symbols). ≥100 mutants per gate; each must be rejected with the documented exit code; benign mutations must round-trip.
+- [x] 35-G-fuzz-source           Adversarial fuzz corpus over source-level bypasses: AST mutators for `@approve` re-export bypass, effect under-reporting at module boundary, `Grounded<T>` provenance loss across function calls, import-aliasing of dangerous tools. Each mutated source must fail typecheck with the diagnostic tagged to the right `guarantee_id` from slice 35-B.
+- [x] 35-H-bilateral-verifier    Independent ABI verifier (`corvid-abi-verify` binary): parses source independently of the main pipeline, runs only the descriptor-relevant subset of resolution + typecheck, builds an independent `AbiDescriptor`, and bit-compares against the embedded one in a built cdylib. Disagreement = build rejection. Shrinks TCB to "agreement between two implementations." Separate binary, separate code path, separate review surface.
+- [x] 35-I-claim-explain         `corvid claim --explain <cdylib>`: emits a self-contained provenance statement listing every guarantee enforced for the given binary, by id and class, plus the signing key fingerprint and verifier-agreement attestation from slice 35-H. The artifact HN threads can quote without further context.
 - [ ] 35-J-sign-refusal          `corvid build --sign` refuses to emit a signed cdylib unless every declared contract in the source maps to a `GUARANTEE_REGISTRY` entry that was actually checked in this build. No silent skips, no "we didn't run that pass on this target" downgrades. The signed artifact carries the *enforced* claim, not the *intended* claim.
 - [ ] 35-K-security-model        `docs/security-model.md`: TCB diagram (compiler + verifier + runtime + signer + ABI surface), threat model (insider/outsider, what each defends against), explicit non-goals (compromised host kernel, signing-key compromise, compiler-toolchain compromise). References slice 35-H/I/J behaviours; does not over-claim.
 - [ ] 35-L-readme-alignment      Replace any aspirational launch wording with claims derivable from `corvid claim --explain`, the adversarial corpus, and the bilateral verifier. README and landing page point at runnable commands; the wording is the *output* of the artifacts, not a separate prose layer.
@@ -1668,9 +1668,284 @@ This phase closes all five end-to-end with no shortcuts: a guarantee manifest ta
 - Proof of cryptographic primitives — we use ed25519, SHA-256, and DSSE as standardized primitives, not redesigns.
 - Defense against compiler-toolchain compromise (we trust rustc and Cranelift; reproducible builds are a post-v1.0 hardening).
 - Defense against signing-key compromise — key management is a host responsibility, not a Corvid responsibility, and `docs/security-model.md` says so explicitly.
-- Bug-bounty program, third-party audit contract, formal launch comms — those belong to Phase 33's beta round and launch materials, not to Phase 35.
+- Bug-bounty program, third-party audit contract, formal launch comms — those belong to the final market-launch phase, not to Phase 35.
 
-**v1.0 final cut here. Launch day.**
+**Defensible-core cut here.** Phase 35 proves the language's claims. The next phases prove Corvid is a complete backend language for production AI applications, not just a compiler with excellent AI-safety primitives.
+
+### Production slice standard
+
+Every Phase 36-43 slice must clear the same four gates before it can be marked done. This is how the production-backend track stays inventive instead of becoming a long checklist of ordinary web-framework features.
+
+1. **Developer pain removed.** The slice must name the concrete pain it removes for production AI developers: glue code, duplicated policy checks, invisible cost, missing replay, unsafe tool calls, connector OAuth work, weak traces, hand-written audit logs, migration drift, deployment guesswork, or benchmark uncertainty.
+2. **AI-native invention.** The slice must add or preserve at least one Corvid-specific AI primitive through the layer it touches: effects, approvals, budgets, provenance, replay, confidence, model routing, evals, trace assertions, signed claims, or guarantee IDs. A generic backend feature without one of these is not enough.
+3. **Benchmark or proof.** The slice must ship a measurable artifact: benchmark, adversarial test, golden trace, route test, migration drift test, replay fixture, connector mock, operator command, or reference-app proof. If Corvid cannot beat a mature language/framework on raw speed, the benchmark must show the dimension Corvid wins: fewer unsafe lines, fewer moving parts, compile-time rejection, replayability, audit completeness, or operational time-to-answer.
+4. **AI usage in development.** The slice brief must include at least one AI-assisted maintainer workflow that Corvid itself enables or will enable: generating tests from traces, turning production runs into evals, explaining failed guarantees, producing approval summaries, suggesting migrations, summarizing incidents, or creating connector mocks. AI is part of the developer workflow, not only the user's application.
+
+**Benchmark posture.** Corvid should not claim to beat Go, Rust, Java, Node, or Python frameworks on every raw throughput benchmark. The intended win is broader and more relevant to AI backends:
+
+- **Against Python/LangChain-style stacks:** fewer host-language layers, stronger static contracts, faster non-model orchestration, replay/eval/approval built into the language rather than scattered libraries.
+- **Against TypeScript/Node agent stacks:** stronger compile-time effect and approval boundaries, native binary deployment, explicit cost/provenance/replay contracts, lower operational ambiguity.
+- **Against Go/Rust backend stacks:** less handwritten AI governance code, first-class model/tool/approval/eval semantics, signed AI-safety claims, and faster development of auditable agent backends.
+- **Against workflow engines:** richer language-level typing and AI contracts while retaining durable jobs, replay, approvals, and operator controls.
+
+Each benchmark must separate model-provider latency from Corvid runtime overhead. Hiding LLM latency inside benchmark wins is forbidden.
+
+### Phase 36 — Production backend core (~8-10 weeks)
+
+**Goal.** Corvid can build an always-on HTTP backend without a host framework. A developer should be able to write routes, JSON APIs, middleware, health checks, configuration, secrets, structured logs, graceful shutdown, and deployment-ready binaries in Corvid itself.
+
+**Why this phase exists.** Developer pain is not "how do I write an agent demo?" It is "how do I turn this agent into a service that survives auth, retries, observability, secrets, deploys, audits, and production traffic?" Corvid's moat must travel through the backend layer, otherwise developers still have to glue the real product together in another language.
+
+**Inventive benchmark target.** Compare the refund API against FastAPI, Express/Fastify, and Go HTTP. Corvid does not need to beat Go on raw requests/sec in this phase; it must beat AI-backend setup complexity by showing route effects, approvals, traces, env validation, and signed server claims in one language-level path with less handwritten governance code.
+
+**Scope:**
+
+- [ ] `server` declarations or a standard backend entry pattern with typed routes, request/response bodies, path/query params, headers, cookies, status codes, and error responses.
+- [ ] Runtime HTTP server with async request handling, graceful shutdown, request IDs, timeouts, body-size limits, panic/error isolation, and platform parity.
+- [ ] Middleware pipeline for auth, rate limits, tracing, CORS, compression, request logging, and effect-aware policy checks.
+- [ ] Typed JSON encode/decode errors that preserve spans and route names in diagnostics.
+- [ ] Config and environment layer with required/optional vars, typed parsing, redacted secret reporting, and `corvid doctor` validation.
+- [ ] Health, readiness, and metrics endpoints generated from runtime state.
+- [ ] `corvid build --target=server` emits a single backend binary with embedded route manifest and signed contract metadata when signing is enabled.
+- [ ] AI-native integration: every route can declare effect, approval, replay, budget, provenance, and model-routing constraints; violations fail before deploy.
+- [ ] End-to-end example: approval-gated refund API served entirely by Corvid, with no Rust/Python/Node host app.
+
+**Slice checklist:**
+
+- [ ] 36A-backend-design-brief       `docs/phase-36-backend-core.md` defines backend syntax, runtime ownership, non-scope, route examples, and acceptance tests before code.
+- [ ] 36B-minimal-server-target      `corvid build --target=server` accepts one backend entrypoint and emits a runnable local server binary.
+- [ ] 36C-typed-route-model          GET/POST routes have typed path/query/body/response shapes and compile-time validation.
+- [ ] 36D-json-boundary              Request JSON decode and response JSON encode have typed errors and route-aware diagnostics.
+- [ ] 36E-server-runtime-basics      Request IDs, timeouts, graceful shutdown, body limits, and panic/error isolation work.
+- [ ] 36F-route-tracing              Every request emits route, method, status, duration, request ID, and effect metadata into Corvid traces.
+- [ ] 36G-health-readiness-metrics   Generated health/readiness endpoints report server, runtime, provider, and config status.
+- [ ] 36H-config-and-secrets         Typed env/config validation works through `corvid doctor` and redacts secret values.
+- [ ] 36I-approval-effect-integration Dangerous route/tool paths without reachable approval contracts fail before deploy.
+- [ ] 36J-backend-example            `examples/backend/refund_api` runs as a production-shaped Corvid server with tests.
+
+**Done when:** `examples/backend/refund_api` runs as a production-shaped server, passes route tests, emits traces, enforces approval gates, validates env/config through `corvid doctor`, and builds with `corvid build --target=server`.
+
+### Phase 37 — Persistence, migrations, and state (~8-10 weeks)
+
+**Goal.** Corvid can own durable application state: tables, records, transactions, migrations, encrypted secrets/tokens, audit logs, and query APIs.
+
+**Inventive benchmark target.** Compare a task/approval/audit schema against Prisma/TypeScript, SQLAlchemy/Alembic, and sqlx/Rust. Corvid must prove migration drift, typed decode failures, DB effects, replay summaries, and AI-action audit logs are first-class instead of manually assembled.
+
+**Scope:**
+
+- [ ] `std.db` with SQLite first, Postgres second: connection config, query execution, transactions, prepared statements, row decoding, and typed errors.
+- [ ] Migration system: checked-in migrations, `corvid migrate up/down/status`, drift detection, checksum validation, and CI-safe dry runs.
+- [ ] Typed records mapped to tables without hiding SQL; developers can use explicit queries and still get typed decode guarantees.
+- [ ] Encrypted token/credential storage for OAuth refresh tokens and connector state, with clear host key-management boundaries.
+- [ ] Audit-log table pattern for AI actions: who/what/why, prompt version, model, tool call, approval state, cost, trace ID, and replay key.
+- [ ] AI-native integration: DB reads/writes are effect-tagged; dangerous writes can require approval; replay records deterministic DB interaction summaries.
+- [ ] Golden examples for session state, task state, approval state, trace state, and connector token state.
+
+**Slice checklist:**
+
+- [ ] 37A-persistence-design-brief   `docs/phase-37-persistence.md` defines DB scope, SQL posture, migration rules, effect model, replay model, and non-scope.
+- [ ] 37B-sqlite-connection-query    `std.db` opens SQLite connections and runs explicit parameterized queries.
+- [ ] 37C-typed-row-decoding         Query results decode into typed Corvid records with useful diagnostics on missing/wrong columns.
+- [ ] 37D-transactions               Transactions support commit/rollback, nested-scope rejection or savepoint policy, and typed errors.
+- [ ] 37E-migrations-drift           `corvid migrate up/down/status` supports checksums, dry runs, drift detection, and CI failure on mismatch.
+- [ ] 37F-audit-log-pattern          Standard audit-log schema records actor, action, prompt/model/tool versions, approval state, cost, trace ID, and replay key.
+- [ ] 37G-token-storage-boundary     Encrypted connector-token storage ships with explicit key-management boundaries and tests.
+- [ ] 37H-postgres-support           Postgres reaches parity with the SQLite query/transaction/migration subset needed by reference apps.
+- [ ] 37I-db-effect-replay           DB reads/writes carry effect tags and replay records deterministic interaction summaries.
+- [ ] 37J-backend-state-example      Backend example persists users, tasks, approvals, traces, connector tokens, and durable agent state.
+
+**Done when:** a Corvid backend can persist users, tasks, approvals, traces, connector tokens, and durable agent state through typed migrations and tests.
+
+### Phase 38 — Jobs, schedules, and durable agent execution (~8-10 weeks)
+
+**Goal.** Corvid can run long-lived backend work safely: scheduled jobs, retrying jobs, background queues, idempotent actions, failure recovery, and bounded agent loops.
+
+**Inventive benchmark target.** Compare durable agent jobs against Celery, BullMQ, Sidekiq-style queues, and Temporal-style workflows. Corvid must win on AI-specific safety: budgeted loops, approval waits, replayable agent checkpoints, tool-call lineage, and compile-time visibility of dangerous background work.
+
+**Scope:**
+
+- [ ] Durable job runner with enqueue, delay, cron, cancellation, concurrency limits, idempotency keys, retry/backoff, dead-letter queue, and job leases.
+- [ ] Scheduler manifest visible to `corvid audit`: every recurring task has owner, effect set, max runtime, max cost, replay policy, and approval policy.
+- [ ] Durable agent run state: step checkpoints, tool-call results, approval waits, resume-after-crash, and replayable finalization.
+- [ ] Loop controls: max steps, max wall time, max spend, max tool calls, and escalation-on-stall.
+- [ ] AI-native integration: every job carries a budget, effect row, provenance policy, and trace lineage; dangerous jobs cannot run without an approval boundary.
+- [ ] Operational controls: pause queue, drain workers, inspect job, retry job, cancel job, and export job trace.
+
+**Slice checklist:**
+
+- [ ] 38A-jobs-design-brief          `docs/phase-38-jobs.md` defines queue semantics, durability model, scheduler model, approval waits, replay behavior, and non-scope.
+- [ ] 38B-enqueue-run-one-job        Runtime can enqueue and execute one persisted background job with typed input/output.
+- [ ] 38C-retry-backoff-dlq          Jobs support retry policies, backoff, terminal failure, and dead-letter inspection.
+- [ ] 38D-delayed-jobs-cron          Delayed jobs and cron schedules persist, recover after restart, and appear in `corvid audit`.
+- [ ] 38E-leases-concurrency-idempotency Jobs use leases, concurrency limits, and idempotency keys to avoid duplicate dangerous work.
+- [ ] 38F-agent-step-checkpoints     Durable agent runs checkpoint steps, tool-call results, and partial outputs.
+- [ ] 38G-approval-wait-resume       Jobs can pause on approval, resume after approve/deny/expire, and record the audit transition.
+- [ ] 38H-loop-bounds                Max steps, wall time, spend, and tool calls are enforced for job-backed agent loops.
+- [ ] 38I-job-ops-commands           Operators can pause queues, drain workers, inspect, retry, cancel, and export job traces.
+- [ ] 38J-executive-agent-jobs       Personal Executive Agent daily brief, meeting prep, triage, and follow-up jobs survive process restart.
+
+**Done when:** the Personal Executive Agent backend can run daily brief generation, email triage, meeting prep, and follow-up reminders as durable jobs that survive process restart.
+
+### Phase 39 — Auth, identity, and human approval product surface (~8-10 weeks)
+
+**Goal.** Corvid can secure real multi-user AI backends and provide a production approval system rather than a demo `approve` hook.
+
+**Inventive benchmark target.** Compare the approval flow against Auth.js/Express, FastAPI dependencies, and Go middleware. Corvid must win by proving that identity, tenant, permission, dangerous tool, and approval-contract relationships are statically visible and audited end-to-end.
+
+**Scope:**
+
+- [ ] `std.auth` for sessions, API keys, JWT verification, OAuth callback handling, CSRF protection, passwordless login hooks, and service-account auth.
+- [ ] Identity and tenant model: user IDs, organization IDs, roles, permissions, and audit actor propagation through routes, jobs, tools, and traces.
+- [ ] Approval queue API: create, list, inspect, approve, deny, expire, comment, delegate, and audit approvals.
+- [ ] Typed approval contracts generated from dangerous tools: expected action, target resource, max cost, data touched, irreversible flag, expiry, and required approver role.
+- [ ] Approval UI contract: backend serves enough structured data for any frontend to render approvals without reverse-engineering traces.
+- [ ] AI-native integration: compiler rejects dangerous route/job/tool paths that have no reachable approval contract.
+- [ ] Security tests for confused-deputy approval bypass, tenant-crossing approval reuse, stale approval replay, and privilege escalation.
+
+**Slice checklist:**
+
+- [ ] 39A-auth-approval-design-brief `docs/phase-39-auth-approval.md` defines identity, tenant, session, approval, threat, and non-scope models.
+- [ ] 39B-session-api-key-auth        `std.auth` supports sessions and API keys with typed actor propagation into routes and traces.
+- [ ] 39C-jwt-oauth-callbacks        JWT verification and OAuth callback handling work for connector authorization flows.
+- [ ] 39D-tenant-role-permissions    User, organization, role, and permission checks propagate through routes, jobs, tools, and traces.
+- [ ] 39E-approval-queue-api         Approval create/list/inspect/approve/deny/expire/comment/delegate APIs ship with tests.
+- [ ] 39F-generated-approval-contracts Dangerous tools generate typed approval contracts with target, cost, data, expiry, irreversibility, and required role.
+- [ ] 39G-approval-ui-contract       Backend exposes structured approval payloads that any frontend can render without parsing traces.
+- [ ] 39H-compiler-approval-reachability Compiler rejects dangerous route/job/tool paths with no reachable approval contract.
+- [ ] 39I-security-bypass-tests      Tests cover confused-deputy approval bypass, tenant-crossing approval reuse, stale approval replay, and privilege escalation.
+- [ ] 39J-approval-product-example   Reference backend exposes real login, tenant-safe approvals, and auditable AI actions.
+
+**Done when:** a backend can expose real user login, tenant-safe approvals, and auditable AI actions without outsourcing the core safety model to another framework.
+
+### Phase 40 — Agent observability, evals, and production monitoring (~6-8 weeks)
+
+**Goal.** Corvid gives maintainers the operational visibility needed to trust AI systems in production: traces, metrics, evals, cost, latency, drift, and human review.
+
+**Inventive benchmark target.** Compare incident diagnosis against OpenTelemetry plus ad hoc LangSmith/Langfuse-style tracing. Corvid must win on time-to-answer for: what action happened, why, who approved it, what it cost, what data it touched, which guarantee applied, and how to replay or promote it into an eval.
+
+**Scope:**
+
+- [ ] Trace viewer data model and export format for route -> job -> agent -> prompt -> tool -> approval -> DB lineage.
+- [ ] OpenTelemetry export for request metrics, job metrics, LLM calls, tool calls, approvals, errors, retries, token/cost usage, model-routing decisions, and replay IDs.
+- [ ] `corvid observe` command for local trace inspection, cost reports, approval summaries, failing runs, and hot spots.
+- [ ] Evals from production traces: promote trace slices into regression tests with redacted inputs, expected contracts, and replay fixtures.
+- [ ] Drift and regression reports: model output schema failures, confidence drops, cost changes, latency changes, approval denial spikes, and tool-error spikes.
+- [ ] Human-review queues for low-confidence or high-risk outputs, with audit linkage back to source prompt/model/tool versions.
+- [ ] AI-native integration: observability is contract-aware; reports group failures by violated guarantee/effect/budget/provenance rule.
+
+**Slice checklist:**
+
+- [ ] 40A-observability-design-brief `docs/phase-40-observability.md` defines trace schema, metrics taxonomy, eval promotion, retention, redaction, and non-scope.
+- [ ] 40B-lineage-trace-model        Route -> job -> agent -> prompt -> tool -> approval -> DB lineage is represented in one trace model.
+- [ ] 40C-otel-export                OpenTelemetry export covers requests, jobs, LLM calls, tools, approvals, errors, retries, costs, and replay IDs.
+- [ ] 40D-observe-command-basics     `corvid observe` lists traces, costs, approvals, failures, and hot spots from local stores.
+- [ ] 40E-trace-to-eval              Production trace slices can be promoted into redacted regression/eval fixtures.
+- [ ] 40F-drift-regression-reports   Reports highlight schema failures, confidence drops, cost changes, latency changes, denial spikes, and tool-error spikes.
+- [ ] 40G-human-review-queues        Low-confidence and high-risk outputs can enter human-review queues with trace/audit linkage.
+- [ ] 40H-contract-aware-grouping    Observability reports group incidents by guarantee, effect, budget, provenance, and approval rule.
+- [ ] 40I-maintainer-runbook         Docs show how maintainers answer cost, action, approval, data-touch, and replay questions from tooling.
+
+**Done when:** maintainers can answer "what did the agent do, why, what did it cost, who approved it, what data did it touch, and can I replay it?" from committed Corvid tooling.
+
+### Phase 41 — Production connectors (~8-12 weeks)
+
+**Goal.** Corvid ships connectors for the workflows real personal and enterprise agents need, with effect profiles and approval boundaries built in.
+
+**Inventive benchmark target.** Compare connector implementation against raw SDK use in Python/TypeScript. Corvid must win on safe write operations: OAuth state, scopes, rate limits, mocks, replay fixtures, data-class effects, and approval-gated sends/updates are declared in the connector manifest rather than hand-documented.
+
+**Scope:**
+
+- [ ] Gmail/Google Workspace connector: read/search messages, draft replies, send only with approval, labels, attachments metadata, and OAuth token refresh.
+- [ ] Microsoft 365 connector: Outlook mail, calendar, contacts, Teams/Graph basics, and tenant-aware OAuth.
+- [ ] Calendar connector: availability, event create/update/cancel, meeting prep context, reminders, and approval-gated external invites.
+- [ ] Slack connector: read channels/DM metadata, draft messages, send with approval, thread summaries, and workspace/user scoping.
+- [ ] Task/project connectors: Linear and GitHub issues first; typed task creation/update/comment flows with approval gates.
+- [ ] Local files connector for personal knowledge: indexed folders, file metadata, read permissions, write approval, and provenance-preserving snippets.
+- [ ] Connector manifest format: scopes, effects, data classes, approval requirements, replay policy, rate limits, and failure modes.
+- [ ] Mock connector suite for offline tests and deterministic demos; no production connector ships without a mock and replay fixture.
+
+**Slice checklist:**
+
+- [ ] 41A-connector-design-brief     `docs/phase-41-connectors.md` defines connector manifest shape, OAuth/token state, effect profiles, mocks, replay, and non-scope.
+- [ ] 41B-connector-runtime-contract Shared connector runtime handles auth state, rate limits, retries, redaction, trace events, and mock mode.
+- [ ] 41C-gmail-google-workspace     Gmail/Google Workspace connector supports read/search/draft/send-with-approval and token refresh.
+- [ ] 41D-microsoft-365              Microsoft 365 connector supports Outlook mail, calendar basics, contacts, Graph auth, and tenant-aware scopes.
+- [ ] 41E-calendar-connector         Calendar connector supports availability, event create/update/cancel, reminders, and approval-gated external invites.
+- [ ] 41F-slack-connector            Slack connector supports channel/DM reads, draft/send-with-approval, threads, and workspace/user scoping.
+- [ ] 41G-task-project-connectors    Linear and GitHub issue connectors support typed create/update/comment flows with approval gates.
+- [ ] 41H-local-files-connector      Local file connector supports indexed folders, read permissions, write approval, and provenance snippets.
+- [ ] 41I-mock-replay-suite          Every connector ships mock mode, replay fixtures, manifest tests, and offline deterministic examples.
+- [ ] 41J-executive-agent-connectors Personal Executive Agent uses email, calendar, tasks, chat, and files through Corvid-owned connectors.
+
+**Done when:** the Personal Executive Agent can connect to email, calendar, tasks, and files through Corvid-owned backend connectors, with explicit effects and approval contracts.
+
+### Phase 42 — Production reference applications (~10-14 weeks)
+
+**Goal.** Prove Corvid can build real products by shipping complete backend reference apps, not toy demos. These apps are the market proof and the regression suite for the language.
+
+**Inventive benchmark target.** Compare the Personal Executive Agent backend against an equivalent Python or TypeScript implementation. Corvid must show fewer external framework seams, fewer custom policy/audit/replay modules, stronger compile-time rejection of unsafe actions, and equivalent or better non-model orchestration latency.
+
+**Reference apps:**
+
+- [ ] **Personal Executive Agent backend.** Inbox triage, draft replies, calendar scheduling, meeting prep, daily brief, task extraction, follow-up tracking, approval-gated sends/edits, durable jobs, connector state, observability, and replay.
+- [ ] **Personal Knowledge Agent backend.** Document ingestion, grounded search, citations, memory, private/local mode, evals from user feedback, and provenance-preserving answers.
+- [ ] **Personal Finance Operations Agent backend.** Read-only aggregation first, bill/subscription reminders, budget explanations, anomaly detection, approval-gated payment intents, strict audit trail, and explicit non-scope for regulated financial advice.
+- [ ] **Customer support operations agent backend.** Ticket triage, suggested replies, policy-grounded answers, refund/escalation approvals, SLA jobs, and eval dashboards.
+- [ ] **Code-review and maintenance agent backend.** Repository ingestion, issue triage, review comments, patch proposals, CI-aware risk labels, and approval-gated write operations.
+
+**Product requirements for every reference app:**
+
+- [ ] Runs as a Corvid server binary with Corvid routes, DB, jobs, auth, connectors, approvals, traces, evals, and deployment manifest.
+- [ ] Has seed data, mock connector mode, deterministic replay tests, adversarial tests, and a real provider mode behind documented env vars.
+- [ ] Has an operator runbook: setup, secrets, migrations, backups, logs, metrics, incident response, and rollback.
+- [ ] Has a clear security model and non-goals. No app over-claims autonomy or safety beyond what Corvid can enforce.
+
+**Slice checklist:**
+
+- [ ] 42A-reference-app-brief        `docs/phase-42-reference-apps.md` defines app selection, shared architecture, quality bar, security posture, demo mode, and non-scope.
+- [ ] 42B-shared-app-template        Common backend template provides routes, DB, jobs, auth, connectors, approvals, traces, evals, deployment manifest, and runbook skeleton.
+- [ ] 42C-personal-executive-agent   Personal Executive Agent backend ships inbox triage, drafts, calendar scheduling, meeting prep, daily brief, tasks, follow-ups, approvals, and replay.
+- [ ] 42D-personal-knowledge-agent   Knowledge Agent backend ships ingestion, grounded search, citations, private/local mode, feedback evals, and provenance-preserving answers.
+- [ ] 42E-finance-operations-agent   Finance Operations Agent backend ships read-only aggregation, reminders, anomaly detection, approval-gated payment intents, audit trail, and regulated-advice non-scope.
+- [ ] 42F-support-operations-agent   Support Agent backend ships ticket triage, suggested replies, policy-grounded answers, refund/escalation approvals, SLA jobs, and eval dashboard.
+- [ ] 42G-code-maintenance-agent     Code Maintenance Agent backend ships repo ingestion, issue triage, review comments, patch proposals, CI-aware risk labels, and approval-gated writes.
+- [ ] 42H-reference-app-hardening    Every app gets seed data, mock connector mode, replay tests, adversarial tests, real-provider env docs, security model, and operator runbook.
+- [ ] 42I-external-developer-trial   At least one external developer runs a reference app locally and files feedback before Phase 43.
+
+**Done when:** external developers can clone the repo, run at least one full production-shaped backend app locally, inspect its approvals/traces/evals, and deploy it without writing a second backend in another language.
+
+### Phase 43 — Packaging, deployment, and market readiness (~6-8 weeks)
+
+**Goal.** Corvid is ready to go online as a product for developers and maintainers: installable, deployable, operable, documented, and honest under scrutiny.
+
+**Inventive benchmark target.** Compare "clone to production-shaped deploy" against a representative FastAPI/LangChain or TypeScript agent stack. Corvid must win on reproducibility: signed binaries, env validation, migrations, health checks, deployment manifests, claim explanation, and operator docs generated from the same contracts used by the build.
+
+**Scope:**
+
+- [ ] `corvid deploy package`: Dockerfile, OCI image metadata, health/readiness config, migration runner, env schema, and signed build attestation.
+- [ ] Deployment manifests for local Docker Compose, Fly.io/Render-style single service, Kubernetes, and bare-metal systemd.
+- [ ] Release channels: nightly, beta, stable; SemVer policy tied to the stability contract and migration guide.
+- [ ] Upgrade/migration tooling for syntax, stdlib, schema, trace format, and connector manifests.
+- [ ] Maintainer docs: release checklist, security advisory process, compatibility policy, CI gates, benchmark reproduction, and claim review process.
+- [ ] Developer docs: backend tutorial, Personal Executive Agent tutorial, connector authoring guide, approval-system guide, observability guide, and production checklist.
+- [ ] Beta program: at least 20 external developers build real backend apps; feedback must close as code/docs/tests or explicit non-scope before launch.
+- [ ] Final claim audit: README, website, launch page, docs, and `corvid claim --explain` say the same thing.
+- [ ] Launch package: install scripts, changelog, signed binaries, checksums, reproducible build notes, demo scripts, and incident-response contacts.
+
+**Slice checklist:**
+
+- [ ] 43A-market-readiness-brief     `docs/phase-43-market-readiness.md` defines launch gates, release channels, support posture, security process, beta criteria, and non-scope.
+- [ ] 43B-deploy-package             `corvid deploy package` emits Dockerfile, OCI metadata, health/readiness config, migration runner, env schema, and signed build attestation.
+- [ ] 43C-deployment-manifests       Docker Compose, single-service PaaS, Kubernetes, and systemd manifests work for at least one reference app.
+- [ ] 43D-release-channels           Nightly, beta, and stable release channels are documented and wired to SemVer/stability policy.
+- [ ] 43E-upgrade-migration-tools    Syntax, stdlib, schema, trace-format, and connector-manifest migrations have tooling and docs.
+- [ ] 43F-maintainer-docs            Release checklist, advisory process, compatibility policy, CI gates, benchmark reproduction, and claim review docs are complete.
+- [ ] 43G-developer-docs             Backend tutorial, Personal Executive Agent tutorial, connector guide, approval guide, observability guide, and production checklist are complete.
+- [ ] 43H-beta-program               At least 20 external developers build real backend apps; feedback is closed as code/docs/tests or explicit non-scope.
+- [ ] 43I-final-claim-audit          README, website, launch page, docs, and `corvid claim --explain` use the same defensible claims.
+- [ ] 43J-launch-package             Signed binaries, install scripts, changelog, checksums, reproducible notes, demo scripts, and incident contacts are ready.
+
+**v1.0 final cut here. Launch day.** Corvid goes online only after the defensible core and the production-backend track are both complete.
 
 ---
 
@@ -1678,7 +1953,7 @@ This phase closes all five end-to-end with no shortcuts: a guarantee manifest ta
 
 Scoped-out of the pre-v1.0 critical path. Not abandoned — explicitly planned, with honest reasoning for why they're not in v1.0.
 
-- **Multi-agent + durable execution.** Crash-safe agents, recursion / composition with automatic trace merging. Enterprise-maturity feature; most v1.0 users write single-agent applications. Ship when real user pull for it is measurable. Uses the replay infrastructure from Phase 21.
+- **Distributed multi-agent orchestration.** Cross-service agent graphs, recursive agent composition, distributed trace merging, and multi-tenant workflow sharding. Phase 38 ships durable single-backend agent execution for v1.0; this post-v1.0 item is the larger distributed/enterprise orchestration layer.
 - **Hot reload.** In-flight runs keep version; new runs use new code. Production-runtime concern for always-on services. Most v1.0 users ship scripts + CLIs + embedded apps where restart-is-cheap. Ship when the production-service user segment is sized.
 - **Prompt-aware compilation.** Schema caching, TOON compression, template deduplication. Performance optimization on top of v1.0 capability — measurable once cost data from real users shows where to target. Builds on Phase 20's cost model.
 - **Interactive time-travel debugger UI.** Phase 21 ships deterministic replay; the scrub-backward / step-forward UI is a followup using the same infrastructure.
@@ -1690,7 +1965,7 @@ Scoped-out of the pre-v1.0 critical path. Not abandoned — explicitly planned, 
 
 ## Total estimated effort
 
-**~27 months of focused solo work** from today to v1.0 public launch, summed from the per-phase estimates above:
+**~47-57 months of focused solo work** from today to v1.0 public launch if done by one person, summed from the per-phase estimates above. The earlier 27-month plan proved the language core; the updated plan also proves Corvid as a production backend language for real AI applications.
 
 | Release | Phases | Bottom-up estimate |
 |---|---|---|
@@ -1702,11 +1977,13 @@ Scoped-out of the pre-v1.0 critical path. Not abandoned — explicitly planned, 
 | v0.8 (dev workflow) | 24, 25, 26, 27 | ~5 months |
 | v0.9 (feature-complete) | 28, 29, 30, 31, 32 | ~5 months |
 | v1.0 (launch polish) | 33, 34 | ~2 months |
-| v1.0 (defensible core) | 35 | ~6–8 weeks |
+| v1.0 (defensible core) | 35 | ~6-8 weeks |
+| v1.0 (production backend) | 36, 37, 38, 39, 40, 41 | ~11-14 months |
+| v1.0 (reference products + market readiness) | 42, 43 | ~4-5 months |
 
-Bottom-up sums to **~27 months** — over the 18–24 originally quoted because the bottom-up is pessimistic per phase and because Phase 20's honest slice breakdown pushed its estimate up (7 slices × ~2 weeks each vs. the earlier 12–14-week monolith). Real slip will come from Phase 20 unknowns (slice 20d's cost-analysis is novel research; slice 20e's `T?confidence` interaction with the type system is unpredictable), Phase 24 (LSP — scope tends to grow), and Phase 33 (launch polish — always longer than estimated). Build schedule with a 20% buffer; re-plan quarterly.
+Bottom-up now sums to **~47-57 months** for a solo lane because the launch target changed: Corvid is no longer merely proving a language core plus defensible claims; it is proving that the language can build the full backend of production AI applications itself. Real slip will come from Phase 20 unknowns (slice 20d's cost-analysis is novel research; slice 20e's `T?confidence` interaction with the type system is unpredictable), Phase 24 (LSP - scope tends to grow), Phase 36-41 (backend/runtime/connectors create real operational surface area), and Phase 42 (reference apps expose missing language/runtime pieces). Build schedule with a 20% buffer; re-plan quarterly.
 
-The original "~18–24 months" quote is not preserved above because preserving it would be dishonest — the honest plan sums to more. Quoting 24 months and planning 27 is the shortcut; quoting what the plan actually sums to is the non-shortcut.
+The original "~18-24 months" quote is not preserved above because preserving it would be dishonest. Quoting a smaller number while adding production backend, auth, persistence, jobs, connectors, observability, deployment, and reference products would be the shortcut; quoting what the plan actually sums to is the non-shortcut.
 
 The dates aren't the point. The point is that each phase has:
 - A clear goal with a named hard dependency, not a vibe sequence.
@@ -1716,7 +1993,7 @@ The dates aren't the point. The point is that each phase has:
 - Tests green at the boundary.
 - A dev-log entry.
 
-That discipline is what makes the 27 months possible. Without it, the plan slips to 40+ and v1.0 becomes aspirational rather than a calendar commitment.
+That discipline is what makes the plan possible. Without it, the production-backend track becomes aspirational, and v1.0 turns into a marketing date instead of a shippable product.
 
 ---
 
@@ -1749,5 +2026,10 @@ To keep momentum honest, ship one observable artefact at every phase boundary. E
 - **End of Phase 23** — Corvid program embedded in a Rust host (`cargo add` the cdylib) AND the same program compiled to wasm and running in a browser page. One source, two deployment targets. (v0.7)
 - **End of Phase 27** — Full developer workflow demo: write in VS Code with live type hints, `corvid add` a registry package, `corvid test` runs, `corvid eval` produces the HTML report. (v0.8)
 - **End of Phase 32** — Feature-complete: agents ask/choose humans, sessions persist to SQLite, Python libs import effect-tagged, Google + Ollama + Anthropic + OpenAI all work, `std.*` batteries included. (v0.9)
-- **End of Phase 33** — v1.0 public release: installer, website, beta-tester feedback incorporated, launch GIF, announcement.
+- **End of Phase 33** — launch polish foundation: installer, website, beta-tester feedback loop, launch GIF, announcement drafts, and claim audit scaffolding.
 - **End of Phase 35** — `corvid claim --explain refund_bot.dylib` prints the binary's enforced guarantee set, signing key fingerprint, and bilateral-verifier attestation. `corvid contract list --json` round-trips into `docs/core-semantics.md` byte-for-byte. The fuzz corpus rejects 100% of mutated descriptors and bypassed sources. Independent verifier `corvid-abi-verify` rebuilds the descriptor for any signed cdylib and bit-matches the embedded one. CI re-runs all four on every push.
+- **End of Phase 36** — `corvid build --target=server examples/backend/refund_api` emits a runnable backend binary with routes, config validation, health checks, traces, and approval-gated dangerous actions.
+- **End of Phase 38** — the Personal Executive Agent's daily brief, meeting prep, and follow-up jobs survive process restart and resume with bounded cost, bounded steps, replay IDs, and auditable approval waits.
+- **End of Phase 41** — email, calendar, task, chat, and file connectors all expose effect manifests, mock modes, OAuth/token state, replay fixtures, and approval-gated write operations.
+- **End of Phase 42** — Personal Executive Agent backend runs locally as a production-shaped Corvid product: routes, DB, jobs, auth, connectors, approvals, traces, evals, replay, and deployment manifest.
+- **End of Phase 43** — v1.0 public release: signed binaries, install scripts, deployment packages, production docs, external beta feedback closed, and launch claims aligned with `corvid claim --explain`.
