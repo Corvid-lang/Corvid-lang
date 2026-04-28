@@ -113,6 +113,13 @@ pub struct SchedulerRecoveryReport {
     pub recoveries: Vec<ScheduleRecovery>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct QueueConcurrencyLimit {
+    pub scope: String,
+    pub limit: u64,
+    pub updated_ms: u64,
+}
+
 #[derive(Clone, Default)]
 pub struct QueueRuntime {
     next_id: Arc<AtomicU64>,
@@ -640,6 +647,77 @@ impl DurableQueueRuntime {
         Ok(report)
     }
 
+    pub fn set_global_concurrency_limit(
+        &self,
+        limit: u64,
+    ) -> Result<QueueConcurrencyLimit, RuntimeError> {
+        self.set_concurrency_limit("global", limit)
+    }
+
+    pub fn set_task_concurrency_limit(
+        &self,
+        task: &str,
+        limit: u64,
+    ) -> Result<QueueConcurrencyLimit, RuntimeError> {
+        if task.trim().is_empty() {
+            return Err(RuntimeError::Other(
+                "std.queue task concurrency limit name must not be empty".to_string(),
+            ));
+        }
+        self.set_concurrency_limit(&format!("task:{task}"), limit)
+    }
+
+    pub fn list_concurrency_limits(&self) -> Result<Vec<QueueConcurrencyLimit>, RuntimeError> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn
+            .prepare("select scope, max_leased, updated_ms from queue_concurrency_limits order by scope")
+            .map_err(|err| RuntimeError::Other(format!("failed to prepare concurrency limit list: {err}")))?;
+        let rows = stmt
+            .query_map([], |row| {
+                Ok(QueueConcurrencyLimit {
+                    scope: row.get(0)?,
+                    limit: row.get::<_, i64>(1)? as u64,
+                    updated_ms: row.get::<_, i64>(2)? as u64,
+                })
+            })
+            .map_err(|err| RuntimeError::Other(format!("failed to list concurrency limits: {err}")))?;
+        let mut limits = Vec::new();
+        for row in rows {
+            limits.push(
+                row.map_err(|err| RuntimeError::Other(format!("failed to decode concurrency limit: {err}")))?,
+            );
+        }
+        Ok(limits)
+    }
+
+    fn set_concurrency_limit(
+        &self,
+        scope: &str,
+        limit: u64,
+    ) -> Result<QueueConcurrencyLimit, RuntimeError> {
+        if limit == 0 {
+            return Err(RuntimeError::Other(
+                "std.queue concurrency limit must be at least 1".to_string(),
+            ));
+        }
+        let now = now_ms();
+        self.conn
+            .lock()
+            .unwrap()
+            .execute(
+                "insert into queue_concurrency_limits (scope, max_leased, updated_ms)
+                 values (?1, ?2, ?3)
+                 on conflict(scope) do update set max_leased = excluded.max_leased, updated_ms = excluded.updated_ms",
+                params![scope, limit as i64, now as i64],
+            )
+            .map_err(|err| RuntimeError::Other(format!("failed to set concurrency limit: {err}")))?;
+        Ok(QueueConcurrencyLimit {
+            scope: scope.to_string(),
+            limit,
+            updated_ms: now,
+        })
+    }
+
     pub fn cancel(&self, id: &str) -> Result<QueueJob, RuntimeError> {
         let now = now_ms();
         let updated = self
@@ -688,6 +766,9 @@ impl DurableQueueRuntime {
         }
         let lease_expires = now.saturating_add(ttl_ms.max(1));
         for candidate in self.list()?.into_iter().filter(|job| eligible_to_lease(job, now)) {
+            if !self.concurrency_allows(&candidate.task, now)? {
+                continue;
+            }
             let updated = self
                 .conn
                 .lock()
@@ -708,6 +789,25 @@ impl DurableQueueRuntime {
             }
         }
         Ok(None)
+    }
+
+    fn concurrency_allows(&self, task: &str, now: u64) -> Result<bool, RuntimeError> {
+        let conn = self.conn.lock().unwrap();
+        let global_limit = read_concurrency_limit(&conn, "global")?;
+        if let Some(limit) = global_limit {
+            let active = count_active_leases(&conn, None, now)?;
+            if active >= limit {
+                return Ok(false);
+            }
+        }
+        let scope = format!("task:{task}");
+        if let Some(limit) = read_concurrency_limit(&conn, &scope)? {
+            let active = count_active_leases(&conn, Some(task), now)?;
+            if active >= limit {
+                return Ok(false);
+            }
+        }
+        Ok(true)
     }
 
     pub fn complete_leased(
@@ -952,7 +1052,12 @@ impl DurableQueueRuntime {
                     job_id text not null,
                     created_ms integer not null
                 );
-                create unique index if not exists queue_schedule_fires_unique on queue_schedule_fires(schedule_id, fire_ms);",
+                create unique index if not exists queue_schedule_fires_unique on queue_schedule_fires(schedule_id, fire_ms);
+                create table if not exists queue_concurrency_limits (
+                    scope text primary key,
+                    max_leased integer not null,
+                    updated_ms integer not null
+                );",
             )
             .map_err(|err| {
                 RuntimeError::Other(format!("failed to initialize durable queue: {err}"))
@@ -1149,6 +1254,46 @@ fn normalize_cron(cron: &str) -> Result<String, RuntimeError> {
     }
 }
 
+fn read_concurrency_limit(
+    conn: &Connection,
+    scope: &str,
+) -> Result<Option<u64>, RuntimeError> {
+    let mut stmt = conn
+        .prepare("select max_leased from queue_concurrency_limits where scope = ?1")
+        .map_err(|err| RuntimeError::Other(format!("failed to prepare concurrency limit read: {err}")))?;
+    let mut rows = stmt
+        .query(params![scope])
+        .map_err(|err| RuntimeError::Other(format!("failed to query concurrency limit: {err}")))?;
+    if let Some(row) = rows
+        .next()
+        .map_err(|err| RuntimeError::Other(format!("failed to read concurrency limit: {err}")))? {
+        Ok(Some(row.get::<_, i64>(0).map_err(|err| {
+            RuntimeError::Other(format!("failed to decode concurrency limit: {err}"))
+        })? as u64))
+    } else {
+        Ok(None)
+    }
+}
+
+fn count_active_leases(
+    conn: &Connection,
+    task: Option<&str>,
+    now: u64,
+) -> Result<u64, RuntimeError> {
+    let sql = if task.is_some() {
+        "select count(*) from queue_jobs where status = 'leased' and coalesce(lease_expires_ms, 0) > ?1 and task = ?2"
+    } else {
+        "select count(*) from queue_jobs where status = 'leased' and coalesce(lease_expires_ms, 0) > ?1"
+    };
+    let count = if let Some(task) = task {
+        conn.query_row(sql, params![now as i64, task], |row| row.get::<_, i64>(0))
+    } else {
+        conn.query_row(sql, params![now as i64], |row| row.get::<_, i64>(0))
+    }
+    .map_err(|err| RuntimeError::Other(format!("failed to count active leases: {err}")))?;
+    Ok(count.max(0) as u64)
+}
+
 fn eligible_to_run(job: &QueueJob) -> bool {
     match job.status {
         QueueJobStatus::Pending => job.next_run_ms.map(|next| next <= now_ms()).unwrap_or(true),
@@ -1333,6 +1478,56 @@ mod tests {
         assert_eq!(reclaimed.id, job.id);
         assert_eq!(reclaimed.lease_owner.as_deref(), Some("worker-b"));
         assert_eq!(reclaimed.lease_expires_ms, Some(2_021));
+    }
+
+    #[test]
+    fn durable_queue_enforces_global_and_task_concurrency_limits() {
+        let queue = DurableQueueRuntime::open_in_memory().unwrap();
+        queue.set_global_concurrency_limit(1).unwrap();
+        queue.set_task_concurrency_limit("email", 1).unwrap();
+        queue
+            .enqueue("email", serde_json::json!({"n": 1}), 1, 0.1, None, None)
+            .unwrap();
+        queue
+            .enqueue("email", serde_json::json!({"n": 2}), 1, 0.1, None, None)
+            .unwrap();
+        queue
+            .enqueue("brief", serde_json::json!({"n": 3}), 1, 0.1, None, None)
+            .unwrap();
+
+        let first = queue
+            .lease_next_at("worker-a", 60_000, 5_000)
+            .unwrap()
+            .expect("first lease");
+        assert_eq!(first.task, "email");
+        assert!(
+            queue
+                .lease_next_at("worker-b", 60_000, 5_001)
+                .unwrap()
+                .is_none(),
+            "global limit should block every other task while one lease is active"
+        );
+
+        queue
+            .complete_leased(&first.id, "worker-a", None, None)
+            .unwrap();
+        let second = queue
+            .lease_next_at("worker-b", 60_000, 5_002)
+            .unwrap()
+            .expect("second email lease");
+        assert_eq!(second.task, "email");
+        assert!(
+            queue
+                .lease_next_at("worker-c", 60_000, 5_003)
+                .unwrap()
+                .is_none(),
+            "task limit should block another email lease"
+        );
+
+        let limits = queue.list_concurrency_limits().unwrap();
+        assert_eq!(limits.len(), 2);
+        assert!(limits.iter().any(|limit| limit.scope == "global" && limit.limit == 1));
+        assert!(limits.iter().any(|limit| limit.scope == "task:email" && limit.limit == 1));
     }
 
     #[test]

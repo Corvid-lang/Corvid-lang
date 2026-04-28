@@ -1322,6 +1322,15 @@ fn main() -> ExitCode {
                     max_missed_per_schedule,
                 } => cmd_jobs_schedule_recover(&state, max_missed_per_schedule),
             },
+            JobsCommand::Limit { command } => match command {
+                JobsLimitCommand::Set {
+                    state,
+                    scope,
+                    task,
+                    max_leased,
+                } => cmd_jobs_limit_set(&state, scope, task.as_deref(), max_leased),
+                JobsLimitCommand::List { state } => cmd_jobs_limit_list(&state),
+            },
             JobsCommand::Dlq { state } => cmd_jobs_dlq(&state),
         },
         Some(Command::Bench { command }) => match command {
@@ -1662,6 +1671,50 @@ fn cmd_jobs_schedule_recover(state: &Path, max_missed_per_schedule: usize) -> Re
             recovery.action,
             recovery.job_id.as_deref().unwrap_or(""),
             recovery.policy.as_str()
+        );
+    }
+    Ok(0)
+}
+
+fn cmd_jobs_limit_set(
+    state: &Path,
+    scope: LimitScopeArg,
+    task: Option<&str>,
+    max_leased: u64,
+) -> Result<u8> {
+    if let Some(parent) = state
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("failed to create jobs state dir `{}`", parent.display()))?;
+    }
+    let queue = DurableQueueRuntime::open(state)?;
+    let limit = match scope {
+        LimitScopeArg::Global => queue.set_global_concurrency_limit(max_leased)?,
+        LimitScopeArg::Task => {
+            let task = task.context("--task is required when --scope task")?;
+            queue.set_task_concurrency_limit(task, max_leased)?
+        }
+    };
+    println!("corvid jobs limit set");
+    println!("state: {}", state.display());
+    println!("scope: {}", limit.scope);
+    println!("max_leased: {}", limit.limit);
+    println!("updated_ms: {}", limit.updated_ms);
+    Ok(0)
+}
+
+fn cmd_jobs_limit_list(state: &Path) -> Result<u8> {
+    let queue = DurableQueueRuntime::open(state)?;
+    let limits = queue.list_concurrency_limits()?;
+    println!("corvid jobs limit list");
+    println!("state: {}", state.display());
+    println!("limit_count: {}", limits.len());
+    for limit in limits {
+        println!(
+            "limit: scope:{} max_leased:{} updated_ms:{}",
+            limit.scope, limit.limit, limit.updated_ms
         );
     }
     Ok(0)
@@ -3037,8 +3090,44 @@ enum JobsCommand {
         #[command(subcommand)]
         command: JobsScheduleCommand,
     },
+    /// Configure queue and task concurrency limits.
+    Limit {
+        #[command(subcommand)]
+        command: JobsLimitCommand,
+    },
     /// Inspect terminally failed local jobs.
     Dlq {
+        /// SQLite state file used by the durable local queue.
+        #[arg(long, value_name = "PATH", default_value = "target/corvid-jobs.sqlite")]
+        state: PathBuf,
+    },
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum LimitScopeArg {
+    Global,
+    Task,
+}
+
+#[derive(Subcommand)]
+enum JobsLimitCommand {
+    /// Set a durable concurrency limit.
+    Set {
+        /// SQLite state file used by the durable local queue.
+        #[arg(long, value_name = "PATH", default_value = "target/corvid-jobs.sqlite")]
+        state: PathBuf,
+        /// Limit scope.
+        #[arg(long, value_enum)]
+        scope: LimitScopeArg,
+        /// Task name when --scope task.
+        #[arg(long)]
+        task: Option<String>,
+        /// Maximum active leases allowed for this scope.
+        #[arg(long)]
+        max_leased: u64,
+    },
+    /// List durable concurrency limits.
+    List {
         /// SQLite state file used by the durable local queue.
         #[arg(long, value_name = "PATH", default_value = "target/corvid-jobs.sqlite")]
         state: PathBuf,

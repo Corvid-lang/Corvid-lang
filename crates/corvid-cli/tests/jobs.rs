@@ -240,6 +240,53 @@ fn jobs_schedule_recovers_missed_fire_after_restart() {
 }
 
 #[test]
+fn jobs_limit_cli_persists_concurrency_limits() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let state = dir.path().join("jobs.sqlite");
+
+    let set = Command::new(corvid_bin())
+        .args([
+            "jobs",
+            "limit",
+            "set",
+            "--state",
+            state.to_str().unwrap(),
+            "--scope",
+            "task",
+            "--task",
+            "email",
+            "--max-leased",
+            "2",
+        ])
+        .output()
+        .expect("run jobs limit set");
+    assert!(
+        set.status.success(),
+        "limit set failed:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&set.stdout),
+        String::from_utf8_lossy(&set.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&set.stdout);
+    assert!(stdout.contains("corvid jobs limit set"), "{stdout}");
+    assert!(stdout.contains("scope: task:email"), "{stdout}");
+    assert!(stdout.contains("max_leased: 2"), "{stdout}");
+
+    let list = Command::new(corvid_bin())
+        .args(["jobs", "limit", "list", "--state", state.to_str().unwrap()])
+        .output()
+        .expect("run jobs limit list");
+    assert!(
+        list.status.success(),
+        "limit list failed:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&list.stdout),
+        String::from_utf8_lossy(&list.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&list.stdout);
+    assert!(stdout.contains("limit_count: 1"), "{stdout}");
+    assert!(stdout.contains("limit: scope:task:email max_leased:2"), "{stdout}");
+}
+
+#[test]
 fn jobs_dlq_inspects_dead_lettered_jobs() {
     let dir = tempfile::tempdir().expect("tempdir");
     let state = dir.path().join("jobs.sqlite");
