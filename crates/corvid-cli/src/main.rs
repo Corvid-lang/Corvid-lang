@@ -34,6 +34,7 @@ mod bench_cmd;
 mod bind_cmd;
 mod bundle_cmd;
 mod capsule_cmd;
+mod contract_cmd;
 mod cost_frontier;
 mod eval_cmd;
 mod receipt_cache;
@@ -604,6 +605,13 @@ enum Command {
         #[command(subcommand)]
         command: BenchCommand,
     },
+    /// Inspect Corvid's canonical guarantee table — the public list of
+    /// promises the compiler and runtime enforce, the pipeline phase
+    /// each lives in, and the test references that prove each one.
+    Contract {
+        #[command(subcommand)]
+        command: ContractCommand,
+    },
 }
 
 #[derive(Subcommand)]
@@ -618,6 +626,34 @@ enum BenchCommand {
         /// Emit structured JSON.
         #[arg(long)]
         json: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum ContractCommand {
+    /// Print the canonical guarantee table.
+    ///
+    /// Default output is human-readable: one row per guarantee with
+    /// id, kind, class (static / runtime-checked / out-of-scope),
+    /// pipeline phase, and a one-line description. `--json` emits the
+    /// full structured table including test references and (where
+    /// applicable) the explicit `out_of_scope_reason` for non-defenses.
+    /// The output is the single source of truth that `docs/core-semantics.md`
+    /// is generated from in slice 35-D and that `corvid claim --explain`
+    /// reports against in slice 35-I.
+    List {
+        /// Emit machine-readable JSON instead of the human-readable table.
+        #[arg(long)]
+        json: bool,
+        /// Filter by class. Accepts `static`, `runtime_checked`, or
+        /// `out_of_scope`. Repeatable; unspecified shows everything.
+        #[arg(long, value_name = "CLASS")]
+        class: Option<String>,
+        /// Filter by kind (e.g. `approval`, `effect_row`, `grounded`,
+        /// `budget`, `confidence`, `replay`, `provenance_trace`,
+        /// `abi_descriptor`, `abi_attestation`, `platform`).
+        #[arg(long, value_name = "KIND")]
+        kind: Option<String>,
     },
 }
 
@@ -1146,6 +1182,11 @@ fn main() -> ExitCode {
                 session,
                 json,
             } => bench_cmd::run_compare(&target, &session, json),
+        },
+        Some(Command::Contract { command }) => match command {
+            ContractCommand::List { json, class, kind } => {
+                contract_cmd::run_list(json, class.as_deref(), kind.as_deref())
+            }
         },
         None => {
             println!("corvid — the AI-native language compiler");

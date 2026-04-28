@@ -5717,3 +5717,34 @@ to slice 35-I, where the introduction of `corvid claim --explain`
 naturally requires a structured outcome enum that the tagging can
 attach to. Slice 35-E will flag any registered guarantee that lacks
 both compile-time and runtime tagging by the time it runs.
+
+## 2026-04-28 - Phase 35-C: `corvid contract list` exposes the registry
+
+The canonical guarantee table is now visible from the command line.
+`corvid contract list` prints the registry as either a human-readable
+column-aligned table (default) or structured JSON (`--json`); both
+forms emit rows in declaration order so the output is stable across
+invocations. Optional `--class` and `--kind` filters narrow the
+output without reordering it.
+
+The JSON form is the load-bearing artifact: it carries
+`schema_version`, `count`, and a `guarantees` array of full registry
+rows including `out_of_scope_reason` for `OutOfScope` entries
+(skipped on enforced rows so the JSON does not falsely imply a
+non-defense exists). Slice 35-D will lock the JSON as the input to
+the `docs/core-semantics.md` generator and gate CI on drift.
+
+The human-readable table prints reasons inline beneath each
+`OutOfScope` row so a reviewer scanning the output can immediately
+see what we explicitly do NOT defend and why. With the seed
+registry, `corvid contract list --class out_of_scope` produces a
+four-row honest non-defense list: `budget.runtime_termination`
+(planned, downgraded in slice 35-B), `platform.host_kernel_compromise`,
+`platform.signing_key_compromise`, and `platform.toolchain_compromise`.
+
+Wired through `crates/corvid-cli/src/contract_cmd.rs`; clap
+`Contract { command: ContractCommand::List { json, class, kind } }`
+nested under a `ContractCommand` enum mirroring the existing
+`BenchCommand` shape. Four unit tests cover the class/kind parser
+acceptance and rejection paths plus the JSON payload's count and
+out-of-scope-reason policy.
