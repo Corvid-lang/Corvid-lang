@@ -237,6 +237,12 @@ serves `GET /healthz`. Later slices replace this convention with typed
 - A route returning the wrong response type fails at compile time.
 - Duplicate method/path pairs fail at compile time.
 
+Implementation convention for 36C: `server` and nested `route` are now real
+AST/parser/resolver/typechecker constructs. Path captures from `{name}` are
+typed as `String`; `query Type` and `body Type` bind route-local `query` and
+`body` values; `-> json Type` sets the route return contract. Runtime
+query/body JSON decoding lands in 36D with the server dispatch layer.
+
 ### 36D JSON Boundary
 
 - Missing required fields produce route-aware 400 errors.

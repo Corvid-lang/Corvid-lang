@@ -77,7 +77,8 @@ impl<'a> Checker<'a> {
                     | DeclKind::Test
                     | DeclKind::Mock
                     | DeclKind::Effect
-                    | DeclKind::Model => {
+                    | DeclKind::Model
+                    | DeclKind::Server => {
                         for a in args {
                             let _ = self.check_expr(a);
                         }

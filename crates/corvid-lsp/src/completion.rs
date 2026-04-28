@@ -201,6 +201,12 @@ fn add_declarations(items: &mut CompletionSet, file: &File) {
                 "model",
                 format!("model {}", model.name.name),
             )),
+            Decl::Server(server) => items.add(symbol_item(
+                &server.name.name,
+                CompletionItemKind::CLASS,
+                "server",
+                format!("server {}", server.name.name),
+            )),
             Decl::Eval(eval) => items.add(symbol_item(
                 &eval.name.name,
                 CompletionItemKind::METHOD,

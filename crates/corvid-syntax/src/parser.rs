@@ -145,7 +145,6 @@ impl<'a> Parser<'a> {
         )
     }
 
-
     fn expect_ident(&mut self) -> Result<(String, Span), ParseError> {
         let span = self.peek_span();
         match self.peek().clone() {
@@ -194,7 +193,6 @@ impl<'a> Parser<'a> {
             self.bump();
         }
     }
-
 
     fn expect_newline(&mut self) -> Result<(), ParseError> {
         match self.peek() {
@@ -259,6 +257,7 @@ impl<'a> Parser<'a> {
                 | TokKind::KwPrompt
                 | TokKind::KwEval
                 | TokKind::KwTest
+                | TokKind::KwServer
                 | TokKind::KwAgent
                 | TokKind::KwExtend
                 | TokKind::KwEffect
@@ -308,6 +307,7 @@ impl<'a> Parser<'a> {
                 | TokKind::KwPrompt
                 | TokKind::KwEval
                 | TokKind::KwTest
+                | TokKind::KwServer
                 | TokKind::KwAgent
                 | TokKind::KwEffect
                 | TokKind::KwModel
@@ -320,7 +320,6 @@ impl<'a> Parser<'a> {
             }
         }
     }
-
 
     fn peek_ident_is(&self, expected: &str) -> bool {
         matches!(self.peek(), TokKind::Ident(name) if name == expected)
@@ -342,9 +341,6 @@ impl<'a> Parser<'a> {
             }),
         }
     }
-
-
-
 }
 
 fn describe_token(t: &TokKind) -> String {
@@ -357,7 +353,6 @@ fn describe_token(t: &TokKind) -> String {
         other => format!("{other:?}"),
     }
 }
-
 
 mod decl;
 mod effect_row;

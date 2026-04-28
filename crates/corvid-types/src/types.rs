@@ -75,6 +75,9 @@ pub enum Type {
     /// 21-inv-E-3.
     TraceId,
 
+    /// Synthetic struct-like value for backend route path captures.
+    RouteParams(Vec<(String, Type)>),
+
     /// Placeholder when the checker can't determine a precise type.
     /// Propagates without cascading errors.
     Unknown,
@@ -120,6 +123,7 @@ impl Type {
             Type::Partial(inner) => format!("Partial<{}>", inner.display_name()),
             Type::ResumeToken(inner) => format!("ResumeToken<{}>", inner.display_name()),
             Type::TraceId => "TraceId".into(),
+            Type::RouteParams(_) => "route path params".into(),
             Type::Unknown => "<unknown>".into(),
         }
     }
@@ -145,6 +149,7 @@ impl Type {
             (Type::Grounded(a), Type::Grounded(b)) => a.is_assignable_to(b),
             (Type::Partial(a), Type::Partial(b)) => a.is_assignable_to(b),
             (Type::ResumeToken(a), Type::ResumeToken(b)) => a.is_assignable_to(b),
+            (Type::RouteParams(a), Type::RouteParams(b)) => a == b,
             // Legacy compatibility: Grounded<T> remains assignable to T.
             // New code should prefer `.unwrap_discarding_sources()` so the
             // provenance drop is visible in source and IR.

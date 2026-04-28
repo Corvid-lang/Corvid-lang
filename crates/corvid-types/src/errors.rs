@@ -283,6 +283,16 @@ pub enum TypeErrorKind {
     /// A `route:` arm's guard expression is not a Bool.
     RouteGuardNotBool { prompt: String, got: String },
 
+    /// A backend server declared the same method/path pair more than once.
+    DuplicateServerRoute {
+        server: String,
+        method: String,
+        path: String,
+    },
+
+    /// A GET route declared a request body.
+    GetRouteBody { server: String, path: String },
+
     ModelOutputFormatMismatch {
         prompt: String,
         model: String,
@@ -571,6 +581,16 @@ impl TypeErrorKind {
             Self::RouteGuardNotBool { prompt, got } => {
                 format!("route arm guard in prompt `{prompt}` must evaluate to `Bool`, got `{got}`")
             }
+            Self::DuplicateServerRoute {
+                server,
+                method,
+                path,
+            } => {
+                format!("server `{server}` declares duplicate route `{method} {path}`")
+            }
+            Self::GetRouteBody { server, path } => {
+                format!("GET route `{path}` in server `{server}` declares a request body")
+            }
             Self::ModelOutputFormatMismatch {
                 prompt,
                 model,
@@ -824,6 +844,12 @@ impl TypeErrorKind {
             Self::RouteGuardNotBool { .. } => Some(
                 "use a comparison or boolean expression for the guard, e.g. `length(q) > 1000`"
                     .into(),
+            ),
+            Self::DuplicateServerRoute { method, path, .. } => Some(format!(
+                "keep exactly one handler for `{method} {path}`, or change one route's method/path"
+            )),
+            Self::GetRouteBody { .. } => Some(
+                "move request data for GET into a `query Type` clause, or change the method to POST/PUT/PATCH".into(),
             ),
             Self::ModelOutputFormatMismatch { required, .. } => Some(format!(
                 "add `output_format: {required}` to the target `model` declaration, or route this prompt to a model that supports that response format"

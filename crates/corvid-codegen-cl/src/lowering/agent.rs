@@ -35,8 +35,10 @@ pub(super) fn define_extern_c_wrapper(
     }
     sig.params.push(AbiParam::new(I64));
     if !matches!(agent.return_ty, Type::Nothing) {
-        sig.returns
-            .push(AbiParam::new(extern_c_abi_type(&agent.return_ty, agent.span)?));
+        sig.returns.push(AbiParam::new(extern_c_abi_type(
+            &agent.return_ty,
+            agent.span,
+        )?));
     }
 
     let wrapper_id = module
@@ -51,7 +53,11 @@ pub(super) fn define_extern_c_wrapper(
     let mut ctx = Context::new();
     ctx.func = Function::with_name_signature(
         UserFuncName::user(0, wrapper_id.as_u32()),
-        module.declarations().get_function_decl(wrapper_id).signature.clone(),
+        module
+            .declarations()
+            .get_function_decl(wrapper_id)
+            .signature
+            .clone(),
     );
 
     let mut builder_ctx = FunctionBuilderContext::new();
@@ -62,8 +68,7 @@ pub(super) fn define_extern_c_wrapper(
         builder.switch_to_block(entry);
         builder.seal_block(entry);
 
-        let embed_init_ref =
-            module.declare_func_in_func(runtime.runtime_embed_init, builder.func);
+        let embed_init_ref = module.declare_func_in_func(runtime.runtime_embed_init, builder.func);
         builder.ins().call(embed_init_ref, &[]);
         let begin_observation_ref =
             module.declare_func_in_func(runtime.begin_direct_observation, builder.func);
@@ -95,7 +100,8 @@ pub(super) fn define_extern_c_wrapper(
         let inner_ref = module.declare_func_in_func(inner_func_id, builder.func);
         let call = builder.ins().call(inner_ref, &call_args);
         let results: Vec<ClValue> = builder.inst_results(call).iter().copied().collect();
-        let grounded_handle_ptr = grounded_return_inner.map(|_| builder.block_params(entry)[agent.params.len()]);
+        let grounded_handle_ptr =
+            grounded_return_inner.map(|_| builder.block_params(entry)[agent.params.len()]);
         let observation_handle_ptr = builder.block_params(entry)
             [agent.params.len() + grounded_return_inner.map(|_| 1).unwrap_or(0)];
         let finish_observation_ref =
@@ -146,10 +152,8 @@ pub(super) fn define_extern_c_wrapper(
                         agent.span,
                     )
                 })?;
-                let capture_ref = module.declare_func_in_func(
-                    runtime.grounded_capture_string_handle,
-                    builder.func,
-                );
+                let capture_ref = module
+                    .declare_func_in_func(runtime.grounded_capture_string_handle, builder.func);
                 let capture_call = builder.ins().call(capture_ref, &[result]);
                 let handle = builder.inst_results(capture_call)[0];
                 emit_grounded_handle_store(&mut builder, grounded_handle_ptr, handle);
@@ -170,10 +174,8 @@ pub(super) fn define_extern_c_wrapper(
                         agent.span,
                     )
                 })?;
-                let capture_ref = module.declare_func_in_func(
-                    runtime.grounded_capture_scalar_handle,
-                    builder.func,
-                );
+                let capture_ref = module
+                    .declare_func_in_func(runtime.grounded_capture_scalar_handle, builder.func);
                 let capture_call = builder.ins().call(capture_ref, &[]);
                 let handle = builder.inst_results(capture_call)[0];
                 emit_grounded_handle_store(&mut builder, grounded_handle_ptr, handle);
@@ -338,6 +340,10 @@ pub(super) fn cl_type_for(ty: &Type, span: Span) -> Result<clir::Type, CodegenEr
             "`Option<T>` — native codegen currently supports nullable-pointer `Option<T>` when `T` is refcounted plus wide scalar `Option<Int|Bool|Float>`; other payload shapes still need the interpreter tier",
             span,
         )),
+        Type::RouteParams(_) => Err(CodegenError::not_supported(
+            "`route path params` - native HTTP route lowering lands in the backend-runtime slices",
+            span,
+        )),
         Type::TraceId => Err(CodegenError::not_supported(
             "`TraceId` - native codegen for replay expressions lands in Phase 21 slice 21-inv-E-4; use the interpreter tier (`corvid run --tier interp`) until then",
             span,
@@ -359,7 +365,11 @@ pub(super) fn define_agent(
     let mut ctx = Context::new();
     ctx.func = Function::with_name_signature(
         UserFuncName::user(0, func_id.as_u32()),
-        module.declarations().get_function_decl(func_id).signature.clone(),
+        module
+            .declarations()
+            .get_function_decl(func_id)
+            .signature
+            .clone(),
     );
 
     let mut builder_ctx = FunctionBuilderContext::new();

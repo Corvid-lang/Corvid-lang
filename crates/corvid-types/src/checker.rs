@@ -456,6 +456,7 @@ impl<'a> Checker<'a> {
                         models.insert(id, m);
                     }
                 }
+                Decl::Server(_) => {}
                 Decl::Extend(ext) => {
                     // Index method decls by their allocated DefIds
                     // (from the resolver's
@@ -529,6 +530,7 @@ impl<'a> Checker<'a> {
                 Decl::Fixture(f) => self.check_fixture(f),
                 Decl::Mock(m) => self.check_mock(m),
                 Decl::Prompt(p) => self.check_prompt(p),
+                Decl::Server(s) => self.check_server(s),
                 Decl::Tool(_)
                 | Decl::Type(_)
                 | Decl::Store(_)

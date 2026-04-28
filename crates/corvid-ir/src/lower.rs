@@ -188,6 +188,11 @@ impl<'a> Lowerer<'a> {
                     // capability requirements; slice C adds the
                     // route table.
                 }
+                Decl::Server(_) => {
+                    // Phase 36C: server route bodies typecheck, but
+                    // HTTP dispatch IR is introduced in a later
+                    // backend-runtime slice.
+                }
                 Decl::Extend(ext) => {
                     // Lower each method into the appropriate per-kind
                     // IR vector. Methods get

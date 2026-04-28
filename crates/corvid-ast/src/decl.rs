@@ -34,6 +34,8 @@ pub enum Decl {
     /// `model Name:` typed-model-substrate declaration (Phase 20h).
     /// A catalog entry for an LLM the project can dispatch to.
     Model(ModelDecl),
+    /// `server Name:` backend route declaration.
+    Server(ServerDecl),
 }
 
 impl Decl {
@@ -52,8 +54,79 @@ impl Decl {
             Decl::Extend(d) => d.span,
             Decl::Effect(d) => d.span,
             Decl::Model(d) => d.span,
+            Decl::Server(d) => d.span,
         }
     }
+}
+
+/// A backend server surface:
+///
+/// ```text
+/// server refund_api:
+///     route GET "/orders/{id}" -> json Order:
+///         return get_order(path.id)
+/// ```
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ServerDecl {
+    pub name: Ident,
+    pub routes: Vec<HttpRouteDecl>,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct HttpRouteDecl {
+    pub method: HttpMethod,
+    pub path: String,
+    pub path_params: Vec<RoutePathParam>,
+    #[serde(default)]
+    pub query_ty: Option<TypeRef>,
+    #[serde(default)]
+    pub body_ty: Option<TypeRef>,
+    pub response: RouteResponse,
+    #[serde(default)]
+    pub effect_row: EffectRow,
+    pub body: Block,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum HttpMethod {
+    Get,
+    Post,
+    Put,
+    Patch,
+    Delete,
+}
+
+impl HttpMethod {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Get => "GET",
+            Self::Post => "POST",
+            Self::Put => "PUT",
+            Self::Patch => "PATCH",
+            Self::Delete => "DELETE",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RoutePathParam {
+    pub name: Ident,
+    pub ty: TypeRef,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RouteResponse {
+    pub kind: RouteResponseKind,
+    pub ty: TypeRef,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum RouteResponseKind {
+    Json,
 }
 
 /// Visibility modifier on a method declared inside an `extend` block.
@@ -667,7 +740,9 @@ impl AgentAttribute {
     }
 
     pub fn is_deterministic(attrs: &[AgentAttribute]) -> bool {
-        attrs.iter().any(|a| matches!(a, Self::Deterministic { .. }))
+        attrs
+            .iter()
+            .any(|a| matches!(a, Self::Deterministic { .. }))
     }
 
     pub fn is_wrapping(attrs: &[AgentAttribute]) -> bool {

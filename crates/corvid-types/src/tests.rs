@@ -75,6 +75,98 @@ fn has_effect_violation(c: &Checked, dimension: &str) -> bool {
     })
 }
 
+#[test]
+fn server_route_path_query_body_and_json_response_typecheck() {
+    let src = r#"
+type Order:
+    id: String
+
+type OrderQuery:
+    include_items: Bool
+
+type RefundRequest:
+    order_id: String
+
+type RefundResponse:
+    ok: Bool
+
+tool get_order(id: String) -> Order
+tool approve_refund(req: RefundRequest) -> RefundResponse
+
+server refund_api:
+    route GET "/orders/{id}" query OrderQuery -> json Order:
+        return get_order(path.id)
+    route POST "/refunds" body RefundRequest -> json RefundResponse:
+        return approve_refund(body)
+"#;
+    let c = check(src);
+    assert!(c.errors.is_empty(), "errors: {:?}", c.errors);
+}
+
+#[test]
+fn server_route_json_response_mismatch_is_rejected() {
+    let src = r#"
+type Order:
+    id: String
+
+server refund_api:
+    route GET "/orders/{id}" -> json Order:
+        return path.id
+"#;
+    let c = check(src);
+    assert!(
+        c.errors
+            .iter()
+            .any(|e| matches!(e.kind, TypeErrorKind::ReturnTypeMismatch { .. })),
+        "expected route return mismatch, got {:?}",
+        c.errors
+    );
+}
+
+#[test]
+fn server_route_duplicate_method_path_is_rejected() {
+    let src = r#"
+type Order:
+    id: String
+
+tool get_order(id: String) -> Order
+
+server refund_api:
+    route GET "/orders/{id}" -> json Order:
+        return get_order(path.id)
+    route GET "/orders/{id}" -> json Order:
+        return get_order(path.id)
+"#;
+    let c = check(src);
+    assert!(
+        c.errors
+            .iter()
+            .any(|e| matches!(e.kind, TypeErrorKind::DuplicateServerRoute { .. })),
+        "expected duplicate route error, got {:?}",
+        c.errors
+    );
+}
+
+#[test]
+fn server_get_route_body_is_rejected() {
+    let src = r#"
+type RefundRequest:
+    order_id: String
+
+server refund_api:
+    route GET "/refunds" body RefundRequest -> json RefundRequest:
+        return body
+"#;
+    let c = check(src);
+    assert!(
+        c.errors
+            .iter()
+            .any(|e| matches!(e.kind, TypeErrorKind::GetRouteBody { .. })),
+        "expected GET body error, got {:?}",
+        c.errors
+    );
+}
+
 const MUTATION_APPROVAL_BASE: &str = r#"
 type Receipt:
     id: String

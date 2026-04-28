@@ -111,6 +111,7 @@ fn is_native_value_type(ty: &Type) -> bool {
         | Type::Stream(_)
         | Type::Partial(_)
         | Type::ResumeToken(_)
+        | Type::RouteParams(_)
         | Type::Unknown => false,
     }
 }

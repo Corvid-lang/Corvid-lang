@@ -10,8 +10,8 @@ use crate::errors::{ResolveError, ResolveErrorKind};
 use crate::scope::{Binding, DefId, DeclKind, LocalId, LocalScope, SymbolTable};
 use corvid_ast::{
     AgentDecl, Block, Decl, EvalAssert, EvalDecl, Expr, ExtendDecl, ExtendMethodKind, File,
-    Ident, PromptDecl, ReplayArm, ReplayPattern, Span, Stmt, TestDecl, ToolArgPattern, ToolDecl,
-    TypeDecl, TypeRef, Visibility,
+    HttpRouteDecl, Ident, PromptDecl, ReplayArm, ReplayPattern, ServerDecl, Span, Stmt, TestDecl,
+    ToolArgPattern, ToolDecl, TypeDecl, TypeRef, Visibility,
 };
 use std::collections::{HashMap, HashSet};
 
@@ -188,6 +188,7 @@ impl Resolver {
                 }
                 Decl::Effect(e) => (e.name.name.clone(), DeclKind::Effect, e.span),
                 Decl::Model(m) => (m.name.name.clone(), DeclKind::Model, m.span),
+                Decl::Server(s) => (s.name.name.clone(), DeclKind::Server, s.span),
                 Decl::Extend(_) => {
                     // The parser accepts `extend T:`
                     // blocks; method registration into a per-type
@@ -352,6 +353,7 @@ impl Resolver {
                     // dimension validation; slice C wires `route:`
                     // clauses that reference model names.
                 }
+                Decl::Server(s) => self.resolve_server_decl(s),
                 Decl::Extend(ext) => {
                     // Resolve each method body
                     // the same way free agents/prompts/tools are
@@ -545,6 +547,40 @@ impl Resolver {
         self.resolve_type_ref(&a.return_ty);
         self.resolve_effect_row(&a.effect_row);
         self.resolve_block(&a.body);
+        self.pop_scope();
+    }
+
+    fn resolve_server_decl(&mut self, s: &ServerDecl) {
+        for route in &s.routes {
+            self.resolve_http_route_decl(route);
+        }
+    }
+
+    fn resolve_http_route_decl(&mut self, route: &HttpRouteDecl) {
+        for param in &route.path_params {
+            self.resolve_type_ref(&param.ty);
+        }
+        if let Some(query_ty) = &route.query_ty {
+            self.resolve_type_ref(query_ty);
+        }
+        if let Some(body_ty) = &route.body_ty {
+            self.resolve_type_ref(body_ty);
+        }
+        self.resolve_type_ref(&route.response.ty);
+        self.resolve_effect_row(&route.effect_row);
+
+        self.push_scope();
+        let path_id = self.fresh_local();
+        self.current_scope_mut().insert("path", path_id);
+        if route.query_ty.is_some() {
+            let query_id = self.fresh_local();
+            self.current_scope_mut().insert("query", query_id);
+        }
+        if route.body_ty.is_some() {
+            let body_id = self.fresh_local();
+            self.current_scope_mut().insert("body", body_id);
+        }
+        self.resolve_block(&route.body);
         self.pop_scope();
     }
 
@@ -884,6 +920,14 @@ impl Resolver {
                         }
                     }
                 }
+                Decl::Server(server) => {
+                    for route in &server.routes {
+                        collect_approval_labels_in_block(
+                            &route.body,
+                            &mut self.known_approval_labels,
+                        );
+                    }
+                }
                 _ => {}
             }
         }
@@ -949,6 +993,7 @@ fn decl_kind_label(kind: DeclKind) -> &'static str {
         DeclKind::Mock => "mock",
         DeclKind::Effect => "effect",
         DeclKind::Model => "model",
+        DeclKind::Server => "server",
     }
 }
 

@@ -82,6 +82,7 @@ pub fn decl_name(decl: &Decl) -> Option<&str> {
         Decl::Eval(d) => Some(&d.name.name),
         Decl::Test(d) => Some(&d.name.name),
         Decl::Fixture(d) => Some(&d.name.name),
+        Decl::Server(d) => Some(&d.name.name),
         Decl::Mock(_) | Decl::Extend(_) | Decl::Effect(_) | Decl::Model(_) => None,
     }
 }
@@ -131,6 +132,21 @@ fn collect_decl_deps(decl: &Decl, resolved: &Resolved, deps: &mut HashSet<DefId>
         Decl::Store(store) => {
             for field in &store.fields {
                 collect_typeref_dep(&field.ty, resolved, deps);
+            }
+        }
+        Decl::Server(server) => {
+            for route in &server.routes {
+                for param in &route.path_params {
+                    collect_typeref_dep(&param.ty, resolved, deps);
+                }
+                if let Some(query_ty) = &route.query_ty {
+                    collect_typeref_dep(query_ty, resolved, deps);
+                }
+                if let Some(body_ty) = &route.body_ty {
+                    collect_typeref_dep(body_ty, resolved, deps);
+                }
+                collect_typeref_dep(&route.response.ty, resolved, deps);
+                collect_block_deps(&route.body, resolved, deps);
             }
         }
         Decl::Import(_) | Decl::Extend(_) | Decl::Effect(_) | Decl::Model(_) => {}

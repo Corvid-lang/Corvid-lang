@@ -509,7 +509,11 @@ pub(super) fn declare_runtime_funcs(
     let mut json_buffer_new_sig = module.make_signature();
     json_buffer_new_sig.returns.push(AbiParam::new(I64));
     let json_buffer_new_id = module
-        .declare_function(JSON_BUFFER_NEW_SYMBOL, Linkage::Import, &json_buffer_new_sig)
+        .declare_function(
+            JSON_BUFFER_NEW_SYMBOL,
+            Linkage::Import,
+            &json_buffer_new_sig,
+        )
         .map_err(|e| {
             CodegenError::cranelift(format!("declare json_buffer_new: {e}"), Span::new(0, 0))
         })?;
@@ -607,8 +611,12 @@ pub(super) fn declare_runtime_funcs(
         })?;
 
     let mut json_buffer_append_string_sig = module.make_signature();
-    json_buffer_append_string_sig.params.push(AbiParam::new(I64));
-    json_buffer_append_string_sig.params.push(AbiParam::new(I64));
+    json_buffer_append_string_sig
+        .params
+        .push(AbiParam::new(I64));
+    json_buffer_append_string_sig
+        .params
+        .push(AbiParam::new(I64));
     let json_buffer_append_string_id = module
         .declare_function(
             JSON_BUFFER_APPEND_STRING_SYMBOL,
@@ -2036,6 +2044,7 @@ pub(super) fn mangle_type_name(ty: &Type) -> String {
             }
         }
         Type::TraceId => "TraceId".into(),
+        Type::RouteParams(_) => "RouteParams".into(),
         Type::Unknown => "Unknown".into(),
     }
 }
@@ -2408,6 +2417,7 @@ pub(super) fn is_native_value_type(ty: &Type) -> bool {
         Type::TraceId => true,
         Type::Nothing
         | Type::Function { .. }
+        | Type::RouteParams(_)
         | Type::Stream(_)
         | Type::Partial(_)
         | Type::ResumeToken(_)
@@ -2926,10 +2936,9 @@ fn emit_json_append_struct(
         emit_json_append_raw(builder, module, runtime, buf, &prefix, span)?;
         let field_cl_ty = cl_type_for(&field.ty, span)?;
         let offset = (i as i32) * STRUCT_FIELD_SLOT_BYTES;
-        let field_val =
-            builder
-                .ins()
-                .load(field_cl_ty, MemFlags::trusted(), value, offset);
+        let field_val = builder
+            .ins()
+            .load(field_cl_ty, MemFlags::trusted(), value, offset);
         emit_json_append(builder, module, runtime, buf, field_val, &field.ty, span)?;
     }
     emit_json_append_raw(builder, module, runtime, buf, "}", span)?;
@@ -2947,9 +2956,7 @@ fn emit_json_append_list(
 ) -> Result<(), CodegenError> {
     let elem_cl_ty = cl_type_for(elem_ty, span)?;
     emit_json_append_raw(builder, module, runtime, buf, "[", span)?;
-    let length = builder
-        .ins()
-        .load(I64, MemFlags::trusted(), value, 0);
+    let length = builder.ins().load(I64, MemFlags::trusted(), value, 0);
     let zero = builder.ins().iconst(I64, 0);
 
     let header_block = builder.create_block();
@@ -2967,10 +2974,10 @@ fn emit_json_append_list(
 
     builder.switch_to_block(body_block);
     builder.seal_block(body_block);
-    let needs_comma = builder
+    let needs_comma = builder.ins().icmp_imm(IntCC::SignedGreaterThan, counter, 0);
+    builder
         .ins()
-        .icmp_imm(IntCC::SignedGreaterThan, counter, 0);
-    builder.ins().brif(needs_comma, comma_block, &[], elem_block, &[]);
+        .brif(needs_comma, comma_block, &[], elem_block, &[]);
 
     builder.switch_to_block(comma_block);
     builder.seal_block(comma_block);

@@ -276,6 +276,7 @@ fn type_label(t: &Type) -> String {
         Type::Partial(inner) => format!("Partial<{}>", type_label(inner)),
         Type::ResumeToken(inner) => format!("ResumeToken<{}>", type_label(inner)),
         Type::TraceId => "TraceId".into(),
+        Type::RouteParams(_) => "route path params".into(),
         Type::Function { .. } => "function".into(),
         Type::Unknown => "<unknown>".into(),
     }

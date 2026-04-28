@@ -1,9 +1,9 @@
 use anyhow::{anyhow, bail, Result};
 use corvid_ast::{
     AgentDecl, Backoff, BackpressurePolicy, BinaryOp, Block, Decl, DimensionValue, Effect,
-    EffectConstraint, EvalAssert, Expr, ExtendMethod, ExtendMethodKind, File, FixtureDecl,
-    ImportSource, Ident, Literal, MockDecl, Param, PromptDecl, Span, Stmt, ToolDecl, TypeRef,
-    UnaryOp, Visibility,
+    EffectConstraint, EvalAssert, Expr, ExtendMethod, ExtendMethodKind, File, FixtureDecl, Ident,
+    ImportSource, Literal, MockDecl, Param, PromptDecl, Span, Stmt, ToolDecl, TypeRef, UnaryOp,
+    Visibility,
 };
 use corvid_resolve::{build_dep_graph, resolve, Binding, LocalId, Resolved};
 use corvid_syntax::{lex, parse_file};
@@ -134,7 +134,10 @@ pub fn render_file(file: &File) -> String {
 fn alpha_convert(file: &mut File) -> Result<bool> {
     let resolved = resolve(file);
     if !resolved.errors.is_empty() {
-        bail!("resolve failed before alpha-conversion: {:?}", resolved.errors);
+        bail!(
+            "resolve failed before alpha-conversion: {:?}",
+            resolved.errors
+        );
     }
     for decl in &mut file.decls {
         let Decl::Agent(agent) = decl else { continue };
@@ -200,12 +203,20 @@ fn commutative_sibling_swap(file: &mut File) -> Result<bool> {
 fn top_level_reorder(file: &mut File) -> Result<bool> {
     let resolved = resolve(file);
     if !resolved.errors.is_empty() {
-        bail!("resolve failed before top-level-reorder: {:?}", resolved.errors);
+        bail!(
+            "resolve failed before top-level-reorder: {:?}",
+            resolved.errors
+        );
     }
     let graph = build_dep_graph(file, &resolved);
     for index in 0..file.decls.len().saturating_sub(1) {
-        if can_reorder_top_level_pair(&file.decls[index], &file.decls[index + 1], file, &resolved, &graph)
-        {
+        if can_reorder_top_level_pair(
+            &file.decls[index],
+            &file.decls[index + 1],
+            file,
+            &resolved,
+            &graph,
+        ) {
             file.decls.swap(index, index + 1);
             return Ok(true);
         }
@@ -263,7 +274,9 @@ fn collect_rename_candidate_from_block(
                     collect_rename_candidate_from_block(block, resolved, candidate);
                 }
             }
-            Stmt::For { body, .. } => collect_rename_candidate_from_block(body, resolved, candidate),
+            Stmt::For { body, .. } => {
+                collect_rename_candidate_from_block(body, resolved, candidate)
+            }
             _ => {}
         }
     }
@@ -301,7 +314,9 @@ fn rename_local_in_block(block: &mut Block, resolved: &Resolved, target: LocalId
                     rename_local_in_block(block, resolved, target, fresh);
                 }
             }
-            Stmt::For { var, iter, body, .. } => {
+            Stmt::For {
+                var, iter, body, ..
+            } => {
                 rename_ident_if_matches(var, resolved, target, fresh);
                 rename_local_in_expr(iter, resolved, target, fresh);
                 rename_local_in_block(body, resolved, target, fresh);
@@ -325,7 +340,11 @@ fn rename_local_in_expr(expr: &mut Expr, resolved: &Resolved, target: LocalId, f
         Expr::FieldAccess { target: inner, .. } => {
             rename_local_in_expr(inner, resolved, target, fresh);
         }
-        Expr::Index { target: inner, index, .. } => {
+        Expr::Index {
+            target: inner,
+            index,
+            ..
+        } => {
             rename_local_in_expr(inner, resolved, target, fresh);
             rename_local_in_expr(index, resolved, target, fresh);
         }
@@ -559,9 +578,7 @@ fn is_direct_local_expr(expr: &Expr, resolved: &Resolved, local: LocalId) -> boo
 
 fn apply_inline_to_stmt(stmt: &mut Stmt, resolved: &Resolved, replacement: Expr) {
     match stmt {
-        Stmt::Let { value, .. }
-        | Stmt::Yield { value, .. }
-        | Stmt::Expr { expr: value, .. } => {
+        Stmt::Let { value, .. } | Stmt::Yield { value, .. } | Stmt::Expr { expr: value, .. } => {
             if matches!(value, Expr::Ident { .. }) {
                 *value = replacement;
             }
@@ -692,7 +709,9 @@ fn expr_mentions_local(expr: &Expr, resolved: &Resolved, local: LocalId) -> bool
         ),
         Expr::Call { callee, args, .. } => {
             expr_mentions_local(callee, resolved, local)
-                || args.iter().any(|arg| expr_mentions_local(arg, resolved, local))
+                || args
+                    .iter()
+                    .any(|arg| expr_mentions_local(arg, resolved, local))
         }
         Expr::FieldAccess { target, .. } => expr_mentions_local(target, resolved, local),
         Expr::Index { target, index, .. } => {
@@ -704,7 +723,9 @@ fn expr_mentions_local(expr: &Expr, resolved: &Resolved, local: LocalId) -> bool
                 || expr_mentions_local(right, resolved, local)
         }
         Expr::UnOp { operand, .. } => expr_mentions_local(operand, resolved, local),
-        Expr::List { items, .. } => items.iter().any(|item| expr_mentions_local(item, resolved, local)),
+        Expr::List { items, .. } => items
+            .iter()
+            .any(|item| expr_mentions_local(item, resolved, local)),
         Expr::TryPropagate { inner, .. } => expr_mentions_local(inner, resolved, local),
         Expr::TryRetry { body, .. } => expr_mentions_local(body, resolved, local),
         Expr::Replay {
@@ -742,7 +763,8 @@ fn can_reorder_top_level_pair(
         return false;
     };
     let _ = file;
-    !depends_transitively(graph, left_id, right_id) && !depends_transitively(graph, right_id, left_id)
+    !depends_transitively(graph, left_id, right_id)
+        && !depends_transitively(graph, right_id, left_id)
 }
 
 fn is_reorderable_top_level_decl(decl: &Decl) -> bool {
@@ -873,7 +895,13 @@ fn fold_constants_in_stmt(stmt: &mut Stmt) -> bool {
 }
 
 fn fold_constants_in_expr(expr: &mut Expr) -> bool {
-    if let Expr::BinOp { op, left, right, span } = expr {
+    if let Expr::BinOp {
+        op,
+        left,
+        right,
+        span,
+    } = expr
+    {
         if let (Expr::Literal { value: left, .. }, Expr::Literal { value: right, .. }) =
             (&**left, &**right)
         {
@@ -1010,7 +1038,11 @@ fn is_pure_expr(expr: &Expr) -> bool {
 }
 
 fn collect_agent_local_names(agent: &AgentDecl) -> BTreeSet<String> {
-    let mut names: BTreeSet<String> = agent.params.iter().map(|param| param.name.name.clone()).collect();
+    let mut names: BTreeSet<String> = agent
+        .params
+        .iter()
+        .map(|param| param.name.name.clone())
+        .collect();
     collect_names_from_block(&agent.body, &mut names);
     names
 }
@@ -1098,6 +1130,15 @@ fn collect_all_names(file: &File) -> BTreeSet<String> {
                     names.insert(field.name.name.clone());
                 }
             }
+            Decl::Server(server) => {
+                names.insert(server.name.name.clone());
+                for route in &server.routes {
+                    for param in &route.path_params {
+                        names.insert(param.name.name.clone());
+                    }
+                    collect_names_from_block(&route.body, &mut names);
+                }
+            }
         }
     }
     names
@@ -1166,7 +1207,9 @@ fn render_decl(decl: &Decl, indent: usize, out: &mut String) {
             out.push_str("import ");
             out.push_str(match import.source {
                 ImportSource::Python => "python ",
-                ImportSource::Corvid | ImportSource::RemoteCorvid | ImportSource::PackageCorvid => "",
+                ImportSource::Corvid | ImportSource::RemoteCorvid | ImportSource::PackageCorvid => {
+                    ""
+                }
             });
             out.push_str(&render_string_literal(&import.module));
             if let Some(hash) = &import.content_hash {
@@ -1315,6 +1358,38 @@ fn render_decl(decl: &Decl, indent: usize, out: &mut String) {
                 out.push_str(&render_dimension_value(&field.value));
             }
         }
+        Decl::Server(server) => {
+            push_indent(indent, out);
+            out.push_str("server ");
+            out.push_str(&server.name.name);
+            out.push_str(":\n");
+            for (index, route) in server.routes.iter().enumerate() {
+                if index > 0 {
+                    out.push('\n');
+                }
+                push_indent(indent + 1, out);
+                out.push_str("route ");
+                out.push_str(route.method.as_str());
+                out.push(' ');
+                out.push_str(&render_string_literal(&route.path));
+                if let Some(query_ty) = &route.query_ty {
+                    out.push_str(" query ");
+                    out.push_str(&render_type_ref(query_ty));
+                }
+                if let Some(body_ty) = &route.body_ty {
+                    out.push_str(" body ");
+                    out.push_str(&render_type_ref(body_ty));
+                }
+                out.push_str(" -> json ");
+                out.push_str(&render_type_ref(&route.response.ty));
+                if !route.effect_row.effects.is_empty() {
+                    out.push_str(" uses ");
+                    out.push_str(&render_effect_row_names(&route.effect_row.effects));
+                }
+                out.push_str(":\n");
+                render_block(&route.body, indent + 2, out);
+            }
+        }
     }
 }
 
@@ -1439,7 +1514,9 @@ fn render_block(block: &Block, indent: usize, out: &mut String) {
 
 fn render_stmt(stmt: &Stmt, indent: usize, out: &mut String) {
     match stmt {
-        Stmt::Let { name, ty, value, .. } => {
+        Stmt::Let {
+            name, ty, value, ..
+        } => {
             push_indent(indent, out);
             out.push_str(&name.name);
             if let Some(ty) = ty {
@@ -1480,7 +1557,9 @@ fn render_stmt(stmt: &Stmt, indent: usize, out: &mut String) {
                 render_block(block, indent + 1, out);
             }
         }
-        Stmt::For { var, iter, body, .. } => {
+        Stmt::For {
+            var, iter, body, ..
+        } => {
             push_indent(indent, out);
             out.push_str("for ");
             out.push_str(&var.name);
@@ -1510,17 +1589,23 @@ fn render_expr(expr: &Expr) -> String {
             render_expr(callee),
             args.iter().map(render_expr).collect::<Vec<_>>().join(", ")
         ),
-        Expr::FieldAccess { target, field, .. } => format!("{}.{}", render_expr(target), field.name),
+        Expr::FieldAccess { target, field, .. } => {
+            format!("{}.{}", render_expr(target), field.name)
+        }
         Expr::Index { target, index, .. } => {
             format!("{}[{}]", render_expr(target), render_expr(index))
         }
-        Expr::BinOp { op, left, right, .. } => format!(
+        Expr::BinOp {
+            op, left, right, ..
+        } => format!(
             "({} {} {})",
             render_expr(left),
             render_binary_op(*op),
             render_expr(right)
         ),
-        Expr::UnOp { op, operand, .. } => format!("({}{})", render_unary_op(*op), render_expr(operand)),
+        Expr::UnOp { op, operand, .. } => {
+            format!("({}{})", render_unary_op(*op), render_expr(operand))
+        }
         Expr::List { items, .. } => format!(
             "[{}]",
             items.iter().map(render_expr).collect::<Vec<_>>().join(", ")
@@ -1610,7 +1695,11 @@ fn render_eval_assert(assertion: &EvalAssert) -> String {
         EvalAssert::Called { tool, .. } => format!("assert called {}", tool.name),
         EvalAssert::Approved { label, .. } => format!("assert approved {}", label.name),
         EvalAssert::Cost { op, bound, .. } => {
-            format!("assert cost {} ${}", render_binary_op(*op), render_float(*bound))
+            format!(
+                "assert cost {} ${}",
+                render_binary_op(*op),
+                render_float(*bound)
+            )
         }
         EvalAssert::Ordering { before, after, .. } => {
             format!("assert called {} before {}", before.name, after.name)
@@ -1633,7 +1722,10 @@ fn render_type_ref(ty: &TypeRef) -> String {
         TypeRef::Generic { name, args, .. } => format!(
             "{}<{}>",
             name.name,
-            args.iter().map(render_type_ref).collect::<Vec<_>>().join(", ")
+            args.iter()
+                .map(render_type_ref)
+                .collect::<Vec<_>>()
+                .join(", ")
         ),
         TypeRef::Weak { inner, effects, .. } => {
             let inner = render_type_ref(inner);
@@ -1655,7 +1747,11 @@ fn render_type_ref(ty: &TypeRef) -> String {
         }
         TypeRef::Function { params, ret, .. } => format!(
             "({}) -> {}",
-            params.iter().map(render_type_ref).collect::<Vec<_>>().join(", "),
+            params
+                .iter()
+                .map(render_type_ref)
+                .collect::<Vec<_>>()
+                .join(", "),
             render_type_ref(ret)
         ),
     }
@@ -1673,7 +1769,11 @@ fn render_literal(literal: &Literal) -> String {
 
 fn render_constraint(constraint: &EffectConstraint) -> String {
     match &constraint.value {
-        Some(value) => format!("@{}({})", constraint.dimension.name, render_dimension_value(value)),
+        Some(value) => format!(
+            "@{}({})",
+            constraint.dimension.name,
+            render_dimension_value(value)
+        ),
         None => format!("@{}", constraint.dimension.name),
     }
 }
@@ -1687,7 +1787,9 @@ fn render_dimension_value(value: &DimensionValue) -> String {
         DimensionValue::Streaming { backpressure } => {
             format!("streaming({})", render_backpressure(backpressure))
         }
-        DimensionValue::ConfidenceGated { threshold, above, .. } => {
+        DimensionValue::ConfidenceGated {
+            threshold, above, ..
+        } => {
             format!("{above}_if_confident({})", render_float(*threshold))
         }
     }

@@ -3055,3 +3055,48 @@ replay \"t.jsonl\":
             .expect("expected whole-event `as order` capture");
         assert_eq!(capture.name, "order");
     }
+
+    #[test]
+    fn server_route_decl_parses_typed_backend_surface() {
+        let src = r#"
+type Order:
+    id: String
+
+type RefundQuery:
+    dry_run: Bool
+
+type RefundRequest:
+    order_id: String
+
+type RefundResponse:
+    ok: Bool
+
+effect transfer_money:
+    cost: $1
+
+server refund_api:
+    route GET "/orders/{id}" query RefundQuery -> json Order:
+        return get_order(path.id)
+    route POST "/refunds" body RefundRequest -> json RefundResponse uses transfer_money:
+        return approve_refund(body)
+"#;
+        let tokens = lex(src).expect("lex failed");
+        let (file, errors) = parse_file(&tokens);
+        assert!(errors.is_empty(), "unexpected parse errors: {errors:?}");
+        let server = file
+            .decls
+            .iter()
+            .find_map(|decl| match decl {
+                Decl::Server(server) => Some(server),
+                _ => None,
+            })
+            .expect("server decl");
+        assert_eq!(server.name.name, "refund_api");
+        assert_eq!(server.routes.len(), 2);
+        assert_eq!(server.routes[0].method.as_str(), "GET");
+        assert_eq!(server.routes[0].path, "/orders/{id}");
+        assert_eq!(server.routes[0].path_params[0].name.name, "id");
+        assert!(server.routes[0].query_ty.is_some());
+        assert!(server.routes[1].body_ty.is_some());
+        assert_eq!(server.routes[1].effect_row.effects[0].name.name, "transfer_money");
+    }

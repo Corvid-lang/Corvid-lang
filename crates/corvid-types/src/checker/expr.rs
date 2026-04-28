@@ -212,7 +212,8 @@ impl<'a> Checker<'a> {
             | DeclKind::Test
             | DeclKind::Mock
             | DeclKind::Effect
-            | DeclKind::Model => Type::Unknown,
+            | DeclKind::Model
+            | DeclKind::Server => Type::Unknown,
         }
     }
 
@@ -262,6 +263,20 @@ impl<'a> Checker<'a> {
                 }
             }
             Type::Partial(inner) => self.check_partial_field(inner, field, span),
+            Type::RouteParams(fields) => {
+                if let Some((_, ty)) = fields.iter().find(|(name, _)| name == &field.name) {
+                    ty.clone()
+                } else {
+                    self.errors.push(TypeError::new(
+                        TypeErrorKind::UnknownField {
+                            struct_name: "route path params".into(),
+                            field: field.name.clone(),
+                        },
+                        span,
+                    ));
+                    Type::Unknown
+                }
+            }
             Type::Unknown => Type::Unknown,
             other => {
                 self.errors.push(TypeError::new(

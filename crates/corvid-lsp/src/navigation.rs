@@ -286,6 +286,14 @@ fn top_level_definitions(file: &File, resolved: &Resolved) -> Vec<Definition> {
                 name.span,
                 SymbolKind::CLASS,
             ),
+            Decl::Server(server) => push_definition(
+                &mut out,
+                resolved,
+                &server.name.name,
+                DeclKind::Server,
+                server.name.span,
+                SymbolKind::CLASS,
+            ),
             Decl::Import(_) | Decl::Extend(_) => {}
         }
     }

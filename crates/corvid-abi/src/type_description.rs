@@ -78,7 +78,7 @@ pub fn emit_type_description(ty: &Type, resolved: &Resolved) -> TypeDescription 
                     .collect(),
             },
         },
-        Type::Function { .. } | Type::Unknown => TypeDescription::Scalar {
+        Type::Function { .. } | Type::RouteParams(_) | Type::Unknown => TypeDescription::Scalar {
             scalar: ScalarTypeName::String,
         },
     }

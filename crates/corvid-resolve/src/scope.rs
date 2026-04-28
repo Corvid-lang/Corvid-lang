@@ -74,6 +74,8 @@ pub enum DeclKind {
     Effect,
     /// `model Name:` catalog entry (Phase 20h typed model substrate).
     Model,
+    /// `server Name:` backend route surface.
+    Server,
 }
 
 /// An entry in the file-level symbol table.
