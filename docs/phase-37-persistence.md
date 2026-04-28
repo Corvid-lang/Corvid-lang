@@ -132,6 +132,12 @@ path cannot silently bypass approval or replay policy.
 - Parameterized execute/query APIs reject raw interpolation shortcuts.
 - Query errors include SQL site and database message.
 
+Implementation convention for 37B: `std/db.cor` establishes the public Corvid
+surface first: SQLite connection envelopes, parameter envelopes,
+parameterized query/execute envelopes, result envelopes, redacted error
+envelopes, and DB effect metadata. Host-backed execution will attach to this
+surface in the next persistence slices.
+
 ### 37C Typed Row Decoding
 
 - Query rows decode into declared records.

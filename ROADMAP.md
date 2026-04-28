@@ -1744,7 +1744,7 @@ Each benchmark must separate model-provider latency from Corvid runtime overhead
 **Slice checklist:**
 
 - [x] 37A-persistence-design-brief   `docs/phase-37-persistence.md` defines DB scope, SQL posture, migration rules, effect model, replay model, and non-scope.
-- [ ] 37B-sqlite-connection-query    `std.db` opens SQLite connections and runs explicit parameterized queries.
+- [x] 37B-sqlite-connection-query    `std.db` exposes SQLite connection, parameterized query/execute, result, and redacted error envelopes.
 - [ ] 37C-typed-row-decoding         Query results decode into typed Corvid records with useful diagnostics on missing/wrong columns.
 - [ ] 37D-transactions               Transactions support commit/rollback, nested-scope rejection or savepoint policy, and typed errors.
 - [ ] 37E-migrations-drift           `corvid migrate up/down/status` supports checksums, dry runs, drift detection, and CI failure on mismatch.

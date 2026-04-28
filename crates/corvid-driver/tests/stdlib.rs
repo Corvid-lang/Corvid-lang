@@ -169,6 +169,19 @@ fn std_effects_compiles_as_corvid_source() {
         .expect("std.effects should compile as a standalone Corvid module");
 }
 
+#[test]
+fn std_db_compiles_as_corvid_source() {
+    let repo = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(std::path::Path::parent)
+        .expect("repo root");
+    let source_path = repo.join("std").join("db.cor");
+    let source = fs::read_to_string(&source_path).expect("std/db.cor");
+
+    compile_to_ir_with_config_at_path(&source, &source_path, None)
+        .expect("std.db should compile as a standalone Corvid module");
+}
+
 // ---------------------------------------------------------------
 // Imported-helpers typecheck tests. Each exercises the full
 // public surface of one std/*.cor module from a user-side
@@ -313,6 +326,26 @@ agent main() -> Bool:
     queued = queued_job("job-2", "extract", "running", 5, 1.00, "std.ai", "std.queue.job")
     cancel = canceled_job(queued)
     return pending.status == "pending" and queued.status == "running" and cancel.status == "canceled"
+"#,
+    );
+}
+
+#[test]
+fn std_db_imported_helpers_typecheck() {
+    assert_imported_helpers_typecheck(
+        "db",
+        true,
+        r#"
+import "./std/db" use DbConnection, DbParam, DbQuery, DbResult, DbError, sqlite_open, db_param, db_query, db_execute, db_result, db_error, db_parameterized
+
+agent main() -> Bool:
+    db = sqlite_open("file:app.db", "db:app")
+    id = db_param("id", "String", false)
+    read = db_query("select id from users where id = ?", 1, "db:users:read")
+    write = db_execute("insert into users (id) values (?)", 1, "db:users:write")
+    result = db_result(1, 0, "db:users:write")
+    err = db_error("users.find", "no such table")
+    return db.driver == "sqlite" and id.name == "id" and db_parameterized(read) and write.operation == "write" and result.rows_affected == 1 and err.redacted
 "#,
     );
 }

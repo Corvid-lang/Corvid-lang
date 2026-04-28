@@ -1,0 +1,54 @@
+# Standard database metadata envelopes.
+
+import "./effects" use EffectEnvelope, effect_envelope
+
+public type DbConnection:
+    driver: String
+    dsn: String
+    replay_key: String
+    effect_meta: EffectEnvelope
+
+public type DbParam:
+    name: String
+    value_kind: String
+    redacted: Bool
+
+public type DbQuery:
+    sql: String
+    parameterized: Bool
+    param_count: Int
+    operation: String
+    replay_key: String
+    effect_meta: EffectEnvelope
+
+public type DbResult:
+    rows_affected: Int
+    row_count: Int
+    replay_key: String
+    effect_meta: EffectEnvelope
+
+public type DbError:
+    query_site: String
+    database_message: String
+    redacted: Bool
+
+public agent sqlite_open(dsn: String, replay_key: String) -> DbConnection:
+    return DbConnection("sqlite", dsn, replay_key, effect_envelope("std.db.open", "", "", "", replay_key))
+
+public agent db_param(name: String, value_kind: String, redacted: Bool) -> DbParam:
+    return DbParam(name, value_kind, redacted)
+
+public agent db_query(sql: String, param_count: Int, replay_key: String) -> DbQuery:
+    return DbQuery(sql, true, param_count, "read", replay_key, effect_envelope("std.db.query", "", "", "", replay_key))
+
+public agent db_execute(sql: String, param_count: Int, replay_key: String) -> DbQuery:
+    return DbQuery(sql, true, param_count, "write", replay_key, effect_envelope("std.db.execute", "", "", "", replay_key))
+
+public agent db_result(rows_affected: Int, row_count: Int, replay_key: String) -> DbResult:
+    return DbResult(rows_affected, row_count, replay_key, effect_envelope("std.db.result", "", "", "", replay_key))
+
+public agent db_error(query_site: String, database_message: String) -> DbError:
+    return DbError(query_site, database_message, true)
+
+public agent db_parameterized(query: DbQuery) -> Bool:
+    return query.parameterized and query.param_count >= 0
