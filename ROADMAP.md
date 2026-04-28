@@ -1519,7 +1519,8 @@ The determinism-source catalog and the language's treatment of non-reproducible 
 
 **Phase 29 follow-up audit (2026-04-29) — epistemic verification:**
 
-- [ ] 29-K-memory-module-audit-doc       Write `docs/phase-29-memory-audit.md` enumerating every memory primitive shipped against the ROADMAP claims: `session`/`memory` block syntax, retention policy, approval-required writes, provenance-required reads, conflict detection, generated accessors. Each row has the source file + line range + at least one positive test ref + one adversarial test ref. The audit either confirms full coverage (no roadmap change) or identifies specific gaps that promote into named follow-up slices. Closes when the doc lists every claim with a source-of-truth pointer.
+- [x] 29-K-memory-module-audit-doc       `docs/phase-29-memory-audit.md` ships, enumerating every memory primitive against the ROADMAP claims with source file + line range + positive + adversarial tests for each surface. Audit confirmed native-tier coverage; identified one cross-tier gap (wasm IndexedDB backing) that promotes into slice 29-L below.
+- [ ] 29-L-wasm-indexeddb-host-import    Add `corvid:host store.*` import bindings for IndexedDB on the JS side; the wasm-codegen ES loader generates the typed wrapper. Closes when `examples/wasm_browser_demo` persists across page reloads through IndexedDB and a Phase 23 browser CI test (slice 23-F) verifies persistence. The native-tier `[x]` of Phase 29 stands; this slice promotes Phase 29's WASM-tier claim from aspirational scope-line to shipped runtime.
 
 ### Phase 30 — Python FFI via PyO3 (~5–6 weeks) (reopened 2026-04-29 — default-CI gap)
 
