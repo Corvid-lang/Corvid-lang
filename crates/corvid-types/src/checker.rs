@@ -442,7 +442,7 @@ impl<'a> Checker<'a> {
                         fixtures.insert(id, f);
                     }
                 }
-                Decl::Eval(_) | Decl::Test(_) | Decl::Mock(_) => {}
+                Decl::Eval(_) | Decl::Test(_) | Decl::Mock(_) | Decl::Schedule(_) => {}
                 Decl::Type(t) => {
                     if let Some(id) = resolved.symbols.lookup_def(&t.name.name) {
                         types.insert(id, t);
@@ -536,7 +536,8 @@ impl<'a> Checker<'a> {
                 | Decl::Store(_)
                 | Decl::Import(_)
                 | Decl::Effect(_)
-                | Decl::Model(_) => {}
+                | Decl::Model(_)
+                | Decl::Schedule(_) => {}
                 Decl::Extend(ext) => {
                     // Typecheck agent method bodies the same way free
                     // agents are checked.

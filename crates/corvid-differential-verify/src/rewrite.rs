@@ -1139,6 +1139,12 @@ fn collect_all_names(file: &File) -> BTreeSet<String> {
                     collect_names_from_block(&route.body, &mut names);
                 }
             }
+            Decl::Schedule(schedule) => {
+                names.insert(schedule.target.name.clone());
+                for effect in &schedule.effect_row.effects {
+                    names.insert(effect.name.name.clone());
+                }
+            }
         }
     }
     names
@@ -1388,6 +1394,27 @@ fn render_decl(decl: &Decl, indent: usize, out: &mut String) {
                 }
                 out.push_str(":\n");
                 render_block(&route.body, indent + 2, out);
+            }
+        }
+        Decl::Schedule(schedule) => {
+            push_indent(indent, out);
+            out.push_str("schedule ");
+            out.push_str(&render_string_literal(&schedule.cron));
+            out.push_str(" zone ");
+            out.push_str(&render_string_literal(&schedule.zone));
+            out.push_str(" -> ");
+            out.push_str(&schedule.target.name);
+            out.push('(');
+            for (index, arg) in schedule.args.iter().enumerate() {
+                if index > 0 {
+                    out.push_str(", ");
+                }
+                out.push_str(&render_expr(arg));
+            }
+            out.push(')');
+            if !schedule.effect_row.effects.is_empty() {
+                out.push_str(" uses ");
+                out.push_str(&render_effect_row_names(&schedule.effect_row.effects));
             }
         }
     }

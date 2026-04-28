@@ -189,6 +189,9 @@ impl Resolver {
                 Decl::Effect(e) => (e.name.name.clone(), DeclKind::Effect, e.span),
                 Decl::Model(m) => (m.name.name.clone(), DeclKind::Model, m.span),
                 Decl::Server(s) => (s.name.name.clone(), DeclKind::Server, s.span),
+                Decl::Schedule(_) => {
+                    continue;
+                }
                 Decl::Extend(_) => {
                     // The parser accepts `extend T:`
                     // blocks; method registration into a per-type
@@ -354,6 +357,12 @@ impl Resolver {
                     // clauses that reference model names.
                 }
                 Decl::Server(s) => self.resolve_server_decl(s),
+                Decl::Schedule(schedule) => {
+                    for arg in &schedule.args {
+                        self.resolve_expr(arg);
+                    }
+                    self.resolve_effect_row(&schedule.effect_row);
+                }
                 Decl::Extend(ext) => {
                     // Resolve each method body
                     // the same way free agents/prompts/tools are

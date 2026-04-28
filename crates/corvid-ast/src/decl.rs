@@ -36,6 +36,8 @@ pub enum Decl {
     Model(ModelDecl),
     /// `server Name:` backend route declaration.
     Server(ServerDecl),
+    /// `schedule "cron" zone "Area/City" -> job(args)` durable cron trigger.
+    Schedule(ScheduleDecl),
 }
 
 impl Decl {
@@ -55,8 +57,20 @@ impl Decl {
             Decl::Effect(d) => d.span,
             Decl::Model(d) => d.span,
             Decl::Server(d) => d.span,
+            Decl::Schedule(d) => d.span,
         }
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ScheduleDecl {
+    pub cron: String,
+    pub zone: String,
+    pub target: Ident,
+    pub args: Vec<Expr>,
+    #[serde(default)]
+    pub effect_row: EffectRow,
+    pub span: Span,
 }
 
 /// A backend server surface:

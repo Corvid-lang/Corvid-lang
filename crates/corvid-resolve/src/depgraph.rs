@@ -83,7 +83,9 @@ pub fn decl_name(decl: &Decl) -> Option<&str> {
         Decl::Test(d) => Some(&d.name.name),
         Decl::Fixture(d) => Some(&d.name.name),
         Decl::Server(d) => Some(&d.name.name),
-        Decl::Mock(_) | Decl::Extend(_) | Decl::Effect(_) | Decl::Model(_) => None,
+        Decl::Mock(_) | Decl::Extend(_) | Decl::Effect(_) | Decl::Model(_) | Decl::Schedule(_) => {
+            None
+        }
     }
 }
 
@@ -147,6 +149,11 @@ fn collect_decl_deps(decl: &Decl, resolved: &Resolved, deps: &mut HashSet<DefId>
                 }
                 collect_typeref_dep(&route.response.ty, resolved, deps);
                 collect_block_deps(&route.body, resolved, deps);
+            }
+        }
+        Decl::Schedule(schedule) => {
+            for arg in &schedule.args {
+                collect_expr_deps(arg, resolved, deps);
             }
         }
         Decl::Import(_) | Decl::Extend(_) | Decl::Effect(_) | Decl::Model(_) => {}

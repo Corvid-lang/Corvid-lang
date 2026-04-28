@@ -193,6 +193,11 @@ impl<'a> Lowerer<'a> {
                     // HTTP dispatch IR is introduced in a later
                     // backend-runtime slice.
                 }
+                Decl::Schedule(_) => {
+                    // Phase 38D2: schedules are static audit/runtime
+                    // manifests. They do not lower into executable IR
+                    // until the scheduler runner slice.
+                }
                 Decl::Extend(ext) => {
                     // Lower each method into the appropriate per-kind
                     // IR vector. Methods get

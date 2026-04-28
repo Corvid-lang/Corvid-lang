@@ -157,5 +157,6 @@ fn decl_kind_name(decl: &Decl) -> String {
         Decl::Effect(_) => "effect".into(),
         Decl::Model(_) => "model".into(),
         Decl::Server(_) => "server".into(),
+        Decl::Schedule(_) => "schedule".into(),
     }
 }

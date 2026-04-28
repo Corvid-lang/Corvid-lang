@@ -3100,3 +3100,29 @@ server refund_api:
         assert!(server.routes[1].body_ty.is_some());
         assert_eq!(server.routes[1].effect_row.effects[0].name.name, "transfer_money");
     }
+
+    #[test]
+    fn schedule_decl_parses_cron_manifest_surface() {
+        let src = r#"
+effect send_email:
+    cost: $0.05
+
+schedule "0 8 * * *" zone "America/New_York" -> daily_brief(every_user()) uses send_email
+"#;
+        let tokens = lex(src).expect("lex failed");
+        let (file, errors) = parse_file(&tokens);
+        assert!(errors.is_empty(), "unexpected parse errors: {errors:?}");
+        let schedule = file
+            .decls
+            .iter()
+            .find_map(|decl| match decl {
+                Decl::Schedule(schedule) => Some(schedule),
+                _ => None,
+            })
+            .expect("schedule decl");
+        assert_eq!(schedule.cron, "0 8 * * *");
+        assert_eq!(schedule.zone, "America/New_York");
+        assert_eq!(schedule.target.name, "daily_brief");
+        assert_eq!(schedule.args.len(), 1);
+        assert_eq!(schedule.effect_row.effects[0].name.name, "send_email");
+    }

@@ -17,8 +17,8 @@ use corvid_ast::{
     EvalAssert, EvalDecl, ExtendDecl, ExtendMethod, ExtendMethodKind, Field, FixtureDecl, Ident,
     HttpMethod, HttpRouteDecl, ImportDecl, ImportContentHash, ImportSource, ImportUseItem,
     MockDecl, ModelDecl, ModelField, Param, RoutePathParam, RouteResponse, RouteResponseKind,
-    ServerDecl, Span, StoreDecl, StoreKind, StorePolicy, ToolDecl, TestDecl, TypeDecl, TypeRef,
-    Visibility,
+    ScheduleDecl, ServerDecl, Span, StoreDecl, StoreKind, StorePolicy, ToolDecl, TestDecl,
+    TypeDecl, TypeRef, Visibility,
 };
 
 impl<'a> Parser<'a> {
@@ -65,6 +65,7 @@ impl<'a> Parser<'a> {
             TokKind::KwTool => self.parse_tool_decl(visibility).map(Decl::Tool),
             TokKind::KwPrompt => self.parse_prompt_decl(visibility).map(Decl::Prompt),
             TokKind::KwServer => self.parse_server_decl().map(Decl::Server),
+            TokKind::KwSchedule => self.parse_schedule_decl().map(Decl::Schedule),
             TokKind::KwEval => self.parse_eval_decl().map(Decl::Eval),
             TokKind::KwTest => self.parse_test_decl().map(Decl::Test),
             TokKind::KwFixture => self.parse_fixture_decl().map(Decl::Fixture),
@@ -839,6 +840,72 @@ impl<'a> Parser<'a> {
             constraints: Vec::new(),
             attributes: Vec::new(),
             visibility,
+            span: start.merge(end),
+        })
+    }
+
+    // -- schedules -----------------------------------------------
+
+    fn parse_schedule_decl(&mut self) -> Result<ScheduleDecl, ParseError> {
+        let start = self.peek_span();
+        self.expect(TokKind::KwSchedule, "`schedule` declaration")?;
+        let cron_span = self.peek_span();
+        let cron = match self.peek().clone() {
+            TokKind::StringLit(cron) => {
+                self.bump();
+                cron
+            }
+            other => {
+                return Err(ParseError {
+                    kind: ParseErrorKind::UnexpectedToken {
+                        got: describe_token(&other),
+                        expected: "a cron expression string literal".into(),
+                    },
+                    span: cron_span,
+                });
+            }
+        };
+        self.expect(TokKind::KwZone, "`zone` after schedule cron expression")?;
+        let zone_span = self.peek_span();
+        let zone = match self.peek().clone() {
+            TokKind::StringLit(zone) => {
+                self.bump();
+                zone
+            }
+            other => {
+                return Err(ParseError {
+                    kind: ParseErrorKind::UnexpectedToken {
+                        got: describe_token(&other),
+                        expected: "an IANA time zone string literal".into(),
+                    },
+                    span: zone_span,
+                });
+            }
+        };
+        self.expect(TokKind::Arrow, "`->` before schedule target")?;
+        let (target, target_span) = self.expect_ident()?;
+        self.expect(TokKind::LParen, "`(` after schedule target")?;
+        let mut args = Vec::new();
+        if !matches!(self.peek(), TokKind::RParen) {
+            args.push(self.parse_expr()?);
+            while matches!(self.peek(), TokKind::Comma) {
+                self.bump();
+                if matches!(self.peek(), TokKind::RParen) {
+                    break;
+                }
+                args.push(self.parse_expr()?);
+            }
+        }
+        self.expect(TokKind::RParen, "`)` after schedule target arguments")?;
+        let effect_row = self.parse_uses_clause()?;
+        let end = self.peek_span();
+        self.expect_newline()?;
+        Ok(ScheduleDecl {
+            cron,
+            zone,
+            target: Ident::new(target, target_span),
+            args,
+            effect_row,
             span: start.merge(end),
         })
     }

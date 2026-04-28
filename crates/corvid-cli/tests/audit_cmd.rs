@@ -91,3 +91,53 @@ agent main() -> String:
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("No launch-blocking findings"));
 }
+
+#[test]
+fn audit_reports_cron_schedule_manifests() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let main_path = dir.path().join("main.cor");
+    std::fs::write(
+        &main_path,
+        r#"
+effect email:
+    cost: $0.05
+
+public @replayable
+agent daily_brief() -> String uses email:
+    return "ok"
+
+schedule "0 8 * * *" zone "America/New_York" -> daily_brief() uses email
+"#,
+    )
+    .expect("write main");
+
+    let output = run_corvid(
+        &["audit", main_path.to_str().expect("utf8 path"), "--json"],
+        dir.path(),
+    );
+    assert!(
+        output.status.success(),
+        "stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("audit json output");
+    assert_eq!(json["schedule_count"].as_u64(), Some(1));
+    let schedule = &json["schedules"].as_array().expect("schedules")[0];
+    assert_eq!(schedule["cron"], "0 8 * * *");
+    assert_eq!(schedule["zone"], "America/New_York");
+    assert_eq!(schedule["target"], "daily_brief");
+    assert_eq!(schedule["effect_names"][0], "email");
+
+    let plain = run_corvid(&["audit", main_path.to_str().expect("utf8 path")], dir.path());
+    assert!(
+        plain.status.success(),
+        "stdout={} stderr={}",
+        String::from_utf8_lossy(&plain.stdout),
+        String::from_utf8_lossy(&plain.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&plain.stdout);
+    assert!(stdout.contains("Cron schedules:"), "{stdout}");
+    assert!(stdout.contains("0 8 * * * America/New_York -> daily_brief"), "{stdout}");
+}
