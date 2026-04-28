@@ -271,6 +271,31 @@ impl DurableQueueRuntime {
             .ok_or_else(|| RuntimeError::Other(format!("std.queue job `{id}` not found")))
     }
 
+    pub fn run_one(&self) -> Result<Option<QueueJob>, RuntimeError> {
+        let pending = self
+            .list()?
+            .into_iter()
+            .find(|job| job.status == QueueJobStatus::Pending);
+        let Some(mut job) = pending else {
+            return Ok(None);
+        };
+        let now = now_ms();
+        job.status = QueueJobStatus::Succeeded;
+        job.attempts = job.attempts.saturating_add(1);
+        job.updated_ms = now;
+        self.conn
+            .lock()
+            .unwrap()
+            .execute(
+                "update queue_jobs set status = ?2, attempts = ?3, updated_ms = ?4 where id = ?1 and status = 'pending'",
+                params![job.id, job.status.as_str(), job.attempts as i64, job.updated_ms as i64],
+            )
+            .map_err(|err| RuntimeError::Other(format!("failed to run durable queue job: {err}")))?;
+        self.get(&job.id)?
+            .map(Some)
+            .ok_or_else(|| RuntimeError::Other(format!("std.queue job `{}` not found", job.id)))
+    }
+
     fn init(&self) -> Result<(), RuntimeError> {
         self.conn
             .lock()
@@ -391,5 +416,30 @@ mod tests {
 
         let canceled = queue.cancel(&job.id).unwrap();
         assert_eq!(canceled.status, QueueJobStatus::Canceled);
+    }
+
+    #[test]
+    fn durable_queue_run_one_persists_success() {
+        let queue = DurableQueueRuntime::open_in_memory().unwrap();
+        let job = queue
+            .enqueue(
+                "daily_brief",
+                serde_json::json!({"user": "u1"}),
+                2,
+                0.5,
+                Some("llm+db".to_string()),
+                Some("replay:job".to_string()),
+            )
+            .unwrap();
+
+        let ran = queue.run_one().unwrap().expect("pending job");
+        assert_eq!(ran.id, job.id);
+        assert_eq!(ran.status, QueueJobStatus::Succeeded);
+        assert_eq!(ran.attempts, 1);
+
+        let fetched = queue.get(&job.id).unwrap().unwrap();
+        assert_eq!(fetched.status, QueueJobStatus::Succeeded);
+        assert_eq!(fetched.attempts, 1);
+        assert!(queue.run_one().unwrap().is_none());
     }
 }

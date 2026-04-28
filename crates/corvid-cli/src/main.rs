@@ -57,6 +57,7 @@ use clap::{Parser, Subcommand, ValueEnum};
 use corvid_differential_verify::{
     render_corpus_grid, render_report, shrink_program, verify_corpus,
 };
+use corvid_runtime::queue::{DurableQueueRuntime, QueueJob};
 use cost_frontier::{build_frontier, render_frontier as render_cost_frontier, CostFrontierOptions};
 use routing_report::{build_report, render_report as render_routing_report, RoutingReportOptions};
 use sha2::{Digest, Sha256};
@@ -626,6 +627,11 @@ enum Command {
     Migrate {
         #[command(subcommand)]
         command: MigrateCommand,
+    },
+    /// Enqueue and run durable local background jobs.
+    Jobs {
+        #[command(subcommand)]
+        command: JobsCommand,
     },
     /// Inspect published orchestration-overhead benchmark archives.
     Bench {
@@ -1240,6 +1246,26 @@ fn main() -> ExitCode {
                 dry_run,
             } => cmd_migrate("down", &dir, &state, dry_run),
         },
+        Some(Command::Jobs { command }) => match command {
+            JobsCommand::Enqueue {
+                state,
+                task,
+                payload,
+                max_retries,
+                budget_usd,
+                effect_summary,
+                replay_key,
+            } => cmd_jobs_enqueue(
+                &state,
+                &task,
+                &payload,
+                max_retries,
+                budget_usd,
+                effect_summary,
+                replay_key,
+            ),
+            JobsCommand::RunOne { state } => cmd_jobs_run_one(&state),
+        },
         Some(Command::Bench { command }) => match command {
             BenchCommand::Compare {
                 target,
@@ -1353,6 +1379,65 @@ fn cmd_migrate(action: &str, dir: &Path, state: &Path, dry_run: bool) -> Result<
         }
     );
     Ok(0)
+}
+
+fn cmd_jobs_enqueue(
+    state: &Path,
+    task: &str,
+    payload: &str,
+    max_retries: u64,
+    budget_usd: f64,
+    effect_summary: Option<String>,
+    replay_key: Option<String>,
+) -> Result<u8> {
+    if let Some(parent) = state.parent().filter(|parent| !parent.as_os_str().is_empty()) {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("failed to create jobs state dir `{}`", parent.display()))?;
+    }
+    let queue = DurableQueueRuntime::open(state)?;
+    let payload = serde_json::from_str(payload).context("jobs payload must be valid JSON")?;
+    let job = queue.enqueue(
+        task,
+        payload,
+        max_retries,
+        budget_usd,
+        effect_summary,
+        replay_key,
+    )?;
+    println!("corvid jobs enqueue");
+    println!("state: {}", state.display());
+    print_job_summary(&job);
+    Ok(0)
+}
+
+fn cmd_jobs_run_one(state: &Path) -> Result<u8> {
+    let queue = DurableQueueRuntime::open(state)?;
+    println!("corvid jobs run-one");
+    println!("state: {}", state.display());
+    match queue.run_one()? {
+        Some(job) => {
+            print_job_summary(&job);
+            Ok(0)
+        }
+        None => {
+            println!("job: none");
+            Ok(0)
+        }
+    }
+}
+
+fn print_job_summary(job: &QueueJob) {
+    println!("job: {}", job.id);
+    println!("task: {}", job.task);
+    println!("status: {}", job.status.as_str());
+    println!("attempts: {}", job.attempts);
+    println!("max_retries: {}", job.max_retries);
+    println!("budget_usd: {:.4}", job.budget_usd);
+    println!(
+        "effect_summary: {}",
+        job.effect_summary.as_deref().unwrap_or("")
+    );
+    println!("replay_key: {}", job.replay_key.as_deref().unwrap_or(""));
 }
 
 struct MigrationFile {
@@ -2504,6 +2589,40 @@ enum MigrateCommand {
         /// Report the rollback candidate without mutating state.
         #[arg(long)]
         dry_run: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum JobsCommand {
+    /// Persist a new local background job.
+    Enqueue {
+        /// SQLite state file used by the durable local queue.
+        #[arg(long, value_name = "PATH", default_value = "target/corvid-jobs.sqlite")]
+        state: PathBuf,
+        /// Job kind or task name.
+        #[arg(long)]
+        task: String,
+        /// Redacted JSON input payload for the job.
+        #[arg(long, default_value = "{}")]
+        payload: String,
+        /// Maximum retry count available to later retry policies.
+        #[arg(long, default_value = "3")]
+        max_retries: u64,
+        /// Budget carried with the job metadata.
+        #[arg(long, default_value = "0")]
+        budget_usd: f64,
+        /// Human-readable effect summary, for audit output.
+        #[arg(long)]
+        effect_summary: Option<String>,
+        /// Replay key linking the job to trace/replay metadata.
+        #[arg(long)]
+        replay_key: Option<String>,
+    },
+    /// Execute the first pending local job and persist the result metadata.
+    RunOne {
+        /// SQLite state file used by the durable local queue.
+        #[arg(long, value_name = "PATH", default_value = "target/corvid-jobs.sqlite")]
+        state: PathBuf,
     },
 }
 
