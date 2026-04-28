@@ -8,6 +8,19 @@ pub struct ReplayDivergence {
     pub got_description: String,
 }
 
+impl ReplayDivergence {
+    /// Stable id of the public Corvid guarantee this runtime error
+    /// enforces — `replay.deterministic_pure_path`. The compile-time
+    /// portion of the same guarantee is enforced by
+    /// `TypeErrorKind::NonReplayableCall` /
+    /// `TypeErrorKind::NonDeterministicCall` in `corvid-types`;
+    /// this runtime divergence catches the cases the compile-time
+    /// check could not statically prove.
+    pub const fn guarantee_id(&self) -> &'static str {
+        "replay.deterministic_pure_path"
+    }
+}
+
 impl std::fmt::Display for ReplayDivergence {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(

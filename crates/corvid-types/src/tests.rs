@@ -3833,3 +3833,83 @@ agent uses_qualified(r: policy.Receipt) -> String:
             other => panic!("unexpected: {other:?}"),
         }
     }
+
+    // ---------------------------------------------------------------
+    // Phase 35-B: tagging-coverage smoke tests.
+    //
+    // These tests exercise the same source fixtures the existing
+    // contract tests use, but additionally assert that the emitted
+    // diagnostics carry the expected `guarantee_id` from
+    // `corvid_guarantees::GUARANTEE_REGISTRY`. Slice 35-E will add the
+    // comprehensive cross-reference enforcement; this set is the
+    // smoke check that the wiring works end-to-end for the four
+    // canonical compile-time guarantees.
+
+    #[test]
+    fn tagged_unapproved_dangerous_call_carries_approval_guarantee_id() {
+        let src = "\
+tool issue_refund(id: String, amount: Float) -> Receipt dangerous
+
+type Receipt:
+    id: String
+
+agent bad(id: String, amount: Float) -> Receipt:
+    return issue_refund(id, amount)
+";
+        let c = check(src);
+        let err = c
+            .errors
+            .iter()
+            .find(|e| matches!(e.kind, TypeErrorKind::UnapprovedDangerousCall { .. }))
+            .expect("expected UnapprovedDangerousCall");
+        assert_eq!(
+            err.guarantee_id,
+            Some("approval.dangerous_call_requires_token"),
+            "unapproved-dangerous diagnostic must tag the approval registry id"
+        );
+        assert!(
+            corvid_guarantees::lookup(err.guarantee_id.unwrap()).is_some(),
+            "tagged id must resolve in the canonical registry"
+        );
+    }
+
+    #[test]
+    fn tagged_invalid_confidence_carries_confidence_guarantee_id() {
+        let src = "\
+eval bad_eval:
+    assert true with confidence 1.5 over 5 runs
+";
+        let c = check(src);
+        let err = c
+            .errors
+            .iter()
+            .find(|e| matches!(e.kind, TypeErrorKind::InvalidConfidence { .. }))
+            .expect("expected InvalidConfidence");
+        assert_eq!(
+            err.guarantee_id,
+            Some("confidence.min_threshold"),
+            "invalid-confidence diagnostic must tag the confidence registry id"
+        );
+    }
+
+    #[test]
+    fn non_contract_diagnostic_has_no_guarantee_id() {
+        // An ordinary type mismatch enforces program well-formedness,
+        // not a public Corvid promise. The registry must not claim
+        // such a diagnostic backs a guarantee.
+        let src = "\
+agent bad() -> String:
+    return 42
+";
+        let c = check(src);
+        let err = c
+            .errors
+            .iter()
+            .find(|e| matches!(e.kind, TypeErrorKind::ReturnTypeMismatch { .. }))
+            .expect("expected ReturnTypeMismatch");
+        assert_eq!(
+            err.guarantee_id, None,
+            "well-formedness diagnostics (return type mismatch) must NOT tag a guarantee — \
+             only public promise enforcement is registered"
+        );
+    }

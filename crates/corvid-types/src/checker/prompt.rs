@@ -37,9 +37,10 @@ impl<'a> Checker<'a> {
 
         if let Some(confidence) = p.stream.min_confidence {
             if !(0.0..=1.0).contains(&confidence) {
-                self.errors.push(TypeError::new(
+                self.errors.push(TypeError::with_guarantee(
                     TypeErrorKind::InvalidConfidence { value: confidence },
                     p.span,
+                    "confidence.min_threshold",
                 ));
             }
         }
@@ -161,9 +162,10 @@ impl<'a> Checker<'a> {
                 }
                 if let Some(t) = stage.threshold {
                     if !(0.0..=1.0).contains(&t) {
-                        self.errors.push(TypeError::new(
+                        self.errors.push(TypeError::with_guarantee(
                             TypeErrorKind::InvalidConfidence { value: t },
                             stage.span,
+                            "confidence.min_threshold",
                         ));
                     }
                 }

@@ -43,6 +43,7 @@ corvid-types = { workspace = true }
 inventory = { workspace = true }
 corvid-trace-schema = { workspace = true }
 corvid-abi = { workspace = true }
+corvid-guarantees = { workspace = true }
 libloading = "0.8"
 slotmap = "1"
 

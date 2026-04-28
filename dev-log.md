@@ -5660,3 +5660,60 @@ the stable handles that diagnostics in slice 35-B will reference, that
 `corvid contract list` in slice 35-C will print, and that `corvid claim
 --explain` in slice 35-I will report per binary. Slice 35-A introduces no
 behaviour change in the existing pipeline; it is foundation only.
+
+## 2026-04-28 - Phase 35-B: tag every contract diagnostic with a guarantee_id
+
+Wired the registry into the compiler's diagnostic surface. Every
+contract-enforcing emission site now ships with the
+`corvid_guarantees::Guarantee::id` it backs:
+
+- `TypeError` (in `corvid-types/src/errors.rs`) gained a
+  `guarantee_id: Option<&'static str>` field plus a `with_guarantee`
+  constructor whose `debug_assert!` calls `corvid_guarantees::lookup`
+  so any unregistered or misspelled id fails fast in tests.
+- 22 contract-enforcing emission sites in `corvid-types` migrated from
+  `TypeError::new` to `TypeError::with_guarantee`. Coverage spans
+  approval (call.rs, import_call.rs), effect-row body completeness +
+  import boundary (checker.rs, import_call.rs), grounded provenance
+  (checker.rs), compile-time budget ceiling (checker.rs), confidence
+  threshold (decl.rs, prompt.rs, effect_decl.rs), and replay
+  determinism (decl.rs).
+- `EmbeddedAttestationError` (corvid-abi) gained a `guarantee_id()`
+  method returning `abi_attestation.envelope_signature` for every
+  variant — they are all envelope-parsing failures gated by the same
+  promise.
+- `ReplayDivergence` (corvid-runtime) gained a `guarantee_id()`
+  method returning `replay.deterministic_pure_path`. Compile-time and
+  runtime enforcements of the same promise now share a stable handle.
+
+Three smoke tests in `corvid-types/src/tests.rs` assert the wiring
+end-to-end: an unapproved-dangerous call carries the approval id, an
+out-of-range eval confidence carries the confidence id, and a plain
+return-type mismatch (a well-formedness diagnostic, not a public
+promise) does NOT carry a guarantee_id. Slice 35-E will add the
+comprehensive cross-reference enforcement that catches missing
+adversarial coverage on every Static guarantee.
+
+One registry honesty correction shipped in the same commit:
+`budget.runtime_termination` was downgraded from `RuntimeChecked` to
+`OutOfScope` because the runtime currently observes per-call cost in
+trace events but does not yet terminate execution on threshold
+crossing. The `out_of_scope_reason` documents the gap as a planned
+follow-up; the load-bearing budget guarantee for v1.0 remains
+`budget.compile_time_ceiling` (which is enforced and tagged).
+
+Validation: 198 + 11 + 8 + 162 unit tests pass across
+corvid-types / corvid-guarantees / corvid-abi / corvid-runtime. The
+`verify --corpus tests/corpus` command produces byte-identical output
+on `main` with and without these changes (both exit 2 today, due to a
+pre-existing interpreter-tier issue on `combined_all.cor` that is
+out of slice 35-B scope and tracked separately).
+
+Diagnostics in `corvid-cli` itself (the `corvid receipt verify` and
+`verify-abi` exit-code paths that surface `replay.trace_signature`,
+`provenance_trace.receipt_signature`, `abi_attestation.descriptor_match`,
+and `abi_attestation.absent_reports_unsigned`) are intentionally left
+to slice 35-I, where the introduction of `corvid claim --explain`
+naturally requires a structured outcome enum that the tagging can
+attach to. Slice 35-E will flag any registered guarantee that lacks
+both compile-time and runtime tagging by the time it runs.

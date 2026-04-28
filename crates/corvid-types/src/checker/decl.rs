@@ -192,13 +192,14 @@ impl<'a> Checker<'a> {
         let mut violations = Vec::new();
         collect_replayability_violations_in_block(body, &mut violations);
         for violation in violations {
-            self.errors.push(TypeError::new(
+            self.errors.push(TypeError::with_guarantee(
                 TypeErrorKind::NonReplayableCall {
                     agent: agent_name.to_string(),
                     call: violation.call_name,
                     source_label: violation.source.label().to_string(),
                 },
                 violation.span,
+                "replay.deterministic_pure_path",
             ));
         }
     }
@@ -249,13 +250,14 @@ impl<'a> Checker<'a> {
             Stmt::Approve { action, span } => {
                 // Approve is an LLM-layer concern; a pure function
                 // cannot gate on user approval.
-                self.errors.push(TypeError::new(
+                self.errors.push(TypeError::with_guarantee(
                     TypeErrorKind::NonDeterministicCall {
                         agent: agent.to_string(),
                         call: callee_name(action).unwrap_or_else(|| "<approve target>".into()),
                         call_kind: "approve".into(),
                     },
                     *span,
+                    "replay.deterministic_pure_path",
                 ));
                 self.walk_deterministic_expr(agent, action);
             }
@@ -326,13 +328,14 @@ impl<'a> Checker<'a> {
         // fails `@deterministic` for the same reason it fails
         // `@replayable` — but the error message is stricter.
         if let Some(source) = classify_call_target(&name) {
-            self.errors.push(TypeError::new(
+            self.errors.push(TypeError::with_guarantee(
                 TypeErrorKind::NonDeterministicCall {
                     agent: agent.to_string(),
                     call: name.clone(),
                     call_kind: source.label().to_string(),
                 },
                 span,
+                "replay.deterministic_pure_path",
             ));
             return;
         }
@@ -371,23 +374,25 @@ impl<'a> Checker<'a> {
                 _ => None,
             };
             if let Some(kind) = call_kind {
-                self.errors.push(TypeError::new(
+                self.errors.push(TypeError::with_guarantee(
                     TypeErrorKind::NonDeterministicCall {
                         agent: agent.to_string(),
                         call: name,
                         call_kind: kind.to_string(),
                     },
                     span,
+                    "replay.deterministic_pure_path",
                 ));
             }
         } else if let Some(Binding::BuiltIn(BuiltIn::Ask | BuiltIn::Choose)) = binding {
-            self.errors.push(TypeError::new(
+            self.errors.push(TypeError::with_guarantee(
                 TypeErrorKind::NonDeterministicCall {
                     agent: agent.to_string(),
                     call: name,
                     call_kind: "human".to_string(),
                 },
                 span,
+                "replay.deterministic_pure_path",
             ));
         }
     }
@@ -536,16 +541,18 @@ impl<'a> Checker<'a> {
                 }
                 if let Some(value) = confidence {
                     if !(0.0..=1.0).contains(value) {
-                        self.errors.push(TypeError::new(
+                        self.errors.push(TypeError::with_guarantee(
                             TypeErrorKind::InvalidConfidence { value: *value },
                             *span,
+                            "confidence.min_threshold",
                         ));
                     }
                 }
                 if matches!(runs, Some(0)) {
-                    self.errors.push(TypeError::new(
+                    self.errors.push(TypeError::with_guarantee(
                         TypeErrorKind::InvalidConfidence { value: 0.0 },
                         *span,
+                        "confidence.min_threshold",
                     ));
                 }
             }

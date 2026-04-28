@@ -159,13 +159,14 @@ fn typecheck_with_everything(
                 if matches!(violation.dimension.as_str(), "cost" | "tokens" | "latency_ms") {
                     continue;
                 }
-                c.errors.push(TypeError::new(
+                c.errors.push(TypeError::with_guarantee(
                     TypeErrorKind::EffectConstraintViolation {
                         agent: summary.agent_name.clone(),
                         dimension: violation.dimension.clone(),
                         message: violation.to_string(),
                     },
                     violation.span,
+                    "effect_row.body_completeness",
                 ));
             }
         }
@@ -222,13 +223,14 @@ fn typecheck_with_everything(
                         crate::effects::format_numeric_dimension(&dim, limit),
                         path_text,
                     );
-                    c.errors.push(TypeError::new(
+                    c.errors.push(TypeError::with_guarantee(
                         TypeErrorKind::EffectConstraintViolation {
                             agent: agent.name.name.clone(),
                             dimension: dim,
                             message,
                         },
                         constraint.span,
+                        "budget.compile_time_ceiling",
                     ));
                 }
             }
@@ -240,12 +242,13 @@ fn typecheck_with_everything(
     {
         let provenance_violations = crate::effects::check_grounded_returns(file, resolved, &registry);
         for violation in provenance_violations {
-            c.errors.push(TypeError::new(
+            c.errors.push(TypeError::with_guarantee(
                 TypeErrorKind::UngroundedReturn {
                     agent: violation.agent_name,
                     message: violation.message,
                 },
                 violation.span,
+                "grounded.provenance_required",
             ));
         }
     }

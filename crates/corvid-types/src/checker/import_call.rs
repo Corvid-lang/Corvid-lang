@@ -22,13 +22,14 @@ impl<'a> Checker<'a> {
                 continue;
             }
             if import.effect_row.effects.is_empty() {
-                self.errors.push(TypeError::new(
+                self.errors.push(TypeError::with_guarantee(
                     TypeErrorKind::EffectConstraintViolation {
                         agent: format!("python import `{}`", import.module),
                         dimension: "effects".to_string(),
                         message: "Python imports must declare their host capabilities with `effects: ...`; use `effects: unsafe` only as an explicit review escape hatch".to_string(),
                     },
                     import.span,
+                    "effect_row.import_boundary",
                 ));
                 continue;
             }
@@ -104,13 +105,14 @@ impl<'a> Checker<'a> {
                     self.validate_import_requires_replayable(import, module);
                 }
                 AgentAttribute::Wrapping { .. } => {
-                    self.errors.push(TypeError::new(
+                    self.errors.push(TypeError::with_guarantee(
                         TypeErrorKind::EffectConstraintViolation {
                             agent: format!("import `{}`", import.module),
                             dimension: "wrapping".to_string(),
                             message: "`@wrapping` is an agent execution mode and cannot be required at an import boundary".to_string(),
                         },
                         import.span,
+                        "effect_row.import_boundary",
                     ));
                 }
             }
@@ -141,7 +143,7 @@ impl<'a> Checker<'a> {
                 registry.check_constraints(&profile, &import.required_constraints)
             {
                 let message = violation.to_string();
-                self.errors.push(TypeError::new(
+                self.errors.push(TypeError::with_guarantee(
                     TypeErrorKind::EffectConstraintViolation {
                         agent: format!(
                             "import `{}` exported agent `{}`",
@@ -151,6 +153,7 @@ impl<'a> Checker<'a> {
                         message,
                     },
                     import.span,
+                    "effect_row.import_boundary",
                 ));
             }
         }
@@ -164,7 +167,7 @@ impl<'a> Checker<'a> {
         for export in module.exports.values() {
             match export.kind {
                 DeclKind::Tool | DeclKind::Prompt => {
-                    self.errors.push(TypeError::new(
+                    self.errors.push(TypeError::with_guarantee(
                         TypeErrorKind::EffectConstraintViolation {
                             agent: format!("import `{}`", import.module),
                             dimension: "deterministic".to_string(),
@@ -179,6 +182,7 @@ impl<'a> Checker<'a> {
                             ),
                         },
                         import.span,
+                        "effect_row.import_boundary",
                     ));
                 }
                 DeclKind::Agent => {
@@ -188,7 +192,7 @@ impl<'a> Checker<'a> {
                         .get(&export.name)
                         .is_some_and(|summary| summary.deterministic);
                     if !deterministic {
-                        self.errors.push(TypeError::new(
+                        self.errors.push(TypeError::with_guarantee(
                             TypeErrorKind::EffectConstraintViolation {
                                 agent: format!(
                                     "import `{}` exported agent `{}`",
@@ -198,6 +202,7 @@ impl<'a> Checker<'a> {
                                 message: "exported agent is not marked `@deterministic`".to_string(),
                             },
                             import.span,
+                            "effect_row.import_boundary",
                         ));
                     }
                 }
@@ -221,7 +226,7 @@ impl<'a> Checker<'a> {
                 .get(&export.name)
                 .is_some_and(|summary| summary.replayable);
             if !replayable {
-                self.errors.push(TypeError::new(
+                self.errors.push(TypeError::with_guarantee(
                     TypeErrorKind::EffectConstraintViolation {
                         agent: format!(
                             "import `{}` exported agent `{}`",
@@ -232,6 +237,7 @@ impl<'a> Checker<'a> {
                             .to_string(),
                     },
                     import.span,
+                    "effect_row.import_boundary",
                 ));
             }
         }
@@ -428,13 +434,14 @@ impl<'a> Checker<'a> {
                         .iter()
                         .any(|a| snake_case(&a.label) == name && a.arity == args.len());
                     if !authorized {
-                        self.errors.push(TypeError::new(
+                        self.errors.push(TypeError::with_guarantee(
                             TypeErrorKind::UnapprovedDangerousCall {
                                 tool: name.to_string(),
                                 expected_approve_label: pascal_case(name),
                                 arity: args.len(),
                             },
                             span,
+                            "approval.dangerous_call_requires_token",
                         ));
                     }
                 }

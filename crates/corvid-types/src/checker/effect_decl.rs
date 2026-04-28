@@ -6,9 +6,10 @@ impl<'a> Checker<'a> {
         for dim in &effect.dimensions {
             match (&dim.name.name[..], &dim.value) {
                 ("confidence", DimensionValue::Number(value)) if !(0.0..=1.0).contains(value) => {
-                    self.errors.push(TypeError::new(
+                    self.errors.push(TypeError::with_guarantee(
                         TypeErrorKind::InvalidConfidence { value: *value },
                         dim.span,
+                        "confidence.min_threshold",
                     ));
                 }
                 (
@@ -18,9 +19,10 @@ impl<'a> Checker<'a> {
                         ..
                     },
                 ) if !(0.0..=1.0).contains(threshold) => {
-                    self.errors.push(TypeError::new(
+                    self.errors.push(TypeError::with_guarantee(
                         TypeErrorKind::InvalidConfidence { value: *threshold },
                         dim.span,
+                        "confidence.min_threshold",
                     ));
                 }
                 _ => {}

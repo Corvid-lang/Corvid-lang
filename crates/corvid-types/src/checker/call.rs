@@ -125,13 +125,14 @@ impl<'a> Checker<'a> {
                 .iter()
                 .any(|a| snake_case(&a.label) == tool_name && a.arity == args.len());
             if !authorized {
-                self.errors.push(TypeError::new(
+                self.errors.push(TypeError::with_guarantee(
                     TypeErrorKind::UnapprovedDangerousCall {
                         tool: tool_name.to_string(),
                         expected_approve_label: pascal_case(tool_name),
                         arity: args.len(),
                     },
                     span,
+                    "approval.dangerous_call_requires_token",
                 ));
             }
         }

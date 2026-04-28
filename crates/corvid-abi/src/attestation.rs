@@ -66,6 +66,25 @@ pub enum EmbeddedAttestationError {
     SymbolLoad(String),
 }
 
+impl EmbeddedAttestationError {
+    /// Stable id of the public Corvid guarantee this error enforces.
+    /// Every variant of this enum represents a way the embedded
+    /// attestation envelope failed to parse cleanly, which the
+    /// runtime treats as a verification failure under
+    /// `abi_attestation.envelope_signature` — a host that gets one
+    /// of these errors back from `parse_embedded_attestation_bytes`
+    /// must not treat the cdylib as signed.
+    ///
+    /// The id resolves to a row in
+    /// [`corvid_guarantees::GUARANTEE_REGISTRY`]; in debug builds
+    /// the id presence is asserted at construction time of
+    /// `corvid-cli`'s reporting wrapper to fail fast on registry
+    /// drift.
+    pub const fn guarantee_id(&self) -> &'static str {
+        "abi_attestation.envelope_signature"
+    }
+}
+
 impl fmt::Display for EmbeddedAttestationError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {

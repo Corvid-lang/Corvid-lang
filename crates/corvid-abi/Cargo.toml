@@ -10,6 +10,7 @@ corvid-ast = { workspace = true }
 corvid-resolve = { workspace = true }
 corvid-types = { workspace = true }
 corvid-ir = { workspace = true }
+corvid-guarantees = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 sha2 = "0.10"

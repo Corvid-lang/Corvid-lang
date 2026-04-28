@@ -344,13 +344,19 @@ pub static GUARANTEE_REGISTRY: &[Guarantee] = &[
     Guarantee {
         id: "budget.runtime_termination",
         kind: GuaranteeKind::Budget,
-        class: GuaranteeClass::RuntimeChecked,
+        class: GuaranteeClass::OutOfScope,
         phase: Phase::Runtime,
         description:
-            "When actual runtime cost crosses the agent's `@budget($X)` \
-             threshold, the runtime terminates the agent with the \
-             documented budget-exhausted error.",
-        out_of_scope_reason: "",
+            "Live runtime termination of an agent when actual runtime cost \
+             crosses the `@budget($X)` threshold mid-execution.",
+        out_of_scope_reason:
+            "Today Corvid enforces budgets at compile time via \
+             `budget.compile_time_ceiling`, and the runtime observes \
+             per-call cost in trace events; live mid-execution \
+             termination on threshold crossing is not yet implemented. \
+             A future slice can promote this entry back to \
+             `RuntimeChecked` once the enforcement ships. The compile-time \
+             ceiling is the load-bearing guarantee for v1.0.",
         positive_test_refs: &[],
         adversarial_test_refs: &[],
     },
