@@ -123,6 +123,8 @@ fn build_server_emits_runnable_local_http_binary() {
     assert!(health.contains("HTTP/1.1 200 OK"), "{health}");
     assert!(health.contains(r#"{"status":"ok"}"#), "{health}");
     assert!(health.contains("x-corvid-request-id:"), "{health}");
+    assert!(health.contains("x-corvid-middleware:"), "{health}");
+    assert!(health.contains("x-corvid-effect-policy: enforced"), "{health}");
 
     let ready = http_get(addr, "/readyz");
     assert!(ready.contains("HTTP/1.1 200 OK"), "{ready}");
@@ -210,6 +212,69 @@ fn build_server_emits_runnable_local_http_binary() {
     assert!(timeout.contains(r#""kind":"handler_timeout""#), "{timeout}");
 
     drop(timeout_child);
+
+    let auth_child = Command::new(&server)
+        .env("CORVID_PORT", "0")
+        .env("CORVID_REQUIRE_AUTH", "1")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn auth server");
+    let mut auth_child = ChildGuard(auth_child);
+    let stdout = auth_child.0.stdout.take().expect("auth server stdout");
+    let mut reader = BufReader::new(stdout);
+    let mut line = String::new();
+    let start = Instant::now();
+    while line.is_empty() && start.elapsed() < Duration::from_secs(10) {
+        reader
+            .read_line(&mut line)
+            .expect("read auth listening line");
+    }
+    let auth_addr = line
+        .trim()
+        .strip_prefix("listening: http://")
+        .expect("auth listening prefix");
+    let unauthorized = http_get(auth_addr, "/healthz");
+    assert!(
+        unauthorized.contains("HTTP/1.1 401 Unauthorized"),
+        "{unauthorized}"
+    );
+    assert!(
+        unauthorized.contains(r#""kind":"auth_required""#),
+        "{unauthorized}"
+    );
+    drop(auth_child);
+
+    let rate_child = Command::new(&server)
+        .env("CORVID_PORT", "0")
+        .env("CORVID_RATE_LIMIT_REQUESTS", "1")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn rate-limit server");
+    let mut rate_child = ChildGuard(rate_child);
+    let stdout = rate_child.0.stdout.take().expect("rate-limit server stdout");
+    let mut reader = BufReader::new(stdout);
+    let mut line = String::new();
+    let start = Instant::now();
+    while line.is_empty() && start.elapsed() < Duration::from_secs(10) {
+        reader
+            .read_line(&mut line)
+            .expect("read rate-limit listening line");
+    }
+    let rate_addr = line
+        .trim()
+        .strip_prefix("listening: http://")
+        .expect("rate-limit listening prefix");
+    let first = http_get(rate_addr, "/healthz");
+    assert!(first.contains("HTTP/1.1 200 OK"), "{first}");
+    let limited = http_get(rate_addr, "/healthz");
+    assert!(
+        limited.contains("HTTP/1.1 429 Too Many Requests"),
+        "{limited}"
+    );
+    assert!(limited.contains(r#""kind":"rate_limited""#), "{limited}");
+    drop(rate_child);
 
     let invalid_config = Command::new(&server)
         .env("CORVID_PORT", "0")

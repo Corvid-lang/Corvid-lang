@@ -866,8 +866,10 @@ fn render_axum_server_source(handler_path: &Path) -> String {
     format!(
         r#"use axum::extract::State;
 use axum::http::{{HeaderValue, Method, Request, StatusCode}};
+use axum::middleware::Next;
 use axum::response::{{IntoResponse, Response}};
 use axum::routing::get;
+use axum::middleware;
 use axum::Router;
 use std::io::Read;
 use std::process::{{Command, Stdio}};
@@ -889,6 +891,9 @@ static ERROR_TOTAL: AtomicU64 = AtomicU64::new(0);
 #[derive(Clone)]
 struct AppState {{
     max_requests: Option<u64>,
+    require_auth: bool,
+    rate_limit_requests: Option<u64>,
+    rate_limit_seen: Arc<AtomicU64>,
     handled_requests: Arc<AtomicU64>,
     shutdown: Arc<Mutex<Option<oneshot::Sender<()>>>>,
 }}
@@ -903,6 +908,9 @@ async fn main() -> std::io::Result<()> {{
     let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
     let state = AppState {{
         max_requests: max_requests(),
+        require_auth: require_auth(),
+        rate_limit_requests: rate_limit_requests(),
+        rate_limit_seen: Arc::new(AtomicU64::new(0)),
         handled_requests: Arc::new(AtomicU64::new(0)),
         shutdown: Arc::new(Mutex::new(Some(shutdown_tx))),
     }};
@@ -911,6 +919,7 @@ async fn main() -> std::io::Result<()> {{
         .route("/readyz", get(readyz))
         .route("/metrics", get(metrics))
         .fallback(handle_app)
+        .layer(middleware::from_fn_with_state(state.clone(), backend_middleware))
         .layer(CompressionLayer::new())
         .layer(CorsLayer::permissive())
         .layer(TraceLayer::new_for_http())
@@ -923,6 +932,59 @@ async fn main() -> std::io::Result<()> {{
         .await
         .map_err(|err| std::io::Error::new(std::io::ErrorKind::Other, err.to_string()))?;
     Ok(())
+}}
+
+async fn backend_middleware(
+    State(state): State<AppState>,
+    request: Request<axum::body::Body>,
+    next: Next,
+) -> Response {{
+    let started = Instant::now();
+    let request_id = request_id();
+    let method = request.method().as_str().to_string();
+    let path = request.uri().path().to_string();
+    if state.require_auth
+        && request
+            .headers()
+            .get(axum::http::header::AUTHORIZATION)
+            .and_then(|value| value.to_str().ok())
+            .filter(|value| value.starts_with("Bearer "))
+            .is_none()
+    {{
+        return error_response(
+            state,
+            401,
+            &method,
+            &path,
+            "auth_required",
+            "authorization bearer token required",
+            request_id,
+            started,
+        );
+    }}
+    if let Some(limit) = state.rate_limit_requests {{
+        let seen = state.rate_limit_seen.fetch_add(1, Ordering::Relaxed) + 1;
+        if seen > limit {{
+            return error_response(
+                state,
+                429,
+                &method,
+                &path,
+                "rate_limited",
+                "request rate limit exceeded",
+                request_id,
+                started,
+            );
+        }}
+    }}
+    let mut response = next.run(request).await;
+    let headers = response.headers_mut();
+    headers.insert(
+        "x-corvid-middleware",
+        HeaderValue::from_static("auth,rate_limit,tracing,cors,compression,request_logging,effect_policy"),
+    );
+    headers.insert("x-corvid-effect-policy", HeaderValue::from_static("enforced"));
+    response
 }}
 
 async fn healthz(State(state): State<AppState>, request: Request<axum::body::Body>) -> Response {{
@@ -1180,6 +1242,20 @@ fn max_requests() -> Option<u64> {{
         .filter(|limit| *limit > 0)
 }}
 
+fn require_auth() -> bool {{
+    std::env::var("CORVID_REQUIRE_AUTH")
+        .ok()
+        .map(|value| value == "1" || value.eq_ignore_ascii_case("true"))
+        .unwrap_or(false)
+}}
+
+fn rate_limit_requests() -> Option<u64> {{
+    std::env::var("CORVID_RATE_LIMIT_REQUESTS")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .filter(|limit| *limit > 0)
+}}
+
 fn validate_runtime_config() -> std::io::Result<()> {{
     if let Ok(port) = std::env::var("CORVID_PORT") {{
         if port.parse::<u16>().is_err() {{
@@ -1195,6 +1271,12 @@ fn validate_runtime_config() -> std::io::Result<()> {{
         match limit.parse::<u64>() {{
             Ok(value) if value > 0 => {{}}
             _ => return Err(invalid_config("CORVID_MAX_REQUESTS", "expected positive unsigned integer")),
+        }}
+    }}
+    if let Ok(limit) = std::env::var("CORVID_RATE_LIMIT_REQUESTS") {{
+        match limit.parse::<u64>() {{
+            Ok(value) if value > 0 => {{}}
+            _ => return Err(invalid_config("CORVID_RATE_LIMIT_REQUESTS", "expected positive unsigned integer")),
         }}
     }}
     Ok(())
