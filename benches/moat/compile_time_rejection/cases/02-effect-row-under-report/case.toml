@@ -1,0 +1,19 @@
+id = "02-effect-row-under-report"
+title = "Function declares a narrower effect row than its body produces"
+bug_class = "effect-under-report"
+description = """
+A function declares an effect row that omits an effect actually produced
+in the body — for example, declares `@trust(autonomous)` while calling a
+helper that requires `@trust(human_required)`. In production this means
+a caller relies on a contract the body cannot satisfy, and the safety
+check the caller intended is silently absent.
+"""
+
+[expected]
+corvid = "rejected"
+python = "accepted"
+typescript = "accepted"
+
+corvid_guarantee_id = "effect_row.body_completeness"
+python_baseline = "mypy --strict + pydantic"
+typescript_baseline = "tsc --strict + zod"

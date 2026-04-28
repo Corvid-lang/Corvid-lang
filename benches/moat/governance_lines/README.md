@@ -1,0 +1,111 @@
+# Benchmark — governance line-count
+
+For each reference app under `apps/`, count the lines of source that
+exist *only* to enforce safety, audit, replay, approval, or provenance
+— and compare across Corvid, Python+LangChain, and TypeScript+Vercel
+AI SDK. The published number is the line-count delta the language
+saves a developer.
+
+## What counts as a "governance line"
+
+A line is a governance line if removing it would:
+
+1. Allow a dangerous tool call without approval.
+2. Allow an effect to be produced that the calling function did not
+   declare.
+3. Allow a `Grounded<T>` value to ship without a citation chain.
+4. Allow a budget to be exceeded silently.
+5. Allow a confidence threshold to be bypassed.
+6. Allow a replay-divergent call inside a `@deterministic` /
+   `@replayable` body.
+7. Allow a tenant-crossing data access.
+8. Allow a JSON output to be accepted without a schema check.
+9. Allow an LLM call to ship without an audit trace event.
+10. Allow a connector write without a corresponding approval contract.
+
+A line is a *feature line* if removing it changes user-facing behaviour
+(handler logic, business rules, formatting, output shape). Feature
+lines are not counted.
+
+A line that is *both* feature and governance — e.g. a Python `if`
+statement that both checks an approval and also branches on the
+business outcome — is counted as `0.5` of a governance line, with the
+specific case noted in the runner output.
+
+## Honest counting rules
+
+1. **Comments don't count.** Counter ignores `#`, `//`, `///`, `--`
+   leading lines and trailing comments.
+2. **Blank lines don't count.**
+3. **Imports count if they exist *only* for governance** (e.g.
+   `from pydantic import ValidationError` used only to catch a
+   safety check failure). They don't count if the import serves
+   feature code too.
+4. **Boilerplate counts.** A Python `try/except` block that exists to
+   catch an approval bypass error counts even though the keywords are
+   "structural" — they exist *for* the governance check.
+5. **Same product everywhere.** All three apps must implement the
+   same intended behaviour. Anyone reading the three implementations
+   should see the same product, not three different products.
+
+## App format
+
+Each app lives under `apps/<name>/<stack>/` and contains a self-
+contained implementation:
+
+- `apps/refund_bot/corvid/` — Corvid implementation. `.cor` files only.
+- `apps/refund_bot/python/` — Python implementation. `.py` files +
+  `requirements.txt` listing the exact deps used.
+- `apps/refund_bot/typescript/` — TypeScript implementation. `.ts`
+  files + `package.json` listing the exact deps used.
+
+Each stack must implement at minimum:
+
+1. A typed request/response surface (refund request → refund response).
+2. A dangerous tool (`issue_refund`).
+3. An approval contract gating the dangerous tool.
+4. An audit-log entry written for every refund.
+5. An effect-tagged trace event for every prompt/tool/approval call.
+6. A budget cap on the refund amount.
+7. A grounded answer when the user asks "why was my refund denied?"
+   that cites the original order data.
+8. A replay-deterministic test fixture for the happy path.
+
+That set of requirements is the same across stacks. The implementations
+will look very different — that's the point.
+
+## Running
+
+```bash
+python3 benches/moat/governance_lines/runner/count.py \
+    --apps-dir benches/moat/governance_lines/apps \
+    --out      benches/moat/governance_lines/RESULTS.md
+```
+
+The counter tags each non-blank, non-comment line as `feature` /
+`governance` / `mixed` / `boilerplate-for-governance` and emits a
+per-stack table.
+
+## Honesty rules
+
+1. **Idiomatic implementations.** Each stack uses the libraries a
+   senior developer in that ecosystem would reach for. Naive
+   implementations (no static checking, no audit, no approval) are
+   rejected — they would let Corvid win against an unfair baseline.
+2. **No "winning by under-implementing."** If the Python version
+   skips a requirement listed above, the counter logs it as a missing
+   feature line, not zero governance lines. The published table
+   notes which stacks skipped which requirement.
+3. **Adversarial review.** Before publishing, the implementations
+   are posted to the bounty page for at least 7 days; if a reviewer
+   submits a more idiomatic Python/TS rewrite that lowers the
+   governance line count, the rewrite replaces the published version.
+
+## Path to first headline number
+
+`apps/refund_bot/` ships with the Corvid implementation as a working
+end-to-end shell + Python and TypeScript shells with the requirement
+checklist filled in but governance code stubs labelled `TODO`. The
+first published headline number lands when all three implementations
+clear the requirement list, which is tracked under slice
+33-X-moat-benchmarks.

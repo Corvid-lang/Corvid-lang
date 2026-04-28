@@ -1,0 +1,20 @@
+id = "03-grounded-without-citation"
+title = "Function returns Grounded<T> with no retrieval in the call chain"
+bug_class = "grounded-without-citation"
+description = """
+A function declares its return as Grounded<T> (a value with cited
+provenance) but the body produces the value from a non-retrieval
+source — a hardcoded string, an LLM call without retrieval context,
+or any path that does not flow from a `data: grounded` effect. In
+production this is the citation-forgery bug class: an answer claims
+to be grounded but the citation chain points nowhere.
+"""
+
+[expected]
+corvid = "rejected"
+python = "accepted"
+typescript = "accepted"
+
+corvid_guarantee_id = "grounded.provenance_required"
+python_baseline = "mypy --strict + pydantic"
+typescript_baseline = "tsc --strict + zod"

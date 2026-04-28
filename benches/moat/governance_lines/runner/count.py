@@ -1,0 +1,225 @@
+"""Governance vs feature line counter.
+
+Walks `apps/<name>/<stack>/` directories and classifies each non-blank
+non-comment source line as one of:
+
+    - feature              line implements user-facing behaviour
+    - governance           line exists only for safety/audit/replay/approval
+    - mixed                line does both (counted as 0.5 governance)
+
+Classification heuristics:
+
+  Corvid (.cor):
+    - Lines with @budget / @trust / @min_confidence / @deterministic /
+      @replayable annotations → governance.
+    - `dangerous` keyword in tool decl → governance.
+    - `Grounded<` type reference → governance.
+    - `approve ` keyword → governance.
+    - `effect ` keyword in declarations → governance.
+    - `uses` clause → governance.
+    - `policy` clause → governance.
+    - Everything else → feature.
+
+  Python (.py) and TypeScript (.ts):
+    - Lines with a trailing `# governance` (Py) or `// governance` (TS)
+      comment are governance. Convention is that the developer marks
+      governance lines explicitly because Python/TS have no static
+      representation for the concept.
+    - Lines marked `# mixed` / `// mixed` count as 0.5 governance.
+    - Comments and blank lines are skipped.
+
+Output: a Markdown table with per-stack totals, governance %, and
+overall delta showing how many lines Corvid saves.
+
+Usage:
+    python3 benches/moat/governance_lines/runner/count.py \\
+        --apps-dir benches/moat/governance_lines/apps \\
+        --out      benches/moat/governance_lines/RESULTS.md
+"""
+
+from __future__ import annotations
+
+import argparse
+import re
+from dataclasses import dataclass
+from pathlib import Path
+
+CORVID_GOVERNANCE_PATTERNS = [
+    re.compile(r"@budget\b"),
+    re.compile(r"@trust\b"),
+    re.compile(r"@min_confidence\b"),
+    re.compile(r"@deterministic\b"),
+    re.compile(r"@replayable\b"),
+    re.compile(r"\bdangerous\b"),
+    re.compile(r"\bGrounded<"),
+    re.compile(r"\bapprove\b"),
+    re.compile(r"\beffect\b\s+\w+:"),
+    re.compile(r"\buses\b"),
+    re.compile(r"\bpolicy\b"),
+    re.compile(r"\bprovenance\(\)?"),
+]
+
+
+@dataclass
+class StackCount:
+    stack: str
+    feature: int = 0
+    governance: float = 0.0  # supports 0.5 increments
+
+    @property
+    def total(self) -> float:
+        return self.feature + self.governance
+
+
+def is_skippable_python_line(line: str) -> bool:
+    stripped = line.strip()
+    return not stripped or stripped.startswith("#")
+
+
+def is_skippable_ts_line(line: str) -> bool:
+    stripped = line.strip()
+    return (
+        not stripped
+        or stripped.startswith("//")
+        or stripped.startswith("/*")
+        or stripped == "*/"
+    )
+
+
+def is_skippable_corvid_line(line: str) -> bool:
+    stripped = line.strip()
+    return not stripped or stripped.startswith("#")
+
+
+def classify_corvid(line: str) -> str:
+    if any(pat.search(line) for pat in CORVID_GOVERNANCE_PATTERNS):
+        return "governance"
+    return "feature"
+
+
+def classify_marked(line: str, marker: str) -> str:
+    """Python + TS use trailing `# governance` / `// governance` markers.
+    Lines with `mixed` are half-counted."""
+    lower = line.lower()
+    if f"{marker} mixed" in lower:
+        return "mixed"
+    if f"{marker} governance" in lower:
+        return "governance"
+    return "feature"
+
+
+def count_file(path: Path) -> StackCount:
+    suffix = path.suffix
+    text = path.read_text(encoding="utf-8")
+    count = StackCount(stack=path.parent.name)
+    for raw_line in text.splitlines():
+        if suffix == ".cor":
+            if is_skippable_corvid_line(raw_line):
+                continue
+            kind = classify_corvid(raw_line)
+        elif suffix == ".py":
+            if is_skippable_python_line(raw_line):
+                continue
+            kind = classify_marked(raw_line, "#")
+        elif suffix in {".ts", ".tsx", ".js"}:
+            if is_skippable_ts_line(raw_line):
+                continue
+            kind = classify_marked(raw_line, "//")
+        else:
+            continue
+        if kind == "feature":
+            count.feature += 1
+        elif kind == "governance":
+            count.governance += 1
+        elif kind == "mixed":
+            count.governance += 0.5
+            count.feature += 0.5
+    return count
+
+
+def count_stack(stack_dir: Path) -> StackCount:
+    """Sum line counts across every source file in a stack directory."""
+    total = StackCount(stack=stack_dir.name)
+    for path in sorted(stack_dir.rglob("*")):
+        if path.is_file() and path.suffix in {".cor", ".py", ".ts", ".tsx"}:
+            sub = count_file(path)
+            total.feature += sub.feature
+            total.governance += sub.governance
+    return total
+
+
+def render_results_md(app_results: dict[str, dict[str, StackCount]]) -> str:
+    out: list[str] = []
+    out.append("# Governance line-count — published results\n")
+    out.append(
+        "> Auto-generated by `benches/moat/governance_lines/runner/count.py`. "
+        "Do not hand-edit. Re-run the counter after editing the app "
+        "implementations.\n"
+    )
+
+    for app, stacks in sorted(app_results.items()):
+        out.append(f"## App: `{app}`\n")
+        out.append("| Stack | Feature lines | Governance lines | Total | Governance % |")
+        out.append("|-------|---------------|------------------|-------|--------------|")
+        for stack_name in ("corvid", "python", "typescript"):
+            sc = stacks.get(stack_name)
+            if sc is None:
+                out.append(f"| {stack_name} | — | — | — | — |")
+                continue
+            pct = (sc.governance / sc.total * 100.0) if sc.total else 0.0
+            out.append(
+                f"| {stack_name} "
+                f"| {sc.feature:.1f} "
+                f"| {sc.governance:.1f} "
+                f"| {sc.total:.1f} "
+                f"| {pct:.1f}% |"
+            )
+        cor = stacks.get("corvid")
+        py = stacks.get("python")
+        ts = stacks.get("typescript")
+        if cor and py:
+            saved = py.governance - cor.governance
+            out.append(
+                f"\n**Governance lines Corvid saves vs Python:** {saved:+.1f}"
+            )
+        if cor and ts:
+            saved = ts.governance - cor.governance
+            out.append(
+                f"**Governance lines Corvid saves vs TypeScript:** {saved:+.1f}\n"
+            )
+
+    out.append("## Methodology\n")
+    out.append(
+        "See `benches/moat/governance_lines/README.md` for the counting "
+        "rules. Python and TypeScript implementations mark governance "
+        "lines with a trailing `# governance` / `// governance` comment "
+        "so the counter is auditable; Corvid lines are classified by "
+        "syntactic pattern (annotations, keywords, type wrappers)."
+    )
+    return "\n".join(out) + "\n"
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--apps-dir", required=True, type=Path)
+    parser.add_argument("--out", required=True, type=Path)
+    args = parser.parse_args()
+
+    apps: list[Path] = sorted(p for p in args.apps_dir.iterdir() if p.is_dir())
+    if not apps:
+        print(f"no apps under {args.apps_dir}")
+        return 1
+
+    app_results: dict[str, dict[str, StackCount]] = {}
+    for app_dir in apps:
+        stacks: dict[str, StackCount] = {}
+        for stack_dir in sorted(p for p in app_dir.iterdir() if p.is_dir()):
+            stacks[stack_dir.name] = count_stack(stack_dir)
+        app_results[app_dir.name] = stacks
+
+    args.out.write_text(render_results_md(app_results), encoding="utf-8")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

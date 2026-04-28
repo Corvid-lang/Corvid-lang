@@ -1,0 +1,7 @@
+tool fabricate(seed: String) -> String
+
+# BUG: agent declares Grounded<String> return but the body produces a
+# plain String with no provenance path from a `data: grounded` effect.
+# Corvid rejects with `grounded.provenance_required`.
+agent answer(seed: String) -> Grounded<String>:
+    return fabricate(seed)

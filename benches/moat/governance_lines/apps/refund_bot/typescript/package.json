@@ -1,0 +1,10 @@
+{
+  "name": "refund-bot-typescript",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "devDependencies": {
+    "typescript": "5.4.5",
+    "zod": "3.23.8"
+  }
+}

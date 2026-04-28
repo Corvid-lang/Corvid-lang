@@ -1,0 +1,9 @@
+type Receipt:
+    id: String
+
+tool issue_refund(order_id: String, amount: Float) -> Receipt dangerous
+
+agent refund_bot(order_id: String, amount: Float) -> Receipt:
+    # BUG: dangerous tool called without `approve IssueRefund(...)`.
+    # Corvid rejects this at typecheck time.
+    return issue_refund(order_id, amount)

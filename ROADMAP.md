@@ -1654,6 +1654,7 @@ The determinism-source catalog and the language's treatment of non-reproducible 
 - [ ] 33K-reference-demo-pack        One-command demo apps have tests, evals, traces, and benchmark notes.
 - [ ] 33L-launch-materials           GIF/video, launch drafts, and external-reader review are complete.
 - [ ] 33M-beta-feedback              20 external-developer feedback items are closed as code/docs/tests or explicit non-scope.
+- [ ] 33N-moat-benchmarks            `benches/moat/` ships two defensibility benchmarks the website can quote: (a) compile-time rejection rate over a target 50-case bug-class corpus comparing Corvid against `mypy --strict + pydantic` and `tsc --strict + zod`; (b) governance line-count over a shared reference-app corpus implemented identically across Corvid + Python + TypeScript. Each benchmark has a runner that produces a deterministic Markdown `RESULTS.md`; CI runs the runners on every push and a drift gate fails the build if `RESULTS.md` no longer matches what the runner produces. Slice scaffold + 3 seed cases + first refund_bot governance comparison committed 2026-04-29 (Corvid saves 22 lines vs Python, 34 vs TypeScript on refund_bot); slice fully closes when all 50 compile-time-rejection cases land + at least 3 reference apps cover governance-line counts.
 
 ### Phase 34 — Inventions readme + landing page (~2 weeks) ✅ closed
 

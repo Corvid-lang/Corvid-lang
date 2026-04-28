@@ -1,0 +1,19 @@
+id = "01-unapproved-dangerous-call"
+title = "Dangerous tool called without approval"
+bug_class = "approval-bypass"
+description = """
+The program calls a refund-issuing tool annotated as dangerous
+(financial impact, irreversible, requires human approval) without
+first obtaining the matching approval token. In production this is
+the most common AI-app safety failure: a bug or a hot-fix removes the
+approval step and money moves without review.
+"""
+
+[expected]
+corvid = "rejected"
+python = "accepted"
+typescript = "accepted"
+
+corvid_guarantee_id = "approval.dangerous_call_requires_token"
+python_baseline = "mypy --strict + pydantic"
+typescript_baseline = "tsc --strict + zod"

@@ -1,0 +1,20 @@
+effect transfer:
+    cost: $0.50
+    trust: human_required
+    reversible: false
+
+type Receipt:
+    id: String
+
+tool issue_refund(id: String, amount: Float) -> Receipt dangerous uses transfer
+
+agent helper(id: String, amount: Float) -> Receipt uses transfer:
+    approve IssueRefund(id, amount)
+    return issue_refund(id, amount)
+
+# BUG: outer agent declares @trust(autonomous), but calls a helper whose
+# body produces a human_required trust effect. Corvid rejects with
+# `effect_row.body_completeness`.
+@trust(autonomous)
+agent outer(id: String, amount: Float) -> Receipt:
+    return helper(id, amount)

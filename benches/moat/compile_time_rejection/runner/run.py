@@ -1,0 +1,259 @@
+"""Phase 35-style moat benchmark — compile-time rejection rate runner.
+
+Walks `cases/`, runs each stack's static checker over each case, and
+emits a Markdown rejection table to `RESULTS.md`. Designed to be
+deterministic and CI-runnable.
+
+Usage:
+    python3 benches/moat/compile_time_rejection/runner/run.py \\
+        --cases-dir benches/moat/compile_time_rejection/cases \\
+        --out      benches/moat/compile_time_rejection/RESULTS.md
+
+The runner shells out to:
+    cargo run -q -p corvid-cli -- check <corvid.cor>
+    mypy --strict <python.py>
+    tsc --strict --noEmit <typescript.ts>
+
+Exit code 0 = stack accepted. Non-zero = stack rejected.
+
+When a case expects `corvid_guarantee_id`, the runner additionally
+greps Corvid's stderr for the id and fails the case if the rejection
+happened for the wrong reason.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import shutil
+import subprocess
+import sys
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Optional
+
+try:
+    import tomllib  # Python 3.11+
+except ModuleNotFoundError:  # pragma: no cover
+    import tomli as tomllib  # type: ignore
+
+
+@dataclass
+class CaseResult:
+    case_id: str
+    title: str
+    bug_class: str
+    expected: dict[str, str]
+    observed: dict[str, str] = field(default_factory=dict)
+    notes: list[str] = field(default_factory=list)
+
+    def matches_expected(self) -> bool:
+        return all(
+            self.observed.get(stack) == expected
+            for stack, expected in self.expected.items()
+        )
+
+
+def discover_cases(cases_dir: Path) -> list[Path]:
+    return sorted(p for p in cases_dir.iterdir() if p.is_dir())
+
+
+def run_corvid(case_dir: Path, expected_guarantee_id: str | None) -> tuple[str, str]:
+    """Returns (verdict, note). verdict is 'rejected' / 'accepted' / 'error'."""
+    corvid_src = case_dir / "corvid.cor"
+    if not corvid_src.exists():
+        return "error", "missing corvid.cor"
+    proc = subprocess.run(
+        ["cargo", "run", "-q", "-p", "corvid-cli", "--", "check", str(corvid_src)],
+        capture_output=True,
+        text=True,
+    )
+    if proc.returncode == 0:
+        return "accepted", ""
+    output = (proc.stdout or "") + (proc.stderr or "")
+    if expected_guarantee_id and expected_guarantee_id not in output:
+        return (
+            "rejected",
+            f"WARNING: rejected but did not mention expected guarantee_id "
+            f"`{expected_guarantee_id}`. Diagnostic surface may have drifted.",
+        )
+    return "rejected", ""
+
+
+def run_python(case_dir: Path) -> tuple[str, str]:
+    py_src = case_dir / "python.py"
+    if not py_src.exists():
+        return "error", "missing python.py"
+    if shutil.which("mypy") is None:
+        return "error", "mypy not installed"
+    proc = subprocess.run(
+        ["mypy", "--strict", str(py_src)],
+        capture_output=True,
+        text=True,
+    )
+    return ("accepted" if proc.returncode == 0 else "rejected"), ""
+
+
+def run_typescript(case_dir: Path) -> tuple[str, str]:
+    ts_src = case_dir / "typescript.ts"
+    if not ts_src.exists():
+        return "error", "missing typescript.ts"
+    if shutil.which("tsc") is None:
+        return "error", "tsc not installed (npm install -g typescript)"
+    proc = subprocess.run(
+        ["tsc", "--strict", "--noEmit", "--skipLibCheck", "--target", "es2022",
+         "--module", "esnext", "--moduleResolution", "bundler", str(ts_src)],
+        capture_output=True,
+        text=True,
+    )
+    return ("accepted" if proc.returncode == 0 else "rejected"), ""
+
+
+def run_case(case_dir: Path) -> CaseResult:
+    case_toml = case_dir / "case.toml"
+    if not case_toml.exists():
+        raise SystemExit(f"missing case.toml in {case_dir}")
+    meta = tomllib.loads(case_toml.read_text(encoding="utf-8"))
+    expected_guarantee_id = meta.get("corvid_guarantee_id") or None
+
+    result = CaseResult(
+        case_id=meta["id"],
+        title=meta["title"],
+        bug_class=meta["bug_class"],
+        expected={
+            "corvid": meta["expected"]["corvid"],
+            "python": meta["expected"]["python"],
+            "typescript": meta["expected"]["typescript"],
+        },
+    )
+
+    corvid_verdict, corvid_note = run_corvid(case_dir, expected_guarantee_id)
+    result.observed["corvid"] = corvid_verdict
+    if corvid_note:
+        result.notes.append(corvid_note)
+
+    py_verdict, py_note = run_python(case_dir)
+    result.observed["python"] = py_verdict
+    if py_note:
+        result.notes.append(f"python: {py_note}")
+
+    ts_verdict, ts_note = run_typescript(case_dir)
+    result.observed["typescript"] = ts_verdict
+    if ts_note:
+        result.notes.append(f"typescript: {ts_note}")
+
+    return result
+
+
+def render_results_md(results: list[CaseResult]) -> str:
+    out: list[str] = []
+    out.append("# Compile-time rejection rate — published results\n")
+    out.append(
+        "> Auto-generated by `benches/moat/compile_time_rejection/runner/run.py`. "
+        "Do not hand-edit. Re-run the runner after adding or modifying cases.\n"
+    )
+
+    rejected_corvid = sum(1 for r in results if r.observed.get("corvid") == "rejected")
+    rejected_python = sum(1 for r in results if r.observed.get("python") == "rejected")
+    rejected_ts = sum(1 for r in results if r.observed.get("typescript") == "rejected")
+    total = len(results)
+
+    out.append("## Headline numbers\n")
+    out.append(f"- Cases run: **{total}**")
+    out.append(f"- Rejected by Corvid: **{rejected_corvid}/{total}**")
+    out.append(
+        f"- Rejected by Python (`mypy --strict + pydantic`): **{rejected_python}/{total}**"
+    )
+    out.append(
+        f"- Rejected by TypeScript (`tsc --strict + zod`): **{rejected_ts}/{total}**\n"
+    )
+
+    out.append("## Per-case verdicts\n")
+    out.append(
+        "| Case | Bug class | Corvid | Python | TypeScript | Match expected? |"
+    )
+    out.append(
+        "|------|-----------|--------|--------|------------|-----------------|"
+    )
+    for r in results:
+        ok = "✓" if r.matches_expected() else "✗"
+        out.append(
+            f"| `{r.case_id}` "
+            f"| {r.bug_class} "
+            f"| {r.observed.get('corvid', '?')} "
+            f"| {r.observed.get('python', '?')} "
+            f"| {r.observed.get('typescript', '?')} "
+            f"| {ok} |"
+        )
+
+    notes = [(r.case_id, n) for r in results for n in r.notes]
+    if notes:
+        out.append("\n## Notes\n")
+        for case_id, note in notes:
+            out.append(f"- `{case_id}`: {note}")
+
+    out.append("\n## Methodology\n")
+    out.append(
+        "See `benches/moat/compile_time_rejection/README.md` for the case "
+        "format, what counts as a rejection, and the honesty rules. The "
+        "runner shells out to `cargo run -q -p corvid-cli -- check`, "
+        "`mypy --strict`, and `tsc --strict --noEmit` per case."
+    )
+
+    return "\n".join(out) + "\n"
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--cases-dir", required=True, type=Path)
+    parser.add_argument("--out", required=True, type=Path)
+    parser.add_argument("--json", type=Path, default=None,
+                        help="Optional path to dump the structured per-case JSON")
+    args = parser.parse_args()
+
+    cases = discover_cases(args.cases_dir)
+    if not cases:
+        print(f"no cases under {args.cases_dir}", file=sys.stderr)
+        return 1
+
+    results = [run_case(c) for c in cases]
+
+    args.out.write_text(render_results_md(results), encoding="utf-8")
+
+    if args.json:
+        args.json.write_text(
+            json.dumps(
+                [
+                    {
+                        "case_id": r.case_id,
+                        "title": r.title,
+                        "bug_class": r.bug_class,
+                        "expected": r.expected,
+                        "observed": r.observed,
+                        "notes": r.notes,
+                    }
+                    for r in results
+                ],
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+
+    mismatches = [r for r in results if not r.matches_expected()]
+    if mismatches:
+        print(
+            f"{len(mismatches)} case(s) mismatched expected verdicts:",
+            file=sys.stderr,
+        )
+        for r in mismatches:
+            print(
+                f"  - {r.case_id}: expected={r.expected} observed={r.observed}",
+                file=sys.stderr,
+            )
+        return 1
+
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -1,0 +1,47 @@
+# Refund-bot reference implementation — Corvid.
+#
+# Every governance check in this file is a single annotation or
+# typed declaration. The compiler enforces them; no runtime guard
+# code is required.
+
+effect transfer_money:
+    cost: $0.05
+    trust: human_required
+    reversible: false
+    data: financial
+
+effect order_lookup:
+    data: grounded
+
+type RefundRequest:
+    order_id: String
+    amount: Float
+    reason: String
+
+type RefundResponse:
+    receipt_id: String
+    status: String
+
+type RefundExplanation:
+    reason: String
+    sources: List<String>
+
+# `dangerous` is the entire governance surface for the dangerous tool.
+tool issue_refund(req: RefundRequest) -> String dangerous uses transfer_money
+
+# `data: grounded` carries provenance through the return type.
+tool fetch_order(order_id: String) -> Grounded<String> uses order_lookup
+
+# `@budget` + `@trust` are compile-time enforced; an unapproved or
+# over-budget call is a typecheck error.
+@budget($500.00)
+agent approve_refund(req: RefundRequest) -> RefundResponse uses transfer_money:
+    approve IssueRefund(req)
+    receipt_id = issue_refund(req)
+    return RefundResponse(receipt_id, "approved")
+
+# The explanation returns Grounded<String> — the citation chain
+# survives the prompt boundary by construction.
+agent explain_refund(order_id: String) -> RefundExplanation:
+    order_text: Grounded<String> = fetch_order(order_id)
+    return RefundExplanation(unwrap(order_text), provenance(order_text))
