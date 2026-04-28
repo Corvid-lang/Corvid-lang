@@ -5833,3 +5833,38 @@ references inline in each guarantee's detail section, taking the
 file from 9.9 KB / 22 rows to 15.5 KB / 22 rows. The drift gate
 holds the regenerated doc against the registry. Tests in
 `corvid-guarantees`: 17 passed; workspace check clean.
+
+## 2026-04-28 - Phase 35-F: descriptor + attestation byte fuzz corpus
+
+`crates/corvid-abi/tests/byte_fuzz_corpus.rs` ships a deterministic
+adversarial byte corpus over the public Corvid sections and DSSE
+envelopes. 12 tests cover three guarantees end-to-end:
+
+- `abi_descriptor.cdylib_emission` — descriptor section parser
+  rejects 256+ random byte flips, every truncation, and every
+  non-canonical magic.
+- `abi_descriptor.byte_determinism` (promoted back to `Static`) —
+  the same source produces byte-identical descriptor bytes across
+  two emissions; the cross-build comparison was the missing
+  artifact slice 35-E flagged.
+- `abi_attestation.envelope_signature` — magic+version header flips
+  reject 100%; body mutations that survive parse must fail
+  signature verification (no mutation is silently accepted by both
+  stages); signature, payload, and payloadType tampering all reject.
+  256+ generated cases per gate.
+
+Determinism uses a small deterministic LCG (no proptest dep) so
+the corpus is reproducible without external state. The harness
+documents an honest finding: descriptor section length-field flips
+can parse to a smaller body, which is then caught downstream by
+hash mismatch — covered by the body-mutation-breaks-verification
+test rather than over-claimed in the parse-time test.
+
+Registry updated to promote `abi_descriptor.byte_determinism` from
+`OutOfScope` back to `Static` with concrete test refs, and the
+attestation envelope guarantee now references all six fuzz-corpus
+adversarial tests in addition to the cdylib end-to-end ones.
+Doc regenerated; drift gate continues to hold.
+
+Tests: 12 (corvid-abi byte_fuzz_corpus) + 17 (corvid-guarantees);
+workspace check clean.

@@ -31,7 +31,7 @@ Per the no-shortcuts rule, every `out_of_scope` entry carries an explicit reason
 | `replay.trace_signature` | replay | runtime_checked | runtime |
 | `provenance_trace.receipt_signature` | provenance_trace | runtime_checked | runtime |
 | `abi_descriptor.cdylib_emission` | abi_descriptor | static | codegen |
-| `abi_descriptor.byte_determinism` | abi_descriptor | out_of_scope | codegen |
+| `abi_descriptor.byte_determinism` | abi_descriptor | static | codegen |
 | `abi_attestation.envelope_signature` | abi_attestation | runtime_checked | abi_verify |
 | `abi_attestation.descriptor_match` | abi_attestation | runtime_checked | abi_verify |
 | `abi_attestation.absent_reports_unsigned` | abi_attestation | runtime_checked | abi_verify |
@@ -269,12 +269,19 @@ Every `corvid build --target=cdylib` output exports a `CORVID_ABI_DESCRIPTOR` sy
 - `crates/corvid-cli/tests/build_cdylib.rs::cli_build_cdylib_fails_cleanly_on_non_scalar_signature`
 
 #### `abi_descriptor.byte_determinism`
-- **class**: out_of_scope
+- **class**: static
 - **phase**: codegen
 
 Two byte-identical Corvid sources compiled with the same toolchain version produce byte-identical descriptor JSON; the descriptor is canonical, not pretty-printed.
 
-> **Why out of scope:** Today's coverage proves the canonical-hash function is stable (`abi_hash_matches_embedded_descriptor_hash` in `crates/corvid-cli/tests/abi_cmd.rs`), but a dedicated cross-build byte-identical comparison test is not yet checked in. Slice 35-F's descriptor + attestation byte fuzzer will add the explicit determinism harness; once that lands this entry promotes back to `Static` with the corresponding test refs.
+**Positive tests:**
+
+- `crates/corvid-abi/tests/determinism.rs::identical_source_produces_byte_identical_descriptor_modulo_generated_at`
+- `crates/corvid-abi/tests/byte_fuzz_corpus.rs::descriptor_bytes_are_byte_identical_across_two_emissions_of_same_source`
+
+**Adversarial tests:**
+
+- `crates/corvid-abi/tests/byte_fuzz_corpus.rs::descriptor_section_rejects_random_byte_flips`
 
 ### ABI attestation
 
@@ -287,10 +294,16 @@ Two byte-identical Corvid sources compiled with the same toolchain version produ
 **Positive tests:**
 
 - `crates/corvid-cli/tests/abi_attestation.rs::signed_cdylib_verifies_against_matching_key`
+- `crates/corvid-abi/tests/byte_fuzz_corpus.rs::signing_key_round_trip_baseline`
 
 **Adversarial tests:**
 
 - `crates/corvid-cli/tests/abi_attestation.rs::signed_cdylib_rejects_wrong_key`
+- `crates/corvid-abi/tests/byte_fuzz_corpus.rs::dsse_envelope_signature_tampering_is_rejected`
+- `crates/corvid-abi/tests/byte_fuzz_corpus.rs::dsse_envelope_payload_tampering_is_rejected`
+- `crates/corvid-abi/tests/byte_fuzz_corpus.rs::dsse_envelope_payload_type_swap_is_rejected`
+- `crates/corvid-abi/tests/byte_fuzz_corpus.rs::attestation_section_rejects_every_magic_or_version_byte_flip`
+- `crates/corvid-abi/tests/byte_fuzz_corpus.rs::attestation_section_body_mutations_break_signature_verification`
 
 #### `abi_attestation.descriptor_match`
 - **class**: runtime_checked

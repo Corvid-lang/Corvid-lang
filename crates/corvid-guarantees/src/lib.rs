@@ -511,23 +511,20 @@ pub static GUARANTEE_REGISTRY: &[Guarantee] = &[
     Guarantee {
         id: "abi_descriptor.byte_determinism",
         kind: GuaranteeKind::AbiDescriptor,
-        class: GuaranteeClass::OutOfScope,
+        class: GuaranteeClass::Static,
         phase: Phase::Codegen,
         description:
             "Two byte-identical Corvid sources compiled with the same \
              toolchain version produce byte-identical descriptor JSON; \
              the descriptor is canonical, not pretty-printed.",
-        out_of_scope_reason:
-            "Today's coverage proves the canonical-hash function is \
-             stable (`abi_hash_matches_embedded_descriptor_hash` in \
-             `crates/corvid-cli/tests/abi_cmd.rs`), but a dedicated \
-             cross-build byte-identical comparison test is not yet \
-             checked in. Slice 35-F's descriptor + attestation byte \
-             fuzzer will add the explicit determinism harness; once \
-             that lands this entry promotes back to `Static` with the \
-             corresponding test refs.",
-        positive_test_refs: &[],
-        adversarial_test_refs: &[],
+        out_of_scope_reason: "",
+        positive_test_refs: &[
+            "crates/corvid-abi/tests/determinism.rs::identical_source_produces_byte_identical_descriptor_modulo_generated_at",
+            "crates/corvid-abi/tests/byte_fuzz_corpus.rs::descriptor_bytes_are_byte_identical_across_two_emissions_of_same_source",
+        ],
+        adversarial_test_refs: &[
+            "crates/corvid-abi/tests/byte_fuzz_corpus.rs::descriptor_section_rejects_random_byte_flips",
+        ],
     },
     // ----- ABI attestation ----------------------------------------
     Guarantee {
@@ -543,9 +540,15 @@ pub static GUARANTEE_REGISTRY: &[Guarantee] = &[
         out_of_scope_reason: "",
         positive_test_refs: &[
             "crates/corvid-cli/tests/abi_attestation.rs::signed_cdylib_verifies_against_matching_key",
+            "crates/corvid-abi/tests/byte_fuzz_corpus.rs::signing_key_round_trip_baseline",
         ],
         adversarial_test_refs: &[
             "crates/corvid-cli/tests/abi_attestation.rs::signed_cdylib_rejects_wrong_key",
+            "crates/corvid-abi/tests/byte_fuzz_corpus.rs::dsse_envelope_signature_tampering_is_rejected",
+            "crates/corvid-abi/tests/byte_fuzz_corpus.rs::dsse_envelope_payload_tampering_is_rejected",
+            "crates/corvid-abi/tests/byte_fuzz_corpus.rs::dsse_envelope_payload_type_swap_is_rejected",
+            "crates/corvid-abi/tests/byte_fuzz_corpus.rs::attestation_section_rejects_every_magic_or_version_byte_flip",
+            "crates/corvid-abi/tests/byte_fuzz_corpus.rs::attestation_section_body_mutations_break_signature_verification",
         ],
     },
     Guarantee {
