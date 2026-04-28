@@ -182,6 +182,28 @@ fn std_db_compiles_as_corvid_source() {
         .expect("std.db should compile as a standalone Corvid module");
 }
 
+#[test]
+fn std_db_token_surface_does_not_expose_raw_token_values() {
+    let repo = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(std::path::Path::parent)
+        .expect("repo root");
+    let source_path = repo.join("std").join("db.cor");
+    let source = fs::read_to_string(&source_path).expect("std/db.cor");
+
+    for forbidden in ["access_token", "refresh_token", "raw_token", "token_value"] {
+        assert!(
+            !source.contains(forbidden),
+            "std.db token storage surface must not expose raw token field `{forbidden}`"
+        );
+    }
+    assert!(source.contains("redacted"), "token surface must carry redaction metadata");
+    assert!(
+        source.contains("ciphertext_hash"),
+        "encrypted token surface must expose only ciphertext hash metadata"
+    );
+}
+
 // ---------------------------------------------------------------
 // Imported-helpers typecheck tests. Each exercises the full
 // public surface of one std/*.cor module from a user-side
