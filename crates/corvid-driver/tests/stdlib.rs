@@ -336,7 +336,7 @@ fn std_db_imported_helpers_typecheck() {
         "db",
         true,
         r#"
-import "./std/db" use DbConnection, DbParam, DbQuery, DbResult, DbError, DbColumn, DbRowDecode, DbTransaction, sqlite_open, db_param, db_query, db_execute, db_result, db_error, db_parameterized, db_column, db_decode_ok, db_decode_missing_column, db_decode_wrong_kind, db_transaction, db_transaction_commit, db_transaction_rollback, db_transaction_nested_rejected
+import "./std/db" use DbConnection, DbParam, DbQuery, DbResult, DbError, DbColumn, DbRowDecode, DbTransaction, DbAuditRecord, sqlite_open, db_param, db_query, db_execute, db_result, db_error, db_parameterized, db_column, db_decode_ok, db_decode_missing_column, db_decode_wrong_kind, db_transaction, db_transaction_commit, db_transaction_rollback, db_transaction_nested_rejected, db_audit_record, db_audit_approved
 
 agent main() -> Bool:
     db = sqlite_open("file:app.db", "db:app")
@@ -353,7 +353,8 @@ agent main() -> Bool:
     committed = db_transaction_commit(tx)
     rolled_back = db_transaction_rollback(tx)
     nested = db_transaction("tx-2", "rejected", true, "db:tx:2")
-    return db.driver == "sqlite" and id.name == "id" and db_parameterized(read) and write.operation == "write" and result.rows_affected == 1 and err.redacted and col.present and ok.ok and not missing.ok and wrong.received_kind == "String" and committed.status == "committed" and rolled_back.status == "rolled_back" and db_transaction_nested_rejected(nested)
+    audit = db_audit_record("user-1", "refund.requested", "order-1", "/refunds", "job-1", "approve_refund", "prompt-v1", "model-a", "issue_refund", "approved", 0.05, "trace-1", "replay-1")
+    return db.driver == "sqlite" and id.name == "id" and db_parameterized(read) and write.operation == "write" and result.rows_affected == 1 and err.redacted and col.present and ok.ok and not missing.ok and wrong.received_kind == "String" and committed.status == "committed" and rolled_back.status == "rolled_back" and db_transaction_nested_rejected(nested) and db_audit_approved(audit)
 "#,
     );
 }

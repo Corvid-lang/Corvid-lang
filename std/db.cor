@@ -53,6 +53,22 @@ public type DbTransaction:
     replay_key: String
     effect_meta: EffectEnvelope
 
+public type DbAuditRecord:
+    actor: String
+    action: String
+    subject: String
+    route_name: String
+    job_id: String
+    agent_name: String
+    prompt_version: String
+    model_id: String
+    tool_name: String
+    approval_state: String
+    cost_usd: Float
+    trace_id: String
+    replay_key: String
+    effect_meta: EffectEnvelope
+
 public agent sqlite_open(dsn: String, replay_key: String) -> DbConnection:
     return DbConnection("sqlite", dsn, replay_key, effect_envelope("std.db.open", "", "", "", replay_key))
 
@@ -97,3 +113,9 @@ public agent db_transaction_rollback(tx: DbTransaction) -> DbTransaction:
 
 public agent db_transaction_nested_rejected(tx: DbTransaction) -> Bool:
     return tx.nested
+
+public agent db_audit_record(actor: String, action: String, subject: String, route_name: String, job_id: String, agent_name: String, prompt_version: String, model_id: String, tool_name: String, approval_state: String, cost_usd: Float, trace_id: String, replay_key: String) -> DbAuditRecord:
+    return DbAuditRecord(actor, action, subject, route_name, job_id, agent_name, prompt_version, model_id, tool_name, approval_state, cost_usd, trace_id, replay_key, effect_envelope("std.db.audit", "", actor, subject, replay_key))
+
+public agent db_audit_approved(record: DbAuditRecord) -> Bool:
+    return record.approval_state == "approved"
