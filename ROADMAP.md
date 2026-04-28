@@ -1811,7 +1811,7 @@ Each benchmark must separate model-provider latency from Corvid runtime overhead
 
 **Slice checklist:**
 
-- [ ] 38A-jobs-design-brief          `docs/phase-38-jobs.md` defines queue semantics, durability model, scheduler model, approval waits, replay behavior, and non-scope.
+- [x] 38A-jobs-design-brief          `docs/phase-38-jobs.md` defines queue semantics, durability model, scheduler model, approval waits, replay behavior, and non-scope.
 - [ ] 38B-enqueue-run-one-job        Runtime can enqueue and execute one persisted background job with typed input/output.
 - [ ] 38C-retry-backoff-dlq          Jobs support retry policies, backoff, terminal failure, and dead-letter inspection.
 - [ ] 38D-delayed-jobs-cron          Delayed jobs and cron schedules persist, recover after restart, and appear in `corvid audit`.
