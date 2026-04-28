@@ -97,6 +97,8 @@ fn scalar_ir() -> IrFile {
         ],
         evals: vec![],
         tests: vec![],
+        fixtures: vec![],
+        mocks: vec![],
     }
 }
 

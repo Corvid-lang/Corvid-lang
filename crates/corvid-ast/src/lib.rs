@@ -54,9 +54,11 @@ mod tests {
             params: vec![Param {
                 name: id("id"),
                 ty: ty_named("String"),
+                ownership: None,
                 span: sp(),
             }],
             return_ty: ty_named("Order"),
+            return_ownership: None,
             effect: Effect::Safe,
             effect_row: EffectRow::default(),
             visibility: Visibility::Private,
@@ -70,15 +72,18 @@ mod tests {
                 Param {
                     name: id("id"),
                     ty: ty_named("String"),
+                    ownership: None,
                     span: sp(),
                 },
                 Param {
                     name: id("amount"),
                     ty: ty_named("Float"),
+                    ownership: None,
                     span: sp(),
                 },
             ],
             return_ty: ty_named("Receipt"),
+            return_ownership: None,
             effect: Effect::Dangerous,
             effect_row: EffectRow::default(),
             visibility: Visibility::Private,
@@ -149,9 +154,11 @@ mod tests {
             params: vec![Param {
                 name: id("ticket"),
                 ty: ty_named("Ticket"),
+                ownership: None,
                 span: sp(),
             }],
             return_ty: ty_named("Decision"),
+            return_ownership: None,
             body: Block {
                 stmts: vec![
                     order_let,
