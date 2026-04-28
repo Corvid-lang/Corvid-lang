@@ -6065,3 +6065,84 @@ Validation:
 
 - `cargo check -p corvid-driver -p corvid-cli`
 - `cargo test -p corvid-cli --test build_server -- --nocapture`
+
+## 2026-04-29 - Phase 20-32 audit reopens 3 phases + 3 follow-up audits
+
+A line-by-line implementation audit of phases 20-35 (after Phase 35 itself
+landed clean) found three real gaps that warrant rolling the parent phase's
+[x] back to [ ], plus three epistemic gaps that need verification docs but
+not phase-level rollbacks.
+
+**Reopened phases (gap-closing slices added):**
+
+- Phase 20 → slice 20m-bounty-corpus-honest-naming. The bounty process
+  and counterexamples directory exist (`docs/effects-spec/bounty.md`,
+  `docs/effects-spec/counterexamples/composition/`), but the README did
+  not announce the public submission path so external developers had no
+  visible inbound. README now links `docs/effects-spec/bounty.md` directly.
+
+- Phase 23 → slice 23-F-browser-ci-headless. The wasmtime parity harness
+  proves the WASM module runs as a runtime; it does not prove
+  `examples/wasm_browser_demo` survives a fresh checkout under a real
+  browser. The slice asks for a headless-Chromium CI matrix entry that
+  loads the demo, exercises typed prompt/tool/approval host capabilities
+  from JS, and asserts schema-v2 trace events. Open until the CI job is
+  green on main.
+
+- Phase 30 → slice 30-J-default-ci-pyo3. The pyo3 integration tests run
+  only behind the optional `python` feature flag. A `phase30-python-ffi`
+  CI matrix entry was added in this commit that runs
+  `cargo test -p corvid-runtime --features python --tests` on every push
+  against a pinned CPython 3.11. Slice closes when the matrix entry is
+  green on main (next CI run).
+
+**Follow-up audit slices (no phase rollback):**
+
+- Phase 25 → slice 25-G-no-hosted-registry-honesty. The phase shipped a
+  package format + local resolver + signed-publish-to-a-directory; no
+  `registry.corvid.dev` service runs. README + landing-page surfaces are
+  already clean (grep returns zero un-qualified registry mentions). The
+  slice ships `docs/package-manager-scope.md` documenting the boundary,
+  links it from README, and registers `platform.hosted_registry_available`
+  as `OutOfScope` in the canonical guarantee registry with the explicit
+  reason that any user-supplied `--url-base` works.
+
+- Phase 29 → slice 29-K-memory-module-audit-doc. The slice list is
+  fully ticked but I have not personally verified each memory primitive
+  ships against ROADMAP claims (session/memory blocks, retention policy,
+  approval-required writes, provenance-required reads, conflict
+  detection, generated accessors). The slice asks for
+  `docs/phase-29-memory-audit.md` with each row pointing to source +
+  test refs. Open until the doc lists every claim with a source-of-truth
+  pointer.
+
+- Phase 32 → slice 32-T-stdlib-effect-tag-audit-doc. Same shape: the
+  std.* surface is broad (ai, http, io, secrets, observe, cache, queue,
+  agent, rag, effects); a per-module audit doc verifies declared effect
+  tags fire at the right runtime callsites. Open until
+  `docs/phase-32-stdlib-audit.md` is written.
+
+**Tractable implementations landed in this commit:**
+
+1. `docs/package-manager-scope.md` — full registry-scope doc (slice 25-G).
+2. README link to bounty + package-manager-scope (slice 20m partial,
+   slice 25-G partial).
+3. `platform.hosted_registry_available` registry entry as `OutOfScope`
+   with concrete reason.
+4. CI matrix entry `phase30-python-ffi` (slice 30-J).
+5. ROADMAP slice entries 20m, 23-F, 25-G, 29-K, 30-J, 32-T with the
+   slice-completion-gate format.
+6. `docs/core-semantics.md` regenerated through the drift gate; 18
+   corvid-guarantees tests pass.
+
+The full implementation of slice 23-F (browser CI), slice 29-K (memory
+audit), slice 32-T (stdlib audit) remains open and tracked in the
+ROADMAP. Phase 20m and Phase 30-J are partially landed in this commit
+(README link + CI matrix); they close when the CI job is green and the
+public bounty inbox shows real submissions.
+
+Validation:
+- `cargo test -p corvid-guarantees --lib` (18 passed).
+- `cargo run -q -p corvid-cli -- contract regen-doc docs/core-semantics.md`
+  (drift gate green; doc grew from 17.3 KB to 18.0 KB with the new
+  `platform.hosted_registry_available` row).

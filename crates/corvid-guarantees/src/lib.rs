@@ -673,6 +673,25 @@ pub static GUARANTEE_REGISTRY: &[Guarantee] = &[
         positive_test_refs: &[],
         adversarial_test_refs: &[],
     },
+    Guarantee {
+        id: "platform.hosted_registry_available",
+        kind: GuaranteeKind::Platform,
+        class: GuaranteeClass::OutOfScope,
+        phase: Phase::Platform,
+        description:
+            "A Corvid-operated public package registry service that \
+             serves the published index format and source artifacts.",
+        out_of_scope_reason:
+            "No hosted Corvid-operated registry service runs at v1.0. \
+             The CLI ships the published index format + signed-publish \
+             tooling (`corvid package publish`, `verify-registry`, \
+             `verify-lock`) and accepts any user-supplied `--url-base` \
+             (file://, self-hosted https, S3, CDN). A hosted public \
+             registry is post-v1.0 work; see `docs/package-manager-scope.md` \
+             for the full boundary.",
+        positive_test_refs: &[],
+        adversarial_test_refs: &[],
+    },
 ];
 
 /// Guarantee ids carried by every signed cdylib ABI descriptor.

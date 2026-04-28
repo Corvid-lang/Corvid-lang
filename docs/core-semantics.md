@@ -40,6 +40,7 @@ Per the no-shortcuts rule, every `out_of_scope` entry carries an explicit reason
 | `platform.host_kernel_compromise` | platform | out_of_scope | platform |
 | `platform.signing_key_compromise` | platform | out_of_scope | platform |
 | `platform.toolchain_compromise` | platform | out_of_scope | platform |
+| `platform.hosted_registry_available` | platform | out_of_scope | platform |
 
 ## Detail
 
@@ -397,6 +398,14 @@ Defending against compromise of the ed25519 signing key used to attest a cdylib 
 Defending against a compromised Rust toolchain, Cranelift release, or system linker producing a Corvid binary that does not match its source.
 
 > **Why out of scope:** Reproducible builds across heterogeneous toolchains are a post-v1.0 hardening goal. Today Corvid trusts the rustc and Cranelift releases the user installs; the bilateral verifier (Slice 35-H) is the closest approximation of toolchain-independence available pre-v1.0.
+
+#### `platform.hosted_registry_available`
+- **class**: out_of_scope
+- **phase**: platform
+
+A Corvid-operated public package registry service that serves the published index format and source artifacts.
+
+> **Why out of scope:** No hosted Corvid-operated registry service runs at v1.0. The CLI ships the published index format + signed-publish tooling (`corvid package publish`, `verify-registry`, `verify-lock`) and accepts any user-supplied `--url-base` (file://, self-hosted https, S3, CDN). A hosted public registry is post-v1.0 work; see `docs/package-manager-scope.md` for the full boundary.
 
 ## Updating this document
 

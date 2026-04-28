@@ -521,6 +521,8 @@ If `cargo fmt --check` fails because `cargo-fmt` is not installed, install the R
 - [docs/bundle-format.md](./docs/bundle-format.md): signed bundle and receipt format.
 - [ARCHITECTURE.md](./ARCHITECTURE.md): compiler design and repo structure.
 - [CONTRIBUTING.md](./CONTRIBUTING.md): project rules and contribution expectations.
+- [docs/effects-spec/bounty.md](./docs/effects-spec/bounty.md): public submission process for effect-system bypasses and false positives. Accepted reports are credited to the reporter and added to [docs/effects-spec/counterexamples/](./docs/effects-spec/counterexamples/) as permanent regression fixtures.
+- [docs/package-manager-scope.md](./docs/package-manager-scope.md): what the package manager does today vs what would require a hosted registry service.
 - [dev-log.md](./dev-log.md): chronological build journal.
 - [learnings.md](./learnings.md): durable engineering lessons.
 

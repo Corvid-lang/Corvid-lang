@@ -498,7 +498,7 @@ Pre-phase chat caught two limiting shortcuts in my brief and reshaped the phase 
 
 ---
 
-### Phase 20 — Effect rigor + grounding + cost + streaming (~14–16 weeks) ✅ closed — **THE MOAT PHASE**
+### Phase 20 — Effect rigor + grounding + cost + streaming (~14–16 weeks) — **THE MOAT PHASE** (reopened 2026-04-29 — bounty corpus naming gap)
 
 **Goal.** The phase that defines what makes Corvid Corvid. All compile-time, all language-level. Shipped mid-roadmap, not saved for impact — every phase after this inherits the moat.
 
@@ -1145,7 +1145,11 @@ Users register local models (Ollama, vLLM, llama.cpp) with declared capabilities
 | Eval-swap | `this commit` | `corvid eval --swap-model` retrospective model migration analysis over trace files and trace suites |
 | Cost-frontier | `this commit` | `corvid cost-frontier <prompt>` Pareto analysis from model cost traces plus explicit eval-quality host events |
 
-**Phase 20 closed.** Dimensional effects, grounding, evals, cost analysis, confidence gates, streaming effects, bypass verification, and the typed model substrate are all shipped. The moat phase is complete.
+**Phase 20 reopened 2026-04-29 — gap-closing slice required:**
+
+- [ ] 20m-bounty-corpus-honest-naming     The slice originally landed an *internal* regression-corpus generator under the name "bounty-fed regression corpus." No public bug-bounty intake exists today. Either rename throughout the codebase + ROADMAP + docs to `regression-corpus` (internal), or build the external bounty intake (post-v1.0 scope). Either way: every reference to "bounty" in source comments, docs, and ROADMAP must match what actually ships. No aspirational vocabulary. Closes when grep for `bounty-fed` returns zero hits or every hit is qualified with "(future external bounty program — currently internal-only)."
+
+**Phase 20 next-close criteria:** the ROADMAP-level `[x]` returns only when slice 20m clears the slice completion gate (registry rows updated if any new public claim, dev-log entry, README/site copy aligned).
 
 **Next phase:** 21 - Replay.
 
@@ -1329,7 +1333,7 @@ The determinism-source catalog and the language's treatment of non-reproducible 
 
 **Non-scope:** WASM (Phase 23). Language-level FFI imports of other languages.
 
-### Phase 23 — WASM target (~8–10 weeks) ✅ closed
+### Phase 23 — WASM target (~8–10 weeks) (reopened 2026-04-29 — browser end-to-end CI gap)
 
 **Goal.** Deploy Corvid to browsers and edge runtimes.
 
@@ -1353,6 +1357,12 @@ The determinism-source catalog and the language's treatment of non-reproducible 
 - [x] 23-C-wasm-replay       JS-side trace store in generated loader: `instantiate(host, { trace })` records schema-v2 `schema_header`, `run_started`, `llm_call/result`, `tool_call/result`, `approval_request/decision/response`, and `run_completed` events for scalar host imports. Native/WASM traces now share the event taxonomy; full `corvid replay` execution over WASM modules remains a harness follow-up.
 - [x] 23-D-browser-demo      Browser smoke page at `examples/wasm_browser_demo`: one Corvid source compiles to WASM, the generated ES loader is imported by a real page, typed prompt/tool/approval host capabilities are supplied from JS, approval decisions are visible in UI, and the trace panel records schema-v2 run/prompt/approval/tool events from the generated loader.
 - [x] 23-E-wasmtime-harness  Wasmtime parity harness for the current WASM-supported native parity subset: generated scalar modules execute under Wasmtime and match the interpreter for arithmetic, branching, and agent calls; scalar prompt/approval/tool imports execute through typed host functions. Unsupported native parity families remain explicit WASM boundary work until strings, structs, lists, and provenance handles land.
+
+**Phase 23 reopened 2026-04-29 — gap-closing slice required:**
+
+- [ ] 23-F-browser-ci-headless     The wasmtime harness proves WASM-as-a-runtime works; it does not prove the *browser* path (slice 23-D) survives a fresh checkout. Add a headless-Chromium CI job that loads `examples/wasm_browser_demo`, exercises typed prompt/tool/approval host capabilities from JS, and asserts schema-v2 trace events appear in the trace panel. Use `playwright` or `puppeteer` in the GitHub Actions matrix; mocked LLM responses; deterministic. Closes when CI runs the browser demo end-to-end on every push and a regression in the JS loader is caught before merge — not at launch rehearsal.
+
+**Phase 23 next-close criteria:** the ROADMAP-level `[x]` returns only when slice 23-F clears the slice completion gate (CI workflow update, registry rows for `wasm.browser_host_imports_typed` + `wasm.trace_panel_records_schema_v2`, side-by-side `benches/comparisons/wasm_deploy.md` against a comparable Vercel AI SDK browser deployment).
 
 **v0.7 cuts here.** Corvid ships as a library + a wasm module. Real deployment story.
 
@@ -1383,7 +1393,7 @@ The determinism-source catalog and the language's treatment of non-reproducible 
 - [x] 24-E-navigation        Single-file navigation over resolver identity: go-to-definition, find-references, rename edits, and workspace symbol search across open documents. Navigation uses DefId/LocalId bindings, not text search, so local rename does not touch unrelated declarations with the same spelling.
 - [x] 24-F-vscode-client     Reference VS Code extension at `extensions/vscode-corvid`: registers `.cor`, starts `corvid-lsp`, wires diagnostics/hover/completion/definition/references/rename/workspace symbols, ships syntax highlighting, language configuration, snippets for AI-native constructs, restart/log commands, and a local verification script.
 
-### Phase 25 — Package manager (~6–8 weeks) ✅ closed
+### Phase 25 — Package manager (~6–8 weeks) (reopened 2026-04-29 — hosted-registry honesty gap)
 
 **Goal.** Users can share Corvid code and AI capabilities with guarantees. Table stakes for any language anyone takes seriously, made Corvid-native by distributing effect, provenance, approval, budget, and replay contracts alongside source.
 
@@ -1408,6 +1418,12 @@ The determinism-source catalog and the language's treatment of non-reproducible 
 - [x] 25-D-registry-http-contract     Minimal stateless registry API contract with `corvid package verify-registry`: validates index entries, scoped names, semver, canonical package URIs, immutable versioned `.cor` artifact URLs, SHA-256 bytes, artifact UTF-8/source semantic summaries, Ed25519 signatures, duplicate entries, and CDN-style `Cache-Control: ... immutable` headers.
 - [x] 25-E-package-metadata-pages     `corvid package metadata` renders compiler-backed package pages from source: scoped package identity, install snippet, optional signature provenance, exported agents/tools/prompts/types/effects, effect profiles, approval boundaries, grounding, replayability, determinism, and cost/violation notes. JSON output gives the same semantic summary to web registries.
 - [x] 25-F-conflict-resolution        `corvid package verify-lock` validates the installed package graph: manifest dependencies, locked package presence, duplicate URIs, multiple locked versions for one dependency, semver requirement satisfaction, stale undeclared lock entries, required semantic summaries, and current package-policy compatibility from locked semantic summaries.
+
+**Phase 25 reopened 2026-04-29 — gap-closing slice required:**
+
+- [ ] 25-G-no-hosted-registry-honesty   The current implementation is a *package format + local resolver + signed-publish-to-a-directory*; `registry.corvid.dev` does not exist as a running service. The slice must (a) update `README.md` and the package CLI `--help` output to make the "format-and-tooling, no hosted service yet" boundary explicit, (b) add `docs/package-manager-scope.md` documenting what works locally vs what requires a hosted registry, (c) add a registry entry `package.hosted_registry_available` as `OutOfScope` with reason "no hosted service runs yet; `--url-base` accepts file:// and any http endpoint a user runs themselves," and (d) ensure no website / launch-page copy implies the hosted registry exists. Closes when grep against README + landing page returns zero un-qualified mentions of `registry.corvid.dev`.
+
+**Phase 25 next-close criteria:** the ROADMAP-level `[x]` returns only when slice 25-G clears the slice completion gate.
 
 ### Phase 26 — Testing primitives (~4 weeks) ✅ closed
 
@@ -1501,7 +1517,11 @@ The determinism-source catalog and the language's treatment of non-reproducible 
 - Memory conflict resolution: typed handling for stale facts, contradictory facts, and source-priority rules, with conflicts surfaced as `Result`/diagnostics rather than silently overwriting state.
 - Memory write approvals for sensitive or irreversible state changes, recorded in replay and visible in effect summaries.
 
-### Phase 30 — Python FFI via PyO3 (~5–6 weeks) ✅ closed
+**Phase 29 follow-up audit (2026-04-29) — epistemic verification:**
+
+- [ ] 29-K-memory-module-audit-doc       Write `docs/phase-29-memory-audit.md` enumerating every memory primitive shipped against the ROADMAP claims: `session`/`memory` block syntax, retention policy, approval-required writes, provenance-required reads, conflict detection, generated accessors. Each row has the source file + line range + at least one positive test ref + one adversarial test ref. The audit either confirms full coverage (no roadmap change) or identifies specific gaps that promote into named follow-up slices. Closes when the doc lists every claim with a source-of-truth pointer.
+
+### Phase 30 — Python FFI via PyO3 (~5–6 weeks) (reopened 2026-04-29 — default-CI gap)
 
 **Goal.** `import python "..."` works in compiled code. Closes the "but Python has the ecosystem" gap.
 
@@ -1522,6 +1542,12 @@ The determinism-source catalog and the language's treatment of non-reproducible 
 - Optional sandbox profiles for Python imports: network, filesystem, subprocess, environment, and native-extension access are denied unless declared in the import's effect profile.
 - Generated typed wrappers from Python signatures and docstring/schema metadata where available; unresolved dynamic shapes require explicit Corvid type annotations.
 - Python FFI contract tests: verify exception marshalling, type conversion, trace recording, and effect summaries for imported Python functions.
+
+**Phase 30 reopened 2026-04-29 — gap-closing slice required:**
+
+- [ ] 30-J-default-ci-pyo3        The Python FFI integration tests run only behind the optional `python` feature flag; default `cargo test --workspace` does not exercise the pyo3 runtime path. A regression in the call bridge, the GIL handling, the type marshaling, or the trace event emission would not be caught by CI on every push. The slice (a) adds a CI matrix entry that runs `cargo test -p corvid-runtime --features python --tests` against a pinned CPython, (b) makes the Python integration tests assert at minimum: scalar round-trip, list round-trip, dict↔struct round-trip, exception marshalling preserves traceback, `python.call`/`python.result`/`python.error` events fire, and a sandbox-profile-denied import is rejected, (c) documents the matrix entry in `docs/ci.md`. Closes when the GitHub Actions workflow shows the python-feature job green on `main`.
+
+**Phase 30 next-close criteria:** the ROADMAP-level `[x]` returns only when slice 30-J clears the slice completion gate.
 
 ### Phase 31 — Multi-provider LLM adapters (~2 weeks) ✅ closed
 
@@ -1573,6 +1599,10 @@ The determinism-source catalog and the language's treatment of non-reproducible 
 - [x] `std.cache` prompt/model/tool-result caching with replay-safe invalidation, provenance preservation, and effect-aware cache keys.
 - [x] `std.secrets` explicit secret access APIs with redacted audit metadata surfaces that avoid leaking secret values.
 - [x] `std.observe` metrics, trace counters, cost counters, latency histograms, routing decisions, and approval summaries exposed through one typed observability surface.
+
+**Phase 32 follow-up audit (2026-04-29) — per-module verification:**
+
+- [ ] 32-T-stdlib-effect-tag-audit-doc    Write `docs/phase-32-stdlib-audit.md` covering each shipped `std.*` module (`ai`, `http`, `io`, `secrets`, `observe`, `cache`, `queue`, `agent`, `rag`, `effects`). Each row lists: module path in repo, declared effect tags, runtime callsite that fires each tag (with file:line), at least one positive integration test, at least one adversarial test (e.g. "invoking `std.http.get` without `network` effect declared fails typecheck"). Closes when every shipped public function in `std.*` is in the table with a source-of-truth pointer; gaps promote into named follow-up slices per module.
 
 **v0.9 cuts here.** Language feature-complete: HITL, memory, Python FFI, multi-provider LLMs, stdlib. Only polish remaining.
 
@@ -1953,7 +1983,7 @@ corvid jobs drain --workers=all
 - [x] 38C2-retry-runner              Runner applies retry/backoff and terminal failure.
 - [x] 38C3-dlq-inspection            CLI can inspect dead-lettered jobs.
 - [x] 38D1-delay-support             Delayed jobs persist and wake after restart.
-- [ ] 38D2-cron-manifest             Cron schedules appear in `corvid audit`.
+- [x] 38D2-cron-manifest             Cron schedules appear in `corvid audit`.
 - [ ] 38D3-scheduler-recovery        Scheduler recovers missed/pending jobs after restart.
 - [ ] 38E1-lease-model               Job leases prevent duplicate workers.
 - [ ] 38E2-concurrency-limits        Queue and job-type concurrency limits are enforced.
