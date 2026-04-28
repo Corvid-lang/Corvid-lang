@@ -25,6 +25,13 @@ benches/corvid/generated/
 # MSVC object files leaked from cdylib_emission tests by cl.exe
 crates/corvid-codegen-cl/*.obj
 
+# Phase 23-F browser CI test dependencies (Playwright + browsers
+# install per-runner; not committed).
+examples/wasm_browser_demo/test/node_modules/
+examples/wasm_browser_demo/test/test-results/
+examples/wasm_browser_demo/test/playwright-report/
+examples/wasm_browser_demo/test/package-lock.json
+
 # Python
 __pycache__/
 *.pyc

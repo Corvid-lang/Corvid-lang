@@ -1,0 +1,12 @@
+{
+  "name": "corvid-wasm-browser-demo-test",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Phase 23-F headless-Chromium test for the WASM browser approval demo.",
+  "scripts": {
+    "test": "playwright test"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.45.3"
+  }
+}

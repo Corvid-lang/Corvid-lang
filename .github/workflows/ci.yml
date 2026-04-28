@@ -177,6 +177,56 @@ jobs:
           fi
           echo "ok: corvid verify exited 1 as expected"
 
+  phase23-browser-ci:
+    # Phase 23-F: headless-Chromium end-to-end test of the
+    # examples/wasm_browser_demo. Wasmtime parity proves WASM-as-a-
+    # runtime works; this job proves the generated ES loader, the
+    # typed host capabilities, the approve/deny path, and the
+    # schema-v2 trace events all still agree after any change to
+    # either side.
+    name: 23 wasm browser demo (headless Chromium)
+    runs-on: ubuntu-latest
+    needs: workspace-tests
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry + target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-wasm-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-wasm-
+
+      - name: Build wasm artifacts
+        run: |
+          cargo run -q -p corvid-cli -- build \
+            examples/wasm_browser_demo/src/refund_gate.cor \
+            --target=wasm
+
+      - name: Verify wasm artifact shape
+        run: bash examples/wasm_browser_demo/verify.sh
+
+      - name: Set up Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Playwright + browsers
+        working-directory: examples/wasm_browser_demo/test
+        run: |
+          npm install --no-audit --no-fund
+          npx playwright install --with-deps chromium
+
+      - name: Run browser smoke test
+        working-directory: examples/wasm_browser_demo/test
+        run: npx playwright test
+
   phase30-python-ffi:
     # Phase 30-J: Python FFI integration tests must run on every push.
     # The default workspace test run does NOT enable the `python`
