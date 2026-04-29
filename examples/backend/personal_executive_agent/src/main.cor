@@ -79,6 +79,11 @@ agent meeting_prep_job(user_id: String, day: String) -> ExecutiveJobRun uses inb
     return executive_run(contract, "sha256:meeting_prep_input", "sha256:meeting_prep_output", "meeting.plan", "prepare_packet")
 
 public @replayable
+agent email_triage_job(user_id: String, inbox_window: String) -> ExecutiveJobRun uses inbox_read, executive_llm, task_write:
+    contract = executive_contract("email_triage", user_id, inbox_window, "", false)
+    return executive_run(contract, "sha256:email_triage_input", "sha256:email_triage_output", "triage.plan", "classify_inbox")
+
+public @replayable
 agent follow_up_job(user_id: String, thread_id: String) -> ExecutiveJobRun uses inbox_read, executive_llm, send_email, task_write:
     contract = executive_contract("follow_up", user_id, thread_id, "SendExecutiveFollowUp", true)
     return executive_run(contract, "sha256:follow_up_input", "sha256:follow_up_output", "followup.plan", "send_email")
@@ -93,10 +98,12 @@ agent executive_job_needs_human_before_external_send(run: ExecutiveJobRun) -> Bo
 
 schedule "0 7 * * 1-5" zone "America/New_York" -> daily_brief_job("active_users", "business_day") uses inbox_read, calendar_read, executive_llm
 schedule "0 6 * * 1-5" zone "America/New_York" -> meeting_prep_job("active_users", "business_day") uses inbox_read, calendar_read, executive_llm
+schedule "*/10 8-18 * * 1-5" zone "America/New_York" -> email_triage_job("active_users", "workday_window") uses inbox_read, executive_llm, task_write
 schedule "*/15 8-18 * * 1-5" zone "America/New_York" -> follow_up_job("active_users", "open_threads") uses inbox_read, executive_llm, send_email, task_write
 
 agent main() -> Bool:
     brief = daily_brief_job("user-1", "2026-04-29")
     prep = meeting_prep_job("user-1", "2026-04-29")
+    triage = email_triage_job("user-1", "2026-04-29T08:00")
     follow = follow_up_job("user-1", "thread-1")
-    return executive_job_contract_valid(brief) and executive_job_contract_valid(prep) and executive_job_contract_valid(follow) and executive_job_needs_human_before_external_send(follow)
+    return executive_job_contract_valid(brief) and executive_job_contract_valid(prep) and executive_job_contract_valid(triage) and executive_job_contract_valid(follow) and executive_job_needs_human_before_external_send(follow)

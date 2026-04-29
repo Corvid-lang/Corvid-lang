@@ -10,6 +10,8 @@ rows, and audited schedules.
 - `daily_brief_job` reads inbox and calendar context, runs a bounded executive
   planning step, and emits a redacted brief output envelope.
 - `meeting_prep_job` prepares meeting context from inbox and calendar context.
+- `email_triage_job` classifies inbox work into follow-up, archive, and task
+  candidates without sending anything externally.
 - `follow_up_job` drafts outbound follow-up work and requires the
   `SendExecutiveFollowUp` approval boundary before the external send effect can
   run.
