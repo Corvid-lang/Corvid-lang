@@ -1911,7 +1911,7 @@ A slice that fails any box rolls back to `[ ]`. The `[x]` is a contract, not a w
 - [ ] Durable agent run state: step checkpoints, tool-call results, approval waits, resume-after-crash, and replayable finalization.
 - [x] Loop controls: max steps, max wall time, max spend, max tool calls, and escalation-on-stall.
 - [ ] AI-native integration: every job carries a budget, effect row, provenance policy, and trace lineage; dangerous jobs cannot run without an approval boundary.
-- [ ] Operational controls: pause queue, drain workers, inspect job, retry job, cancel job, and export job trace.
+- [x] Operational controls: pause queue, drain workers, inspect job, retry job, cancel job, and export job trace.
 
 **Slice checklist:**
 
@@ -1923,7 +1923,7 @@ A slice that fails any box rolls back to `[ ]`. The `[x]` is a contract, not a w
 - [x] 38F-agent-step-checkpoints     Durable agent runs checkpoint steps, tool-call results, and partial outputs.
 - [x] 38G-approval-wait-resume       Jobs can pause on approval, resume after approve/deny/expire, and record the audit transition.
 - [x] 38H-loop-bounds                Max steps, wall time, spend, and tool calls are enforced for job-backed agent loops.
-- [ ] 38I-job-ops-commands           Operators can pause queues, drain workers, inspect, retry, cancel, and export job traces.
+- [x] 38I-job-ops-commands           Operators can pause queues, drain workers, inspect, retry, cancel, and export job traces.
 - [ ] 38J-executive-agent-jobs       Personal Executive Agent daily brief, meeting prep, triage, and follow-up jobs survive process restart.
 
 **Done when:** the Personal Executive Agent backend can run daily brief generation, email triage, meeting prep, and follow-up reminders as durable jobs that survive process restart.
@@ -1997,7 +1997,7 @@ corvid jobs drain --workers=all
 - [x] 38G2-approval-resume           Approve/deny/expire transitions resume or stop jobs and write audit events.
 - [x] 38H1-loop-budget-controls      Max steps, wall time, spend, and tool-call limits are enforced.
 - [x] 38H2-stall-escalation          Stalled loops escalate or terminate with trace evidence.
-- [ ] 38I1-job-ops-cli               Pause/drain/inspect/retry/cancel/export commands work locally.
+- [x] 38I1-job-ops-cli               Pause/drain/inspect/retry/cancel/export commands work locally.
 - [ ] 38J1-exec-agent-job-spec       Personal Executive Agent job definitions are written and checked.
 - [ ] 38J2-exec-agent-restart-proof  Daily brief/meeting prep/follow-up jobs survive restart in tests.
 

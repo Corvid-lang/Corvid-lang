@@ -622,6 +622,152 @@ fn jobs_loop_stall_policy_escalates_with_audit() {
 }
 
 #[test]
+fn jobs_ops_pause_drain_inspect_retry_cancel_and_export_trace() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let state = dir.path().join("jobs.sqlite");
+    let trace = dir.path().join("job_trace.json");
+
+    let enqueue = Command::new(corvid_bin())
+        .args([
+            "jobs",
+            "enqueue",
+            "--state",
+            state.to_str().unwrap(),
+            "--task",
+            "ops_job",
+            "--payload",
+            "{\"safe\":true}",
+            "--replay-key",
+            "replay:ops",
+        ])
+        .output()
+        .expect("enqueue");
+    assert!(enqueue.status.success());
+
+    let pause = Command::new(corvid_bin())
+        .args([
+            "jobs",
+            "pause",
+            "--state",
+            state.to_str().unwrap(),
+            "--reason",
+            "maintenance",
+        ])
+        .output()
+        .expect("pause");
+    assert!(pause.status.success());
+    let run = Command::new(corvid_bin())
+        .args(["jobs", "run-one", "--state", state.to_str().unwrap()])
+        .output()
+        .expect("run paused");
+    assert!(run.status.success());
+    assert!(String::from_utf8_lossy(&run.stdout).contains("job: none"));
+
+    let resume = Command::new(corvid_bin())
+        .args(["jobs", "resume", "--state", state.to_str().unwrap()])
+        .output()
+        .expect("resume");
+    assert!(resume.status.success());
+
+    let drain_job = Command::new(corvid_bin())
+        .args([
+            "jobs",
+            "wait-approval",
+            "--state",
+            state.to_str().unwrap(),
+            "--worker-id",
+            "worker-a",
+            "--approval-id",
+            "approval:ops",
+            "--approval-expires-ms",
+            "4102444800000",
+            "--approval-reason",
+            "ops check",
+        ])
+        .output()
+        .expect("move to approval wait");
+    assert!(drain_job.status.success());
+
+    let inspect = Command::new(corvid_bin())
+        .args([
+            "jobs",
+            "inspect",
+            "--state",
+            state.to_str().unwrap(),
+            "--job",
+            "job_1",
+        ])
+        .output()
+        .expect("inspect");
+    assert!(inspect.status.success());
+    let stdout = String::from_utf8_lossy(&inspect.stdout);
+    assert!(stdout.contains("corvid jobs inspect"), "{stdout}");
+    assert!(stdout.contains("status: approval_wait"), "{stdout}");
+
+    let cancel = Command::new(corvid_bin())
+        .args([
+            "jobs",
+            "cancel",
+            "--state",
+            state.to_str().unwrap(),
+            "--job",
+            "job_1",
+        ])
+        .output()
+        .expect("cancel");
+    assert!(cancel.status.success());
+    assert!(String::from_utf8_lossy(&cancel.stdout).contains("status: canceled"));
+
+    let retry = Command::new(corvid_bin())
+        .args([
+            "jobs",
+            "retry",
+            "--state",
+            state.to_str().unwrap(),
+            "--job",
+            "job_1",
+        ])
+        .output()
+        .expect("retry");
+    assert!(retry.status.success());
+    assert!(String::from_utf8_lossy(&retry.stdout).contains("status: pending"));
+
+    let export = Command::new(corvid_bin())
+        .args([
+            "jobs",
+            "export-trace",
+            "--state",
+            state.to_str().unwrap(),
+            "--job",
+            "job_1",
+            "--out",
+            trace.to_str().unwrap(),
+        ])
+        .output()
+        .expect("export trace");
+    assert!(export.status.success());
+    let exported = std::fs::read_to_string(&trace).expect("read exported trace");
+    assert!(exported.contains("\"schema\": \"corvid.jobs.trace.v1\""));
+    assert!(exported.contains("\"replay_key\": \"replay:ops\""));
+
+    let drain = Command::new(corvid_bin())
+        .args([
+            "jobs",
+            "drain",
+            "--state",
+            state.to_str().unwrap(),
+            "--reason",
+            "deploy",
+        ])
+        .output()
+        .expect("drain");
+    assert!(drain.status.success());
+    let stdout = String::from_utf8_lossy(&drain.stdout);
+    assert!(stdout.contains("paused: true"), "{stdout}");
+    assert!(stdout.contains("released_leases:"), "{stdout}");
+}
+
+#[test]
 fn jobs_checkpoint_cli_records_agent_tool_and_partial_outputs() {
     let dir = tempfile::tempdir().expect("tempdir");
     let state = dir.path().join("jobs.sqlite");

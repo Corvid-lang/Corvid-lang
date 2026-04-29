@@ -1311,6 +1311,15 @@ fn main_impl() -> ExitCode {
                 fail_fingerprint,
                 retry_base_ms,
             ),
+            JobsCommand::Inspect { state, job } => cmd_jobs_inspect(&state, &job),
+            JobsCommand::Retry { state, job } => cmd_jobs_retry(&state, &job),
+            JobsCommand::Cancel { state, job } => cmd_jobs_cancel(&state, &job),
+            JobsCommand::Pause { state, reason } => cmd_jobs_pause(&state, reason.as_deref()),
+            JobsCommand::Resume { state } => cmd_jobs_resume(&state),
+            JobsCommand::Drain { state, reason } => cmd_jobs_drain(&state, reason.as_deref()),
+            JobsCommand::ExportTrace { state, job, out } => {
+                cmd_jobs_export_trace(&state, &job, out.as_deref())
+            }
             JobsCommand::WaitApproval {
                 state,
                 worker_id,
@@ -1692,6 +1701,139 @@ fn cmd_jobs_run_one(
             Ok(0)
         }
     }
+}
+
+fn cmd_jobs_inspect(state: &Path, job_id: &str) -> Result<u8> {
+    let queue = DurableQueueRuntime::open(state)?;
+    let job = queue
+        .get(job_id)?
+        .with_context(|| format!("job `{job_id}` not found"))?;
+    println!("corvid jobs inspect");
+    println!("state: {}", state.display());
+    print_job_summary(&job);
+    if let Some(usage) = queue.loop_usage(job_id)? {
+        print_loop_usage(&usage);
+    }
+    println!("checkpoint_count: {}", queue.list_checkpoints(job_id)?.len());
+    println!("audit_event_count: {}", queue.job_audit_events(job_id)?.len());
+    Ok(0)
+}
+
+fn cmd_jobs_retry(state: &Path, job_id: &str) -> Result<u8> {
+    let queue = DurableQueueRuntime::open(state)?;
+    let job = queue.retry_job(job_id)?;
+    println!("corvid jobs retry");
+    println!("state: {}", state.display());
+    print_job_summary(&job);
+    Ok(0)
+}
+
+fn cmd_jobs_cancel(state: &Path, job_id: &str) -> Result<u8> {
+    let queue = DurableQueueRuntime::open(state)?;
+    let job = queue.cancel(job_id)?;
+    println!("corvid jobs cancel");
+    println!("state: {}", state.display());
+    print_job_summary(&job);
+    Ok(0)
+}
+
+fn cmd_jobs_pause(state: &Path, reason: Option<&str>) -> Result<u8> {
+    let queue = DurableQueueRuntime::open(state)?;
+    queue.set_paused(true, reason)?;
+    println!("corvid jobs pause");
+    println!("state: {}", state.display());
+    println!("paused: true");
+    println!("reason: {}", reason.unwrap_or(""));
+    Ok(0)
+}
+
+fn cmd_jobs_resume(state: &Path) -> Result<u8> {
+    let queue = DurableQueueRuntime::open(state)?;
+    queue.set_paused(false, None)?;
+    println!("corvid jobs resume");
+    println!("state: {}", state.display());
+    println!("paused: false");
+    Ok(0)
+}
+
+fn cmd_jobs_drain(state: &Path, reason: Option<&str>) -> Result<u8> {
+    let queue = DurableQueueRuntime::open(state)?;
+    let released = queue.drain_active_leases(reason)?;
+    println!("corvid jobs drain");
+    println!("state: {}", state.display());
+    println!("paused: true");
+    println!("released_leases: {released}");
+    println!("reason: {}", reason.unwrap_or(""));
+    Ok(0)
+}
+
+fn cmd_jobs_export_trace(state: &Path, job_id: &str, out: Option<&Path>) -> Result<u8> {
+    let queue = DurableQueueRuntime::open(state)?;
+    let job = queue
+        .get(job_id)?
+        .with_context(|| format!("job `{job_id}` not found"))?;
+    let checkpoints = queue.list_checkpoints(job_id)?;
+    let audit = queue.job_audit_events(job_id)?;
+    let usage = queue.loop_usage(job_id)?;
+    let trace = serde_json::json!({
+        "schema": "corvid.jobs.trace.v1",
+        "job": {
+            "id": job.id,
+            "task": job.task,
+            "status": job.status.as_str(),
+            "attempts": job.attempts,
+            "max_retries": job.max_retries,
+            "budget_usd": job.budget_usd,
+            "effect_summary": job.effect_summary,
+            "replay_key": job.replay_key,
+            "idempotency_key": job.idempotency_key,
+            "output_kind": job.output_kind,
+            "output_fingerprint": job.output_fingerprint,
+            "failure_kind": job.failure_kind,
+            "failure_fingerprint": job.failure_fingerprint,
+            "approval_id": job.approval_id,
+            "approval_expires_ms": job.approval_expires_ms,
+            "created_ms": job.created_ms,
+            "updated_ms": job.updated_ms
+        },
+        "checkpoints": checkpoints.into_iter().map(|checkpoint| serde_json::json!({
+            "id": checkpoint.id,
+            "sequence": checkpoint.sequence,
+            "kind": checkpoint.kind.as_str(),
+            "label": checkpoint.label,
+            "payload_fingerprint": checkpoint.payload_fingerprint,
+            "created_ms": checkpoint.created_ms
+        })).collect::<Vec<_>>(),
+        "audit": audit.into_iter().map(|event| serde_json::json!({
+            "id": event.id,
+            "event_kind": event.event_kind,
+            "actor": event.actor,
+            "approval_id": event.approval_id,
+            "status_before": event.status_before,
+            "status_after": event.status_after,
+            "reason": event.reason,
+            "created_ms": event.created_ms
+        })).collect::<Vec<_>>(),
+        "loop_usage": usage.map(|usage| serde_json::json!({
+            "steps": usage.steps,
+            "wall_ms": usage.wall_ms,
+            "spend_usd": usage.spend_usd,
+            "tool_calls": usage.tool_calls,
+            "updated_ms": usage.updated_ms
+        }))
+    });
+    let rendered = serde_json::to_string_pretty(&trace)?;
+    println!("corvid jobs export-trace");
+    println!("state: {}", state.display());
+    println!("job: {job_id}");
+    if let Some(out) = out {
+        std::fs::write(out, rendered)
+            .with_context(|| format!("failed to write job trace `{}`", out.display()))?;
+        println!("out: {}", out.display());
+    } else {
+        println!("{rendered}");
+    }
+    Ok(0)
 }
 
 fn cmd_jobs_wait_approval(
@@ -3545,6 +3687,55 @@ enum JobsCommand {
         /// Base backoff in milliseconds for failed attempts.
         #[arg(long, default_value = "1000")]
         retry_base_ms: u64,
+    },
+    /// Inspect one job and its operational metadata.
+    Inspect {
+        #[arg(long, value_name = "PATH", default_value = "target/corvid-jobs.sqlite")]
+        state: PathBuf,
+        #[arg(long)]
+        job: String,
+    },
+    /// Requeue a terminal or delayed job immediately.
+    Retry {
+        #[arg(long, value_name = "PATH", default_value = "target/corvid-jobs.sqlite")]
+        state: PathBuf,
+        #[arg(long)]
+        job: String,
+    },
+    /// Cancel one job.
+    Cancel {
+        #[arg(long, value_name = "PATH", default_value = "target/corvid-jobs.sqlite")]
+        state: PathBuf,
+        #[arg(long)]
+        job: String,
+    },
+    /// Pause leasing new work from the local queue.
+    Pause {
+        #[arg(long, value_name = "PATH", default_value = "target/corvid-jobs.sqlite")]
+        state: PathBuf,
+        #[arg(long)]
+        reason: Option<String>,
+    },
+    /// Resume leasing work from the local queue.
+    Resume {
+        #[arg(long, value_name = "PATH", default_value = "target/corvid-jobs.sqlite")]
+        state: PathBuf,
+    },
+    /// Pause the queue and release active leases back to pending.
+    Drain {
+        #[arg(long, value_name = "PATH", default_value = "target/corvid-jobs.sqlite")]
+        state: PathBuf,
+        #[arg(long)]
+        reason: Option<String>,
+    },
+    /// Export a redacted JSON trace for one job.
+    ExportTrace {
+        #[arg(long, value_name = "PATH", default_value = "target/corvid-jobs.sqlite")]
+        state: PathBuf,
+        #[arg(long)]
+        job: String,
+        #[arg(long, value_name = "PATH")]
+        out: Option<PathBuf>,
     },
     /// Lease the next runnable job and pause it on a human approval boundary.
     WaitApproval {

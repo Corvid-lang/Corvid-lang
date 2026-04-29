@@ -765,6 +765,85 @@ impl DurableQueueRuntime {
             .collect())
     }
 
+    pub fn set_paused(&self, paused: bool, reason: Option<&str>) -> Result<(), RuntimeError> {
+        let now = now_ms();
+        self.conn
+            .lock()
+            .unwrap()
+            .execute(
+                "insert into queue_controls (name, value, reason, updated_ms)
+                 values ('paused', ?1, ?2, ?3)
+                 on conflict(name) do update set
+                    value = excluded.value,
+                    reason = excluded.reason,
+                    updated_ms = excluded.updated_ms",
+                params![if paused { "true" } else { "false" }, reason, now as i64],
+            )
+            .map_err(|err| RuntimeError::Other(format!("failed to set queue pause state: {err}")))?;
+        Ok(())
+    }
+
+    pub fn is_paused(&self) -> Result<bool, RuntimeError> {
+        let conn = self.conn.lock().unwrap();
+        let paused = conn
+            .query_row(
+                "select value from queue_controls where name = 'paused'",
+                [],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+            .map_err(|err| RuntimeError::Other(format!("failed to read queue pause state: {err}")))?;
+        Ok(paused.as_deref() == Some("true"))
+    }
+
+    pub fn drain_active_leases(&self, reason: Option<&str>) -> Result<usize, RuntimeError> {
+        self.set_paused(true, reason)?;
+        let now = now_ms();
+        let updated = self
+            .conn
+            .lock()
+            .unwrap()
+            .execute(
+                "update queue_jobs
+                 set status = 'pending',
+                     lease_owner = null,
+                     lease_expires_ms = null,
+                     updated_ms = ?1
+                 where status = 'leased'",
+                params![now as i64],
+            )
+            .map_err(|err| RuntimeError::Other(format!("failed to drain active leases: {err}")))?;
+        Ok(updated)
+    }
+
+    pub fn retry_job(&self, id: &str) -> Result<QueueJob, RuntimeError> {
+        let job = self
+            .get(id)?
+            .ok_or_else(|| RuntimeError::Other(format!("std.queue job `{id}` not found")))?;
+        if matches!(job.status, QueueJobStatus::Pending | QueueJobStatus::Leased) {
+            return Err(RuntimeError::Other(format!(
+                "std.queue job `{id}` is already runnable or leased"
+            )));
+        }
+        let now = now_ms();
+        self.conn
+            .lock()
+            .unwrap()
+            .execute(
+                "update queue_jobs
+                 set status = 'pending',
+                     next_run_ms = ?2,
+                     lease_owner = null,
+                     lease_expires_ms = null,
+                     updated_ms = ?2
+                 where id = ?1",
+                params![id, now as i64],
+            )
+            .map_err(|err| RuntimeError::Other(format!("failed to retry durable queue job: {err}")))?;
+        self.get(id)?
+            .ok_or_else(|| RuntimeError::Other(format!("std.queue job `{id}` not found")))
+    }
+
     pub fn approval_waiting(&self) -> Result<Vec<QueueJob>, RuntimeError> {
         Ok(self
             .list()?
@@ -1677,6 +1756,9 @@ impl DurableQueueRuntime {
         ttl_ms: u64,
         now: u64,
     ) -> Result<Option<QueueJob>, RuntimeError> {
+        if self.is_paused()? {
+            return Ok(None);
+        }
         let worker_id = worker_id.into();
         if worker_id.trim().is_empty() {
             return Err(RuntimeError::Other(
@@ -2232,6 +2314,12 @@ impl DurableQueueRuntime {
                     job_id text primary key,
                     stall_after_ms integer not null,
                     action text not null,
+                    updated_ms integer not null
+                );
+                create table if not exists queue_controls (
+                    name text primary key,
+                    value text not null,
+                    reason text,
                     updated_ms integer not null
                 );",
             )
