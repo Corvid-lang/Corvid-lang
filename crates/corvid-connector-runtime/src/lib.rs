@@ -3,12 +3,15 @@ pub mod calendar;
 pub mod files;
 pub mod github_real;
 pub mod gmail;
+pub mod gmail_real;
 pub mod manifest;
 pub mod ms365;
+pub mod oauth2_refresh;
 pub mod rate_limit;
 pub mod real_client;
 pub mod runtime;
 pub mod slack;
+pub mod slack_real;
 pub mod tasks;
 pub mod test_kit;
 pub mod trace;
@@ -27,6 +30,8 @@ pub use github_real::{
     github_pat_real_client, github_pat_real_client_with_base, GitHubEndpoints,
     StaticBearerResolver, GITHUB_API_BASE,
 };
+pub use gmail_real::{gmail_real_client, GmailEndpoints, GMAIL_API_BASE};
+pub use slack_real::{slack_real_client, SlackEndpoints, SLACK_API_BASE};
 pub use gmail::{
     gmail_manifest, GmailConnector, GmailDraftRequest, GmailMessageMetadata, GmailSearchRequest,
     GmailSendRequest, GmailWriteReceipt, GMAIL_CONNECTOR_MANIFEST,
@@ -41,10 +46,14 @@ pub use ms365::{
     ms365_manifest, Ms365CalendarEvent, Ms365CalendarEventsRequest, Ms365Connector,
     Ms365MailMessage, Ms365MailSearchRequest, MS365_CONNECTOR_MANIFEST,
 };
+pub use oauth2_refresh::{
+    InMemoryOAuth2Store, OAuth2RefreshHook, OAuth2RefreshResolver, OAuth2TokenStore,
+    OAuth2Tokens, ReqwestRefreshHook,
+};
 pub use rate_limit::{ConnectorRateLimit, ConnectorRateLimitDecision, ConnectorRateLimiter};
 pub use real_client::{
     parse_retry_after_header, BearerTokenError, BearerTokenResolver, ConnectorRealClient,
-    OperationEndpoints, RealCallContext, RefuseRealMode, ReqwestRealClient,
+    OperationEndpoints, RealCallContext, RealCallPlan, RefuseRealMode, ReqwestRealClient,
 };
 pub use runtime::{
     ConnectorRequest, ConnectorResponse, ConnectorRuntime, ConnectorRuntimeError,

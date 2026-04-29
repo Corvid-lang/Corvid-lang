@@ -27,7 +27,7 @@
 
 use crate::real_client::{
     BearerTokenError, BearerTokenResolver, ConnectorRealClient, OperationEndpoints,
-    RealCallContext, ReqwestRealClient,
+    RealCallContext, RealCallPlan, ReqwestRealClient,
 };
 use crate::runtime::ConnectorRuntimeError;
 use serde_json::Value;
@@ -98,7 +98,7 @@ impl OperationEndpoints for GitHubEndpoints {
         ctx: &RealCallContext<'_>,
         bearer: &str,
         client: &reqwest::blocking::Client,
-    ) -> Result<reqwest::blocking::RequestBuilder, ConnectorRuntimeError> {
+    ) -> Result<RealCallPlan, ConnectorRuntimeError> {
         match ctx.operation {
             "github_search" => {
                 let owner = string_field(ctx.payload, "owner")?;
@@ -110,7 +110,7 @@ impl OperationEndpoints for GitHubEndpoints {
                     .and_then(|v| v.as_u64())
                     .unwrap_or(20) as u32;
                 let url = self.search_url(&owner, &repo, &query, limit);
-                Ok(github_request(client.get(&url), bearer))
+                Ok(RealCallPlan::Http(github_request(client.get(&url), bearer)))
             }
             "github_write" => {
                 let owner_repo = string_field(ctx.payload, "workspace_or_repo")?;
@@ -127,7 +127,10 @@ impl OperationEndpoints for GitHubEndpoints {
                     "Create" => {
                         let url = self.create_issue_url(&owner, &repo);
                         let body_json = serde_json::json!({"title": title, "body": body});
-                        Ok(github_request(client.post(&url).json(&body_json), bearer))
+                        Ok(RealCallPlan::Http(github_request(
+                            client.post(&url).json(&body_json),
+                            bearer,
+                        )))
                     }
                     "Update" => {
                         let issue = issue_id.ok_or_else(|| {
@@ -137,7 +140,10 @@ impl OperationEndpoints for GitHubEndpoints {
                         })?;
                         let url = self.update_issue_url(&owner, &repo, &issue);
                         let body_json = serde_json::json!({"title": title, "body": body});
-                        Ok(github_request(client.patch(&url).json(&body_json), bearer))
+                        Ok(RealCallPlan::Http(github_request(
+                            client.patch(&url).json(&body_json),
+                            bearer,
+                        )))
                     }
                     "Comment" => {
                         let issue = issue_id.ok_or_else(|| {
@@ -147,7 +153,10 @@ impl OperationEndpoints for GitHubEndpoints {
                         })?;
                         let url = self.issue_comment_url(&owner, &repo, &issue);
                         let body_json = serde_json::json!({"body": body});
-                        Ok(github_request(client.post(&url).json(&body_json), bearer))
+                        Ok(RealCallPlan::Http(github_request(
+                            client.post(&url).json(&body_json),
+                            bearer,
+                        )))
                     }
                     other => Err(ConnectorRuntimeError::RealModeNotBound(format!(
                         "github_write unknown kind `{other}`"
@@ -293,6 +302,15 @@ mod tests {
     use crate::manifest::{ConnectorManifest, ConnectorScope, ConnectorScopeApproval};
     use serde_json::json;
 
+    fn unwrap_http(plan: RealCallPlan) -> reqwest::blocking::RequestBuilder {
+        match plan {
+            RealCallPlan::Http(builder) => builder,
+            RealCallPlan::Synthesized(value) => panic!(
+                "expected RealCallPlan::Http but got Synthesized({value:?})"
+            ),
+        }
+    }
+
     fn percent_decode(value: &str) -> String {
         let bytes = value.as_bytes();
         let mut out = Vec::with_capacity(bytes.len());
@@ -390,11 +408,10 @@ mod tests {
             "limit": 5,
         });
         let ctx = ctx_for(&manifest, &scope, &auth, "github_search", &payload);
-        let request = endpoints
+        let plan = endpoints
             .build_request(&ctx, "ghp_test", &client)
-            .expect("build request")
-            .build()
-            .expect("finalise");
+            .expect("build request");
+        let request = unwrap_http(plan).build().expect("finalise");
         assert_eq!(request.method(), reqwest::Method::GET);
         let url = request.url().to_string();
         assert!(url.starts_with("https://example.test/search/issues?q="), "{url}");
@@ -464,11 +481,10 @@ mod tests {
             "approval_id": "approval-1",
         });
         let ctx = ctx_for(&manifest, &scope, &auth, "github_write", &payload);
-        let request = endpoints
+        let plan = endpoints
             .build_request(&ctx, "ghp_write", &client)
-            .expect("build request")
-            .build()
-            .expect("finalise");
+            .expect("build request");
+        let request = unwrap_http(plan).build().expect("finalise");
         assert_eq!(request.method(), reqwest::Method::POST);
         assert_eq!(
             request.url().as_str(),
@@ -498,11 +514,10 @@ mod tests {
             "approval_id": "approval-1",
         });
         let ctx = ctx_for(&manifest, &scope, &auth, "github_write", &payload);
-        let request = endpoints
+        let plan = endpoints
             .build_request(&ctx, "ghp_write", &client)
-            .expect("build request")
-            .build()
-            .expect("finalise");
+            .expect("build request");
+        let request = unwrap_http(plan).build().expect("finalise");
         assert_eq!(request.method(), reqwest::Method::PATCH);
         assert_eq!(
             request.url().as_str(),
@@ -530,11 +545,10 @@ mod tests {
             "approval_id": "approval-1",
         });
         let ctx = ctx_for(&manifest, &scope, &auth, "github_write", &payload);
-        let request = endpoints
+        let plan = endpoints
             .build_request(&ctx, "ghp_write", &client)
-            .expect("build request")
-            .build()
-            .expect("finalise");
+            .expect("build request");
+        let request = unwrap_http(plan).build().expect("finalise");
         assert_eq!(request.method(), reqwest::Method::POST);
         assert_eq!(
             request.url().as_str(),
@@ -564,7 +578,10 @@ mod tests {
             "approval_id": "approval-1",
         });
         let ctx = ctx_for(&manifest, &scope, &auth, "github_write", &payload);
-        let err = endpoints.build_request(&ctx, "ghp", &client).unwrap_err();
+        let err = match endpoints.build_request(&ctx, "ghp", &client) {
+            Err(e) => e,
+            Ok(_) => panic!("expected refusal"),
+        };
         assert!(
             matches!(&err, ConnectorRuntimeError::RealModeNotBound(msg) if msg.contains("issue_id")),
             "{err}"
@@ -589,7 +606,10 @@ mod tests {
             "approval_id": "approval-1",
         });
         let ctx = ctx_for(&manifest, &scope, &auth, "github_write", &payload);
-        let err = endpoints.build_request(&ctx, "ghp", &client).unwrap_err();
+        let err = match endpoints.build_request(&ctx, "ghp", &client) {
+            Err(e) => e,
+            Ok(_) => panic!("expected refusal"),
+        };
         assert!(
             matches!(&err, ConnectorRuntimeError::RealModeNotBound(msg) if msg.contains("<owner>/<repo>")),
             "{err}"

@@ -113,17 +113,32 @@ impl From<BearerTokenError> for ConnectorRuntimeError {
     }
 }
 
+/// What a per-connector `OperationEndpoints` impl returns for a
+/// given call: either an HTTP request the shared `ReqwestRealClient`
+/// will issue, or a synthesized value the runtime emits without
+/// touching the network.
+///
+/// `Synthesized` is for operations that have no provider-side
+/// counterpart but are part of the connector's logical surface —
+/// e.g. Slack drafts, which exist only client-side and are merged
+/// into a `chat.postMessage` call when the user approves a send.
+pub enum RealCallPlan {
+    Http(reqwest::blocking::RequestBuilder),
+    Synthesized(Value),
+}
+
 /// Static URL mapping that a per-connector real client supplies to the
-/// shared `ReqwestRealClient`. Maps `(operation, payload)` → fully
-/// constructed `reqwest::blocking::Request`. 41K-B + 41K-C provide
-/// `GitHubEndpoints`, `GmailEndpoints`, and `SlackEndpoints`.
+/// shared `ReqwestRealClient`. Maps `(operation, payload)` → either
+/// a constructed HTTP request or a synthesized response. 41K-B and
+/// 41K-C provide `GitHubEndpoints`, `GmailEndpoints`, and
+/// `SlackEndpoints`.
 pub trait OperationEndpoints: Send + Sync {
     fn build_request(
         &self,
         ctx: &RealCallContext<'_>,
         bearer: &str,
         client: &reqwest::blocking::Client,
-    ) -> Result<reqwest::blocking::RequestBuilder, ConnectorRuntimeError>;
+    ) -> Result<RealCallPlan, ConnectorRuntimeError>;
 
     /// Optional: shape the JSON response. Default = identity.
     fn shape_response(
@@ -188,8 +203,13 @@ impl ConnectorRealClient for ReqwestRealClient {
         ctx: &RealCallContext<'_>,
     ) -> Result<Value, ConnectorRuntimeError> {
         let bearer = self.bearer.resolve_bearer(&ctx.auth.token_id)?;
-        let request_builder = self.endpoints.build_request(ctx, &bearer, &self.client)?;
-        let request_builder = request_builder.timeout(self.request_timeout);
+        let plan = self.endpoints.build_request(ctx, &bearer, &self.client)?;
+        let request_builder = match plan {
+            RealCallPlan::Synthesized(value) => {
+                return Ok(self.endpoints.shape_response(ctx, value));
+            }
+            RealCallPlan::Http(builder) => builder.timeout(self.request_timeout),
+        };
         let response = request_builder.send().map_err(map_reqwest_error)?;
 
         let status = response.status();
