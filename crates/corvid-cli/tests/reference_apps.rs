@@ -20,7 +20,7 @@ fn corvid_bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_corvid"))
 }
 
-fn execute_sql_dir(conn: &Connection, dir: &Path) {
+fn execute_sql_dir(conn: &Connection, dir: &Path, expected_migrations: usize) {
     let mut migrations = fs::read_dir(dir)
         .unwrap_or_else(|err| panic!("read migration dir {}: {err}", dir.display()))
         .map(|entry| entry.expect("migration entry").path())
@@ -28,11 +28,7 @@ fn execute_sql_dir(conn: &Connection, dir: &Path) {
         .collect::<Vec<_>>();
     migrations.sort();
 
-    assert_eq!(
-        migrations.len(),
-        5,
-        "Personal Executive Agent must keep five app migrations"
-    );
+    assert_eq!(migrations.len(), expected_migrations, "migration count");
     for migration in migrations {
         let sql = fs::read_to_string(&migration)
             .unwrap_or_else(|err| panic!("read migration {}: {err}", migration.display()));
@@ -48,7 +44,7 @@ fn personal_executive_agent_data_model_migrations_and_connectors_are_real() {
     conn.execute_batch("PRAGMA foreign_keys = ON;")
         .expect("enable foreign keys");
 
-    execute_sql_dir(&conn, &app.join("migrations"));
+    execute_sql_dir(&conn, &app.join("migrations"), 5);
 
     let table_count: i64 = conn
         .query_row(
@@ -229,4 +225,58 @@ fn personal_executive_agent_hardening_bundle_runs_and_covers_risks() {
 
     assert!(app.join("ops").join("runbook.md").exists());
     assert!(app.join("deploy").join("docker-compose.yml").exists());
+}
+
+#[test]
+fn personal_knowledge_agent_ingestion_is_private_and_provenanced() {
+    let app = repo_root()
+        .join("examples")
+        .join("backend")
+        .join("personal_knowledge_agent");
+    let source = app.join("src").join("main.cor");
+    let out = Command::new(corvid_bin())
+        .arg("check")
+        .arg(&source)
+        .current_dir(repo_root())
+        .output()
+        .expect("check knowledge app");
+    assert!(
+        out.status.success(),
+        "knowledge app check failed:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    let conn = Connection::open_in_memory().expect("in-memory sqlite");
+    conn.execute_batch("PRAGMA foreign_keys = ON;")
+        .expect("enable foreign keys");
+    execute_sql_dir(&conn, &app.join("migrations"), 3);
+    let seed_sql = fs::read_to_string(app.join("seeds").join("demo.sql")).expect("read seed sql");
+    conn.execute_batch(&seed_sql).expect("execute seed sql");
+
+    let table_count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_schema WHERE type = 'table' AND name LIKE 'knowledge_%'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("table count");
+    assert_eq!(table_count, 6);
+
+    let local_only: i64 = conn
+        .query_row("SELECT local_only FROM knowledge_embeddings", [], |row| {
+            row.get(0)
+        })
+        .expect("local only");
+    assert_eq!(local_only, 1);
+
+    let mock_text =
+        fs::read_to_string(app.join("mocks").join("files_index.json")).expect("read files mock");
+    let mock: Value = serde_json::from_str(&mock_text).expect("parse files mock");
+    assert_eq!(mock["mode"].as_str(), Some("mock"));
+    assert_eq!(mock["privacy"]["local_only"].as_bool(), Some(true));
+    assert_eq!(mock["privacy"]["raw_text_committed"].as_bool(), Some(false));
+    assert!(mock["documents"][0]["provenance_id"]
+        .as_str()
+        .is_some_and(|id| id.starts_with("files:notes:")));
 }

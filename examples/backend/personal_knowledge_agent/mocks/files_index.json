@@ -1,0 +1,26 @@
+{
+  "mode": "mock",
+  "connector": "files",
+  "roots": [
+    {
+      "root_id": "notes",
+      "path": "./notes",
+      "read_only": true
+    }
+  ],
+  "documents": [
+    {
+      "id": "source-1",
+      "root_id": "notes",
+      "path": "notes/strategy.md",
+      "media_type": "text/markdown",
+      "content_hash": "sha256:source-demo",
+      "provenance_id": "files:notes:notes/strategy.md:0:512",
+      "snippet_fingerprint": "sha256:chunk-text-demo"
+    }
+  ],
+  "privacy": {
+    "local_only": true,
+    "raw_text_committed": false
+  }
+}

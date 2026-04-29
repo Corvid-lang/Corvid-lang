@@ -1,0 +1,121 @@
+effect files_read:
+    cost: $0.01
+    trust: local
+    data: private
+
+effect local_embed:
+    cost: $0.02
+    trust: local
+    data: private
+
+effect index_write:
+    cost: $0.01
+    trust: local
+    data: private
+
+public type KnowledgeConfig:
+    service: String
+    connector_mode: String
+    storage_mode: String
+    local_only: Bool
+    trace_dir: String
+
+public type KnowledgeSource:
+    id: String
+    tenant_id: String
+    root_id: String
+    path: String
+    media_type: String
+    content_hash: String
+    provenance_id: String
+
+public type KnowledgeDocument:
+    id: String
+    tenant_id: String
+    source_id: String
+    title_fingerprint: String
+    content_hash: String
+    version: Int
+    provenance_id: String
+
+public type KnowledgeChunk:
+    id: String
+    tenant_id: String
+    document_id: String
+    source_id: String
+    byte_start: Int
+    byte_end: Int
+    text_fingerprint: String
+    provenance_id: String
+
+public type KnowledgeEmbedding:
+    id: String
+    chunk_id: String
+    provider: String
+    model_name: String
+    vector_hash: String
+    local_only: Bool
+
+public type KnowledgeIngestionJob:
+    id: String
+    tenant_id: String
+    root_id: String
+    status: String
+    discovered_count: Int
+    indexed_count: Int
+    replay_key: String
+
+public type KnowledgeIngestionResult:
+    source: KnowledgeSource
+    document: KnowledgeDocument
+    chunk: KnowledgeChunk
+    embedding: KnowledgeEmbedding
+    job: KnowledgeIngestionJob
+    provenance_preserved: Bool
+    private_local_mode: Bool
+
+public @replayable
+agent knowledge_config() -> KnowledgeConfig:
+    return KnowledgeConfig("personal_knowledge_agent", "mock", "sqlite+local_index", true, "target/traces")
+
+public @replayable
+agent mock_source() -> KnowledgeSource uses files_read:
+    return KnowledgeSource("source-1", "tenant-1", "notes", "notes/strategy.md", "text/markdown", "sha256:source-demo", "files:notes:notes/strategy.md:0:512")
+
+public @replayable
+agent mock_document() -> KnowledgeDocument uses files_read:
+    source = mock_source()
+    return KnowledgeDocument("doc-1", source.tenant_id, source.id, "sha256:title-demo", source.content_hash, 1, source.provenance_id)
+
+public @replayable
+agent mock_chunk() -> KnowledgeChunk uses files_read:
+    doc = mock_document()
+    return KnowledgeChunk("chunk-1", doc.tenant_id, doc.id, doc.source_id, 0, 512, "sha256:chunk-text-demo", doc.provenance_id)
+
+public @replayable
+agent mock_embedding() -> KnowledgeEmbedding uses local_embed:
+    chunk = mock_chunk()
+    return KnowledgeEmbedding("embedding-1", chunk.id, "local", "bge-small-en", "sha256:vector-demo", true)
+
+public @replayable
+agent ingest_mock_document() -> KnowledgeIngestionResult uses files_read, local_embed, index_write:
+    source = mock_source()
+    doc = mock_document()
+    chunk = mock_chunk()
+    embedding = mock_embedding()
+    job = KnowledgeIngestionJob("ingest-1", source.tenant_id, source.root_id, "indexed", 1, 1, "knowledge:ingest:notes:strategy")
+    return KnowledgeIngestionResult(source, doc, chunk, embedding, job, chunk.provenance_id == source.provenance_id, embedding.local_only)
+
+public @replayable
+agent ingestion_contract_valid(result: KnowledgeIngestionResult) -> Bool:
+    return result.provenance_preserved and result.private_local_mode and result.job.discovered_count == result.job.indexed_count and result.source.content_hash == result.document.content_hash
+
+server personal_knowledge_agent_api:
+    route GET "/config" -> json KnowledgeConfig:
+        return knowledge_config()
+    route GET "/ingest/mock" -> json KnowledgeIngestionResult uses files_read, local_embed, index_write:
+        return ingest_mock_document()
+
+agent main() -> Bool:
+    result = ingest_mock_document()
+    return ingestion_contract_valid(result)

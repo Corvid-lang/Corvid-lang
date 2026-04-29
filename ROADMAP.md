@@ -2386,7 +2386,7 @@ corvid run --target=server --mode=real             # real-provider mode behind e
 - [x] 42C3-exec-agent-calendar       Scheduling, meeting prep, daily brief, and follow-ups run as durable jobs.
 - [x] 42C4-exec-agent-approval       Sends/edits are approval-gated and auditable.
 - [x] 42C5-exec-agent-hardening      Replay, evals, adversarial tests, and runbook are complete.
-- [ ] 42D1-knowledge-ingestion       Knowledge app ingests docs with provenance and private/local mode.
+- [x] 42D1-knowledge-ingestion       Knowledge app ingests docs with provenance and private/local mode.
 - [ ] 42D2-knowledge-search-answer   Grounded search, citations, feedback evals, and answer provenance work.
 - [ ] 42E1-finance-readonly          Finance app aggregates read-only data and explains budgets/subscriptions.
 - [ ] 42E2-finance-approval-audit    Payment intents are approval-gated with strict non-advice and audit posture.
