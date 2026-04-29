@@ -199,6 +199,15 @@ pub enum TypeErrorKind {
         arity: usize,
     },
 
+    /// An externally reachable route, schedule, or exported agent can reach a
+    /// dangerous tool without a matching approval contract in lexical scope.
+    ApprovalReachabilityViolation {
+        entrypoint: String,
+        tool: String,
+        expected_approve_label: String,
+        arity: usize,
+    },
+
     /// A dimensional effect constraint was violated.
     EffectConstraintViolation {
         agent: String,
@@ -520,6 +529,13 @@ impl TypeErrorKind {
             Self::UnapprovedDangerousCall { tool, .. } => {
                 format!("dangerous tool `{tool}` called without a prior `approve`")
             }
+            Self::ApprovalReachabilityViolation {
+                entrypoint, tool, ..
+            } => {
+                format!(
+                    "`{entrypoint}` can reach dangerous tool `{tool}` without a reachable approval contract"
+                )
+            }
             Self::EffectConstraintViolation { agent, message, .. } => {
                 format!("effect constraint violated in agent `{agent}`: {message}")
             }
@@ -794,6 +810,19 @@ impl TypeErrorKind {
                     .join(", ");
                 Some(format!(
                     "add `approve {expected_approve_label}({args})` on the line before this call"
+                ))
+            }
+            Self::ApprovalReachabilityViolation {
+                expected_approve_label,
+                arity,
+                ..
+            } => {
+                let args = (0..*arity)
+                    .map(|i| format!("arg{}", i + 1))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                Some(format!(
+                    "add `approve {expected_approve_label}({args})` in the same lexical block as the dangerous call, or move the dangerous action behind a checked approval helper"
                 ))
             }
             Self::EffectConstraintViolation { dimension, .. } => Some(format!(

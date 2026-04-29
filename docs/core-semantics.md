@@ -19,6 +19,7 @@ Per the no-shortcuts rule, every `out_of_scope` entry carries an explicit reason
 | `approval.dangerous_call_requires_token` | approval | static | typecheck |
 | `approval.token_lexical_only` | approval | static | typecheck |
 | `approval.dangerous_marker_preserved` | approval | static | typecheck |
+| `approval.reachable_entrypoints_require_contract` | approval | static | typecheck |
 | `effect_row.body_completeness` | effect_row | static | typecheck |
 | `effect_row.caller_propagation` | effect_row | static | typecheck |
 | `effect_row.import_boundary` | effect_row | static | resolve |
@@ -90,6 +91,21 @@ A `@dangerous` marker cannot be erased by re-exporting or aliasing the tool thro
 
 - `crates/corvid-types/src/tests.rs::adversarial_source_mutator_import_use_alias_dangerous_tool_is_tagged`
 - `crates/corvid-types/tests/source_bypass_corpus.rs::mutator_drops_approve_through_mock_alias_triggers_token_guarantee`
+
+#### `approval.reachable_entrypoints_require_contract`
+- **class**: static
+- **phase**: typecheck
+
+Externally reachable routes, schedules, and exported agents are walked through their reachable agent calls; any reachable `@dangerous` tool call must still have a matching lexical approval contract.
+
+**Positive tests:**
+
+- `crates/corvid-types/src/tests.rs::server_route_approve_authorizes_dangerous_tool`
+
+**Adversarial tests:**
+
+- `crates/corvid-types/src/tests.rs::server_route_reachability_reports_helper_without_approval`
+- `crates/corvid-types/src/tests.rs::schedule_reachability_reports_job_without_approval`
 
 ### Effect rows
 

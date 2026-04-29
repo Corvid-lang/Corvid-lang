@@ -111,6 +111,10 @@ fn typecheck_with_everything(
     c.validate_import_use_items(file);
     c.validate_python_import_effects(file);
     c.check_file(file);
+    c.errors
+        .extend(crate::approval_reachability::check_approval_reachability(
+            file, resolved,
+        ));
 
     let effect_decls: Vec<&corvid_ast::EffectDecl> = file
         .decls

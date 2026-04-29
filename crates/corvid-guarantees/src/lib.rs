@@ -280,6 +280,25 @@ pub static GUARANTEE_REGISTRY: &[Guarantee] = &[
             "crates/corvid-types/tests/source_bypass_corpus.rs::mutator_drops_approve_through_mock_alias_triggers_token_guarantee",
         ],
     },
+    Guarantee {
+        id: "approval.reachable_entrypoints_require_contract",
+        kind: GuaranteeKind::Approval,
+        class: GuaranteeClass::Static,
+        phase: Phase::TypeCheck,
+        description:
+            "Externally reachable routes, schedules, and exported agents \
+             are walked through their reachable agent calls; any reachable \
+             `@dangerous` tool call must still have a matching lexical \
+             approval contract.",
+        out_of_scope_reason: "",
+        positive_test_refs: &[
+            "crates/corvid-types/src/tests.rs::server_route_approve_authorizes_dangerous_tool",
+        ],
+        adversarial_test_refs: &[
+            "crates/corvid-types/src/tests.rs::server_route_reachability_reports_helper_without_approval",
+            "crates/corvid-types/src/tests.rs::schedule_reachability_reports_job_without_approval",
+        ],
+    },
     // ----- Effect rows --------------------------------------------
     Guarantee {
         id: "effect_row.body_completeness",
@@ -704,6 +723,7 @@ pub const SIGNED_CDYLIB_CLAIM_GUARANTEE_IDS: &[&str] = &[
     "approval.dangerous_call_requires_token",
     "approval.token_lexical_only",
     "approval.dangerous_marker_preserved",
+    "approval.reachable_entrypoints_require_contract",
     "effect_row.body_completeness",
     "effect_row.caller_propagation",
     "effect_row.import_boundary",
@@ -919,8 +939,8 @@ mod tests {
         let mut seen = std::collections::BTreeSet::new();
         for id in SIGNED_CDYLIB_CLAIM_GUARANTEE_IDS {
             assert!(seen.insert(*id), "duplicate signed cdylib claim id `{id}`");
-            let guarantee =
-                lookup(id).unwrap_or_else(|| panic!("signed cdylib claim id `{id}` is not registered"));
+            let guarantee = lookup(id)
+                .unwrap_or_else(|| panic!("signed cdylib claim id `{id}` is not registered"));
             assert_ne!(
                 guarantee.class,
                 GuaranteeClass::OutOfScope,

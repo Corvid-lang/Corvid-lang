@@ -207,6 +207,60 @@ server refund_api:
     assert!(c.errors.is_empty(), "errors: {:?}", c.errors);
 }
 
+#[test]
+fn server_route_reachability_reports_helper_without_approval() {
+    let src = r#"
+type Receipt:
+    id: String
+
+tool issue_refund(id: String) -> Receipt dangerous
+
+agent unsafe_refund(id: String) -> Receipt:
+    return issue_refund(id)
+
+server refund_api:
+    route POST "/refunds/{id}" -> json Receipt:
+        return unsafe_refund(path.id)
+"#;
+    let c = check(src);
+    assert!(
+        c.errors.iter().any(|e| matches!(
+            &e.kind,
+            TypeErrorKind::ApprovalReachabilityViolation { entrypoint, tool, .. }
+                if entrypoint.contains("route POST /refunds/{id}") && tool == "issue_refund"
+        ) && e.guarantee_id
+            == Some("approval.reachable_entrypoints_require_contract")),
+        "expected route reachability approval diagnostic, got {:?}",
+        c.errors
+    );
+}
+
+#[test]
+fn schedule_reachability_reports_job_without_approval() {
+    let src = r#"
+type Receipt:
+    id: String
+
+tool issue_refund(id: String) -> Receipt dangerous
+
+agent refund_job() -> Receipt:
+    return issue_refund("ord_1")
+
+schedule "0 8 * * *" zone "UTC" -> refund_job()
+"#;
+    let c = check(src);
+    assert!(
+        c.errors.iter().any(|e| matches!(
+            &e.kind,
+            TypeErrorKind::ApprovalReachabilityViolation { entrypoint, tool, .. }
+                if entrypoint.contains("schedule `0 8 * * *`") && tool == "issue_refund"
+        ) && e.guarantee_id
+            == Some("approval.reachable_entrypoints_require_contract")),
+        "expected schedule reachability approval diagnostic, got {:?}",
+        c.errors
+    );
+}
+
 const MUTATION_APPROVAL_BASE: &str = r#"
 type Receipt:
     id: String

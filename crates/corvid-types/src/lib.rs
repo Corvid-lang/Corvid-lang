@@ -9,6 +9,7 @@
 
 #![allow(dead_code)]
 
+mod approval_reachability;
 pub mod checker;
 pub mod config;
 pub mod determinism;
