@@ -302,6 +302,117 @@ main {
   margin: 0;
 }
 
+.benchmarks {
+  margin-top: clamp(64px, 9vw, 120px);
+}
+
+.benchmarks .section-head p code,
+.bench-table .bench-sub code {
+  background: rgba(17, 17, 15, 0.06);
+  border-radius: 6px;
+  font-size: 0.92em;
+  padding: 1px 6px;
+}
+
+.bench-scroll {
+  border: 1px solid var(--line);
+  border-radius: 24px;
+  background: rgba(255, 250, 240, 0.82);
+  box-shadow: 0 28px 70px rgba(17, 17, 15, 0.12);
+  overflow-x: auto;
+  margin-top: 24px;
+}
+
+.bench-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 15px;
+  font-family: "Trebuchet MS", Verdana, sans-serif;
+}
+
+.bench-table thead th {
+  color: var(--rust);
+  text-align: left;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: 12px;
+  font-weight: 800;
+  border-bottom: 1px solid var(--line);
+  padding: 16px 18px;
+  background: rgba(231, 221, 202, 0.4);
+  vertical-align: bottom;
+}
+
+.bench-table tbody th,
+.bench-table tbody td {
+  border-bottom: 1px solid rgba(216, 205, 184, 0.6);
+  padding: 18px;
+  vertical-align: top;
+}
+
+.bench-table tbody tr:last-child th,
+.bench-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.bench-table tbody th {
+  text-align: left;
+  font-weight: 400;
+  width: 30%;
+  min-width: 230px;
+}
+
+.bench-table .bench-name {
+  display: block;
+  color: var(--ink);
+  font-weight: 800;
+  font-size: 16px;
+  letter-spacing: -0.01em;
+  margin-bottom: 6px;
+}
+
+.bench-table .bench-sub {
+  display: block;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.bench-table tbody td {
+  color: var(--muted);
+  font-size: 15px;
+}
+
+.bench-table tbody td strong {
+  color: var(--green);
+  font-size: 18px;
+  font-weight: 800;
+}
+
+.bench-table tbody td:last-child {
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.bench-table tbody td:last-child a {
+  color: var(--green);
+  font-weight: 600;
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+}
+
+.bench-table tbody td:last-child a:hover {
+  color: var(--rust);
+}
+
+.bench-footnote {
+  color: var(--muted);
+  font-size: 15px;
+  line-height: 1.55;
+  margin-top: 16px;
+}
+
 .claim-policy {
   display: grid;
   grid-template-columns: minmax(240px, 0.8fr) minmax(0, 1.2fr);
