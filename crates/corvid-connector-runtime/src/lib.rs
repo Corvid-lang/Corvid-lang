@@ -1,4 +1,5 @@
 pub mod auth;
+pub mod gmail;
 pub mod manifest;
 pub mod rate_limit;
 pub mod runtime;
@@ -6,6 +7,10 @@ pub mod test_kit;
 pub mod trace;
 
 pub use auth::{ConnectorAuthError, ConnectorAuthState};
+pub use gmail::{
+    gmail_manifest, GmailConnector, GmailMessageMetadata, GmailSearchRequest,
+    GMAIL_CONNECTOR_MANIFEST,
+};
 pub use manifest::{
     parse_connector_manifest, validate_connector_manifest, ConnectorManifest,
     ConnectorManifestError, ConnectorMode, ConnectorReplayPolicy, ConnectorScope,

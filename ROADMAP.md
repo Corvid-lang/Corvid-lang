@@ -2283,7 +2283,7 @@ corvid connectors verify-webhook --sig=<...>
 - [x] 41B1-manifest-parser           Connector manifest parser validates scopes/effects/data classes/approval/replay/rate limits.
 - [x] 41B2-connector-runtime         Shared runtime handles auth state, retry, rate limits, redaction, trace events, and mock mode.
 - [x] 41B3-connector-test-kit        Mock/replay fixture harness is reusable across connectors.
-- [ ] 41C1-gmail-read-search         Gmail read/search metadata works with mock and real-provider env docs.
+- [x] 41C1-gmail-read-search         Gmail read/search metadata works with mock and real-provider env docs.
 - [ ] 41C2-gmail-draft-send         Draft/send is approval-gated and replay-visible.
 - [ ] 41D1-ms365-mail-calendar       Outlook mail/calendar basics work through Graph auth.
 - [ ] 41D2-ms365-tenant-scopes       Tenant-aware scopes and token refresh are tested.
