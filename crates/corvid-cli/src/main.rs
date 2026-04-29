@@ -918,6 +918,16 @@ enum ObserveCommand {
         #[arg(long, value_name = "PATH")]
         trace_dir: Option<PathBuf>,
     },
+    /// Explain one lineage run with contract-aware grouping.
+    Show {
+        /// Lineage trace identifier: either a direct file path, or a
+        /// run id resolved as `<id>.lineage.jsonl` under `--trace-dir`.
+        id_or_path: String,
+        /// Trace directory used when `id_or_path` is a bare run id.
+        /// Defaults to `target/trace`.
+        #[arg(long, value_name = "PATH")]
+        trace_dir: Option<PathBuf>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -1201,6 +1211,10 @@ fn main_impl() -> ExitCode {
         },
         Some(Command::Observe { command }) => match command {
             ObserveCommand::List { trace_dir } => observe_cmd::run_list(trace_dir.as_deref()),
+            ObserveCommand::Show {
+                id_or_path,
+                trace_dir,
+            } => observe_cmd::run_show(&id_or_path, trace_dir.as_deref()),
         },
         Some(Command::TraceDiff {
             base_sha,

@@ -1,5 +1,6 @@
 use anyhow::{Context, Result};
 use corvid_runtime::{LineageEvent, LineageKind, LineageStatus};
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -31,10 +32,47 @@ pub struct ObservedRun {
     pub hot_spot_latency_ms: u64,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct ObserveShowReport {
+    pub path: PathBuf,
+    pub run: ObservedRun,
+    pub events: Vec<ObservedEvent>,
+    pub guarantee_groups: Vec<ObservedGroup>,
+    pub effect_groups: Vec<ObservedGroup>,
+    pub data_class_groups: Vec<ObservedGroup>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ObservedEvent {
+    pub kind: String,
+    pub name: String,
+    pub status: String,
+    pub latency_ms: u64,
+    pub cost_usd: String,
+    pub guarantee_id: String,
+    pub approval_id: String,
+    pub replay_key: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ObservedGroup {
+    pub key: String,
+    pub count: u64,
+    pub failures: u64,
+    pub denials: u64,
+    pub cost_usd: String,
+}
+
 pub fn run_list(trace_dir: Option<&Path>) -> Result<u8> {
     let trace_dir = trace_dir.unwrap_or_else(|| Path::new("target/trace"));
     let report = build_observe_list(trace_dir)?;
     print!("{}", render_observe_list(&report));
+    Ok(0)
+}
+
+pub fn run_show(id_or_path: &str, trace_dir: Option<&Path>) -> Result<u8> {
+    let report = build_observe_show(id_or_path, trace_dir)?;
+    print!("{}", render_observe_show(&report));
     Ok(0)
 }
 
@@ -76,6 +114,24 @@ pub fn build_observe_list(trace_dir: &Path) -> Result<ObserveListReport> {
     })
 }
 
+pub fn build_observe_show(id_or_path: &str, trace_dir: Option<&Path>) -> Result<ObserveShowReport> {
+    let path = resolve_lineage_path(id_or_path, trace_dir);
+    let events = read_lineage_events(&path)
+        .with_context(|| format!("reading lineage trace `{}`", path.display()))?;
+    if events.is_empty() {
+        anyhow::bail!("lineage trace `{}` is empty", path.display());
+    }
+    let run = summarize_run(path.clone(), &events);
+    Ok(ObserveShowReport {
+        path,
+        run,
+        events: events.iter().map(observed_event).collect(),
+        guarantee_groups: build_groups(&events, GroupKind::Guarantee),
+        effect_groups: build_groups(&events, GroupKind::Effect),
+        data_class_groups: build_groups(&events, GroupKind::DataClass),
+    })
+}
+
 pub fn render_observe_list(report: &ObserveListReport) -> String {
     let mut out = String::new();
     out.push_str(&format!(
@@ -109,6 +165,50 @@ pub fn render_observe_list(report: &ObserveListReport) -> String {
             run.approval_pending_count,
             run.hot_spot,
             run.hot_spot_latency_ms
+        ));
+    }
+    out
+}
+
+pub fn render_observe_show(report: &ObserveShowReport) -> String {
+    let mut out = String::new();
+    out.push_str(&format!(
+        "observe show: {} | trace={} root={} duration_ms={} cost=${:.6} failures={} approvals={} denials={}\n",
+        report.path.display(),
+        report.run.trace_id,
+        report.run.root_name,
+        report.run.duration_ms,
+        report.run.cost_usd,
+        report.run.failure_count,
+        report.run.approval_count,
+        report.run.approval_denied_count
+    ));
+    out.push_str(&format!(
+        "hot_spot: {}:{}ms | tokens={} | replayable_events={}\n",
+        report.run.hot_spot,
+        report.run.hot_spot_latency_ms,
+        report.run.tokens,
+        report
+            .events
+            .iter()
+            .filter(|event| !event.replay_key.is_empty())
+            .count()
+    ));
+    render_groups(&mut out, "guarantees", &report.guarantee_groups);
+    render_groups(&mut out, "effects", &report.effect_groups);
+    render_groups(&mut out, "data_classes", &report.data_class_groups);
+    out.push_str("events:\n");
+    for event in &report.events {
+        out.push_str(&format!(
+            "- {}:{} status={} latency_ms={} cost_usd={} guarantee={} approval={} replay={}\n",
+            event.kind,
+            event.name,
+            event.status,
+            event.latency_ms,
+            event.cost_usd,
+            display_optional(&event.guarantee_id),
+            display_optional(&event.approval_id),
+            display_optional(&event.replay_key)
         ));
     }
     out
@@ -183,6 +283,88 @@ fn summarize_run(path: PathBuf, events: &[LineageEvent]) -> ObservedRun {
     }
 }
 
+fn observed_event(event: &LineageEvent) -> ObservedEvent {
+    ObservedEvent {
+        kind: kind_name(event.kind),
+        name: event.name.clone(),
+        status: status_name(event.status),
+        latency_ms: event.latency_ms,
+        cost_usd: format!("{:.6}", finite_cost(event.cost_usd)),
+        guarantee_id: event.guarantee_id.clone(),
+        approval_id: event.approval_id.clone(),
+        replay_key: event.replay_key.clone(),
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum GroupKind {
+    Guarantee,
+    Effect,
+    DataClass,
+}
+
+#[derive(Debug, Clone, Default)]
+struct GroupAccumulator {
+    count: u64,
+    failures: u64,
+    denials: u64,
+    cost_usd: f64,
+}
+
+fn build_groups(events: &[LineageEvent], kind: GroupKind) -> Vec<ObservedGroup> {
+    let mut groups: BTreeMap<String, GroupAccumulator> = BTreeMap::new();
+    for event in events {
+        let keys = match kind {
+            GroupKind::Guarantee => single_group_key(&event.guarantee_id),
+            GroupKind::Effect => event.effect_ids.clone(),
+            GroupKind::DataClass => event.data_classes.clone(),
+        };
+        for key in keys {
+            let group = groups.entry(key).or_default();
+            group.count += 1;
+            if event.status == LineageStatus::Failed {
+                group.failures += 1;
+            }
+            if event.status == LineageStatus::Denied {
+                group.denials += 1;
+            }
+            group.cost_usd += finite_cost(event.cost_usd);
+        }
+    }
+    groups
+        .into_iter()
+        .map(|(key, group)| ObservedGroup {
+            key,
+            count: group.count,
+            failures: group.failures,
+            denials: group.denials,
+            cost_usd: format!("{:.6}", group.cost_usd),
+        })
+        .collect()
+}
+
+fn render_groups(out: &mut String, label: &str, groups: &[ObservedGroup]) {
+    out.push_str(&format!("{label}:\n"));
+    if groups.is_empty() {
+        out.push_str("- none\n");
+        return;
+    }
+    for group in groups {
+        out.push_str(&format!(
+            "- {} count={} failures={} denials={} cost_usd={}\n",
+            group.key, group.count, group.failures, group.denials, group.cost_usd
+        ));
+    }
+}
+
+fn single_group_key(value: &str) -> Vec<String> {
+    if value.is_empty() {
+        Vec::new()
+    } else {
+        vec![value.to_string()]
+    }
+}
+
 fn read_lineage_events(path: &Path) -> Result<Vec<LineageEvent>> {
     let text = fs::read_to_string(path)?;
     let mut events = Vec::new();
@@ -198,6 +380,16 @@ fn read_lineage_events(path: &Path) -> Result<Vec<LineageEvent>> {
     Ok(events)
 }
 
+fn resolve_lineage_path(id_or_path: &str, trace_dir: Option<&Path>) -> PathBuf {
+    let direct = PathBuf::from(id_or_path);
+    if direct.exists() || direct.extension().is_some() {
+        return direct;
+    }
+    trace_dir
+        .unwrap_or_else(|| Path::new("target/trace"))
+        .join(format!("{id_or_path}.lineage.jsonl"))
+}
+
 fn is_lineage_jsonl(path: &Path) -> bool {
     path.file_name()
         .and_then(|name| name.to_str())
@@ -210,6 +402,29 @@ fn kind_name(kind: LineageKind) -> String {
         .ok()
         .and_then(|value| value.as_str().map(ToOwned::to_owned))
         .unwrap_or_else(|| format!("{kind:?}").to_lowercase())
+}
+
+fn status_name(status: LineageStatus) -> String {
+    serde_json::to_value(status)
+        .ok()
+        .and_then(|value| value.as_str().map(ToOwned::to_owned))
+        .unwrap_or_else(|| format!("{status:?}").to_lowercase())
+}
+
+fn finite_cost(value: f64) -> f64 {
+    if value.is_finite() && value > 0.0 {
+        value
+    } else {
+        0.0
+    }
+}
+
+fn display_optional(value: &str) -> &str {
+    if value.is_empty() {
+        "-"
+    } else {
+        value
+    }
 }
 
 #[cfg(test)]
@@ -268,5 +483,45 @@ mod tests {
         let report = build_observe_list(dir.path()).unwrap();
         assert!(report.runs.is_empty());
         assert!(render_observe_list(&report).contains("no lineage traces found"));
+    }
+
+    #[test]
+    fn show_groups_one_run_by_guarantee_effect_and_data_class() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut route = LineageEvent::root("trace-1", LineageKind::Route, "POST /send", 10)
+            .finish(LineageStatus::Ok, 100);
+        route.replay_key = "route:trace-1".to_string();
+        let mut tool = LineageEvent::child(&route, LineageKind::Tool, "send_email", 0, 20)
+            .finish(LineageStatus::Failed, 90);
+        tool.guarantee_id = "approval.reachable_entrypoints_require_contract".to_string();
+        tool.effect_ids = vec!["send_email".to_string()];
+        tool.data_classes = vec!["private".to_string()];
+        tool.approval_id = "approval-1".to_string();
+        tool.cost_usd = 0.02;
+        let mut approval = LineageEvent::child(&tool, LineageKind::Approval, "SendEmail", 0, 30)
+            .finish(LineageStatus::Denied, 40);
+        approval.guarantee_id = tool.guarantee_id.clone();
+        approval.effect_ids = tool.effect_ids.clone();
+        approval.data_classes = tool.data_classes.clone();
+        approval.approval_id = tool.approval_id.clone();
+        write_lineage(
+            &dir.path().join("trace-1.lineage.jsonl"),
+            &[route, tool, approval],
+        );
+
+        let report = build_observe_show("trace-1", Some(dir.path())).unwrap();
+        assert_eq!(report.run.failure_count, 1);
+        assert_eq!(report.guarantee_groups.len(), 1);
+        assert_eq!(report.guarantee_groups[0].count, 2);
+        assert_eq!(report.guarantee_groups[0].failures, 1);
+        assert_eq!(report.guarantee_groups[0].denials, 1);
+        assert_eq!(report.effect_groups[0].key, "send_email");
+        assert_eq!(report.data_class_groups[0].key, "private");
+
+        let rendered = render_observe_show(&report);
+        assert!(rendered.contains("guarantees:"));
+        assert!(rendered.contains("approval.reachable_entrypoints_require_contract"));
+        assert!(rendered.contains("events:"));
+        assert!(rendered.contains("tool:send_email status=failed"));
     }
 }
