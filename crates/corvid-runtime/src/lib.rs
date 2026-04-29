@@ -62,6 +62,7 @@ pub mod models;
 mod native_trace;
 pub mod observation_handles;
 pub mod observe;
+pub mod otel_schema;
 pub mod prompt_cache;
 pub mod provenance;
 #[cfg(feature = "python")]
@@ -178,6 +179,10 @@ pub use observe::{
     approval_summary, latency_histogram, provider_observations, route_summaries,
     runtime_observation_summary, ApprovalObservationSummary, LatencyObservation,
     ProviderObservation, RouteObservationSummary, RuntimeObservationSummary,
+};
+pub use otel_schema::{
+    lineage_to_otel_span, required_otel_metrics, OtelMetricMapping, OtelSpanMapping,
+    OTEL_SCHEMA_VERSION,
 };
 pub use provenance::{GroundedValue, ProvenanceChain, ProvenanceEntry, ProvenanceKind};
 pub use queue::{DurableQueueRuntime, QueueJob, QueueJobStatus, QueueRuntime};
