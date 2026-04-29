@@ -38,6 +38,34 @@ fn execute_sql_dir(conn: &Connection, dir: &Path, expected_migrations: usize) {
 }
 
 #[test]
+fn release_policy_defines_channels_semver_and_blockers() {
+    let policy = fs::read_to_string(repo_root().join("docs").join("release-policy.md"))
+        .expect("read release policy");
+
+    for required in [
+        "## Channels",
+        "### Nightly",
+        "### Beta",
+        "### Stable",
+        "## SemVer Scope",
+        "## Stability Classes",
+        "## Breaking Change Rules",
+        "## Release Blockers",
+        "## Key Rotation",
+        "## Maintainer Signoff",
+        "signed binaries",
+        "SHA256SUMS.txt",
+        "corvid upgrade --check",
+        "corvid claim audit",
+    ] {
+        assert!(
+            policy.contains(required),
+            "release policy is missing `{required}`"
+        );
+    }
+}
+
+#[test]
 fn personal_executive_agent_data_model_migrations_and_connectors_are_real() {
     let app = personal_executive_agent_root();
     let conn = Connection::open_in_memory().expect("in-memory sqlite");

@@ -2508,7 +2508,7 @@ corvid claim audit                           # AI-assisted final claim audit (ad
 - [x] 43C1-compose-manifest          Docker Compose deploy works for one reference app.
 - [x] 43C2-paas-manifest             Fly/Render-style single-service deploy works.
 - [x] 43C3-k8s-systemd-manifests     Kubernetes and systemd manifests work or are explicitly scoped.
-- [ ] 43D1-release-policy            Nightly/beta/stable SemVer and stability policy are documented.
+- [x] 43D1-release-policy            Nightly/beta/stable SemVer and stability policy are documented.
 - [ ] 43D2-release-automation        Release channel automation produces signed artifacts and changelog entries.
 - [ ] 43E1-syntax-stdlib-migrator    Syntax and stdlib migration tooling exists.
 - [ ] 43E2-schema-trace-migrator     Schema, trace-format, and connector-manifest migrations exist.
