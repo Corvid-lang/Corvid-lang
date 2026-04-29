@@ -115,6 +115,104 @@ public type ExecutiveApprovalProduct:
     auditable: Bool
     ready_to_execute: Bool
 
+public type ExecutiveTenant:
+    id: String
+    display_name: String
+    plan: String
+    region: String
+    data_retention_days: Int
+
+public type ExecutiveUserProfile:
+    id: String
+    tenant_id: String
+    email: String
+    timezone: String
+    role: String
+    preferences_fingerprint: String
+
+public type ExecutiveConnectorBinding:
+    id: String
+    tenant_id: String
+    provider: String
+    scope: String
+    mode: String
+    approval_required: Bool
+    replay_policy: String
+
+public type ExecutiveInboxThread:
+    id: String
+    tenant_id: String
+    user_id: String
+    provider_thread_id: String
+    sender: String
+    subject_fingerprint: String
+    priority: String
+    triage_status: String
+
+public type ExecutiveDraftReply:
+    id: String
+    thread_id: String
+    tenant_id: String
+    body_fingerprint: String
+    approval_label: String
+    status: String
+
+public type ExecutiveCalendarEvent:
+    id: String
+    tenant_id: String
+    user_id: String
+    provider_event_id: String
+    starts_at: String
+    ends_at: String
+    attendee_fingerprint: String
+    status: String
+
+public type ExecutiveMeetingPrepPacket:
+    id: String
+    tenant_id: String
+    event_id: String
+    source_thread_count: Int
+    source_file_count: Int
+    packet_fingerprint: String
+
+public type ExecutiveDailyBrief:
+    id: String
+    tenant_id: String
+    user_id: String
+    brief_date: String
+    priority_count: Int
+    meeting_count: Int
+    task_count: Int
+    output_fingerprint: String
+
+public type ExecutiveTaskItem:
+    id: String
+    tenant_id: String
+    user_id: String
+    source_kind: String
+    title_fingerprint: String
+    external_ref: String
+    status: String
+
+public type ExecutiveFollowUpItem:
+    id: String
+    tenant_id: String
+    user_id: String
+    thread_id: String
+    task_id: String
+    due_at: String
+    status: String
+    approval_label: String
+
+public type ExecutiveSchemaManifest:
+    service: String
+    migration_count: Int
+    table_count: Int
+    connector_count: Int
+    job_count: Int
+    approval_count: Int
+    default_mode: String
+
 tool send_follow_up_email(req: FollowUpSendRequest) -> FollowUpSendReceipt dangerous uses send_email
 
 public @replayable
@@ -226,7 +324,87 @@ public @replayable
 agent approval_product_contract_valid(product: ExecutiveApprovalProduct) -> Bool:
     return product.tenant_safe and product.auditable and product.ready_to_execute and product.review.accepted and product.action.approval_label == "SendFollowUpEmail"
 
+public @replayable
+agent demo_tenant() -> ExecutiveTenant:
+    return ExecutiveTenant("tenant-1", "Executive Demo", "team", "us", 90)
+
+public @replayable
+agent demo_user_profile() -> ExecutiveUserProfile:
+    return ExecutiveUserProfile("user-1", "tenant-1", "user@example.com", "America/New_York", "owner", "sha256:preferences-demo")
+
+public @replayable
+agent email_connector_binding() -> ExecutiveConnectorBinding:
+    return ExecutiveConnectorBinding("conn-email", "tenant-1", "gmail", "mail.read mail.draft mail.send", "mock", true, "quarantine_writes")
+
+public @replayable
+agent calendar_connector_binding() -> ExecutiveConnectorBinding:
+    return ExecutiveConnectorBinding("conn-calendar", "tenant-1", "calendar", "calendar.read calendar.write", "mock", true, "quarantine_writes")
+
+public @replayable
+agent task_connector_binding() -> ExecutiveConnectorBinding:
+    return ExecutiveConnectorBinding("conn-tasks", "tenant-1", "tasks", "tasks.read tasks.write", "mock", true, "quarantine_writes")
+
+public @replayable
+agent chat_connector_binding() -> ExecutiveConnectorBinding:
+    return ExecutiveConnectorBinding("conn-chat", "tenant-1", "slack", "chat.read chat.write", "mock", true, "quarantine_writes")
+
+public @replayable
+agent files_connector_binding() -> ExecutiveConnectorBinding:
+    return ExecutiveConnectorBinding("conn-files", "tenant-1", "files", "files.read files.write", "mock", true, "quarantine_writes")
+
+public @replayable
+agent demo_inbox_thread() -> ExecutiveInboxThread:
+    return ExecutiveInboxThread("thread-1", "tenant-1", "user-1", "gmail-thread-1", "partner@example.com", "sha256:subject-demo", "high", "needs_draft")
+
+public @replayable
+agent demo_draft_reply() -> ExecutiveDraftReply:
+    return ExecutiveDraftReply("draft-1", "thread-1", "tenant-1", "sha256:draft-demo", "SendFollowUpEmail", "approval_pending")
+
+public @replayable
+agent demo_calendar_event() -> ExecutiveCalendarEvent:
+    return ExecutiveCalendarEvent("event-1", "tenant-1", "user-1", "calendar-event-1", "2026-04-29T14:00:00Z", "2026-04-29T14:30:00Z", "sha256:attendees-demo", "confirmed")
+
+public @replayable
+agent demo_meeting_prep_packet() -> ExecutiveMeetingPrepPacket:
+    return ExecutiveMeetingPrepPacket("packet-1", "tenant-1", "event-1", 3, 2, "sha256:packet-demo")
+
+public @replayable
+agent demo_daily_brief() -> ExecutiveDailyBrief:
+    return ExecutiveDailyBrief("brief-1", "tenant-1", "user-1", "2026-04-29", 4, 2, 5, "sha256:brief-demo")
+
+public @replayable
+agent demo_task_item() -> ExecutiveTaskItem:
+    return ExecutiveTaskItem("task-1", "tenant-1", "user-1", "email", "sha256:task-title-demo", "linear:PEA-1", "open")
+
+public @replayable
+agent demo_follow_up_item() -> ExecutiveFollowUpItem:
+    return ExecutiveFollowUpItem("follow-up-1", "tenant-1", "user-1", "thread-1", "task-1", "2026-04-30T16:00:00Z", "approval_pending", "SendFollowUpEmail")
+
+public @replayable
+agent executive_schema_manifest() -> ExecutiveSchemaManifest:
+    return ExecutiveSchemaManifest("personal_executive_agent", 5, 10, 5, 4, 5, "mock")
+
 server personal_executive_agent_api:
+    route GET "/schema" -> json ExecutiveSchemaManifest:
+        return executive_schema_manifest()
+    route GET "/schema/tenant" -> json ExecutiveTenant:
+        return demo_tenant()
+    route GET "/schema/user" -> json ExecutiveUserProfile:
+        return demo_user_profile()
+    route GET "/schema/inbox-thread" -> json ExecutiveInboxThread:
+        return demo_inbox_thread()
+    route GET "/schema/draft-reply" -> json ExecutiveDraftReply:
+        return demo_draft_reply()
+    route GET "/schema/calendar-event" -> json ExecutiveCalendarEvent:
+        return demo_calendar_event()
+    route GET "/schema/meeting-prep" -> json ExecutiveMeetingPrepPacket:
+        return demo_meeting_prep_packet()
+    route GET "/schema/daily-brief" -> json ExecutiveDailyBrief:
+        return demo_daily_brief()
+    route GET "/schema/task" -> json ExecutiveTaskItem:
+        return demo_task_item()
+    route GET "/schema/follow-up" -> json ExecutiveFollowUpItem:
+        return demo_follow_up_item()
     route POST "/auth/session/login" body LoginRequest -> json LoginResponse:
         return session_login(body)
     route POST "/auth/api-key/login" body ApiKeyLoginRequest -> json ApiKeyLoginResponse:

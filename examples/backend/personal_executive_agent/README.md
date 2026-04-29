@@ -5,6 +5,30 @@ agent runtime. It is intentionally backend-only: every workflow is expressed as
 typed Corvid source, durable job metadata, replay keys, idempotency keys, effect
 rows, and audited schedules.
 
+For Phase 42 it now also carries the production reference app data model:
+schemas in `src/main.cor`, five SQL migrations under `migrations/`, deterministic
+demo rows under `seeds/`, and the mock connector catalog under `connectors/`.
+
+## Data Model
+
+The backend owns twelve operational tables:
+
+- `executive_tenants`
+- `executive_users`
+- `executive_connector_accounts`
+- `executive_inbox_threads`
+- `executive_draft_replies`
+- `executive_tasks`
+- `executive_follow_ups`
+- `executive_calendar_events`
+- `executive_meeting_prep_packets`
+- `executive_daily_briefs`
+- `executive_job_runs`
+- `executive_approval_audits`
+
+The `/schema` route reports the migration, table, connector, job, and approval
+counts that downstream slices must preserve.
+
 ## Jobs
 
 - `daily_brief_job` reads inbox and calendar context, runs a bounded executive

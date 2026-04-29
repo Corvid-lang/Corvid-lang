@@ -1,0 +1,46 @@
+{
+  "service": "personal_executive_agent",
+  "mode": "mock",
+  "connectors": [
+    {
+      "id": "conn-email",
+      "provider": "gmail",
+      "read_operations": ["search", "read_metadata"],
+      "write_operations": ["draft", "send"],
+      "approval_required": true,
+      "replay_policy": "quarantine_writes"
+    },
+    {
+      "id": "conn-calendar",
+      "provider": "calendar",
+      "read_operations": ["availability", "events"],
+      "write_operations": ["create", "update", "cancel"],
+      "approval_required": true,
+      "replay_policy": "quarantine_writes"
+    },
+    {
+      "id": "conn-tasks",
+      "provider": "tasks",
+      "read_operations": ["linear_search", "github_search"],
+      "write_operations": ["linear_write", "github_write"],
+      "approval_required": true,
+      "replay_policy": "quarantine_writes"
+    },
+    {
+      "id": "conn-chat",
+      "provider": "slack",
+      "read_operations": ["channel_read", "thread_read"],
+      "write_operations": ["draft", "send"],
+      "approval_required": true,
+      "replay_policy": "quarantine_writes"
+    },
+    {
+      "id": "conn-files",
+      "provider": "files",
+      "read_operations": ["index", "read"],
+      "write_operations": ["write", "delete"],
+      "approval_required": true,
+      "replay_policy": "quarantine_writes"
+    }
+  ]
+}
