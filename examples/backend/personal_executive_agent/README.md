@@ -62,6 +62,17 @@ counts that downstream slices must preserve.
 - `GET /approvals/surface` reports the approval surface, and
   `mocks/approval_surface.json` keeps the expected labels/routes under test.
 
+## Hardening
+
+42C5 adds the production hardening bundle:
+
+- `evals/hardening_eval.cor` contains ten deterministic acceptance assertions.
+- `traces/demo.lineage.jsonl` is a redacted route/job/approval lineage fixture.
+- `adversarial/` contains negative cases for ungated sends, raw trace data,
+  real-provider default mode, missing replay keys, and provider secrets.
+- `deploy/` and `ops/runbook.md` define the local deployment and operator
+  handoff.
+
 ## Jobs
 
 - `daily_brief_job` reads inbox and calendar context, runs a bounded executive

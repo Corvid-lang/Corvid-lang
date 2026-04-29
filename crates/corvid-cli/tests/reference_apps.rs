@@ -1,5 +1,6 @@
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 use rusqlite::Connection;
 use serde_json::Value;
@@ -13,6 +14,10 @@ fn personal_executive_agent_root() -> PathBuf {
         .join("examples")
         .join("backend")
         .join("personal_executive_agent")
+}
+
+fn corvid_bin() -> PathBuf {
+    PathBuf::from(env!("CARGO_BIN_EXE_corvid"))
 }
 
 fn execute_sql_dir(conn: &Connection, dir: &Path) {
@@ -189,4 +194,39 @@ fn personal_executive_agent_external_writes_are_approval_gated_and_auditable() {
             "missing dangerous tool contract for {dangerous_tool}"
         );
     }
+}
+
+#[test]
+fn personal_executive_agent_hardening_bundle_runs_and_covers_risks() {
+    let app = personal_executive_agent_root();
+    let eval = app.join("evals").join("hardening_eval.cor");
+    let out = Command::new(corvid_bin())
+        .arg("eval")
+        .arg(&eval)
+        .current_dir(repo_root())
+        .output()
+        .expect("run hardening eval");
+    assert!(
+        out.status.success(),
+        "hardening eval failed:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("1 passed, 0 failed"), "{stdout}");
+    assert!(stdout.contains("values: 10/10 passed"), "{stdout}");
+
+    let adversarial = fs::read_dir(app.join("adversarial"))
+        .expect("read adversarial dir")
+        .count();
+    assert_eq!(adversarial, 5, "expected five adversarial cases");
+
+    let trace = fs::read_to_string(app.join("traces").join("demo.lineage.jsonl"))
+        .expect("read trace fixture");
+    assert!(trace.contains("\"kind\":\"approval\""));
+    assert!(trace.contains("\"redaction_policy_hash\":\"sha256:redacted\""));
+    assert!(!trace.contains("DO_NOT_COMMIT_RAW_EMAIL"));
+
+    assert!(app.join("ops").join("runbook.md").exists());
+    assert!(app.join("deploy").join("docker-compose.yml").exists());
 }

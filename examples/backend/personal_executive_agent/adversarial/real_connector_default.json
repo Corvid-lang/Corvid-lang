@@ -1,0 +1,6 @@
+{
+  "case": "real_connector_default",
+  "must_reject": true,
+  "reason": "reference app demo mode must default to mock connectors",
+  "connector_mode": "real"
+}

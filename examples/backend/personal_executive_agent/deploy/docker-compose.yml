@@ -1,0 +1,23 @@
+services:
+  personal-executive-agent:
+    image: corvid/personal-executive-agent:local
+    build:
+      context: ../../..
+      dockerfile: examples/backend/personal_executive_agent/deploy/Dockerfile
+    command:
+      - corvid
+      - run
+      - examples/backend/personal_executive_agent/src/main.cor
+    environment:
+      CORVID_APP_ENV: local
+      CORVID_CONNECTOR_MODE: mock
+      CORVID_DATABASE_URL: sqlite:/data/personal_executive_agent.db
+      CORVID_TRACE_DIR: /data/traces
+      CORVID_REQUIRE_APPROVALS: "true"
+    ports:
+      - "8081:8080"
+    volumes:
+      - personal-executive-agent-data:/data
+
+volumes:
+  personal-executive-agent-data:

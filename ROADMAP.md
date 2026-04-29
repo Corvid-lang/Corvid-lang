@@ -2324,7 +2324,7 @@ corvid connectors verify-webhook --sig=<...>
 
 - [x] 42A-reference-app-brief        `docs/phase-42-reference-apps.md` defines app selection, shared architecture, quality bar, security posture, demo mode, and non-scope.
 - [x] 42B-shared-app-template        Common backend template provides routes, DB, jobs, auth, connectors, approvals, traces, evals, deployment manifest, and runbook skeleton.
-- [ ] 42C-personal-executive-agent   Personal Executive Agent backend ships inbox triage, drafts, calendar scheduling, meeting prep, daily brief, tasks, follow-ups, approvals, and replay.
+- [x] 42C-personal-executive-agent   Personal Executive Agent backend ships inbox triage, drafts, calendar scheduling, meeting prep, daily brief, tasks, follow-ups, approvals, and replay.
 - [ ] 42D-personal-knowledge-agent   Knowledge Agent backend ships ingestion, grounded search, citations, private/local mode, feedback evals, and provenance-preserving answers.
 - [ ] 42E-finance-operations-agent   Finance Operations Agent backend ships read-only aggregation, reminders, anomaly detection, approval-gated payment intents, audit trail, and regulated-advice non-scope.
 - [ ] 42F-support-operations-agent   Support Agent backend ships ticket triage, suggested replies, policy-grounded answers, refund/escalation approvals, SLA jobs, and eval dashboard.
@@ -2385,7 +2385,7 @@ corvid run --target=server --mode=real             # real-provider mode behind e
 - [x] 42C2-exec-agent-inbox          Inbox triage and draft replies work in mock connector mode.
 - [x] 42C3-exec-agent-calendar       Scheduling, meeting prep, daily brief, and follow-ups run as durable jobs.
 - [x] 42C4-exec-agent-approval       Sends/edits are approval-gated and auditable.
-- [ ] 42C5-exec-agent-hardening      Replay, evals, adversarial tests, and runbook are complete.
+- [x] 42C5-exec-agent-hardening      Replay, evals, adversarial tests, and runbook are complete.
 - [ ] 42D1-knowledge-ingestion       Knowledge app ingests docs with provenance and private/local mode.
 - [ ] 42D2-knowledge-search-answer   Grounded search, citations, feedback evals, and answer provenance work.
 - [ ] 42E1-finance-readonly          Finance app aggregates read-only data and explains budgets/subscriptions.

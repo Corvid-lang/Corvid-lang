@@ -1,0 +1,6 @@
+{
+  "case": "unredacted_trace",
+  "must_reject": true,
+  "reason": "trace fixtures must contain fingerprints, not raw message bodies",
+  "raw_body": "DO_NOT_COMMIT_RAW_EMAIL"
+}

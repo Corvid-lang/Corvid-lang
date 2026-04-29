@@ -1,0 +1,5 @@
+{
+  "case": "missing_replay_key",
+  "must_reject": true,
+  "reason": "durable jobs and external writes require replay keys"
+}

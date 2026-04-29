@@ -1,0 +1,4 @@
+tool send_follow_up_email(req: String) -> String dangerous
+
+agent bad() -> String:
+    return send_follow_up_email("secret body")
