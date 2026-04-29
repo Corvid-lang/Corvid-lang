@@ -751,6 +751,22 @@ enum DeployCommand {
         #[arg(long, value_name = "DIR")]
         out: Option<PathBuf>,
     },
+    /// Emit Kubernetes manifests.
+    K8s {
+        /// App directory, e.g. examples/backend/personal_executive_agent.
+        app: PathBuf,
+        /// Output directory for generated artifacts.
+        #[arg(long, value_name = "DIR")]
+        out: Option<PathBuf>,
+    },
+    /// Emit systemd service, sysusers, and tmpfiles artifacts.
+    Systemd {
+        /// App directory, e.g. examples/backend/personal_executive_agent.
+        app: PathBuf,
+        /// Output directory for generated artifacts.
+        #[arg(long, value_name = "DIR")]
+        out: Option<PathBuf>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -1366,6 +1382,14 @@ fn main_impl() -> ExitCode {
             DeployCommand::Paas { app, out } => {
                 let out = out.unwrap_or_else(|| app.join("target").join("paas"));
                 deploy_cmd::run_paas(&app, &out).map(|_| 0)
+            }
+            DeployCommand::K8s { app, out } => {
+                let out = out.unwrap_or_else(|| app.join("target").join("k8s"));
+                deploy_cmd::run_k8s(&app, &out).map(|_| 0)
+            }
+            DeployCommand::Systemd { app, out } => {
+                let out = out.unwrap_or_else(|| app.join("target").join("systemd"));
+                deploy_cmd::run_systemd(&app, &out).map(|_| 0)
             }
         },
         Some(Command::Migrate { command }) => match command {

@@ -1713,7 +1713,7 @@ This phase closes all five end-to-end with no shortcuts: a guarantee manifest ta
 
 **Audit correction (Phase 35-41 audit, 2026-04-29):** the original Phase 35 claim coverage table only registered Phase 21/22/35 contract ids. Every later phase that introduced a new declared contract (Phase 38 `@retry`/`@idempotency`/`@replayable`/`job`/`schedule`/`await_approval`, Phase 39 `auth`/`tenant`/`role`/`permission`/`approval`/`@requires`/`@approval`, Phase 41 `connector`/`scopes`/`rate_limit`/`redact`/`webhook_signed_by`) inherited the same gate but never added itself to it. A signed cdylib that uses any of those features ships an *incomplete* claim today. 35-N closes the inheritance hole so the gate moves with the language.
 
-- [ ] 35-N-claim-coverage-extend  `validate_signed_claim_coverage` (in `corvid-driver`) recognises every declared-contract surface introduced in Phases 38, 39, and 41: `@retry`, `@idempotency`, `@replayable`, `job`, `schedule`, `await_approval`, `auth`, `tenant`, `role`, `permission`, `approval`, `@requires`, `@approval`, `connector`, `scopes`, `rate_limit`, `redact`, `webhook_signed_by`. Each new surface has a positive test (signed build succeeds when the contract maps to a registered guarantee) and an adversarial test (signed build fails when the contract is declared but no guarantee row covers it).
+- [ ] 35-N-claim-coverage-extend  Two pieces. (a) `validate_signed_claim_coverage` walks every AST decl that exists today but was unhandled: `Decl::Schedule` (cron triggers from Phase 38) and `Decl::Server` (route surfaces from Phase 36). (b) Registry rows landed as `OutOfScope` placeholders for the Phase 38/39/41 contract surfaces that have no AST representation yet (`jobs.*` for `@retry`/`@idempotency`/`@replayable`/`job`/`await_approval`; `auth.*` for `auth`/`tenant`/`role`/`permission`/`approval`/`@requires`/`@approval`; `connector.*` for `connector`/`scopes`/`rate_limit`/`redact`/`webhook_signed_by`). Each `OutOfScope` row carries the same explicit `out_of_scope_reason` pattern the existing platform rows use, naming the audit-correction slice (38K/38M/39K/39L/41K/41L/41M) that promotes it to `Static` or `RuntimeChecked`. When a phase's audit-correction track adds the parser-level surface, that track is responsible for promoting the matching row(s) and adding the gate walker hooks. Adversarial test: signed build refuses when a `Decl::Schedule` declares a target that has no registered job-coverage row.
 
 **Non-scope:**
 
@@ -2446,7 +2446,7 @@ corvid run --target=server --mode=real             # real-provider mode behind e
 
 - [x] 43A-market-readiness-brief     `docs/phase-43-market-readiness.md` defines launch gates, release channels, support posture, security process, beta criteria, and non-scope.
 - [ ] 43B-deploy-package             `corvid deploy package` emits Dockerfile, OCI metadata, health/readiness config, migration runner, env schema, and signed build attestation.
-- [ ] 43C-deployment-manifests       Docker Compose, single-service PaaS, Kubernetes, and systemd manifests work for at least one reference app.
+- [x] 43C-deployment-manifests       Docker Compose, single-service PaaS, Kubernetes, and systemd manifests work for at least one reference app.
 - [ ] 43D-release-channels           Nightly, beta, and stable release channels are documented and wired to SemVer/stability policy.
 - [ ] 43E-upgrade-migration-tools    Syntax, stdlib, schema, trace-format, and connector-manifest migrations have tooling and docs.
 - [ ] 43F-maintainer-docs            Release checklist, advisory process, compatibility policy, CI gates, benchmark reproduction, and claim review docs are complete.
@@ -2507,7 +2507,7 @@ corvid claim audit                           # AI-assisted final claim audit (ad
 - [x] 43B3-package-attestation       Package includes signed build attestation and verification docs.
 - [x] 43C1-compose-manifest          Docker Compose deploy works for one reference app.
 - [x] 43C2-paas-manifest             Fly/Render-style single-service deploy works.
-- [ ] 43C3-k8s-systemd-manifests     Kubernetes and systemd manifests work or are explicitly scoped.
+- [x] 43C3-k8s-systemd-manifests     Kubernetes and systemd manifests work or are explicitly scoped.
 - [ ] 43D1-release-policy            Nightly/beta/stable SemVer and stability policy are documented.
 - [ ] 43D2-release-automation        Release channel automation produces signed artifacts and changelog entries.
 - [ ] 43E1-syntax-stdlib-migrator    Syntax and stdlib migration tooling exists.

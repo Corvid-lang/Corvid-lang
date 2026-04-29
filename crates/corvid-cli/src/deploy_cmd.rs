@@ -111,6 +111,47 @@ pub fn run_paas(app: &Path, out: &Path) -> Result<()> {
     Ok(())
 }
 
+pub fn run_k8s(app: &Path, out: &Path) -> Result<()> {
+    let app_name = app
+        .file_name()
+        .and_then(|name| name.to_str())
+        .context("app path must end in a valid directory name")?;
+    fs::create_dir_all(out)
+        .with_context(|| format!("create k8s deploy dir `{}`", out.display()))?;
+    fs::write(out.join("deployment.yaml"), render_k8s(app_name)).context("write k8s deployment")?;
+    println!("k8s manifest: {}", out.join("deployment.yaml").display());
+    Ok(())
+}
+
+pub fn run_systemd(app: &Path, out: &Path) -> Result<()> {
+    let app_name = app
+        .file_name()
+        .and_then(|name| name.to_str())
+        .context("app path must end in a valid directory name")?;
+    fs::create_dir_all(out)
+        .with_context(|| format!("create systemd deploy dir `{}`", out.display()))?;
+    fs::write(
+        out.join(format!("{app_name}.service")),
+        render_systemd_service(app_name),
+    )
+    .context("write systemd service")?;
+    fs::write(
+        out.join(format!("{app_name}.sysusers")),
+        render_systemd_sysusers(app_name),
+    )
+    .context("write sysusers")?;
+    fs::write(
+        out.join(format!("{app_name}.tmpfiles")),
+        render_systemd_tmpfiles(app_name),
+    )
+    .context("write tmpfiles")?;
+    println!(
+        "systemd service: {}",
+        out.join(format!("{app_name}.service")).display()
+    );
+    Ok(())
+}
+
 fn render_dockerfile(app_name: &str) -> String {
     format!(
         r#"FROM rust:1.78-slim AS build
@@ -313,4 +354,95 @@ CORVID_DATABASE_URL=sqlite:/data/{app_name}.db
 CORVID_DEPLOY_SIGNING_KEY=<hex-encoded-ed25519-seed>
 "#
     )
+}
+
+fn render_k8s(app_name: &str) -> String {
+    format!(
+        r#"apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {app_name}-config
+data:
+  CORVID_APP_ENV: production
+  CORVID_CONNECTOR_MODE: mock
+  CORVID_TRACE_DIR: /data/traces
+  CORVID_REQUIRE_APPROVALS: "true"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {app_name}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: {app_name}
+  template:
+    metadata:
+      labels:
+        app: {app_name}
+    spec:
+      containers:
+        - name: {app_name}
+          image: corvid/{app_name}:local
+          ports:
+            - containerPort: 8080
+          envFrom:
+            - configMapRef:
+                name: {app_name}-config
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: 8080
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {app_name}
+spec:
+  selector:
+    app: {app_name}
+  ports:
+    - port: 80
+      targetPort: 8080
+"#
+    )
+}
+
+fn render_systemd_service(app_name: &str) -> String {
+    format!(
+        r#"[Unit]
+Description=Corvid {app_name}
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User={app_name}
+Group={app_name}
+WorkingDirectory=/opt/corvid
+Environment=CORVID_APP_ENV=production
+Environment=CORVID_CONNECTOR_MODE=mock
+Environment=CORVID_DATABASE_URL=sqlite:/var/lib/{app_name}/{app_name}.db
+Environment=CORVID_TRACE_DIR=/var/lib/{app_name}/traces
+Environment=CORVID_REQUIRE_APPROVALS=true
+ExecStart=/usr/local/bin/corvid run examples/backend/{app_name}/src/main.cor
+Restart=on-failure
+RestartSec=5s
+
+[Install]
+WantedBy=multi-user.target
+"#
+    )
+}
+
+fn render_systemd_sysusers(app_name: &str) -> String {
+    format!("u {app_name} - \"Corvid {app_name}\" /var/lib/{app_name}\n")
+}
+
+fn render_systemd_tmpfiles(app_name: &str) -> String {
+    format!("d /var/lib/{app_name} 0750 {app_name} {app_name} -\nd /var/lib/{app_name}/traces 0750 {app_name} {app_name} -\n")
 }

@@ -809,3 +809,60 @@ fn deploy_paas_emits_single_service_manifests() {
     let secrets = fs::read_to_string(out.join("secrets.example")).expect("read secrets template");
     assert!(secrets.contains("CORVID_DATABASE_URL"));
 }
+
+#[test]
+fn deploy_k8s_and_systemd_emit_operable_manifests() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let app = repo_root()
+        .join("examples")
+        .join("backend")
+        .join("personal_executive_agent");
+
+    let k8s_out = temp.path().join("k8s");
+    let k8s = Command::new(corvid_bin())
+        .arg("deploy")
+        .arg("k8s")
+        .arg(&app)
+        .arg("--out")
+        .arg(&k8s_out)
+        .current_dir(repo_root())
+        .output()
+        .expect("run deploy k8s");
+    assert!(
+        k8s.status.success(),
+        "deploy k8s failed:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&k8s.stdout),
+        String::from_utf8_lossy(&k8s.stderr)
+    );
+    let k8s_yaml = fs::read_to_string(k8s_out.join("deployment.yaml")).expect("read k8s yaml");
+    assert!(k8s_yaml.contains("kind: Deployment"));
+    assert!(k8s_yaml.contains("readinessProbe"));
+    assert!(k8s_yaml.contains("path: /healthz"));
+
+    let systemd_out = temp.path().join("systemd");
+    let systemd = Command::new(corvid_bin())
+        .arg("deploy")
+        .arg("systemd")
+        .arg(&app)
+        .arg("--out")
+        .arg(&systemd_out)
+        .current_dir(repo_root())
+        .output()
+        .expect("run deploy systemd");
+    assert!(
+        systemd.status.success(),
+        "deploy systemd failed:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&systemd.stdout),
+        String::from_utf8_lossy(&systemd.stderr)
+    );
+    let service = fs::read_to_string(systemd_out.join("personal_executive_agent.service"))
+        .expect("read systemd service");
+    assert!(service.contains("ExecStart=/usr/local/bin/corvid run"));
+    assert!(service.contains("Restart=on-failure"));
+    assert!(systemd_out
+        .join("personal_executive_agent.sysusers")
+        .exists());
+    assert!(systemd_out
+        .join("personal_executive_agent.tmpfiles")
+        .exists());
+}

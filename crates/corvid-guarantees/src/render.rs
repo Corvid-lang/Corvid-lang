@@ -151,6 +151,10 @@ fn kind_heading(kind: GuaranteeKind) -> &'static str {
         GuaranteeKind::ProvenanceTrace => "Provenance traces",
         GuaranteeKind::AbiDescriptor => "ABI descriptor",
         GuaranteeKind::AbiAttestation => "ABI attestation",
+        GuaranteeKind::Server => "Server runtime",
+        GuaranteeKind::Jobs => "Durable jobs",
+        GuaranteeKind::Auth => "Auth and approvals",
+        GuaranteeKind::Connector => "Connectors",
         GuaranteeKind::Platform => "Platform — explicit non-defenses",
     }
 }
