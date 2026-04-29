@@ -15,6 +15,8 @@ pub enum QueueJobStatus {
     Pending,
     Leased,
     ApprovalWait,
+    ApprovalDenied,
+    ApprovalExpired,
     RetryWait,
     Running,
     Succeeded,
@@ -29,6 +31,8 @@ impl QueueJobStatus {
             Self::Pending => "pending",
             Self::Leased => "leased",
             Self::ApprovalWait => "approval_wait",
+            Self::ApprovalDenied => "approval_denied",
+            Self::ApprovalExpired => "approval_expired",
             Self::RetryWait => "retry_wait",
             Self::Running => "running",
             Self::Succeeded => "succeeded",
@@ -161,6 +165,36 @@ pub struct JobResumeState {
     pub checkpoints: Vec<JobCheckpoint>,
     pub last_checkpoint: Option<JobCheckpoint>,
     pub next_sequence: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum JobApprovalDecision {
+    Approve,
+    Deny,
+    Expire,
+}
+
+impl JobApprovalDecision {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Approve => "approve",
+            Self::Deny => "deny",
+            Self::Expire => "expire",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct JobAuditEvent {
+    pub id: String,
+    pub job_id: String,
+    pub event_kind: String,
+    pub actor: String,
+    pub approval_id: Option<String>,
+    pub status_before: String,
+    pub status_after: String,
+    pub reason: Option<String>,
+    pub created_ms: u64,
 }
 
 #[derive(Clone, Default)]
@@ -663,6 +697,30 @@ impl DurableQueueRuntime {
             .into_iter()
             .filter(|job| job.status == QueueJobStatus::ApprovalWait)
             .collect())
+    }
+
+    pub fn job_audit_events(&self, job_id: &str) -> Result<Vec<JobAuditEvent>, RuntimeError> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn
+            .prepare(
+                "select id, job_id, event_kind, actor, approval_id, status_before, status_after, reason, created_ms
+                 from queue_job_audit_events
+                 where job_id = ?1
+                 order by created_ms, id",
+            )
+            .map_err(|err| RuntimeError::Other(format!("failed to prepare job audit read: {err}")))?;
+        let rows = stmt
+            .query_map(params![job_id], read_job_audit_row)
+            .map_err(|err| {
+                RuntimeError::Other(format!("failed to list job audit events: {err}"))
+            })?;
+        let mut events = Vec::new();
+        for row in rows {
+            events.push(row.map_err(|err| {
+                RuntimeError::Other(format!("failed to decode job audit event: {err}"))
+            })?);
+        }
+        Ok(events)
     }
 
     pub fn upsert_schedule(
@@ -1285,6 +1343,133 @@ impl DurableQueueRuntime {
             .ok_or_else(|| RuntimeError::Other(format!("std.queue job `{id}` not found")))
     }
 
+    pub fn decide_approval_wait(
+        &self,
+        id: &str,
+        approval_id: &str,
+        decision: JobApprovalDecision,
+        actor: impl Into<String>,
+        reason: Option<String>,
+    ) -> Result<QueueJob, RuntimeError> {
+        self.decide_approval_wait_at(id, approval_id, decision, actor, reason, now_ms())
+    }
+
+    pub fn decide_approval_wait_at(
+        &self,
+        id: &str,
+        approval_id: &str,
+        decision: JobApprovalDecision,
+        actor: impl Into<String>,
+        reason: Option<String>,
+        now: u64,
+    ) -> Result<QueueJob, RuntimeError> {
+        let actor = actor.into();
+        if actor.trim().is_empty() {
+            return Err(RuntimeError::Other(
+                "std.queue approval actor must not be empty".to_string(),
+            ));
+        }
+        if approval_id.trim().is_empty() {
+            return Err(RuntimeError::Other(
+                "std.queue approval id must not be empty".to_string(),
+            ));
+        }
+
+        let mut conn = self.conn.lock().unwrap();
+        let tx = conn.transaction().map_err(|err| {
+            RuntimeError::Other(format!(
+                "failed to start approval decision transaction: {err}"
+            ))
+        })?;
+        let (stored_status, stored_approval_id, stored_expires_ms) = tx
+            .query_row(
+                "select status, approval_id, approval_expires_ms from queue_jobs where id = ?1",
+                params![id],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, Option<String>>(1)?,
+                        row.get::<_, Option<i64>>(2)?,
+                    ))
+                },
+            )
+            .map_err(|err| {
+                RuntimeError::Other(format!(
+                    "std.queue job `{id}` not found or unreadable: {err}"
+                ))
+            })?;
+        if parse_status(&stored_status) != QueueJobStatus::ApprovalWait {
+            return Err(RuntimeError::Other(format!(
+                "std.queue job `{id}` is not waiting on approval"
+            )));
+        }
+        if stored_approval_id.as_deref() != Some(approval_id) {
+            return Err(RuntimeError::Other(format!(
+                "std.queue job `{id}` is waiting on a different approval id"
+            )));
+        }
+        if decision == JobApprovalDecision::Expire {
+            let Some(expires_ms) = stored_expires_ms else {
+                return Err(RuntimeError::Other(format!(
+                    "std.queue job `{id}` approval has no expiry"
+                )));
+            };
+            if (expires_ms as u64) > now {
+                return Err(RuntimeError::Other(format!(
+                    "std.queue job `{id}` approval `{approval_id}` has not expired"
+                )));
+            }
+        }
+
+        let (status_after, next_run_ms) = match decision {
+            JobApprovalDecision::Approve => (QueueJobStatus::Pending, Some(now)),
+            JobApprovalDecision::Deny => (QueueJobStatus::ApprovalDenied, None),
+            JobApprovalDecision::Expire => (QueueJobStatus::ApprovalExpired, None),
+        };
+        let updated = tx
+            .execute(
+                "update queue_jobs
+                 set status = ?3,
+                     next_run_ms = ?4,
+                     lease_owner = null,
+                     lease_expires_ms = null,
+                     updated_ms = ?5
+                 where id = ?1 and status = 'approval_wait' and approval_id = ?2",
+                params![
+                    id,
+                    approval_id,
+                    status_after.as_str(),
+                    next_run_ms.map(|value| value as i64),
+                    now as i64,
+                ],
+            )
+            .map_err(|err| {
+                RuntimeError::Other(format!("failed to apply approval decision: {err}"))
+            })?;
+        if updated == 0 {
+            return Err(RuntimeError::Other(format!(
+                "std.queue job `{id}` approval decision raced with another transition"
+            )));
+        }
+        insert_job_audit_event(
+            &tx,
+            id,
+            &format!("approval_{}", decision.as_str()),
+            &actor,
+            Some(approval_id),
+            &stored_status,
+            status_after.as_str(),
+            reason.as_deref(),
+            now,
+        )?;
+        tx.commit().map_err(|err| {
+            RuntimeError::Other(format!("failed to commit approval decision: {err}"))
+        })?;
+        drop(conn);
+        self.get(id)?
+            .ok_or_else(|| RuntimeError::Other(format!("std.queue job `{id}` not found")))
+    }
+
     pub fn run_one_with_output(
         &self,
         output_kind: Option<String>,
@@ -1472,7 +1657,19 @@ impl DurableQueueRuntime {
                     payload_fingerprint text,
                     created_ms integer not null
                 );
-                create unique index if not exists queue_job_checkpoints_sequence on queue_job_checkpoints(job_id, sequence);",
+                create unique index if not exists queue_job_checkpoints_sequence on queue_job_checkpoints(job_id, sequence);
+                create table if not exists queue_job_audit_events (
+                    id text primary key,
+                    job_id text not null,
+                    event_kind text not null,
+                    actor text not null,
+                    approval_id text,
+                    status_before text not null,
+                    status_after text not null,
+                    reason text,
+                    created_ms integer not null
+                );
+                create index if not exists queue_job_audit_events_job on queue_job_audit_events(job_id, created_ms);",
             )
             .map_err(|err| {
                 RuntimeError::Other(format!("failed to initialize durable queue: {err}"))
@@ -1612,10 +1809,65 @@ fn read_checkpoint_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<JobCheckpoin
     })
 }
 
+fn read_job_audit_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<JobAuditEvent> {
+    Ok(JobAuditEvent {
+        id: row.get(0)?,
+        job_id: row.get(1)?,
+        event_kind: row.get(2)?,
+        actor: row.get(3)?,
+        approval_id: row.get(4)?,
+        status_before: row.get(5)?,
+        status_after: row.get(6)?,
+        reason: row.get(7)?,
+        created_ms: row.get::<_, i64>(8)? as u64,
+    })
+}
+
+fn insert_job_audit_event(
+    tx: &rusqlite::Transaction<'_>,
+    job_id: &str,
+    event_kind: &str,
+    actor: &str,
+    approval_id: Option<&str>,
+    status_before: &str,
+    status_after: &str,
+    reason: Option<&str>,
+    created_ms: u64,
+) -> Result<(), RuntimeError> {
+    let next = tx
+        .query_row(
+            "select coalesce(max(cast(substr(id, 7) as integer)), 0) + 1 from queue_job_audit_events where id like 'audit_%'",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+        .map_err(|err| RuntimeError::Other(format!("failed to allocate job audit id: {err}")))?;
+    let id = format!("audit_{}", next.max(1));
+    tx.execute(
+        "insert into queue_job_audit_events
+         (id, job_id, event_kind, actor, approval_id, status_before, status_after, reason, created_ms)
+         values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+        params![
+            id,
+            job_id,
+            event_kind,
+            actor,
+            approval_id,
+            status_before,
+            status_after,
+            reason,
+            created_ms as i64,
+        ],
+    )
+    .map_err(|err| RuntimeError::Other(format!("failed to insert job audit event: {err}")))?;
+    Ok(())
+}
+
 fn parse_status(status: &str) -> QueueJobStatus {
     match status {
         "leased" => QueueJobStatus::Leased,
         "approval_wait" => QueueJobStatus::ApprovalWait,
+        "approval_denied" => QueueJobStatus::ApprovalDenied,
+        "approval_expired" => QueueJobStatus::ApprovalExpired,
         "retry_wait" => QueueJobStatus::RetryWait,
         "running" => QueueJobStatus::Running,
         "succeeded" => QueueJobStatus::Succeeded,
@@ -2204,6 +2456,130 @@ mod tests {
         assert_eq!(stored.approval_expires_ms, Some(approval_expires_ms));
         assert_eq!(queue.approval_waiting().unwrap().len(), 1);
         assert!(queue.lease_next("worker-c", 60_000).unwrap().is_none());
+    }
+
+    #[test]
+    fn durable_queue_approval_decisions_resume_or_stop_with_audit() {
+        let queue = DurableQueueRuntime::open_in_memory().unwrap();
+        let approved = queue
+            .enqueue(
+                "send_email",
+                serde_json::json!({"draft": "a"}),
+                1,
+                0.25,
+                None,
+                None,
+            )
+            .unwrap();
+        let denied = queue
+            .enqueue(
+                "send_email",
+                serde_json::json!({"draft": "d"}),
+                1,
+                0.25,
+                None,
+                None,
+            )
+            .unwrap();
+        let expired = queue
+            .enqueue(
+                "send_email",
+                serde_json::json!({"draft": "e"}),
+                1,
+                0.25,
+                None,
+                None,
+            )
+            .unwrap();
+
+        for (job, approval_id, expires_ms) in [
+            (&approved, "approval:a", 20_000),
+            (&denied, "approval:d", 20_000),
+            (&expired, "approval:e", 10_000),
+        ] {
+            let leased = queue
+                .lease_next_at("worker-a", 60_000, 1_000)
+                .unwrap()
+                .expect("lease");
+            assert_eq!(leased.id, job.id);
+            queue
+                .enter_approval_wait(
+                    &job.id,
+                    "worker-a",
+                    approval_id,
+                    expires_ms,
+                    format!("decide {approval_id}"),
+                )
+                .unwrap();
+        }
+
+        let resumed = queue
+            .decide_approval_wait_at(
+                &approved.id,
+                "approval:a",
+                JobApprovalDecision::Approve,
+                "reviewer:u1",
+                Some("approved by policy".to_string()),
+                12_000,
+            )
+            .unwrap();
+        assert_eq!(resumed.status, QueueJobStatus::Pending);
+        assert_eq!(resumed.next_run_ms, Some(12_000));
+        let runnable = queue
+            .lease_next_at("worker-b", 60_000, 12_001)
+            .unwrap()
+            .expect("approved job resumes");
+        assert_eq!(runnable.id, approved.id);
+
+        let stopped = queue
+            .decide_approval_wait_at(
+                &denied.id,
+                "approval:d",
+                JobApprovalDecision::Deny,
+                "reviewer:u1",
+                Some("recipient mismatch".to_string()),
+                12_002,
+            )
+            .unwrap();
+        assert_eq!(stopped.status, QueueJobStatus::ApprovalDenied);
+        assert!(stopped.next_run_ms.is_none());
+
+        let too_early = queue.decide_approval_wait_at(
+            &expired.id,
+            "approval:e",
+            JobApprovalDecision::Expire,
+            "system",
+            Some("timer fired early".to_string()),
+            9_999,
+        );
+        assert!(too_early.is_err());
+        let expired_job = queue
+            .decide_approval_wait_at(
+                &expired.id,
+                "approval:e",
+                JobApprovalDecision::Expire,
+                "system",
+                Some("approval expired".to_string()),
+                10_001,
+            )
+            .unwrap();
+        assert_eq!(expired_job.status, QueueJobStatus::ApprovalExpired);
+
+        let approved_events = queue.job_audit_events(&approved.id).unwrap();
+        assert_eq!(approved_events.len(), 1);
+        assert_eq!(approved_events[0].event_kind, "approval_approve");
+        assert_eq!(approved_events[0].status_before, "approval_wait");
+        assert_eq!(approved_events[0].status_after, "pending");
+        assert_eq!(
+            approved_events[0].approval_id.as_deref(),
+            Some("approval:a")
+        );
+        let denied_events = queue.job_audit_events(&denied.id).unwrap();
+        assert_eq!(denied_events[0].event_kind, "approval_deny");
+        assert_eq!(denied_events[0].status_after, "approval_denied");
+        let expired_events = queue.job_audit_events(&expired.id).unwrap();
+        assert_eq!(expired_events[0].event_kind, "approval_expire");
+        assert_eq!(expired_events[0].status_after, "approval_expired");
     }
 
     #[test]

@@ -538,6 +538,88 @@ fn jobs_wait_approval_pauses_and_lists_approval_wait_jobs() {
     assert!(stdout.contains("approval_wait_count: 1"), "{stdout}");
     assert!(stdout.contains("task: send_email"), "{stdout}");
 
+    let approve = Command::new(corvid_bin())
+        .args([
+            "jobs",
+            "approval",
+            "decide",
+            "--state",
+            state.to_str().unwrap(),
+            "--job",
+            "job_1",
+            "--approval-id",
+            "approval:send:d1",
+            "--decision",
+            "approve",
+            "--actor",
+            "reviewer:u1",
+            "--reason",
+            "approved redacted email",
+        ])
+        .output()
+        .expect("approve job");
+    assert!(
+        approve.status.success(),
+        "approve failed:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&approve.stdout),
+        String::from_utf8_lossy(&approve.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&approve.stdout);
+    assert!(stdout.contains("corvid jobs approval decide"), "{stdout}");
+    assert!(stdout.contains("decision: approve"), "{stdout}");
+    assert!(stdout.contains("status: pending"), "{stdout}");
+
+    let audit = Command::new(corvid_bin())
+        .args([
+            "jobs",
+            "approval",
+            "audit",
+            "--state",
+            state.to_str().unwrap(),
+            "--job",
+            "job_1",
+        ])
+        .output()
+        .expect("audit approval decision");
+    assert!(
+        audit.status.success(),
+        "audit failed:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&audit.stdout),
+        String::from_utf8_lossy(&audit.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&audit.stdout);
+    assert!(stdout.contains("audit_event_count: 1"), "{stdout}");
+    assert!(stdout.contains("event_kind: approval_approve"), "{stdout}");
+    assert!(stdout.contains("actor: reviewer:u1"), "{stdout}");
+    assert!(stdout.contains("status_before: approval_wait"), "{stdout}");
+    assert!(stdout.contains("status_after: pending"), "{stdout}");
+    assert!(
+        stdout.contains("reason: approved redacted email"),
+        "{stdout}"
+    );
+
+    let resumed = Command::new(corvid_bin())
+        .args([
+            "jobs",
+            "run-one",
+            "--state",
+            state.to_str().unwrap(),
+            "--output-kind",
+            "EmailSendResult",
+            "--output-fingerprint",
+            "sha256:redacted-email-send",
+        ])
+        .output()
+        .expect("run approved job");
+    assert!(
+        resumed.status.success(),
+        "run approved failed:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&resumed.stdout),
+        String::from_utf8_lossy(&resumed.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&resumed.stdout);
+    assert!(stdout.contains("status: succeeded"), "{stdout}");
+
     let conn = Connection::open(&state).expect("open jobs db");
     let status: String = conn
         .query_row(
@@ -546,7 +628,13 @@ fn jobs_wait_approval_pauses_and_lists_approval_wait_jobs() {
             |row| row.get(0),
         )
         .expect("read status");
-    assert_eq!(status, "approval_wait");
+    assert_eq!(status, "succeeded");
+    let audit_count: i64 = conn
+        .query_row("select count(*) from queue_job_audit_events", [], |row| {
+            row.get(0)
+        })
+        .expect("count audit events");
+    assert_eq!(audit_count, 1);
 }
 
 #[test]

@@ -58,7 +58,8 @@ use corvid_differential_verify::{
     render_corpus_grid, render_report, shrink_program, verify_corpus,
 };
 use corvid_runtime::queue::{
-    DurableQueueRuntime, JobCheckpointKind, QueueJob, QueueScheduleManifest, ScheduleMissedPolicy,
+    DurableQueueRuntime, JobApprovalDecision, JobCheckpointKind, QueueJob, QueueScheduleManifest,
+    ScheduleMissedPolicy,
 };
 use cost_frontier::{build_frontier, render_frontier as render_cost_frontier, CostFrontierOptions};
 use routing_report::{build_report, render_report as render_routing_report, RoutingReportOptions};
@@ -1325,6 +1326,17 @@ fn main_impl() -> ExitCode {
                 &approval_reason,
             ),
             JobsCommand::Approvals { state } => cmd_jobs_approvals(&state),
+            JobsCommand::Approval { command } => match command {
+                JobsApprovalCommand::Decide {
+                    state,
+                    job,
+                    approval_id,
+                    decision,
+                    actor,
+                    reason,
+                } => cmd_jobs_approval_decide(&state, &job, &approval_id, decision, &actor, reason),
+                JobsApprovalCommand::Audit { state, job } => cmd_jobs_approval_audit(&state, &job),
+            },
             JobsCommand::Schedule { command } => match command {
                 JobsScheduleCommand::Add {
                     state,
@@ -1671,6 +1683,46 @@ fn cmd_jobs_approvals(state: &Path) -> Result<u8> {
     println!("approval_wait_count: {}", jobs.len());
     for job in jobs {
         print_job_summary(&job);
+    }
+    Ok(0)
+}
+
+fn cmd_jobs_approval_decide(
+    state: &Path,
+    job_id: &str,
+    approval_id: &str,
+    decision: ApprovalDecisionArg,
+    actor: &str,
+    reason: Option<String>,
+) -> Result<u8> {
+    let queue = DurableQueueRuntime::open(state)?;
+    let job = queue.decide_approval_wait(job_id, approval_id, decision.into(), actor, reason)?;
+    println!("corvid jobs approval decide");
+    println!("state: {}", state.display());
+    println!("decision: {}", decision.as_str());
+    print_job_summary(&job);
+    Ok(0)
+}
+
+fn cmd_jobs_approval_audit(state: &Path, job_id: &str) -> Result<u8> {
+    let queue = DurableQueueRuntime::open(state)?;
+    let events = queue.job_audit_events(job_id)?;
+    println!("corvid jobs approval audit");
+    println!("state: {}", state.display());
+    println!("job: {job_id}");
+    println!("audit_event_count: {}", events.len());
+    for event in events {
+        println!("audit: {}", event.id);
+        println!("event_kind: {}", event.event_kind);
+        println!("actor: {}", event.actor);
+        println!(
+            "approval_id: {}",
+            event.approval_id.as_deref().unwrap_or("")
+        );
+        println!("status_before: {}", event.status_before);
+        println!("status_after: {}", event.status_after);
+        println!("reason: {}", event.reason.as_deref().unwrap_or(""));
+        println!("created_ms: {}", event.created_ms);
     }
     Ok(0)
 }
@@ -3292,6 +3344,11 @@ enum JobsCommand {
         #[arg(long, value_name = "PATH", default_value = "target/corvid-jobs.sqlite")]
         state: PathBuf,
     },
+    /// Decide or audit a paused approval-wait job.
+    Approval {
+        #[command(subcommand)]
+        command: JobsApprovalCommand,
+    },
     /// Manage durable cron schedules and restart recovery.
     Schedule {
         #[command(subcommand)]
@@ -3328,6 +3385,67 @@ impl From<CheckpointKindArg> for JobCheckpointKind {
             CheckpointKindArg::AgentStep => JobCheckpointKind::AgentStep,
             CheckpointKindArg::ToolResult => JobCheckpointKind::ToolResult,
             CheckpointKindArg::PartialOutput => JobCheckpointKind::PartialOutput,
+        }
+    }
+}
+
+#[derive(Subcommand)]
+enum JobsApprovalCommand {
+    /// Approve, deny, or expire a job waiting on a durable approval.
+    Decide {
+        /// SQLite state file used by the durable local queue.
+        #[arg(long, value_name = "PATH", default_value = "target/corvid-jobs.sqlite")]
+        state: PathBuf,
+        /// Job id currently in approval-wait.
+        #[arg(long)]
+        job: String,
+        /// Approval request id that must match the waiting job.
+        #[arg(long)]
+        approval_id: String,
+        /// Decision to apply.
+        #[arg(long, value_enum)]
+        decision: ApprovalDecisionArg,
+        /// Actor id for the durable audit event.
+        #[arg(long)]
+        actor: String,
+        /// Redacted decision reason recorded in the audit event.
+        #[arg(long)]
+        reason: Option<String>,
+    },
+    /// List durable approval audit events for one job.
+    Audit {
+        /// SQLite state file used by the durable local queue.
+        #[arg(long, value_name = "PATH", default_value = "target/corvid-jobs.sqlite")]
+        state: PathBuf,
+        /// Job id to inspect.
+        #[arg(long)]
+        job: String,
+    },
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum ApprovalDecisionArg {
+    Approve,
+    Deny,
+    Expire,
+}
+
+impl ApprovalDecisionArg {
+    fn as_str(&self) -> &'static str {
+        match self {
+            Self::Approve => "approve",
+            Self::Deny => "deny",
+            Self::Expire => "expire",
+        }
+    }
+}
+
+impl From<ApprovalDecisionArg> for JobApprovalDecision {
+    fn from(value: ApprovalDecisionArg) -> Self {
+        match value {
+            ApprovalDecisionArg::Approve => JobApprovalDecision::Approve,
+            ApprovalDecisionArg::Deny => JobApprovalDecision::Deny,
+            ApprovalDecisionArg::Expire => JobApprovalDecision::Expire,
         }
     }
 }
