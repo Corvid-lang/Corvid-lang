@@ -2,6 +2,7 @@ pub mod auth;
 pub mod manifest;
 pub mod rate_limit;
 pub mod runtime;
+pub mod test_kit;
 pub mod trace;
 
 pub use auth::{ConnectorAuthError, ConnectorAuthState};
@@ -15,5 +16,8 @@ pub use rate_limit::{ConnectorRateLimit, ConnectorRateLimitDecision, ConnectorRa
 pub use runtime::{
     ConnectorRequest, ConnectorResponse, ConnectorRuntime, ConnectorRuntimeError,
     ConnectorRuntimeMode,
+};
+pub use test_kit::{
+    parse_connector_fixture, run_connector_fixture, ConnectorFixture, ConnectorFixtureReport,
 };
 pub use trace::ConnectorTraceEvent;
