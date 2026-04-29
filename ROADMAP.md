@@ -2180,7 +2180,7 @@ corvid observe metrics --listen=:9090
 
 **Small-slice breakdown for Phase 40:**
 
-- [ ] 40B1-trace-link-ids            Request/job/agent/prompt/tool/approval/DB events share stable lineage IDs.
+- [x] 40B1-trace-link-ids            Request/job/agent/prompt/tool/approval/DB events share stable lineage IDs.
 - [ ] 40B2-lineage-render            Local command renders the lineage tree for one run.
 - [ ] 40C1-otel-schema               OTel span/metric/log mapping is documented and tested.
 - [ ] 40C2-otel-exporter             Exporter emits request/job/LLM/tool/approval/error/retry/cost/replay data.

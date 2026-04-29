@@ -55,6 +55,7 @@ pub mod grounded_handles;
 pub mod human;
 pub mod http;
 pub mod io;
+pub mod lineage;
 pub mod llm;
 pub mod models;
 mod native_trace;
@@ -157,6 +158,10 @@ pub use http::{
     HttpRetryPolicy, RecordedHttpExchange,
 };
 pub use io::{DirectoryEntry, FileRead, FileSystemEffect, FileWrite, IoRuntime, TextLineStream};
+pub use lineage::{
+    lineage_span_id, validate_lineage, LineageEvent, LineageKind, LineageStatus, LineageValidation,
+    LINEAGE_SCHEMA,
+};
 pub use llm::{
     anthropic::AnthropicAdapter,
     gemini::GeminiAdapter,
