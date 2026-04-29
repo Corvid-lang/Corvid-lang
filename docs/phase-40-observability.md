@@ -186,3 +186,6 @@ Phase 40 tooling must answer:
 
 These questions become the acceptance criteria for the later implementation
 slices.
+
+The operational command mapping for these questions lives in
+`docs/phase-40-operator-runbook.md`.

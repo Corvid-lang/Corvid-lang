@@ -2139,7 +2139,7 @@ corvid approvals export --since=2026-04-01  # audit dump
 - [x] 40F-drift-regression-reports   Reports highlight schema failures, confidence drops, cost changes, latency changes, denial spikes, and tool-error spikes.
 - [x] 40G-human-review-queues        Low-confidence and high-risk outputs can enter human-review queues with trace/audit linkage.
 - [x] 40H-contract-aware-grouping    Observability reports group incidents by guarantee, effect, budget, provenance, and approval rule.
-- [ ] 40I-maintainer-runbook         Docs show how maintainers answer cost, action, approval, data-touch, and replay questions from tooling.
+- [x] 40I-maintainer-runbook         Docs show how maintainers answer cost, action, approval, data-touch, and replay questions from tooling.
 
 **Done when:** maintainers can answer "what did the agent do, why, what did it cost, who approved it, what data did it touch, and can I replay it?" from committed Corvid tooling.
 
@@ -2193,7 +2193,7 @@ corvid observe metrics --listen=:9090
 - [x] 40G1-review-queue-envelope     Human-review queue records link to trace/audit IDs.
 - [x] 40G2-review-queue-ops          Low-confidence/high-risk outputs enter review and resolve with audit evidence.
 - [x] 40H1-guarantee-grouping        Incidents group by guarantee/effect/budget/provenance/approval rule.
-- [ ] 40I1-operator-questions        Runbook maps common maintainer questions to exact commands.
+- [x] 40I1-operator-questions        Runbook maps common maintainer questions to exact commands.
 
 ### Phase 41 — Production connectors (~8-12 weeks)
 
