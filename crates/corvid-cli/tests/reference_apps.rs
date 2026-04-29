@@ -280,3 +280,56 @@ fn personal_knowledge_agent_ingestion_is_private_and_provenanced() {
         .as_str()
         .is_some_and(|id| id.starts_with("files:notes:")));
 }
+
+#[test]
+fn personal_knowledge_agent_search_answers_are_grounded_and_evaluated() {
+    let app = repo_root()
+        .join("examples")
+        .join("backend")
+        .join("personal_knowledge_agent");
+    let source = app.join("src").join("main.cor");
+    let check = Command::new(corvid_bin())
+        .arg("check")
+        .arg(&source)
+        .current_dir(repo_root())
+        .output()
+        .expect("check knowledge app");
+    assert!(
+        check.status.success(),
+        "knowledge app check failed:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&check.stdout),
+        String::from_utf8_lossy(&check.stderr)
+    );
+
+    let eval = app.join("evals").join("search_answer_eval.cor");
+    let eval_out = Command::new(corvid_bin())
+        .arg("eval")
+        .arg(&eval)
+        .current_dir(repo_root())
+        .output()
+        .expect("run knowledge eval");
+    assert!(
+        eval_out.status.success(),
+        "knowledge eval failed:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&eval_out.stdout),
+        String::from_utf8_lossy(&eval_out.stderr)
+    );
+    let eval_stdout = String::from_utf8_lossy(&eval_out.stdout);
+    assert!(eval_stdout.contains("values: 5/5 passed"), "{eval_stdout}");
+
+    let search_text = fs::read_to_string(app.join("mocks").join("search_results.json"))
+        .expect("read search mock");
+    let search: Value = serde_json::from_str(&search_text).expect("parse search mock");
+    assert_eq!(search["local_only"].as_bool(), Some(true));
+    assert_eq!(search["hits"][0]["grounded"].as_bool(), Some(true));
+    assert!(search["hits"][0]["citation"]["provenance_id"]
+        .as_str()
+        .is_some_and(|id| id.starts_with("files:notes:")));
+    assert_eq!(search["answer"]["citation_count"].as_i64(), Some(1));
+
+    let trace = fs::read_to_string(app.join("traces").join("demo.lineage.jsonl"))
+        .expect("read knowledge trace");
+    assert!(trace.contains("\"guarantee_id\":\"grounded-search\""));
+    assert!(trace.contains("\"guarantee_id\":\"provenance-answer\""));
+    assert!(!trace.contains("raw document"));
+}

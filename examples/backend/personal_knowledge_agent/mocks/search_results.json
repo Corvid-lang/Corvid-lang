@@ -1,0 +1,25 @@
+{
+  "mode": "mock",
+  "local_only": true,
+  "query_fingerprint": "sha256:question-demo",
+  "hits": [
+    {
+      "chunk_id": "chunk-1",
+      "document_id": "doc-1",
+      "score": 0.93,
+      "grounded": true,
+      "citation": {
+        "source_path": "notes/strategy.md",
+        "byte_start": 0,
+        "byte_end": 512,
+        "provenance_id": "files:notes:notes/strategy.md:0:512"
+      }
+    }
+  ],
+  "answer": {
+    "answer_fingerprint": "sha256:answer-demo",
+    "citation_count": 1,
+    "grounded": true,
+    "trace_id": "trace-knowledge-answer"
+  }
+}

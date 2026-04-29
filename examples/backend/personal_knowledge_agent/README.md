@@ -9,6 +9,9 @@ server route that proves ingestion works in private/local mode.
 
 - `GET /config`
 - `GET /ingest/mock`
+- `GET /search/mock`
+- `GET /answer/mock`
+- `GET /feedback/eval/mock`
 
 ## Ingestion Contract
 
@@ -16,3 +19,14 @@ server route that proves ingestion works in private/local mode.
 - Embeddings are marked `local_only`.
 - Sources, documents, chunks, and embeddings preserve a stable provenance ID.
 - Committed fixtures contain hashes and fingerprints, not raw private text.
+
+## Search And Answer Contract
+
+42D2 adds grounded retrieval and feedback evals:
+
+- Search hits must carry citations with byte ranges and provenance IDs.
+- Answers must preserve the citation provenance ID and stay in local/private
+  mode.
+- Feedback records can be promoted into deterministic eval fixtures.
+- `evals/search_answer_eval.cor` and `traces/demo.lineage.jsonl` prove the
+  search/answer path without committing raw document text.

@@ -74,6 +74,45 @@ public type KnowledgeIngestionResult:
     provenance_preserved: Bool
     private_local_mode: Bool
 
+public type KnowledgeSearchRequest:
+    tenant_id: String
+    query_fingerprint: String
+    top_k: Int
+    local_only: Bool
+
+public type KnowledgeCitation:
+    document_id: String
+    chunk_id: String
+    source_path: String
+    byte_start: Int
+    byte_end: Int
+    provenance_id: String
+
+public type KnowledgeSearchHit:
+    chunk: KnowledgeChunk
+    citation: KnowledgeCitation
+    score: Float
+    grounded: Bool
+
+public type KnowledgeAnswer:
+    tenant_id: String
+    question_fingerprint: String
+    answer_fingerprint: String
+    hit: KnowledgeSearchHit
+    citation_count: Int
+    grounded: Bool
+    provenance_id: String
+    trace_id: String
+
+public type KnowledgeFeedbackEval:
+    id: String
+    tenant_id: String
+    answer_fingerprint: String
+    accepted: Bool
+    citation_count: Int
+    promoted_to_eval: Bool
+    trace_id: String
+
 public @replayable
 agent knowledge_config() -> KnowledgeConfig:
     return KnowledgeConfig("personal_knowledge_agent", "mock", "sqlite+local_index", true, "target/traces")
@@ -110,12 +149,54 @@ public @replayable
 agent ingestion_contract_valid(result: KnowledgeIngestionResult) -> Bool:
     return result.provenance_preserved and result.private_local_mode and result.job.discovered_count == result.job.indexed_count and result.source.content_hash == result.document.content_hash
 
+public @replayable
+agent mock_search_request() -> KnowledgeSearchRequest:
+    return KnowledgeSearchRequest("tenant-1", "sha256:question-demo", 3, true)
+
+public @replayable
+agent mock_citation() -> KnowledgeCitation uses files_read:
+    source = mock_source()
+    return KnowledgeCitation("doc-1", "chunk-1", source.path, 0, 512, source.provenance_id)
+
+public @replayable
+agent grounded_search_mock() -> KnowledgeSearchHit uses files_read, local_embed:
+    chunk = mock_chunk()
+    citation = mock_citation()
+    return KnowledgeSearchHit(chunk, citation, 0.93, chunk.provenance_id == citation.provenance_id)
+
+public @replayable
+agent answer_with_provenance_mock() -> KnowledgeAnswer uses files_read, local_embed:
+    req = mock_search_request()
+    hit = grounded_search_mock()
+    return KnowledgeAnswer(req.tenant_id, req.query_fingerprint, "sha256:answer-demo", hit, 1, hit.grounded, hit.citation.provenance_id, "trace-knowledge-answer")
+
+public @replayable
+agent feedback_eval_mock() -> KnowledgeFeedbackEval:
+    answer = answer_with_provenance_mock()
+    return KnowledgeFeedbackEval("feedback-1", answer.tenant_id, answer.answer_fingerprint, true, answer.citation_count, true, answer.trace_id)
+
+public @replayable
+agent answer_contract_valid(answer: KnowledgeAnswer) -> Bool:
+    return answer.grounded and answer.citation_count > 0 and answer.provenance_id == answer.hit.citation.provenance_id and answer.hit.grounded
+
+public @replayable
+agent feedback_eval_contract_valid(feedback: KnowledgeFeedbackEval) -> Bool:
+    return feedback.accepted and feedback.promoted_to_eval and feedback.citation_count > 0 and feedback.trace_id != ""
+
 server personal_knowledge_agent_api:
     route GET "/config" -> json KnowledgeConfig:
         return knowledge_config()
     route GET "/ingest/mock" -> json KnowledgeIngestionResult uses files_read, local_embed, index_write:
         return ingest_mock_document()
+    route GET "/search/mock" -> json KnowledgeSearchHit uses files_read, local_embed:
+        return grounded_search_mock()
+    route GET "/answer/mock" -> json KnowledgeAnswer uses files_read, local_embed:
+        return answer_with_provenance_mock()
+    route GET "/feedback/eval/mock" -> json KnowledgeFeedbackEval:
+        return feedback_eval_mock()
 
 agent main() -> Bool:
     result = ingest_mock_document()
-    return ingestion_contract_valid(result)
+    answer = answer_with_provenance_mock()
+    feedback = feedback_eval_mock()
+    return ingestion_contract_valid(result) and answer_contract_valid(answer) and feedback_eval_contract_valid(feedback)

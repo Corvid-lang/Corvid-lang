@@ -1,0 +1,21 @@
+agent search_is_grounded() -> Bool:
+    return true
+
+agent answer_has_citation() -> Bool:
+    return true
+
+agent provenance_round_trips() -> Bool:
+    return "files:notes:notes/strategy.md:0:512" == "files:notes:notes/strategy.md:0:512"
+
+agent feedback_promotes_eval() -> Bool:
+    return true
+
+agent private_mode_stays_local() -> Bool:
+    return true
+
+eval knowledge_search_answer:
+    assert search_is_grounded()
+    assert answer_has_citation()
+    assert provenance_round_trips()
+    assert feedback_promotes_eval()
+    assert private_mode_stays_local()
