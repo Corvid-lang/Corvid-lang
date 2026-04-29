@@ -2281,7 +2281,7 @@ corvid connectors verify-webhook --sig=<...>
 **Small-slice breakdown for Phase 41:**
 
 - [x] 41B1-manifest-parser           Connector manifest parser validates scopes/effects/data classes/approval/replay/rate limits.
-- [ ] 41B2-connector-runtime         Shared runtime handles auth state, retry, rate limits, redaction, trace events, and mock mode.
+- [x] 41B2-connector-runtime         Shared runtime handles auth state, retry, rate limits, redaction, trace events, and mock mode.
 - [ ] 41B3-connector-test-kit        Mock/replay fixture harness is reusable across connectors.
 - [ ] 41C1-gmail-read-search         Gmail read/search metadata works with mock and real-provider env docs.
 - [ ] 41C2-gmail-draft-send         Draft/send is approval-gated and replay-visible.
