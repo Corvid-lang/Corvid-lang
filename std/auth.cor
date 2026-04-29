@@ -55,6 +55,44 @@ public type AuthDecision:
     reason: String
     trace: AuthTraceContext
 
+public type Tenant:
+    id: String
+    display_name: String
+    plan: String
+    lifecycle_state: String
+    data_boundary: String
+    effect_meta: EffectEnvelope
+
+public type Role:
+    tenant_id: String
+    name: String
+    permission_fingerprint: String
+    effect_meta: EffectEnvelope
+
+public type Permission:
+    name: String
+    resource_kind: String
+    action: String
+    risk_level: String
+    effect_meta: EffectEnvelope
+
+public type ActorRoleBinding:
+    tenant_id: String
+    actor_id: String
+    role_name: String
+    granted_by: String
+    expires_ms: Int
+    effect_meta: EffectEnvelope
+
+public type ActorPermissionSet:
+    tenant_id: String
+    actor_id: String
+    role_fingerprint: String
+    permission_fingerprint: String
+    resolved_ms: Int
+    trace_id: String
+    effect_meta: EffectEnvelope
+
 public type JwtVerificationContract:
     issuer: String
     audience: String
@@ -130,6 +168,30 @@ public agent allow_permission(actor: Actor, trace: AuthTraceContext, permission:
 
 public agent deny_permission(actor: Actor, trace: AuthTraceContext, permission: String, reason: String) -> AuthDecision:
     return AuthDecision(actor, actor.tenant_id, permission, false, reason, trace)
+
+public agent tenant(id: String, display_name: String, plan: String, lifecycle_state: String, data_boundary: String) -> Tenant:
+    return Tenant(id, display_name, plan, lifecycle_state, data_boundary, effect_envelope("std.auth.tenant", id, "", data_boundary, "auth:tenant:" + id))
+
+public agent role(tenant_id: String, name: String, permission_fingerprint: String) -> Role:
+    return Role(tenant_id, name, permission_fingerprint, effect_envelope("std.auth.role", tenant_id, "", tenant_id + ":" + name, "auth:role:" + tenant_id + ":" + name))
+
+public agent permission(name: String, resource_kind: String, action: String, risk_level: String) -> Permission:
+    return Permission(name, resource_kind, action, risk_level, effect_envelope("std.auth.permission", resource_kind, "", resource_kind + ":" + action, "auth:permission:" + name))
+
+public agent actor_role_binding(tenant_id: String, actor_id: String, role_name: String, granted_by: String, expires_ms: Int) -> ActorRoleBinding:
+    return ActorRoleBinding(tenant_id, actor_id, role_name, granted_by, expires_ms, effect_envelope("std.auth.role_binding", tenant_id, "", tenant_id + ":" + actor_id + ":" + role_name, "auth:role_binding:" + actor_id))
+
+public agent actor_permission_set(actor: Actor, role_fingerprint: String, permission_fingerprint: String, resolved_ms: Int) -> ActorPermissionSet:
+    return ActorPermissionSet(actor.tenant_id, actor.id, role_fingerprint, permission_fingerprint, resolved_ms, actor.trace_id, effect_envelope("std.auth.permission_set", actor.trace_id, "", actor.tenant_id + ":" + actor.id, "auth:permission_set:" + actor.trace_id))
+
+public agent tenant_active(t: Tenant) -> Bool:
+    return t.lifecycle_state == "active"
+
+public agent role_binding_active(binding: ActorRoleBinding, now_ms: Int) -> Bool:
+    return binding.expires_ms == 0 or now_ms < binding.expires_ms
+
+public agent permission_set_same_actor(set: ActorPermissionSet, actor: Actor) -> Bool:
+    return set.tenant_id == actor.tenant_id and set.actor_id == actor.id and set.trace_id == actor.trace_id
 
 public agent actor_same_tenant(actor: Actor, tenant_id: String) -> Bool:
     return actor.tenant_id == tenant_id
