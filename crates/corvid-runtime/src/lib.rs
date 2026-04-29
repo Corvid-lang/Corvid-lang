@@ -101,11 +101,12 @@ pub use approvals::{
     ProgrammaticApprover, StdinApprover,
 };
 pub use auth::{
-    hash_api_key_secret, hash_oauth_state, hash_session_secret,
+    authorize_trace_permission, hash_api_key_secret, hash_oauth_state, hash_session_secret,
     validate_jwt_verification_contract, verify_api_key_secret, ApiKeyCreate, ApiKeyRecord,
-    ApiKeyResolution, AuthActor, AuthAuditEvent, AuthTraceContext, JwtContractDiagnostic,
-    JwtVerificationContract, OAuthCallbackResolution, OAuthStateCreate, OAuthStateRecord,
-    SessionAuthRuntime, SessionCreate, SessionRecord, SessionResolution,
+    ApiKeyResolution, AuthActor, AuthAuditEvent, AuthTraceContext, AuthorizationDecision,
+    JwtContractDiagnostic, JwtVerificationContract, OAuthCallbackResolution, OAuthStateCreate,
+    OAuthStateRecord, PermissionRequirement, SessionAuthRuntime, SessionCreate, SessionRecord,
+    SessionResolution,
 };
 pub use calibration::{CalibrationObservation, CalibrationStats};
 pub use cache::{

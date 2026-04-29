@@ -155,6 +155,29 @@ pub struct OAuthCallbackResolution {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PermissionRequirement {
+    pub tenant_id: String,
+    pub permission: String,
+    pub permission_fingerprint: String,
+    pub surface_kind: String,
+    pub surface_id: String,
+    pub trace_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AuthorizationDecision {
+    pub allowed: bool,
+    pub actor_id: String,
+    pub tenant_id: String,
+    pub permission: String,
+    pub surface_kind: String,
+    pub surface_id: String,
+    pub trace_id: String,
+    pub reason: String,
+    pub redacted: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AuthAuditEvent {
     pub id: String,
     pub event_kind: String,
@@ -1109,6 +1132,39 @@ pub fn validate_jwt_verification_contract(
     }
 }
 
+pub fn authorize_trace_permission(
+    actor: &AuthActor,
+    trace: &AuthTraceContext,
+    requirement: &PermissionRequirement,
+) -> AuthorizationDecision {
+    let reason = if actor.tenant_id != requirement.tenant_id {
+        Some("actor tenant does not match requirement tenant")
+    } else if trace.tenant_id != requirement.tenant_id {
+        Some("trace tenant does not match requirement tenant")
+    } else if trace.actor_id != actor.id {
+        Some("trace actor does not match actor")
+    } else if trace.trace_id != requirement.trace_id {
+        Some("trace id does not match requirement")
+    } else if actor.permission_fingerprint != requirement.permission_fingerprint {
+        Some("actor permission fingerprint does not satisfy requirement")
+    } else if trace.permission_fingerprint != requirement.permission_fingerprint {
+        Some("trace permission fingerprint does not satisfy requirement")
+    } else {
+        None
+    };
+    AuthorizationDecision {
+        allowed: reason.is_none(),
+        actor_id: actor.id.clone(),
+        tenant_id: requirement.tenant_id.clone(),
+        permission: requirement.permission.clone(),
+        surface_kind: requirement.surface_kind.clone(),
+        surface_id: requirement.surface_id.clone(),
+        trace_id: requirement.trace_id.clone(),
+        reason: reason.unwrap_or("permission propagated").to_string(),
+        redacted: true,
+    }
+}
+
 fn validate_non_empty(label: &str, value: &str) -> Result<(), RuntimeError> {
     if value.trim().is_empty() {
         Err(RuntimeError::Other(format!("{label} must not be empty")))
@@ -1540,5 +1596,45 @@ mod tests {
             .resolve_oauth_callback("state-1", "org-1", "trace-expired", expires_ms)
             .unwrap_err();
         assert!(expired.to_string().contains("state expired"));
+    }
+
+    #[test]
+    fn permission_propagation_binds_actor_tenant_trace_and_surface() {
+        let actor = actor("user-1", "org-1");
+        let trace = AuthTraceContext {
+            trace_id: "trace-1".to_string(),
+            tenant_id: "org-1".to_string(),
+            actor_id: "user-1".to_string(),
+            auth_method: "session".to_string(),
+            session_id: "sess-1".to_string(),
+            api_key_id: String::new(),
+            permission_fingerprint: "sha256:permissions".to_string(),
+            replay_key: "replay-1".to_string(),
+        };
+        let requirement = PermissionRequirement {
+            tenant_id: "org-1".to_string(),
+            permission: "CanReviewEmail".to_string(),
+            permission_fingerprint: "sha256:permissions".to_string(),
+            surface_kind: "job".to_string(),
+            surface_id: "email_triage_job".to_string(),
+            trace_id: "trace-1".to_string(),
+        };
+        let allowed = authorize_trace_permission(&actor, &trace, &requirement);
+        assert!(allowed.allowed);
+        assert_eq!(allowed.surface_kind, "job");
+        assert_eq!(allowed.reason, "permission propagated");
+        assert!(allowed.redacted);
+
+        let mut cross_tenant = requirement.clone();
+        cross_tenant.tenant_id = "org-2".to_string();
+        let denied = authorize_trace_permission(&actor, &trace, &cross_tenant);
+        assert!(!denied.allowed);
+        assert!(denied.reason.contains("tenant"));
+
+        let mut stale_trace = trace.clone();
+        stale_trace.permission_fingerprint = "sha256:old".to_string();
+        let denied = authorize_trace_permission(&actor, &stale_trace, &requirement);
+        assert!(!denied.allowed);
+        assert!(denied.reason.contains("trace permission"));
     }
 }

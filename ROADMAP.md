@@ -2022,7 +2022,7 @@ corvid jobs drain --workers=all
 - [x] 39A-auth-approval-design-brief `docs/phase-39-auth-approval.md` defines identity, tenant, session, approval, threat, and non-scope models.
 - [x] 39B-session-api-key-auth        `std.auth` supports sessions and API keys with typed actor propagation into routes and traces.
 - [ ] 39C-jwt-oauth-callbacks        JWT verification and OAuth callback handling work for connector authorization flows.
-- [ ] 39D-tenant-role-permissions    User, organization, role, and permission checks propagate through routes, jobs, tools, and traces.
+- [x] 39D-tenant-role-permissions    User, organization, role, and permission checks propagate through routes, jobs, tools, and traces.
 - [ ] 39E-approval-queue-api         Approval create/list/inspect/approve/deny/expire/comment/delegate APIs ship with tests.
 - [ ] 39F-generated-approval-contracts Dangerous tools generate typed approval contracts with target, cost, data, expiry, irreversibility, and required role.
 - [ ] 39G-approval-ui-contract       Backend exposes structured approval payloads that any frontend can render without parsing traces.
@@ -2100,7 +2100,7 @@ corvid approvals export --since=2026-04-01  # audit dump
 - [x] 39C1-jwt-verify-contract       JWT verification surface and failure diagnostics are defined.
 - [x] 39C2-oauth-callback-state      OAuth callback state/token references are typed and replay/audit visible.
 - [x] 39D1-tenant-role-model         User/org/role/permission records and helpers are typed.
-- [ ] 39D2-permission-propagation    Permissions propagate through routes, jobs, tools, and traces.
+- [x] 39D2-permission-propagation    Permissions propagate through routes, jobs, tools, and traces.
 - [ ] 39E1-approval-store            Approval queue persistence schema and stdlib envelopes exist.
 - [ ] 39E2-approval-api              Create/list/inspect/approve/deny/expire/comment/delegate APIs work.
 - [ ] 39E3-approval-audit            Every approval transition writes audit and trace evidence.
