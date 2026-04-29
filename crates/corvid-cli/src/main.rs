@@ -743,6 +743,14 @@ enum DeployCommand {
         #[arg(long, value_name = "DIR")]
         out: Option<PathBuf>,
     },
+    /// Emit Fly.io and Render-style single-service deployment artifacts.
+    Paas {
+        /// App directory, e.g. examples/backend/personal_executive_agent.
+        app: PathBuf,
+        /// Output directory for generated artifacts.
+        #[arg(long, value_name = "DIR")]
+        out: Option<PathBuf>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -1354,6 +1362,10 @@ fn main_impl() -> ExitCode {
             DeployCommand::Compose { app, out } => {
                 let out = out.unwrap_or_else(|| app.join("target").join("compose"));
                 deploy_cmd::run_compose(&app, &out).map(|_| 0)
+            }
+            DeployCommand::Paas { app, out } => {
+                let out = out.unwrap_or_else(|| app.join("target").join("paas"));
+                deploy_cmd::run_paas(&app, &out).map(|_| 0)
             }
         },
         Some(Command::Migrate { command }) => match command {

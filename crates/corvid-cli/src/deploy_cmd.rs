@@ -95,6 +95,22 @@ pub fn run_compose(app: &Path, out: &Path) -> Result<()> {
     Ok(())
 }
 
+pub fn run_paas(app: &Path, out: &Path) -> Result<()> {
+    let app_name = app
+        .file_name()
+        .and_then(|name| name.to_str())
+        .context("app path must end in a valid directory name")?;
+    fs::create_dir_all(out)
+        .with_context(|| format!("create paas deploy dir `{}`", out.display()))?;
+    fs::write(out.join("fly.toml"), render_fly(app_name)).context("write fly.toml")?;
+    fs::write(out.join("render.yaml"), render_render(app_name)).context("write render.yaml")?;
+    fs::write(out.join("secrets.example"), render_paas_secrets(app_name))
+        .context("write paas secrets")?;
+    println!("fly manifest: {}", out.join("fly.toml").display());
+    println!("render manifest: {}", out.join("render.yaml").display());
+    Ok(())
+}
+
 fn render_dockerfile(app_name: &str) -> String {
     format!(
         r#"FROM rust:1.78-slim AS build
@@ -228,6 +244,73 @@ CORVID_CONNECTOR_MODE=mock
 CORVID_DATABASE_URL=sqlite:target/{app_name}.db
 CORVID_TRACE_DIR=target/traces
 CORVID_REQUIRE_APPROVALS=true
+"#
+    )
+}
+
+fn render_fly(app_name: &str) -> String {
+    format!(
+        r#"app = "{app_name}"
+primary_region = "iad"
+
+[build]
+  dockerfile = "examples/backend/{app_name}/deploy/Dockerfile"
+
+[env]
+  CORVID_APP_ENV = "production"
+  CORVID_CONNECTOR_MODE = "mock"
+  CORVID_TRACE_DIR = "/data/traces"
+  CORVID_REQUIRE_APPROVALS = "true"
+
+[[mounts]]
+  source = "{app_name}_data"
+  destination = "/data"
+
+[[services]]
+  internal_port = 8080
+  protocol = "tcp"
+
+  [[services.ports]]
+    port = 80
+    handlers = ["http"]
+
+  [[services.http_checks]]
+    interval = "30s"
+    timeout = "10s"
+    method = "get"
+    path = "/healthz"
+"#
+    )
+}
+
+fn render_render(app_name: &str) -> String {
+    format!(
+        r#"services:
+  - type: web
+    name: {app_name}
+    env: docker
+    dockerfilePath: examples/backend/{app_name}/deploy/Dockerfile
+    healthCheckPath: /healthz
+    envVars:
+      - key: CORVID_APP_ENV
+        value: production
+      - key: CORVID_CONNECTOR_MODE
+        value: mock
+      - key: CORVID_TRACE_DIR
+        value: /data/traces
+      - key: CORVID_REQUIRE_APPROVALS
+        value: "true"
+      - key: CORVID_DATABASE_URL
+        sync: false
+"#
+    )
+}
+
+fn render_paas_secrets(app_name: &str) -> String {
+    format!(
+        r#"# Secrets for {app_name}
+CORVID_DATABASE_URL=sqlite:/data/{app_name}.db
+CORVID_DEPLOY_SIGNING_KEY=<hex-encoded-ed25519-seed>
 "#
     )
 }

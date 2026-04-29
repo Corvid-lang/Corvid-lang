@@ -776,3 +776,36 @@ fn deploy_compose_emits_reference_app_manifest() {
     let env = fs::read_to_string(out.join(".env.example")).expect("read compose env");
     assert!(env.contains("CORVID_CONNECTOR_MODE=mock"));
 }
+
+#[test]
+fn deploy_paas_emits_single_service_manifests() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let app = repo_root()
+        .join("examples")
+        .join("backend")
+        .join("personal_executive_agent");
+    let out = temp.path().join("paas");
+    let deploy = Command::new(corvid_bin())
+        .arg("deploy")
+        .arg("paas")
+        .arg(&app)
+        .arg("--out")
+        .arg(&out)
+        .current_dir(repo_root())
+        .output()
+        .expect("run deploy paas");
+    assert!(
+        deploy.status.success(),
+        "deploy paas failed:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&deploy.stdout),
+        String::from_utf8_lossy(&deploy.stderr)
+    );
+    let fly = fs::read_to_string(out.join("fly.toml")).expect("read fly manifest");
+    assert!(fly.contains("personal_executive_agent"));
+    assert!(fly.contains("path = \"/healthz\""));
+    let render = fs::read_to_string(out.join("render.yaml")).expect("read render manifest");
+    assert!(render.contains("healthCheckPath: /healthz"));
+    assert!(render.contains("CORVID_REQUIRE_APPROVALS"));
+    let secrets = fs::read_to_string(out.join("secrets.example")).expect("read secrets template");
+    assert!(secrets.contains("CORVID_DATABASE_URL"));
+}
