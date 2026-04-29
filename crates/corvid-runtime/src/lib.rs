@@ -34,6 +34,7 @@ pub mod adversarial;
 pub mod approvals;
 pub mod approver_bridge;
 pub(crate) mod attestation_store;
+pub mod auth;
 pub mod calibration;
 pub mod cache;
 pub mod capability_contract;
@@ -98,6 +99,10 @@ pub use adversarial::{contradiction_flag, trace_text};
 pub use approvals::{
     ApprovalCard, ApprovalCardArgument, ApprovalDecision, ApprovalRequest, ApprovalRisk, Approver,
     ProgrammaticApprover, StdinApprover,
+};
+pub use auth::{
+    hash_session_secret, AuthActor, AuthAuditEvent, AuthTraceContext, SessionAuthRuntime,
+    SessionCreate, SessionRecord, SessionResolution,
 };
 pub use calibration::{CalibrationObservation, CalibrationStats};
 pub use cache::{
