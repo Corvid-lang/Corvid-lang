@@ -59,7 +59,8 @@ use corvid_differential_verify::{
 };
 use corvid_runtime::queue::{
     DurableQueueRuntime, JobApprovalDecision, JobCheckpointKind, JobLoopLimits, JobLoopUsage,
-    QueueJob, QueueScheduleManifest, ScheduleMissedPolicy,
+    JobStallAction, JobStallCheck, JobStallPolicy, QueueJob, QueueScheduleManifest,
+    ScheduleMissedPolicy,
 };
 use cost_frontier::{build_frontier, render_frontier as render_cost_frontier, CostFrontierOptions};
 use routing_report::{build_report, render_report as render_routing_report, RoutingReportOptions};
@@ -1365,6 +1366,21 @@ fn main_impl() -> ExitCode {
                     &state, &job, steps, wall_ms, spend_usd, tool_calls, &actor,
                 ),
                 JobsLoopCommand::Usage { state, job } => cmd_jobs_loop_usage(&state, &job),
+                JobsLoopCommand::Heartbeat {
+                    state,
+                    job,
+                    actor,
+                    message,
+                } => cmd_jobs_loop_heartbeat(&state, &job, &actor, message),
+                JobsLoopCommand::StallPolicy {
+                    state,
+                    job,
+                    stall_after_ms,
+                    action,
+                } => cmd_jobs_loop_stall_policy(&state, &job, stall_after_ms, action),
+                JobsLoopCommand::CheckStall { state, job, actor } => {
+                    cmd_jobs_loop_check_stall(&state, &job, &actor)
+                }
             },
             JobsCommand::Schedule { command } => match command {
                 JobsScheduleCommand::Add {
@@ -1827,6 +1843,58 @@ fn cmd_jobs_loop_usage(state: &Path, job_id: &str) -> Result<u8> {
     Ok(0)
 }
 
+fn cmd_jobs_loop_heartbeat(
+    state: &Path,
+    job_id: &str,
+    actor: &str,
+    message: Option<String>,
+) -> Result<u8> {
+    let queue = DurableQueueRuntime::open(state)?;
+    let heartbeat = queue.record_loop_heartbeat(job_id, actor, message)?;
+    println!("corvid jobs loop heartbeat");
+    println!("state: {}", state.display());
+    println!("job: {}", heartbeat.job_id);
+    println!("actor: {}", heartbeat.actor);
+    println!("message: {}", heartbeat.message.as_deref().unwrap_or(""));
+    println!("last_heartbeat_ms: {}", heartbeat.last_heartbeat_ms);
+    println!("updated_ms: {}", heartbeat.updated_ms);
+    Ok(0)
+}
+
+fn cmd_jobs_loop_stall_policy(
+    state: &Path,
+    job_id: &str,
+    stall_after_ms: u64,
+    action: StallActionArg,
+) -> Result<u8> {
+    let queue = DurableQueueRuntime::open(state)?;
+    let policy = queue.set_stall_policy(job_id, stall_after_ms, action.into())?;
+    println!("corvid jobs loop stall-policy");
+    println!("state: {}", state.display());
+    print_stall_policy(&policy);
+    Ok(0)
+}
+
+fn cmd_jobs_loop_check_stall(state: &Path, job_id: &str, actor: &str) -> Result<u8> {
+    let queue = DurableQueueRuntime::open(state)?;
+    let check = queue.check_stall(job_id, actor)?;
+    println!("corvid jobs loop check-stall");
+    println!("state: {}", state.display());
+    print_stall_check(&check);
+    if let Some(job) = queue.get(job_id)? {
+        println!("status: {}", job.status.as_str());
+        println!(
+            "failure_kind: {}",
+            job.failure_kind.as_deref().unwrap_or("")
+        );
+        println!(
+            "failure_fingerprint: {}",
+            job.failure_fingerprint.as_deref().unwrap_or("")
+        );
+    }
+    Ok(0)
+}
+
 fn cmd_jobs_dlq(state: &Path) -> Result<u8> {
     let queue = DurableQueueRuntime::open(state)?;
     let jobs = queue.dead_lettered()?;
@@ -2074,6 +2142,25 @@ fn print_loop_usage(usage: &JobLoopUsage) {
     println!("spend_usd: {:.6}", usage.spend_usd);
     println!("tool_calls: {}", usage.tool_calls);
     println!("usage_updated_ms: {}", usage.updated_ms);
+}
+
+fn print_stall_policy(policy: &JobStallPolicy) {
+    println!("job: {}", policy.job_id);
+    println!("stall_after_ms: {}", policy.stall_after_ms);
+    println!("action: {}", policy.action.as_str());
+    println!("updated_ms: {}", policy.updated_ms);
+}
+
+fn print_stall_check(check: &JobStallCheck) {
+    println!("job: {}", check.job_id);
+    println!("stalled: {}", check.stalled);
+    println!(
+        "action_taken: {}",
+        check.action_taken.as_deref().unwrap_or("")
+    );
+    println!("last_heartbeat_ms: {}", check.last_heartbeat_ms);
+    println!("stall_after_ms: {}", check.stall_after_ms);
+    println!("elapsed_ms: {}", check.elapsed_ms);
 }
 
 fn print_schedule_summary(schedule: &QueueScheduleManifest) {
@@ -3653,6 +3740,63 @@ enum JobsLoopCommand {
         #[arg(long)]
         job: String,
     },
+    /// Record a worker heartbeat for stall detection.
+    Heartbeat {
+        /// SQLite state file used by the durable local queue.
+        #[arg(long, value_name = "PATH", default_value = "target/corvid-jobs.sqlite")]
+        state: PathBuf,
+        /// Job id to heartbeat.
+        #[arg(long)]
+        job: String,
+        /// Worker or runtime actor recording the heartbeat.
+        #[arg(long, default_value = "corvid-loop-runtime")]
+        actor: String,
+        /// Redacted progress message.
+        #[arg(long)]
+        message: Option<String>,
+    },
+    /// Configure stall escalation or termination for a job loop.
+    StallPolicy {
+        /// SQLite state file used by the durable local queue.
+        #[arg(long, value_name = "PATH", default_value = "target/corvid-jobs.sqlite")]
+        state: PathBuf,
+        /// Job id to constrain.
+        #[arg(long)]
+        job: String,
+        /// Milliseconds without heartbeat before the loop is stalled.
+        #[arg(long)]
+        stall_after_ms: u64,
+        /// Action to apply after stall detection.
+        #[arg(long, value_enum)]
+        action: StallActionArg,
+    },
+    /// Check whether a job loop has stalled and apply the configured action.
+    CheckStall {
+        /// SQLite state file used by the durable local queue.
+        #[arg(long, value_name = "PATH", default_value = "target/corvid-jobs.sqlite")]
+        state: PathBuf,
+        /// Job id to inspect.
+        #[arg(long)]
+        job: String,
+        /// Operator/runtime actor performing the check.
+        #[arg(long, default_value = "corvid-stall-watchdog")]
+        actor: String,
+    },
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum StallActionArg {
+    Escalate,
+    Terminate,
+}
+
+impl From<StallActionArg> for JobStallAction {
+    fn from(value: StallActionArg) -> Self {
+        match value {
+            StallActionArg::Escalate => JobStallAction::Escalate,
+            StallActionArg::Terminate => JobStallAction::Terminate,
+        }
+    }
 }
 
 #[derive(Subcommand)]

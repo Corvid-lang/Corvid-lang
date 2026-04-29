@@ -18,6 +18,8 @@ pub enum QueueJobStatus {
     ApprovalDenied,
     ApprovalExpired,
     LoopBudgetExceeded,
+    LoopStallEscalated,
+    LoopStallTerminated,
     RetryWait,
     Running,
     Succeeded,
@@ -35,6 +37,8 @@ impl QueueJobStatus {
             Self::ApprovalDenied => "approval_denied",
             Self::ApprovalExpired => "approval_expired",
             Self::LoopBudgetExceeded => "loop_budget_exceeded",
+            Self::LoopStallEscalated => "loop_stall_escalated",
+            Self::LoopStallTerminated => "loop_stall_terminated",
             Self::RetryWait => "retry_wait",
             Self::Running => "running",
             Self::Succeeded => "succeeded",
@@ -223,6 +227,48 @@ pub struct JobLoopUsage {
 pub struct JobLoopUsageReport {
     pub usage: JobLoopUsage,
     pub violated_bounds: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum JobStallAction {
+    Escalate,
+    Terminate,
+}
+
+impl JobStallAction {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Escalate => "escalate",
+            Self::Terminate => "terminate",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct JobStallPolicy {
+    pub job_id: String,
+    pub stall_after_ms: u64,
+    pub action: JobStallAction,
+    pub updated_ms: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct JobLoopHeartbeat {
+    pub job_id: String,
+    pub actor: String,
+    pub message: Option<String>,
+    pub last_heartbeat_ms: u64,
+    pub updated_ms: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct JobStallCheck {
+    pub job_id: String,
+    pub stalled: bool,
+    pub action_taken: Option<String>,
+    pub last_heartbeat_ms: u64,
+    pub stall_after_ms: u64,
+    pub elapsed_ms: u64,
 }
 
 #[derive(Clone, Default)]
@@ -975,6 +1021,240 @@ impl DurableQueueRuntime {
         Ok(JobLoopUsageReport {
             usage,
             violated_bounds,
+        })
+    }
+
+    pub fn set_stall_policy(
+        &self,
+        job_id: &str,
+        stall_after_ms: u64,
+        action: JobStallAction,
+    ) -> Result<JobStallPolicy, RuntimeError> {
+        if stall_after_ms == 0 {
+            return Err(RuntimeError::Other(
+                "std.queue stall threshold must be greater than zero".to_string(),
+            ));
+        }
+        if self.get(job_id)?.is_none() {
+            return Err(RuntimeError::Other(format!("std.queue job `{job_id}` not found")));
+        }
+        let now = now_ms();
+        self.conn
+            .lock()
+            .unwrap()
+            .execute(
+                "insert into queue_job_stall_policies
+                 (job_id, stall_after_ms, action, updated_ms)
+                 values (?1, ?2, ?3, ?4)
+                 on conflict(job_id) do update set
+                    stall_after_ms = excluded.stall_after_ms,
+                    action = excluded.action,
+                    updated_ms = excluded.updated_ms",
+                params![job_id, stall_after_ms as i64, action.as_str(), now as i64],
+            )
+            .map_err(|err| RuntimeError::Other(format!("failed to set stall policy: {err}")))?;
+        self.stall_policy(job_id)?
+            .ok_or_else(|| RuntimeError::Other(format!("std.queue stall policy for `{job_id}` not found")))
+    }
+
+    pub fn stall_policy(&self, job_id: &str) -> Result<Option<JobStallPolicy>, RuntimeError> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn
+            .prepare(
+                "select job_id, stall_after_ms, action, updated_ms
+                 from queue_job_stall_policies where job_id = ?1",
+            )
+            .map_err(|err| RuntimeError::Other(format!("failed to prepare stall policy read: {err}")))?;
+        let mut rows = stmt
+            .query(params![job_id])
+            .map_err(|err| RuntimeError::Other(format!("failed to query stall policy: {err}")))?;
+        if let Some(row) = rows
+            .next()
+            .map_err(|err| RuntimeError::Other(format!("failed to read stall policy row: {err}")))?
+        {
+            Ok(Some(read_stall_policy_row(row).map_err(|err| {
+                RuntimeError::Other(format!("failed to decode stall policy: {err}"))
+            })?))
+        } else {
+            Ok(None)
+        }
+    }
+
+    pub fn record_loop_heartbeat(
+        &self,
+        job_id: &str,
+        actor: impl Into<String>,
+        message: Option<String>,
+    ) -> Result<JobLoopHeartbeat, RuntimeError> {
+        self.record_loop_heartbeat_at(job_id, actor, message, now_ms())
+    }
+
+    pub fn record_loop_heartbeat_at(
+        &self,
+        job_id: &str,
+        actor: impl Into<String>,
+        message: Option<String>,
+        now: u64,
+    ) -> Result<JobLoopHeartbeat, RuntimeError> {
+        let actor = actor.into();
+        if actor.trim().is_empty() {
+            return Err(RuntimeError::Other(
+                "std.queue loop heartbeat actor must not be empty".to_string(),
+            ));
+        }
+        if self.get(job_id)?.is_none() {
+            return Err(RuntimeError::Other(format!("std.queue job `{job_id}` not found")));
+        }
+        self.conn
+            .lock()
+            .unwrap()
+            .execute(
+                "insert into queue_job_loop_heartbeats
+                 (job_id, actor, message, last_heartbeat_ms, updated_ms)
+                 values (?1, ?2, ?3, ?4, ?5)
+                 on conflict(job_id) do update set
+                    actor = excluded.actor,
+                    message = excluded.message,
+                    last_heartbeat_ms = excluded.last_heartbeat_ms,
+                    updated_ms = excluded.updated_ms",
+                params![job_id, actor, message, now as i64, now as i64],
+            )
+            .map_err(|err| RuntimeError::Other(format!("failed to record loop heartbeat: {err}")))?;
+        self.loop_heartbeat(job_id)?
+            .ok_or_else(|| RuntimeError::Other(format!("std.queue heartbeat for `{job_id}` not found")))
+    }
+
+    pub fn loop_heartbeat(&self, job_id: &str) -> Result<Option<JobLoopHeartbeat>, RuntimeError> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn
+            .prepare(
+                "select job_id, actor, message, last_heartbeat_ms, updated_ms
+                 from queue_job_loop_heartbeats where job_id = ?1",
+            )
+            .map_err(|err| RuntimeError::Other(format!("failed to prepare heartbeat read: {err}")))?;
+        let mut rows = stmt
+            .query(params![job_id])
+            .map_err(|err| RuntimeError::Other(format!("failed to query loop heartbeat: {err}")))?;
+        if let Some(row) = rows
+            .next()
+            .map_err(|err| RuntimeError::Other(format!("failed to read heartbeat row: {err}")))?
+        {
+            Ok(Some(read_loop_heartbeat_row(row).map_err(|err| {
+                RuntimeError::Other(format!("failed to decode loop heartbeat: {err}"))
+            })?))
+        } else {
+            Ok(None)
+        }
+    }
+
+    pub fn check_stall(&self, job_id: &str, actor: impl Into<String>) -> Result<JobStallCheck, RuntimeError> {
+        self.check_stall_at(job_id, actor, now_ms())
+    }
+
+    pub fn check_stall_at(
+        &self,
+        job_id: &str,
+        actor: impl Into<String>,
+        now: u64,
+    ) -> Result<JobStallCheck, RuntimeError> {
+        let actor = actor.into();
+        if actor.trim().is_empty() {
+            return Err(RuntimeError::Other(
+                "std.queue stall checker actor must not be empty".to_string(),
+            ));
+        }
+        let mut conn = self.conn.lock().unwrap();
+        let tx = conn
+            .transaction()
+            .map_err(|err| RuntimeError::Other(format!("failed to start stall check transaction: {err}")))?;
+        let (status_before, job_updated_ms) = tx
+            .query_row(
+                "select status, updated_ms from queue_jobs where id = ?1",
+                params![job_id],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)? as u64)),
+            )
+            .map_err(|err| RuntimeError::Other(format!("std.queue job `{job_id}` not found or unreadable: {err}")))?;
+        let policy = tx
+            .query_row(
+                "select job_id, stall_after_ms, action, updated_ms
+                 from queue_job_stall_policies where job_id = ?1",
+                params![job_id],
+                read_stall_policy_row,
+            )
+            .optional()
+            .map_err(|err| RuntimeError::Other(format!("failed to read stall policy: {err}")))?
+            .ok_or_else(|| RuntimeError::Other(format!("std.queue job `{job_id}` has no stall policy")))?;
+        let heartbeat = tx
+            .query_row(
+                "select job_id, actor, message, last_heartbeat_ms, updated_ms
+                 from queue_job_loop_heartbeats where job_id = ?1",
+                params![job_id],
+                read_loop_heartbeat_row,
+            )
+            .optional()
+            .map_err(|err| RuntimeError::Other(format!("failed to read loop heartbeat: {err}")))?;
+        let last_heartbeat_ms = heartbeat
+            .as_ref()
+            .map(|heartbeat| heartbeat.last_heartbeat_ms)
+            .unwrap_or(job_updated_ms);
+        let elapsed_ms = now.saturating_sub(last_heartbeat_ms);
+        let already_terminal = matches!(
+            parse_status(&status_before),
+            QueueJobStatus::Succeeded
+                | QueueJobStatus::DeadLettered
+                | QueueJobStatus::Canceled
+                | QueueJobStatus::ApprovalDenied
+                | QueueJobStatus::ApprovalExpired
+                | QueueJobStatus::LoopBudgetExceeded
+                | QueueJobStatus::LoopStallTerminated
+        );
+        let stalled = elapsed_ms > policy.stall_after_ms && !already_terminal;
+        let mut action_taken = None;
+        if stalled {
+            let status_after = match policy.action {
+                JobStallAction::Escalate => QueueJobStatus::LoopStallEscalated,
+                JobStallAction::Terminate => QueueJobStatus::LoopStallTerminated,
+            };
+            let reason = format!(
+                "loop_stalled:last_heartbeat_ms={last_heartbeat_ms},elapsed_ms={elapsed_ms},stall_after_ms={}",
+                policy.stall_after_ms
+            );
+            tx.execute(
+                "update queue_jobs
+                 set status = ?2,
+                     failure_kind = 'loop_stalled',
+                     failure_fingerprint = ?3,
+                     next_run_ms = null,
+                     lease_owner = null,
+                     lease_expires_ms = null,
+                     updated_ms = ?4
+                 where id = ?1",
+                params![job_id, status_after.as_str(), reason, now as i64],
+            )
+            .map_err(|err| RuntimeError::Other(format!("failed to apply stall transition: {err}")))?;
+            let event_kind = format!("loop_stalled_{}", policy.action.as_str());
+            insert_job_audit_event(
+                &tx,
+                job_id,
+                &event_kind,
+                &actor,
+                None,
+                &status_before,
+                status_after.as_str(),
+                Some(&reason),
+                now,
+            )?;
+            action_taken = Some(policy.action.as_str().to_string());
+        }
+        tx.commit()
+            .map_err(|err| RuntimeError::Other(format!("failed to commit stall check: {err}")))?;
+        Ok(JobStallCheck {
+            job_id: job_id.to_string(),
+            stalled,
+            action_taken,
+            last_heartbeat_ms,
+            stall_after_ms: policy.stall_after_ms,
+            elapsed_ms,
         })
     }
 
@@ -1940,6 +2220,19 @@ impl DurableQueueRuntime {
                     spend_usd real not null,
                     tool_calls integer not null,
                     updated_ms integer not null
+                );
+                create table if not exists queue_job_loop_heartbeats (
+                    job_id text primary key,
+                    actor text not null,
+                    message text,
+                    last_heartbeat_ms integer not null,
+                    updated_ms integer not null
+                );
+                create table if not exists queue_job_stall_policies (
+                    job_id text primary key,
+                    stall_after_ms integer not null,
+                    action text not null,
+                    updated_ms integer not null
                 );",
             )
             .map_err(|err| {
@@ -2116,6 +2409,26 @@ fn read_loop_usage_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<JobLoopUsage
     })
 }
 
+fn read_stall_policy_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<JobStallPolicy> {
+    let action: String = row.get(2)?;
+    Ok(JobStallPolicy {
+        job_id: row.get(0)?,
+        stall_after_ms: row.get::<_, i64>(1)? as u64,
+        action: parse_stall_action(&action),
+        updated_ms: row.get::<_, i64>(3)? as u64,
+    })
+}
+
+fn read_loop_heartbeat_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<JobLoopHeartbeat> {
+    Ok(JobLoopHeartbeat {
+        job_id: row.get(0)?,
+        actor: row.get(1)?,
+        message: row.get(2)?,
+        last_heartbeat_ms: row.get::<_, i64>(3)? as u64,
+        updated_ms: row.get::<_, i64>(4)? as u64,
+    })
+}
+
 fn loop_bound_violations(usage: &JobLoopUsage, limits: &JobLoopLimits) -> Vec<String> {
     let mut violations = Vec::new();
     if limits.max_steps.is_some_and(|limit| usage.steps > limit) {
@@ -2201,6 +2514,8 @@ fn parse_status(status: &str) -> QueueJobStatus {
         "approval_denied" => QueueJobStatus::ApprovalDenied,
         "approval_expired" => QueueJobStatus::ApprovalExpired,
         "loop_budget_exceeded" => QueueJobStatus::LoopBudgetExceeded,
+        "loop_stall_escalated" => QueueJobStatus::LoopStallEscalated,
+        "loop_stall_terminated" => QueueJobStatus::LoopStallTerminated,
         "retry_wait" => QueueJobStatus::RetryWait,
         "running" => QueueJobStatus::Running,
         "succeeded" => QueueJobStatus::Succeeded,
@@ -2208,6 +2523,13 @@ fn parse_status(status: &str) -> QueueJobStatus {
         "dead_lettered" => QueueJobStatus::DeadLettered,
         "canceled" => QueueJobStatus::Canceled,
         _ => QueueJobStatus::Pending,
+    }
+}
+
+fn parse_stall_action(action: &str) -> JobStallAction {
+    match action {
+        "terminate" => JobStallAction::Terminate,
+        _ => JobStallAction::Escalate,
     }
 }
 
@@ -2978,6 +3300,74 @@ mod tests {
         assert!(queue
             .record_loop_usage_at(&job.id, 1, 1, 0.01, 0, "worker-a", 10_200)
             .is_err());
+    }
+
+    #[test]
+    fn durable_queue_escalates_or_terminates_stalled_loops_with_audit() {
+        let queue = DurableQueueRuntime::open_in_memory().unwrap();
+        let escalated = queue
+            .enqueue("agent_loop", serde_json::json!({"n": 1}), 1, 0.1, None, None)
+            .unwrap();
+        let terminated = queue
+            .enqueue("agent_loop", serde_json::json!({"n": 2}), 1, 0.1, None, None)
+            .unwrap();
+
+        queue
+            .set_stall_policy(&escalated.id, 1_000, JobStallAction::Escalate)
+            .unwrap();
+        queue
+            .set_stall_policy(&terminated.id, 1_000, JobStallAction::Terminate)
+            .unwrap();
+        queue
+            .record_loop_heartbeat_at(
+                &escalated.id,
+                "worker-a",
+                Some("step 1".to_string()),
+                10_000,
+            )
+            .unwrap();
+        queue
+            .record_loop_heartbeat_at(
+                &terminated.id,
+                "worker-b",
+                Some("step 1".to_string()),
+                20_000,
+            )
+            .unwrap();
+
+        let healthy = queue
+            .check_stall_at(&escalated.id, "watchdog", 10_500)
+            .unwrap();
+        assert!(!healthy.stalled);
+        assert_eq!(healthy.elapsed_ms, 500);
+
+        let stalled = queue
+            .check_stall_at(&escalated.id, "watchdog", 11_001)
+            .unwrap();
+        assert!(stalled.stalled);
+        assert_eq!(stalled.action_taken.as_deref(), Some("escalate"));
+        let job = queue.get(&escalated.id).unwrap().unwrap();
+        assert_eq!(job.status, QueueJobStatus::LoopStallEscalated);
+        assert_eq!(job.failure_kind.as_deref(), Some("loop_stalled"));
+        let audit = queue.job_audit_events(&escalated.id).unwrap();
+        assert_eq!(audit[0].event_kind, "loop_stalled_escalate");
+        assert_eq!(audit[0].status_after, "loop_stall_escalated");
+        assert!(audit[0]
+            .reason
+            .as_deref()
+            .unwrap_or_default()
+            .contains("elapsed_ms=1001"));
+
+        let terminated_check = queue
+            .check_stall_at(&terminated.id, "watchdog", 21_001)
+            .unwrap();
+        assert!(terminated_check.stalled);
+        assert_eq!(terminated_check.action_taken.as_deref(), Some("terminate"));
+        let job = queue.get(&terminated.id).unwrap().unwrap();
+        assert_eq!(job.status, QueueJobStatus::LoopStallTerminated);
+        let audit = queue.job_audit_events(&terminated.id).unwrap();
+        assert_eq!(audit[0].event_kind, "loop_stalled_terminate");
+        assert_eq!(audit[0].status_after, "loop_stall_terminated");
     }
 
     #[test]

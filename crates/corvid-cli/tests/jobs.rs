@@ -498,6 +498,130 @@ fn jobs_loop_limits_stop_over_budget_agent_jobs() {
 }
 
 #[test]
+fn jobs_loop_stall_policy_escalates_with_audit() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let state = dir.path().join("jobs.sqlite");
+
+    let enqueue = Command::new(corvid_bin())
+        .args([
+            "jobs",
+            "enqueue",
+            "--state",
+            state.to_str().unwrap(),
+            "--task",
+            "daily_brief_agent",
+            "--payload",
+            "{\"user\":\"u1\"}",
+        ])
+        .output()
+        .expect("run jobs enqueue");
+    assert!(
+        enqueue.status.success(),
+        "enqueue failed:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&enqueue.stdout),
+        String::from_utf8_lossy(&enqueue.stderr)
+    );
+
+    let heartbeat = Command::new(corvid_bin())
+        .args([
+            "jobs",
+            "loop",
+            "heartbeat",
+            "--state",
+            state.to_str().unwrap(),
+            "--job",
+            "job_1",
+            "--actor",
+            "worker-a",
+            "--message",
+            "planning",
+        ])
+        .output()
+        .expect("record heartbeat");
+    assert!(
+        heartbeat.status.success(),
+        "heartbeat failed:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&heartbeat.stdout),
+        String::from_utf8_lossy(&heartbeat.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&heartbeat.stdout);
+    assert!(stdout.contains("corvid jobs loop heartbeat"), "{stdout}");
+    assert!(stdout.contains("actor: worker-a"), "{stdout}");
+
+    let policy = Command::new(corvid_bin())
+        .args([
+            "jobs",
+            "loop",
+            "stall-policy",
+            "--state",
+            state.to_str().unwrap(),
+            "--job",
+            "job_1",
+            "--stall-after-ms",
+            "1",
+            "--action",
+            "escalate",
+        ])
+        .output()
+        .expect("set stall policy");
+    assert!(
+        policy.status.success(),
+        "stall policy failed:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&policy.stdout),
+        String::from_utf8_lossy(&policy.stderr)
+    );
+
+    std::thread::sleep(std::time::Duration::from_millis(5));
+    let check = Command::new(corvid_bin())
+        .args([
+            "jobs",
+            "loop",
+            "check-stall",
+            "--state",
+            state.to_str().unwrap(),
+            "--job",
+            "job_1",
+            "--actor",
+            "watchdog",
+        ])
+        .output()
+        .expect("check stall");
+    assert!(
+        check.status.success(),
+        "check stall failed:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&check.stdout),
+        String::from_utf8_lossy(&check.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&check.stdout);
+    assert!(stdout.contains("stalled: true"), "{stdout}");
+    assert!(stdout.contains("action_taken: escalate"), "{stdout}");
+    assert!(stdout.contains("status: loop_stall_escalated"), "{stdout}");
+    assert!(stdout.contains("failure_kind: loop_stalled"), "{stdout}");
+
+    let audit = Command::new(corvid_bin())
+        .args([
+            "jobs",
+            "approval",
+            "audit",
+            "--state",
+            state.to_str().unwrap(),
+            "--job",
+            "job_1",
+        ])
+        .output()
+        .expect("audit stall");
+    assert!(
+        audit.status.success(),
+        "audit failed:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&audit.stdout),
+        String::from_utf8_lossy(&audit.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&audit.stdout);
+    assert!(stdout.contains("event_kind: loop_stalled_escalate"), "{stdout}");
+    assert!(stdout.contains("status_after: loop_stall_escalated"), "{stdout}");
+}
+
+#[test]
 fn jobs_checkpoint_cli_records_agent_tool_and_partial_outputs() {
     let dir = tempfile::tempdir().expect("tempdir");
     let state = dir.path().join("jobs.sqlite");

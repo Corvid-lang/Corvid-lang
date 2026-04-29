@@ -1909,7 +1909,7 @@ A slice that fails any box rolls back to `[ ]`. The `[x]` is a contract, not a w
 - [ ] Durable job runner with enqueue, delay, cron, cancellation, concurrency limits, idempotency keys, retry/backoff, dead-letter queue, and job leases.
 - [ ] Scheduler manifest visible to `corvid audit`: every recurring task has owner, effect set, max runtime, max cost, replay policy, and approval policy.
 - [ ] Durable agent run state: step checkpoints, tool-call results, approval waits, resume-after-crash, and replayable finalization.
-- [ ] Loop controls: max steps, max wall time, max spend, max tool calls, and escalation-on-stall.
+- [x] Loop controls: max steps, max wall time, max spend, max tool calls, and escalation-on-stall.
 - [ ] AI-native integration: every job carries a budget, effect row, provenance policy, and trace lineage; dangerous jobs cannot run without an approval boundary.
 - [ ] Operational controls: pause queue, drain workers, inspect job, retry job, cancel job, and export job trace.
 
@@ -1922,7 +1922,7 @@ A slice that fails any box rolls back to `[ ]`. The `[x]` is a contract, not a w
 - [x] 38E-leases-concurrency-idempotency Jobs use leases, concurrency limits, and idempotency keys to avoid duplicate dangerous work.
 - [x] 38F-agent-step-checkpoints     Durable agent runs checkpoint steps, tool-call results, and partial outputs.
 - [x] 38G-approval-wait-resume       Jobs can pause on approval, resume after approve/deny/expire, and record the audit transition.
-- [ ] 38H-loop-bounds                Max steps, wall time, spend, and tool calls are enforced for job-backed agent loops.
+- [x] 38H-loop-bounds                Max steps, wall time, spend, and tool calls are enforced for job-backed agent loops.
 - [ ] 38I-job-ops-commands           Operators can pause queues, drain workers, inspect, retry, cancel, and export job traces.
 - [ ] 38J-executive-agent-jobs       Personal Executive Agent daily brief, meeting prep, triage, and follow-up jobs survive process restart.
 
@@ -1996,7 +1996,7 @@ corvid jobs drain --workers=all
 - [x] 38G1-approval-wait-state       Jobs can enter approval-wait state with expiry.
 - [x] 38G2-approval-resume           Approve/deny/expire transitions resume or stop jobs and write audit events.
 - [x] 38H1-loop-budget-controls      Max steps, wall time, spend, and tool-call limits are enforced.
-- [ ] 38H2-stall-escalation          Stalled loops escalate or terminate with trace evidence.
+- [x] 38H2-stall-escalation          Stalled loops escalate or terminate with trace evidence.
 - [ ] 38I1-job-ops-cli               Pause/drain/inspect/retry/cancel/export commands work locally.
 - [ ] 38J1-exec-agent-job-spec       Personal Executive Agent job definitions are written and checked.
 - [ ] 38J2-exec-agent-restart-proof  Daily brief/meeting prep/follow-up jobs survive restart in tests.
