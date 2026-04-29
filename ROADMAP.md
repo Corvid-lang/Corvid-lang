@@ -2453,7 +2453,7 @@ corvid run --target=server --mode=real             # real-provider mode behind e
 - [x] 43G-developer-docs             Backend tutorial, Personal Executive Agent tutorial, connector guide, approval guide, observability guide, and production checklist are complete.
 - [ ] 43H-beta-program               At least 20 external developers build real backend apps; feedback is closed as code/docs/tests or explicit non-scope.
 - [x] 43I-final-claim-audit          README, website, launch page, docs, and `corvid claim --explain` use the same defensible claims.
-- [ ] 43J-launch-package             Signed binaries, install scripts, changelog, checksums, reproducible notes, demo scripts, and incident contacts are ready.
+- [x] 43J-launch-package             Signed binaries, install scripts, changelog, checksums, reproducible notes, demo scripts, and incident contacts are ready.
 
 **v1.0 final cut here. Launch day.** Corvid goes online only after the defensible core and the production-backend track are both complete.
 
@@ -2518,8 +2518,8 @@ corvid claim audit                           # AI-assisted final claim audit (ad
 - [ ] 43H2-beta-closure              Beta feedback is closed as code/docs/tests or explicit non-scope.
 - [x] 43I1-claim-inventory           README, website, launch page, docs, and `corvid claim --explain` claims are inventoried.
 - [x] 43I2-claim-alignment           All launch claims align with runnable artifacts and no aspirational wording remains.
-- [ ] 43J1-release-artifacts         Signed binaries, install scripts, checksums, changelog, and reproducible notes are ready.
-- [ ] 43J2-launch-rehearsal          Demo scripts, incident contacts, rollback plan, and final smoke tests are complete.
+- [x] 43J1-release-artifacts         Signed binaries, install scripts, checksums, changelog, and reproducible notes are ready.
+- [x] 43J2-launch-rehearsal          Demo scripts, incident contacts, rollback plan, and final smoke tests are complete.
 
 ---
 

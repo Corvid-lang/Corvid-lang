@@ -39,6 +39,16 @@ pub fn run_release(channel: &str, version: Option<&str>, out: &Path) -> Result<(
     fs::write(out.join(changelog_name), &changelog).context("write release changelog")?;
 
     let binary_name = file_name(&binary_path)?;
+    fs::write(out.join("install.sh"), render_install_sh(&binary_name))
+        .context("write unix install script")?;
+    fs::write(out.join("install.ps1"), render_install_ps1(&binary_name))
+        .context("write powershell install script")?;
+    fs::write(out.join("REPRODUCIBLE.md"), render_reproducible(normalized, &version))
+        .context("write reproducible build notes")?;
+    fs::write(out.join("DEMO.md"), render_demo_script()).context("write demo script")?;
+    fs::write(out.join("INCIDENT_CONTACTS.md"), render_incident_contacts())
+        .context("write incident contacts")?;
+    fs::write(out.join("ROLLBACK.md"), render_rollback()).context("write rollback plan")?;
     let checksums = format!("{binary_sha256}  {binary_name}\n");
     fs::write(out.join("SHA256SUMS.txt"), checksums).context("write release checksums")?;
 
@@ -66,6 +76,7 @@ pub fn run_release(channel: &str, version: Option<&str>, out: &Path) -> Result<(
     println!("version: {version}");
     println!("binary: {}", binary_path.display());
     println!("checksums: {}", out.join("SHA256SUMS.txt").display());
+    println!("install: {}", out.join("install.sh").display());
     println!("manifest: {}", out.join("release-manifest.json").display());
     println!(
         "attestation: {}",
@@ -106,18 +117,7 @@ fn validate_version(channel: &str, version: &str) -> Result<()> {
 
 fn copy_current_binary(channel: &str, version: &str, out: &Path) -> Result<PathBuf> {
     let current = std::env::current_exe().context("locate current corvid binary")?;
-    let ext = std::env::consts::EXE_EXTENSION;
-    let suffix = if ext.is_empty() {
-        String::new()
-    } else {
-        format!(".{ext}")
-    };
-    let target = out.join(format!(
-        "corvid-{channel}-{version}-{}-{}{}",
-        std::env::consts::OS,
-        std::env::consts::ARCH,
-        suffix
-    ));
+    let target = out.join(binary_file_name_for(channel, version));
     fs::copy(&current, &target).with_context(|| {
         format!(
             "copy release binary `{}` to `{}`",
@@ -126,6 +126,20 @@ fn copy_current_binary(channel: &str, version: &str, out: &Path) -> Result<PathB
         )
     })?;
     Ok(target)
+}
+
+fn binary_file_name_for(channel: &str, version: &str) -> String {
+    let base = format!(
+        "corvid-{channel}-{version}-{}-{}",
+        std::env::consts::OS,
+        std::env::consts::ARCH
+    );
+    let ext = std::env::consts::EXE_EXTENSION;
+    if ext.is_empty() {
+        base
+    } else {
+        format!("{base}.{ext}")
+    }
 }
 
 fn file_name(path: &Path) -> Result<String> {
@@ -153,6 +167,85 @@ Channel: {channel}
 This release follows `docs/release-policy.md`. Any breaking change must appear in the upgrade report and migration guide.
 "#
     )
+}
+
+fn render_install_sh(binary_name: &str) -> String {
+    format!(
+        r#"#!/usr/bin/env sh
+set -eu
+prefix="${{CORVID_INSTALL_PREFIX:-/usr/local/bin}}"
+mkdir -p "$prefix"
+cp "./{binary_name}" "$prefix/corvid"
+chmod 0755 "$prefix/corvid"
+"#
+    )
+}
+
+fn render_install_ps1(binary_name: &str) -> String {
+    format!(
+        r#"$ErrorActionPreference = "Stop"
+$prefix = if ($env:CORVID_INSTALL_PREFIX) {{ $env:CORVID_INSTALL_PREFIX }} else {{ "$env:LOCALAPPDATA\Corvid\bin" }}
+New-Item -ItemType Directory -Force -Path $prefix | Out-Null
+Copy-Item ".\{binary_name}" (Join-Path $prefix "corvid.exe") -Force
+"#
+    )
+}
+
+fn render_reproducible(channel: &str, version: &str) -> String {
+    format!(
+        r#"# Reproducible Build Notes
+
+Channel: {channel}
+Version: {version}
+
+Required verification:
+
+```bash
+cargo build -p corvid-cli --release
+sha256sum target/release/corvid
+sha256sum -c SHA256SUMS.txt
+corvid claim audit --json
+```
+
+A stable release needs an independent rebuild report before public launch. If the rebuilt hash differs, attach compiler version, host OS, linker, target triple, and environment diff to the release issue.
+"#
+    )
+}
+
+fn render_demo_script() -> &'static str {
+    r#"# Launch Demo Script
+
+1. `corvid check examples/backend/personal_executive_agent/src/main.cor`
+2. `corvid audit examples/backend/personal_executive_agent/src/main.cor --json`
+3. `corvid deploy package examples/backend/personal_executive_agent --out target/pea-package`
+4. `corvid release beta 1.0.0-beta.1 --out target/release/beta`
+5. `corvid claim audit --json`
+
+The demo must show approval-gated external writes, deploy artifacts, release artifacts, and claim-audit alignment.
+"#
+}
+
+fn render_incident_contacts() -> &'static str {
+    r#"# Incident Contacts
+
+- Release owner: record in `release-manifest.json`
+- Security owner: record in the release issue
+- Claim-audit owner: record in the release issue
+- Rollback owner: record in the release issue
+
+Do not publish stable artifacts without named owners.
+"#
+}
+
+fn render_rollback() -> &'static str {
+    r#"# Rollback Plan
+
+1. Stop promoting the affected channel.
+2. Preserve binaries, checksums, SBOM, and attestations for investigation.
+3. Publish rollback note with affected versions and workaround.
+4. Cut patched nightly or beta from a fixed commit.
+5. Re-run release, upgrade, deploy, and claim-audit checks.
+"#
 }
 
 fn stability_for(channel: &str) -> &'static str {

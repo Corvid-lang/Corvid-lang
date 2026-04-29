@@ -802,6 +802,25 @@ fn claim_audit_inventory_is_machine_checked_and_aligned() {
 }
 
 #[test]
+fn launch_rehearsal_documents_release_artifacts_incidents_and_rollback() {
+    let rehearsal = fs::read_to_string(repo_root().join("docs").join("launch-rehearsal.md"))
+        .expect("read launch rehearsal");
+    for required in [
+        "## Smoke Commands",
+        "## Generated Release Files",
+        "## Incident Contacts",
+        "## Rollback",
+        "release-attestation.dsse.json",
+        "install.sh",
+        "install.ps1",
+        "REPRODUCIBLE.md",
+        "corvid claim audit --json",
+    ] {
+        assert!(rehearsal.contains(required), "missing {required}");
+    }
+}
+
+#[test]
 fn deploy_package_emits_dockerfile_and_oci_metadata() {
     let temp = tempfile::tempdir().expect("tempdir");
     let app = repo_root()
@@ -916,6 +935,22 @@ fn release_command_emits_signed_artifacts_and_changelog() {
     assert!(changelog.contains("Corvid 1.0.0-beta.1"));
     assert!(changelog.contains("corvid upgrade --check"));
     assert!(changelog.contains("corvid claim audit"));
+    for artifact in [
+        "install.sh",
+        "install.ps1",
+        "REPRODUCIBLE.md",
+        "DEMO.md",
+        "INCIDENT_CONTACTS.md",
+        "ROLLBACK.md",
+    ] {
+        assert!(out.join(artifact).is_file(), "missing {artifact}");
+    }
+    let reproducible =
+        fs::read_to_string(out.join("REPRODUCIBLE.md")).expect("read reproducible notes");
+    assert!(reproducible.contains("sha256sum -c SHA256SUMS.txt"));
+    let demo = fs::read_to_string(out.join("DEMO.md")).expect("read demo script");
+    assert!(demo.contains("personal_executive_agent"));
+    assert!(demo.contains("corvid claim audit --json"));
 
     let attestation_text = fs::read_to_string(out.join("release-attestation.dsse.json"))
         .expect("read release attestation");
