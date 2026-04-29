@@ -1,0 +1,3 @@
+# Per-stack summaries are regenerated on every run (locally and in CI).
+# RESULTS.md is the drift-gated artifact; _summary.json files are not.
+runs/*/_summary.json

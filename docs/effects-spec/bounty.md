@@ -128,6 +128,31 @@ threaded metadata, or convention-only `# sources kept here` markers do not
 count. The point is whether a downstream consumer can extract provenance
 *without reading the implementation*.
 
+### `benches/moat/replay_determinism/` — deterministic re-execution of `refund_bot_demo`
+
+Current published numbers:
+
+- Corvid (`cargo run -p refund_bot_demo`, N=20, normalized): **all pairs byte-identical**.
+- Python (LangChain + LangSmith): **bounty-open** — no `_summary.json` yet.
+- TypeScript (Vercel AI SDK + OTEL): **bounty-open** — no `_summary.json` yet.
+
+The harness invokes the same agent N times against mocked tools and a
+mocked LLM, normalizes wall-clock and run-id fields per the documented
+rules, and asks whether all N traces are byte-identical pairwise.
+
+A submission counts if it provides an idiomatic Python or TypeScript
+implementation of the same agent (contract in
+`benches/moat/replay_determinism/runs/corvid/agent_spec.md`) plus a
+runner that loops N times, captures the stack-native trace artifact,
+applies its documented normalization, and emits `_summary.json` in
+the standard shape. The orchestrator re-renders `RESULTS.md` and
+the headline updates accordingly.
+
+Submissions are rejected if the normalization rules paper over real
+divergence (e.g. stripping retry counters or attempt IDs that
+genuinely vary across runs). The point is what the stack ships out
+of the box — not how aggressively a reviewer can normalize.
+
 ### Window
 
 The bounty window is rolling. The published numbers are
