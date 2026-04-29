@@ -2019,7 +2019,7 @@ corvid jobs drain --workers=all
 
 **Slice checklist:**
 
-- [ ] 39A-auth-approval-design-brief `docs/phase-39-auth-approval.md` defines identity, tenant, session, approval, threat, and non-scope models.
+- [x] 39A-auth-approval-design-brief `docs/phase-39-auth-approval.md` defines identity, tenant, session, approval, threat, and non-scope models.
 - [ ] 39B-session-api-key-auth        `std.auth` supports sessions and API keys with typed actor propagation into routes and traces.
 - [ ] 39C-jwt-oauth-callbacks        JWT verification and OAuth callback handling work for connector authorization flows.
 - [ ] 39D-tenant-role-permissions    User, organization, role, and permission checks propagate through routes, jobs, tools, and traces.
