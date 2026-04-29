@@ -2102,7 +2102,7 @@ corvid approvals export --since=2026-04-01  # audit dump
 - [x] 39D1-tenant-role-model         User/org/role/permission records and helpers are typed.
 - [x] 39D2-permission-propagation    Permissions propagate through routes, jobs, tools, and traces.
 - [x] 39E1-approval-store            Approval queue persistence schema and stdlib envelopes exist.
-- [ ] 39E2-approval-api              Create/list/inspect/approve/deny/expire/comment/delegate APIs work.
+- [x] 39E2-approval-api              Create/list/inspect/approve/deny/expire/comment/delegate APIs work.
 - [ ] 39E3-approval-audit            Every approval transition writes audit and trace evidence.
 - [ ] 39F1-contract-generation       Dangerous tools generate typed approval contract records.
 - [ ] 39F2-contract-policy-check     Required role/expiry/irreversibility/cost/data rules are enforced.

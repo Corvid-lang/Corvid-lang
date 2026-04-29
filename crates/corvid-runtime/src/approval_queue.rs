@@ -223,7 +223,7 @@ impl ApprovalQueueRuntime {
         let mut stmt = conn
             .prepare(
                 "select id, approval_id, tenant_id, actor_id, event_kind, status_before, status_after, reason, trace_id, created_ms
-                 from approval_queue_audit where approval_id = ?1 order by created_ms, id",
+                 from approval_queue_audit where approval_id = ?1 order by rowid",
             )
             .map_err(sqlite_error)?;
         let rows = stmt
@@ -234,6 +234,114 @@ impl ApprovalQueueRuntime {
             events.push(row.map_err(sqlite_error)?);
         }
         Ok(events)
+    }
+
+    pub fn approve(
+        &self,
+        id: &str,
+        tenant_id: &str,
+        actor_id: &str,
+        reason: Option<&str>,
+    ) -> Result<ApprovalQueueRecord, RuntimeError> {
+        self.transition_status(id, tenant_id, actor_id, "approved", "approved", reason)
+    }
+
+    pub fn deny(
+        &self,
+        id: &str,
+        tenant_id: &str,
+        actor_id: &str,
+        reason: Option<&str>,
+    ) -> Result<ApprovalQueueRecord, RuntimeError> {
+        self.transition_status(id, tenant_id, actor_id, "denied", "denied", reason)
+    }
+
+    pub fn expire(
+        &self,
+        id: &str,
+        tenant_id: &str,
+        actor_id: &str,
+        reason: Option<&str>,
+        at_ms: u64,
+    ) -> Result<ApprovalQueueRecord, RuntimeError> {
+        let existing = self.require_pending(id, tenant_id)?;
+        if at_ms < existing.expires_ms {
+            return Err(RuntimeError::Other(
+                "approval cannot expire before contract expiry".to_string(),
+            ));
+        }
+        self.transition_status_at(id, tenant_id, actor_id, "expired", "expired", reason, at_ms)
+    }
+
+    pub fn comment(
+        &self,
+        id: &str,
+        tenant_id: &str,
+        actor_id: &str,
+        comment: &str,
+    ) -> Result<ApprovalQueueAuditEvent, RuntimeError> {
+        validate_value("comment", comment)?;
+        let existing = self.require_tenant(id, tenant_id)?;
+        let now = now_ms();
+        let mut conn = self.conn.lock().unwrap();
+        let tx = conn.transaction().map_err(sqlite_error)?;
+        insert_audit_tx(
+            &tx,
+            id,
+            tenant_id,
+            actor_id,
+            "commented",
+            &existing.status,
+            &existing.status,
+            Some(comment),
+            &existing.trace_id,
+            now,
+        )?;
+        tx.commit().map_err(sqlite_error)?;
+        drop(conn);
+        self.audit_events(id)?
+            .into_iter()
+            .rev()
+            .find(|event| event.event_kind == "commented")
+            .ok_or_else(|| RuntimeError::Other(format!("approval `{id}` comment audit not found")))
+    }
+
+    pub fn delegate(
+        &self,
+        id: &str,
+        tenant_id: &str,
+        actor_id: &str,
+        delegated_to_actor_id: &str,
+        reason: Option<&str>,
+    ) -> Result<ApprovalQueueRecord, RuntimeError> {
+        validate_value("delegated actor id", delegated_to_actor_id)?;
+        let existing = self.require_pending(id, tenant_id)?;
+        let now = now_ms();
+        let mut conn = self.conn.lock().unwrap();
+        let tx = conn.transaction().map_err(sqlite_error)?;
+        tx.execute(
+            "update approval_queue
+             set delegated_to_actor_id = ?3, updated_ms = ?4
+             where id = ?1 and tenant_id = ?2 and status = 'pending'",
+            params![id, tenant_id, delegated_to_actor_id, now as i64],
+        )
+        .map_err(sqlite_error)?;
+        insert_audit_tx(
+            &tx,
+            id,
+            tenant_id,
+            actor_id,
+            "delegated",
+            &existing.status,
+            &existing.status,
+            reason,
+            &existing.trace_id,
+            now,
+        )?;
+        tx.commit().map_err(sqlite_error)?;
+        drop(conn);
+        self.get(id)?
+            .ok_or_else(|| RuntimeError::Other(format!("approval `{id}` not found")))
     }
 
     fn init(&self) -> Result<(), RuntimeError> {
@@ -299,6 +407,100 @@ impl ApprovalQueueRuntime {
             )
             .map_err(sqlite_error)
     }
+
+    fn transition_status(
+        &self,
+        id: &str,
+        tenant_id: &str,
+        actor_id: &str,
+        event_kind: &str,
+        status_after: &str,
+        reason: Option<&str>,
+    ) -> Result<ApprovalQueueRecord, RuntimeError> {
+        self.transition_status_at(
+            id,
+            tenant_id,
+            actor_id,
+            event_kind,
+            status_after,
+            reason,
+            now_ms(),
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn transition_status_at(
+        &self,
+        id: &str,
+        tenant_id: &str,
+        actor_id: &str,
+        event_kind: &str,
+        status_after: &str,
+        reason: Option<&str>,
+        at_ms: u64,
+    ) -> Result<ApprovalQueueRecord, RuntimeError> {
+        validate_value("approval id", id)?;
+        validate_value("tenant id", tenant_id)?;
+        validate_value("actor id", actor_id)?;
+        let existing = self.require_pending(id, tenant_id)?;
+        let mut conn = self.conn.lock().unwrap();
+        let tx = conn.transaction().map_err(sqlite_error)?;
+        tx.execute(
+            "update approval_queue
+             set status = ?4, approver_actor_id = ?3, updated_ms = ?5
+             where id = ?1 and tenant_id = ?2 and status = 'pending'",
+            params![id, tenant_id, actor_id, status_after, at_ms as i64],
+        )
+        .map_err(sqlite_error)?;
+        insert_audit_tx(
+            &tx,
+            id,
+            tenant_id,
+            actor_id,
+            event_kind,
+            &existing.status,
+            status_after,
+            reason,
+            &existing.trace_id,
+            at_ms,
+        )?;
+        tx.commit().map_err(sqlite_error)?;
+        drop(conn);
+        self.get(id)?
+            .ok_or_else(|| RuntimeError::Other(format!("approval `{id}` not found")))
+    }
+
+    fn require_tenant(
+        &self,
+        id: &str,
+        tenant_id: &str,
+    ) -> Result<ApprovalQueueRecord, RuntimeError> {
+        validate_value("approval id", id)?;
+        validate_value("tenant id", tenant_id)?;
+        let approval = self
+            .get(id)?
+            .ok_or_else(|| RuntimeError::Other(format!("approval `{id}` not found")))?;
+        if approval.tenant_id != tenant_id {
+            return Err(RuntimeError::Other(
+                "approval tenant mismatch".to_string(),
+            ));
+        }
+        Ok(approval)
+    }
+
+    fn require_pending(
+        &self,
+        id: &str,
+        tenant_id: &str,
+    ) -> Result<ApprovalQueueRecord, RuntimeError> {
+        let approval = self.require_tenant(id, tenant_id)?;
+        if approval.status != "pending" {
+            return Err(RuntimeError::Other(format!(
+                "approval `{id}` is not pending"
+            )));
+        }
+        Ok(approval)
+    }
 }
 
 fn validate_create(input: &ApprovalCreate) -> Result<(), RuntimeError> {
@@ -326,6 +528,14 @@ fn validate_create(input: &ApprovalCreate) -> Result<(), RuntimeError> {
         ));
     }
     Ok(())
+}
+
+fn validate_value(label: &str, value: &str) -> Result<(), RuntimeError> {
+    if value.trim().is_empty() {
+        Err(RuntimeError::Other(format!("{label} must not be empty")))
+    } else {
+        Ok(())
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -493,5 +703,120 @@ mod tests {
             })
             .unwrap_err();
         assert!(err.to_string().contains("expiry"));
+    }
+
+    #[test]
+    fn approval_api_transitions_comment_and_delegate_work_transactionally() {
+        let queue = ApprovalQueueRuntime::open_in_memory().unwrap();
+        let approval = queue
+            .create(ApprovalCreate {
+                id: "approval-1".to_string(),
+                tenant_id: "org-1".to_string(),
+                requester_actor_id: "user-1".to_string(),
+                contract: contract(now_ms().saturating_add(60_000)),
+                risk_level: "external_side_effect".to_string(),
+                trace_id: "trace-1".to_string(),
+            })
+            .unwrap();
+
+        let comment = queue
+            .comment(&approval.id, "org-1", "reviewer-1", "looks safe after redaction")
+            .unwrap();
+        assert_eq!(comment.event_kind, "commented");
+        assert_eq!(comment.status_before, "pending");
+        assert_eq!(comment.status_after, "pending");
+
+        let delegated = queue
+            .delegate(
+                &approval.id,
+                "org-1",
+                "reviewer-1",
+                "reviewer-2",
+                Some("handoff to owner"),
+            )
+            .unwrap();
+        assert_eq!(delegated.status, "pending");
+        assert_eq!(
+            delegated.delegated_to_actor_id.as_deref(),
+            Some("reviewer-2")
+        );
+
+        let approved = queue
+            .approve(&approval.id, "org-1", "reviewer-2", Some("approved"))
+            .unwrap();
+        assert_eq!(approved.status, "approved");
+        assert_eq!(approved.approver_actor_id.as_deref(), Some("reviewer-2"));
+        assert!(queue
+            .deny(&approval.id, "org-1", "reviewer-3", Some("too late"))
+            .unwrap_err()
+            .to_string()
+            .contains("not pending"));
+
+        let audit = queue.audit_events(&approval.id).unwrap();
+        assert_eq!(
+            audit
+                .iter()
+                .map(|event| event.event_kind.as_str())
+                .collect::<Vec<_>>(),
+            vec!["created", "commented", "delegated", "approved"]
+        );
+    }
+
+    #[test]
+    fn approval_api_denies_and_expires_fail_closed() {
+        let queue = ApprovalQueueRuntime::open_in_memory().unwrap();
+        let denial = queue
+            .create(ApprovalCreate {
+                id: "approval-deny".to_string(),
+                tenant_id: "org-1".to_string(),
+                requester_actor_id: "user-1".to_string(),
+                contract: contract(now_ms().saturating_add(60_000)),
+                risk_level: "external_side_effect".to_string(),
+                trace_id: "trace-deny".to_string(),
+            })
+            .unwrap();
+        let denied = queue
+            .deny(&denial.id, "org-1", "reviewer-1", Some("insufficient context"))
+            .unwrap();
+        assert_eq!(denied.status, "denied");
+
+        let expires_ms = now_ms().saturating_add(1_000);
+        let expiring = queue
+            .create(ApprovalCreate {
+                id: "approval-expire".to_string(),
+                tenant_id: "org-1".to_string(),
+                requester_actor_id: "user-1".to_string(),
+                contract: contract(expires_ms),
+                risk_level: "external_side_effect".to_string(),
+                trace_id: "trace-expire".to_string(),
+            })
+            .unwrap();
+        assert!(queue
+            .expire(
+                &expiring.id,
+                "org-1",
+                "system",
+                Some("too early"),
+                expires_ms - 1,
+            )
+            .unwrap_err()
+            .to_string()
+            .contains("before contract expiry"));
+        let expired = queue
+            .expire(
+                &expiring.id,
+                "org-1",
+                "system",
+                Some("deadline passed"),
+                expires_ms,
+            )
+            .unwrap();
+        assert_eq!(expired.status, "expired");
+
+        assert!(queue
+            .approve(&expiring.id, "org-2", "reviewer-1", None)
+            .unwrap_err()
+            .to_string()
+            .contains("tenant"));
     }
 }
