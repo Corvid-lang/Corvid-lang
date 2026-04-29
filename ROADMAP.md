@@ -1995,7 +1995,7 @@ corvid jobs drain --workers=all
 - [x] 38F2-resume-agent-run          Agent run resumes from last checkpoint after crash.
 - [x] 38G1-approval-wait-state       Jobs can enter approval-wait state with expiry.
 - [x] 38G2-approval-resume           Approve/deny/expire transitions resume or stop jobs and write audit events.
-- [ ] 38H1-loop-budget-controls      Max steps, wall time, spend, and tool-call limits are enforced.
+- [x] 38H1-loop-budget-controls      Max steps, wall time, spend, and tool-call limits are enforced.
 - [ ] 38H2-stall-escalation          Stalled loops escalate or terminate with trace evidence.
 - [ ] 38I1-job-ops-cli               Pause/drain/inspect/retry/cancel/export commands work locally.
 - [ ] 38J1-exec-agent-job-spec       Personal Executive Agent job definitions are written and checked.

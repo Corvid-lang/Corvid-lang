@@ -338,6 +338,166 @@ fn jobs_idempotency_key_collapses_duplicate_enqueue() {
 }
 
 #[test]
+fn jobs_loop_limits_stop_over_budget_agent_jobs() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let state = dir.path().join("jobs.sqlite");
+
+    let enqueue = Command::new(corvid_bin())
+        .args([
+            "jobs",
+            "enqueue",
+            "--state",
+            state.to_str().unwrap(),
+            "--task",
+            "daily_brief_agent",
+            "--payload",
+            "{\"user\":\"u1\"}",
+            "--budget-usd",
+            "0.20",
+            "--effect-summary",
+            "llm+tools",
+            "--replay-key",
+            "replay:brief:u1",
+        ])
+        .output()
+        .expect("run jobs enqueue");
+    assert!(
+        enqueue.status.success(),
+        "enqueue failed:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&enqueue.stdout),
+        String::from_utf8_lossy(&enqueue.stderr)
+    );
+
+    let limits = Command::new(corvid_bin())
+        .args([
+            "jobs",
+            "loop",
+            "limits",
+            "--state",
+            state.to_str().unwrap(),
+            "--job",
+            "job_1",
+            "--max-steps",
+            "2",
+            "--max-wall-ms",
+            "1000",
+            "--max-spend-usd",
+            "0.20",
+            "--max-tool-calls",
+            "1",
+        ])
+        .output()
+        .expect("set loop limits");
+    assert!(
+        limits.status.success(),
+        "limits failed:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&limits.stdout),
+        String::from_utf8_lossy(&limits.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&limits.stdout);
+    assert!(stdout.contains("corvid jobs loop limits"), "{stdout}");
+    assert!(stdout.contains("max_steps: 2"), "{stdout}");
+    assert!(stdout.contains("max_spend_usd: 0.200000"), "{stdout}");
+
+    let within = Command::new(corvid_bin())
+        .args([
+            "jobs",
+            "loop",
+            "record",
+            "--state",
+            state.to_str().unwrap(),
+            "--job",
+            "job_1",
+            "--steps",
+            "1",
+            "--wall-ms",
+            "300",
+            "--spend-usd",
+            "0.05",
+            "--tool-calls",
+            "1",
+            "--actor",
+            "worker-a",
+        ])
+        .output()
+        .expect("record loop usage");
+    assert!(
+        within.status.success(),
+        "record within failed:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&within.stdout),
+        String::from_utf8_lossy(&within.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&within.stdout);
+    assert!(stdout.contains("violated_bound_count: 0"), "{stdout}");
+    assert!(stdout.contains("status: pending"), "{stdout}");
+
+    let exceeded = Command::new(corvid_bin())
+        .args([
+            "jobs",
+            "loop",
+            "record",
+            "--state",
+            state.to_str().unwrap(),
+            "--job",
+            "job_1",
+            "--steps",
+            "2",
+            "--wall-ms",
+            "800",
+            "--spend-usd",
+            "0.16",
+            "--tool-calls",
+            "1",
+            "--actor",
+            "worker-a",
+        ])
+        .output()
+        .expect("record over-budget usage");
+    assert!(
+        exceeded.status.success(),
+        "record exceeded failed:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&exceeded.stdout),
+        String::from_utf8_lossy(&exceeded.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&exceeded.stdout);
+    assert!(stdout.contains("violated_bound_count: 4"), "{stdout}");
+    assert!(stdout.contains("violated_bound: max_steps:3>2"), "{stdout}");
+    assert!(stdout.contains("violated_bound: max_wall_ms:1100>1000"), "{stdout}");
+    assert!(stdout.contains("violated_bound: max_spend_usd:0.210000>0.200000"), "{stdout}");
+    assert!(stdout.contains("violated_bound: max_tool_calls:2>1"), "{stdout}");
+    assert!(stdout.contains("status: loop_budget_exceeded"), "{stdout}");
+    assert!(stdout.contains("failure_kind: loop_bound_exceeded"), "{stdout}");
+
+    let audit = Command::new(corvid_bin())
+        .args([
+            "jobs",
+            "approval",
+            "audit",
+            "--state",
+            state.to_str().unwrap(),
+            "--job",
+            "job_1",
+        ])
+        .output()
+        .expect("audit loop violation");
+    assert!(
+        audit.status.success(),
+        "audit failed:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&audit.stdout),
+        String::from_utf8_lossy(&audit.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&audit.stdout);
+    assert!(stdout.contains("event_kind: loop_bound_exceeded"), "{stdout}");
+    assert!(stdout.contains("status_after: loop_budget_exceeded"), "{stdout}");
+
+    let conn = Connection::open(&state).expect("open jobs db");
+    let status: String = conn
+        .query_row("select status from queue_jobs where id = 'job_1'", [], |row| row.get(0))
+        .expect("read status");
+    assert_eq!(status, "loop_budget_exceeded");
+}
+
+#[test]
 fn jobs_checkpoint_cli_records_agent_tool_and_partial_outputs() {
     let dir = tempfile::tempdir().expect("tempdir");
     let state = dir.path().join("jobs.sqlite");

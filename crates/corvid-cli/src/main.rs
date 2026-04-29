@@ -58,8 +58,8 @@ use corvid_differential_verify::{
     render_corpus_grid, render_report, shrink_program, verify_corpus,
 };
 use corvid_runtime::queue::{
-    DurableQueueRuntime, JobApprovalDecision, JobCheckpointKind, QueueJob, QueueScheduleManifest,
-    ScheduleMissedPolicy,
+    DurableQueueRuntime, JobApprovalDecision, JobCheckpointKind, JobLoopLimits, JobLoopUsage,
+    QueueJob, QueueScheduleManifest, ScheduleMissedPolicy,
 };
 use cost_frontier::{build_frontier, render_frontier as render_cost_frontier, CostFrontierOptions};
 use routing_report::{build_report, render_report as render_routing_report, RoutingReportOptions};
@@ -1337,6 +1337,35 @@ fn main_impl() -> ExitCode {
                 } => cmd_jobs_approval_decide(&state, &job, &approval_id, decision, &actor, reason),
                 JobsApprovalCommand::Audit { state, job } => cmd_jobs_approval_audit(&state, &job),
             },
+            JobsCommand::Loop { command } => match command {
+                JobsLoopCommand::Limits {
+                    state,
+                    job,
+                    max_steps,
+                    max_wall_ms,
+                    max_spend_usd,
+                    max_tool_calls,
+                } => cmd_jobs_loop_limits(
+                    &state,
+                    &job,
+                    max_steps,
+                    max_wall_ms,
+                    max_spend_usd,
+                    max_tool_calls,
+                ),
+                JobsLoopCommand::Record {
+                    state,
+                    job,
+                    steps,
+                    wall_ms,
+                    spend_usd,
+                    tool_calls,
+                    actor,
+                } => cmd_jobs_loop_record(
+                    &state, &job, steps, wall_ms, spend_usd, tool_calls, &actor,
+                ),
+                JobsLoopCommand::Usage { state, job } => cmd_jobs_loop_usage(&state, &job),
+            },
             JobsCommand::Schedule { command } => match command {
                 JobsScheduleCommand::Add {
                     state,
@@ -1727,6 +1756,77 @@ fn cmd_jobs_approval_audit(state: &Path, job_id: &str) -> Result<u8> {
     Ok(0)
 }
 
+fn cmd_jobs_loop_limits(
+    state: &Path,
+    job_id: &str,
+    max_steps: Option<u64>,
+    max_wall_ms: Option<u64>,
+    max_spend_usd: Option<f64>,
+    max_tool_calls: Option<u64>,
+) -> Result<u8> {
+    let queue = DurableQueueRuntime::open(state)?;
+    let limits = queue.set_loop_limits(
+        job_id,
+        max_steps,
+        max_wall_ms,
+        max_spend_usd,
+        max_tool_calls,
+    )?;
+    println!("corvid jobs loop limits");
+    println!("state: {}", state.display());
+    print_loop_limits(&limits);
+    Ok(0)
+}
+
+fn cmd_jobs_loop_record(
+    state: &Path,
+    job_id: &str,
+    steps: u64,
+    wall_ms: u64,
+    spend_usd: f64,
+    tool_calls: u64,
+    actor: &str,
+) -> Result<u8> {
+    let queue = DurableQueueRuntime::open(state)?;
+    let report = queue.record_loop_usage(job_id, steps, wall_ms, spend_usd, tool_calls, actor)?;
+    println!("corvid jobs loop record");
+    println!("state: {}", state.display());
+    print_loop_usage(&report.usage);
+    println!("violated_bound_count: {}", report.violated_bounds.len());
+    for bound in report.violated_bounds {
+        println!("violated_bound: {bound}");
+    }
+    if let Some(job) = queue.get(job_id)? {
+        println!("status: {}", job.status.as_str());
+        println!(
+            "failure_kind: {}",
+            job.failure_kind.as_deref().unwrap_or("")
+        );
+        println!(
+            "failure_fingerprint: {}",
+            job.failure_fingerprint.as_deref().unwrap_or("")
+        );
+    }
+    Ok(0)
+}
+
+fn cmd_jobs_loop_usage(state: &Path, job_id: &str) -> Result<u8> {
+    let queue = DurableQueueRuntime::open(state)?;
+    println!("corvid jobs loop usage");
+    println!("state: {}", state.display());
+    if let Some(limits) = queue.loop_limits(job_id)? {
+        print_loop_limits(&limits);
+    } else {
+        println!("limits: none");
+    }
+    if let Some(usage) = queue.loop_usage(job_id)? {
+        print_loop_usage(&usage);
+    } else {
+        println!("usage: none");
+    }
+    Ok(0)
+}
+
 fn cmd_jobs_dlq(state: &Path) -> Result<u8> {
     let queue = DurableQueueRuntime::open(state)?;
     let jobs = queue.dead_lettered()?;
@@ -1932,6 +2032,48 @@ fn print_checkpoint_summary(checkpoint: &corvid_runtime::queue::JobCheckpoint) {
         checkpoint.payload_fingerprint.as_deref().unwrap_or("")
     );
     println!("created_ms: {}", checkpoint.created_ms);
+}
+
+fn print_loop_limits(limits: &JobLoopLimits) {
+    println!("job: {}", limits.job_id);
+    println!(
+        "max_steps: {}",
+        limits
+            .max_steps
+            .map(|value| value.to_string())
+            .unwrap_or_default()
+    );
+    println!(
+        "max_wall_ms: {}",
+        limits
+            .max_wall_ms
+            .map(|value| value.to_string())
+            .unwrap_or_default()
+    );
+    println!(
+        "max_spend_usd: {}",
+        limits
+            .max_spend_usd
+            .map(|value| format!("{value:.6}"))
+            .unwrap_or_default()
+    );
+    println!(
+        "max_tool_calls: {}",
+        limits
+            .max_tool_calls
+            .map(|value| value.to_string())
+            .unwrap_or_default()
+    );
+    println!("limits_updated_ms: {}", limits.updated_ms);
+}
+
+fn print_loop_usage(usage: &JobLoopUsage) {
+    println!("job: {}", usage.job_id);
+    println!("steps: {}", usage.steps);
+    println!("wall_ms: {}", usage.wall_ms);
+    println!("spend_usd: {:.6}", usage.spend_usd);
+    println!("tool_calls: {}", usage.tool_calls);
+    println!("usage_updated_ms: {}", usage.updated_ms);
 }
 
 fn print_schedule_summary(schedule: &QueueScheduleManifest) {
@@ -3349,6 +3491,11 @@ enum JobsCommand {
         #[command(subcommand)]
         command: JobsApprovalCommand,
     },
+    /// Configure and record bounded agent-loop usage.
+    Loop {
+        #[command(subcommand)]
+        command: JobsLoopCommand,
+    },
     /// Manage durable cron schedules and restart recovery.
     Schedule {
         #[command(subcommand)]
@@ -3448,6 +3595,64 @@ impl From<ApprovalDecisionArg> for JobApprovalDecision {
             ApprovalDecisionArg::Expire => JobApprovalDecision::Expire,
         }
     }
+}
+
+#[derive(Subcommand)]
+enum JobsLoopCommand {
+    /// Set max steps, wall time, spend, and tool-call limits for a job.
+    Limits {
+        /// SQLite state file used by the durable local queue.
+        #[arg(long, value_name = "PATH", default_value = "target/corvid-jobs.sqlite")]
+        state: PathBuf,
+        /// Job id to constrain.
+        #[arg(long)]
+        job: String,
+        /// Maximum agent-loop steps.
+        #[arg(long)]
+        max_steps: Option<u64>,
+        /// Maximum cumulative wall time in milliseconds.
+        #[arg(long)]
+        max_wall_ms: Option<u64>,
+        /// Maximum cumulative spend in USD.
+        #[arg(long)]
+        max_spend_usd: Option<f64>,
+        /// Maximum cumulative tool calls.
+        #[arg(long)]
+        max_tool_calls: Option<u64>,
+    },
+    /// Add usage deltas after one bounded agent-loop step.
+    Record {
+        /// SQLite state file used by the durable local queue.
+        #[arg(long, value_name = "PATH", default_value = "target/corvid-jobs.sqlite")]
+        state: PathBuf,
+        /// Job id to update.
+        #[arg(long)]
+        job: String,
+        /// Step delta to add.
+        #[arg(long, default_value = "0")]
+        steps: u64,
+        /// Wall-time delta in milliseconds.
+        #[arg(long, default_value = "0")]
+        wall_ms: u64,
+        /// Spend delta in USD.
+        #[arg(long, default_value = "0")]
+        spend_usd: f64,
+        /// Tool-call delta to add.
+        #[arg(long, default_value = "0")]
+        tool_calls: u64,
+        /// Worker or runtime actor recording the usage.
+        #[arg(long, default_value = "corvid-loop-runtime")]
+        actor: String,
+    },
+    /// Inspect current limits and cumulative usage for one job.
+    Usage {
+        /// SQLite state file used by the durable local queue.
+        #[arg(long, value_name = "PATH", default_value = "target/corvid-jobs.sqlite")]
+        state: PathBuf,
+        /// Job id to inspect.
+        #[arg(long)]
+        job: String,
+    },
 }
 
 #[derive(Subcommand)]

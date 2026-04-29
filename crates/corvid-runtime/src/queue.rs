@@ -3,7 +3,7 @@ use crate::tracing::now_ms;
 use chrono::{TimeZone, Utc};
 use chrono_tz::Tz;
 use cron::Schedule;
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, OptionalExtension};
 use serde_json::Value;
 use std::collections::BTreeMap;
 use std::str::FromStr;
@@ -17,6 +17,7 @@ pub enum QueueJobStatus {
     ApprovalWait,
     ApprovalDenied,
     ApprovalExpired,
+    LoopBudgetExceeded,
     RetryWait,
     Running,
     Succeeded,
@@ -33,6 +34,7 @@ impl QueueJobStatus {
             Self::ApprovalWait => "approval_wait",
             Self::ApprovalDenied => "approval_denied",
             Self::ApprovalExpired => "approval_expired",
+            Self::LoopBudgetExceeded => "loop_budget_exceeded",
             Self::RetryWait => "retry_wait",
             Self::Running => "running",
             Self::Succeeded => "succeeded",
@@ -195,6 +197,32 @@ pub struct JobAuditEvent {
     pub status_after: String,
     pub reason: Option<String>,
     pub created_ms: u64,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct JobLoopLimits {
+    pub job_id: String,
+    pub max_steps: Option<u64>,
+    pub max_wall_ms: Option<u64>,
+    pub max_spend_usd: Option<f64>,
+    pub max_tool_calls: Option<u64>,
+    pub updated_ms: u64,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct JobLoopUsage {
+    pub job_id: String,
+    pub steps: u64,
+    pub wall_ms: u64,
+    pub spend_usd: f64,
+    pub tool_calls: u64,
+    pub updated_ms: u64,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct JobLoopUsageReport {
+    pub usage: JobLoopUsage,
+    pub violated_bounds: Vec<String>,
 }
 
 #[derive(Clone, Default)]
@@ -721,6 +749,233 @@ impl DurableQueueRuntime {
             })?);
         }
         Ok(events)
+    }
+
+    pub fn set_loop_limits(
+        &self,
+        job_id: &str,
+        max_steps: Option<u64>,
+        max_wall_ms: Option<u64>,
+        max_spend_usd: Option<f64>,
+        max_tool_calls: Option<u64>,
+    ) -> Result<JobLoopLimits, RuntimeError> {
+        if self.get(job_id)?.is_none() {
+            return Err(RuntimeError::Other(format!("std.queue job `{job_id}` not found")));
+        }
+        let max_spend_usd = max_spend_usd.filter(|value| value.is_finite() && *value >= 0.0);
+        let now = now_ms();
+        self.conn
+            .lock()
+            .unwrap()
+            .execute(
+                "insert into queue_job_loop_limits
+                 (job_id, max_steps, max_wall_ms, max_spend_usd, max_tool_calls, updated_ms)
+                 values (?1, ?2, ?3, ?4, ?5, ?6)
+                 on conflict(job_id) do update set
+                    max_steps = excluded.max_steps,
+                    max_wall_ms = excluded.max_wall_ms,
+                    max_spend_usd = excluded.max_spend_usd,
+                    max_tool_calls = excluded.max_tool_calls,
+                    updated_ms = excluded.updated_ms",
+                params![
+                    job_id,
+                    max_steps.map(|value| value as i64),
+                    max_wall_ms.map(|value| value as i64),
+                    max_spend_usd,
+                    max_tool_calls.map(|value| value as i64),
+                    now as i64,
+                ],
+            )
+            .map_err(|err| RuntimeError::Other(format!("failed to set loop limits: {err}")))?;
+        self.loop_limits(job_id)?
+            .ok_or_else(|| RuntimeError::Other(format!("std.queue loop limits for `{job_id}` not found")))
+    }
+
+    pub fn loop_limits(&self, job_id: &str) -> Result<Option<JobLoopLimits>, RuntimeError> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn
+            .prepare(
+                "select job_id, max_steps, max_wall_ms, max_spend_usd, max_tool_calls, updated_ms
+                 from queue_job_loop_limits where job_id = ?1",
+            )
+            .map_err(|err| RuntimeError::Other(format!("failed to prepare loop limit read: {err}")))?;
+        let mut rows = stmt
+            .query(params![job_id])
+            .map_err(|err| RuntimeError::Other(format!("failed to query loop limits: {err}")))?;
+        if let Some(row) = rows
+            .next()
+            .map_err(|err| RuntimeError::Other(format!("failed to read loop limit row: {err}")))?
+        {
+            Ok(Some(read_loop_limits_row(row).map_err(|err| {
+                RuntimeError::Other(format!("failed to decode loop limits: {err}"))
+            })?))
+        } else {
+            Ok(None)
+        }
+    }
+
+    pub fn loop_usage(&self, job_id: &str) -> Result<Option<JobLoopUsage>, RuntimeError> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn
+            .prepare(
+                "select job_id, steps, wall_ms, spend_usd, tool_calls, updated_ms
+                 from queue_job_loop_usage where job_id = ?1",
+            )
+            .map_err(|err| RuntimeError::Other(format!("failed to prepare loop usage read: {err}")))?;
+        let mut rows = stmt
+            .query(params![job_id])
+            .map_err(|err| RuntimeError::Other(format!("failed to query loop usage: {err}")))?;
+        if let Some(row) = rows
+            .next()
+            .map_err(|err| RuntimeError::Other(format!("failed to read loop usage row: {err}")))?
+        {
+            Ok(Some(read_loop_usage_row(row).map_err(|err| {
+                RuntimeError::Other(format!("failed to decode loop usage: {err}"))
+            })?))
+        } else {
+            Ok(None)
+        }
+    }
+
+    pub fn record_loop_usage(
+        &self,
+        job_id: &str,
+        step_delta: u64,
+        wall_ms_delta: u64,
+        spend_usd_delta: f64,
+        tool_call_delta: u64,
+        actor: impl Into<String>,
+    ) -> Result<JobLoopUsageReport, RuntimeError> {
+        self.record_loop_usage_at(
+            job_id,
+            step_delta,
+            wall_ms_delta,
+            spend_usd_delta,
+            tool_call_delta,
+            actor,
+            now_ms(),
+        )
+    }
+
+    pub fn record_loop_usage_at(
+        &self,
+        job_id: &str,
+        step_delta: u64,
+        wall_ms_delta: u64,
+        spend_usd_delta: f64,
+        tool_call_delta: u64,
+        actor: impl Into<String>,
+        now: u64,
+    ) -> Result<JobLoopUsageReport, RuntimeError> {
+        let actor = actor.into();
+        if actor.trim().is_empty() {
+            return Err(RuntimeError::Other(
+                "std.queue loop usage actor must not be empty".to_string(),
+            ));
+        }
+        let spend_usd_delta = if spend_usd_delta.is_finite() && spend_usd_delta > 0.0 {
+            spend_usd_delta
+        } else {
+            0.0
+        };
+        let mut conn = self.conn.lock().unwrap();
+        let tx = conn
+            .transaction()
+            .map_err(|err| RuntimeError::Other(format!("failed to start loop usage transaction: {err}")))?;
+        let status_before = tx
+            .query_row(
+                "select status from queue_jobs where id = ?1",
+                params![job_id],
+                |row| row.get::<_, String>(0),
+            )
+            .map_err(|err| RuntimeError::Other(format!("std.queue job `{job_id}` not found or unreadable: {err}")))?;
+        if matches!(
+            parse_status(&status_before),
+            QueueJobStatus::Succeeded
+                | QueueJobStatus::DeadLettered
+                | QueueJobStatus::Canceled
+                | QueueJobStatus::ApprovalDenied
+                | QueueJobStatus::ApprovalExpired
+                | QueueJobStatus::LoopBudgetExceeded
+        ) {
+            return Err(RuntimeError::Other(format!(
+                "std.queue job `{job_id}` is terminal and cannot record loop usage"
+            )));
+        }
+        tx.execute(
+            "insert into queue_job_loop_usage
+             (job_id, steps, wall_ms, spend_usd, tool_calls, updated_ms)
+             values (?1, ?2, ?3, ?4, ?5, ?6)
+             on conflict(job_id) do update set
+                steps = steps + excluded.steps,
+                wall_ms = wall_ms + excluded.wall_ms,
+                spend_usd = spend_usd + excluded.spend_usd,
+                tool_calls = tool_calls + excluded.tool_calls,
+                updated_ms = excluded.updated_ms",
+            params![
+                job_id,
+                step_delta as i64,
+                wall_ms_delta as i64,
+                spend_usd_delta,
+                tool_call_delta as i64,
+                now as i64,
+            ],
+        )
+        .map_err(|err| RuntimeError::Other(format!("failed to record loop usage: {err}")))?;
+        let usage = tx
+            .query_row(
+                "select job_id, steps, wall_ms, spend_usd, tool_calls, updated_ms
+                 from queue_job_loop_usage where job_id = ?1",
+                params![job_id],
+                read_loop_usage_row,
+            )
+            .map_err(|err| RuntimeError::Other(format!("failed to read loop usage after update: {err}")))?;
+        let limits = tx
+            .query_row(
+                "select job_id, max_steps, max_wall_ms, max_spend_usd, max_tool_calls, updated_ms
+                 from queue_job_loop_limits where job_id = ?1",
+                params![job_id],
+                read_loop_limits_row,
+            )
+            .optional()
+            .map_err(|err| RuntimeError::Other(format!("failed to read loop limits after update: {err}")))?;
+        let violated_bounds = limits
+            .as_ref()
+            .map(|limits| loop_bound_violations(&usage, limits))
+            .unwrap_or_default();
+        if !violated_bounds.is_empty() {
+            let reason = violated_bounds.join(",");
+            tx.execute(
+                "update queue_jobs
+                 set status = 'loop_budget_exceeded',
+                     failure_kind = 'loop_bound_exceeded',
+                     failure_fingerprint = ?2,
+                     next_run_ms = null,
+                     lease_owner = null,
+                     lease_expires_ms = null,
+                     updated_ms = ?3
+                 where id = ?1",
+                params![job_id, reason, now as i64],
+            )
+            .map_err(|err| RuntimeError::Other(format!("failed to stop loop-bound job: {err}")))?;
+            insert_job_audit_event(
+                &tx,
+                job_id,
+                "loop_bound_exceeded",
+                &actor,
+                None,
+                &status_before,
+                QueueJobStatus::LoopBudgetExceeded.as_str(),
+                Some(&reason),
+                now,
+            )?;
+        }
+        tx.commit()
+            .map_err(|err| RuntimeError::Other(format!("failed to commit loop usage: {err}")))?;
+        Ok(JobLoopUsageReport {
+            usage,
+            violated_bounds,
+        })
     }
 
     pub fn upsert_schedule(
@@ -1669,7 +1924,23 @@ impl DurableQueueRuntime {
                     reason text,
                     created_ms integer not null
                 );
-                create index if not exists queue_job_audit_events_job on queue_job_audit_events(job_id, created_ms);",
+                create index if not exists queue_job_audit_events_job on queue_job_audit_events(job_id, created_ms);
+                create table if not exists queue_job_loop_limits (
+                    job_id text primary key,
+                    max_steps integer,
+                    max_wall_ms integer,
+                    max_spend_usd real,
+                    max_tool_calls integer,
+                    updated_ms integer not null
+                );
+                create table if not exists queue_job_loop_usage (
+                    job_id text primary key,
+                    steps integer not null,
+                    wall_ms integer not null,
+                    spend_usd real not null,
+                    tool_calls integer not null,
+                    updated_ms integer not null
+                );",
             )
             .map_err(|err| {
                 RuntimeError::Other(format!("failed to initialize durable queue: {err}"))
@@ -1823,6 +2094,67 @@ fn read_job_audit_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<JobAuditEvent
     })
 }
 
+fn read_loop_limits_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<JobLoopLimits> {
+    Ok(JobLoopLimits {
+        job_id: row.get(0)?,
+        max_steps: row.get::<_, Option<i64>>(1)?.map(|value| value as u64),
+        max_wall_ms: row.get::<_, Option<i64>>(2)?.map(|value| value as u64),
+        max_spend_usd: row.get(3)?,
+        max_tool_calls: row.get::<_, Option<i64>>(4)?.map(|value| value as u64),
+        updated_ms: row.get::<_, i64>(5)? as u64,
+    })
+}
+
+fn read_loop_usage_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<JobLoopUsage> {
+    Ok(JobLoopUsage {
+        job_id: row.get(0)?,
+        steps: row.get::<_, i64>(1)? as u64,
+        wall_ms: row.get::<_, i64>(2)? as u64,
+        spend_usd: row.get(3)?,
+        tool_calls: row.get::<_, i64>(4)? as u64,
+        updated_ms: row.get::<_, i64>(5)? as u64,
+    })
+}
+
+fn loop_bound_violations(usage: &JobLoopUsage, limits: &JobLoopLimits) -> Vec<String> {
+    let mut violations = Vec::new();
+    if limits.max_steps.is_some_and(|limit| usage.steps > limit) {
+        violations.push(format!(
+            "max_steps:{}>{}",
+            usage.steps,
+            limits.max_steps.unwrap()
+        ));
+    }
+    if limits.max_wall_ms.is_some_and(|limit| usage.wall_ms > limit) {
+        violations.push(format!(
+            "max_wall_ms:{}>{}",
+            usage.wall_ms,
+            limits.max_wall_ms.unwrap()
+        ));
+    }
+    if limits
+        .max_spend_usd
+        .is_some_and(|limit| usage.spend_usd > limit)
+    {
+        violations.push(format!(
+            "max_spend_usd:{:.6}>{:.6}",
+            usage.spend_usd,
+            limits.max_spend_usd.unwrap()
+        ));
+    }
+    if limits
+        .max_tool_calls
+        .is_some_and(|limit| usage.tool_calls > limit)
+    {
+        violations.push(format!(
+            "max_tool_calls:{}>{}",
+            usage.tool_calls,
+            limits.max_tool_calls.unwrap()
+        ));
+    }
+    violations
+}
+
 fn insert_job_audit_event(
     tx: &rusqlite::Transaction<'_>,
     job_id: &str,
@@ -1868,6 +2200,7 @@ fn parse_status(status: &str) -> QueueJobStatus {
         "approval_wait" => QueueJobStatus::ApprovalWait,
         "approval_denied" => QueueJobStatus::ApprovalDenied,
         "approval_expired" => QueueJobStatus::ApprovalExpired,
+        "loop_budget_exceeded" => QueueJobStatus::LoopBudgetExceeded,
         "retry_wait" => QueueJobStatus::RetryWait,
         "running" => QueueJobStatus::Running,
         "succeeded" => QueueJobStatus::Succeeded,
@@ -2580,6 +2913,71 @@ mod tests {
         let expired_events = queue.job_audit_events(&expired.id).unwrap();
         assert_eq!(expired_events[0].event_kind, "approval_expire");
         assert_eq!(expired_events[0].status_after, "approval_expired");
+    }
+
+    #[test]
+    fn durable_queue_enforces_loop_budget_limits_with_audit() {
+        let queue = DurableQueueRuntime::open_in_memory().unwrap();
+        let job = queue
+            .enqueue(
+                "daily_brief_agent",
+                serde_json::json!({"user": "u1"}),
+                1,
+                0.20,
+                Some("llm+tools".to_string()),
+                Some("replay:brief:u1".to_string()),
+            )
+            .unwrap();
+        queue
+            .set_loop_limits(&job.id, Some(3), Some(1_000), Some(0.20), Some(2))
+            .unwrap();
+
+        let first = queue
+            .record_loop_usage_at(&job.id, 1, 250, 0.05, 1, "worker-a", 10_000)
+            .unwrap();
+        assert!(first.violated_bounds.is_empty());
+        assert_eq!(first.usage.steps, 1);
+        assert_eq!(queue.get(&job.id).unwrap().unwrap().status, QueueJobStatus::Pending);
+
+        let exceeded = queue
+            .record_loop_usage_at(&job.id, 3, 900, 0.16, 2, "worker-a", 10_100)
+            .unwrap();
+        assert_eq!(exceeded.usage.steps, 4);
+        assert_eq!(exceeded.usage.wall_ms, 1_150);
+        assert_eq!(exceeded.usage.tool_calls, 3);
+        assert!(exceeded
+            .violated_bounds
+            .iter()
+            .any(|bound| bound.starts_with("max_steps:4>3")));
+        assert!(exceeded
+            .violated_bounds
+            .iter()
+            .any(|bound| bound.starts_with("max_wall_ms:1150>1000")));
+        assert!(exceeded
+            .violated_bounds
+            .iter()
+            .any(|bound| bound.starts_with("max_spend_usd:0.210000>0.200000")));
+        assert!(exceeded
+            .violated_bounds
+            .iter()
+            .any(|bound| bound.starts_with("max_tool_calls:3>2")));
+
+        let stopped = queue.get(&job.id).unwrap().unwrap();
+        assert_eq!(stopped.status, QueueJobStatus::LoopBudgetExceeded);
+        assert_eq!(stopped.failure_kind.as_deref(), Some("loop_bound_exceeded"));
+        assert!(stopped
+            .failure_fingerprint
+            .as_deref()
+            .unwrap_or_default()
+            .contains("max_steps:4>3"));
+        let audit = queue.job_audit_events(&job.id).unwrap();
+        assert_eq!(audit.len(), 1);
+        assert_eq!(audit[0].event_kind, "loop_bound_exceeded");
+        assert_eq!(audit[0].actor, "worker-a");
+        assert_eq!(audit[0].status_after, "loop_budget_exceeded");
+        assert!(queue
+            .record_loop_usage_at(&job.id, 1, 1, 0.01, 0, "worker-a", 10_200)
+            .is_err());
     }
 
     #[test]
