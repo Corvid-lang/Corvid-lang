@@ -566,7 +566,7 @@ fn backend_personal_executive_agent_jobs_typecheck() {
         .and_then(std::path::Path::parent)
         .expect("repo root");
     fs::create_dir_all(dir.path().join("std")).unwrap();
-    for module in ["jobs.cor", "effects.cor", "agent.cor", "auth.cor"] {
+    for module in ["jobs.cor", "effects.cor", "agent.cor", "auth.cor", "approvals.cor"] {
         fs::copy(repo.join("std").join(module), dir.path().join("std").join(module))
             .unwrap_or_else(|e| panic!("copy std/{module}: {e}"));
     }

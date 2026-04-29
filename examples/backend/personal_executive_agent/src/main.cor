@@ -2,6 +2,7 @@ import "./std/jobs" use JobInputEnvelope, JobOutputEnvelope, JobRetryPolicy, Job
 import "./std/effects" use EffectEnvelope, effect_envelope, replay_safe, approval_required
 import "./std/agent" use PlanStep, ActionRequest, ReviewVerdict, plan_step, action_request, review_verdict
 import "./std/auth" use Actor, SessionRef, ApiKeyRef, AuthTraceContext, AuthDecision, user_actor, service_actor, session_ref, api_key_ref, auth_trace_for_session, auth_trace_for_api_key, allow_permission, deny_permission, session_active, api_key_active, auth_trace_same_tenant
+import "./std/approvals" use ApprovalContractRef, ApprovalQueueItem, ApprovalAuditEnvelope, approval_contract_ref, approval_queue_item, approval_audit_envelope, approval_pending, approval_same_tenant, approval_not_expired, approval_redacted
 
 effect inbox_read:
     cost: $0.04
@@ -87,6 +88,34 @@ public type AuthStatusResponse:
     permission: String
     reason: String
     replay_key: String
+
+public type FollowUpSendRequest:
+    tenant_id: String
+    actor_id: String
+    thread_id: String
+    recipient: String
+    body_fingerprint: String
+    approval_id: String
+    trace_id: String
+
+public type FollowUpSendReceipt:
+    message_id: String
+    tenant_id: String
+    thread_id: String
+    approval_id: String
+    trace_id: String
+    status: String
+
+public type ExecutiveApprovalProduct:
+    approval: ApprovalQueueItem
+    audit: ApprovalAuditEnvelope
+    action: ActionRequest
+    review: ReviewVerdict
+    tenant_safe: Bool
+    auditable: Bool
+    ready_to_execute: Bool
+
+tool send_follow_up_email(req: FollowUpSendRequest) -> FollowUpSendReceipt dangerous uses send_email
 
 public @replayable
 agent executive_contract(job_kind: String, user_id: String, window_key: String, approval_label: String, needs_review: Bool) -> ExecutiveJobContract:
@@ -174,6 +203,29 @@ agent api_key_auth_status(actor_id: String, tenant_id: String, trace_id: String)
     denied = deny_permission(actor, trace, "executive.jobs.write", "api key inactive")
     return AuthStatusResponse(actor, actor.tenant_id, false, denied.permission, denied.reason, trace.replay_key)
 
+public @replayable
+agent follow_up_approval_contract(tenant_id: String, thread_id: String, trace_id: String) -> ApprovalContractRef:
+    return approval_contract_ref("follow-up:" + thread_id, "v1", "SendExecutiveFollowUp", "email_thread", thread_id, tenant_id, "Reviewer", 0.25, "private", true, 4102444800000, "approval:follow_up:" + trace_id)
+
+public @replayable
+agent follow_up_approval_product(auth: AuthStatusResponse, thread_id: String, trace_id: String) -> ExecutiveApprovalProduct:
+    contract = follow_up_approval_contract(auth.tenant_id, thread_id, trace_id)
+    item = approval_queue_item("approval:" + thread_id, auth.tenant_id, auth.actor.id, contract, "external_side_effect", trace_id)
+    audit = approval_audit_envelope("audit:" + thread_id, item.id, item.tenant_id, auth.actor.id, "created", "", "pending", "approval opened for outbound follow-up", trace_id, 1)
+    action = action_request("send_follow_up_email", "thread:" + thread_id, "SendFollowUpEmail", true)
+    review = review_verdict(true, "", "tenant, expiry, redaction, and approval audit are present")
+    tenant_safe = auth.authenticated and approval_same_tenant(item, auth.tenant_id)
+    auditable = approval_pending(item) and approval_not_expired(item, 1) and approval_redacted(item, audit)
+    return ExecutiveApprovalProduct(item, audit, action, review, tenant_safe, auditable, tenant_safe and auditable and action.ready)
+
+agent execute_approved_follow_up(req: FollowUpSendRequest) -> FollowUpSendReceipt uses send_email:
+    approve SendFollowUpEmail(req)
+    return send_follow_up_email(req)
+
+public @replayable
+agent approval_product_contract_valid(product: ExecutiveApprovalProduct) -> Bool:
+    return product.tenant_safe and product.auditable and product.ready_to_execute and product.review.accepted and product.action.approval_label == "SendFollowUpEmail"
+
 server personal_executive_agent_api:
     route POST "/auth/session/login" body LoginRequest -> json LoginResponse:
         return session_login(body)
@@ -183,6 +235,11 @@ server personal_executive_agent_api:
         return auth_status("user-1", "tenant-1", "trace-auth-status")
     route GET "/auth/api-key/status" -> json AuthStatusResponse:
         return api_key_auth_status("service-1", "tenant-1", "trace-api-key-status")
+    route GET "/approvals/follow-up" -> json ExecutiveApprovalProduct:
+        auth = auth_status("user-1", "tenant-1", "trace-approval-open")
+        return follow_up_approval_product(auth, "thread-1", "trace-approval-open")
+    route POST "/actions/follow-up/send" body FollowUpSendRequest -> json FollowUpSendReceipt uses send_email:
+        return execute_approved_follow_up(body)
 
 schedule "0 7 * * 1-5" zone "America/New_York" -> daily_brief_job("active_users", "business_day") uses inbox_read, calendar_read, executive_llm
 schedule "0 6 * * 1-5" zone "America/New_York" -> meeting_prep_job("active_users", "business_day") uses inbox_read, calendar_read, executive_llm
@@ -196,4 +253,5 @@ agent main() -> Bool:
     follow = follow_up_job("user-1", "thread-1")
     auth = auth_status("user-1", "tenant-1", "trace-main-auth")
     service_auth = api_key_auth_status("service-1", "tenant-1", "trace-main-api-key")
-    return executive_job_contract_valid(brief) and executive_job_contract_valid(prep) and executive_job_contract_valid(triage) and executive_job_contract_valid(follow) and executive_job_needs_human_before_external_send(follow) and auth.authenticated and service_auth.authenticated
+    approval_product = follow_up_approval_product(auth, "thread-1", "trace-main-approval")
+    return executive_job_contract_valid(brief) and executive_job_contract_valid(prep) and executive_job_contract_valid(triage) and executive_job_contract_valid(follow) and executive_job_needs_human_before_external_send(follow) and auth.authenticated and service_auth.authenticated and approval_product_contract_valid(approval_product)

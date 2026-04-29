@@ -2014,21 +2014,21 @@ corvid jobs drain --workers=all
 - [ ] Approval queue API: create, list, inspect, approve, deny, expire, comment, delegate, and audit approvals.
 - [ ] Typed approval contracts generated from dangerous tools: expected action, target resource, max cost, data touched, irreversible flag, expiry, and required approver role.
 - [ ] Approval UI contract: backend serves enough structured data for any frontend to render approvals without reverse-engineering traces.
-- [ ] AI-native integration: compiler rejects dangerous route/job/tool paths that have no reachable approval contract.
-- [ ] Security tests for confused-deputy approval bypass, tenant-crossing approval reuse, stale approval replay, and privilege escalation.
+- [x] AI-native integration: compiler rejects dangerous route/job/tool paths that have no reachable approval contract.
+- [x] Security tests for confused-deputy approval bypass, tenant-crossing approval reuse, stale approval replay, and privilege escalation.
 
 **Slice checklist:**
 
 - [x] 39A-auth-approval-design-brief `docs/phase-39-auth-approval.md` defines identity, tenant, session, approval, threat, and non-scope models.
 - [x] 39B-session-api-key-auth        `std.auth` supports sessions and API keys with typed actor propagation into routes and traces.
-- [ ] 39C-jwt-oauth-callbacks        JWT verification and OAuth callback handling work for connector authorization flows.
+- [x] 39C-jwt-oauth-callbacks        JWT verification and OAuth callback handling work for connector authorization flows.
 - [x] 39D-tenant-role-permissions    User, organization, role, and permission checks propagate through routes, jobs, tools, and traces.
 - [x] 39E-approval-queue-api         Approval create/list/inspect/approve/deny/expire/comment/delegate APIs ship with tests.
 - [x] 39F-generated-approval-contracts Dangerous tools generate typed approval contracts with target, cost, data, expiry, irreversibility, and required role.
 - [x] 39G-approval-ui-contract       Backend exposes structured approval payloads that any frontend can render without parsing traces.
 - [x] 39H-compiler-approval-reachability Compiler rejects dangerous route/job/tool paths with no reachable approval contract.
 - [x] 39I-security-bypass-tests      Tests cover confused-deputy approval bypass, tenant-crossing approval reuse, stale approval replay, and privilege escalation.
-- [ ] 39J-approval-product-example   Reference backend exposes real login, tenant-safe approvals, and auditable AI actions.
+- [x] 39J-approval-product-example   Reference backend exposes real login, tenant-safe approvals, and auditable AI actions.
 
 **Done when:** a backend can expose real user login, tenant-safe approvals, and auditable AI actions without outsourcing the core safety model to another framework.
 
@@ -2111,7 +2111,7 @@ corvid approvals export --since=2026-04-01  # audit dump
 - [x] 39H1-reachability-analysis     Compiler checks route/job/tool paths for reachable approvals.
 - [x] 39H2-reachability-bypass-tests Confused-deputy, tenant-crossing, stale replay, and privilege escalation tests fail closed.
 - [x] 39J1-auth-example              Reference backend has login/API-key auth.
-- [ ] 39J2-approval-product-example  Reference backend exposes tenant-safe approvals and auditable AI actions.
+- [x] 39J2-approval-product-example  Reference backend exposes tenant-safe approvals and auditable AI actions.
 
 ### Phase 40 — Agent observability, evals, and production monitoring (~6-8 weeks)
 

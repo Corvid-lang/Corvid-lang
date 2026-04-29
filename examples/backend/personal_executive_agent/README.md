@@ -30,6 +30,21 @@ The backend also declares production-shaped auth routes in `src/main.cor`:
 All auth responses use `std/auth` envelopes so tenant, actor, permission
 fingerprints, replay keys, and redaction are part of the typed backend contract.
 
+## Approval Product Flow
+
+The example exposes the outbound follow-up path as a tenant-safe approval
+product:
+
+- `GET /approvals/follow-up` returns an approval queue item, audit envelope,
+  action request, reviewer verdict, and booleans proving tenant safety and audit
+  completeness.
+- `POST /actions/follow-up/send` is the dangerous external-send route. Its
+  handler must pass through `approve SendFollowUpEmail(...)` before calling the
+  `send_follow_up_email` tool.
+
+This keeps approval, audit, replay, tenant, and action metadata in typed Corvid
+source instead of relying on frontend-only conventions.
+
 ## Production Contract
 
 Each job carries:
@@ -42,6 +57,7 @@ Each job carries:
 - redacted input and output fingerprints
 - an effect envelope with provenance, cache, approval, and replay metadata
 - session and API-key auth envelopes with tenant-safe trace context
+- tenant-safe approval queue and audit envelopes for outbound AI actions
 
 The schedules in `src/main.cor` are first-class `schedule` declarations so
 `corvid audit` can report the cron manifest directly from source.
