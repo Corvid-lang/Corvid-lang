@@ -1,5 +1,5 @@
 use crate::auth::{ConnectorAuthError, ConnectorAuthState};
-use crate::manifest::{ConnectorManifest, ConnectorScope};
+use crate::manifest::{ConnectorManifest, ConnectorScope, ConnectorScopeApproval};
 use crate::rate_limit::{ConnectorRateLimit, ConnectorRateLimiter};
 use crate::trace::ConnectorTraceEvent;
 use serde_json::Value;
@@ -17,6 +17,7 @@ pub struct ConnectorRequest {
     pub scope_id: String,
     pub operation: String,
     pub payload: Value,
+    pub approval_id: String,
     pub replay_key: String,
     pub now_ms: u64,
 }
@@ -33,6 +34,7 @@ pub enum ConnectorRuntimeError {
     Auth(ConnectorAuthError),
     RateLimited { retry_after_ms: u64 },
     MissingMock(String),
+    ApprovalRequired(String),
     ReplayWriteQuarantined(String),
     RealModeNotBound(String),
 }
@@ -46,6 +48,9 @@ impl std::fmt::Display for ConnectorRuntimeError {
                 write!(f, "connector rate limited; retry after {retry_after_ms}ms")
             }
             Self::MissingMock(operation) => write!(f, "missing connector mock for `{operation}`"),
+            Self::ApprovalRequired(scope) => {
+                write!(f, "connector scope `{scope}` requires approval")
+            }
             Self::ReplayWriteQuarantined(operation) => {
                 write!(f, "replay mode quarantined write operation `{operation}`")
             }
@@ -107,6 +112,11 @@ impl ConnectorRuntime {
             .ok_or_else(|| ConnectorRuntimeError::UnknownScope(request.scope_id.clone()))?
             .clone();
         self.auth.authorize(&scope.id, request.now_ms)?;
+        if scope.approval == ConnectorScopeApproval::Required
+            && request.approval_id.trim().is_empty()
+        {
+            return Err(ConnectorRuntimeError::ApprovalRequired(scope.id));
+        }
         let decision = self.rate_limiter.check(
             &ConnectorRateLimit {
                 key: format!("{}:{}", self.auth.tenant_id, self.auth.actor_id),
@@ -162,6 +172,7 @@ impl ConnectorRuntime {
             scope: scope.id,
             effect_ids: scope.effects,
             data_classes: scope.data_classes,
+            approval_id: request.approval_id,
             replay_key: request.replay_key,
             latency_ms: 0,
             redacted: true,
@@ -254,6 +265,7 @@ policy = "quarantine_write"
                 scope_id: "gmail.read_metadata".to_string(),
                 operation: "read_metadata".to_string(),
                 payload: json!({}),
+                approval_id: String::new(),
                 replay_key: "replay-1".to_string(),
                 now_ms: 1,
             })
@@ -268,6 +280,7 @@ policy = "quarantine_write"
                 scope_id: "gmail.read_metadata".to_string(),
                 operation: "read_metadata".to_string(),
                 payload: json!({}),
+                approval_id: String::new(),
                 replay_key: "replay-2".to_string(),
                 now_ms: 2,
             })
@@ -283,6 +296,7 @@ policy = "quarantine_write"
                 scope_id: "gmail.send".to_string(),
                 operation: "send".to_string(),
                 payload: json!({"to": "a@example.com"}),
+                approval_id: "approval-1".to_string(),
                 replay_key: "replay-send".to_string(),
                 now_ms: 1,
             })

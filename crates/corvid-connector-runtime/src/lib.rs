@@ -8,8 +8,8 @@ pub mod trace;
 
 pub use auth::{ConnectorAuthError, ConnectorAuthState};
 pub use gmail::{
-    gmail_manifest, GmailConnector, GmailMessageMetadata, GmailSearchRequest,
-    GMAIL_CONNECTOR_MANIFEST,
+    gmail_manifest, GmailConnector, GmailDraftRequest, GmailMessageMetadata, GmailSearchRequest,
+    GmailSendRequest, GmailWriteReceipt, GMAIL_CONNECTOR_MANIFEST,
 };
 pub use manifest::{
     parse_connector_manifest, validate_connector_manifest, ConnectorManifest,

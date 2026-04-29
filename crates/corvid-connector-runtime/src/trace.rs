@@ -11,6 +11,7 @@ pub struct ConnectorTraceEvent {
     pub scope: String,
     pub effect_ids: Vec<String>,
     pub data_classes: Vec<String>,
+    pub approval_id: String,
     pub replay_key: String,
     pub latency_ms: u64,
     pub redacted: bool,

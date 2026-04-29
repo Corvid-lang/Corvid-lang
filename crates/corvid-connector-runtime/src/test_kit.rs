@@ -19,6 +19,8 @@ pub struct ConnectorFixture {
     pub request: Value,
     #[serde(default)]
     pub response: Value,
+    #[serde(default)]
+    pub approval_id: String,
     pub replay_key: String,
     pub now_ms: u64,
 }
@@ -77,6 +79,7 @@ fn run_mode(
         scope_id: fixture.scope_id.clone(),
         operation: fixture.operation.clone(),
         payload: fixture.request.clone(),
+        approval_id: fixture.approval_id.clone(),
         replay_key: fixture.replay_key.clone(),
         now_ms: fixture.now_ms,
     })?;
@@ -151,6 +154,7 @@ policy = "quarantine_write"
             operation: "read_metadata".to_string(),
             request: serde_json::json!({"q": "newer_than:1d"}),
             response: serde_json::json!({"messages": [{"id": "m1"}]}),
+            approval_id: String::new(),
             replay_key: "gmail:read:m1".to_string(),
             now_ms: 1,
         };
@@ -175,6 +179,7 @@ policy = "quarantine_write"
             operation: "send".to_string(),
             request: serde_json::json!({"to": "a@example.com"}),
             response: serde_json::json!({"id": "sent-1"}),
+            approval_id: "approval-1".to_string(),
             replay_key: "gmail:send:sent-1".to_string(),
             now_ms: 1,
         };
