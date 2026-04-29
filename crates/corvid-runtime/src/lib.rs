@@ -31,6 +31,7 @@
 
 pub mod abi;
 pub mod adversarial;
+pub mod approval_authorization;
 pub mod approval_policy;
 pub mod approval_queue;
 pub mod approval_ui;
@@ -102,6 +103,9 @@ pub use adversarial::{contradiction_flag, trace_text};
 pub use approvals::{
     ApprovalCard, ApprovalCardArgument, ApprovalDecision, ApprovalRequest, ApprovalRisk, Approver,
     ProgrammaticApprover, StdinApprover,
+};
+pub use approval_authorization::{
+    authorize_approval_transition, ApprovalActorContext, ApprovalTransitionKind,
 };
 pub use approval_queue::{
     ApprovalAuditCoverage, ApprovalContractRecord, ApprovalCreate, ApprovalQueueAuditEvent,

@@ -2027,7 +2027,7 @@ corvid jobs drain --workers=all
 - [x] 39F-generated-approval-contracts Dangerous tools generate typed approval contracts with target, cost, data, expiry, irreversibility, and required role.
 - [x] 39G-approval-ui-contract       Backend exposes structured approval payloads that any frontend can render without parsing traces.
 - [x] 39H-compiler-approval-reachability Compiler rejects dangerous route/job/tool paths with no reachable approval contract.
-- [ ] 39I-security-bypass-tests      Tests cover confused-deputy approval bypass, tenant-crossing approval reuse, stale approval replay, and privilege escalation.
+- [x] 39I-security-bypass-tests      Tests cover confused-deputy approval bypass, tenant-crossing approval reuse, stale approval replay, and privilege escalation.
 - [ ] 39J-approval-product-example   Reference backend exposes real login, tenant-safe approvals, and auditable AI actions.
 
 **Done when:** a backend can expose real user login, tenant-safe approvals, and auditable AI actions without outsourcing the core safety model to another framework.
@@ -2109,7 +2109,7 @@ corvid approvals export --since=2026-04-01  # audit dump
 - [x] 39G1-ui-payload-schema         Approval UI payload schema is stable and frontend-agnostic.
 - [x] 39G2-ui-contract-tests         Payloads can be rendered without parsing traces.
 - [x] 39H1-reachability-analysis     Compiler checks route/job/tool paths for reachable approvals.
-- [ ] 39H2-reachability-bypass-tests Confused-deputy, tenant-crossing, stale replay, and privilege escalation tests fail closed.
+- [x] 39H2-reachability-bypass-tests Confused-deputy, tenant-crossing, stale replay, and privilege escalation tests fail closed.
 - [ ] 39J1-auth-example              Reference backend has login/API-key auth.
 - [ ] 39J2-approval-product-example  Reference backend exposes tenant-safe approvals and auditable AI actions.
 

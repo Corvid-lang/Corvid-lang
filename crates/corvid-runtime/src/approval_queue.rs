@@ -1,6 +1,10 @@
+use crate::approval_authorization::{
+    authorize_approval_delegate_target, authorize_approval_transition, ApprovalActorContext,
+    ApprovalTransitionKind,
+};
+use crate::approval_policy::validate_approval_contract_policy_at;
 use crate::errors::RuntimeError;
 use crate::tracing::now_ms;
-use crate::approval_policy::validate_approval_contract_policy_at;
 use rusqlite::{params, Connection, OptionalExtension};
 use std::path::Path;
 use std::sync::Mutex;
@@ -212,7 +216,10 @@ impl ApprovalQueueRuntime {
             .map_err(sqlite_error)
     }
 
-    pub fn list_by_tenant(&self, tenant_id: &str) -> Result<Vec<ApprovalQueueRecord>, RuntimeError> {
+    pub fn list_by_tenant(
+        &self,
+        tenant_id: &str,
+    ) -> Result<Vec<ApprovalQueueRecord>, RuntimeError> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn
             .prepare(
@@ -296,20 +303,48 @@ impl ApprovalQueueRuntime {
         &self,
         id: &str,
         tenant_id: &str,
-        actor_id: &str,
+        actor: &ApprovalActorContext,
         reason: Option<&str>,
     ) -> Result<ApprovalQueueRecord, RuntimeError> {
-        self.transition_status(id, tenant_id, actor_id, "approved", "approved", reason)
+        self.approve_at(id, tenant_id, actor, reason, now_ms())
+    }
+
+    pub fn approve_at(
+        &self,
+        id: &str,
+        tenant_id: &str,
+        actor: &ApprovalActorContext,
+        reason: Option<&str>,
+        at_ms: u64,
+    ) -> Result<ApprovalQueueRecord, RuntimeError> {
+        self.transition_status_at(
+            id,
+            tenant_id,
+            actor,
+            ApprovalTransitionKind::Approve,
+            "approved",
+            "approved",
+            reason,
+            at_ms,
+        )
     }
 
     pub fn deny(
         &self,
         id: &str,
         tenant_id: &str,
-        actor_id: &str,
+        actor: &ApprovalActorContext,
         reason: Option<&str>,
     ) -> Result<ApprovalQueueRecord, RuntimeError> {
-        self.transition_status(id, tenant_id, actor_id, "denied", "denied", reason)
+        self.transition_status(
+            id,
+            tenant_id,
+            actor,
+            ApprovalTransitionKind::Deny,
+            "denied",
+            "denied",
+            reason,
+        )
     }
 
     pub fn expire(
@@ -326,7 +361,7 @@ impl ApprovalQueueRuntime {
                 "approval cannot expire before contract expiry".to_string(),
             ));
         }
-        self.transition_status_at(id, tenant_id, actor_id, "expired", "expired", reason, at_ms)
+        self.transition_expired_at(id, tenant_id, actor_id, reason, at_ms)
     }
 
     pub fn comment(
@@ -366,12 +401,19 @@ impl ApprovalQueueRuntime {
         &self,
         id: &str,
         tenant_id: &str,
-        actor_id: &str,
+        actor: &ApprovalActorContext,
         delegated_to_actor_id: &str,
         reason: Option<&str>,
     ) -> Result<ApprovalQueueRecord, RuntimeError> {
         validate_value("delegated actor id", delegated_to_actor_id)?;
         let existing = self.require_pending(id, tenant_id)?;
+        authorize_approval_transition(
+            &existing,
+            actor,
+            ApprovalTransitionKind::Delegate,
+            now_ms(),
+        )?;
+        authorize_approval_delegate_target(&existing, delegated_to_actor_id)?;
         let now = now_ms();
         let mut conn = self.conn.lock().unwrap();
         let tx = conn.transaction().map_err(sqlite_error)?;
@@ -386,7 +428,7 @@ impl ApprovalQueueRuntime {
             &tx,
             id,
             tenant_id,
-            actor_id,
+            &actor.actor_id,
             "delegated",
             &existing.status,
             &existing.status,
@@ -468,7 +510,8 @@ impl ApprovalQueueRuntime {
         &self,
         id: &str,
         tenant_id: &str,
-        actor_id: &str,
+        actor: &ApprovalActorContext,
+        transition: ApprovalTransitionKind,
         event_kind: &str,
         status_after: &str,
         reason: Option<&str>,
@@ -476,7 +519,8 @@ impl ApprovalQueueRuntime {
         self.transition_status_at(
             id,
             tenant_id,
-            actor_id,
+            actor,
+            transition,
             event_kind,
             status_after,
             reason,
@@ -489,9 +533,49 @@ impl ApprovalQueueRuntime {
         &self,
         id: &str,
         tenant_id: &str,
-        actor_id: &str,
+        actor: &ApprovalActorContext,
+        transition: ApprovalTransitionKind,
         event_kind: &str,
         status_after: &str,
+        reason: Option<&str>,
+        at_ms: u64,
+    ) -> Result<ApprovalQueueRecord, RuntimeError> {
+        validate_value("approval id", id)?;
+        validate_value("tenant id", tenant_id)?;
+        let existing = self.require_pending(id, tenant_id)?;
+        authorize_approval_transition(&existing, actor, transition, at_ms)?;
+        let mut conn = self.conn.lock().unwrap();
+        let tx = conn.transaction().map_err(sqlite_error)?;
+        tx.execute(
+            "update approval_queue
+             set status = ?4, approver_actor_id = ?3, updated_ms = ?5
+             where id = ?1 and tenant_id = ?2 and status = 'pending'",
+            params![id, tenant_id, actor.actor_id, status_after, at_ms as i64],
+        )
+        .map_err(sqlite_error)?;
+        insert_audit_tx(
+            &tx,
+            id,
+            tenant_id,
+            &actor.actor_id,
+            event_kind,
+            &existing.status,
+            status_after,
+            reason,
+            &existing.trace_id,
+            at_ms,
+        )?;
+        tx.commit().map_err(sqlite_error)?;
+        drop(conn);
+        self.get(id)?
+            .ok_or_else(|| RuntimeError::Other(format!("approval `{id}` not found")))
+    }
+
+    fn transition_expired_at(
+        &self,
+        id: &str,
+        tenant_id: &str,
+        actor_id: &str,
         reason: Option<&str>,
         at_ms: u64,
     ) -> Result<ApprovalQueueRecord, RuntimeError> {
@@ -503,9 +587,9 @@ impl ApprovalQueueRuntime {
         let tx = conn.transaction().map_err(sqlite_error)?;
         tx.execute(
             "update approval_queue
-             set status = ?4, approver_actor_id = ?3, updated_ms = ?5
+             set status = 'expired', approver_actor_id = ?3, updated_ms = ?4
              where id = ?1 and tenant_id = ?2 and status = 'pending'",
-            params![id, tenant_id, actor_id, status_after, at_ms as i64],
+            params![id, tenant_id, actor_id, at_ms as i64],
         )
         .map_err(sqlite_error)?;
         insert_audit_tx(
@@ -513,9 +597,9 @@ impl ApprovalQueueRuntime {
             id,
             tenant_id,
             actor_id,
-            event_kind,
+            "expired",
             &existing.status,
-            status_after,
+            "expired",
             reason,
             &existing.trace_id,
             at_ms,
@@ -537,9 +621,7 @@ impl ApprovalQueueRuntime {
             .get(id)?
             .ok_or_else(|| RuntimeError::Other(format!("approval `{id}` not found")))?;
         if approval.tenant_id != tenant_id {
-            return Err(RuntimeError::Other(
-                "approval tenant mismatch".to_string(),
-            ));
+            return Err(RuntimeError::Other("approval tenant mismatch".to_string()));
         }
         Ok(approval)
     }
@@ -696,6 +778,35 @@ mod tests {
         }
     }
 
+    fn reviewer(id: &str) -> ApprovalActorContext {
+        ApprovalActorContext {
+            actor_id: id.to_string(),
+            tenant_id: "org-1".to_string(),
+            role: "Reviewer".to_string(),
+        }
+    }
+
+    fn actor(id: &str, tenant_id: &str, role: &str) -> ApprovalActorContext {
+        ApprovalActorContext {
+            actor_id: id.to_string(),
+            tenant_id: tenant_id.to_string(),
+            role: role.to_string(),
+        }
+    }
+
+    fn queued_approval(queue: &ApprovalQueueRuntime, id: &str) -> ApprovalQueueRecord {
+        queue
+            .create(ApprovalCreate {
+                id: id.to_string(),
+                tenant_id: "org-1".to_string(),
+                requester_actor_id: "user-1".to_string(),
+                contract: contract(now_ms().saturating_add(60_000)),
+                risk_level: "external_side_effect".to_string(),
+                trace_id: format!("trace-{id}"),
+            })
+            .unwrap()
+    }
+
     #[test]
     fn approval_store_persists_contract_queue_item_and_create_audit() {
         let dir = tempfile::tempdir().unwrap();
@@ -798,7 +909,12 @@ mod tests {
             .unwrap();
 
         let comment = queue
-            .comment(&approval.id, "org-1", "reviewer-1", "looks safe after redaction")
+            .comment(
+                &approval.id,
+                "org-1",
+                "reviewer-1",
+                "looks safe after redaction",
+            )
             .unwrap();
         assert_eq!(comment.event_kind, "commented");
         assert_eq!(comment.status_before, "pending");
@@ -808,7 +924,7 @@ mod tests {
             .delegate(
                 &approval.id,
                 "org-1",
-                "reviewer-1",
+                &reviewer("reviewer-1"),
                 "reviewer-2",
                 Some("handoff to owner"),
             )
@@ -820,12 +936,22 @@ mod tests {
         );
 
         let approved = queue
-            .approve(&approval.id, "org-1", "reviewer-2", Some("approved"))
+            .approve(
+                &approval.id,
+                "org-1",
+                &reviewer("reviewer-2"),
+                Some("approved"),
+            )
             .unwrap();
         assert_eq!(approved.status, "approved");
         assert_eq!(approved.approver_actor_id.as_deref(), Some("reviewer-2"));
         assert!(queue
-            .deny(&approval.id, "org-1", "reviewer-3", Some("too late"))
+            .deny(
+                &approval.id,
+                "org-1",
+                &reviewer("reviewer-3"),
+                Some("too late"),
+            )
             .unwrap_err()
             .to_string()
             .contains("not pending"));
@@ -854,7 +980,12 @@ mod tests {
             })
             .unwrap();
         let denied = queue
-            .deny(&denial.id, "org-1", "reviewer-1", Some("insufficient context"))
+            .deny(
+                &denial.id,
+                "org-1",
+                &reviewer("reviewer-1"),
+                Some("insufficient context"),
+            )
             .unwrap();
         assert_eq!(denied.status, "denied");
 
@@ -892,7 +1023,7 @@ mod tests {
         assert_eq!(expired.status, "expired");
 
         assert!(queue
-            .approve(&expiring.id, "org-2", "reviewer-1", None)
+            .approve(&expiring.id, "org-2", &reviewer("reviewer-1"), None)
             .unwrap_err()
             .to_string()
             .contains("tenant"));
@@ -923,13 +1054,18 @@ mod tests {
             .delegate(
                 &approval.id,
                 "org-1",
-                "reviewer-1",
+                &reviewer("reviewer-1"),
                 "reviewer-2",
                 Some("owner review"),
             )
             .unwrap();
         queue
-            .deny(&approval.id, "org-1", "reviewer-2", Some("unsafe target"))
+            .deny(
+                &approval.id,
+                "org-1",
+                &reviewer("reviewer-2"),
+                Some("unsafe target"),
+            )
             .unwrap();
 
         let coverage = queue.audit_coverage(&approval.id).unwrap();
@@ -943,5 +1079,78 @@ mod tests {
         assert!(events.iter().all(|event| event.trace_id == "trace-audit"));
         assert!(events.iter().all(|event| event.tenant_id == "org-1"));
         assert!(events.iter().all(|event| event.approval_id == approval.id));
+    }
+
+    #[test]
+    fn approval_bypass_rejects_confused_deputy_self_approval() {
+        let queue = ApprovalQueueRuntime::open_in_memory().unwrap();
+        let approval = queued_approval(&queue, "approval-self");
+        let requester_with_role = actor("user-1", "org-1", "Reviewer");
+        let err = queue
+            .approve(
+                &approval.id,
+                "org-1",
+                &requester_with_role,
+                Some("self approve"),
+            )
+            .unwrap_err();
+        assert!(err.to_string().contains("requester"));
+        assert_eq!(queue.get(&approval.id).unwrap().unwrap().status, "pending");
+    }
+
+    #[test]
+    fn approval_bypass_rejects_tenant_crossing_actor() {
+        let queue = ApprovalQueueRuntime::open_in_memory().unwrap();
+        let approval = queued_approval(&queue, "approval-tenant");
+        let cross_tenant_reviewer = actor("reviewer-1", "org-2", "Reviewer");
+        let err = queue
+            .approve(
+                &approval.id,
+                "org-1",
+                &cross_tenant_reviewer,
+                Some("wrong tenant"),
+            )
+            .unwrap_err();
+        assert!(err.to_string().contains("tenant mismatch"));
+        assert_eq!(queue.get(&approval.id).unwrap().unwrap().status, "pending");
+    }
+
+    #[test]
+    fn approval_bypass_rejects_stale_approval_replay() {
+        let queue = ApprovalQueueRuntime::open_in_memory().unwrap();
+        let expires_ms = now_ms().saturating_add(60_000);
+        let approval = queue
+            .create(ApprovalCreate {
+                id: "approval-stale".to_string(),
+                tenant_id: "org-1".to_string(),
+                requester_actor_id: "user-1".to_string(),
+                contract: contract(expires_ms),
+                risk_level: "external_side_effect".to_string(),
+                trace_id: "trace-stale".to_string(),
+            })
+            .unwrap();
+        let err = queue
+            .approve_at(
+                &approval.id,
+                "org-1",
+                &reviewer("reviewer-1"),
+                Some("replayed approval"),
+                expires_ms,
+            )
+            .unwrap_err();
+        assert!(err.to_string().contains("expired"));
+        assert_eq!(queue.get(&approval.id).unwrap().unwrap().status, "pending");
+    }
+
+    #[test]
+    fn approval_bypass_rejects_privilege_escalation() {
+        let queue = ApprovalQueueRuntime::open_in_memory().unwrap();
+        let approval = queued_approval(&queue, "approval-role");
+        let member = actor("member-1", "org-1", "Member");
+        let err = queue
+            .approve(&approval.id, "org-1", &member, Some("role escalation"))
+            .unwrap_err();
+        assert!(err.to_string().contains("required role"));
+        assert_eq!(queue.get(&approval.id).unwrap().unwrap().status, "pending");
     }
 }

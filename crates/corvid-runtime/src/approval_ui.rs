@@ -188,9 +188,7 @@ fn human_title(action: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::approval_queue::{
-        ApprovalContractRecord, ApprovalCreate, ApprovalQueueRuntime,
-    };
+    use crate::approval_queue::{ApprovalContractRecord, ApprovalCreate, ApprovalQueueRuntime};
     use crate::tracing::now_ms;
 
     fn contract(expires_ms: u64) -> ApprovalContractRecord {
@@ -208,6 +206,14 @@ mod tests {
             expires_ms,
             replay_key: "replay-approval-1".to_string(),
             created_ms: 0,
+        }
+    }
+
+    fn reviewer(id: &str) -> crate::approval_authorization::ApprovalActorContext {
+        crate::approval_authorization::ApprovalActorContext {
+            actor_id: id.to_string(),
+            tenant_id: "org-1".to_string(),
+            role: "Reviewer".to_string(),
         }
     }
 
@@ -233,12 +239,15 @@ mod tests {
         assert_eq!(payload.schema_version, "corvid.approval.ui.v1");
         assert_eq!(payload.title, "Send Executive Follow Up");
         assert_eq!(payload.target.kind, "email_thread");
-        assert_eq!(payload.allowed_transitions, vec![
-            "approve".to_string(),
-            "deny".to_string(),
-            "comment".to_string(),
-            "delegate".to_string(),
-        ]);
+        assert_eq!(
+            payload.allowed_transitions,
+            vec![
+                "approve".to_string(),
+                "deny".to_string(),
+                "comment".to_string(),
+                "delegate".to_string(),
+            ]
+        );
         assert_eq!(payload.audit.len(), 2);
         assert!(payload.redacted);
         let json = serde_json::to_value(&payload).unwrap();
@@ -261,14 +270,23 @@ mod tests {
             })
             .unwrap();
         let delegated = queue
-            .delegate(&approval.id, "org-1", "reviewer-1", "reviewer-2", None)
+            .delegate(
+                &approval.id,
+                "org-1",
+                &reviewer("reviewer-1"),
+                "reviewer-2",
+                None,
+            )
             .unwrap();
         let audit = queue.audit_events(&approval.id).unwrap();
 
         let wrong_role = approval_ui_payload(&delegated, &audit, "reviewer-2", "Member");
         assert_eq!(wrong_role.allowed_transitions, vec!["comment".to_string()]);
         let wrong_delegate = approval_ui_payload(&delegated, &audit, "reviewer-3", "Reviewer");
-        assert_eq!(wrong_delegate.allowed_transitions, vec!["comment".to_string()]);
+        assert_eq!(
+            wrong_delegate.allowed_transitions,
+            vec!["comment".to_string()]
+        );
     }
 
     #[test]
@@ -299,7 +317,9 @@ mod tests {
         broken.allowed_transitions.push("parse_trace".to_string());
         let check = check_approval_ui_contract(&broken);
         assert!(!check.renderable_without_trace_parsing);
-        assert!(check.violations.contains(&"missing_display_text".to_string()));
+        assert!(check
+            .violations
+            .contains(&"missing_display_text".to_string()));
         assert!(check.violations.contains(&"missing_target".to_string()));
         assert!(check
             .violations
