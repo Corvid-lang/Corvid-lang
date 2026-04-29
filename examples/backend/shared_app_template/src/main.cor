@@ -1,0 +1,64 @@
+public type AppConfig:
+    service: String
+    environment: String
+    version: String
+    connector_mode: String
+    trace_dir: String
+
+public type HealthResponse:
+    service: String
+    status: String
+    version: String
+
+public type ReadinessResponse:
+    service: String
+    ready: Bool
+    database: String
+    connectors: String
+    migrations: String
+
+public type RouteDoc:
+    method: String
+    path: String
+    response: String
+    auth_required: Bool
+    effects: String
+
+public type RouteManifest:
+    service: String
+    routes: List<RouteDoc>
+
+public @replayable
+agent app_config() -> AppConfig:
+    return AppConfig("shared_app_template", "local", "0.0.1", "mock", "target/trace")
+
+public @replayable
+agent healthz() -> HealthResponse:
+    cfg = app_config()
+    return HealthResponse(cfg.service, "ok", cfg.version)
+
+public @replayable
+agent readyz() -> ReadinessResponse:
+    cfg = app_config()
+    return ReadinessResponse(cfg.service, true, "not_configured_yet", "mock", "pending_migrations_slice")
+
+public @replayable
+agent route_manifest() -> RouteManifest:
+    health = RouteDoc("GET", "/healthz", "HealthResponse", false, "")
+    ready = RouteDoc("GET", "/readyz", "ReadinessResponse", false, "")
+    config = RouteDoc("GET", "/config", "AppConfig", true, "")
+    routes = RouteDoc("GET", "/routes", "RouteManifest", true, "")
+    return RouteManifest("shared_app_template", [health, ready, config, routes])
+
+server shared_app_template:
+    route GET "/healthz" -> json HealthResponse:
+        return healthz()
+    route GET "/readyz" -> json ReadinessResponse:
+        return readyz()
+    route GET "/config" -> json AppConfig:
+        return app_config()
+    route GET "/routes" -> json RouteManifest:
+        return route_manifest()
+
+agent main() -> String:
+    return "shared app template server contract loaded"

@@ -2378,7 +2378,7 @@ corvid run --target=server --mode=real             # real-provider mode behind e
 
 **Small-slice breakdown for Phase 42:**
 
-- [ ] 42B1-template-routes           Shared app template has routes, config, health/readiness, and generated docs.
+- [x] 42B1-template-routes           Shared app template has routes, config, health/readiness, and generated docs.
 - [ ] 42B2-template-state            Template has DB migrations, seed data, jobs, auth, and connector mocks.
 - [ ] 42B3-template-ops              Template has traces, evals, deployment manifest, and runbook skeleton.
 - [ ] 42C1-exec-agent-data-model     Personal Executive Agent schemas/migrations/jobs/connectors are defined.

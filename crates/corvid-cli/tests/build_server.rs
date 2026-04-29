@@ -424,3 +424,40 @@ fn refund_api_backend_example_checks_and_builds() {
         String::from_utf8_lossy(&build.stderr)
     );
 }
+
+#[test]
+fn shared_app_template_checks_and_builds() {
+    let repo = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let entrypoint = repo
+        .join("examples")
+        .join("backend")
+        .join("shared_app_template")
+        .join("src")
+        .join("main.cor");
+
+    let check = run_corvid(
+        &["check".to_string(), entrypoint.to_string_lossy().into_owned()],
+        &repo,
+    );
+    assert!(
+        check.status.success(),
+        "shared app template check failed:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&check.stdout),
+        String::from_utf8_lossy(&check.stderr)
+    );
+
+    let build = run_corvid(
+        &[
+            "build".to_string(),
+            entrypoint.to_string_lossy().into_owned(),
+            "--target=server".to_string(),
+        ],
+        &repo,
+    );
+    assert!(
+        build.status.success(),
+        "shared app template server build failed:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&build.stdout),
+        String::from_utf8_lossy(&build.stderr)
+    );
+}
