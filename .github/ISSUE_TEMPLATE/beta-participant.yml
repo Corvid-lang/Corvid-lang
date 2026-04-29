@@ -1,0 +1,59 @@
+name: Beta participant report
+description: Track one external developer building a real Corvid backend app.
+title: "[beta] <app category> by <participant>"
+labels: ["beta:intake"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this only for real external beta participants. Do not create placeholder issues to satisfy the launch gate.
+  - type: input
+    id: participant
+    attributes:
+      label: Participant identifier
+      description: Name, handle, company, or private tracker id.
+    validations:
+      required: true
+  - type: input
+    id: app
+    attributes:
+      label: Backend app built
+      description: What real app did the participant build?
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Corvid version or commit
+    validations:
+      required: true
+  - type: textarea
+    id: commands
+    attributes:
+      label: Commands run
+      description: Include check, migrate, deploy, upgrade, and any app-specific commands.
+      value: |
+        corvid check ...
+        corvid migrate status ...
+        corvid deploy package ...
+        corvid upgrade check ...
+    validations:
+      required: true
+  - type: dropdown
+    id: outcome
+    attributes:
+      label: Outcome
+      options:
+        - completed locally
+        - deployed
+        - blocked
+        - abandoned
+    validations:
+      required: true
+  - type: textarea
+    id: feedback
+    attributes:
+      label: Feedback
+      description: Bugs, docs gaps, missing features, performance issues, or non-scope asks.
+    validations:
+      required: true

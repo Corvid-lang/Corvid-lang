@@ -747,6 +747,35 @@ fn phase_43_market_readiness_brief_defines_launch_gates() {
 }
 
 #[test]
+fn beta_program_intake_and_closure_assets_exist_but_are_not_faked() {
+    let beta = fs::read_to_string(repo_root().join("docs").join("beta-program.md"))
+        .expect("read beta program");
+    let participant = fs::read_to_string(
+        repo_root()
+            .join(".github")
+            .join("ISSUE_TEMPLATE")
+            .join("beta-participant.yml"),
+    )
+    .expect("read beta participant template");
+    let closure = fs::read_to_string(
+        repo_root()
+            .join(".github")
+            .join("ISSUE_TEMPLATE")
+            .join("beta-closure.yml"),
+    )
+    .expect("read beta closure template");
+
+    assert!(beta.contains("20 external developers"));
+    assert!(beta.contains("pending real external participants"));
+    assert!(participant.contains("Do not create placeholder issues"));
+    assert!(participant.contains("corvid deploy package"));
+    assert!(closure.contains("code"));
+    assert!(closure.contains("docs"));
+    assert!(closure.contains("tests"));
+    assert!(closure.contains("explicit non-scope"));
+}
+
+#[test]
 fn deploy_package_emits_dockerfile_and_oci_metadata() {
     let temp = tempfile::tempdir().expect("tempdir");
     let app = repo_root()

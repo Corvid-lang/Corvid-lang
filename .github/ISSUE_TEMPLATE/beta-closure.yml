@@ -1,0 +1,37 @@
+name: Beta feedback closure
+description: Close a beta feedback item as code, docs, tests, or explicit non-scope.
+title: "[beta-closure] <short feedback title>"
+labels: ["beta:closed"]
+body:
+  - type: dropdown
+    id: closure_type
+    attributes:
+      label: Closure type
+      options:
+        - code
+        - docs
+        - tests
+        - explicit non-scope
+    validations:
+      required: true
+  - type: input
+    id: participant_issue
+    attributes:
+      label: Participant issue
+      description: Link to the beta participant report.
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence
+      description: Link commits, tests, docs, or non-scope rationale.
+    validations:
+      required: true
+  - type: textarea
+    id: residual_risk
+    attributes:
+      label: Residual risk
+      description: What remains risky after closure?
+    validations:
+      required: true
