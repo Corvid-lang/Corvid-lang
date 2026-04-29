@@ -28,6 +28,28 @@ public type RouteManifest:
     service: String
     routes: List<RouteDoc>
 
+public type TemplateJob:
+    id: String
+    tenant_id: String
+    kind: String
+    status: String
+    replay_key: String
+
+public type TemplateAuth:
+    tenant_id: String
+    actor_id: String
+    role: String
+    permission: String
+    authenticated: Bool
+
+public type ConnectorMockSummary:
+    connector_count: Int
+    email: String
+    calendar: String
+    tasks: String
+    chat: String
+    files: String
+
 public @replayable
 agent app_config() -> AppConfig:
     return AppConfig("shared_app_template", "local", "0.0.1", "mock", "target/trace")
@@ -50,6 +72,18 @@ agent route_manifest() -> RouteManifest:
     routes = RouteDoc("GET", "/routes", "RouteManifest", true, "")
     return RouteManifest("shared_app_template", [health, ready, config, routes])
 
+public @replayable
+agent demo_job() -> TemplateJob:
+    return TemplateJob("job-demo-daily", "tenant-demo", "daily_brief", "pending", "template:daily:demo")
+
+public @replayable
+agent demo_auth() -> TemplateAuth:
+    return TemplateAuth("tenant-demo", "user-demo", "owner", "template.run", true)
+
+public @replayable
+agent connector_mocks() -> ConnectorMockSummary:
+    return ConnectorMockSummary(5, "gmail:mock", "calendar:mock", "tasks:mock", "slack:mock", "files:mock")
+
 server shared_app_template:
     route GET "/healthz" -> json HealthResponse:
         return healthz()
@@ -59,6 +93,12 @@ server shared_app_template:
         return app_config()
     route GET "/routes" -> json RouteManifest:
         return route_manifest()
+    route GET "/jobs/demo" -> json TemplateJob:
+        return demo_job()
+    route GET "/auth/demo" -> json TemplateAuth:
+        return demo_auth()
+    route GET "/connectors/mock" -> json ConnectorMockSummary:
+        return connector_mocks()
 
 agent main() -> String:
     return "shared app template server contract loaded"

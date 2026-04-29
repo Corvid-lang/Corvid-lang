@@ -18,5 +18,15 @@ corvid build examples/backend/shared_app_template/src/main.cor --target=server
 - `GET /readyz`
 - `GET /config`
 - `GET /routes`
+- `GET /jobs/demo`
+- `GET /auth/demo`
+- `GET /connectors/mock`
 
 The response types are part of the Corvid source, not hand-written host code.
+
+## State
+
+- `migrations/0001_initial.sql` creates tenant, user, and job tables.
+- `seeds/demo.sql` inserts deterministic demo rows.
+- `/jobs/demo`, `/auth/demo`, and `/connectors/mock` expose the template
+  state/auth/connector seams that reference apps fill in later slices.
