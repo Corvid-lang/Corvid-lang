@@ -1,0 +1,17 @@
+{
+  "mode": "mock",
+  "provider": "gmail",
+  "threads": [
+    {
+      "id": "thread-1",
+      "tenant_id": "tenant-1",
+      "user_id": "user-1",
+      "provider_thread_id": "gmail-thread-1",
+      "sender": "partner@example.com",
+      "subject_fingerprint": "sha256:subject-demo",
+      "priority": "high",
+      "triage_status": "needs_draft",
+      "replay_key": "replay:thread-1"
+    }
+  ]
+}

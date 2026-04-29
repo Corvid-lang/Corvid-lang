@@ -1,0 +1,17 @@
+{
+  "mode": "mock",
+  "provider": "gmail",
+  "drafts": [
+    {
+      "id": "draft-1",
+      "thread_id": "thread-1",
+      "tenant_id": "tenant-1",
+      "recipient": "partner@example.com",
+      "tone": "concise_professional",
+      "body_fingerprint": "sha256:draft-demo",
+      "approval_label": "SendFollowUpEmail",
+      "status": "approval_pending",
+      "replay_key": "replay:draft:thread-1"
+    }
+  ]
+}

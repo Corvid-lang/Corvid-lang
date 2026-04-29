@@ -204,6 +204,34 @@ public type ExecutiveFollowUpItem:
     status: String
     approval_label: String
 
+public type ExecutiveInboxSignal:
+    thread_id: String
+    tenant_id: String
+    sender: String
+    subject_fingerprint: String
+    urgency: String
+    needs_reply: Bool
+    needs_task: Bool
+    confidence: Float
+
+public type ExecutiveTriageDecision:
+    thread: ExecutiveInboxThread
+    signal: ExecutiveInboxSignal
+    task: ExecutiveTaskItem
+    follow_up: ExecutiveFollowUpItem
+    draft: ExecutiveDraftReply
+    status: String
+    replay_key: String
+
+public type ExecutiveDraftPreview:
+    draft: ExecutiveDraftReply
+    recipient: String
+    tone: String
+    body_fingerprint: String
+    approval_label: String
+    ready_for_review: Bool
+    replay_key: String
+
 public type ExecutiveSchemaManifest:
     service: String
     migration_count: Int
@@ -381,8 +409,36 @@ agent demo_follow_up_item() -> ExecutiveFollowUpItem:
     return ExecutiveFollowUpItem("follow-up-1", "tenant-1", "user-1", "thread-1", "task-1", "2026-04-30T16:00:00Z", "approval_pending", "SendFollowUpEmail")
 
 public @replayable
+agent demo_inbox_signal() -> ExecutiveInboxSignal:
+    thread = demo_inbox_thread()
+    return ExecutiveInboxSignal(thread.id, thread.tenant_id, thread.sender, thread.subject_fingerprint, "high", true, true, 0.91)
+
+public @replayable
+agent triage_mock_inbox_thread(thread_id: String) -> ExecutiveTriageDecision uses inbox_read, executive_llm, task_write:
+    thread = demo_inbox_thread()
+    signal = demo_inbox_signal()
+    task = demo_task_item()
+    follow = demo_follow_up_item()
+    draft = demo_draft_reply()
+    return ExecutiveTriageDecision(thread, signal, task, follow, draft, "triaged", "replay:triage:" + thread_id)
+
+public @replayable
+agent draft_mock_reply(thread_id: String) -> ExecutiveDraftPreview uses inbox_read, executive_llm:
+    draft = demo_draft_reply()
+    thread = demo_inbox_thread()
+    return ExecutiveDraftPreview(draft, thread.sender, "concise_professional", draft.body_fingerprint, "SendFollowUpEmail", true, "replay:draft:" + thread_id)
+
+public @replayable
+agent inbox_triage_contract_valid(decision: ExecutiveTriageDecision) -> Bool:
+    return decision.signal.needs_reply and decision.signal.needs_task and decision.signal.confidence >= 0.8 and decision.draft.approval_label == "SendFollowUpEmail" and decision.follow_up.status == "approval_pending"
+
+public @replayable
+agent draft_reply_contract_valid(preview: ExecutiveDraftPreview) -> Bool:
+    return preview.ready_for_review and preview.approval_label == "SendFollowUpEmail" and preview.body_fingerprint == preview.draft.body_fingerprint
+
+public @replayable
 agent executive_schema_manifest() -> ExecutiveSchemaManifest:
-    return ExecutiveSchemaManifest("personal_executive_agent", 5, 10, 5, 4, 5, "mock")
+    return ExecutiveSchemaManifest("personal_executive_agent", 5, 12, 5, 4, 5, "mock")
 
 server personal_executive_agent_api:
     route GET "/schema" -> json ExecutiveSchemaManifest:
@@ -405,6 +461,10 @@ server personal_executive_agent_api:
         return demo_task_item()
     route GET "/schema/follow-up" -> json ExecutiveFollowUpItem:
         return demo_follow_up_item()
+    route GET "/inbox/triage/mock" -> json ExecutiveTriageDecision uses inbox_read, executive_llm, task_write:
+        return triage_mock_inbox_thread("thread-1")
+    route GET "/drafts/reply/mock" -> json ExecutiveDraftPreview uses inbox_read, executive_llm:
+        return draft_mock_reply("thread-1")
     route POST "/auth/session/login" body LoginRequest -> json LoginResponse:
         return session_login(body)
     route POST "/auth/api-key/login" body ApiKeyLoginRequest -> json ApiKeyLoginResponse:
@@ -432,4 +492,6 @@ agent main() -> Bool:
     auth = auth_status("user-1", "tenant-1", "trace-main-auth")
     service_auth = api_key_auth_status("service-1", "tenant-1", "trace-main-api-key")
     approval_product = follow_up_approval_product(auth, "thread-1", "trace-main-approval")
-    return executive_job_contract_valid(brief) and executive_job_contract_valid(prep) and executive_job_contract_valid(triage) and executive_job_contract_valid(follow) and executive_job_needs_human_before_external_send(follow) and auth.authenticated and service_auth.authenticated and approval_product_contract_valid(approval_product)
+    triage_decision = triage_mock_inbox_thread("thread-1")
+    draft_preview = draft_mock_reply("thread-1")
+    return executive_job_contract_valid(brief) and executive_job_contract_valid(prep) and executive_job_contract_valid(triage) and executive_job_contract_valid(follow) and executive_job_needs_human_before_external_send(follow) and auth.authenticated and service_auth.authenticated and approval_product_contract_valid(approval_product) and inbox_triage_contract_valid(triage_decision) and draft_reply_contract_valid(draft_preview)

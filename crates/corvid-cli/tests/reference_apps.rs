@@ -78,3 +78,32 @@ fn personal_executive_agent_data_model_migrations_and_connectors_are_real() {
             && connector["replay_policy"].as_str() == Some("quarantine_writes")
     }));
 }
+
+#[test]
+fn personal_executive_agent_inbox_and_draft_mocks_are_approval_gated() {
+    let app = personal_executive_agent_root();
+    let inbox_text =
+        fs::read_to_string(app.join("mocks").join("inbox_threads.json")).expect("read inbox mock");
+    let drafts_text =
+        fs::read_to_string(app.join("mocks").join("draft_replies.json")).expect("read draft mock");
+    let inbox: Value = serde_json::from_str(&inbox_text).expect("parse inbox mock");
+    let drafts: Value = serde_json::from_str(&drafts_text).expect("parse draft mock");
+
+    assert_eq!(inbox["mode"].as_str(), Some("mock"));
+    assert_eq!(drafts["mode"].as_str(), Some("mock"));
+
+    let threads = inbox["threads"].as_array().expect("threads array");
+    let draft_items = drafts["drafts"].as_array().expect("drafts array");
+    assert_eq!(threads.len(), 1);
+    assert_eq!(draft_items.len(), 1);
+
+    let thread = &threads[0];
+    let draft = &draft_items[0];
+    assert_eq!(thread["triage_status"].as_str(), Some("needs_draft"));
+    assert_eq!(draft["thread_id"], thread["id"]);
+    assert_eq!(draft["approval_label"].as_str(), Some("SendFollowUpEmail"));
+    assert_eq!(draft["status"].as_str(), Some("approval_pending"));
+    assert!(draft["replay_key"]
+        .as_str()
+        .is_some_and(|key| key.starts_with("replay:draft:")));
+}

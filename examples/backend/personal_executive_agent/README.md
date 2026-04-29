@@ -29,6 +29,17 @@ The backend owns twelve operational tables:
 The `/schema` route reports the migration, table, connector, job, and approval
 counts that downstream slices must preserve.
 
+## Inbox And Draft Mock Mode
+
+42C2 adds deterministic inbox behavior without provider credentials:
+
+- `GET /inbox/triage/mock` returns an `ExecutiveTriageDecision` with the source
+  thread, triage signal, task, follow-up, draft, status, and replay key.
+- `GET /drafts/reply/mock` returns an `ExecutiveDraftPreview` that is ready for
+  human review but still approval-gated before any external send.
+- `mocks/inbox_threads.json` and `mocks/draft_replies.json` are the committed
+  fixtures for replay and local development.
+
 ## Jobs
 
 - `daily_brief_job` reads inbox and calendar context, runs a bounded executive
