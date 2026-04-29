@@ -652,3 +652,24 @@ fn phase_42_external_trial_packet_is_ready_but_not_faked() {
     assert!(trial.contains("Do not mark 42I1 or 42I2 complete"));
     assert!(triage.contains("No external reviewer signoff has been recorded yet"));
 }
+
+#[test]
+fn phase_43_market_readiness_brief_defines_launch_gates() {
+    let brief = fs::read_to_string(
+        repo_root()
+            .join("docs")
+            .join("phase-43-market-readiness.md"),
+    )
+    .expect("read phase 43 brief");
+    for required in [
+        "Launch Gates",
+        "Release Channels",
+        "Support Posture",
+        "Security Process",
+        "Beta Criteria",
+        "Non-Scope",
+    ] {
+        assert!(brief.contains(required), "missing {required}");
+    }
+    assert!(brief.contains("Final claims have runnable evidence or are removed"));
+}
