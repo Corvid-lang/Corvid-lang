@@ -1,6 +1,7 @@
 pub mod auth;
 pub mod gmail;
 pub mod manifest;
+pub mod ms365;
 pub mod rate_limit;
 pub mod runtime;
 pub mod test_kit;
@@ -16,6 +17,10 @@ pub use manifest::{
     ConnectorManifestError, ConnectorMode, ConnectorReplayPolicy, ConnectorScope,
     ConnectorScopeApproval, ConnectorValidationReport, RateLimitDeclaration, RedactionRule,
     ReplayDeclaration,
+};
+pub use ms365::{
+    ms365_manifest, Ms365CalendarEvent, Ms365CalendarEventsRequest, Ms365Connector,
+    Ms365MailMessage, Ms365MailSearchRequest, MS365_CONNECTOR_MANIFEST,
 };
 pub use rate_limit::{ConnectorRateLimit, ConnectorRateLimitDecision, ConnectorRateLimiter};
 pub use runtime::{
