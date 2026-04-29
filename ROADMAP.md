@@ -2322,7 +2322,7 @@ corvid connectors verify-webhook --sig=<...>
 
 **Slice checklist:**
 
-- [ ] 42A-reference-app-brief        `docs/phase-42-reference-apps.md` defines app selection, shared architecture, quality bar, security posture, demo mode, and non-scope.
+- [x] 42A-reference-app-brief        `docs/phase-42-reference-apps.md` defines app selection, shared architecture, quality bar, security posture, demo mode, and non-scope.
 - [ ] 42B-shared-app-template        Common backend template provides routes, DB, jobs, auth, connectors, approvals, traces, evals, deployment manifest, and runbook skeleton.
 - [ ] 42C-personal-executive-agent   Personal Executive Agent backend ships inbox triage, drafts, calendar scheduling, meeting prep, daily brief, tasks, follow-ups, approvals, and replay.
 - [ ] 42D-personal-knowledge-agent   Knowledge Agent backend ships ingestion, grounded search, citations, private/local mode, feedback evals, and provenance-preserving answers.
