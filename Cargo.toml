@@ -17,6 +17,7 @@ members = [
     "crates/corvid-codegen-cl",
     "crates/corvid-codegen-wasm",
     "crates/corvid-runtime",
+    "crates/corvid-connector-runtime",
     "crates/corvid-macros",
     "crates/corvid-test-tools",
     "crates/corvid-driver",
@@ -29,6 +30,7 @@ members = [
     "examples/refund_bot_demo",
     "examples/openai_hello",
     "examples/anthropic_hello",
+    "benches/moat/time_to_audit/corpus_gen",
 ]
 
 [workspace.package]
@@ -85,6 +87,7 @@ corvid-codegen-py = { path = "crates/corvid-codegen-py" }
 corvid-codegen-cl = { path = "crates/corvid-codegen-cl" }
 corvid-codegen-wasm = { path = "crates/corvid-codegen-wasm" }
 corvid-runtime  = { path = "crates/corvid-runtime" }
+corvid-connector-runtime = { path = "crates/corvid-connector-runtime" }
 corvid-macros   = { path = "crates/corvid-macros" }
 corvid-test-tools = { path = "crates/corvid-test-tools" }
 corvid-driver   = { path = "crates/corvid-driver" }
