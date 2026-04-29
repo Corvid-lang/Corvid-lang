@@ -1,0 +1,29 @@
+{
+  "mode": "mock",
+  "approvals": [
+    {
+      "label": "SendSupportReply",
+      "route": "POST /replies/send",
+      "audit_required": true
+    },
+    {
+      "label": "IssueSupportRefund",
+      "route": "POST /refunds/issue",
+      "audit_required": true
+    }
+  ],
+  "sla_jobs": [
+    {
+      "id": "sla-1",
+      "ticket_id": "ticket-1",
+      "status": "scheduled",
+      "replay_key": "support:sla:ticket-1"
+    }
+  ],
+  "eval_dashboard": {
+    "grounded_replies": 1,
+    "approval_gated_writes": 2,
+    "sla_jobs": 1,
+    "eval_passes": 4
+  }
+}

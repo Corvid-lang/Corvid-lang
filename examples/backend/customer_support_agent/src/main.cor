@@ -13,6 +13,16 @@ effect support_ai:
     trust: bounded
     data: customer
 
+effect support_write:
+    cost: $0.01
+    trust: human_required
+    data: customer
+
+effect refund_write:
+    cost: $0.02
+    trust: human_required
+    data: financial
+
 public type SupportConfig:
     service: String
     connector_mode: String
@@ -48,6 +58,51 @@ public type SupportDraftReply:
     approval_label: String
     grounded: Bool
 
+public type SupportReplySendRequest:
+    tenant_id: String
+    actor_id: String
+    ticket_id: String
+    body_fingerprint: String
+    approval_id: String
+    trace_id: String
+
+public type SupportReplySendReceipt:
+    ticket_id: String
+    approval_id: String
+    trace_id: String
+    status: String
+
+public type SupportRefundRequest:
+    tenant_id: String
+    actor_id: String
+    ticket_id: String
+    amount_cents: Int
+    approval_id: String
+    trace_id: String
+
+public type SupportRefundReceipt:
+    ticket_id: String
+    approval_id: String
+    trace_id: String
+    status: String
+
+public type SupportSlaJob:
+    id: String
+    tenant_id: String
+    ticket_id: String
+    due_at: String
+    status: String
+    replay_key: String
+
+public type SupportEvalDashboard:
+    grounded_replies: Int
+    approval_gated_writes: Int
+    sla_jobs: Int
+    eval_passes: Int
+
+tool send_support_reply(req: SupportReplySendRequest) -> SupportReplySendReceipt dangerous uses support_write
+tool issue_support_refund(req: SupportRefundRequest) -> SupportRefundReceipt dangerous uses refund_write
+
 public @replayable
 agent support_config() -> SupportConfig:
     return SupportConfig("customer_support_agent", "mock", true)
@@ -75,6 +130,27 @@ public @replayable
 agent support_triage_contract_valid(reply: SupportDraftReply) -> Bool:
     return reply.grounded and reply.citation.provenance_id != "" and reply.approval_label == "SendSupportReply" and reply.status == "drafted"
 
+agent execute_approved_support_reply(req: SupportReplySendRequest) -> SupportReplySendReceipt uses support_write:
+    approve SendSupportReply(req)
+    return send_support_reply(req)
+
+agent execute_approved_support_refund(req: SupportRefundRequest) -> SupportRefundReceipt uses refund_write:
+    approve IssueSupportRefund(req)
+    return issue_support_refund(req)
+
+public @replayable
+agent support_sla_job() -> SupportSlaJob:
+    ticket = demo_ticket()
+    return SupportSlaJob("sla-1", ticket.tenant_id, ticket.id, "2026-04-29T18:00:00Z", "scheduled", "support:sla:ticket-1")
+
+public @replayable
+agent support_eval_dashboard() -> SupportEvalDashboard:
+    return SupportEvalDashboard(1, 2, 1, 4)
+
+public @replayable
+agent support_ops_contract_valid(dashboard: SupportEvalDashboard, sla: SupportSlaJob) -> Bool:
+    return dashboard.grounded_replies >= 1 and dashboard.approval_gated_writes == 2 and dashboard.sla_jobs == 1 and sla.replay_key == "support:sla:ticket-1"
+
 server customer_support_agent_api:
     route GET "/config" -> json SupportConfig:
         return support_config()
@@ -82,7 +158,17 @@ server customer_support_agent_api:
         return triage_ticket_mock()
     route GET "/replies/draft/mock" -> json SupportDraftReply uses ticket_read, policy_search, support_ai:
         return draft_policy_grounded_reply_mock()
+    route GET "/sla/jobs/mock" -> json SupportSlaJob:
+        return support_sla_job()
+    route GET "/eval/dashboard/mock" -> json SupportEvalDashboard:
+        return support_eval_dashboard()
+    route POST "/replies/send" body SupportReplySendRequest -> json SupportReplySendReceipt uses support_write:
+        return execute_approved_support_reply(body)
+    route POST "/refunds/issue" body SupportRefundRequest -> json SupportRefundReceipt uses refund_write:
+        return execute_approved_support_refund(body)
 
 agent main() -> Bool:
     reply = draft_policy_grounded_reply_mock()
-    return support_triage_contract_valid(reply)
+    dashboard = support_eval_dashboard()
+    sla = support_sla_job()
+    return support_triage_contract_valid(reply) and support_ops_contract_valid(dashboard, sla)

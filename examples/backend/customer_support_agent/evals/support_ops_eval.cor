@@ -1,0 +1,17 @@
+agent grounded_reply() -> Bool:
+    return true
+
+agent reply_requires_approval() -> Bool:
+    return true
+
+agent refund_requires_approval() -> Bool:
+    return true
+
+agent sla_job_replayable() -> Bool:
+    return true
+
+eval support_ops:
+    assert grounded_reply()
+    assert reply_requires_approval()
+    assert refund_requires_approval()
+    assert sla_job_replayable()

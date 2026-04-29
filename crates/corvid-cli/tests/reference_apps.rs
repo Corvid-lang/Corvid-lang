@@ -457,7 +457,7 @@ fn customer_support_agent_triage_and_drafts_are_policy_grounded() {
     let conn = Connection::open_in_memory().expect("in-memory sqlite");
     conn.execute_batch("PRAGMA foreign_keys = ON;")
         .expect("enable foreign keys");
-    execute_sql_dir(&conn, &app.join("migrations"), 1);
+    execute_sql_dir(&conn, &app.join("migrations"), 2);
     let seed_sql = fs::read_to_string(app.join("seeds").join("demo.sql")).expect("read seed sql");
     conn.execute_batch(&seed_sql).expect("execute seed sql");
 
@@ -472,4 +472,53 @@ fn customer_support_agent_triage_and_drafts_are_policy_grounded() {
     assert!(mock["citation"]["provenance_id"]
         .as_str()
         .is_some_and(|id| id.starts_with("policy:")));
+}
+
+#[test]
+fn customer_support_agent_approvals_sla_and_eval_dashboard_work() {
+    let app = repo_root()
+        .join("examples")
+        .join("backend")
+        .join("customer_support_agent");
+    let source = fs::read_to_string(app.join("src").join("main.cor")).expect("read support source");
+    assert!(source.contains("approve SendSupportReply("));
+    assert!(source.contains("approve IssueSupportRefund("));
+    assert!(source.contains("tool send_support_reply("));
+    assert!(source.contains("tool issue_support_refund("));
+
+    let check = Command::new(corvid_bin())
+        .arg("check")
+        .arg(app.join("src").join("main.cor"))
+        .current_dir(repo_root())
+        .output()
+        .expect("check support app");
+    assert!(
+        check.status.success(),
+        "support app check failed:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&check.stdout),
+        String::from_utf8_lossy(&check.stderr)
+    );
+
+    let mock_text = fs::read_to_string(app.join("mocks").join("approvals_sla.json"))
+        .expect("read support approval mock");
+    let mock: Value = serde_json::from_str(&mock_text).expect("parse support approval mock");
+    assert_eq!(mock["approvals"].as_array().expect("approvals").len(), 2);
+    assert_eq!(
+        mock["sla_jobs"][0]["replay_key"].as_str(),
+        Some("support:sla:ticket-1")
+    );
+    assert_eq!(mock["eval_dashboard"]["eval_passes"].as_i64(), Some(4));
+
+    let eval_out = Command::new(corvid_bin())
+        .arg("eval")
+        .arg(app.join("evals").join("support_ops_eval.cor"))
+        .current_dir(repo_root())
+        .output()
+        .expect("run support eval");
+    assert!(
+        eval_out.status.success(),
+        "support eval failed:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&eval_out.stdout),
+        String::from_utf8_lossy(&eval_out.stderr)
+    );
 }

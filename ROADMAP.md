@@ -2327,7 +2327,7 @@ corvid connectors verify-webhook --sig=<...>
 - [x] 42C-personal-executive-agent   Personal Executive Agent backend ships inbox triage, drafts, calendar scheduling, meeting prep, daily brief, tasks, follow-ups, approvals, and replay.
 - [x] 42D-personal-knowledge-agent   Knowledge Agent backend ships ingestion, grounded search, citations, private/local mode, feedback evals, and provenance-preserving answers.
 - [x] 42E-finance-operations-agent   Finance Operations Agent backend ships read-only aggregation, reminders, anomaly detection, approval-gated payment intents, audit trail, and regulated-advice non-scope.
-- [ ] 42F-support-operations-agent   Support Agent backend ships ticket triage, suggested replies, policy-grounded answers, refund/escalation approvals, SLA jobs, and eval dashboard.
+- [x] 42F-support-operations-agent   Support Agent backend ships ticket triage, suggested replies, policy-grounded answers, refund/escalation approvals, SLA jobs, and eval dashboard.
 - [ ] 42G-code-maintenance-agent     Code Maintenance Agent backend ships repo ingestion, issue triage, review comments, patch proposals, CI-aware risk labels, and approval-gated writes.
 - [ ] 42H-reference-app-hardening    Every app gets seed data, mock connector mode, replay tests, adversarial tests, real-provider env docs, security model, and operator runbook.
 - [ ] 42I-external-developer-trial   At least one external developer runs a reference app locally and files feedback before Phase 43.
@@ -2391,7 +2391,7 @@ corvid run --target=server --mode=real             # real-provider mode behind e
 - [x] 42E1-finance-readonly          Finance app aggregates read-only data and explains budgets/subscriptions.
 - [x] 42E2-finance-approval-audit    Payment intents are approval-gated with strict non-advice and audit posture.
 - [x] 42F1-support-triage            Support app triages tickets and drafts policy-grounded replies.
-- [ ] 42F2-support-approvals-sla     Refund/escalation approvals, SLA jobs, and eval dashboard work.
+- [x] 42F2-support-approvals-sla     Refund/escalation approvals, SLA jobs, and eval dashboard work.
 - [ ] 42G1-code-ingestion-triage     Code app ingests repos, triages issues, and labels CI-aware risk.
 - [ ] 42G2-code-write-approval       Review comments/patch proposals/write actions require approval.
 - [ ] 42H1-hardening-pack            Every app has seed data, mocks, replay tests, adversarial tests, env docs, security model, and runbook.

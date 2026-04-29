@@ -7,6 +7,10 @@
 - `GET /config`
 - `GET /tickets/triage/mock`
 - `GET /replies/draft/mock`
+- `GET /sla/jobs/mock`
+- `GET /eval/dashboard/mock`
+- `POST /replies/send`
+- `POST /refunds/issue`
 
-Draft replies carry policy citations and remain approval-pending until the 42F2
-write/approval slice.
+Draft replies carry policy citations. 42F2 adds approval-gated reply sends,
+approval-gated refunds, replayable SLA jobs, and an eval dashboard fixture.
