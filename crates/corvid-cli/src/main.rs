@@ -825,10 +825,19 @@ enum ConnectorsCommand {
     },
     /// Verify an inbound webhook payload's HMAC-SHA256 signature
     /// against a manifest-declared secret stored in an env var.
-    /// Exits 0 on a valid signature, 1 on mismatch.
+    /// Exits 0 on a valid signature, 1 on mismatch. Pass
+    /// `--provider github|slack|linear` to use the per-provider
+    /// header conventions from
+    /// `corvid-connector-runtime::webhook_verify` (Slack includes
+    /// timestamp replay protection); without `--provider`, the
+    /// generic HMAC-SHA256 verifier consumes the `--signature`
+    /// value directly.
     VerifyWebhook {
         /// Provider's signature header value (e.g. `sha256=...`).
-        #[arg(long)]
+        /// Required for the generic mode; ignored when
+        /// `--provider` is set (the per-provider verifier reads
+        /// the `--header` entries instead).
+        #[arg(long, default_value = "")]
         signature: String,
         /// Env-var name holding the shared HMAC secret.
         #[arg(long)]
@@ -836,6 +845,18 @@ enum ConnectorsCommand {
         /// File containing the raw webhook body bytes.
         #[arg(long, value_name = "FILE")]
         body_file: PathBuf,
+        /// Provider preset: `github`, `slack`, or `linear`. Selects
+        /// the per-provider header conventions and (Slack) the
+        /// timestamp replay-protection window.
+        #[arg(long)]
+        provider: Option<String>,
+        /// `Header-Name=value` pair (repeatable) to feed into the
+        /// per-provider verifier. Required for `--provider` modes
+        /// (e.g. `--header X-Hub-Signature-256=sha256=...` for
+        /// github, plus `X-Slack-Signature` and
+        /// `X-Slack-Request-Timestamp` for slack).
+        #[arg(long = "header", value_name = "NAME=VALUE")]
+        headers: Vec<String>,
     },
 }
 
@@ -2037,15 +2058,29 @@ fn cmd_connectors(command: ConnectorsCommand) -> Result<u8> {
             signature,
             secret_env,
             body_file,
+            provider,
+            headers,
         } => {
+            let parsed_headers = headers
+                .iter()
+                .map(|h| {
+                    let mut parts = h.splitn(2, '=');
+                    let name = parts.next().unwrap_or_default().to_string();
+                    let value = parts.next().unwrap_or_default().to_string();
+                    (name, value)
+                })
+                .collect::<Vec<_>>();
             let output = connectors_cmd::run_verify_webhook(connectors_cmd::WebhookVerifyArgs {
                 signature,
                 secret_env,
                 body_file,
+                provider,
+                headers: parsed_headers,
             })?;
             println!("{}", serde_json::to_string_pretty(&serde_json::json!({
                 "valid": output.valid,
                 "algorithm": output.algorithm,
+                "outcome": output.outcome,
             }))?);
             Ok(if output.valid { 0 } else { 1 })
         }

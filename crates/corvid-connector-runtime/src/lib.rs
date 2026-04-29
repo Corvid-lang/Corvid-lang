@@ -15,6 +15,7 @@ pub mod slack_real;
 pub mod tasks;
 pub mod test_kit;
 pub mod trace;
+pub mod webhook_verify;
 
 pub use auth::{ConnectorAuthError, ConnectorAuthState, ConnectorRefreshTokenState};
 pub use calendar::{
@@ -71,3 +72,6 @@ pub use test_kit::{
     parse_connector_fixture, run_connector_fixture, ConnectorFixture, ConnectorFixtureReport,
 };
 pub use trace::ConnectorTraceEvent;
+pub use webhook_verify::{
+    verify_webhook, WebhookProvider, WebhookVerificationOutcome, WebhookVerifyInputs,
+};
