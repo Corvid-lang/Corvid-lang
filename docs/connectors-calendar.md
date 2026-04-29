@@ -18,7 +18,14 @@ Read scopes for 41E1:
 calendar.read
 ```
 
-Write scopes land in 41E2 and require approval.
+Write scopes:
+
+```text
+calendar.write
+```
+
+Event create, update, cancel, and external invites require an approval ID.
+Replay mode quarantines these writes.
 
 ## Mock Mode
 
@@ -26,6 +33,9 @@ Mock operations:
 
 - `availability`
 - `events`
+- `create`
+- `update`
+- `cancel`
 
 Mock payloads use `CalendarAvailabilitySlot` and `CalendarEvent`.
 
@@ -33,3 +43,6 @@ Mock payloads use `CalendarAvailabilitySlot` and `CalendarEvent`.
 
 - Availability: `calendar:availability:<user_id>:<start_ms>:<end_ms>:<duration_ms>`
 - Events: `calendar:events:<user_id>:<calendar_id>:<start_ms>:<end_ms>`
+- Create: `calendar:create:<user_id>:<calendar_id>:<start_ms>`
+- Update: `calendar:update:<user_id>:<calendar_id>:<start_ms>`
+- Cancel: `calendar:cancel:<user_id>:<calendar_id>:<event_id>`

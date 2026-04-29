@@ -10,8 +10,9 @@ pub mod trace;
 
 pub use auth::{ConnectorAuthError, ConnectorAuthState, ConnectorRefreshTokenState};
 pub use calendar::{
-    calendar_manifest, CalendarAvailabilityRequest, CalendarAvailabilitySlot, CalendarConnector,
-    CalendarEvent, CalendarEventReadRequest, CALENDAR_CONNECTOR_MANIFEST,
+    calendar_manifest, CalendarAvailabilityRequest, CalendarAvailabilitySlot,
+    CalendarCancelRequest, CalendarConnector, CalendarEvent, CalendarEventReadRequest,
+    CalendarWriteReceipt, CalendarWriteRequest, CALENDAR_CONNECTOR_MANIFEST,
 };
 pub use gmail::{
     gmail_manifest, GmailConnector, GmailDraftRequest, GmailMessageMetadata, GmailSearchRequest,

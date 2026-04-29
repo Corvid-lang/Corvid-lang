@@ -2218,7 +2218,7 @@ corvid observe metrics --listen=:9090
 - [x] 41B-connector-runtime-contract Shared connector runtime handles auth state, rate limits, retries, redaction, trace events, and mock mode.
 - [x] 41C-gmail-google-workspace     Gmail/Google Workspace connector supports read/search/draft/send-with-approval and token refresh.
 - [x] 41D-microsoft-365              Microsoft 365 connector supports Outlook mail, calendar basics, contacts, Graph auth, and tenant-aware scopes.
-- [ ] 41E-calendar-connector         Calendar connector supports availability, event create/update/cancel, reminders, and approval-gated external invites.
+- [x] 41E-calendar-connector         Calendar connector supports availability, event create/update/cancel, reminders, and approval-gated external invites.
 - [ ] 41F-slack-connector            Slack connector supports channel/DM reads, draft/send-with-approval, threads, and workspace/user scoping.
 - [ ] 41G-task-project-connectors    Linear and GitHub issue connectors support typed create/update/comment flows with approval gates.
 - [ ] 41H-local-files-connector      Local file connector supports indexed folders, read permissions, write approval, and provenance snippets.
@@ -2288,7 +2288,7 @@ corvid connectors verify-webhook --sig=<...>
 - [x] 41D1-ms365-mail-calendar       Outlook mail/calendar basics work through Graph auth.
 - [x] 41D2-ms365-tenant-scopes       Tenant-aware scopes and token refresh are tested.
 - [x] 41E1-calendar-availability     Availability and event read paths work.
-- [ ] 41E2-calendar-write-approval   Event create/update/cancel and external invites require approval.
+- [x] 41E2-calendar-write-approval   Event create/update/cancel and external invites require approval.
 - [ ] 41F1-slack-read-thread         Slack channel/DM/thread reads work with workspace scoping.
 - [ ] 41F2-slack-send-approval       Draft/send flows require approval and preserve audit evidence.
 - [ ] 41G1-linear-github-read        Linear/GitHub issue read/search flows work.
