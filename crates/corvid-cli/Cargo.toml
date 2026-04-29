@@ -14,6 +14,7 @@ corvid-abi = { workspace = true }
 corvid-abi-verify = { workspace = true }
 corvid-ast = { workspace = true }
 corvid-bind = { workspace = true }
+corvid-connector-runtime = { workspace = true }
 corvid-driver = { workspace = true }
 corvid-guarantees = { workspace = true }
 corvid-resolve = { workspace = true }
@@ -35,6 +36,7 @@ tokio = { workspace = true, features = ["rt", "macros"] }
 rayon = { workspace = true }
 libloading = "0.8"
 sha2 = "0.10"
+hmac = "0.12"
 tar = "0.4"
 ed25519-dalek = { version = "2", features = ["std", "rand_core"] }
 base64 = "0.22"
