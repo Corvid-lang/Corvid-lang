@@ -735,6 +735,14 @@ enum DeployCommand {
         #[arg(long, value_name = "DIR")]
         out: Option<PathBuf>,
     },
+    /// Emit Docker Compose deployment artifacts.
+    Compose {
+        /// App directory, e.g. examples/backend/personal_executive_agent.
+        app: PathBuf,
+        /// Output directory for generated artifacts.
+        #[arg(long, value_name = "DIR")]
+        out: Option<PathBuf>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -1342,6 +1350,10 @@ fn main_impl() -> ExitCode {
             DeployCommand::Package { app, out } => {
                 let out = out.unwrap_or_else(|| app.join("target").join("deploy-package"));
                 deploy_cmd::run_package(&app, &out).map(|_| 0)
+            }
+            DeployCommand::Compose { app, out } => {
+                let out = out.unwrap_or_else(|| app.join("target").join("compose"));
+                deploy_cmd::run_compose(&app, &out).map(|_| 0)
             }
         },
         Some(Command::Migrate { command }) => match command {

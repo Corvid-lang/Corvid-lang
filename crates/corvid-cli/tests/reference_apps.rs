@@ -744,3 +744,35 @@ fn deploy_package_emits_dockerfile_and_oci_metadata() {
     let verify = fs::read_to_string(out.join("VERIFY.md")).expect("read verify docs");
     assert!(verify.contains("DSSE envelope"));
 }
+
+#[test]
+fn deploy_compose_emits_reference_app_manifest() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let app = repo_root()
+        .join("examples")
+        .join("backend")
+        .join("personal_executive_agent");
+    let out = temp.path().join("compose");
+    let deploy = Command::new(corvid_bin())
+        .arg("deploy")
+        .arg("compose")
+        .arg(&app)
+        .arg("--out")
+        .arg(&out)
+        .current_dir(repo_root())
+        .output()
+        .expect("run deploy compose");
+    assert!(
+        deploy.status.success(),
+        "deploy compose failed:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&deploy.stdout),
+        String::from_utf8_lossy(&deploy.stderr)
+    );
+    let compose =
+        fs::read_to_string(out.join("docker-compose.yml")).expect("read compose manifest");
+    assert!(compose.contains("personal_executive_agent"));
+    assert!(compose.contains("CORVID_REQUIRE_APPROVALS"));
+    assert!(compose.contains("healthcheck"));
+    let env = fs::read_to_string(out.join(".env.example")).expect("read compose env");
+    assert!(env.contains("CORVID_CONNECTOR_MODE=mock"));
+}

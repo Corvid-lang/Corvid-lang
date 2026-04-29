@@ -2479,7 +2479,7 @@ corvid claim audit                           # AI-assisted final claim audit (ad
 - [x] 43B1-package-dockerfile        `corvid deploy package` emits Dockerfile and OCI metadata.
 - [x] 43B2-package-runtime-config    Package includes health/readiness config, migration runner, env schema, and startup checks.
 - [x] 43B3-package-attestation       Package includes signed build attestation and verification docs.
-- [ ] 43C1-compose-manifest          Docker Compose deploy works for one reference app.
+- [x] 43C1-compose-manifest          Docker Compose deploy works for one reference app.
 - [ ] 43C2-paas-manifest             Fly/Render-style single-service deploy works.
 - [ ] 43C3-k8s-systemd-manifests     Kubernetes and systemd manifests work or are explicitly scoped.
 - [ ] 43D1-release-policy            Nightly/beta/stable SemVer and stability policy are documented.

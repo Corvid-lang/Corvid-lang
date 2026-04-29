@@ -76,6 +76,25 @@ pub fn run_package(app: &Path, out: &Path) -> Result<()> {
     Ok(())
 }
 
+pub fn run_compose(app: &Path, out: &Path) -> Result<()> {
+    let app_name = app
+        .file_name()
+        .and_then(|name| name.to_str())
+        .context("app path must end in a valid directory name")?;
+    fs::create_dir_all(out)
+        .with_context(|| format!("create compose deploy dir `{}`", out.display()))?;
+    fs::write(out.join("docker-compose.yml"), render_compose(app_name))
+        .context("write docker-compose.yml")?;
+    fs::write(out.join(".env.example"), render_compose_env(app_name))
+        .context("write compose env")?;
+    println!(
+        "compose manifest: {}",
+        out.join("docker-compose.yml").display()
+    );
+    println!("env example: {}", out.join(".env.example").display());
+    Ok(())
+}
+
 fn render_dockerfile(app_name: &str) -> String {
     format!(
         r#"FROM rust:1.78-slim AS build
@@ -171,4 +190,44 @@ Verification requirements:
 - The payload's source SHA-256 must match `oci-labels.json`
 - The image/app label must match the packaged app directory
 "#
+}
+
+fn render_compose(app_name: &str) -> String {
+    format!(
+        r#"services:
+  {app_name}:
+    build:
+      context: ../../..
+      dockerfile: examples/backend/{app_name}/deploy/Dockerfile
+    environment:
+      CORVID_APP_ENV: local
+      CORVID_CONNECTOR_MODE: mock
+      CORVID_DATABASE_URL: sqlite:/data/{app_name}.db
+      CORVID_TRACE_DIR: /data/traces
+      CORVID_REQUIRE_APPROVALS: "true"
+    ports:
+      - "8080:8080"
+    volumes:
+      - {app_name}-data:/data
+    healthcheck:
+      test: ["CMD", "corvid", "check", "examples/backend/{app_name}/src/main.cor"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+volumes:
+  {app_name}-data:
+"#
+    )
+}
+
+fn render_compose_env(app_name: &str) -> String {
+    format!(
+        r#"CORVID_APP_ENV=local
+CORVID_CONNECTOR_MODE=mock
+CORVID_DATABASE_URL=sqlite:target/{app_name}.db
+CORVID_TRACE_DIR=target/traces
+CORVID_REQUIRE_APPROVALS=true
+"#
+    )
 }
