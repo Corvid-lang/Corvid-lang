@@ -56,6 +56,7 @@ pub mod human;
 pub mod http;
 pub mod io;
 pub mod lineage;
+pub mod lineage_drift;
 pub mod lineage_eval;
 pub mod lineage_redact;
 pub mod lineage_render;
@@ -166,6 +167,10 @@ pub use io::{DirectoryEntry, FileRead, FileSystemEffect, FileWrite, IoRuntime, T
 pub use lineage::{
     lineage_span_id, validate_lineage, LineageEvent, LineageKind, LineageStatus, LineageValidation,
     LINEAGE_SCHEMA,
+};
+pub use lineage_drift::{
+    compute_lineage_drift_report, summarize_lineage_drift_metrics, LineageDriftReport,
+    LineageDriftSummary,
 };
 pub use lineage_eval::{
     lineage_eval_fixture_hash, promote_lineage_events_to_eval, LineageEvalFixture,

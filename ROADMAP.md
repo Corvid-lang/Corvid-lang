@@ -2188,7 +2188,7 @@ corvid observe metrics --listen=:9090
 - [x] 40D2-observe-show              `corvid observe show <id>` explains one run with contract-aware grouping.
 - [x] 40E1-trace-redaction           Production trace slices can be redacted deterministically.
 - [x] 40E2-eval-promotion            Redacted trace slices become regression/eval fixtures.
-- [ ] 40F1-drift-metrics             Schema/confidence/cost/latency/denial/tool-error drift is computed.
+- [x] 40F1-drift-metrics             Schema/confidence/cost/latency/denial/tool-error drift is computed.
 - [ ] 40F2-drift-report              Drift report is human-readable and CI-friendly.
 - [ ] 40G1-review-queue-envelope     Human-review queue records link to trace/audit IDs.
 - [ ] 40G2-review-queue-ops          Low-confidence/high-risk outputs enter review and resolve with audit evidence.

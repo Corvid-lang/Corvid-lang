@@ -362,6 +362,16 @@ fn build_metric_points(events: &[LineageEvent]) -> Vec<MetricPoint> {
                         event.ended_ms,
                     ));
                 }
+                if event.confidence > 0.0 {
+                    points.push(gauge_metric(
+                        "corvid.llm.confidence",
+                        "1",
+                        "LLM confidence",
+                        event.confidence,
+                        attrs.clone(),
+                        event.ended_ms,
+                    ));
+                }
             }
             LineageKind::Tool => {
                 points.push(count_metric(

@@ -62,6 +62,10 @@ pub fn lineage_to_otel_span(event: &LineageEvent) -> OtelSpanMapping {
             event.tokens_out.to_string(),
         ),
         (
+            "corvid.confidence".to_string(),
+            format_float(event.confidence),
+        ),
+        (
             "corvid.latency_ms".to_string(),
             event.latency_ms.to_string(),
         ),

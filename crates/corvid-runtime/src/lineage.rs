@@ -61,6 +61,8 @@ pub struct LineageEvent {
     pub cost_usd: f64,
     pub tokens_in: u64,
     pub tokens_out: u64,
+    #[serde(default)]
+    pub confidence: f64,
     pub latency_ms: u64,
     pub model_id: String,
     pub model_fingerprint: String,
@@ -144,6 +146,7 @@ impl LineageEvent {
             cost_usd: 0.0,
             tokens_in: 0,
             tokens_out: 0,
+            confidence: 0.0,
             latency_ms: 0,
             model_id: String::new(),
             model_fingerprint: String::new(),
