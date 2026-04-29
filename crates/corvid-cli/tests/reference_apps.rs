@@ -641,3 +641,14 @@ fn phase_42_apps_have_hardening_pack_artifacts() {
         );
     }
 }
+
+#[test]
+fn phase_42_external_trial_packet_is_ready_but_not_faked() {
+    let docs = repo_root().join("docs").join("external-trials");
+    let trial = fs::read_to_string(docs.join("phase-42-trial-one.md")).expect("read trial packet");
+    let triage =
+        fs::read_to_string(docs.join("phase-42-feedback-triage.md")).expect("read triage packet");
+    assert!(trial.contains("Pending real external reviewer"));
+    assert!(trial.contains("Do not mark 42I1 or 42I2 complete"));
+    assert!(triage.contains("No external reviewer signoff has been recorded yet"));
+}
