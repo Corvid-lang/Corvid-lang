@@ -157,6 +157,19 @@ fn std_auth_compiles_as_corvid_source() {
 }
 
 #[test]
+fn std_approvals_compiles_as_corvid_source() {
+    let repo = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(std::path::Path::parent)
+        .expect("repo root");
+    let source_path = repo.join("std").join("approvals.cor");
+    let source = fs::read_to_string(&source_path).expect("std/approvals.cor");
+
+    compile_to_ir_with_config_at_path(&source, &source_path, None)
+        .expect("std.approvals should compile as a standalone Corvid module");
+}
+
+#[test]
 fn std_agent_compiles_as_corvid_source() {
     let repo = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
@@ -428,6 +441,23 @@ agent main() -> Bool:
     oauth = oauth_state("google", "org-1", actor.id, "sha256:state", "pkce-ref-1", "sha256:nonce", 9000, "replay-oauth-1")
     token = oauth_token_ref("google", "org-1", actor.id, "token-ref-1", "sha256:scopes", "sha256:ciphertext", 9000, "replay-oauth-token-1")
     return actor_same_tenant(actor, "org-1") and session_active(sess, 5000) and api_key_active(key, 5000) and auth_secret_redacted(sess, key) and auth_trace_same_tenant(session_trace, actor) and allowed.allowed and not denied.allowed and tenant_active(org) and reviewer.permission_fingerprint != "" and can_review.risk_level == "medium" and role_binding_active(binding, 5000) and permission_set_same_actor(permission_set, actor) and jwt_contract_safe(jwt) and jwt_diagnostic_redacted(verified) and jwt_diagnostic_redacted(failed) and oauth_state_replay_safe(oauth) and oauth_token_redacted(token)
+"#,
+    );
+}
+
+#[test]
+fn std_approvals_imported_helpers_typecheck() {
+    assert_imported_helpers_typecheck(
+        "approvals",
+        true,
+        r#"
+import "./std/approvals" use ApprovalContractRef, ApprovalQueueItem, ApprovalAuditEnvelope, approval_contract_ref, approval_queue_item, approval_audit_envelope, approval_pending, approval_same_tenant, approval_not_expired, approval_redacted
+
+agent main() -> Bool:
+    contract = approval_contract_ref("contract-1", "v1", "SendExecutiveFollowUp", "email_thread", "thread-1", "org-1", "Reviewer", 0.25, "private", true, 9000, "replay-approval-1")
+    item = approval_queue_item("approval-1", "org-1", "user-1", contract, "external_side_effect", "trace-1")
+    audit = approval_audit_envelope("audit-1", item.id, item.tenant_id, item.requester_actor_id, "created", "", item.status, "created", item.trace_id, 1000)
+    return approval_pending(item) and approval_same_tenant(item, "org-1") and approval_not_expired(item, 5000) and approval_redacted(item, audit)
 "#,
     );
 }

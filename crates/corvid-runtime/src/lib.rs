@@ -31,6 +31,7 @@
 
 pub mod abi;
 pub mod adversarial;
+pub mod approval_queue;
 pub mod approvals;
 pub mod approver_bridge;
 pub(crate) mod attestation_store;
@@ -99,6 +100,10 @@ pub use adversarial::{contradiction_flag, trace_text};
 pub use approvals::{
     ApprovalCard, ApprovalCardArgument, ApprovalDecision, ApprovalRequest, ApprovalRisk, Approver,
     ProgrammaticApprover, StdinApprover,
+};
+pub use approval_queue::{
+    ApprovalContractRecord, ApprovalCreate, ApprovalQueueAuditEvent, ApprovalQueueRecord,
+    ApprovalQueueRuntime,
 };
 pub use auth::{
     authorize_trace_permission, hash_api_key_secret, hash_oauth_state, hash_session_secret,

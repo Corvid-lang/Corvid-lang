@@ -1,0 +1,73 @@
+# Standard durable approval queue envelopes.
+
+import "./effects" use EffectEnvelope, effect_envelope
+
+public type ApprovalContractRef:
+    id: String
+    version: String
+    action: String
+    target_kind: String
+    target_id: String
+    tenant_id: String
+    required_role: String
+    max_cost_usd: Float
+    data_class: String
+    irreversible: Bool
+    expires_ms: Int
+    replay_key: String
+    effect_meta: EffectEnvelope
+
+public type ApprovalQueueItem:
+    id: String
+    tenant_id: String
+    requester_actor_id: String
+    approver_actor_id: String
+    delegated_to_actor_id: String
+    contract_id: String
+    action: String
+    target_kind: String
+    target_id: String
+    status: String
+    required_role: String
+    risk_level: String
+    data_class: String
+    irreversible: Bool
+    expires_ms: Int
+    trace_id: String
+    replay_key: String
+    redacted: Bool
+    effect_meta: EffectEnvelope
+
+public type ApprovalAuditEnvelope:
+    id: String
+    approval_id: String
+    tenant_id: String
+    actor_id: String
+    event_kind: String
+    status_before: String
+    status_after: String
+    redacted_reason: String
+    trace_id: String
+    created_ms: Int
+    effect_meta: EffectEnvelope
+
+public agent approval_contract_ref(id: String, version: String, action: String, target_kind: String, target_id: String, tenant_id: String, required_role: String, max_cost_usd: Float, data_class: String, irreversible: Bool, expires_ms: Int, replay_key: String) -> ApprovalContractRef:
+    return ApprovalContractRef(id, version, action, target_kind, target_id, tenant_id, required_role, max_cost_usd, data_class, irreversible, expires_ms, replay_key, effect_envelope("std.approvals.contract", tenant_id, required_role, target_kind + ":" + target_id, replay_key))
+
+public agent approval_queue_item(id: String, tenant_id: String, requester_actor_id: String, contract: ApprovalContractRef, risk_level: String, trace_id: String) -> ApprovalQueueItem:
+    return ApprovalQueueItem(id, tenant_id, requester_actor_id, "", "", contract.id, contract.action, contract.target_kind, contract.target_id, "pending", contract.required_role, risk_level, contract.data_class, contract.irreversible, contract.expires_ms, trace_id, contract.replay_key, true, effect_envelope("std.approvals.queue", trace_id, contract.required_role, tenant_id + ":" + contract.target_kind + ":" + contract.target_id, contract.replay_key))
+
+public agent approval_audit_envelope(id: String, approval_id: String, tenant_id: String, actor_id: String, event_kind: String, status_before: String, status_after: String, redacted_reason: String, trace_id: String, created_ms: Int) -> ApprovalAuditEnvelope:
+    return ApprovalAuditEnvelope(id, approval_id, tenant_id, actor_id, event_kind, status_before, status_after, redacted_reason, trace_id, created_ms, effect_envelope("std.approvals.audit", trace_id, "", tenant_id + ":" + approval_id, "approval:audit:" + approval_id))
+
+public agent approval_pending(item: ApprovalQueueItem) -> Bool:
+    return item.status == "pending"
+
+public agent approval_same_tenant(item: ApprovalQueueItem, tenant_id: String) -> Bool:
+    return item.tenant_id == tenant_id
+
+public agent approval_not_expired(item: ApprovalQueueItem, now_ms: Int) -> Bool:
+    return now_ms < item.expires_ms
+
+public agent approval_redacted(item: ApprovalQueueItem, audit: ApprovalAuditEnvelope) -> Bool:
+    return item.redacted and audit.redacted_reason != ""
