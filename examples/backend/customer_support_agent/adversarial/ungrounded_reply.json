@@ -1,0 +1,5 @@
+{
+  "case": "ungrounded_reply",
+  "must_reject": true,
+  "reason": "support replies must cite policy provenance before sending"
+}

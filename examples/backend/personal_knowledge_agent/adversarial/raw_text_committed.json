@@ -1,0 +1,5 @@
+{
+  "case": "raw_text_committed",
+  "must_reject": true,
+  "reason": "knowledge fixtures must commit hashes and fingerprints, not raw private notes"
+}

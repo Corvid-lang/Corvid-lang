@@ -1,0 +1,5 @@
+{
+  "mode": "mock",
+  "connectors": ["email", "calendar", "tasks", "chat", "files"],
+  "writes_quarantined": true
+}

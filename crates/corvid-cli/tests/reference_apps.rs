@@ -604,3 +604,40 @@ fn code_maintenance_agent_write_actions_require_approval() {
         String::from_utf8_lossy(&eval_out.stderr)
     );
 }
+
+#[test]
+fn phase_42_apps_have_hardening_pack_artifacts() {
+    let apps = [
+        "shared_app_template",
+        "personal_executive_agent",
+        "personal_knowledge_agent",
+        "finance_operations_agent",
+        "customer_support_agent",
+        "code_maintenance_agent",
+    ];
+    for app_name in apps {
+        let app = repo_root().join("examples").join("backend").join(app_name);
+        assert!(app.join("seeds").exists(), "{app_name} missing seeds");
+        assert!(app.join("mocks").exists(), "{app_name} missing mocks");
+        assert!(
+            app.join("traces").exists(),
+            "{app_name} missing replay traces"
+        );
+        assert!(
+            app.join("adversarial").exists(),
+            "{app_name} missing adversarial cases"
+        );
+        assert!(
+            app.join("deploy").join("env.example").exists(),
+            "{app_name} missing env docs"
+        );
+        assert!(
+            app.join("security-model.md").exists(),
+            "{app_name} missing security model"
+        );
+        assert!(
+            app.join("ops").join("runbook.md").exists(),
+            "{app_name} missing runbook"
+        );
+    }
+}

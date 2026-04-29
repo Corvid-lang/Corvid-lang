@@ -2394,7 +2394,7 @@ corvid run --target=server --mode=real             # real-provider mode behind e
 - [x] 42F2-support-approvals-sla     Refund/escalation approvals, SLA jobs, and eval dashboard work.
 - [x] 42G1-code-ingestion-triage     Code app ingests repos, triages issues, and labels CI-aware risk.
 - [x] 42G2-code-write-approval       Review comments/patch proposals/write actions require approval.
-- [ ] 42H1-hardening-pack            Every app has seed data, mocks, replay tests, adversarial tests, env docs, security model, and runbook.
+- [x] 42H1-hardening-pack            Every app has seed data, mocks, replay tests, adversarial tests, env docs, security model, and runbook.
 - [ ] 42I1-external-trial-one        One external developer runs an app locally and feedback is triaged.
 - [ ] 42I2-external-trial-close      Feedback closes as code/docs/tests or explicit non-scope.
 

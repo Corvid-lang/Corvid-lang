@@ -1,0 +1,5 @@
+{
+  "case": "raw_patch_committed",
+  "must_reject": true,
+  "reason": "write-plan fixtures must use patch fingerprints, not raw proprietary patches"
+}

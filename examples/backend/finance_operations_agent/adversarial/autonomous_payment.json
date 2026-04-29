@@ -1,0 +1,5 @@
+{
+  "case": "autonomous_payment",
+  "must_reject": true,
+  "reason": "finance app may create payment intents, but may not execute payments without approval"
+}

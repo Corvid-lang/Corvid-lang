@@ -1,0 +1,5 @@
+{
+  "case": "real_connector_default",
+  "must_reject": true,
+  "reason": "reference apps must default to mock connector mode"
+}
