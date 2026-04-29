@@ -13,6 +13,11 @@ effect code_ai:
     trust: bounded
     data: code
 
+effect code_write:
+    cost: $0.02
+    trust: human_required
+    data: code
+
 public type CodeConfig:
     service: String
     connector_mode: String
@@ -50,6 +55,44 @@ public type CodeRiskLabel:
     confidence: Float
     replay_key: String
 
+public type ReviewCommentRequest:
+    tenant_id: String
+    actor_id: String
+    issue_id: String
+    body_fingerprint: String
+    approval_id: String
+    trace_id: String
+
+public type ReviewCommentReceipt:
+    issue_id: String
+    approval_id: String
+    trace_id: String
+    status: String
+
+public type PatchProposalRequest:
+    tenant_id: String
+    actor_id: String
+    repo_id: String
+    patch_fingerprint: String
+    approval_id: String
+    trace_id: String
+
+public type PatchProposalReceipt:
+    repo_id: String
+    approval_id: String
+    trace_id: String
+    status: String
+
+public type CodeWritePlan:
+    risk: CodeRiskLabel
+    review_comment_fingerprint: String
+    patch_fingerprint: String
+    approval_count: Int
+    writes_gated: Bool
+
+tool post_review_comment(req: ReviewCommentRequest) -> ReviewCommentReceipt dangerous uses code_write
+tool create_patch_proposal(req: PatchProposalRequest) -> PatchProposalReceipt dangerous uses code_write
+
 public @replayable
 agent code_config() -> CodeConfig:
     return CodeConfig("code_maintenance_agent", "mock", true)
@@ -78,6 +121,23 @@ public @replayable
 agent code_triage_valid(label: CodeRiskLabel) -> Bool:
     return label.ci.status == "failed" and label.severity == "high" and label.confidence >= 0.8 and label.replay_key == "code:triage:issue-1"
 
+public @replayable
+agent code_write_plan_mock() -> CodeWritePlan uses repo_read, ci_read, code_ai:
+    risk = triage_issue_mock()
+    return CodeWritePlan(risk, "sha256:review-comment", "sha256:patch-proposal", 2, true)
+
+agent execute_approved_review_comment(req: ReviewCommentRequest) -> ReviewCommentReceipt uses code_write:
+    approve PostReviewComment(req)
+    return post_review_comment(req)
+
+agent execute_approved_patch_proposal(req: PatchProposalRequest) -> PatchProposalReceipt uses code_write:
+    approve CreatePatchProposal(req)
+    return create_patch_proposal(req)
+
+public @replayable
+agent code_write_plan_valid(plan: CodeWritePlan) -> Bool:
+    return plan.writes_gated and plan.approval_count == 2 and plan.patch_fingerprint != "" and plan.review_comment_fingerprint != ""
+
 server code_maintenance_agent_api:
     route GET "/config" -> json CodeConfig:
         return code_config()
@@ -85,7 +145,14 @@ server code_maintenance_agent_api:
         return demo_repo()
     route GET "/issues/triage/mock" -> json CodeRiskLabel uses repo_read, ci_read, code_ai:
         return triage_issue_mock()
+    route GET "/writes/plan/mock" -> json CodeWritePlan uses repo_read, ci_read, code_ai:
+        return code_write_plan_mock()
+    route POST "/comments/post" body ReviewCommentRequest -> json ReviewCommentReceipt uses code_write:
+        return execute_approved_review_comment(body)
+    route POST "/patches/propose" body PatchProposalRequest -> json PatchProposalReceipt uses code_write:
+        return execute_approved_patch_proposal(body)
 
 agent main() -> Bool:
     label = triage_issue_mock()
-    return code_triage_valid(label)
+    plan = code_write_plan_mock()
+    return code_triage_valid(label) and code_write_plan_valid(plan)

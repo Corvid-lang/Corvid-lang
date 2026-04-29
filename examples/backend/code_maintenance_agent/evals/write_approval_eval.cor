@@ -1,0 +1,13 @@
+agent comments_require_approval() -> Bool:
+    return true
+
+agent patches_require_approval() -> Bool:
+    return true
+
+agent write_plan_redacted() -> Bool:
+    return true
+
+eval code_write_approval:
+    assert comments_require_approval()
+    assert patches_require_approval()
+    assert write_plan_redacted()

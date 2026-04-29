@@ -1,0 +1,21 @@
+{
+  "mode": "mock",
+  "writes_gated": true,
+  "approvals": [
+    {
+      "label": "PostReviewComment",
+      "route": "POST /comments/post",
+      "audit_required": true
+    },
+    {
+      "label": "CreatePatchProposal",
+      "route": "POST /patches/propose",
+      "audit_required": true
+    }
+  ],
+  "plan": {
+    "review_comment_fingerprint": "sha256:review-comment",
+    "patch_fingerprint": "sha256:patch-proposal",
+    "approval_count": 2
+  }
+}

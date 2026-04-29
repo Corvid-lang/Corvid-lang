@@ -8,6 +8,9 @@ mode.
 - `GET /config`
 - `GET /repos/ingest/mock`
 - `GET /issues/triage/mock`
+- `GET /writes/plan/mock`
+- `POST /comments/post`
+- `POST /patches/propose`
 
-The app reads repository, issue, and CI metadata only. Write actions are added
-behind approval gates in 42G2.
+42G2 adds approval-gated write actions for review comments and patch proposals.
+The committed write plan uses fingerprints, not raw patch content.

@@ -545,7 +545,7 @@ fn code_maintenance_agent_ingests_and_triages_ci_aware_risk() {
     let conn = Connection::open_in_memory().expect("in-memory sqlite");
     conn.execute_batch("PRAGMA foreign_keys = ON;")
         .expect("enable foreign keys");
-    execute_sql_dir(&conn, &app.join("migrations"), 1);
+    execute_sql_dir(&conn, &app.join("migrations"), 2);
     let seed_sql = fs::read_to_string(app.join("seeds").join("demo.sql")).expect("read seed sql");
     conn.execute_batch(&seed_sql).expect("execute seed sql");
 
@@ -557,4 +557,50 @@ fn code_maintenance_agent_ingests_and_triages_ci_aware_risk() {
     assert!(mock["risk"]["confidence"]
         .as_f64()
         .is_some_and(|confidence| confidence >= 0.8));
+}
+
+#[test]
+fn code_maintenance_agent_write_actions_require_approval() {
+    let app = repo_root()
+        .join("examples")
+        .join("backend")
+        .join("code_maintenance_agent");
+    let source = fs::read_to_string(app.join("src").join("main.cor")).expect("read code source");
+    assert!(source.contains("approve PostReviewComment("));
+    assert!(source.contains("approve CreatePatchProposal("));
+    assert!(source.contains("tool post_review_comment("));
+    assert!(source.contains("tool create_patch_proposal("));
+
+    let check = Command::new(corvid_bin())
+        .arg("check")
+        .arg(app.join("src").join("main.cor"))
+        .current_dir(repo_root())
+        .output()
+        .expect("check code app");
+    assert!(
+        check.status.success(),
+        "code app check failed:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&check.stdout),
+        String::from_utf8_lossy(&check.stderr)
+    );
+
+    let mock_text =
+        fs::read_to_string(app.join("mocks").join("write_plan.json")).expect("read write mock");
+    let mock: Value = serde_json::from_str(&mock_text).expect("parse write mock");
+    assert_eq!(mock["writes_gated"].as_bool(), Some(true));
+    assert_eq!(mock["approvals"].as_array().expect("approvals").len(), 2);
+    assert_eq!(mock["plan"]["approval_count"].as_i64(), Some(2));
+
+    let eval_out = Command::new(corvid_bin())
+        .arg("eval")
+        .arg(app.join("evals").join("write_approval_eval.cor"))
+        .current_dir(repo_root())
+        .output()
+        .expect("run code eval");
+    assert!(
+        eval_out.status.success(),
+        "code eval failed:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&eval_out.stdout),
+        String::from_utf8_lossy(&eval_out.stderr)
+    );
 }

@@ -2328,7 +2328,7 @@ corvid connectors verify-webhook --sig=<...>
 - [x] 42D-personal-knowledge-agent   Knowledge Agent backend ships ingestion, grounded search, citations, private/local mode, feedback evals, and provenance-preserving answers.
 - [x] 42E-finance-operations-agent   Finance Operations Agent backend ships read-only aggregation, reminders, anomaly detection, approval-gated payment intents, audit trail, and regulated-advice non-scope.
 - [x] 42F-support-operations-agent   Support Agent backend ships ticket triage, suggested replies, policy-grounded answers, refund/escalation approvals, SLA jobs, and eval dashboard.
-- [ ] 42G-code-maintenance-agent     Code Maintenance Agent backend ships repo ingestion, issue triage, review comments, patch proposals, CI-aware risk labels, and approval-gated writes.
+- [x] 42G-code-maintenance-agent     Code Maintenance Agent backend ships repo ingestion, issue triage, review comments, patch proposals, CI-aware risk labels, and approval-gated writes.
 - [ ] 42H-reference-app-hardening    Every app gets seed data, mock connector mode, replay tests, adversarial tests, real-provider env docs, security model, and operator runbook.
 - [ ] 42I-external-developer-trial   At least one external developer runs a reference app locally and files feedback before Phase 43.
 
@@ -2393,7 +2393,7 @@ corvid run --target=server --mode=real             # real-provider mode behind e
 - [x] 42F1-support-triage            Support app triages tickets and drafts policy-grounded replies.
 - [x] 42F2-support-approvals-sla     Refund/escalation approvals, SLA jobs, and eval dashboard work.
 - [x] 42G1-code-ingestion-triage     Code app ingests repos, triages issues, and labels CI-aware risk.
-- [ ] 42G2-code-write-approval       Review comments/patch proposals/write actions require approval.
+- [x] 42G2-code-write-approval       Review comments/patch proposals/write actions require approval.
 - [ ] 42H1-hardening-pack            Every app has seed data, mocks, replay tests, adversarial tests, env docs, security model, and runbook.
 - [ ] 42I1-external-trial-one        One external developer runs an app locally and feedback is triaged.
 - [ ] 42I2-external-trial-close      Feedback closes as code/docs/tests or explicit non-scope.
