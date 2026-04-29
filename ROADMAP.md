@@ -2291,7 +2291,7 @@ corvid connectors verify-webhook --sig=<...>
 - [x] 41E2-calendar-write-approval   Event create/update/cancel and external invites require approval.
 - [x] 41F1-slack-read-thread         Slack channel/DM/thread reads work with workspace scoping.
 - [x] 41F2-slack-send-approval       Draft/send flows require approval and preserve audit evidence.
-- [ ] 41G1-linear-github-read        Linear/GitHub issue read/search flows work.
+- [x] 41G1-linear-github-read        Linear/GitHub issue read/search flows work.
 - [ ] 41G2-linear-github-write       Create/update/comment flows are approval-gated.
 - [ ] 41H1-files-index-read          Local file indexing/read permissions/provenance snippets work.
 - [ ] 41H2-files-write-approval      File write/update/delete requires approval and records provenance.

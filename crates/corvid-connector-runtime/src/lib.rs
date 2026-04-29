@@ -6,6 +6,7 @@ pub mod ms365;
 pub mod rate_limit;
 pub mod runtime;
 pub mod slack;
+pub mod tasks;
 pub mod test_kit;
 pub mod trace;
 
@@ -37,6 +38,10 @@ pub use runtime::{
 pub use slack::{
     slack_manifest, SlackConnector, SlackDraftRequest, SlackMessage, SlackReadRequest,
     SlackSendRequest, SlackThreadRequest, SlackWriteReceipt, SLACK_CONNECTOR_MANIFEST,
+};
+pub use tasks::{
+    task_manifest, GitHubIssueSearchRequest, LinearIssueSearchRequest, TaskConnector, TaskIssue,
+    TASK_CONNECTOR_MANIFEST,
 };
 pub use test_kit::{
     parse_connector_fixture, run_connector_fixture, ConnectorFixture, ConnectorFixtureReport,
