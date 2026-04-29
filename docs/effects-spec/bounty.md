@@ -111,11 +111,13 @@ Honesty requirements for accepted submissions:
 
 ### `benches/moat/provenance_preservation/` — multi-hop AI workflow chains
 
-Current published numbers (3 of target 10 chains):
+Current published numbers (10 chains — RAG aggregate, extract+translate,
+RAG-through-tool, classify+route, multi-source dedupe, RAG-to-JSON,
+conversational RAG, safety filter, numeric aggregation, rerank top-k):
 
-- Corvid: **3/3 preserved**.
-- Python (LangChain + pydantic): **0/3 preserved**.
-- TypeScript (Vercel AI SDK + zod): **0/3 preserved**.
+- Corvid: **10/10 preserved**.
+- Python (LangChain + pydantic): **0/10 preserved**.
+- TypeScript (Vercel AI SDK + zod): **0/10 preserved**.
 
 A submission counts if it provides an idiomatic Python or TypeScript
 implementation whose final return type *at the language-type level* exposes

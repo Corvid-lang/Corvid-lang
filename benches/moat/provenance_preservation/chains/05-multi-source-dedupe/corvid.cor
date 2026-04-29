@@ -1,0 +1,21 @@
+effect retrieval:
+    data: grounded
+
+effect llm:
+    cost: $0.10
+
+tool retrieve_wiki(query: String) -> List<Grounded<String>> uses retrieval
+tool retrieve_internal(query: String) -> List<Grounded<String>> uses retrieval
+
+# Dedupe preserves provenance because Grounded<T> remembers the
+# source bindings of every kept item.
+tool dedupe(items: List<Grounded<String>>) -> List<Grounded<String>>
+
+prompt aggregate(parts: List<Grounded<String>>) -> Grounded<String> uses llm:
+    "aggregate the following: {parts}"
+
+agent multi_source_dedupe(query: String) -> Grounded<String>:
+    wiki: List<Grounded<String>> = retrieve_wiki(query)
+    internal: List<Grounded<String>> = retrieve_internal(query)
+    merged: List<Grounded<String>> = dedupe(wiki ++ internal)
+    return aggregate(merged)

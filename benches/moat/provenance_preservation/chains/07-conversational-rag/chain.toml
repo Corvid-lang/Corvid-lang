@@ -1,0 +1,19 @@
+id = "07-conversational-rag"
+title = "Conversation history → retrieve per turn → final answer"
+hops = 4
+description = """
+A multi-turn conversation where each user turn triggers a retrieval
+and the answer is generated from accumulated history. Conversation
+memory in convention-only stacks stores plain message strings;
+sources from prior turns are dropped before the final answer is
+produced.
+"""
+
+[expected]
+corvid = "preserved"
+python = "lost"
+typescript = "lost"
+
+corvid_provenance_type = "Grounded<String>"
+python_baseline = "LangChain ConversationalRetrievalChain + ChatMessageHistory"
+typescript_baseline = "Vercel AI SDK streamText with messages array"

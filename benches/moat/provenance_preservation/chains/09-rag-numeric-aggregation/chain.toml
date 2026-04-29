@@ -1,0 +1,19 @@
+id = "09-rag-numeric-aggregation"
+title = "Retrieve facts → extract numbers → aggregate numerically"
+hops = 4
+description = """
+Retrieve N documents, extract a numeric quantity from each (price,
+quantity, score), then compute a numeric aggregate (sum, mean,
+max). Numeric aggregation in convention-only stacks reduces to
+plain `float`s — the per-fact source binding is gone, so the
+auditor cannot say "the $42 estimate came from doc-7."
+"""
+
+[expected]
+corvid = "preserved"
+python = "lost"
+typescript = "lost"
+
+corvid_provenance_type = "Grounded<Float>"
+python_baseline = "LangChain LLMChain + numpy/statistics"
+typescript_baseline = "Vercel AI SDK generateObject + array reduce"

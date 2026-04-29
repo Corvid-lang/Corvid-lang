@@ -1,0 +1,20 @@
+id = "08-rag-safety-filter"
+title = "Retrieve doc → safety filter → answer"
+hops = 3
+description = """
+A retrieved doc passes through a safety filter (PII redaction,
+toxicity classifier, etc.) before being summarised into the final
+answer. The filter step in convention-only stacks returns a
+filtered string with no link back to the original retrieval —
+auditors can't trace which source the (now redacted) content
+originated from.
+"""
+
+[expected]
+corvid = "preserved"
+python = "lost"
+typescript = "lost"
+
+corvid_provenance_type = "Grounded<String>"
+python_baseline = "LangChain ConstitutionalChain + RetrievalQA"
+typescript_baseline = "Vercel AI SDK + custom moderation guard"

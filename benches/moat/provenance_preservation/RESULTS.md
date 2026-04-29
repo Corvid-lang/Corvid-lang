@@ -4,10 +4,10 @@
 
 ## Headline numbers
 
-- Chains run: **3**
-- Provenance preserved by Corvid: **3/3**
-- Provenance preserved by Python (LangChain + pydantic): **0/3**
-- Provenance preserved by TypeScript (Vercel AI SDK + zod): **0/3**
+- Chains run: **10**
+- Provenance preserved by Corvid: **10/10**
+- Provenance preserved by Python (LangChain + pydantic): **0/10**
+- Provenance preserved by TypeScript (Vercel AI SDK + zod): **0/10**
 
 ## Per-chain verdicts
 
@@ -16,6 +16,13 @@
 | `01-rag-summarise-aggregate` | 4 | preserved | lost | lost | ✓ |
 | `02-extract-translate` | 3 | preserved | lost | lost | ✓ |
 | `03-rag-through-tool-call` | 3 | preserved | lost | lost | ✓ |
+| `04-rag-classify-route` | 4 | preserved | lost | lost | ✓ |
+| `05-multi-source-dedupe` | 4 | preserved | lost | lost | ✓ |
+| `06-rag-to-json-record` | 3 | preserved | lost | lost | ✓ |
+| `07-conversational-rag` | 4 | preserved | lost | lost | ✓ |
+| `08-rag-safety-filter` | 3 | preserved | lost | lost | ✓ |
+| `09-rag-numeric-aggregation` | 4 | preserved | lost | lost | ✓ |
+| `10-rag-rerank-top-k` | 3 | preserved | lost | lost | ✓ |
 
 ## Notes
 
@@ -25,6 +32,20 @@
 - `02-extract-translate`: typescript: return type is `string[]` — sources gone
 - `03-rag-through-tool-call`: python: return type is primitive `str`
 - `03-rag-through-tool-call`: typescript: return type is `string`
+- `04-rag-classify-route`: python: return type is primitive `str`
+- `04-rag-classify-route`: typescript: return type is `string`
+- `05-multi-source-dedupe`: python: return type is primitive `str`
+- `05-multi-source-dedupe`: typescript: return type is `string`
+- `06-rag-to-json-record`: python: class `Product` lacks typed provenance (sources/source_documents/provenance) field
+- `06-rag-to-json-record`: typescript: type `Product` not declared locally — cannot verify
+- `07-conversational-rag`: python: return type is primitive `str`
+- `07-conversational-rag`: typescript: return type is `string`
+- `08-rag-safety-filter`: python: return type is primitive `str`
+- `08-rag-safety-filter`: typescript: return type is `string`
+- `09-rag-numeric-aggregation`: python: return type is primitive `float`
+- `09-rag-numeric-aggregation`: typescript: return type is `number`
+- `10-rag-rerank-top-k`: python: return type is `list[str]` — sources gone
+- `10-rag-rerank-top-k`: typescript: return type is `string[]` — sources gone
 
 ## Methodology
 

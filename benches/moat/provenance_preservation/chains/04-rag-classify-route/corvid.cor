@@ -1,0 +1,26 @@
+effect retrieval:
+    data: grounded
+
+effect llm:
+    cost: $0.10
+
+tool retrieve(query: String) -> Grounded<String> uses retrieval
+
+prompt classify(doc: Grounded<String>) -> Grounded<String> uses llm:
+    "topic of: {doc}"
+    cites doc strictly
+
+prompt billing_specialist(doc: Grounded<String>) -> Grounded<String> uses llm:
+    "billing answer from: {doc}"
+    cites doc strictly
+
+prompt support_specialist(doc: Grounded<String>) -> Grounded<String> uses llm:
+    "support answer from: {doc}"
+    cites doc strictly
+
+agent rag_classify_route(query: String) -> Grounded<String>:
+    doc: Grounded<String> = retrieve(query)
+    topic: Grounded<String> = classify(doc)
+    if topic == "billing":
+        return billing_specialist(doc)
+    return support_specialist(doc)

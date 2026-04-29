@@ -1,0 +1,20 @@
+effect retrieval:
+    data: grounded
+
+effect llm:
+    cost: $0.10
+
+tool retrieve(query: String) -> List<Grounded<String>> uses retrieval
+
+prompt extract_amount(doc: Grounded<String>) -> Grounded<Float> uses llm:
+    "extract a dollar amount from: {doc}"
+    cites doc strictly
+
+# Sum preserves provenance because Grounded<Float> remembers
+# every contributing source binding.
+tool sum_grounded(values: List<Grounded<Float>>) -> Grounded<Float>
+
+agent rag_numeric_aggregation(query: String) -> Grounded<Float>:
+    docs: List<Grounded<String>> = retrieve(query)
+    amounts: List<Grounded<Float>> = map(docs, extract_amount)
+    return sum_grounded(amounts)

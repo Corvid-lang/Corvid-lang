@@ -1,0 +1,18 @@
+id = "05-multi-source-dedupe"
+title = "Retrieve from two sources → dedupe → aggregate"
+hops = 4
+description = """
+Two retrievals (e.g. wiki + internal docs) feed a deduplication
+step that drops repeated text, then an aggregator. The dedupe
+step is where unstructured stacks lose provenance: deduplicating
+plain strings strips the source IDs of the surviving entries.
+"""
+
+[expected]
+corvid = "preserved"
+python = "lost"
+typescript = "lost"
+
+corvid_provenance_type = "Grounded<String>"
+python_baseline = "LangChain MultiRetrievalQA + custom dedupe"
+typescript_baseline = "Vercel AI SDK + Set-based dedupe"

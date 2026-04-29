@@ -1,0 +1,16 @@
+effect retrieval:
+    data: grounded
+
+effect llm:
+    cost: $0.10
+
+tool retrieve(query: String) -> Grounded<String> uses retrieval
+
+prompt reply(history: List<Grounded<String>>, turn: Grounded<String>) -> Grounded<String> uses llm:
+    "answer the next turn given history: {history} and retrieved: {turn}"
+    cites turn strictly
+
+agent conversational_rag(history: List<String>, query: String) -> Grounded<String>:
+    grounded_history: List<Grounded<String>> = map(history, retrieve)
+    turn_doc: Grounded<String> = retrieve(query)
+    return reply(grounded_history, turn_doc)

@@ -1,0 +1,20 @@
+id = "10-rag-rerank-top-k"
+title = "Retrieve N → rerank by relevance → return top-k"
+hops = 3
+description = """
+Retrieve N candidate docs, score them with a reranker, return the
+top K. The reranking step in convention-only stacks usually
+operates on (text, score) tuples — the doc IDs of the surviving
+top-k are not surfaced in the return type, so a downstream
+consumer can't see which sources backed the answer without
+re-running retrieval.
+"""
+
+[expected]
+corvid = "preserved"
+python = "lost"
+typescript = "lost"
+
+corvid_provenance_type = "List<Grounded<String>>"
+python_baseline = "LangChain ContextualCompressionRetriever + reranker"
+typescript_baseline = "Vercel AI SDK + custom rerank by score"

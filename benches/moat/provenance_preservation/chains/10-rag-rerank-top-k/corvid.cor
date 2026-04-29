@@ -1,0 +1,15 @@
+effect retrieval:
+    data: grounded
+
+effect llm:
+    cost: $0.10
+
+tool retrieve(query: String) -> List<Grounded<String>> uses retrieval
+
+# Rerank returns Grounded<T> entries — surviving items keep their
+# source bindings by construction.
+tool rerank_top_k(items: List<Grounded<String>>, k: Int) -> List<Grounded<String>>
+
+agent rag_rerank_top_k(query: String, k: Int) -> List<Grounded<String>>:
+    candidates: List<Grounded<String>> = retrieve(query)
+    return rerank_top_k(candidates, k)

@@ -1,0 +1,19 @@
+id = "06-rag-to-json-record"
+title = "Retrieve doc → format as structured record → return"
+hops = 3
+description = """
+Retrieve a doc and reshape it into a typed product record (e.g.
+{ name, price, description }). The structured-output step is the
+provenance-shedding moment in convention-only stacks: the new
+schema doesn't include a sources field, so the doc ID disappears
+even though the answer is more typed than before.
+"""
+
+[expected]
+corvid = "preserved"
+python = "lost"
+typescript = "lost"
+
+corvid_provenance_type = "Grounded<Product>"
+python_baseline = "LangChain create_structured_output_chain + pydantic"
+typescript_baseline = "Vercel AI SDK generateObject + zod"

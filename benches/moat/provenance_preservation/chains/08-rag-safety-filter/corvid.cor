@@ -1,0 +1,20 @@
+effect retrieval:
+    data: grounded
+
+effect llm:
+    cost: $0.10
+
+tool retrieve(query: String) -> Grounded<String> uses retrieval
+
+# Safety filter is a Grounded<T> -> Grounded<T> transform: the
+# filtered content keeps its source binding by construction.
+tool safety_filter(doc: Grounded<String>) -> Grounded<String>
+
+prompt summarise(doc: Grounded<String>) -> Grounded<String> uses llm:
+    "summarise: {doc}"
+    cites doc strictly
+
+agent rag_safety_filter(query: String) -> Grounded<String>:
+    raw: Grounded<String> = retrieve(query)
+    filtered: Grounded<String> = safety_filter(raw)
+    return summarise(filtered)
