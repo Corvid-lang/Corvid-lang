@@ -2121,7 +2121,7 @@ corvid approvals export --since=2026-04-01  # audit dump
 
 **Scope:**
 
-- [ ] Trace viewer data model and export format for route -> job -> agent -> prompt -> tool -> approval -> DB lineage.
+- [x] Trace viewer data model and export format for route -> job -> agent -> prompt -> tool -> approval -> DB lineage.
 - [ ] OpenTelemetry export for request metrics, job metrics, LLM calls, tool calls, approvals, errors, retries, token/cost usage, model-routing decisions, and replay IDs.
 - [ ] `corvid observe` command for local trace inspection, cost reports, approval summaries, failing runs, and hot spots.
 - [ ] Evals from production traces: promote trace slices into regression tests with redacted inputs, expected contracts, and replay fixtures.
@@ -2132,7 +2132,7 @@ corvid approvals export --since=2026-04-01  # audit dump
 **Slice checklist:**
 
 - [x] 40A-observability-design-brief `docs/phase-40-observability.md` defines trace schema, metrics taxonomy, eval promotion, retention, redaction, and non-scope.
-- [ ] 40B-lineage-trace-model        Route -> job -> agent -> prompt -> tool -> approval -> DB lineage is represented in one trace model.
+- [x] 40B-lineage-trace-model        Route -> job -> agent -> prompt -> tool -> approval -> DB lineage is represented in one trace model.
 - [ ] 40C-otel-export                OpenTelemetry export covers requests, jobs, LLM calls, tools, approvals, errors, retries, costs, and replay IDs.
 - [ ] 40D-observe-command-basics     `corvid observe` lists traces, costs, approvals, failures, and hot spots from local stores.
 - [ ] 40E-trace-to-eval              Production trace slices can be promoted into redacted regression/eval fixtures.
@@ -2181,7 +2181,7 @@ corvid observe metrics --listen=:9090
 **Small-slice breakdown for Phase 40:**
 
 - [x] 40B1-trace-link-ids            Request/job/agent/prompt/tool/approval/DB events share stable lineage IDs.
-- [ ] 40B2-lineage-render            Local command renders the lineage tree for one run.
+- [x] 40B2-lineage-render            Local command renders the lineage tree for one run.
 - [ ] 40C1-otel-schema               OTel span/metric/log mapping is documented and tested.
 - [ ] 40C2-otel-exporter             Exporter emits request/job/LLM/tool/approval/error/retry/cost/replay data.
 - [ ] 40D1-observe-list              `corvid observe list` shows local runs, failures, costs, approvals, and hot spots.

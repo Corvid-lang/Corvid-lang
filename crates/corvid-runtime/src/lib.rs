@@ -56,6 +56,7 @@ pub mod human;
 pub mod http;
 pub mod io;
 pub mod lineage;
+pub mod lineage_render;
 pub mod llm;
 pub mod models;
 mod native_trace;
@@ -162,6 +163,7 @@ pub use lineage::{
     lineage_span_id, validate_lineage, LineageEvent, LineageKind, LineageStatus, LineageValidation,
     LINEAGE_SCHEMA,
 };
+pub use lineage_render::render_lineage_tree;
 pub use llm::{
     anthropic::AnthropicAdapter,
     gemini::GeminiAdapter,

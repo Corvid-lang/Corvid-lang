@@ -39,6 +39,7 @@ mod claim_cmd;
 mod contract_cmd;
 mod cost_frontier;
 mod eval_cmd;
+mod lineage_cmd;
 mod receipt_cache;
 mod receipt_cmd;
 mod replay;
@@ -890,6 +891,16 @@ enum TraceCommand {
         #[arg(long, value_name = "PATH")]
         trace_dir: Option<PathBuf>,
     },
+    /// Render a Phase 40 lineage JSONL trace as an indented tree.
+    Lineage {
+        /// Lineage trace identifier: either a direct file path, or a
+        /// run id resolved as `<id>.lineage.jsonl` under `--trace-dir`.
+        id_or_path: String,
+        /// Trace directory used when `id_or_path` is a bare run id.
+        /// Defaults to `target/trace`.
+        #[arg(long, value_name = "PATH")]
+        trace_dir: Option<PathBuf>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -1166,6 +1177,10 @@ fn main_impl() -> ExitCode {
                 id_or_path,
                 trace_dir,
             } => trace_dag::run_dag(&id_or_path, trace_dir.as_deref()),
+            TraceCommand::Lineage {
+                id_or_path,
+                trace_dir,
+            } => lineage_cmd::run_lineage(&id_or_path, trace_dir.as_deref()),
         },
         Some(Command::TraceDiff {
             base_sha,
