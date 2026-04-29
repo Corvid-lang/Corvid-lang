@@ -1,6 +1,7 @@
 import "./std/jobs" use JobInputEnvelope, JobOutputEnvelope, JobRetryPolicy, JobStateEnvelope, job_input, job_output, retry_policy, retry_policy_valid, pending_job_state, job_needs_approval, job_metadata_redacted
 import "./std/effects" use EffectEnvelope, effect_envelope, replay_safe, approval_required
 import "./std/agent" use PlanStep, ActionRequest, ReviewVerdict, plan_step, action_request, review_verdict
+import "./std/auth" use Actor, SessionRef, ApiKeyRef, AuthTraceContext, AuthDecision, user_actor, service_actor, session_ref, api_key_ref, auth_trace_for_session, auth_trace_for_api_key, allow_permission, deny_permission, session_active, api_key_active, auth_trace_same_tenant
 
 effect inbox_read:
     cost: $0.04
@@ -50,6 +51,43 @@ public type ExecutiveJobRun:
     action: ActionRequest
     review: ReviewVerdict
 
+public type LoginRequest:
+    tenant_id: String
+    actor_id: String
+    display_name: String
+    session_id: String
+    csrf_binding_id: String
+    trace_id: String
+
+public type ApiKeyLoginRequest:
+    tenant_id: String
+    service_actor_id: String
+    display_name: String
+    api_key_id: String
+    trace_id: String
+
+public type LoginResponse:
+    actor: Actor
+    session_ref: SessionRef
+    trace: AuthTraceContext
+    decision: AuthDecision
+    status: String
+
+public type ApiKeyLoginResponse:
+    actor: Actor
+    api_key: ApiKeyRef
+    trace: AuthTraceContext
+    decision: AuthDecision
+    status: String
+
+public type AuthStatusResponse:
+    actor: Actor
+    tenant_id: String
+    authenticated: Bool
+    permission: String
+    reason: String
+    replay_key: String
+
 public @replayable
 agent executive_contract(job_kind: String, user_id: String, window_key: String, approval_label: String, needs_review: Bool) -> ExecutiveJobContract:
     idempotency = job_kind + ":" + user_id + ":" + window_key
@@ -96,6 +134,56 @@ public @replayable
 agent executive_job_needs_human_before_external_send(run: ExecutiveJobRun) -> Bool:
     return job_needs_approval(run.state) and approval_required(run.effect_meta) and run.action.approval_label == "SendExecutiveFollowUp"
 
+public @replayable
+agent session_login(req: LoginRequest) -> LoginResponse:
+    actor = user_actor(req.actor_id, req.tenant_id, req.display_name, "role:executive_member", "perm:executive.read:executive.write", req.trace_id)
+    sess = session_ref(req.session_id, actor.id, actor.tenant_id, 0, 4102444800000, 0, req.csrf_binding_id, req.trace_id)
+    trace = auth_trace_for_session(actor, sess, "auth:session:" + req.session_id)
+    decision = allow_permission(actor, trace, "executive.jobs.read")
+    return LoginResponse(actor, sess, trace, decision, "authenticated")
+
+public @replayable
+agent api_key_login(req: ApiKeyLoginRequest) -> ApiKeyLoginResponse:
+    actor = service_actor(req.service_actor_id, req.tenant_id, req.display_name, "scope:executive.jobs.write", req.trace_id)
+    key = api_key_ref(req.api_key_id, actor.id, actor.tenant_id, "scope:executive.jobs.write", "argon2id", 4102444800000, 0, req.trace_id)
+    trace = auth_trace_for_api_key(actor, key, "auth:api_key:" + req.api_key_id)
+    decision = allow_permission(actor, trace, "executive.jobs.write")
+    return ApiKeyLoginResponse(actor, key, trace, decision, "authenticated")
+
+public @replayable
+agent auth_status(actor_id: String, tenant_id: String, trace_id: String) -> AuthStatusResponse:
+    actor = user_actor(actor_id, tenant_id, "Executive User", "role:executive_member", "perm:executive.read", trace_id)
+    sess = session_ref("session-status", actor.id, actor.tenant_id, 0, 4102444800000, 0, "csrf-status", trace_id)
+    trace = auth_trace_for_session(actor, sess, "auth:status:" + trace_id)
+    active = session_active(sess, 1) and auth_trace_same_tenant(trace, actor)
+    decision = allow_permission(actor, trace, "executive.jobs.read")
+    if active:
+        return AuthStatusResponse(actor, actor.tenant_id, decision.allowed, decision.permission, decision.reason, trace.replay_key)
+    denied = deny_permission(actor, trace, "executive.jobs.read", "session inactive")
+    return AuthStatusResponse(actor, actor.tenant_id, false, denied.permission, denied.reason, trace.replay_key)
+
+public @replayable
+agent api_key_auth_status(actor_id: String, tenant_id: String, trace_id: String) -> AuthStatusResponse:
+    actor = service_actor(actor_id, tenant_id, "Executive Service", "scope:executive.jobs.write", trace_id)
+    key = api_key_ref("api-key-status", actor.id, actor.tenant_id, "scope:executive.jobs.write", "argon2id", 4102444800000, 0, trace_id)
+    trace = auth_trace_for_api_key(actor, key, "auth:api_key_status:" + trace_id)
+    active = api_key_active(key, 1) and auth_trace_same_tenant(trace, actor)
+    decision = allow_permission(actor, trace, "executive.jobs.write")
+    if active:
+        return AuthStatusResponse(actor, actor.tenant_id, decision.allowed, decision.permission, decision.reason, trace.replay_key)
+    denied = deny_permission(actor, trace, "executive.jobs.write", "api key inactive")
+    return AuthStatusResponse(actor, actor.tenant_id, false, denied.permission, denied.reason, trace.replay_key)
+
+server personal_executive_agent_api:
+    route POST "/auth/session/login" body LoginRequest -> json LoginResponse:
+        return session_login(body)
+    route POST "/auth/api-key/login" body ApiKeyLoginRequest -> json ApiKeyLoginResponse:
+        return api_key_login(body)
+    route GET "/auth/status" -> json AuthStatusResponse:
+        return auth_status("user-1", "tenant-1", "trace-auth-status")
+    route GET "/auth/api-key/status" -> json AuthStatusResponse:
+        return api_key_auth_status("service-1", "tenant-1", "trace-api-key-status")
+
 schedule "0 7 * * 1-5" zone "America/New_York" -> daily_brief_job("active_users", "business_day") uses inbox_read, calendar_read, executive_llm
 schedule "0 6 * * 1-5" zone "America/New_York" -> meeting_prep_job("active_users", "business_day") uses inbox_read, calendar_read, executive_llm
 schedule "*/10 8-18 * * 1-5" zone "America/New_York" -> email_triage_job("active_users", "workday_window") uses inbox_read, executive_llm, task_write
@@ -106,4 +194,6 @@ agent main() -> Bool:
     prep = meeting_prep_job("user-1", "2026-04-29")
     triage = email_triage_job("user-1", "2026-04-29T08:00")
     follow = follow_up_job("user-1", "thread-1")
-    return executive_job_contract_valid(brief) and executive_job_contract_valid(prep) and executive_job_contract_valid(triage) and executive_job_contract_valid(follow) and executive_job_needs_human_before_external_send(follow)
+    auth = auth_status("user-1", "tenant-1", "trace-main-auth")
+    service_auth = api_key_auth_status("service-1", "tenant-1", "trace-main-api-key")
+    return executive_job_contract_valid(brief) and executive_job_contract_valid(prep) and executive_job_contract_valid(triage) and executive_job_contract_valid(follow) and executive_job_needs_human_before_external_send(follow) and auth.authenticated and service_auth.authenticated

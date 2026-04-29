@@ -2110,7 +2110,7 @@ corvid approvals export --since=2026-04-01  # audit dump
 - [x] 39G2-ui-contract-tests         Payloads can be rendered without parsing traces.
 - [x] 39H1-reachability-analysis     Compiler checks route/job/tool paths for reachable approvals.
 - [x] 39H2-reachability-bypass-tests Confused-deputy, tenant-crossing, stale replay, and privilege escalation tests fail closed.
-- [ ] 39J1-auth-example              Reference backend has login/API-key auth.
+- [x] 39J1-auth-example              Reference backend has login/API-key auth.
 - [ ] 39J2-approval-product-example  Reference backend exposes tenant-safe approvals and auditable AI actions.
 
 ### Phase 40 — Agent observability, evals, and production monitoring (~6-8 weeks)

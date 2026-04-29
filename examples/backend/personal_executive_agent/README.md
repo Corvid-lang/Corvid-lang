@@ -16,6 +16,20 @@ rows, and audited schedules.
   `SendExecutiveFollowUp` approval boundary before the external send effect can
   run.
 
+## Auth Surface
+
+The backend also declares production-shaped auth routes in `src/main.cor`:
+
+- `POST /auth/session/login` returns a redacted session reference, actor
+  envelope, trace context, and permission decision.
+- `POST /auth/api-key/login` returns a redacted API-key reference for service
+  actors and a write-permission decision.
+- `GET /auth/status` and `GET /auth/api-key/status` prove session and API-key
+  auth status without exposing raw secrets.
+
+All auth responses use `std/auth` envelopes so tenant, actor, permission
+fingerprints, replay keys, and redaction are part of the typed backend contract.
+
 ## Production Contract
 
 Each job carries:
@@ -27,6 +41,7 @@ Each job carries:
 - a budget cap
 - redacted input and output fingerprints
 - an effect envelope with provenance, cache, approval, and replay metadata
+- session and API-key auth envelopes with tenant-safe trace context
 
 The schedules in `src/main.cor` are first-class `schedule` declarations so
 `corvid audit` can report the cron manifest directly from source.
