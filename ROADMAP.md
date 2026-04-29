@@ -2476,7 +2476,7 @@ corvid claim audit                           # AI-assisted final claim audit (ad
 
 **Small-slice breakdown for Phase 43:**
 
-- [ ] 43B1-package-dockerfile        `corvid deploy package` emits Dockerfile and OCI metadata.
+- [x] 43B1-package-dockerfile        `corvid deploy package` emits Dockerfile and OCI metadata.
 - [ ] 43B2-package-runtime-config    Package includes health/readiness config, migration runner, env schema, and startup checks.
 - [ ] 43B3-package-attestation       Package includes signed build attestation and verification docs.
 - [ ] 43C1-compose-manifest          Docker Compose deploy works for one reference app.

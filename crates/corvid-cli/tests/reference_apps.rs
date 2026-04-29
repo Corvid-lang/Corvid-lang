@@ -673,3 +673,45 @@ fn phase_43_market_readiness_brief_defines_launch_gates() {
     }
     assert!(brief.contains("Final claims have runnable evidence or are removed"));
 }
+
+#[test]
+fn deploy_package_emits_dockerfile_and_oci_metadata() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let app = repo_root()
+        .join("examples")
+        .join("backend")
+        .join("personal_executive_agent");
+    let out = temp.path().join("package");
+    let deploy = Command::new(corvid_bin())
+        .arg("deploy")
+        .arg("package")
+        .arg(&app)
+        .arg("--out")
+        .arg(&out)
+        .current_dir(repo_root())
+        .output()
+        .expect("run deploy package");
+    assert!(
+        deploy.status.success(),
+        "deploy package failed:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&deploy.stdout),
+        String::from_utf8_lossy(&deploy.stderr)
+    );
+
+    let dockerfile = fs::read_to_string(out.join("Dockerfile")).expect("read Dockerfile");
+    assert!(dockerfile.contains("FROM rust:1.78-slim AS build"));
+    assert!(dockerfile.contains("HEALTHCHECK"));
+    assert!(dockerfile.contains("personal_executive_agent"));
+
+    let metadata_text = fs::read_to_string(out.join("oci-labels.json")).expect("read oci metadata");
+    let metadata: Value = serde_json::from_str(&metadata_text).expect("parse oci metadata");
+    assert_eq!(metadata["image"].as_str(), Some("personal_executive_agent"));
+    assert!(metadata["labels"]["org.opencontainers.image.source"]
+        .as_str()
+        .is_some_and(
+            |source| source.ends_with("src\\main.cor") || source.ends_with("src/main.cor")
+        ));
+    assert!(metadata["labels"]["dev.corvid.package.source_sha256"]
+        .as_str()
+        .is_some_and(|digest| digest.len() == 64));
+}

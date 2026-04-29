@@ -38,6 +38,7 @@ mod capsule_cmd;
 mod claim_cmd;
 mod contract_cmd;
 mod cost_frontier;
+mod deploy_cmd;
 mod eval_cmd;
 mod lineage_cmd;
 mod observe_cmd;
@@ -638,6 +639,11 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
+    /// Generate deployment artifacts for a Corvid backend app.
+    Deploy {
+        #[command(subcommand)]
+        command: DeployCommand,
+    },
     /// Inspect and apply checked-in database migrations.
     Migrate {
         #[command(subcommand)]
@@ -716,6 +722,18 @@ enum ContractCommand {
     RegenDoc {
         /// Output path, e.g. `docs/core-semantics.md`.
         output: PathBuf,
+    },
+}
+
+#[derive(Subcommand)]
+enum DeployCommand {
+    /// Emit a deploy package containing Dockerfile and OCI metadata.
+    Package {
+        /// App directory, e.g. examples/backend/personal_executive_agent.
+        app: PathBuf,
+        /// Output directory for generated artifacts.
+        #[arg(long, value_name = "DIR")]
+        out: Option<PathBuf>,
     },
 }
 
@@ -1320,6 +1338,12 @@ fn main_impl() -> ExitCode {
         Some(Command::Repl) => cmd_repl(),
         Some(Command::Doctor) => cmd_doctor_v2(),
         Some(Command::Audit { file, json }) => audit_cmd::run_audit(&file, json),
+        Some(Command::Deploy { command }) => match command {
+            DeployCommand::Package { app, out } => {
+                let out = out.unwrap_or_else(|| app.join("target").join("deploy-package"));
+                deploy_cmd::run_package(&app, &out).map(|_| 0)
+            }
+        },
         Some(Command::Migrate { command }) => match command {
             MigrateCommand::Status {
                 dir,
