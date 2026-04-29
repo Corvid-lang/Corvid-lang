@@ -827,20 +827,33 @@ pub static GUARANTEE_REGISTRY: &[Guarantee] = &[
     Guarantee {
         id: "auth.jwt_kid_rotation",
         kind: GuaranteeKind::Auth,
-        class: GuaranteeClass::OutOfScope,
+        class: GuaranteeClass::RuntimeChecked,
         phase: Phase::Runtime,
         description:
             "JWT verification fetches the JWKS, picks the key by \
-             `kid`, verifies the signature, and rejects tokens \
-             whose `kid` is missing from the current JWKS.",
-        out_of_scope_reason:
-            "Today `validate_jwt_verification_contract` checks the \
-             issuer URL prefix, alg name, and claim presence — it \
-             does not fetch JWKS or verify signatures. Slice 39K \
-             adopts `jsonwebtoken` and promotes this row to \
-             `RuntimeChecked`.",
-        positive_test_refs: &[],
-        adversarial_test_refs: &[],
+             `kid`, verifies the signature with `jsonwebtoken`, and \
+             rejects tokens whose `kid` is missing from the current \
+             JWKS, whose alg does not match the contract, whose \
+             signature fails to verify, whose exp/iss/aud do not \
+             align with the contract, or whose required \
+             subject/tenant claim is missing. Out-of-scope at \
+             Phase 39 base; promoted to `RuntimeChecked` by slice \
+             39K when `corvid-runtime/src/jwt_verify.rs` shipped.",
+        out_of_scope_reason: "",
+        positive_test_refs: &[
+            "crates/corvid-runtime/src/jwt_verify.rs::parse_alg_accepts_supported_and_refuses_others",
+            "crates/corvid-runtime/src/jwt_verify.rs::decoding_key_for_rsa_jwk_constructs",
+            "crates/corvid-runtime/src/jwt_verify.rs::error_slugs_are_stable_for_audit_log",
+        ],
+        adversarial_test_refs: &[
+            "crates/corvid-runtime/src/jwt_verify.rs::kid_downgrade_returns_kid_not_found",
+            "crates/corvid-runtime/src/jwt_verify.rs::header_alg_must_match_contract_alg",
+            "crates/corvid-runtime/src/jwt_verify.rs::alg_none_in_header_is_refused",
+            "crates/corvid-runtime/src/jwt_verify.rs::malformed_token_is_refused_before_fetch",
+            "crates/corvid-runtime/src/jwt_verify.rs::jwks_fetch_failure_is_surfaced",
+            "crates/corvid-runtime/src/jwt_verify.rs::decoding_key_for_rejects_rsa_without_n",
+            "crates/corvid-runtime/src/jwt_verify.rs::decoding_key_for_rejects_unknown_kty",
+        ],
     },
     Guarantee {
         id: "auth.oauth_pkce_required",

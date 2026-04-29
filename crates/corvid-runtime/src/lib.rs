@@ -55,6 +55,7 @@ pub mod grounded_handles;
 pub mod human;
 pub mod http;
 pub mod io;
+pub mod jwt_verify;
 pub mod lineage;
 pub mod lineage_drift;
 pub mod lineage_eval;

@@ -48,7 +48,7 @@ Per the no-shortcuts rule, every `out_of_scope` entry carries an explicit reason
 | `jobs.loop_bounds_enforced` | jobs | out_of_scope | runtime |
 | `auth.session_rotation_on_privilege_change` | auth | out_of_scope | runtime |
 | `auth.api_key_at_rest_hashed` | auth | runtime_checked | runtime |
-| `auth.jwt_kid_rotation` | auth | out_of_scope | runtime |
+| `auth.jwt_kid_rotation` | auth | runtime_checked | runtime |
 | `auth.oauth_pkce_required` | auth | runtime_checked | runtime |
 | `auth.csrf_double_submit` | auth | out_of_scope | runtime |
 | `tenant.cross_tenant_compile_error` | auth | out_of_scope | typecheck |
@@ -509,12 +509,26 @@ API keys are stored only as Argon2id hashes; the plaintext leaves Corvid memory 
 - `crates/corvid-runtime/src/auth.rs::api_key_runtime_rejects_wrong_tenant_revoked_expired_and_user_actors`
 
 #### `auth.jwt_kid_rotation`
-- **class**: out_of_scope
+- **class**: runtime_checked
 - **phase**: runtime
 
-JWT verification fetches the JWKS, picks the key by `kid`, verifies the signature, and rejects tokens whose `kid` is missing from the current JWKS.
+JWT verification fetches the JWKS, picks the key by `kid`, verifies the signature with `jsonwebtoken`, and rejects tokens whose `kid` is missing from the current JWKS, whose alg does not match the contract, whose signature fails to verify, whose exp/iss/aud do not align with the contract, or whose required subject/tenant claim is missing. Out-of-scope at Phase 39 base; promoted to `RuntimeChecked` by slice 39K when `corvid-runtime/src/jwt_verify.rs` shipped.
 
-> **Why out of scope:** Today `validate_jwt_verification_contract` checks the issuer URL prefix, alg name, and claim presence — it does not fetch JWKS or verify signatures. Slice 39K adopts `jsonwebtoken` and promotes this row to `RuntimeChecked`.
+**Positive tests:**
+
+- `crates/corvid-runtime/src/jwt_verify.rs::parse_alg_accepts_supported_and_refuses_others`
+- `crates/corvid-runtime/src/jwt_verify.rs::decoding_key_for_rsa_jwk_constructs`
+- `crates/corvid-runtime/src/jwt_verify.rs::error_slugs_are_stable_for_audit_log`
+
+**Adversarial tests:**
+
+- `crates/corvid-runtime/src/jwt_verify.rs::kid_downgrade_returns_kid_not_found`
+- `crates/corvid-runtime/src/jwt_verify.rs::header_alg_must_match_contract_alg`
+- `crates/corvid-runtime/src/jwt_verify.rs::alg_none_in_header_is_refused`
+- `crates/corvid-runtime/src/jwt_verify.rs::malformed_token_is_refused_before_fetch`
+- `crates/corvid-runtime/src/jwt_verify.rs::jwks_fetch_failure_is_surfaced`
+- `crates/corvid-runtime/src/jwt_verify.rs::decoding_key_for_rejects_rsa_without_n`
+- `crates/corvid-runtime/src/jwt_verify.rs::decoding_key_for_rejects_unknown_kty`
 
 #### `auth.oauth_pkce_required`
 - **class**: runtime_checked

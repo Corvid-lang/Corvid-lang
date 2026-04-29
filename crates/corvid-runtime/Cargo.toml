@@ -30,13 +30,15 @@ futures = "0.3"
 rusqlite = { version = "0.31", features = ["bundled"] }
 postgres = "0.19"
 argon2 = "0.5"
+base64 = "0.22"
+jsonwebtoken = "9.3"
 rand_core = { version = "0.6", features = ["getrandom"] }
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 chrono-tz = "0.10"
 cron = "0.16"
 sha2 = "0.10"
 pdf-extract = "0.10"
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "blocking"] }
 dotenvy = "0.15"
 corvid-ast = { workspace = true }
 corvid-ir = { workspace = true }
