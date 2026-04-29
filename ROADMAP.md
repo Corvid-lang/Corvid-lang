@@ -2104,7 +2104,7 @@ corvid approvals export --since=2026-04-01  # audit dump
 - [x] 39E1-approval-store            Approval queue persistence schema and stdlib envelopes exist.
 - [x] 39E2-approval-api              Create/list/inspect/approve/deny/expire/comment/delegate APIs work.
 - [x] 39E3-approval-audit            Every approval transition writes audit and trace evidence.
-- [ ] 39F1-contract-generation       Dangerous tools generate typed approval contract records.
+- [x] 39F1-contract-generation       Dangerous tools generate typed approval contract records.
 - [ ] 39F2-contract-policy-check     Required role/expiry/irreversibility/cost/data rules are enforced.
 - [ ] 39G1-ui-payload-schema         Approval UI payload schema is stable and frontend-agnostic.
 - [ ] 39G2-ui-contract-tests         Payloads can be rendered without parsing traces.

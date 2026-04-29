@@ -1,4 +1,4 @@
-use crate::schema::{AbiToolContract, AbiToolDomainEffect};
+use crate::schema::{AbiGeneratedApprovalContract, AbiToolContract, AbiToolDomainEffect};
 use corvid_ast::{DimensionValue, ToolDecl};
 use corvid_types::{EffectProfile, EffectRegistry};
 use std::collections::BTreeSet;
@@ -51,12 +51,89 @@ pub fn emit_tool_contract(tool: &ToolDecl, registry: &EffectRegistry) -> AbiTool
         }
     }
     if let Some(label) = contract.requires_approval.clone() {
+        contract.generated_approval = Some(generated_approval_contract(
+            tool,
+            registry,
+            &contract,
+            &label,
+        ));
         push_unique(
             &mut contract.approval_card_hints,
             format!("requires approval `{label}`"),
         );
     }
     contract
+}
+
+fn generated_approval_contract(
+    tool: &ToolDecl,
+    registry: &EffectRegistry,
+    contract: &AbiToolContract,
+    label: &str,
+) -> AbiGeneratedApprovalContract {
+    let profiles = tool
+        .effect_row
+        .effects
+        .iter()
+        .filter_map(|effect_ref| registry.get(effect_ref.name.name.as_str()))
+        .collect::<Vec<_>>();
+    let target_resource = contract
+        .domain_effects
+        .iter()
+        .find_map(|effect| effect.target.clone())
+        .or_else(|| tool.params.first().map(|param| param.name.name.clone()))
+        .unwrap_or_else(|| tool.name.name.clone());
+    let max_cost_usd = profiles
+        .iter()
+        .filter_map(|profile| profile.dimensions.get("cost"))
+        .filter_map(cost_value)
+        .sum::<f64>();
+    let data_touched = profiles
+        .iter()
+        .filter_map(|profile| profile.dimensions.get("data"))
+        .filter_map(dim_value_label)
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect::<Vec<_>>()
+        .join(",");
+    let irreversible = contract
+        .domain_effects
+        .iter()
+        .any(|effect| effect.kind == "irreversible");
+    let required_role = profiles
+        .iter()
+        .find_map(|profile| profile.dimensions.get("required_role"))
+        .and_then(dim_value_label)
+        .or_else(|| {
+            profiles
+                .iter()
+                .find_map(|profile| profile.dimensions.get("required_approver_role"))
+                .and_then(dim_value_label)
+        })
+        .unwrap_or_else(|| "Reviewer".to_string());
+    let expiry_ms = profiles
+        .iter()
+        .find_map(|profile| profile.dimensions.get("expires_ms"))
+        .and_then(number_value)
+        .map(|value| value.max(0.0) as u64)
+        .or_else(|| {
+            profiles
+                .iter()
+                .find_map(|profile| profile.dimensions.get("expires_in_ms"))
+                .and_then(number_value)
+                .map(|value| value.max(0.0) as u64)
+        });
+    AbiGeneratedApprovalContract {
+        id: label.to_string(),
+        version: "v1".to_string(),
+        expected_action: tool.name.name.clone(),
+        target_resource,
+        max_cost_usd,
+        data_touched,
+        irreversible,
+        expiry_ms,
+        required_role,
+    }
 }
 
 fn collect_domain_effects(
@@ -208,6 +285,20 @@ fn dim_value_label(value: &DimensionValue) -> Option<String> {
         DimensionValue::Cost(value) | DimensionValue::Number(value) => Some(value.to_string()),
         DimensionValue::Streaming { backpressure } => Some(backpressure.label()),
         DimensionValue::ConfidenceGated { threshold, .. } => Some(threshold.to_string()),
+    }
+}
+
+fn cost_value(value: &DimensionValue) -> Option<f64> {
+    match value {
+        DimensionValue::Cost(value) | DimensionValue::Number(value) => Some(*value),
+        _ => None,
+    }
+}
+
+fn number_value(value: &DimensionValue) -> Option<f64> {
+    match value {
+        DimensionValue::Number(value) | DimensionValue::Cost(value) => Some(*value),
+        _ => None,
     }
 }
 

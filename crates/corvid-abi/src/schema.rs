@@ -125,6 +125,8 @@ pub struct AbiToolContract {
     pub domain_effects: Vec<AbiToolDomainEffect>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub requires_approval: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub generated_approval: Option<AbiGeneratedApprovalContract>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub approval_card_hints: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -135,9 +137,24 @@ impl AbiToolContract {
     pub fn is_empty(&self) -> bool {
         self.domain_effects.is_empty()
             && self.requires_approval.is_none()
+            && self.generated_approval.is_none()
             && self.approval_card_hints.is_empty()
             && self.ci_fail_on.is_empty()
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AbiGeneratedApprovalContract {
+    pub id: String,
+    pub version: String,
+    pub expected_action: String,
+    pub target_resource: String,
+    pub max_cost_usd: f64,
+    pub data_touched: String,
+    pub irreversible: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub expiry_ms: Option<u64>,
+    pub required_role: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

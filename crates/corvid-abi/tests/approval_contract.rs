@@ -71,6 +71,10 @@ effect stripe_charge:
     trust: human_required
     reversible: false
     domain: money
+    cost: $4.25
+    data: financial
+    required_role: FinanceReviewer
+    expires_ms: 86400000
     money: amount
     external: stripe
     requires_approval: charge_card
@@ -112,4 +116,18 @@ agent noop() -> Bool:
         .contract
         .ci_fail_on
         .contains(&"irreversible".to_string()));
+    let generated = tool
+        .contract
+        .generated_approval
+        .as_ref()
+        .expect("generated approval contract");
+    assert_eq!(generated.id, "charge-card");
+    assert_eq!(generated.version, "v1");
+    assert_eq!(generated.expected_action, "charge_card");
+    assert_eq!(generated.target_resource, "amount");
+    assert_eq!(generated.max_cost_usd, 4.25);
+    assert_eq!(generated.data_touched, "financial");
+    assert!(generated.irreversible);
+    assert_eq!(generated.expiry_ms, Some(86_400_000));
+    assert_eq!(generated.required_role, "FinanceReviewer");
 }
