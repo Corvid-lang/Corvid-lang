@@ -101,7 +101,8 @@ pub use approvals::{
     ProgrammaticApprover, StdinApprover,
 };
 pub use auth::{
-    hash_session_secret, AuthActor, AuthAuditEvent, AuthTraceContext, SessionAuthRuntime,
+    hash_api_key_secret, hash_session_secret, verify_api_key_secret, ApiKeyCreate, ApiKeyRecord,
+    ApiKeyResolution, AuthActor, AuthAuditEvent, AuthTraceContext, SessionAuthRuntime,
     SessionCreate, SessionRecord, SessionResolution,
 };
 pub use calibration::{CalibrationObservation, CalibrationStats};
