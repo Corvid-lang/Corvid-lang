@@ -1,0 +1,17 @@
+id = "31-grounded-broken-via-non-rag-prompt"
+title = "Grounded<String> return goes through a prompt with no retrieval effect"
+bug_class = "grounded-without-citation"
+description = """
+The agent calls a prompt that has no data: grounded effect; the
+result is wrapped as Grounded<String>. The provenance chain ends
+at the prompt boundary.
+"""
+
+[expected]
+corvid = "rejected"
+python = "accepted"
+typescript = "accepted"
+
+corvid_guarantee_id = "grounded.provenance_required"
+python_baseline = "mypy --strict + pydantic"
+typescript_baseline = "tsc --strict + zod"

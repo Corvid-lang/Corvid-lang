@@ -1,0 +1,13 @@
+id = "38-eval-confidence-negative"
+title = "Eval assertion with negative confidence value"
+bug_class = "confidence-out-of-range"
+description = "Eval block declares with confidence -0.1 — outside the [0.0, 1.0] range."
+
+[expected]
+corvid = "rejected"
+python = "accepted"
+typescript = "accepted"
+
+corvid_guarantee_id = "confidence.min_threshold"
+python_baseline = "mypy --strict + pydantic"
+typescript_baseline = "tsc --strict + zod"

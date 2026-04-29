@@ -1,0 +1,9 @@
+tool issue_refund(id: String) -> Int dangerous
+
+mock issue_refund(id: String) -> Int:
+    return 42
+
+test unsafe_call:
+    # BUG: mock does not erase `dangerous`; approve still required.
+    value = issue_refund("o-1")
+    assert value == 42

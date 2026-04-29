@@ -1,0 +1,7 @@
+tool issue_refund(id: String) -> Int dangerous
+
+agent bot(id: String, debug: Bool) -> Int:
+    if debug:
+        approve IssueRefund(id)
+    # BUG: the call is unconditional; the approve is conditional.
+    return issue_refund(id)

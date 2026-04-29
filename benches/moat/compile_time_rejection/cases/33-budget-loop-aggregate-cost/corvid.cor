@@ -1,0 +1,11 @@
+effect llm:
+    cost: $0.10
+
+tool ask(q: String) -> String uses llm
+
+@budget($0.05)
+agent process(q: String) -> String:
+    # BUG: even one call ($0.10) exceeds the budget ($0.05).
+    a = ask(q)
+    b = ask(q)
+    return a + b

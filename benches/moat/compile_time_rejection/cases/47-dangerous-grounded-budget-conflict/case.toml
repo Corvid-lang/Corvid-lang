@@ -1,0 +1,13 @@
+id = "47-dangerous-grounded-budget-conflict"
+title = "Three contracts conflict in one program: missing approve, ungrounded return, over-budget"
+bug_class = "multi-contract"
+description = "Real-world bug surface — multiple contract violations land at once. Corvid surfaces all three."
+
+[expected]
+corvid = "rejected"
+python = "accepted"
+typescript = "accepted"
+
+corvid_guarantee_id = "approval.dangerous_call_requires_token"
+python_baseline = "mypy --strict + pydantic"
+typescript_baseline = "tsc --strict + zod"

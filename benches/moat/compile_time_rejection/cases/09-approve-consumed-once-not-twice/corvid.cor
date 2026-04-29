@@ -1,0 +1,5 @@
+tool issue_refund(id: String) -> Result<Int, String> dangerous
+
+agent bot(id: String) -> Result<Int, String>:
+    # BUG: try-retry body fires the dangerous tool with no approve.
+    return try issue_refund(id) on error retry 3 times

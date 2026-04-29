@@ -1,0 +1,16 @@
+id = "17-sub-agent-cost-over-budget"
+title = "Sub-agent's worst-case cost flows to caller and breaks @budget"
+bug_class = "budget-overrun"
+description = """
+A helper agent calls expensive tools; a caller agent declares a tight
+@budget. Composed cost tree exceeds the caller's ceiling.
+"""
+
+[expected]
+corvid = "rejected"
+python = "accepted"
+typescript = "accepted"
+
+corvid_guarantee_id = "budget.compile_time_ceiling"
+python_baseline = "mypy --strict + pydantic"
+typescript_baseline = "tsc --strict + zod"

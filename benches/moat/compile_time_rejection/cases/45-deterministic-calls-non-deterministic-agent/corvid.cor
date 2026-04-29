@@ -1,0 +1,7 @@
+agent helper(x: String) -> String:
+    return x
+
+@deterministic
+agent compute(x: String) -> String:
+    # BUG: helper is not @deterministic; cannot be called from a deterministic body.
+    return helper(x)

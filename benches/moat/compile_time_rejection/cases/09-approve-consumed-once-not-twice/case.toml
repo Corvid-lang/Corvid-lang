@@ -1,0 +1,23 @@
+id = "09-approve-consumed-once-not-twice"
+title = "Dangerous call inside a try-retry body without approve in lexical scope"
+bug_class = "approval-bypass"
+description = """
+A `try expr on error retry N times` block hides the dangerous call
+from a casual reader, but Corvid's lexical-scope approval check
+still fires on the inner call site. Convention-only stacks miss
+this surface entirely.
+
+(Slot 09 originally tracked a different bug class; the original
+shape is correct Corvid semantics — one approve in a block
+authorises any matching dangerous call in the same block — so the
+slot now covers the try-retry surface.)
+"""
+
+[expected]
+corvid = "rejected"
+python = "accepted"
+typescript = "accepted"
+
+corvid_guarantee_id = "approval.dangerous_call_requires_token"
+python_baseline = "mypy --strict + pydantic"
+typescript_baseline = "tsc --strict + zod"

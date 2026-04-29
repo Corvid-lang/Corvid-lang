@@ -1,0 +1,13 @@
+id = "41-eval-with-zero-runs"
+title = "Eval assertion declared with zero runs"
+bug_class = "confidence-out-of-range"
+description = "An eval that runs zero times has no statistical meaning. Corvid rejects on the same range guarantee."
+
+[expected]
+corvid = "rejected"
+python = "accepted"
+typescript = "accepted"
+
+corvid_guarantee_id = "confidence.min_threshold"
+python_baseline = "mypy --strict + pydantic"
+typescript_baseline = "tsc --strict + zod"

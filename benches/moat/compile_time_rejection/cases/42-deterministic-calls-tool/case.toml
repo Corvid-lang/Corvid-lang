@@ -1,0 +1,13 @@
+id = "42-deterministic-calls-tool"
+title = "@deterministic agent calls a tool"
+bug_class = "deterministic-impure-call"
+description = "An agent marked @deterministic must be a pure function of its inputs; calling any tool breaks that contract."
+
+[expected]
+corvid = "rejected"
+python = "accepted"
+typescript = "accepted"
+
+corvid_guarantee_id = "replay.deterministic_pure_path"
+python_baseline = "mypy --strict + pydantic"
+typescript_baseline = "tsc --strict + zod"

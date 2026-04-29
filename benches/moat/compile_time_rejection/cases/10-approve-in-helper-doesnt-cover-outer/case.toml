@@ -1,0 +1,17 @@
+id = "10-approve-in-helper-doesnt-cover-outer"
+title = "Approval inside a helper does not authorise the dangerous tool from the outer agent"
+bug_class = "approval-bypass"
+description = """
+A helper that contains an approve cannot grant approval for a
+dangerous call in the outer agent's body — Corvid scopes approvals
+lexically to the block they appear in.
+"""
+
+[expected]
+corvid = "rejected"
+python = "accepted"
+typescript = "accepted"
+
+corvid_guarantee_id = "approval.dangerous_call_requires_token"
+python_baseline = "mypy --strict + pydantic"
+typescript_baseline = "tsc --strict + zod"

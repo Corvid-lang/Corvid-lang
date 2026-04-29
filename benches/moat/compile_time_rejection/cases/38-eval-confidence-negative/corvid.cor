@@ -1,0 +1,2 @@
+eval bad_eval:
+    assert true with confidence -0.1 over 5 runs

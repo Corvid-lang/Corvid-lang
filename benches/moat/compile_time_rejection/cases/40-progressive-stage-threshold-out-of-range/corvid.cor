@@ -1,0 +1,13 @@
+model fast:
+    provider: "anthropic"
+    name: "haiku"
+
+model strong:
+    provider: "anthropic"
+    name: "opus"
+
+prompt classify(text: String) -> String:
+    "classify {text}"
+    progressive:
+        - fast at 1.2     # BUG: threshold > 1.0
+        - strong

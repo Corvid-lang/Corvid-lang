@@ -1,0 +1,9 @@
+effect chatty:
+    tokens: 4000
+
+tool talkative(q: String) -> String uses chatty
+
+@tokens(2000)
+agent quiet(q: String) -> String:
+    # BUG: tool's tokens (4000) > agent's tokens budget (2000).
+    return talkative(q)

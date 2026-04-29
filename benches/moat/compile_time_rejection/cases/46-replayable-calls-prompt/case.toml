@@ -1,0 +1,13 @@
+id = "46-replayable-calls-prompt"
+title = "@replayable agent invokes the Ask human-input builtin"
+bug_class = "replayable-uncaptured-source"
+description = "The Ask human-input builtin produces values the trace schema does not capture; @replayable body cannot use it."
+
+[expected]
+corvid = "rejected"
+python = "accepted"
+typescript = "accepted"
+
+corvid_guarantee_id = "replay.deterministic_pure_path"
+python_baseline = "mypy --strict + pydantic"
+typescript_baseline = "tsc --strict + zod"

@@ -1,0 +1,9 @@
+effect shaky:
+    confidence: 0.70
+
+tool shaky_lookup(q: String) -> String uses shaky
+
+@min_confidence(0.95)
+agent answer(q: String) -> String:
+    # BUG: composed confidence (0.70) < threshold (0.95).
+    return shaky_lookup(q)

@@ -1,0 +1,5 @@
+tool issue_refund(id: String, amount: Float) -> String dangerous
+
+agent bot(id: String, amount: Float) -> String:
+    approve RefundIssue(id, amount)   # BUG: tool is `issue_refund` -> label IssueRefund.
+    return issue_refund(id, amount)

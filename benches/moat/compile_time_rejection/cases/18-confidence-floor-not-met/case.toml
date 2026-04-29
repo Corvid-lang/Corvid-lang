@@ -1,0 +1,17 @@
+id = "18-confidence-floor-not-met"
+title = "Composed input confidence below @min_confidence threshold"
+bug_class = "confidence-under-threshold"
+description = """
+The agent declares @min_confidence(0.95) but a helper tool only
+guarantees confidence: 0.70. Composition rejects: the floor is not
+met along this path.
+"""
+
+[expected]
+corvid = "rejected"
+python = "accepted"
+typescript = "accepted"
+
+corvid_guarantee_id = "effect_row.body_completeness"
+python_baseline = "mypy --strict + pydantic"
+typescript_baseline = "tsc --strict + zod"

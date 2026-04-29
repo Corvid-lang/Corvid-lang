@@ -1,0 +1,15 @@
+effect deep:
+    trust: human_required
+
+tool deep_op(x: String) -> String uses deep
+
+agent layer_one(x: String) -> String uses deep:
+    return deep_op(x)
+
+agent layer_two(x: String) -> String uses deep:
+    return layer_one(x)
+
+@trust(autonomous)
+agent layer_three(x: String) -> String:
+    # BUG: chain transports human_required up; outer claims autonomous.
+    return layer_two(x)

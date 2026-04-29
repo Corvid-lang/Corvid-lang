@@ -1,0 +1,3 @@
+agent answer(q: String) -> Grounded<String>:
+    # BUG: literal has no provenance source.
+    return "the sky is blue"

@@ -1,0 +1,15 @@
+effect pay:
+    cost: $0.50
+    trust: autonomous
+
+effect audit:
+    cost: $0.25
+    trust: supervisor_required
+
+tool settle() -> Nothing uses pay, audit
+
+@budget($0.60)
+@trust(autonomous)
+agent bad() -> Nothing:
+    # BUG: cost ($0.75) > budget ($0.60); trust wider than autonomous.
+    return settle()

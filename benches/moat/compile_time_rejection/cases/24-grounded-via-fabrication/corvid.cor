@@ -1,0 +1,8 @@
+tool fabricate(seed: String) -> String
+
+agent helper(seed: String) -> String:
+    return fabricate(seed)
+
+agent answer(seed: String) -> Grounded<String>:
+    # BUG: helper returns plain String; no `data: grounded` flow.
+    return helper(seed)

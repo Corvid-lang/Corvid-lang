@@ -1,0 +1,7 @@
+tool issue_refund(id: String) -> Int dangerous
+
+agent bot(id: String) -> Int:
+    # BUG: approve appears AFTER the call.
+    value = issue_refund(id)
+    approve IssueRefund(id)
+    return value

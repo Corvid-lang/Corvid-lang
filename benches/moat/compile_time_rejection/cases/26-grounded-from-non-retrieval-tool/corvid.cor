@@ -1,0 +1,8 @@
+effect llm:
+    cost: $0.10
+
+tool ask_model(q: String) -> String uses llm
+
+agent answer(q: String) -> Grounded<String>:
+    # BUG: ask_model has no data: grounded effect.
+    return ask_model(q)

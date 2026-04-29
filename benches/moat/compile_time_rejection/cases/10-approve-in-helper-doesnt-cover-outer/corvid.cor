@@ -1,0 +1,11 @@
+tool issue_refund(id: String) -> Int dangerous
+
+agent helper(id: String) -> Int:
+    approve IssueRefund(id)
+    return issue_refund(id)
+
+agent outer(id: String) -> Int:
+    a = helper(id)
+    # BUG: outer call has no approve in lexical scope.
+    b = issue_refund(id)
+    return a + b

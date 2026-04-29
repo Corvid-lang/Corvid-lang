@@ -1,0 +1,4 @@
+effect bad_conf:
+    confidence: 1.7    # BUG: out-of-range confidence on effect declaration.
+
+tool t(x: String) -> String uses bad_conf

@@ -1,0 +1,17 @@
+id = "29-prompt-cites-strictly-non-grounded"
+title = "Prompt 'cites strictly' clause names a non-Grounded parameter"
+bug_class = "prompt-citation-mistype"
+description = """
+The 'cites strictly' clause requires its target parameter to be
+Grounded<T>. Naming a plain String parameter is a citation contract
+forgery.
+"""
+
+[expected]
+corvid = "rejected"
+python = "accepted"
+typescript = "accepted"
+
+corvid_guarantee_id = "grounded.provenance_required"
+python_baseline = "mypy --strict + pydantic"
+typescript_baseline = "tsc --strict + zod"

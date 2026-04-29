@@ -1,0 +1,13 @@
+effect classify_eff:
+    cost: $0.30
+
+effect summarise_eff:
+    cost: $0.30
+
+tool classify(text: String) -> String uses classify_eff
+tool summarise(text: String) -> String uses summarise_eff
+
+@budget($0.50)
+agent pipeline(text: String) -> String:
+    # BUG: 0.30 + 0.30 = 0.60 > 0.50 budget.
+    return summarise(classify(text))

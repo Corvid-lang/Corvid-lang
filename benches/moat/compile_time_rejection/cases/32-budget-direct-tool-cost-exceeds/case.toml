@@ -1,0 +1,13 @@
+id = "32-budget-direct-tool-cost-exceeds"
+title = "Single tool cost exceeds the agents declared @budget"
+bug_class = "budget-overrun"
+description = "An agent declares @budget($0.05) but the only tool it calls costs $0.50."
+
+[expected]
+corvid = "rejected"
+python = "accepted"
+typescript = "accepted"
+
+corvid_guarantee_id = "budget.compile_time_ceiling"
+python_baseline = "mypy --strict + pydantic"
+typescript_baseline = "tsc --strict + zod"

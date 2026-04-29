@@ -1,0 +1,10 @@
+effect llm_call:
+    trust: human_required
+
+prompt advise(q: String) -> String uses llm_call:
+    "advice for {q}"
+
+@trust(autonomous)
+agent ask(q: String) -> String:
+    # BUG: prompt's trust effect (human_required) wider than caller's row.
+    return advise(q)

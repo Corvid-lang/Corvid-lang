@@ -1,0 +1,11 @@
+effect e:
+    cost: $0.20
+
+tool a(x: String) -> String uses e
+tool b(x: String) -> String uses e
+tool c(x: String) -> String uses e
+
+@budget($0.50)
+agent pipeline(x: String) -> String:
+    # BUG: 0.20 * 3 = 0.60 > 0.50 budget.
+    return c(b(a(x)))

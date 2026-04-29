@@ -1,0 +1,16 @@
+id = "07-approve-only-in-else-branch"
+title = "Approve only present in the else branch leaves the then branch unauthorised"
+bug_class = "approval-bypass"
+description = """
+The agent has a dangerous call in both branches but only approves in
+one. Corvid's lexical-scope check catches the unauthorised branch.
+"""
+
+[expected]
+corvid = "rejected"
+python = "accepted"
+typescript = "accepted"
+
+corvid_guarantee_id = "approval.dangerous_call_requires_token"
+python_baseline = "mypy --strict + pydantic"
+typescript_baseline = "tsc --strict + zod"

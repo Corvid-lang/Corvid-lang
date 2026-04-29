@@ -1,0 +1,3 @@
+prompt summarise(ctx: String) -> String:
+    "summarise: {ctx}"
+    cites ctx strictly      # BUG: ctx is plain String, not Grounded<String>.

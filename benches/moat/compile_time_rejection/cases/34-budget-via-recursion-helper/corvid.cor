@@ -1,0 +1,12 @@
+effect spendy:
+    cost: $0.20
+
+tool burner(x: String) -> String uses spendy
+
+agent helper(x: String) -> String:
+    return burner(x)
+
+@budget($0.10)
+agent caller(x: String) -> String:
+    # BUG: helper composes $0.20 cost; caller budget $0.10.
+    return helper(x)

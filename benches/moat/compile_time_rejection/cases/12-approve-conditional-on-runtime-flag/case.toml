@@ -1,0 +1,17 @@
+id = "12-approve-conditional-on-runtime-flag"
+title = "Approve guarded by a runtime flag does not unconditionally authorise the call"
+bug_class = "approval-bypass"
+description = """
+The approve only fires when a runtime flag is true; the dangerous
+call is unconditional. Corvid's lexical-scope check still rejects
+the unconditional path.
+"""
+
+[expected]
+corvid = "rejected"
+python = "accepted"
+typescript = "accepted"
+
+corvid_guarantee_id = "approval.dangerous_call_requires_token"
+python_baseline = "mypy --strict + pydantic"
+typescript_baseline = "tsc --strict + zod"

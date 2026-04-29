@@ -1,0 +1,9 @@
+effect slow:
+    latency_ms: 2000
+
+tool slow_lookup(q: String) -> String uses slow
+
+@latency_ms(500)
+agent fast_path(q: String) -> String:
+    # BUG: slow_lookup latency (2000ms) > fast_path budget (500ms).
+    return slow_lookup(q)

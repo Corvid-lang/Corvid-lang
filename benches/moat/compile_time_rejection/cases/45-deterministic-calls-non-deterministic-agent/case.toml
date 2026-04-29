@@ -1,0 +1,13 @@
+id = "45-deterministic-calls-non-deterministic-agent"
+title = "@deterministic agent calls another agent that is not @deterministic"
+bug_class = "deterministic-impure-call"
+description = "Determinism is contagious — a @deterministic agent can only call other @deterministic agents."
+
+[expected]
+corvid = "rejected"
+python = "accepted"
+typescript = "accepted"
+
+corvid_guarantee_id = "replay.deterministic_pure_path"
+python_baseline = "mypy --strict + pydantic"
+typescript_baseline = "tsc --strict + zod"

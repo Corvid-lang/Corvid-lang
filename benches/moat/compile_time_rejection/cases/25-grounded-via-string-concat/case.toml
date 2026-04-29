@@ -1,0 +1,17 @@
+id = "25-grounded-via-string-concat"
+title = "Grounded<String> return built by concatenating non-retrieval text"
+bug_class = "grounded-without-citation"
+description = """
+The agent builds the answer by string concatenation rather than
+through a retrieval call. No data: grounded effect flows; the
+provenance chain is hollow.
+"""
+
+[expected]
+corvid = "rejected"
+python = "accepted"
+typescript = "accepted"
+
+corvid_guarantee_id = "grounded.provenance_required"
+python_baseline = "mypy --strict + pydantic"
+typescript_baseline = "tsc --strict + zod"

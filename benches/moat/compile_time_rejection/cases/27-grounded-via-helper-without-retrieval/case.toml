@@ -1,0 +1,17 @@
+id = "27-grounded-via-helper-without-retrieval"
+title = "Grounded<String> return value flows from a helper that drops retrieval"
+bug_class = "grounded-without-citation"
+description = """
+Even a multi-hop chain that begins with a retrieval can break
+provenance if any link returns a plain String. Corvid tracks
+provenance flow through the chain.
+"""
+
+[expected]
+corvid = "rejected"
+python = "accepted"
+typescript = "accepted"
+
+corvid_guarantee_id = "grounded.provenance_required"
+python_baseline = "mypy --strict + pydantic"
+typescript_baseline = "tsc --strict + zod"

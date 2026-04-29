@@ -1,0 +1,6 @@
+tool external(x: String) -> String
+
+@deterministic
+agent compute(x: String) -> String:
+    # BUG: @deterministic body must be pure; tool call is impure.
+    return external(x)

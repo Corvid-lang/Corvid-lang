@@ -1,0 +1,17 @@
+id = "08-mock-aliased-dangerous-still-requires-approve"
+title = "Dangerous tool aliased through a mock still requires approval"
+bug_class = "approval-bypass"
+description = """
+Tests can `mock` a dangerous tool to provide a deterministic
+implementation, but the dangerous marker is preserved — calls through
+the mock alias still need an approval.
+"""
+
+[expected]
+corvid = "rejected"
+python = "accepted"
+typescript = "accepted"
+
+corvid_guarantee_id = "approval.dangerous_call_requires_token"
+python_baseline = "mypy --strict + pydantic"
+typescript_baseline = "tsc --strict + zod"

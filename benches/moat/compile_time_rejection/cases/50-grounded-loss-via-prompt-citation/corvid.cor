@@ -1,0 +1,3 @@
+prompt summarise(question: String, ctx: Grounded<String>) -> String:
+    "answer {question} using {ctx}"
+    cites question strictly      # BUG: question is plain String, not Grounded.

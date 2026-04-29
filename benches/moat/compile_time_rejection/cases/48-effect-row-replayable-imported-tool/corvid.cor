@@ -1,0 +1,12 @@
+@deterministic
+agent inner(x: String) -> String:
+    return x
+
+agent middle(x: String) -> String:
+    # middle is NOT @deterministic.
+    return Ask(x)
+
+@deterministic
+agent outer(x: String) -> String:
+    # BUG: outer is @deterministic but transitively calls non-deterministic middle.
+    return middle(inner(x))

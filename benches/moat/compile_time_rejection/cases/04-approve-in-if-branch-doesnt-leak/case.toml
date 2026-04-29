@@ -1,0 +1,18 @@
+id = "04-approve-in-if-branch-doesnt-leak"
+title = "Approve token in an `if` branch does not leak to an unconditional outer call"
+bug_class = "approval-bypass"
+description = """
+The agent obtains an approval token inside a conditional branch but
+also calls the dangerous tool unconditionally. Convention-only stacks
+miss the unconditional path; Corvid rejects with the lexical-only
+guarantee.
+"""
+
+[expected]
+corvid = "rejected"
+python = "accepted"
+typescript = "accepted"
+
+corvid_guarantee_id = "approval.dangerous_call_requires_token"
+python_baseline = "mypy --strict + pydantic"
+typescript_baseline = "tsc --strict + zod"

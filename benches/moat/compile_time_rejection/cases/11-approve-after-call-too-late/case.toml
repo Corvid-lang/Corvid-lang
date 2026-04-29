@@ -1,0 +1,17 @@
+id = "11-approve-after-call-too-late"
+title = "Approve placed after the dangerous call does not authorise it"
+bug_class = "approval-ordering"
+description = """
+The approve token must precede the dangerous call lexically. A
+trailing approve does not retroactively authorise the call. Corvid
+rejects on order.
+"""
+
+[expected]
+corvid = "rejected"
+python = "accepted"
+typescript = "accepted"
+
+corvid_guarantee_id = "approval.dangerous_call_requires_token"
+python_baseline = "mypy --strict + pydantic"
+typescript_baseline = "tsc --strict + zod"

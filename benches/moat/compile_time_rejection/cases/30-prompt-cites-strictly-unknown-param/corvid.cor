@@ -1,0 +1,3 @@
+prompt summarise(ctx: Grounded<String>) -> String:
+    "summarise: {ctx}"
+    cites context strictly      # BUG: parameter is `ctx`, not `context`.

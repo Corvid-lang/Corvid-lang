@@ -1,0 +1,8 @@
+tool send_email(to: String, body: String) -> Nothing dangerous
+
+agent notify(flag: Bool, to: String) -> Nothing:
+    if flag:
+        # BUG: then-branch fires the dangerous tool with no approve.
+        return send_email(to, to)
+    approve SendEmail(to, to)
+    return send_email(to, to)

@@ -1,0 +1,13 @@
+id = "34-budget-via-recursion-helper"
+title = "Helper tool composition pushes the caller above @budget"
+bug_class = "budget-overrun"
+description = "Helper agent calls expensive tool; caller declares tight @budget."
+
+[expected]
+corvid = "rejected"
+python = "accepted"
+typescript = "accepted"
+
+corvid_guarantee_id = "budget.compile_time_ceiling"
+python_baseline = "mypy --strict + pydantic"
+typescript_baseline = "tsc --strict + zod"

@@ -1,0 +1,17 @@
+id = "30-prompt-cites-strictly-unknown-param"
+title = "Prompt 'cites strictly' clause names a parameter that does not exist"
+bug_class = "prompt-citation-typo"
+description = """
+The 'cites strictly' identifier must match a real parameter on the
+prompt. Typos surface as compile errors, not as runtime citation
+failures.
+"""
+
+[expected]
+corvid = "rejected"
+python = "accepted"
+typescript = "accepted"
+
+corvid_guarantee_id = "grounded.provenance_required"
+python_baseline = "mypy --strict + pydantic"
+typescript_baseline = "tsc --strict + zod"

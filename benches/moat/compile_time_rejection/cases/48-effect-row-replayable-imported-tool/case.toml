@@ -1,0 +1,13 @@
+id = "48-effect-row-replayable-imported-tool"
+title = "@replayable agent transitively calls a non-replayable agent through helpers"
+bug_class = "replayable-uncaptured-source"
+description = "The replay determinism check propagates through helper agents — a non-replayable callee taints the caller."
+
+[expected]
+corvid = "rejected"
+python = "accepted"
+typescript = "accepted"
+
+corvid_guarantee_id = "replay.deterministic_pure_path"
+python_baseline = "mypy --strict + pydantic"
+typescript_baseline = "tsc --strict + zod"

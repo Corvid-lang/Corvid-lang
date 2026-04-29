@@ -1,0 +1,16 @@
+id = "28-grounded-via-constructor-without-source"
+title = "Grounded<String> return constructed from a hardcoded literal"
+bug_class = "grounded-without-citation"
+description = """
+The agent returns a Grounded<String> built from a literal — the
+classic citation-forgery move. Corvid rejects.
+"""
+
+[expected]
+corvid = "rejected"
+python = "accepted"
+typescript = "accepted"
+
+corvid_guarantee_id = "grounded.provenance_required"
+python_baseline = "mypy --strict + pydantic"
+typescript_baseline = "tsc --strict + zod"

@@ -1,0 +1,13 @@
+id = "40-progressive-stage-threshold-out-of-range"
+title = "Progressive prompt stage threshold above 1.0"
+bug_class = "confidence-out-of-range"
+description = "A progressive escalation chain stage declares threshold: 1.2 — outside the valid [0.0, 1.0] range."
+
+[expected]
+corvid = "rejected"
+python = "accepted"
+typescript = "accepted"
+
+corvid_guarantee_id = "confidence.min_threshold"
+python_baseline = "mypy --strict + pydantic"
+typescript_baseline = "tsc --strict + zod"

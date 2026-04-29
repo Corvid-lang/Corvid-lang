@@ -1,0 +1,16 @@
+id = "16-composed-cost-over-budget"
+title = "Sum of two tool costs exceeds the agent's @budget ceiling"
+bug_class = "budget-overrun"
+description = """
+Two tools each declare cost; the worst-case path through the agent
+sums to more than the agent's @budget. Corvid rejects at compile time.
+"""
+
+[expected]
+corvid = "rejected"
+python = "accepted"
+typescript = "accepted"
+
+corvid_guarantee_id = "budget.compile_time_ceiling"
+python_baseline = "mypy --strict + pydantic"
+typescript_baseline = "tsc --strict + zod"

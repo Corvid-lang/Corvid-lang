@@ -1,0 +1,5 @@
+tool send_email(to: String, body: String) -> Nothing dangerous
+
+agent notify(to: String) -> Nothing:
+    approve SendEmail(to)        # BUG: arity 1, tool takes 2.
+    return send_email(to, to)

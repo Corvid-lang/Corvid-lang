@@ -1,0 +1,9 @@
+effect spendy:
+    cost: $0.50
+
+tool issue_refund(id: String) -> String dangerous uses spendy
+
+@budget($0.10)
+agent triage(id: String) -> Grounded<String>:
+    # BUG: missing approve, return type Grounded but no provenance, cost over budget.
+    return issue_refund(id)

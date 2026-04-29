@@ -1,0 +1,9 @@
+effect modest:
+    cost: $0.30
+
+tool work(x: String) -> String uses modest
+
+@budget($0.20)
+agent op(x: String) -> String:
+    # BUG: after the tightening, $0.30 tool no longer fits the $0.20 budget.
+    return work(x)

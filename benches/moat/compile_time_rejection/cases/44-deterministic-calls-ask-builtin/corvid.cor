@@ -1,0 +1,4 @@
+@deterministic
+agent answer(q: String) -> String:
+    # BUG: Ask is human input — never deterministic.
+    return Ask(q)

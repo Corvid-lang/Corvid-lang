@@ -1,0 +1,13 @@
+id = "35-budget-cumulative-three-tools"
+title = "Three tool calls accumulate cost above the agents @budget"
+bug_class = "budget-overrun"
+description = "Three sequential tool calls of $0.20 each exceed a $0.50 budget."
+
+[expected]
+corvid = "rejected"
+python = "accepted"
+typescript = "accepted"
+
+corvid_guarantee_id = "budget.compile_time_ceiling"
+python_baseline = "mypy --strict + pydantic"
+typescript_baseline = "tsc --strict + zod"

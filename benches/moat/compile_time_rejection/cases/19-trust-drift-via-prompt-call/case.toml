@@ -1,0 +1,17 @@
+id = "19-trust-drift-via-prompt-call"
+title = "Prompt call returns a trust dimension the caller's row doesn't cover"
+bug_class = "effect-under-report"
+description = """
+A prompt declared with `uses` clauses produces dimensional effects
+that flow to the caller. When the caller's row does not declare
+matching trust, Corvid rejects.
+"""
+
+[expected]
+corvid = "rejected"
+python = "accepted"
+typescript = "accepted"
+
+corvid_guarantee_id = "effect_row.body_completeness"
+python_baseline = "mypy --strict + pydantic"
+typescript_baseline = "tsc --strict + zod"

@@ -1,0 +1,16 @@
+id = "14-trust-drift-tool-call"
+title = "Agent declares @trust(autonomous) but calls a tool requiring human_required trust"
+bug_class = "effect-under-report"
+description = """
+The agent claims it can run autonomously, but the tool it calls
+requires human supervision. Effect-row body completeness rejects.
+"""
+
+[expected]
+corvid = "rejected"
+python = "accepted"
+typescript = "accepted"
+
+corvid_guarantee_id = "effect_row.body_completeness"
+python_baseline = "mypy --strict + pydantic"
+typescript_baseline = "tsc --strict + zod"

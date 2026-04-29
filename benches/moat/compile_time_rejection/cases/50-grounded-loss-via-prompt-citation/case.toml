@@ -1,0 +1,13 @@
+id = "50-grounded-loss-via-prompt-citation"
+title = "Grounded<String> answer flows from a prompt that cites strictly the wrong parameter"
+bug_class = "grounded-without-citation"
+description = "The prompt accepts Grounded<String> as one parameter but cites strictly the wrong one — the citation chain at compile time targets a non-grounded parameter."
+
+[expected]
+corvid = "rejected"
+python = "accepted"
+typescript = "accepted"
+
+corvid_guarantee_id = "grounded.provenance_required"
+python_baseline = "mypy --strict + pydantic"
+typescript_baseline = "tsc --strict + zod"

@@ -1,0 +1,16 @@
+id = "24-grounded-via-fabrication"
+title = "Grounded<T> return value comes from a helper that fabricates the string"
+bug_class = "grounded-without-citation"
+description = """
+A helper produces a non-grounded string; the agent claims to return
+Grounded<String>. The provenance chain is empty. Corvid rejects.
+"""
+
+[expected]
+corvid = "rejected"
+python = "accepted"
+typescript = "accepted"
+
+corvid_guarantee_id = "grounded.provenance_required"
+python_baseline = "mypy --strict + pydantic"
+typescript_baseline = "tsc --strict + zod"

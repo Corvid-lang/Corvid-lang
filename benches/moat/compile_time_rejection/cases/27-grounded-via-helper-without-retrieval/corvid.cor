@@ -1,0 +1,12 @@
+effect search_eff:
+    data: grounded
+
+tool search(q: String) -> String uses search_eff
+
+agent strip_provenance(q: String) -> String:
+    # Helper drops the grounded marker by returning plain String.
+    return search(q)
+
+agent answer(q: String) -> Grounded<String>:
+    # BUG: helper return type is plain String — provenance chain broken.
+    return strip_provenance(q)

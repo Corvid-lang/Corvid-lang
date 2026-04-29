@@ -1,0 +1,13 @@
+id = "44-deterministic-calls-ask-builtin"
+title = "@deterministic agent invokes the human Ask builtin"
+bug_class = "deterministic-impure-call"
+description = "The Ask human-input builtin is non-deterministic by definition; @deterministic body cannot use it."
+
+[expected]
+corvid = "rejected"
+python = "accepted"
+typescript = "accepted"
+
+corvid_guarantee_id = "replay.deterministic_pure_path"
+python_baseline = "mypy --strict + pydantic"
+typescript_baseline = "tsc --strict + zod"

@@ -1,0 +1,17 @@
+id = "05-approve-wrong-arity"
+title = "Approve label called with wrong arity does not authorize the dangerous tool"
+bug_class = "approval-arity-mismatch"
+description = """
+The approval call has fewer arguments than the dangerous tool requires.
+The approval token does not match the call site signature; Corvid
+rejects.
+"""
+
+[expected]
+corvid = "rejected"
+python = "accepted"
+typescript = "accepted"
+
+corvid_guarantee_id = "approval.dangerous_call_requires_token"
+python_baseline = "mypy --strict + pydantic"
+typescript_baseline = "tsc --strict + zod"

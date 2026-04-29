@@ -1,0 +1,13 @@
+id = "49-confidence-min-confidence-attribute"
+title = "Effect declaration uses confidence value out of range"
+bug_class = "confidence-out-of-range"
+description = "An effect declares confidence: 1.7. Corvid rejects on the same range guarantee."
+
+[expected]
+corvid = "rejected"
+python = "accepted"
+typescript = "accepted"
+
+corvid_guarantee_id = "confidence.min_threshold"
+python_baseline = "mypy --strict + pydantic"
+typescript_baseline = "tsc --strict + zod"

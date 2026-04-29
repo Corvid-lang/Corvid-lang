@@ -1,0 +1,4 @@
+@replayable
+agent ask_human(q: String) -> String:
+    # BUG: Ask is a catalog-registered nondeterminism source; replay cannot reproduce it.
+    return Ask(q)

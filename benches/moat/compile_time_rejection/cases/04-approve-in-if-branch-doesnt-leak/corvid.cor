@@ -1,0 +1,8 @@
+tool send_email(to: String, body: String) -> Nothing dangerous
+
+agent notify(flag: Bool, to: String) -> Nothing:
+    if flag:
+        approve SendEmail(to, to)
+        return send_email(to, to)
+    # BUG: unconditional fallback call has no approve in scope.
+    return send_email(to, to)

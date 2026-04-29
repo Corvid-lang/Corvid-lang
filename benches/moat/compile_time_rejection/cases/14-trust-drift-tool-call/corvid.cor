@@ -1,0 +1,11 @@
+effect transfer:
+    cost: $0.05
+    trust: human_required
+
+tool issue_refund(id: String) -> Int dangerous uses transfer
+
+@trust(autonomous)
+agent bot(id: String) -> Int:
+    approve IssueRefund(id)
+    # BUG: tool requires human_required; agent declares autonomous.
+    return issue_refund(id)

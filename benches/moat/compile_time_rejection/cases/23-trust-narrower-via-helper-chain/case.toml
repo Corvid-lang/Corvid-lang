@@ -1,0 +1,18 @@
+id = "23-trust-narrower-via-helper-chain"
+title = "Trust drift hides behind a multi-level helper chain"
+bug_class = "effect-under-report"
+description = """
+A 3-level call chain transports trust through helpers. The outer
+caller's declared row doesn't cover the deepest tool's trust
+dimension. Corvid's worst-case effect propagation surfaces the
+violation on the outermost caller.
+"""
+
+[expected]
+corvid = "rejected"
+python = "accepted"
+typescript = "accepted"
+
+corvid_guarantee_id = "effect_row.body_completeness"
+python_baseline = "mypy --strict + pydantic"
+typescript_baseline = "tsc --strict + zod"

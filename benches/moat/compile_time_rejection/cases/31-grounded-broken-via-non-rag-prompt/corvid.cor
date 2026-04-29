@@ -1,0 +1,6 @@
+prompt opinion(q: String) -> String:
+    "what do you think about {q}?"
+
+agent answer(q: String) -> Grounded<String>:
+    # BUG: opinion has no data: grounded effect.
+    return opinion(q)

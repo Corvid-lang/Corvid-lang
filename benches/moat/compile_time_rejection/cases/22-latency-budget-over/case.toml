@@ -1,0 +1,17 @@
+id = "22-latency-budget-over"
+title = "Tool latency exceeds caller's @latency_ms budget"
+bug_class = "budget-overrun"
+description = """
+The latency_ms dimension is a budget-style numeric. A slow tool
+breaks a caller declaring tight latency. Corvid rejects at compile
+time on the cost-style propagation rule.
+"""
+
+[expected]
+corvid = "rejected"
+python = "accepted"
+typescript = "accepted"
+
+corvid_guarantee_id = "budget.compile_time_ceiling"
+python_baseline = "mypy --strict + pydantic"
+typescript_baseline = "tsc --strict + zod"

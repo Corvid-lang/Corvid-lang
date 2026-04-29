@@ -1,0 +1,9 @@
+effect spendy:
+    cost: $0.50
+
+tool burner(x: String) -> String uses spendy
+
+@budget($0.05)
+agent over(x: String) -> String:
+    # BUG: tool cost ($0.50) > budget ($0.05).
+    return burner(x)

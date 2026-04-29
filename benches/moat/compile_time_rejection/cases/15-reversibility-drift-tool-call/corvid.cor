@@ -1,0 +1,12 @@
+effect transfer:
+    cost: $0.05
+    trust: autonomous
+    reversible: false
+
+tool issue_refund(id: String) -> Int dangerous uses transfer
+
+@reversible(true)
+agent bot(id: String) -> Int:
+    approve IssueRefund(id)
+    # BUG: tool's transfer effect is irreversible.
+    return issue_refund(id)

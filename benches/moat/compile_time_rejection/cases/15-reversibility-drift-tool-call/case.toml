@@ -1,0 +1,16 @@
+id = "15-reversibility-drift-tool-call"
+title = "Agent claims reversible operations but tool effect is irreversible"
+bug_class = "effect-under-report"
+description = """
+The agent constrains its body to reversible actions; the tool it
+calls is marked irreversible. Effect-row body completeness rejects.
+"""
+
+[expected]
+corvid = "rejected"
+python = "accepted"
+typescript = "accepted"
+
+corvid_guarantee_id = "effect_row.body_completeness"
+python_baseline = "mypy --strict + pydantic"
+typescript_baseline = "tsc --strict + zod"

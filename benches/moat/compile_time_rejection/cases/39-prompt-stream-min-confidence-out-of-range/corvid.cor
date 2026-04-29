@@ -1,0 +1,4 @@
+prompt classify(text: String) -> Stream<String>:
+    "classify {text}"
+    stream:
+        min_confidence: 1.5

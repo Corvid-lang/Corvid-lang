@@ -1,0 +1,17 @@
+id = "20-multi-dim-cost-and-trust-drift"
+title = "Composed effect drifts on two dimensions at once (cost + trust)"
+bug_class = "effect-under-report"
+description = """
+Two distinct effect dimensions are both wider in the callee than the
+caller declares. Corvid surfaces the violation on the dimension that
+breaks first.
+"""
+
+[expected]
+corvid = "rejected"
+python = "accepted"
+typescript = "accepted"
+
+corvid_guarantee_id = "effect_row.body_completeness"
+python_baseline = "mypy --strict + pydantic"
+typescript_baseline = "tsc --strict + zod"

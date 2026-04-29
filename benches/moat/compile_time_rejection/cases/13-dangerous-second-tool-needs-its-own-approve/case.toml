@@ -1,0 +1,17 @@
+id = "13-dangerous-second-tool-needs-its-own-approve"
+title = "Approving tool A does not authorise calling distinct dangerous tool B"
+bug_class = "approval-mistargeted"
+description = """
+The agent approves one dangerous tool but calls a different one in the
+same block. Corvid resolves approvals by tool identity, not by
+sequence — only the named tool gets authorised.
+"""
+
+[expected]
+corvid = "rejected"
+python = "accepted"
+typescript = "accepted"
+
+corvid_guarantee_id = "approval.dangerous_call_requires_token"
+python_baseline = "mypy --strict + pydantic"
+typescript_baseline = "tsc --strict + zod"

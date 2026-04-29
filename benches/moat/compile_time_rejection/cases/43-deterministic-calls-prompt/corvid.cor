@@ -1,0 +1,7 @@
+prompt classify(x: String) -> String:
+    "classify {x}"
+
+@deterministic
+agent compute(x: String) -> String:
+    # BUG: prompt call is non-deterministic.
+    return classify(x)

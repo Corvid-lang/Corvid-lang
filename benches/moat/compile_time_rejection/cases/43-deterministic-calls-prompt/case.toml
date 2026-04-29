@@ -1,0 +1,13 @@
+id = "43-deterministic-calls-prompt"
+title = "@deterministic agent calls a prompt"
+bug_class = "deterministic-impure-call"
+description = "Calling a prompt from a @deterministic agent breaks purity — LLM output is not deterministic."
+
+[expected]
+corvid = "rejected"
+python = "accepted"
+typescript = "accepted"
+
+corvid_guarantee_id = "replay.deterministic_pure_path"
+python_baseline = "mypy --strict + pydantic"
+typescript_baseline = "tsc --strict + zod"

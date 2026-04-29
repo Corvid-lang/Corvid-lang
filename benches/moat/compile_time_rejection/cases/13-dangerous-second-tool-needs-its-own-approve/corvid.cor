@@ -1,0 +1,7 @@
+tool issue_refund(id: String) -> Int dangerous
+tool wire_transfer(id: String, amount: Float) -> Int dangerous
+
+agent bot(id: String, amount: Float) -> Int:
+    approve IssueRefund(id)
+    # BUG: wire_transfer is a separate dangerous tool; it has no approve.
+    return wire_transfer(id, amount)

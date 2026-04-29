@@ -1,0 +1,13 @@
+id = "37-eval-confidence-greater-than-one"
+title = "Eval assertion with confidence value above 1.0"
+bug_class = "confidence-out-of-range"
+description = "Eval block declares with confidence 1.5 — outside the [0.0, 1.0] range. Corvid rejects."
+
+[expected]
+corvid = "rejected"
+python = "accepted"
+typescript = "accepted"
+
+corvid_guarantee_id = "confidence.min_threshold"
+python_baseline = "mypy --strict + pydantic"
+typescript_baseline = "tsc --strict + zod"

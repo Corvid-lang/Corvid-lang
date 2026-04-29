@@ -1,0 +1,3 @@
+agent answer(seed: String) -> Grounded<String>:
+    # BUG: pure string concatenation has no provenance flow.
+    return "answer-for-" + seed

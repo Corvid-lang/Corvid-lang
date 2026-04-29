@@ -1,0 +1,13 @@
+id = "39-prompt-stream-min-confidence-out-of-range"
+title = "Prompt stream min_confidence above 1.0"
+bug_class = "confidence-out-of-range"
+description = "A prompts stream block declares min_confidence: 1.5 — outside the [0.0, 1.0] range. Corvid rejects."
+
+[expected]
+corvid = "rejected"
+python = "accepted"
+typescript = "accepted"
+
+corvid_guarantee_id = "confidence.min_threshold"
+python_baseline = "mypy --strict + pydantic"
+typescript_baseline = "tsc --strict + zod"

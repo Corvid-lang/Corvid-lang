@@ -1,0 +1,13 @@
+id = "33-budget-loop-aggregate-cost"
+title = "Loop iterates over a list and aggregate cost exceeds budget"
+bug_class = "budget-overrun"
+description = "Calling a $0.10 tool inside a for-loop pushes the total above a $0.50 budget."
+
+[expected]
+corvid = "rejected"
+python = "accepted"
+typescript = "accepted"
+
+corvid_guarantee_id = "budget.compile_time_ceiling"
+python_baseline = "mypy --strict + pydantic"
+typescript_baseline = "tsc --strict + zod"

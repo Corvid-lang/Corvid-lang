@@ -1,0 +1,17 @@
+id = "26-grounded-from-non-retrieval-tool"
+title = "Grounded<String> return wraps a tool with no data: grounded effect"
+bug_class = "grounded-without-citation"
+description = """
+The tool returns a String but does not declare a data: grounded
+effect. Wrapping that String in Grounded<T> at the return type is
+a citation forgery.
+"""
+
+[expected]
+corvid = "rejected"
+python = "accepted"
+typescript = "accepted"
+
+corvid_guarantee_id = "grounded.provenance_required"
+python_baseline = "mypy --strict + pydantic"
+typescript_baseline = "tsc --strict + zod"
