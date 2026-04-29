@@ -3,6 +3,7 @@
 use crate::lineage::{LineageEvent, LineageKind, LineageStatus};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use std::collections::BTreeMap;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -46,6 +47,26 @@ pub struct ReviewQueueRecord {
     pub resolved_ms: u64,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct ReviewQueuePolicy {
+    pub min_confidence: f64,
+    pub high_risk_cost_threshold: f64,
+}
+
+impl Default for ReviewQueuePolicy {
+    fn default() -> Self {
+        Self {
+            min_confidence: 0.70,
+            high_risk_cost_threshold: 1000.0,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct ReviewQueueRuntime {
+    records: BTreeMap<String, ReviewQueueRecord>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ReviewQueueError {
     MissingTraceId,
@@ -54,6 +75,7 @@ pub enum ReviewQueueError {
     MissingActorId,
     MissingReviewer,
     AlreadyResolved,
+    NotFound,
 }
 
 impl std::fmt::Display for ReviewQueueError {
@@ -65,11 +87,77 @@ impl std::fmt::Display for ReviewQueueError {
             Self::MissingActorId => write!(f, "review record requires actor_id"),
             Self::MissingReviewer => write!(f, "review decision requires reviewer_actor_id"),
             Self::AlreadyResolved => write!(f, "review record is already resolved"),
+            Self::NotFound => write!(f, "review record was not found"),
         }
     }
 }
 
 impl std::error::Error for ReviewQueueError {}
+
+impl ReviewQueueRuntime {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn submit(&mut self, record: ReviewQueueRecord) -> &ReviewQueueRecord {
+        let review_id = record.review_id.clone();
+        self.records.entry(review_id).or_insert(record)
+    }
+
+    pub fn enqueue_if_required(
+        &mut self,
+        event: &LineageEvent,
+        cost_of_being_wrong: f64,
+        policy: &ReviewQueuePolicy,
+        now_ms: u64,
+    ) -> Result<Option<&ReviewQueueRecord>, ReviewQueueError> {
+        let reason = review_reason_for_event(event, cost_of_being_wrong, policy);
+        let Some(reason) = reason else {
+            return Ok(None);
+        };
+        let record = create_review_record(event, reason, cost_of_being_wrong, now_ms)?;
+        Ok(Some(self.submit(record)))
+    }
+
+    pub fn pending(&self) -> Vec<&ReviewQueueRecord> {
+        self.records
+            .values()
+            .filter(|record| record.status == ReviewStatus::Pending)
+            .collect()
+    }
+
+    pub fn get(&self, review_id: &str) -> Option<&ReviewQueueRecord> {
+        self.records.get(review_id)
+    }
+
+    pub fn resolve(
+        &mut self,
+        review_id: &str,
+        status: ReviewStatus,
+        reviewer_actor_id: impl Into<String>,
+        audit_event_id: impl Into<String>,
+        decision_note: impl Into<String>,
+        resolved_ms: u64,
+    ) -> Result<&ReviewQueueRecord, ReviewQueueError> {
+        let current = self
+            .records
+            .get(review_id)
+            .ok_or(ReviewQueueError::NotFound)?
+            .clone();
+        let resolved = resolve_review_record(
+            &current,
+            status,
+            reviewer_actor_id,
+            audit_event_id,
+            decision_note,
+            resolved_ms,
+        )?;
+        self.records.insert(review_id.to_string(), resolved);
+        self.records
+            .get(review_id)
+            .ok_or(ReviewQueueError::NotFound)
+    }
+}
 
 pub fn create_review_record(
     event: &LineageEvent,
@@ -149,6 +237,32 @@ pub fn review_lineage_event(record: &ReviewQueueRecord) -> LineageEvent {
     event.prompt_hash = record.source_prompt_hash.clone();
     event.model_fingerprint = record.model_fingerprint.clone();
     event
+}
+
+pub fn review_reason_for_event(
+    event: &LineageEvent,
+    cost_of_being_wrong: f64,
+    policy: &ReviewQueuePolicy,
+) -> Option<ReviewReason> {
+    if event.status == LineageStatus::Denied {
+        return Some(ReviewReason::DeniedApproval);
+    }
+    if event.status == LineageStatus::Failed && !event.guarantee_id.is_empty() {
+        return Some(ReviewReason::GuaranteeViolation);
+    }
+    if event.status == LineageStatus::PendingReview {
+        return Some(ReviewReason::OperatorEscalation);
+    }
+    if event.confidence.is_finite()
+        && event.confidence > 0.0
+        && event.confidence < policy.min_confidence
+    {
+        return Some(ReviewReason::LowConfidence);
+    }
+    if cost_of_being_wrong.is_finite() && cost_of_being_wrong >= policy.high_risk_cost_threshold {
+        return Some(ReviewReason::HighRisk);
+    }
+    None
 }
 
 fn validate_review_source(event: &LineageEvent) -> Result<(), ReviewQueueError> {
@@ -274,5 +388,66 @@ mod tests {
         )
         .unwrap_err();
         assert_eq!(err, ReviewQueueError::AlreadyResolved);
+    }
+
+    #[test]
+    fn queue_enqueues_low_confidence_and_high_risk_records() {
+        let mut runtime = ReviewQueueRuntime::new();
+        let policy = ReviewQueuePolicy {
+            min_confidence: 0.80,
+            high_risk_cost_threshold: 500.0,
+        };
+        let mut low_confidence = source_event();
+        low_confidence.status = LineageStatus::Ok;
+        low_confidence.confidence = 0.40;
+        let low = runtime
+            .enqueue_if_required(&low_confidence, 10.0, &policy, 100)
+            .unwrap()
+            .unwrap();
+        assert_eq!(low.reason, ReviewReason::LowConfidence);
+
+        let mut high_risk = source_event();
+        high_risk.status = LineageStatus::Ok;
+        high_risk.confidence = 0.95;
+        high_risk.span_id = "span-high-risk".to_string();
+        let high = runtime
+            .enqueue_if_required(&high_risk, 1000.0, &policy, 101)
+            .unwrap()
+            .unwrap();
+        assert_eq!(high.reason, ReviewReason::HighRisk);
+        assert_eq!(runtime.pending().len(), 2);
+    }
+
+    #[test]
+    fn queue_resolves_with_audit_evidence() {
+        let mut runtime = ReviewQueueRuntime::new();
+        let mut event = source_event();
+        event.confidence = 0.30;
+        let review_id = runtime
+            .enqueue_if_required(&event, 42.0, &ReviewQueuePolicy::default(), 100)
+            .unwrap()
+            .unwrap()
+            .review_id
+            .clone();
+
+        let resolved = runtime
+            .resolve(
+                &review_id,
+                ReviewStatus::Rejected,
+                "reviewer-1",
+                "audit-1",
+                "not enough evidence",
+                120,
+            )
+            .unwrap()
+            .clone();
+        assert_eq!(resolved.status, ReviewStatus::Rejected);
+        assert_eq!(resolved.audit_event_id, "audit-1");
+        assert!(runtime.pending().is_empty());
+
+        let lineage = review_lineage_event(&resolved);
+        assert_eq!(lineage.kind, LineageKind::Review);
+        assert_eq!(lineage.status, LineageStatus::Denied);
+        assert_eq!(lineage.parent_span_id, event.span_id);
     }
 }

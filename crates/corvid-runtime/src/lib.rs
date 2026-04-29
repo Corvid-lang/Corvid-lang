@@ -220,8 +220,9 @@ pub use replay::{
     ReplayMutationReport, ReplaySource, RunCompletionDivergence, SubstitutionDivergence,
 };
 pub use review_queue::{
-    create_review_record, resolve_review_record, review_lineage_event, ReviewQueueError,
-    ReviewQueueRecord, ReviewReason, ReviewStatus,
+    create_review_record, resolve_review_record, review_lineage_event, review_reason_for_event,
+    ReviewQueueError, ReviewQueuePolicy, ReviewQueueRecord, ReviewQueueRuntime, ReviewReason,
+    ReviewStatus,
 };
 pub use runtime::{Runtime, RuntimeBuilder};
 pub use secrets::{SecretAuditMetadata, SecretRead, SecretRuntime};
