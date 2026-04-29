@@ -66,6 +66,28 @@ fn release_policy_defines_channels_semver_and_blockers() {
 }
 
 #[test]
+fn maintainer_runbooks_cover_release_security_ci_benchmarks_and_claims() {
+    let runbook = fs::read_to_string(repo_root().join("docs").join("maintainer-runbooks.md"))
+        .expect("read maintainer runbooks");
+    for required in [
+        "## Release Checklist",
+        "## Security Advisory Process",
+        "## Compatibility Policy",
+        "## CI Gates",
+        "## Benchmark Reproduction",
+        "## Claim Review",
+        "## Rollback",
+        "corvid release <channel>",
+        "corvid upgrade check",
+        "corvid claim audit",
+        "docs/core-semantics.md",
+        "release-attestation.dsse.json",
+    ] {
+        assert!(runbook.contains(required), "missing {required}");
+    }
+}
+
+#[test]
 fn personal_executive_agent_data_model_migrations_and_connectors_are_real() {
     let app = personal_executive_agent_root();
     let conn = Connection::open_in_memory().expect("in-memory sqlite");

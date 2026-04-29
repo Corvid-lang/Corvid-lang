@@ -2449,7 +2449,7 @@ corvid run --target=server --mode=real             # real-provider mode behind e
 - [x] 43C-deployment-manifests       Docker Compose, single-service PaaS, Kubernetes, and systemd manifests work for at least one reference app.
 - [x] 43D-release-channels           Nightly, beta, and stable release channels are documented and wired to SemVer/stability policy.
 - [x] 43E-upgrade-migration-tools    Syntax, stdlib, schema, trace-format, and connector-manifest migrations have tooling and docs.
-- [ ] 43F-maintainer-docs            Release checklist, advisory process, compatibility policy, CI gates, benchmark reproduction, and claim review docs are complete.
+- [x] 43F-maintainer-docs            Release checklist, advisory process, compatibility policy, CI gates, benchmark reproduction, and claim review docs are complete.
 - [ ] 43G-developer-docs             Backend tutorial, Personal Executive Agent tutorial, connector guide, approval guide, observability guide, and production checklist are complete.
 - [ ] 43H-beta-program               At least 20 external developers build real backend apps; feedback is closed as code/docs/tests or explicit non-scope.
 - [ ] 43I-final-claim-audit          README, website, launch page, docs, and `corvid claim --explain` use the same defensible claims.
@@ -2512,7 +2512,7 @@ corvid claim audit                           # AI-assisted final claim audit (ad
 - [x] 43D2-release-automation        Release channel automation produces signed artifacts and changelog entries.
 - [x] 43E1-syntax-stdlib-migrator    Syntax and stdlib migration tooling exists.
 - [x] 43E2-schema-trace-migrator     Schema, trace-format, and connector-manifest migrations exist.
-- [ ] 43F1-maintainer-runbooks       Release checklist, advisory process, compatibility policy, CI gates, benchmark reproduction, and claim review docs are complete.
+- [x] 43F1-maintainer-runbooks       Release checklist, advisory process, compatibility policy, CI gates, benchmark reproduction, and claim review docs are complete.
 - [ ] 43G1-developer-tutorials       Backend, Personal Executive Agent, connector, approval, observability, and production checklist docs are complete.
 - [ ] 43H1-beta-intake               20 external developers are onboarded with issue templates and feedback labels.
 - [ ] 43H2-beta-closure              Beta feedback is closed as code/docs/tests or explicit non-scope.
