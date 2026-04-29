@@ -2186,7 +2186,7 @@ corvid observe metrics --listen=:9090
 - [x] 40C2-otel-exporter             Exporter emits request/job/LLM/tool/approval/error/retry/cost/replay data.
 - [x] 40D1-observe-list              `corvid observe list` shows local runs, failures, costs, approvals, and hot spots.
 - [x] 40D2-observe-show              `corvid observe show <id>` explains one run with contract-aware grouping.
-- [ ] 40E1-trace-redaction           Production trace slices can be redacted deterministically.
+- [x] 40E1-trace-redaction           Production trace slices can be redacted deterministically.
 - [ ] 40E2-eval-promotion            Redacted trace slices become regression/eval fixtures.
 - [ ] 40F1-drift-metrics             Schema/confidence/cost/latency/denial/tool-error drift is computed.
 - [ ] 40F2-drift-report              Drift report is human-readable and CI-friendly.
