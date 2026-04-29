@@ -44,6 +44,27 @@ const RULES: &[RewriteRule] = &[
         to: "std.cache.remember(",
         message: "`std.cache.get_or_create` is replaced by `std.cache.remember` with the same key/value contract",
     },
+    RewriteRule {
+        id: "schema.migration_state_v1",
+        kind: "schema",
+        from: "\"schema\":\"corvid.migration_state.v0\"",
+        to: "\"schema\":\"corvid.migration_state.v1\"",
+        message: "migration state files must declare the v1 schema before stable release tooling consumes them",
+    },
+    RewriteRule {
+        id: "trace.format_v1",
+        kind: "trace",
+        from: "\"schema\":\"corvid.trace.v0\"",
+        to: "\"schema\":\"corvid.trace.v1\"",
+        message: "trace envelopes must use the v1 trace schema for stable replay and claim audit",
+    },
+    RewriteRule {
+        id: "connector.manifest_v1",
+        kind: "connector",
+        from: "\"manifest_version\":\"0.1\"",
+        to: "\"manifest_version\":\"1.0\"",
+        message: "connector manifests must use manifest_version 1.0 for stable scope, replay, and approval checks",
+    },
 ];
 
 pub fn run_check(root: &Path, json: bool) -> Result<u8> {
@@ -120,7 +141,10 @@ fn collect_corvid_sources(dir: &Path, files: &mut Vec<PathBuf>) -> Result<()> {
         let path = entry.path();
         if path.is_dir() {
             collect_corvid_sources(&path, files)?;
-        } else if path.extension().is_some_and(|ext| ext == "cor") {
+        } else if path
+            .extension()
+            .is_some_and(|ext| ext == "cor" || ext == "json")
+        {
             files.push(path);
         }
     }

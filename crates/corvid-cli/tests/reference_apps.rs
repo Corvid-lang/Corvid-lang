@@ -895,6 +895,70 @@ fn upgrade_command_reports_and_applies_source_stdlib_migrations() {
 }
 
 #[test]
+fn upgrade_command_migrates_schema_trace_and_connector_json() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let schema = temp.path().join("migration-state.json");
+    let trace = temp.path().join("trace.json");
+    let connector = temp.path().join("connector.json");
+    fs::write(&schema, "{\"schema\":\"corvid.migration_state.v0\"}\n")
+        .expect("write schema json");
+    fs::write(&trace, "{\"schema\":\"corvid.trace.v0\"}\n").expect("write trace json");
+    fs::write(&connector, "{\"manifest_version\":\"0.1\"}\n")
+        .expect("write connector json");
+
+    let check = Command::new(corvid_bin())
+        .arg("upgrade")
+        .arg("check")
+        .arg(temp.path())
+        .arg("--json")
+        .current_dir(repo_root())
+        .output()
+        .expect("run upgrade check");
+    assert!(!check.status.success());
+    let findings: Value =
+        serde_json::from_slice(&check.stdout).expect("parse schema upgrade findings");
+    let findings = findings.as_array().expect("findings array");
+    assert_eq!(findings.len(), 3);
+    for rule in [
+        "schema.migration_state_v1",
+        "trace.format_v1",
+        "connector.manifest_v1",
+    ] {
+        assert!(
+            findings
+                .iter()
+                .any(|finding| finding["rule_id"].as_str() == Some(rule)),
+            "missing {rule}"
+        );
+    }
+
+    let apply = Command::new(corvid_bin())
+        .arg("upgrade")
+        .arg("apply")
+        .arg(temp.path())
+        .arg("--json")
+        .current_dir(repo_root())
+        .output()
+        .expect("run upgrade apply");
+    assert!(
+        apply.status.success(),
+        "upgrade apply failed:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&apply.stdout),
+        String::from_utf8_lossy(&apply.stderr)
+    );
+
+    assert!(fs::read_to_string(schema)
+        .expect("read schema")
+        .contains("corvid.migration_state.v1"));
+    assert!(fs::read_to_string(trace)
+        .expect("read trace")
+        .contains("corvid.trace.v1"));
+    assert!(fs::read_to_string(connector)
+        .expect("read connector")
+        .contains("\"manifest_version\":\"1.0\""));
+}
+
+#[test]
 fn deploy_compose_emits_reference_app_manifest() {
     let temp = tempfile::tempdir().expect("tempdir");
     let app = repo_root()
