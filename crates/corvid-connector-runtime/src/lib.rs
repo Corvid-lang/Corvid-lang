@@ -1,6 +1,7 @@
 pub mod auth;
 pub mod calendar;
 pub mod files;
+pub mod github_real;
 pub mod gmail;
 pub mod manifest;
 pub mod ms365;
@@ -21,6 +22,10 @@ pub use calendar::{
 pub use files::{
     file_manifest, FileConnector, FileIndexRequest, FileMetadata, FileReadRequest, FileSnippet,
     FileWriteKind, FileWriteReceipt, FileWriteRequest, FILE_CONNECTOR_MANIFEST,
+};
+pub use github_real::{
+    github_pat_real_client, github_pat_real_client_with_base, GitHubEndpoints,
+    StaticBearerResolver, GITHUB_API_BASE,
 };
 pub use gmail::{
     gmail_manifest, GmailConnector, GmailDraftRequest, GmailMessageMetadata, GmailSearchRequest,
