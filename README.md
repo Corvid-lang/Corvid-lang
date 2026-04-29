@@ -485,6 +485,8 @@ The language is designed as one compiler pipeline with multiple execution tiers.
 
 Corvid is pre-v1.0 and under active development. The compiler, interpreter, effect system, model substrate, streaming substrate, replay/bundle infrastructure, native backend, signed cdylib attestation, bilateral ABI verifier, and claim explanation workflow are in the repository today. Some backend paths intentionally reject newer high-level features until parity work lands; signed builds fail closed when contract-like syntax is not mapped to a registered guarantee.
 
+A 2026-04-29 internal audit of Phases 35-41 found four phase-done bullets in Phases 38-41 that were structurally absent (multi-worker job runner + crash-recovery / DST tests, real JWT verification + `corvid auth/approvals` CLI, OTel SDK conformance, connector real mode + `corvid connectors` CLI). The ROADMAP now carries audit-correction tracks (35-N, 38K-M, 39K-L, 40J-K, 41K-M) that close the gaps end-to-end. Slice checkmarks before those tracks land are honest only at the layer the slice named — composition with the surfaces above stays disabled.
+
 Use the roadmap for source-of-truth status:
 
 ```bash

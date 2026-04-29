@@ -1711,6 +1711,10 @@ This phase closes all five end-to-end with no shortcuts: a guarantee manifest ta
 - [x] 35-L-readme-alignment      Replace any aspirational launch wording with claims derivable from `corvid claim --explain`, the adversarial corpus, and the bilateral verifier. README and landing page point at runnable commands; the wording is the *output* of the artifacts, not a separate prose layer.
 - [x] 35-M-ci-gate               CI workflow runs the fuzz corpus + bilateral verifier + spec drift check on every push. Phase 35 artifacts are continuously enforced, not point-in-time at launch.
 
+**Audit correction (Phase 35-41 audit, 2026-04-29):** the original Phase 35 claim coverage table only registered Phase 21/22/35 contract ids. Every later phase that introduced a new declared contract (Phase 38 `@retry`/`@idempotency`/`@replayable`/`job`/`schedule`/`await_approval`, Phase 39 `auth`/`tenant`/`role`/`permission`/`approval`/`@requires`/`@approval`, Phase 41 `connector`/`scopes`/`rate_limit`/`redact`/`webhook_signed_by`) inherited the same gate but never added itself to it. A signed cdylib that uses any of those features ships an *incomplete* claim today. 35-N closes the inheritance hole so the gate moves with the language.
+
+- [ ] 35-N-claim-coverage-extend  `validate_signed_claim_coverage` (in `corvid-driver`) recognises every declared-contract surface introduced in Phases 38, 39, and 41: `@retry`, `@idempotency`, `@replayable`, `job`, `schedule`, `await_approval`, `auth`, `tenant`, `role`, `permission`, `approval`, `@requires`, `@approval`, `connector`, `scopes`, `rate_limit`, `redact`, `webhook_signed_by`. Each new surface has a positive test (signed build succeeds when the contract maps to a registered guarantee) and an adversarial test (signed build fails when the contract is declared but no guarantee row covers it).
+
 **Non-scope:**
 
 - Formal mechanized proof of the type system (post-v1.0 research; the core-semantics manifest is the v1.0 surface).
@@ -2001,6 +2005,12 @@ corvid jobs drain --workers=all
 - [x] 38J1-exec-agent-job-spec       Personal Executive Agent job definitions are written and checked.
 - [x] 38J2-exec-agent-restart-proof  Daily brief/meeting prep/triage/follow-up jobs survive restart in tests.
 
+**Audit correction (Phase 35-41 audit, 2026-04-29):** Phase 38's slice list shipped the queue/lease/checkpoint envelopes and a single-job runner, but four phase-done bullets remained structurally absent: a multi-worker job runner, a SIGKILL-mid-step crash-recovery test, a 4-concurrent-worker idempotency test, and a DST-aware cron test. Phase 38 is not market-frozen until those land.
+
+- [ ] 38K-multi-worker-runner     `corvid jobs run --queue=<name> --workers=N` spawns a configurable async worker pool that dequeues, leases, executes, releases, and respects per-queue concurrency limits. Replaces the existing single-shot `RunOne` for production use; `RunOne` stays for tests.
+- [ ] 38L-crash-recovery-test     Integration test in `crates/corvid-runtime/tests/` spawns a worker subprocess, lets it begin an LLM call (mocked), `SIGKILL`s it mid-step, restarts a fresh worker, and asserts the job resumes from the last checkpoint with no second LLM call (verified by call counter on the mock adapter). Plus a 4-concurrent-worker idempotency test that submits 100 jobs sharing one idempotency key from 4 worker tasks and asserts exactly one ran.
+- [ ] 38M-dst-cron                Adopt `chrono-tz` for cron schedules; default policy is `fire_once_on_recovery` for missed fires, configurable via job manifest. Test: a job scheduled for 02:30 in `America/New_York` on the spring-forward day fires according to the documented policy. Test: a job scheduled for 01:30 on the fall-back day fires exactly once, not twice.
+
 ### Phase 39 — Auth, identity, and human approval product surface (~8-10 weeks)
 
 **Goal.** Corvid can secure real multi-user AI backends and provide a production approval system rather than a demo `approve` hook.
@@ -2113,6 +2123,11 @@ corvid approvals export --since=2026-04-01  # audit dump
 - [x] 39J1-auth-example              Reference backend has login/API-key auth.
 - [x] 39J2-approval-product-example  Reference backend exposes tenant-safe approvals and auditable AI actions.
 
+**Audit correction (Phase 35-41 audit, 2026-04-29):** Phase 39 shipped the auth/approval data envelopes, Argon2 password hashing, and the OAuth state surface, but the JWT verification path was contract-shape only (`validate_jwt_verification_contract` checks the issuer-URL prefix, alg name, and claim presence — it does not fetch JWKS, does not resolve `kid`, does not verify signatures). The top-level `corvid auth` / `corvid approvals` CLI surface that the developer-flow doc names is also unwired (the closest is `JobsCommand::Approvals`, which lists jobs in approval-wait, not the tenant-scoped queue). Phase 39 is not market-frozen until those land.
+
+- [ ] 39K-real-jwt-verification   Adopt `jsonwebtoken` and a JWKS fetch path with caching, `kid` rotation, and clock-skew tolerance. `auth.rs` exposes a real `verify_jwt(token, jwks_url) -> Result<Claims, JwtError>` that fetches the JWKS, picks the key by `kid`, verifies the signature, validates `exp`/`nbf`/`iss`/`aud`, and returns typed claims. Adversarial tests cover: kid downgrade, expired token, alg-none injection, signature tampering, JWKS-fetch failure, claim-mismatch.
+- [ ] 39L-auth-approvals-cli      `corvid auth migrate`, `corvid auth keys issue/revoke/rotate`, `corvid approvals queue/inspect/approve/deny/expire/comment/delegate/batch/export` are wired as top-level CLI subcommands backed by the existing approval queue store. Each command writes audit + trace events. Integration tests cover the full happy path plus expired/denied/replayed approval flows.
+
 ### Phase 40 — Agent observability, evals, and production monitoring (~6-8 weeks)
 
 **Goal.** Corvid gives maintainers the operational visibility needed to trust AI systems in production: traces, metrics, evals, cost, latency, drift, and human review.
@@ -2194,6 +2209,11 @@ corvid observe metrics --listen=:9090
 - [x] 40G2-review-queue-ops          Low-confidence/high-risk outputs enter review and resolve with audit evidence.
 - [x] 40H1-guarantee-grouping        Incidents group by guarantee/effect/budget/provenance/approval rule.
 - [x] 40I1-operator-questions        Runbook maps common maintainer questions to exact commands.
+
+**Audit correction (Phase 35-41 audit, 2026-04-29):** Phase 40's lineage model, redaction, eval promotion, drift report, and review queue all ship as real implementations, but the OTel export uses hand-rolled JSON over `reqwest` rather than the standard `opentelemetry` SDK + `tracing-opentelemetry` bridge — the docker-compose Jaeger conformance test the phase-done checklist names cannot run today. The `corvid observe explain/cost-optimise` and `corvid eval drift/generate-from-feedback` AI-helper subcommands the developer-flow doc names are not wired. Phase 40 is not market-frozen until those land.
+
+- [ ] 40J-otel-sdk-swap           Replace `corvid-runtime/src/otel_export.rs` hand-rolled JSON with `opentelemetry`, `opentelemetry-otlp`, and `tracing-opentelemetry` so spans flow through the standard SDK. Spans carry `corvid.guarantee_id`, `corvid.cost_usd`, `corvid.approval_id`, `corvid.replay_key` attributes. Conformance test: a docker-compose Jaeger collector receives the spans Corvid emits and the test asserts the expected attributes survive end-to-end.
+- [ ] 40K-observe-eval-helpers    `corvid observe explain <trace-id>` (RAG-grounded over the typed trace), `corvid observe cost-optimise <agent>` (generative route/escalate suggestions), `corvid eval drift --explain` (decompose model / input / prompt / index drift), `corvid eval generate-from-feedback <id>` (eval from a "wrong answer" report). Each is a Corvid program with `@budget`, typed effects, and `Grounded<T>` outputs.
 
 ### Phase 41 — Production connectors (~8-12 weeks)
 
@@ -2298,6 +2318,12 @@ corvid connectors verify-webhook --sig=<...>
 - [x] 41I1-all-mocks                 Every connector has mock mode and deterministic replay fixtures.
 - [x] 41J1-exec-agent-connector-plan Personal Executive Agent connector wiring is specified.
 - [x] 41J2-exec-agent-connector-proof Email/calendar/tasks/chat/files all run through connector mocks in tests.
+
+**Audit correction (Phase 35-41 audit, 2026-04-29):** Phase 41 shipped manifests, mock mode, replay mode, and per-connector .rs files for Gmail / MS365 / Calendar / Slack / Linear+GitHub / local files — but `ConnectorRuntimeMode::Real` returns `Err(ConnectorRuntimeError::RealModeNotBound(...))` for every operation, the connector crate has no HTTP client dependency, the `corvid connectors {list,check,oauth,run,verify-webhook,scopes-min,fail-sim,mock-fixture-gen}` CLI surface from the developer-flow doc is unwired, and webhook signature verification has no implementation. Phase 41 is not market-frozen until those land. Until then, every Phase 41 `[x]` slice is truthful only in mock and replay modes; the real-provider HTTP path the slices imply does not exist.
+
+- [ ] 41K-real-mode-binding       Bind `reqwest` (rustls-tls) into `corvid-connector-runtime`. Implement `ConnectorRuntimeMode::Real` for Gmail (read/search/draft, send-with-approval), Slack (channel/DM read, send-with-approval), and GitHub (issue read/search/create/comment) end-to-end. Real mode is gated behind `CORVID_PROVIDER_LIVE=1`; default CI runs mock; an opt-in CI matrix runs against a recorded VCR cassette so signature/rate-limit/Retry-After paths are exercised without provider keys.
+- [ ] 41L-connectors-cli          `corvid connectors list/check/run/oauth init/oauth rotate/verify-webhook` are wired as top-level CLI subcommands backed by the connector runtime. `check --live` drift-narrates the manifest vs the live provider response shape (uses cassette in CI, real provider behind env var). Each command writes audit + trace events; redaction rules from the manifest apply to traces.
+- [ ] 41M-webhook-and-adversarial Webhook signature verification (`hmac` + `sha2`) for Slack, GitHub, and Linear; per-connector adversarial corpus enumerating the 7 named threats from the phase-done checklist (token-scope escalation, cross-tenant message access, refresh-token replay after revocation, malformed JSON body, 429/5xx Retry-After handling, expired OAuth state, webhook signature forgery). Each threat ships ≥1 named `must_fail` test.
 
 ### Phase 42 — Production reference applications (~10-14 weeks)
 
@@ -2480,7 +2506,7 @@ corvid claim audit                           # AI-assisted final claim audit (ad
 - [x] 43B2-package-runtime-config    Package includes health/readiness config, migration runner, env schema, and startup checks.
 - [x] 43B3-package-attestation       Package includes signed build attestation and verification docs.
 - [x] 43C1-compose-manifest          Docker Compose deploy works for one reference app.
-- [ ] 43C2-paas-manifest             Fly/Render-style single-service deploy works.
+- [x] 43C2-paas-manifest             Fly/Render-style single-service deploy works.
 - [ ] 43C3-k8s-systemd-manifests     Kubernetes and systemd manifests work or are explicitly scoped.
 - [ ] 43D1-release-policy            Nightly/beta/stable SemVer and stability policy are documented.
 - [ ] 43D2-release-automation        Release channel automation produces signed artifacts and changelog entries.
