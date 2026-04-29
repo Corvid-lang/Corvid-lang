@@ -101,9 +101,10 @@ pub use approvals::{
     ProgrammaticApprover, StdinApprover,
 };
 pub use auth::{
-    hash_api_key_secret, hash_session_secret, verify_api_key_secret, ApiKeyCreate, ApiKeyRecord,
-    ApiKeyResolution, AuthActor, AuthAuditEvent, AuthTraceContext, SessionAuthRuntime,
-    SessionCreate, SessionRecord, SessionResolution,
+    hash_api_key_secret, hash_session_secret, validate_jwt_verification_contract,
+    verify_api_key_secret, ApiKeyCreate, ApiKeyRecord, ApiKeyResolution, AuthActor,
+    AuthAuditEvent, AuthTraceContext, JwtContractDiagnostic, JwtVerificationContract,
+    SessionAuthRuntime, SessionCreate, SessionRecord, SessionResolution,
 };
 pub use calibration::{CalibrationObservation, CalibrationStats};
 pub use cache::{

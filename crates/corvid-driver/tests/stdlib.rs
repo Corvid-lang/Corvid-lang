@@ -406,7 +406,7 @@ fn std_auth_imported_helpers_typecheck() {
         "auth",
         true,
         r#"
-import "./std/auth" use Actor, SessionRef, ApiKeyRef, AuthTraceContext, AuthDecision, user_actor, service_actor, session_ref, api_key_ref, auth_trace_for_session, auth_trace_for_api_key, allow_permission, deny_permission, actor_same_tenant, session_active, api_key_active, auth_secret_redacted, auth_trace_same_tenant
+import "./std/auth" use Actor, SessionRef, ApiKeyRef, AuthTraceContext, AuthDecision, JwtVerificationContract, JwtVerificationResult, user_actor, service_actor, session_ref, api_key_ref, auth_trace_for_session, auth_trace_for_api_key, allow_permission, deny_permission, actor_same_tenant, session_active, api_key_active, auth_secret_redacted, auth_trace_same_tenant, jwt_contract, jwt_verified, jwt_denied, jwt_contract_safe, jwt_diagnostic_redacted
 
 agent main() -> Bool:
     actor = user_actor("user-1", "org-1", "A User", "sha256:roles", "sha256:permissions", "trace-1")
@@ -417,7 +417,10 @@ agent main() -> Bool:
     key_trace = auth_trace_for_api_key(service, key, "replay-key-1")
     allowed = allow_permission(actor, session_trace, "CanReadInbox")
     denied = deny_permission(service, key_trace, "CanApproveOwnAction", "service actor cannot self-approve")
-    return actor_same_tenant(actor, "org-1") and session_active(sess, 5000) and api_key_active(key, 5000) and auth_secret_redacted(sess, key) and auth_trace_same_tenant(session_trace, actor) and allowed.allowed and not denied.allowed
+    jwt = jwt_contract("https://issuer.example", "corvid-api", "https://issuer.example/.well-known/jwks.json", "RS256", "tenant", "sub", 60000, "replay-jwt-1")
+    verified = jwt_verified(jwt, "sub-1", "org-1", "kid-1", 9000, 1000)
+    failed = jwt_denied(jwt, "expired")
+    return actor_same_tenant(actor, "org-1") and session_active(sess, 5000) and api_key_active(key, 5000) and auth_secret_redacted(sess, key) and auth_trace_same_tenant(session_trace, actor) and allowed.allowed and not denied.allowed and jwt_contract_safe(jwt) and jwt_diagnostic_redacted(verified) and jwt_diagnostic_redacted(failed)
 "#,
     );
 }

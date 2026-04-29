@@ -55,6 +55,31 @@ public type AuthDecision:
     reason: String
     trace: AuthTraceContext
 
+public type JwtVerificationContract:
+    issuer: String
+    audience: String
+    jwks_url: String
+    algorithm: String
+    required_tenant_claim: String
+    required_subject_claim: String
+    clock_skew_ms: Int
+    replay_key: String
+    effect_meta: EffectEnvelope
+
+public type JwtVerificationResult:
+    verified: Bool
+    issuer: String
+    subject: String
+    audience: String
+    tenant_id: String
+    key_id: String
+    algorithm: String
+    expires_ms: Int
+    not_before_ms: Int
+    failure_kind: String
+    redacted: Bool
+    effect_meta: EffectEnvelope
+
 public agent actor(id: String, tenant_id: String, display_name: String, actor_kind: String, auth_method: String, assurance_level: String, role_fingerprint: String, permission_fingerprint: String, trace_id: String) -> Actor:
     return Actor(id, tenant_id, display_name, actor_kind, auth_method, assurance_level, role_fingerprint, permission_fingerprint, trace_id, effect_envelope("std.auth.actor", trace_id, "", tenant_id + ":" + id, "auth:actor:" + trace_id))
 
@@ -96,3 +121,18 @@ public agent auth_secret_redacted(sess: SessionRef, key: ApiKeyRef) -> Bool:
 
 public agent auth_trace_same_tenant(trace: AuthTraceContext, actor: Actor) -> Bool:
     return trace.tenant_id == actor.tenant_id and trace.actor_id == actor.id and trace.trace_id == actor.trace_id
+
+public agent jwt_contract(issuer: String, audience: String, jwks_url: String, algorithm: String, required_tenant_claim: String, required_subject_claim: String, clock_skew_ms: Int, replay_key: String) -> JwtVerificationContract:
+    return JwtVerificationContract(issuer, audience, jwks_url, algorithm, required_tenant_claim, required_subject_claim, clock_skew_ms, replay_key, effect_envelope("std.auth.jwt.contract", issuer, "", audience, replay_key))
+
+public agent jwt_verified(contract: JwtVerificationContract, subject: String, tenant_id: String, key_id: String, expires_ms: Int, not_before_ms: Int) -> JwtVerificationResult:
+    return JwtVerificationResult(true, contract.issuer, subject, contract.audience, tenant_id, key_id, contract.algorithm, expires_ms, not_before_ms, "", true, effect_envelope("std.auth.jwt.verified", contract.issuer, "", tenant_id + ":" + subject, contract.replay_key))
+
+public agent jwt_denied(contract: JwtVerificationContract, failure_kind: String) -> JwtVerificationResult:
+    return JwtVerificationResult(false, contract.issuer, "", contract.audience, "", "", contract.algorithm, 0, 0, failure_kind, true, effect_envelope("std.auth.jwt.denied", contract.issuer, "", contract.audience, contract.replay_key))
+
+public agent jwt_contract_safe(contract: JwtVerificationContract) -> Bool:
+    return contract.issuer != "" and contract.audience != "" and contract.jwks_url != "" and contract.algorithm != "none" and contract.required_subject_claim != "" and contract.clock_skew_ms >= 0
+
+public agent jwt_diagnostic_redacted(result: JwtVerificationResult) -> Bool:
+    return result.redacted and result.failure_kind != "raw_token"

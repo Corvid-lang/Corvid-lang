@@ -101,6 +101,24 @@ pub struct ApiKeyResolution {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct JwtVerificationContract {
+    pub issuer: String,
+    pub audience: String,
+    pub jwks_url: String,
+    pub algorithm: String,
+    pub required_tenant_claim: String,
+    pub required_subject_claim: String,
+    pub clock_skew_ms: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct JwtContractDiagnostic {
+    pub valid: bool,
+    pub failure_kind: Option<String>,
+    pub redacted: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AuthAuditEvent {
     pub id: String,
     pub event_kind: String,
@@ -802,6 +820,41 @@ pub fn verify_api_key_secret(raw_key: &str, encoded_hash: &str) -> Result<bool, 
         .is_ok())
 }
 
+pub fn validate_jwt_verification_contract(
+    contract: &JwtVerificationContract,
+) -> JwtContractDiagnostic {
+    let failure = if contract.issuer.trim().is_empty() {
+        Some("missing_issuer")
+    } else if contract.audience.trim().is_empty() {
+        Some("missing_audience")
+    } else if contract.jwks_url.trim().is_empty() {
+        Some("missing_jwks_url")
+    } else if !(contract.jwks_url.starts_with("https://")
+        || contract.jwks_url.starts_with("http://localhost")
+        || contract.jwks_url.starts_with("http://127.0.0.1"))
+    {
+        Some("jwks_url_not_https")
+    } else if !matches!(
+        contract.algorithm.as_str(),
+        "RS256" | "ES256" | "EdDSA"
+    ) {
+        Some("unsupported_algorithm")
+    } else if contract.required_subject_claim.trim().is_empty() {
+        Some("missing_subject_claim")
+    } else if contract.required_tenant_claim.trim().is_empty() {
+        Some("missing_tenant_claim")
+    } else if contract.clock_skew_ms > 300_000 {
+        Some("clock_skew_too_large")
+    } else {
+        None
+    };
+    JwtContractDiagnostic {
+        valid: failure.is_none(),
+        failure_kind: failure.map(str::to_string),
+        redacted: true,
+    }
+}
+
 fn validate_non_empty(label: &str, value: &str) -> Result<(), RuntimeError> {
     if value.trim().is_empty() {
         Err(RuntimeError::Other(format!("{label} must not be empty")))
@@ -1109,5 +1162,38 @@ mod tests {
         assert!(audit.iter().all(|event| {
             !event.reason.contains("secret-1") && !event.id.contains("secret-1")
         }));
+    }
+
+    #[test]
+    fn jwt_contract_validation_accepts_production_algorithms_and_redacts_failures() {
+        let contract = JwtVerificationContract {
+            issuer: "https://issuer.example".to_string(),
+            audience: "corvid-api".to_string(),
+            jwks_url: "https://issuer.example/.well-known/jwks.json".to_string(),
+            algorithm: "RS256".to_string(),
+            required_tenant_claim: "tenant".to_string(),
+            required_subject_claim: "sub".to_string(),
+            clock_skew_ms: 60_000,
+        };
+        let ok = validate_jwt_verification_contract(&contract);
+        assert!(ok.valid);
+        assert_eq!(ok.failure_kind, None);
+        assert!(ok.redacted);
+
+        for (algorithm, failure) in [("none", "unsupported_algorithm"), ("HS256", "unsupported_algorithm")] {
+            let mut bad = contract.clone();
+            bad.algorithm = algorithm.to_string();
+            let diagnostic = validate_jwt_verification_contract(&bad);
+            assert!(!diagnostic.valid);
+            assert_eq!(diagnostic.failure_kind.as_deref(), Some(failure));
+            assert!(diagnostic.redacted);
+        }
+
+        let mut insecure = contract.clone();
+        insecure.jwks_url = "http://issuer.example/jwks.json".to_string();
+        let diagnostic = validate_jwt_verification_contract(&insecure);
+        assert!(!diagnostic.valid);
+        assert_eq!(diagnostic.failure_kind.as_deref(), Some("jwks_url_not_https"));
+        assert!(diagnostic.redacted);
     }
 }
