@@ -484,6 +484,32 @@ fn backend_state_app_example_typechecks() {
 }
 
 #[test]
+fn backend_personal_executive_agent_jobs_typecheck() {
+    let dir = tempfile::tempdir().unwrap();
+    let repo = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(std::path::Path::parent)
+        .expect("repo root");
+    fs::create_dir_all(dir.path().join("std")).unwrap();
+    for module in ["jobs.cor", "effects.cor", "agent.cor"] {
+        fs::copy(repo.join("std").join(module), dir.path().join("std").join(module))
+            .unwrap_or_else(|e| panic!("copy std/{module}: {e}"));
+    }
+    let source_path = repo
+        .join("examples")
+        .join("backend")
+        .join("personal_executive_agent")
+        .join("src")
+        .join("main.cor");
+    let staged_path = dir.path().join("main.cor");
+    fs::copy(&source_path, &staged_path).unwrap();
+    let source = fs::read_to_string(&staged_path).expect("personal executive agent example");
+
+    compile_to_ir_with_config_at_path(&source, &staged_path, None)
+        .expect("personal executive agent jobs example should compile");
+}
+
+#[test]
 fn std_agent_imported_helpers_typecheck() {
     assert_imported_helpers_typecheck(
         "agent",

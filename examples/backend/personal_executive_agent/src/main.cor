@@ -1,0 +1,102 @@
+import "./std/jobs" use JobInputEnvelope, JobOutputEnvelope, JobRetryPolicy, JobStateEnvelope, job_input, job_output, retry_policy, retry_policy_valid, pending_job_state, job_needs_approval, job_metadata_redacted
+import "./std/effects" use EffectEnvelope, effect_envelope, replay_safe, approval_required
+import "./std/agent" use PlanStep, ActionRequest, ReviewVerdict, plan_step, action_request, review_verdict
+
+effect inbox_read:
+    cost: $0.04
+    trust: workspace
+    data: private
+
+effect calendar_read:
+    cost: $0.03
+    trust: workspace
+    data: private
+
+effect executive_llm:
+    cost: $0.35
+    trust: bounded
+    data: private
+
+effect send_email:
+    cost: $0.02
+    trust: human_required
+    data: external
+
+effect task_write:
+    cost: $0.01
+    trust: workspace
+    data: private
+
+public type ExecutiveJobContract:
+    job_kind: String
+    queue_name: String
+    input_schema: String
+    output_schema: String
+    max_attempts: Int
+    budget_usd: Float
+    approval_label: String
+    needs_review: Bool
+    idempotency_key: String
+    replay_key: String
+
+public type ExecutiveJobRun:
+    contract: ExecutiveJobContract
+    state: JobStateEnvelope
+    input: JobInputEnvelope
+    output: JobOutputEnvelope
+    retry_plan: JobRetryPolicy
+    effect_meta: EffectEnvelope
+    plan: PlanStep
+    action: ActionRequest
+    review: ReviewVerdict
+
+public @replayable
+agent executive_contract(job_kind: String, user_id: String, window_key: String, approval_label: String, needs_review: Bool) -> ExecutiveJobContract:
+    idempotency = job_kind + ":" + user_id + ":" + window_key
+    replay_value = "executive:" + idempotency
+    return ExecutiveJobContract(job_kind, "personal_executive_agent", job_kind + "Input", job_kind + "Output", 5, 0.75, approval_label, needs_review, idempotency, replay_value)
+
+public @replayable
+agent executive_run(contract: ExecutiveJobContract, input_fingerprint: String, output_fingerprint: String, plan_id: String, action_kind: String) -> ExecutiveJobRun:
+    state = pending_job_state(contract.idempotency_key, contract.queue_name, contract.job_kind, contract.max_attempts, contract.budget_usd, contract.needs_review, contract.idempotency_key, contract.replay_key)
+    input = job_input(contract.job_kind, input_fingerprint, contract.input_schema)
+    output = job_output(output_fingerprint, contract.output_schema)
+    retry_plan = retry_policy(contract.max_attempts, "exponential_jitter", 1000, 600000, "personal_executive_agent.dead_letter")
+    effect_meta = effect_envelope("personal_executive_agent." + contract.job_kind, "workspace:" + contract.queue_name, contract.approval_label, contract.idempotency_key, contract.replay_key)
+    plan = plan_step(plan_id, "bounded executive job step", "personal_executive_agent")
+    action = action_request(action_kind, contract.idempotency_key, contract.approval_label, contract.needs_review)
+    review = review_verdict(true, "", "contract bounded by retry, budget, idempotency, and replay")
+    return ExecutiveJobRun(contract, state, input, output, retry_plan, effect_meta, plan, action, review)
+
+public @replayable
+agent daily_brief_job(user_id: String, day: String) -> ExecutiveJobRun uses inbox_read, calendar_read, executive_llm:
+    contract = executive_contract("daily_brief", user_id, day, "", false)
+    return executive_run(contract, "sha256:daily_brief_input", "sha256:daily_brief_output", "brief.plan", "draft_brief")
+
+public @replayable
+agent meeting_prep_job(user_id: String, day: String) -> ExecutiveJobRun uses inbox_read, calendar_read, executive_llm:
+    contract = executive_contract("meeting_prep", user_id, day, "", false)
+    return executive_run(contract, "sha256:meeting_prep_input", "sha256:meeting_prep_output", "meeting.plan", "prepare_packet")
+
+public @replayable
+agent follow_up_job(user_id: String, thread_id: String) -> ExecutiveJobRun uses inbox_read, executive_llm, send_email, task_write:
+    contract = executive_contract("follow_up", user_id, thread_id, "SendExecutiveFollowUp", true)
+    return executive_run(contract, "sha256:follow_up_input", "sha256:follow_up_output", "followup.plan", "send_email")
+
+public @replayable
+agent executive_job_contract_valid(run: ExecutiveJobRun) -> Bool:
+    return retry_policy_valid(run.retry_plan) and job_metadata_redacted(run.input, run.output) and replay_safe(run.effect_meta) and run.state.budget_usd <= run.contract.budget_usd and run.state.idempotency_key == run.contract.idempotency_key
+
+public @replayable
+agent executive_job_needs_human_before_external_send(run: ExecutiveJobRun) -> Bool:
+    return job_needs_approval(run.state) and approval_required(run.effect_meta) and run.action.approval_label == "SendExecutiveFollowUp"
+
+schedule "0 7 * * 1-5" zone "America/New_York" -> daily_brief_job("active_users", "business_day") uses inbox_read, calendar_read, executive_llm
+schedule "0 6 * * 1-5" zone "America/New_York" -> meeting_prep_job("active_users", "business_day") uses inbox_read, calendar_read, executive_llm
+schedule "*/15 8-18 * * 1-5" zone "America/New_York" -> follow_up_job("active_users", "open_threads") uses inbox_read, executive_llm, send_email, task_write
+
+agent main() -> Bool:
+    brief = daily_brief_job("user-1", "2026-04-29")
+    prep = meeting_prep_job("user-1", "2026-04-29")
+    follow = follow_up_job("user-1", "thread-1")
+    return executive_job_contract_valid(brief) and executive_job_contract_valid(prep) and executive_job_contract_valid(follow) and executive_job_needs_human_before_external_send(follow)

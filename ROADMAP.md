@@ -1998,7 +1998,7 @@ corvid jobs drain --workers=all
 - [x] 38H1-loop-budget-controls      Max steps, wall time, spend, and tool-call limits are enforced.
 - [x] 38H2-stall-escalation          Stalled loops escalate or terminate with trace evidence.
 - [x] 38I1-job-ops-cli               Pause/drain/inspect/retry/cancel/export commands work locally.
-- [ ] 38J1-exec-agent-job-spec       Personal Executive Agent job definitions are written and checked.
+- [x] 38J1-exec-agent-job-spec       Personal Executive Agent job definitions are written and checked.
 - [ ] 38J2-exec-agent-restart-proof  Daily brief/meeting prep/follow-up jobs survive restart in tests.
 
 ### Phase 39 — Auth, identity, and human approval product surface (~8-10 weeks)
