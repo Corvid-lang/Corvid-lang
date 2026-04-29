@@ -35,4 +35,21 @@ Mock operations:
 - DM read: `slack:dm_read:<workspace_id>:<channel_id>:<user_id>:<since_ms>`
 - Thread read: `slack:thread:<workspace_id>:<channel_id>:<thread_ts>:<user_id>`
 
-Writes land in 41F2 and require approval.
+Write scopes:
+
+```text
+chat:write
+```
+
+Draft and send operations require approval IDs and preserve the approval ID in
+the write receipt. Replay mode quarantines writes.
+
+Write operations:
+
+- `draft`
+- `send`
+
+Write replay keys:
+
+- Draft: `slack:draft:<workspace_id>:<channel_id>:<user_id>`
+- Send: `slack:send:<workspace_id>:<channel_id>:<draft_id>`

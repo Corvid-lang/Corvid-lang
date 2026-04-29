@@ -35,8 +35,8 @@ pub use runtime::{
     ConnectorRuntimeMode,
 };
 pub use slack::{
-    slack_manifest, SlackConnector, SlackMessage, SlackReadRequest, SlackThreadRequest,
-    SLACK_CONNECTOR_MANIFEST,
+    slack_manifest, SlackConnector, SlackDraftRequest, SlackMessage, SlackReadRequest,
+    SlackSendRequest, SlackThreadRequest, SlackWriteReceipt, SLACK_CONNECTOR_MANIFEST,
 };
 pub use test_kit::{
     parse_connector_fixture, run_connector_fixture, ConnectorFixture, ConnectorFixtureReport,
