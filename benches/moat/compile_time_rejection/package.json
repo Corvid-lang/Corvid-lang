@@ -1,0 +1,10 @@
+{
+  "name": "corvid-compile-time-rejection-deps",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Shared deps so tsc can resolve zod for every case under cases/.",
+  "devDependencies": {
+    "typescript": "5.4.5",
+    "zod": "3.23.8"
+  }
+}

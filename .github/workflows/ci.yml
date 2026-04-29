@@ -263,3 +263,95 @@ jobs:
       # and sandbox-profile-denied imports.
       - name: cargo test -p corvid-runtime --features python
         run: cargo test -p corvid-runtime --features python --tests -- --nocapture
+
+  phase33-moat-governance-lines:
+    # Phase 33-N (governance line-count benchmark). Pure-Python counter
+    # over the apps under benches/moat/governance_lines/apps. The drift
+    # gate compares the runner's regenerated RESULTS.md byte-for-byte
+    # against the committed file; a divergence means either the apps
+    # changed and the maintainer forgot to re-run the counter, or the
+    # counter changed and the committed RESULTS.md is stale. Either way
+    # CI fails the build.
+    name: 33 moat governance line-count
+    runs-on: ubuntu-latest
+    needs: workspace-tests
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Run governance line-count counter
+        run: |
+          python benches/moat/governance_lines/runner/count.py \
+            --apps-dir benches/moat/governance_lines/apps \
+            --out      /tmp/governance_lines_RESULTS.md
+
+      - name: Drift gate vs committed RESULTS.md
+        run: diff -u benches/moat/governance_lines/RESULTS.md /tmp/governance_lines_RESULTS.md
+
+  phase33-moat-compile-time-rejection:
+    # Phase 33-N (compile-time rejection rate benchmark). Runs
+    # `cargo run -p corvid-cli -- check`, `mypy --strict`, and
+    # `tsc --strict --noEmit` over every case in
+    # benches/moat/compile_time_rejection/cases/, then drift-gates
+    # the regenerated RESULTS.md against the committed file. A
+    # mismatch means either a stack's static checker behavior
+    # changed (real signal — investigate) or the committed
+    # RESULTS.md is stale (re-run the runner locally before merging).
+    name: 33 moat compile-time rejection rate
+    runs-on: ubuntu-latest
+    needs: workspace-tests
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry + target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-moat-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-moat-
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Python deps (pydantic + mypy)
+        working-directory: benches/moat/compile_time_rejection
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+
+      - name: Set up Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install local Node deps (typescript + zod)
+        working-directory: benches/moat/compile_time_rejection
+        run: npm install --no-audit --no-fund
+
+      - name: Build corvid CLI (release)
+        run: cargo build -q -p corvid-cli --release
+
+      - name: Run compile-time rejection runner
+        env:
+          # Use the release binary directly so the runner does not
+          # re-invoke `cargo run` per case.
+          CARGO_TERM_COLOR: always
+        run: |
+          python benches/moat/compile_time_rejection/runner/run.py \
+            --cases-dir benches/moat/compile_time_rejection/cases \
+            --out      /tmp/compile_time_rejection_RESULTS.md
+
+      - name: Drift gate vs committed RESULTS.md
+        run: diff -u benches/moat/compile_time_rejection/RESULTS.md /tmp/compile_time_rejection_RESULTS.md

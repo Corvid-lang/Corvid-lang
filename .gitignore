@@ -32,6 +32,11 @@ examples/wasm_browser_demo/test/test-results/
 examples/wasm_browser_demo/test/playwright-report/
 examples/wasm_browser_demo/test/package-lock.json
 
+# Phase 33-N moat-benchmark deps (npm + pip install per-runner /
+# per-developer; not committed).
+benches/moat/compile_time_rejection/node_modules/
+benches/moat/compile_time_rejection/package-lock.json
+
 # Python
 __pycache__/
 *.pyc

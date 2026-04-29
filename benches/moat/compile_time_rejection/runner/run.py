@@ -94,14 +94,39 @@ def run_python(case_dir: Path) -> tuple[str, str]:
     return ("accepted" if proc.returncode == 0 else "rejected"), ""
 
 
-def run_typescript(case_dir: Path) -> tuple[str, str]:
+def find_tsc(cases_dir: Path) -> str | None:
+    """Find a tsc binary. Prefer the local node_modules install at the
+    benchmark root (`benches/moat/compile_time_rejection/`); fall back
+    to PATH. On Windows, prefer the `.cmd` wrapper because subprocess
+    cannot execute the bare `tsc` shell script directly."""
+    import os as _os
+    bench_root = cases_dir.parent
+    on_windows = _os.name == "nt"
+    candidates = []
+    if on_windows:
+        candidates.append(bench_root / "node_modules" / ".bin" / "tsc.cmd")
+    candidates.append(bench_root / "node_modules" / ".bin" / "tsc")
+    for candidate in candidates:
+        if candidate.exists():
+            return str(candidate)
+    if on_windows:
+        path_match = shutil.which("tsc.cmd") or shutil.which("tsc")
+    else:
+        path_match = shutil.which("tsc")
+    return path_match
+
+
+def run_typescript(case_dir: Path, tsc_bin: str | None) -> tuple[str, str]:
     ts_src = case_dir / "typescript.ts"
     if not ts_src.exists():
         return "error", "missing typescript.ts"
-    if shutil.which("tsc") is None:
-        return "error", "tsc not installed (npm install -g typescript)"
+    if tsc_bin is None:
+        return "error", (
+            "tsc not installed; run `npm install` inside "
+            "benches/moat/compile_time_rejection/ or `npm install -g typescript`"
+        )
     proc = subprocess.run(
-        ["tsc", "--strict", "--noEmit", "--skipLibCheck", "--target", "es2022",
+        [tsc_bin, "--strict", "--noEmit", "--skipLibCheck", "--target", "es2022",
          "--module", "esnext", "--moduleResolution", "bundler", str(ts_src)],
         capture_output=True,
         text=True,
@@ -109,7 +134,7 @@ def run_typescript(case_dir: Path) -> tuple[str, str]:
     return ("accepted" if proc.returncode == 0 else "rejected"), ""
 
 
-def run_case(case_dir: Path) -> CaseResult:
+def run_case(case_dir: Path, tsc_bin: str | None) -> CaseResult:
     case_toml = case_dir / "case.toml"
     if not case_toml.exists():
         raise SystemExit(f"missing case.toml in {case_dir}")
@@ -137,7 +162,7 @@ def run_case(case_dir: Path) -> CaseResult:
     if py_note:
         result.notes.append(f"python: {py_note}")
 
-    ts_verdict, ts_note = run_typescript(case_dir)
+    ts_verdict, ts_note = run_typescript(case_dir, tsc_bin)
     result.observed["typescript"] = ts_verdict
     if ts_note:
         result.notes.append(f"typescript: {ts_note}")
@@ -216,7 +241,8 @@ def main() -> int:
         print(f"no cases under {args.cases_dir}", file=sys.stderr)
         return 1
 
-    results = [run_case(c) for c in cases]
+    tsc_bin = find_tsc(args.cases_dir)
+    results = [run_case(c, tsc_bin) for c in cases]
 
     args.out.write_text(render_results_md(results), encoding="utf-8")
 

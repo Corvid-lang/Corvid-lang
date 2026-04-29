@@ -4,49 +4,19 @@
 
 ## Headline numbers
 
-> **Pending first runner execution.** This file is committed as the
-> placeholder shape; the first row of real numbers lands when CI runs
-> `runner/run.py` against the seed cases. Until then, treat the file as
-> "the contract for what the published table looks like" — every case
-> below has been written by hand and verified manually against Corvid;
-> the Python and TypeScript baselines have been verified against
-> `mypy --strict` and `tsc --strict --noEmit` locally.
+- Cases run: **3**
+- Rejected by Corvid: **3/3**
+- Rejected by Python (`mypy --strict + pydantic`): **0/3**
+- Rejected by TypeScript (`tsc --strict + zod`): **0/3**
 
-The seed corpus contains **3 of the target 50 cases**:
+## Per-case verdicts
 
-- `01-unapproved-dangerous-call`
-- `02-effect-row-under-report`
-- `03-grounded-without-citation`
-
-For each, Corvid is expected to reject; Python and TypeScript are
-expected to accept. The runner produces a per-case table on every
-execution; this file is overwritten with the latest table on each run.
-
-## Manual baseline verification
-
-| Case | Corvid | Python (`mypy --strict + pydantic`) | TypeScript (`tsc --strict + zod`) |
-|------|--------|-------------------------------------|-----------------------------------|
-| `01-unapproved-dangerous-call` | rejected (`approval.dangerous_call_requires_token`) | accepted | accepted |
-| `02-effect-row-under-report` | rejected (`effect_row.body_completeness`) | accepted | accepted |
-| `03-grounded-without-citation` | rejected (`grounded.provenance_required`) | accepted | accepted |
-
-All three Corvid rejections were verified locally with
-`cargo run -q -p corvid-cli -- check <case>/corvid.cor` returning a
-non-zero exit + the expected `guarantee_id` in the diagnostic surface.
-Python + TypeScript baselines were confirmed to compile cleanly at
-`--strict`.
+| Case | Bug class | Corvid | Python | TypeScript | Match expected? |
+|------|-----------|--------|--------|------------|-----------------|
+| `01-unapproved-dangerous-call` | approval-bypass | rejected | accepted | accepted | ✓ |
+| `02-effect-row-under-report` | effect-under-report | rejected | accepted | accepted | ✓ |
+| `03-grounded-without-citation` | grounded-without-citation | rejected | accepted | accepted | ✓ |
 
 ## Methodology
 
-See `benches/moat/compile_time_rejection/README.md` for the case
-format, what counts as a rejection, and the honesty rules. The runner
-shells out to `cargo run -q -p corvid-cli -- check`, `mypy --strict`,
-and `tsc --strict --noEmit` per case.
-
-## Path to 50 cases
-
-The published headline number lands when 50 cases are committed and
-all three stacks have run against each. Tracked in ROADMAP under
-slice 33-X-moat-benchmarks. Each new case must come from a real shape
-seen in production AI applications — synthetic cases that exist only
-to make Corvid look good are rejected at code review.
+See `benches/moat/compile_time_rejection/README.md` for the case format, what counts as a rejection, and the honesty rules. The runner shells out to `cargo run -q -p corvid-cli -- check`, `mypy --strict`, and `tsc --strict --noEmit` per case.
