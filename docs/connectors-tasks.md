@@ -31,4 +31,17 @@ Mock operations:
 - Linear search: `tasks:linear:<workspace_id>:<stable-query>`
 - GitHub search: `tasks:github:<owner>/<repo>:<stable-query>`
 
-Write operations land in 41G2 and require approval.
+Write scopes:
+
+```text
+linear:write
+github:issues:write
+```
+
+Create, update, and comment flows require approval IDs and return
+`TaskWriteReceipt` evidence. Replay mode quarantines writes.
+
+Write operations:
+
+- `linear_write`
+- `github_write`

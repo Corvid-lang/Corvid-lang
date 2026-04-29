@@ -24,6 +24,20 @@ data_classes = ["task_metadata"]
 effects = ["network.read"]
 approval = "none"
 
+[[scope]]
+id = "tasks.linear_write"
+provider_scope = "linear:write"
+data_classes = ["task_metadata", "task_body"]
+effects = ["network.write", "task.write"]
+approval = "required"
+
+[[scope]]
+id = "tasks.github_write"
+provider_scope = "github:issues:write"
+data_classes = ["task_metadata", "task_body"]
+effects = ["network.write", "task.write"]
+approval = "required"
+
 [[rate_limit]]
 key = "tenant_user"
 limit = 100
@@ -41,6 +55,14 @@ policy = "record_read"
 [[replay]]
 operation = "github_search"
 policy = "record_read"
+
+[[replay]]
+operation = "linear_write"
+policy = "quarantine_write"
+
+[[replay]]
+operation = "github_write"
+policy = "quarantine_write"
 "#;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -68,6 +90,33 @@ pub struct GitHubIssueSearchRequest {
     pub repo: String,
     pub query: String,
     pub limit: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum TaskWriteKind {
+    Create,
+    Update,
+    Comment,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TaskWriteRequest {
+    pub provider: String,
+    pub workspace_or_repo: String,
+    pub issue_id: Option<String>,
+    pub title: String,
+    pub body: String,
+    pub kind: TaskWriteKind,
+    pub approval_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TaskWriteReceipt {
+    pub provider: String,
+    pub id: String,
+    pub key: String,
+    pub approval_id: String,
+    pub replay_key: String,
 }
 
 #[derive(Debug, Clone)]
@@ -131,6 +180,52 @@ impl TaskConnector {
         })?;
         Ok(serde_json::from_value(response.payload).unwrap_or_default())
     }
+
+    pub fn write_linear(
+        &mut self,
+        request: TaskWriteRequest,
+        now_ms: u64,
+    ) -> Result<TaskWriteReceipt, ConnectorRuntimeError> {
+        self.write_task("tasks.linear_write", "linear_write", request, now_ms)
+    }
+
+    pub fn write_github(
+        &mut self,
+        request: TaskWriteRequest,
+        now_ms: u64,
+    ) -> Result<TaskWriteReceipt, ConnectorRuntimeError> {
+        self.write_task("tasks.github_write", "github_write", request, now_ms)
+    }
+
+    fn write_task(
+        &mut self,
+        scope_id: &str,
+        operation: &str,
+        request: TaskWriteRequest,
+        now_ms: u64,
+    ) -> Result<TaskWriteReceipt, ConnectorRuntimeError> {
+        let replay_key = format!(
+            "tasks:{}:{}:{}:{:?}",
+            operation,
+            request.workspace_or_repo,
+            request
+                .issue_id
+                .clone()
+                .unwrap_or_else(|| "new".to_string()),
+            request.kind
+        );
+        let approval_id = request.approval_id.clone();
+        let response = self.runtime.execute(ConnectorRequest {
+            scope_id: scope_id.to_string(),
+            operation: operation.to_string(),
+            payload: serde_json::to_value(&request).unwrap_or_default(),
+            approval_id,
+            replay_key,
+            now_ms,
+        })?;
+        serde_json::from_value(response.payload)
+            .map_err(|err| ConnectorRuntimeError::MissingMock(err.to_string()))
+    }
 }
 
 pub fn task_manifest() -> Result<ConnectorManifest, toml::de::Error> {
@@ -154,7 +249,12 @@ mod tests {
             "tenant-1",
             "actor-1",
             "token-1",
-            ["tasks.linear_search", "tasks.github_search"],
+            [
+                "tasks.linear_search",
+                "tasks.github_search",
+                "tasks.linear_write",
+                "tasks.github_write",
+            ],
             10_000,
         )
     }
@@ -218,6 +318,103 @@ mod tests {
                 )
                 .unwrap(),
             vec![github]
+        );
+    }
+
+    #[test]
+    fn linear_and_github_writes_require_approval_and_work_in_mock_mode() {
+        let mut connector = TaskConnector::new(auth(), ConnectorRuntimeMode::Mock).unwrap();
+        connector.insert_mock(
+            "linear_write",
+            serde_json::json!({
+                "provider": "linear",
+                "id": "lin-2",
+                "key": "COR-2",
+                "approval_id": "approval-1",
+                "replay_key": "tasks:linear_write:corvid:new:Create"
+            }),
+        );
+        connector.insert_mock(
+            "github_write",
+            serde_json::json!({
+                "provider": "github",
+                "id": "gh-2",
+                "key": "#43",
+                "approval_id": "approval-1",
+                "replay_key": "tasks:github_write:corvid-lang/corvid:new:Create"
+            }),
+        );
+
+        let missing = connector
+            .write_linear(
+                TaskWriteRequest {
+                    provider: "linear".to_string(),
+                    workspace_or_repo: "corvid".to_string(),
+                    issue_id: None,
+                    title: "Build connector".to_string(),
+                    body: "details".to_string(),
+                    kind: TaskWriteKind::Create,
+                    approval_id: String::new(),
+                },
+                1,
+            )
+            .unwrap_err();
+        assert!(
+            matches!(missing, ConnectorRuntimeError::ApprovalRequired(scope) if scope == "tasks.linear_write")
+        );
+
+        let linear = connector
+            .write_linear(
+                TaskWriteRequest {
+                    provider: "linear".to_string(),
+                    workspace_or_repo: "corvid".to_string(),
+                    issue_id: None,
+                    title: "Build connector".to_string(),
+                    body: "details".to_string(),
+                    kind: TaskWriteKind::Create,
+                    approval_id: "approval-1".to_string(),
+                },
+                2,
+            )
+            .unwrap();
+        assert_eq!(linear.key, "COR-2");
+
+        let github = connector
+            .write_github(
+                TaskWriteRequest {
+                    provider: "github".to_string(),
+                    workspace_or_repo: "corvid-lang/corvid".to_string(),
+                    issue_id: None,
+                    title: "Build connector".to_string(),
+                    body: "details".to_string(),
+                    kind: TaskWriteKind::Create,
+                    approval_id: "approval-1".to_string(),
+                },
+                3,
+            )
+            .unwrap();
+        assert_eq!(github.key, "#43");
+    }
+
+    #[test]
+    fn task_replay_quarantines_writes() {
+        let mut connector = TaskConnector::new(auth(), ConnectorRuntimeMode::Replay).unwrap();
+        let err = connector
+            .write_github(
+                TaskWriteRequest {
+                    provider: "github".to_string(),
+                    workspace_or_repo: "corvid-lang/corvid".to_string(),
+                    issue_id: Some("42".to_string()),
+                    title: "Update".to_string(),
+                    body: "comment".to_string(),
+                    kind: TaskWriteKind::Comment,
+                    approval_id: "approval-1".to_string(),
+                },
+                1,
+            )
+            .unwrap_err();
+        assert!(
+            matches!(err, ConnectorRuntimeError::ReplayWriteQuarantined(operation) if operation == "github_write")
         );
     }
 }

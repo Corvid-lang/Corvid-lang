@@ -41,7 +41,7 @@ pub use slack::{
 };
 pub use tasks::{
     task_manifest, GitHubIssueSearchRequest, LinearIssueSearchRequest, TaskConnector, TaskIssue,
-    TASK_CONNECTOR_MANIFEST,
+    TaskWriteKind, TaskWriteReceipt, TaskWriteRequest, TASK_CONNECTOR_MANIFEST,
 };
 pub use test_kit::{
     parse_connector_fixture, run_connector_fixture, ConnectorFixture, ConnectorFixtureReport,
