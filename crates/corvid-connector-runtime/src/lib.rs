@@ -5,6 +5,7 @@ pub mod manifest;
 pub mod ms365;
 pub mod rate_limit;
 pub mod runtime;
+pub mod slack;
 pub mod test_kit;
 pub mod trace;
 
@@ -32,6 +33,10 @@ pub use rate_limit::{ConnectorRateLimit, ConnectorRateLimitDecision, ConnectorRa
 pub use runtime::{
     ConnectorRequest, ConnectorResponse, ConnectorRuntime, ConnectorRuntimeError,
     ConnectorRuntimeMode,
+};
+pub use slack::{
+    slack_manifest, SlackConnector, SlackMessage, SlackReadRequest, SlackThreadRequest,
+    SLACK_CONNECTOR_MANIFEST,
 };
 pub use test_kit::{
     parse_connector_fixture, run_connector_fixture, ConnectorFixture, ConnectorFixtureReport,

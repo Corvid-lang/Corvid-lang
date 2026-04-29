@@ -2289,7 +2289,7 @@ corvid connectors verify-webhook --sig=<...>
 - [x] 41D2-ms365-tenant-scopes       Tenant-aware scopes and token refresh are tested.
 - [x] 41E1-calendar-availability     Availability and event read paths work.
 - [x] 41E2-calendar-write-approval   Event create/update/cancel and external invites require approval.
-- [ ] 41F1-slack-read-thread         Slack channel/DM/thread reads work with workspace scoping.
+- [x] 41F1-slack-read-thread         Slack channel/DM/thread reads work with workspace scoping.
 - [ ] 41F2-slack-send-approval       Draft/send flows require approval and preserve audit evidence.
 - [ ] 41G1-linear-github-read        Linear/GitHub issue read/search flows work.
 - [ ] 41G2-linear-github-write       Create/update/comment flows are approval-gated.
