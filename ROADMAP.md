@@ -2190,7 +2190,7 @@ corvid observe metrics --listen=:9090
 - [x] 40E2-eval-promotion            Redacted trace slices become regression/eval fixtures.
 - [x] 40F1-drift-metrics             Schema/confidence/cost/latency/denial/tool-error drift is computed.
 - [x] 40F2-drift-report              Drift report is human-readable and CI-friendly.
-- [ ] 40G1-review-queue-envelope     Human-review queue records link to trace/audit IDs.
+- [x] 40G1-review-queue-envelope     Human-review queue records link to trace/audit IDs.
 - [ ] 40G2-review-queue-ops          Low-confidence/high-risk outputs enter review and resolve with audit evidence.
 - [ ] 40H1-guarantee-grouping        Incidents group by guarantee/effect/budget/provenance/approval rule.
 - [ ] 40I1-operator-questions        Runbook maps common maintainer questions to exact commands.

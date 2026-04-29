@@ -77,6 +77,7 @@ pub mod record;
 pub mod redact;
 pub mod replay;
 pub mod replay_dispatch;
+pub mod review_queue;
 pub mod runtime;
 pub mod secrets;
 pub mod store;
@@ -217,6 +218,10 @@ pub use redact::RedactionSet;
 pub use replay::{
     LlmDivergence, MutationDivergence, ReplayDifferentialReport, ReplayDivergence,
     ReplayMutationReport, ReplaySource, RunCompletionDivergence, SubstitutionDivergence,
+};
+pub use review_queue::{
+    create_review_record, resolve_review_record, review_lineage_event, ReviewQueueError,
+    ReviewQueueRecord, ReviewReason, ReviewStatus,
 };
 pub use runtime::{Runtime, RuntimeBuilder};
 pub use secrets::{SecretAuditMetadata, SecretRead, SecretRuntime};
