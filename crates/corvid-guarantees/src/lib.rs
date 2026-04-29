@@ -44,6 +44,10 @@ pub enum GuaranteeKind {
     ProvenanceTrace,
     AbiDescriptor,
     AbiAttestation,
+    Server,
+    Jobs,
+    Auth,
+    Connector,
     Platform,
 }
 
@@ -63,6 +67,10 @@ impl GuaranteeKind {
             GuaranteeKind::ProvenanceTrace => "provenance_trace",
             GuaranteeKind::AbiDescriptor => "abi_descriptor",
             GuaranteeKind::AbiAttestation => "abi_attestation",
+            GuaranteeKind::Server => "server",
+            GuaranteeKind::Jobs => "jobs",
+            GuaranteeKind::Auth => "auth",
+            GuaranteeKind::Connector => "connector",
             GuaranteeKind::Platform => "platform",
         }
     }
@@ -77,6 +85,10 @@ impl GuaranteeKind {
         GuaranteeKind::ProvenanceTrace,
         GuaranteeKind::AbiDescriptor,
         GuaranteeKind::AbiAttestation,
+        GuaranteeKind::Server,
+        GuaranteeKind::Jobs,
+        GuaranteeKind::Auth,
+        GuaranteeKind::Connector,
         GuaranteeKind::Platform,
     ];
 }
@@ -640,6 +652,396 @@ pub static GUARANTEE_REGISTRY: &[Guarantee] = &[
             "crates/corvid-driver/src/build.rs::signed_claim_coverage_rejects_out_of_scope_contract_id",
         ],
     },
+    // ----- Jobs (Phase 38) ---------------------------------------
+    // These rows are placeholders so `validate_signed_claim_coverage`
+    // can recognise the contract surfaces named by the developer-flow
+    // doc when their parser-level keywords land. Each row gets
+    // promoted to `Static` or `RuntimeChecked` by the audit-correction
+    // slice that wires the surface end-to-end (38K/38L/38M).
+    Guarantee {
+        id: "jobs.cron_schedule_durable",
+        kind: GuaranteeKind::Jobs,
+        class: GuaranteeClass::RuntimeChecked,
+        phase: Phase::Runtime,
+        description:
+            "A `schedule \"cron\" zone \"…\" -> job(args)` declaration \
+             persists to the durable queue store and survives process \
+             restart. Slice 35-N walks `Decl::Schedule` so a signed \
+             cdylib that declares a cron schedule cannot ship without \
+             this guarantee in its descriptor.",
+        out_of_scope_reason: "",
+        positive_test_refs: &[
+            "crates/corvid-driver/src/build.rs::signed_claim_coverage_walks_schedule_decl",
+        ],
+        adversarial_test_refs: &[
+            "crates/corvid-driver/src/build.rs::signed_claim_coverage_rejects_schedule_without_jobs_coverage",
+        ],
+    },
+    Guarantee {
+        id: "jobs.retry_budget_bound",
+        kind: GuaranteeKind::Jobs,
+        class: GuaranteeClass::OutOfScope,
+        phase: Phase::Runtime,
+        description:
+            "`@retry(max_attempts: N, backoff: ...)` bounds the runtime \
+             retry envelope of a job so a transient failure cannot \
+             escalate into unbounded re-spend.",
+        out_of_scope_reason:
+            "The runtime queue and lease envelopes are shipped, but \
+             `@retry` is not yet a parser-level attribute. Slice 38K \
+             promotes this row to `RuntimeChecked` when the multi-worker \
+             runner consumes the attribute end-to-end.",
+        positive_test_refs: &[],
+        adversarial_test_refs: &[],
+    },
+    Guarantee {
+        id: "jobs.idempotency_key_uniqueness",
+        kind: GuaranteeKind::Jobs,
+        class: GuaranteeClass::OutOfScope,
+        phase: Phase::Runtime,
+        description:
+            "`@idempotency(key: ...)` collapses duplicate dangerous \
+             work: across N concurrent workers, exactly one execution \
+             of a job sharing one idempotency key may succeed.",
+        out_of_scope_reason:
+            "The idempotency-key column exists on the queue table but \
+             the `@idempotency` attribute is not yet parser-level and \
+             the 4-concurrent-worker test is missing. Slice 38L \
+             promotes this to `RuntimeChecked` together with that test.",
+        positive_test_refs: &[],
+        adversarial_test_refs: &[],
+    },
+    Guarantee {
+        id: "jobs.lease_exclusivity",
+        kind: GuaranteeKind::Jobs,
+        class: GuaranteeClass::OutOfScope,
+        phase: Phase::Runtime,
+        description:
+            "A job lease prevents two workers from running the same \
+             job concurrently. Lease expiry plus heartbeat extension \
+             survives worker crash without double execution.",
+        out_of_scope_reason:
+            "Lease envelopes ship; the multi-worker runner that \
+             actually contests for them is not yet wired (only \
+             single-shot `RunOne` exists). Slice 38K promotes.",
+        positive_test_refs: &[],
+        adversarial_test_refs: &[],
+    },
+    Guarantee {
+        id: "jobs.durable_resume",
+        kind: GuaranteeKind::Jobs,
+        class: GuaranteeClass::OutOfScope,
+        phase: Phase::Runtime,
+        description:
+            "A worker SIGKILL'd mid-step resumes from the last \
+             checkpoint with no double tool call and no double LLM \
+             spend on restart.",
+        out_of_scope_reason:
+            "Checkpoint envelopes ship; the SIGKILL crash-recovery \
+             integration test is missing. Slice 38L promotes.",
+        positive_test_refs: &[],
+        adversarial_test_refs: &[],
+    },
+    Guarantee {
+        id: "jobs.cron_dst_correct",
+        kind: GuaranteeKind::Jobs,
+        class: GuaranteeClass::OutOfScope,
+        phase: Phase::Runtime,
+        description:
+            "Cron schedules respect the declared timezone across \
+             daylight-savings transitions: spring-forward fires \
+             once, fall-back fires once.",
+        out_of_scope_reason:
+            "`chrono-tz` is not yet a runtime dependency and the \
+             DST test corpus does not exist. Slice 38M promotes.",
+        positive_test_refs: &[],
+        adversarial_test_refs: &[],
+    },
+    Guarantee {
+        id: "jobs.approval_wait_resume",
+        kind: GuaranteeKind::Jobs,
+        class: GuaranteeClass::OutOfScope,
+        phase: Phase::Runtime,
+        description:
+            "`await_approval` pauses a job until an approval token \
+             arrives, expires, or is denied; the resume path writes \
+             the audit transition.",
+        out_of_scope_reason:
+            "Runtime approval-wait state ships; `await_approval` is \
+             not yet a parser-level keyword. Slice 38K (or a \
+             follow-up syntax slice) promotes.",
+        positive_test_refs: &[],
+        adversarial_test_refs: &[],
+    },
+    Guarantee {
+        id: "jobs.loop_bounds_enforced",
+        kind: GuaranteeKind::Jobs,
+        class: GuaranteeClass::OutOfScope,
+        phase: Phase::Runtime,
+        description:
+            "Agent loops driven by jobs honor max-steps, max-wall-time, \
+             max-spend, and max-tool-calls; exceeding any bound \
+             escalates or terminates with trace evidence.",
+        out_of_scope_reason:
+            "Loop-bound envelopes ship; the multi-worker runner that \
+             enforces them across crash + restart is not yet wired. \
+             Slice 38K promotes.",
+        positive_test_refs: &[],
+        adversarial_test_refs: &[],
+    },
+    // ----- Auth (Phase 39) ---------------------------------------
+    Guarantee {
+        id: "auth.session_rotation_on_privilege_change",
+        kind: GuaranteeKind::Auth,
+        class: GuaranteeClass::OutOfScope,
+        phase: Phase::Runtime,
+        description:
+            "A session id rotates on privilege escalation (role \
+             upgrade, password change) so a stolen pre-escalation \
+             cookie cannot exercise the post-escalation privilege.",
+        out_of_scope_reason:
+            "Session table ships; rotation hook is not yet wired \
+             through a parser-level `auth` block. Slice 39L promotes.",
+        positive_test_refs: &[],
+        adversarial_test_refs: &[],
+    },
+    Guarantee {
+        id: "auth.api_key_at_rest_hashed",
+        kind: GuaranteeKind::Auth,
+        class: GuaranteeClass::RuntimeChecked,
+        phase: Phase::Runtime,
+        description:
+            "API keys are stored only as Argon2id hashes; the \
+             plaintext leaves Corvid memory exactly once at issuance \
+             and is never logged. Verified by the existing \
+             `hash_api_key_secret`/`verify_api_key_secret` path in \
+             `corvid-runtime/src/auth.rs`.",
+        out_of_scope_reason: "",
+        positive_test_refs: &[
+            "crates/corvid-runtime/src/auth.rs::api_key_runtime_resolves_service_actor_with_argon2_hash_and_redacted_audit",
+        ],
+        adversarial_test_refs: &[
+            "crates/corvid-runtime/src/auth.rs::api_key_runtime_rejects_wrong_tenant_revoked_expired_and_user_actors",
+        ],
+    },
+    Guarantee {
+        id: "auth.jwt_kid_rotation",
+        kind: GuaranteeKind::Auth,
+        class: GuaranteeClass::OutOfScope,
+        phase: Phase::Runtime,
+        description:
+            "JWT verification fetches the JWKS, picks the key by \
+             `kid`, verifies the signature, and rejects tokens \
+             whose `kid` is missing from the current JWKS.",
+        out_of_scope_reason:
+            "Today `validate_jwt_verification_contract` checks the \
+             issuer URL prefix, alg name, and claim presence — it \
+             does not fetch JWKS or verify signatures. Slice 39K \
+             adopts `jsonwebtoken` and promotes this row to \
+             `RuntimeChecked`.",
+        positive_test_refs: &[],
+        adversarial_test_refs: &[],
+    },
+    Guarantee {
+        id: "auth.oauth_pkce_required",
+        kind: GuaranteeKind::Auth,
+        class: GuaranteeClass::RuntimeChecked,
+        phase: Phase::Runtime,
+        description:
+            "OAuth callback state requires PKCE for public clients; \
+             the state record carries the code-verifier hash and is \
+             single-use, tenant-scoped, and expiry-bound.",
+        out_of_scope_reason: "",
+        positive_test_refs: &[
+            "crates/corvid-runtime/src/auth.rs::oauth_callback_state_is_hashed_single_use_and_restart_safe",
+        ],
+        adversarial_test_refs: &[
+            "crates/corvid-runtime/src/auth.rs::oauth_callback_rejects_expired_and_cross_tenant_state",
+        ],
+    },
+    Guarantee {
+        id: "auth.csrf_double_submit",
+        kind: GuaranteeKind::Auth,
+        class: GuaranteeClass::OutOfScope,
+        phase: Phase::Runtime,
+        description:
+            "CSRF protection on cookie-bearing requests uses a \
+             double-submit token verified by HMAC-SHA256.",
+        out_of_scope_reason:
+            "Token shape is documented in the design brief; the \
+             middleware path that enforces it on every cookie-bearing \
+             POST/PUT/PATCH/DELETE is not yet wired into the generated \
+             axum server. Slice 39L promotes.",
+        positive_test_refs: &[],
+        adversarial_test_refs: &[],
+    },
+    Guarantee {
+        id: "tenant.cross_tenant_compile_error",
+        kind: GuaranteeKind::Auth,
+        class: GuaranteeClass::OutOfScope,
+        phase: Phase::TypeCheck,
+        description:
+            "A function whose actor came from tenant A may not pass \
+             a record owned by tenant B to a tool that writes back \
+             into A — the typechecker rejects the cross-tenant \
+             reference.",
+        out_of_scope_reason:
+            "Tenant tagging exists in runtime envelopes but the \
+             parser-level `tenant Org { ... }` block does not exist \
+             yet. Slice 39L (parser surface) plus a typecheck slice \
+             promotes this row to `Static`.",
+        positive_test_refs: &[],
+        adversarial_test_refs: &[],
+    },
+    Guarantee {
+        id: "approval.policy_clause_static_check",
+        kind: GuaranteeKind::Auth,
+        class: GuaranteeClass::OutOfScope,
+        phase: Phase::TypeCheck,
+        description:
+            "An `approval Name:` block's `policy { ... }` clause \
+             type-checks at compile time so a malformed predicate \
+             (wrong field name, wrong type, undeclared role) cannot \
+             ship.",
+        out_of_scope_reason:
+            "Approval store ships; the `approval Name:` parser-level \
+             block does not. Slice 39L promotes.",
+        positive_test_refs: &[],
+        adversarial_test_refs: &[],
+    },
+    Guarantee {
+        id: "approval.batch_equivalence_typed",
+        kind: GuaranteeKind::Auth,
+        class: GuaranteeClass::OutOfScope,
+        phase: Phase::TypeCheck,
+        description:
+            "An `approval ... batch_with: same_tool, same_data_class, \
+             same_role` clause groups equivalent approvals so a \
+             reviewer can approve one record and have N \
+             equivalent-by-typed-shape records auto-resolve.",
+        out_of_scope_reason:
+            "Batch logic exists in the approval queue runtime but the \
+             `batch_with` clause has no parser surface. Slice 39L \
+             promotes.",
+        positive_test_refs: &[],
+        adversarial_test_refs: &[],
+    },
+    Guarantee {
+        id: "approval.confused_deputy_typecheck",
+        kind: GuaranteeKind::Auth,
+        class: GuaranteeClass::OutOfScope,
+        phase: Phase::TypeCheck,
+        description:
+            "A reachable path from any route or job to a `@dangerous` \
+             tool must have an `approve` token whose `required_role` \
+             covers every reachable caller — otherwise typecheck \
+             rejects.",
+        out_of_scope_reason:
+            "Lexical-scope approval check ships (`approval.token_lexical_only`); \
+             the cross-call reachability extension into routes/jobs \
+             is not yet wired. Slice 39L promotes.",
+        positive_test_refs: &[],
+        adversarial_test_refs: &[],
+    },
+    // ----- Connector (Phase 41) ----------------------------------
+    Guarantee {
+        id: "connector.scope_minimum_enforced",
+        kind: GuaranteeKind::Connector,
+        class: GuaranteeClass::OutOfScope,
+        phase: Phase::Runtime,
+        description:
+            "A connector cannot use a scope its manifest does not \
+             declare; the runtime rejects requests whose required \
+             scope is not in the declared scope set.",
+        out_of_scope_reason:
+            "Manifest parser ships; the runtime real-mode call path \
+             (which is the only place where scope is consulted \
+             against a live token) returns `RealModeNotBound`. Slice \
+             41K promotes.",
+        positive_test_refs: &[],
+        adversarial_test_refs: &[],
+    },
+    Guarantee {
+        id: "connector.write_requires_approval",
+        kind: GuaranteeKind::Connector,
+        class: GuaranteeClass::OutOfScope,
+        phase: Phase::TypeCheck,
+        description:
+            "A connector method whose effect set names a write \
+             (`gmail.send`, `slack.post`, `github.create_issue`) \
+             reaches typecheck only when its caller has a matching \
+             `approve` boundary in lexical scope.",
+        out_of_scope_reason:
+            "Manifest declares write effects but the connector AST \
+             surface is not yet parser-level — connectors today are \
+             configured by Rust data, not source. Slice 41L \
+             promotes.",
+        positive_test_refs: &[],
+        adversarial_test_refs: &[],
+    },
+    Guarantee {
+        id: "connector.rate_limit_respects_provider",
+        kind: GuaranteeKind::Connector,
+        class: GuaranteeClass::OutOfScope,
+        phase: Phase::Runtime,
+        description:
+            "A connector honors the provider's rate-limit advice \
+             (`Retry-After`, 429, 5xx) using the limit declared in \
+             the manifest as an upper bound.",
+        out_of_scope_reason:
+            "Rate-limit envelope exists; the real-mode HTTP retry \
+             path that consumes it is not implemented. Slice 41K \
+             promotes.",
+        positive_test_refs: &[],
+        adversarial_test_refs: &[],
+    },
+    Guarantee {
+        id: "connector.contract_drift_detected",
+        kind: GuaranteeKind::Connector,
+        class: GuaranteeClass::OutOfScope,
+        phase: Phase::Runtime,
+        description:
+            "`corvid connectors check --live` compares the manifest \
+             to the live (or recorded-cassette) provider response \
+             shape and exits non-zero when fields drift.",
+        out_of_scope_reason:
+            "`corvid connectors check` CLI is unwired. Slice 41L \
+             promotes.",
+        positive_test_refs: &[],
+        adversarial_test_refs: &[],
+    },
+    Guarantee {
+        id: "connector.webhook_signature_verified",
+        kind: GuaranteeKind::Connector,
+        class: GuaranteeClass::OutOfScope,
+        phase: Phase::Runtime,
+        description:
+            "Inbound webhook payloads from Slack, GitHub, and Linear \
+             are HMAC-SHA256 verified against the manifest's \
+             `webhook_signed_by` secret reference; failure rejects \
+             the payload before any handler runs.",
+        out_of_scope_reason:
+            "`hmac` and `sha2` are not imported by `corvid-connector-runtime`. \
+             Slice 41M promotes.",
+        positive_test_refs: &[],
+        adversarial_test_refs: &[],
+    },
+    Guarantee {
+        id: "connector.replay_quarantine",
+        kind: GuaranteeKind::Connector,
+        class: GuaranteeClass::OutOfScope,
+        phase: Phase::Runtime,
+        description:
+            "A connector running in replay mode must not issue real \
+             provider calls; the runtime quarantines outbound HTTP \
+             when the active mode is `Replay`.",
+        out_of_scope_reason:
+            "Replay mode exists in the connector runtime but real \
+             mode is `RealModeNotBound`, so the quarantine guard is \
+             not exercisable end-to-end. Slice 41K promotes.",
+        positive_test_refs: &[],
+        adversarial_test_refs: &[],
+    },
     // ----- Platform: explicit non-defenses ------------------------
     Guarantee {
         id: "platform.host_kernel_compromise",
@@ -738,6 +1140,7 @@ pub const SIGNED_CDYLIB_CLAIM_GUARANTEE_IDS: &[&str] = &[
     "abi_attestation.envelope_signature",
     "abi_attestation.descriptor_match",
     "abi_attestation.sign_requires_claim_coverage",
+    "jobs.cron_schedule_durable",
 ];
 
 pub fn signed_cdylib_claim_guarantees() -> impl Iterator<Item = &'static Guarantee> {

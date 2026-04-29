@@ -38,6 +38,29 @@ Per the no-shortcuts rule, every `out_of_scope` entry carries an explicit reason
 | `abi_attestation.descriptor_match` | abi_attestation | runtime_checked | abi_verify |
 | `abi_attestation.absent_reports_unsigned` | abi_attestation | runtime_checked | abi_verify |
 | `abi_attestation.sign_requires_claim_coverage` | abi_attestation | static | codegen |
+| `jobs.cron_schedule_durable` | jobs | runtime_checked | runtime |
+| `jobs.retry_budget_bound` | jobs | out_of_scope | runtime |
+| `jobs.idempotency_key_uniqueness` | jobs | out_of_scope | runtime |
+| `jobs.lease_exclusivity` | jobs | out_of_scope | runtime |
+| `jobs.durable_resume` | jobs | out_of_scope | runtime |
+| `jobs.cron_dst_correct` | jobs | out_of_scope | runtime |
+| `jobs.approval_wait_resume` | jobs | out_of_scope | runtime |
+| `jobs.loop_bounds_enforced` | jobs | out_of_scope | runtime |
+| `auth.session_rotation_on_privilege_change` | auth | out_of_scope | runtime |
+| `auth.api_key_at_rest_hashed` | auth | runtime_checked | runtime |
+| `auth.jwt_kid_rotation` | auth | out_of_scope | runtime |
+| `auth.oauth_pkce_required` | auth | runtime_checked | runtime |
+| `auth.csrf_double_submit` | auth | out_of_scope | runtime |
+| `tenant.cross_tenant_compile_error` | auth | out_of_scope | typecheck |
+| `approval.policy_clause_static_check` | auth | out_of_scope | typecheck |
+| `approval.batch_equivalence_typed` | auth | out_of_scope | typecheck |
+| `approval.confused_deputy_typecheck` | auth | out_of_scope | typecheck |
+| `connector.scope_minimum_enforced` | connector | out_of_scope | runtime |
+| `connector.write_requires_approval` | connector | out_of_scope | typecheck |
+| `connector.rate_limit_respects_provider` | connector | out_of_scope | runtime |
+| `connector.contract_drift_detected` | connector | out_of_scope | runtime |
+| `connector.webhook_signature_verified` | connector | out_of_scope | runtime |
+| `connector.replay_quarantine` | connector | out_of_scope | runtime |
 | `platform.host_kernel_compromise` | platform | out_of_scope | platform |
 | `platform.signing_key_compromise` | platform | out_of_scope | platform |
 | `platform.toolchain_compromise` | platform | out_of_scope | platform |
@@ -388,6 +411,214 @@ After signature validation, the recovered attestation payload must bit-match the
 
 - `crates/corvid-driver/src/build.rs::signed_claim_coverage_rejects_missing_declared_contract_id`
 - `crates/corvid-driver/src/build.rs::signed_claim_coverage_rejects_out_of_scope_contract_id`
+
+### Durable jobs
+
+#### `jobs.cron_schedule_durable`
+- **class**: runtime_checked
+- **phase**: runtime
+
+A `schedule "cron" zone "…" -> job(args)` declaration persists to the durable queue store and survives process restart. Slice 35-N walks `Decl::Schedule` so a signed cdylib that declares a cron schedule cannot ship without this guarantee in its descriptor.
+
+**Positive tests:**
+
+- `crates/corvid-driver/src/build.rs::signed_claim_coverage_walks_schedule_decl`
+
+**Adversarial tests:**
+
+- `crates/corvid-driver/src/build.rs::signed_claim_coverage_rejects_schedule_without_jobs_coverage`
+
+#### `jobs.retry_budget_bound`
+- **class**: out_of_scope
+- **phase**: runtime
+
+`@retry(max_attempts: N, backoff: ...)` bounds the runtime retry envelope of a job so a transient failure cannot escalate into unbounded re-spend.
+
+> **Why out of scope:** The runtime queue and lease envelopes are shipped, but `@retry` is not yet a parser-level attribute. Slice 38K promotes this row to `RuntimeChecked` when the multi-worker runner consumes the attribute end-to-end.
+
+#### `jobs.idempotency_key_uniqueness`
+- **class**: out_of_scope
+- **phase**: runtime
+
+`@idempotency(key: ...)` collapses duplicate dangerous work: across N concurrent workers, exactly one execution of a job sharing one idempotency key may succeed.
+
+> **Why out of scope:** The idempotency-key column exists on the queue table but the `@idempotency` attribute is not yet parser-level and the 4-concurrent-worker test is missing. Slice 38L promotes this to `RuntimeChecked` together with that test.
+
+#### `jobs.lease_exclusivity`
+- **class**: out_of_scope
+- **phase**: runtime
+
+A job lease prevents two workers from running the same job concurrently. Lease expiry plus heartbeat extension survives worker crash without double execution.
+
+> **Why out of scope:** Lease envelopes ship; the multi-worker runner that actually contests for them is not yet wired (only single-shot `RunOne` exists). Slice 38K promotes.
+
+#### `jobs.durable_resume`
+- **class**: out_of_scope
+- **phase**: runtime
+
+A worker SIGKILL'd mid-step resumes from the last checkpoint with no double tool call and no double LLM spend on restart.
+
+> **Why out of scope:** Checkpoint envelopes ship; the SIGKILL crash-recovery integration test is missing. Slice 38L promotes.
+
+#### `jobs.cron_dst_correct`
+- **class**: out_of_scope
+- **phase**: runtime
+
+Cron schedules respect the declared timezone across daylight-savings transitions: spring-forward fires once, fall-back fires once.
+
+> **Why out of scope:** `chrono-tz` is not yet a runtime dependency and the DST test corpus does not exist. Slice 38M promotes.
+
+#### `jobs.approval_wait_resume`
+- **class**: out_of_scope
+- **phase**: runtime
+
+`await_approval` pauses a job until an approval token arrives, expires, or is denied; the resume path writes the audit transition.
+
+> **Why out of scope:** Runtime approval-wait state ships; `await_approval` is not yet a parser-level keyword. Slice 38K (or a follow-up syntax slice) promotes.
+
+#### `jobs.loop_bounds_enforced`
+- **class**: out_of_scope
+- **phase**: runtime
+
+Agent loops driven by jobs honor max-steps, max-wall-time, max-spend, and max-tool-calls; exceeding any bound escalates or terminates with trace evidence.
+
+> **Why out of scope:** Loop-bound envelopes ship; the multi-worker runner that enforces them across crash + restart is not yet wired. Slice 38K promotes.
+
+### Auth and approvals
+
+#### `auth.session_rotation_on_privilege_change`
+- **class**: out_of_scope
+- **phase**: runtime
+
+A session id rotates on privilege escalation (role upgrade, password change) so a stolen pre-escalation cookie cannot exercise the post-escalation privilege.
+
+> **Why out of scope:** Session table ships; rotation hook is not yet wired through a parser-level `auth` block. Slice 39L promotes.
+
+#### `auth.api_key_at_rest_hashed`
+- **class**: runtime_checked
+- **phase**: runtime
+
+API keys are stored only as Argon2id hashes; the plaintext leaves Corvid memory exactly once at issuance and is never logged. Verified by the existing `hash_api_key_secret`/`verify_api_key_secret` path in `corvid-runtime/src/auth.rs`.
+
+**Positive tests:**
+
+- `crates/corvid-runtime/src/auth.rs::api_key_runtime_resolves_service_actor_with_argon2_hash_and_redacted_audit`
+
+**Adversarial tests:**
+
+- `crates/corvid-runtime/src/auth.rs::api_key_runtime_rejects_wrong_tenant_revoked_expired_and_user_actors`
+
+#### `auth.jwt_kid_rotation`
+- **class**: out_of_scope
+- **phase**: runtime
+
+JWT verification fetches the JWKS, picks the key by `kid`, verifies the signature, and rejects tokens whose `kid` is missing from the current JWKS.
+
+> **Why out of scope:** Today `validate_jwt_verification_contract` checks the issuer URL prefix, alg name, and claim presence — it does not fetch JWKS or verify signatures. Slice 39K adopts `jsonwebtoken` and promotes this row to `RuntimeChecked`.
+
+#### `auth.oauth_pkce_required`
+- **class**: runtime_checked
+- **phase**: runtime
+
+OAuth callback state requires PKCE for public clients; the state record carries the code-verifier hash and is single-use, tenant-scoped, and expiry-bound.
+
+**Positive tests:**
+
+- `crates/corvid-runtime/src/auth.rs::oauth_callback_state_is_hashed_single_use_and_restart_safe`
+
+**Adversarial tests:**
+
+- `crates/corvid-runtime/src/auth.rs::oauth_callback_rejects_expired_and_cross_tenant_state`
+
+#### `auth.csrf_double_submit`
+- **class**: out_of_scope
+- **phase**: runtime
+
+CSRF protection on cookie-bearing requests uses a double-submit token verified by HMAC-SHA256.
+
+> **Why out of scope:** Token shape is documented in the design brief; the middleware path that enforces it on every cookie-bearing POST/PUT/PATCH/DELETE is not yet wired into the generated axum server. Slice 39L promotes.
+
+#### `tenant.cross_tenant_compile_error`
+- **class**: out_of_scope
+- **phase**: typecheck
+
+A function whose actor came from tenant A may not pass a record owned by tenant B to a tool that writes back into A — the typechecker rejects the cross-tenant reference.
+
+> **Why out of scope:** Tenant tagging exists in runtime envelopes but the parser-level `tenant Org { ... }` block does not exist yet. Slice 39L (parser surface) plus a typecheck slice promotes this row to `Static`.
+
+#### `approval.policy_clause_static_check`
+- **class**: out_of_scope
+- **phase**: typecheck
+
+An `approval Name:` block's `policy { ... }` clause type-checks at compile time so a malformed predicate (wrong field name, wrong type, undeclared role) cannot ship.
+
+> **Why out of scope:** Approval store ships; the `approval Name:` parser-level block does not. Slice 39L promotes.
+
+#### `approval.batch_equivalence_typed`
+- **class**: out_of_scope
+- **phase**: typecheck
+
+An `approval ... batch_with: same_tool, same_data_class, same_role` clause groups equivalent approvals so a reviewer can approve one record and have N equivalent-by-typed-shape records auto-resolve.
+
+> **Why out of scope:** Batch logic exists in the approval queue runtime but the `batch_with` clause has no parser surface. Slice 39L promotes.
+
+#### `approval.confused_deputy_typecheck`
+- **class**: out_of_scope
+- **phase**: typecheck
+
+A reachable path from any route or job to a `@dangerous` tool must have an `approve` token whose `required_role` covers every reachable caller — otherwise typecheck rejects.
+
+> **Why out of scope:** Lexical-scope approval check ships (`approval.token_lexical_only`); the cross-call reachability extension into routes/jobs is not yet wired. Slice 39L promotes.
+
+### Connectors
+
+#### `connector.scope_minimum_enforced`
+- **class**: out_of_scope
+- **phase**: runtime
+
+A connector cannot use a scope its manifest does not declare; the runtime rejects requests whose required scope is not in the declared scope set.
+
+> **Why out of scope:** Manifest parser ships; the runtime real-mode call path (which is the only place where scope is consulted against a live token) returns `RealModeNotBound`. Slice 41K promotes.
+
+#### `connector.write_requires_approval`
+- **class**: out_of_scope
+- **phase**: typecheck
+
+A connector method whose effect set names a write (`gmail.send`, `slack.post`, `github.create_issue`) reaches typecheck only when its caller has a matching `approve` boundary in lexical scope.
+
+> **Why out of scope:** Manifest declares write effects but the connector AST surface is not yet parser-level — connectors today are configured by Rust data, not source. Slice 41L promotes.
+
+#### `connector.rate_limit_respects_provider`
+- **class**: out_of_scope
+- **phase**: runtime
+
+A connector honors the provider's rate-limit advice (`Retry-After`, 429, 5xx) using the limit declared in the manifest as an upper bound.
+
+> **Why out of scope:** Rate-limit envelope exists; the real-mode HTTP retry path that consumes it is not implemented. Slice 41K promotes.
+
+#### `connector.contract_drift_detected`
+- **class**: out_of_scope
+- **phase**: runtime
+
+`corvid connectors check --live` compares the manifest to the live (or recorded-cassette) provider response shape and exits non-zero when fields drift.
+
+> **Why out of scope:** `corvid connectors check` CLI is unwired. Slice 41L promotes.
+
+#### `connector.webhook_signature_verified`
+- **class**: out_of_scope
+- **phase**: runtime
+
+Inbound webhook payloads from Slack, GitHub, and Linear are HMAC-SHA256 verified against the manifest's `webhook_signed_by` secret reference; failure rejects the payload before any handler runs.
+
+> **Why out of scope:** `hmac` and `sha2` are not imported by `corvid-connector-runtime`. Slice 41M promotes.
+
+#### `connector.replay_quarantine`
+- **class**: out_of_scope
+- **phase**: runtime
+
+A connector running in replay mode must not issue real provider calls; the runtime quarantines outbound HTTP when the active mode is `Replay`.
+
+> **Why out of scope:** Replay mode exists in the connector runtime but real mode is `RealModeNotBound`, so the quarantine guard is not exercisable end-to-end. Slice 41K promotes.
 
 ### Platform — explicit non-defenses
 

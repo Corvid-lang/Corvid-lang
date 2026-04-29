@@ -309,6 +309,15 @@ fn collect_decl_contracts(decl: &Decl, claims: &mut DeclaredContractClaims) {
                 }
             }
         }
+        Decl::Schedule(schedule) => {
+            // A `schedule "cron" zone "…" -> job(args)` declaration
+            // implies a durable cron trigger (Phase 38). Slice 35-N
+            // requires the cdylib's signed claim set to acknowledge
+            // jobs.cron_schedule_durable so a binary that ships a
+            // cron trigger cannot omit the corresponding guarantee.
+            claims.required_ids.insert("jobs.cron_schedule_durable");
+            collect_effect_row_claims(&schedule.effect_row, claims);
+        }
         _ => {}
     }
 }
@@ -1829,6 +1838,59 @@ agent answer(x: Int) -> Int:
             .expect_err("out-of-scope claim must reject signing");
         assert!(
             err.to_string().contains("out_of_scope"),
+            "{err:#}"
+        );
+    }
+
+    /// Slice 35-N positive: a `Decl::Schedule` raises a require for
+    /// `jobs.cron_schedule_durable` and the gate accepts when the
+    /// descriptor includes that id.
+    #[test]
+    fn signed_claim_coverage_walks_schedule_decl() {
+        let file = parse_source(
+            r#"
+effect send_email:
+    cost: $0.05
+
+agent daily_brief(user_id: String) -> String uses send_email:
+    return user_id
+
+schedule "0 8 * * *" zone "America/New_York" -> daily_brief("u1") uses send_email
+"#,
+        );
+        let descriptor =
+            descriptor_with_claim_ids(corvid_guarantees::SIGNED_CDYLIB_CLAIM_GUARANTEE_IDS);
+        validate_signed_claim_coverage(&file, &descriptor)
+            .expect("schedule decl must be accepted when jobs.cron_schedule_durable is in claims");
+    }
+
+    /// Slice 35-N adversarial: a `Decl::Schedule` without the
+    /// `jobs.cron_schedule_durable` claim id in the descriptor must
+    /// be refused: a signed cdylib that ships a cron trigger must
+    /// acknowledge that contract.
+    #[test]
+    fn signed_claim_coverage_rejects_schedule_without_jobs_coverage() {
+        let file = parse_source(
+            r#"
+effect send_email:
+    cost: $0.05
+
+agent daily_brief(user_id: String) -> String uses send_email:
+    return user_id
+
+schedule "0 8 * * *" zone "America/New_York" -> daily_brief("u1") uses send_email
+"#,
+        );
+        let ids = corvid_guarantees::SIGNED_CDYLIB_CLAIM_GUARANTEE_IDS
+            .iter()
+            .copied()
+            .filter(|id| *id != "jobs.cron_schedule_durable")
+            .collect::<Vec<_>>();
+        let descriptor = descriptor_with_claim_ids(&ids);
+        let err = validate_signed_claim_coverage(&file, &descriptor)
+            .expect_err("schedule without cron_schedule_durable must reject signing");
+        assert!(
+            err.to_string().contains("jobs.cron_schedule_durable"),
             "{err:#}"
         );
     }
