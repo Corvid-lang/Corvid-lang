@@ -2221,7 +2221,7 @@ corvid observe metrics --listen=:9090
 - [x] 41E-calendar-connector         Calendar connector supports availability, event create/update/cancel, reminders, and approval-gated external invites.
 - [x] 41F-slack-connector            Slack connector supports channel/DM reads, draft/send-with-approval, threads, and workspace/user scoping.
 - [x] 41G-task-project-connectors    Linear and GitHub issue connectors support typed create/update/comment flows with approval gates.
-- [ ] 41H-local-files-connector      Local file connector supports indexed folders, read permissions, write approval, and provenance snippets.
+- [x] 41H-local-files-connector      Local file connector supports indexed folders, read permissions, write approval, and provenance snippets.
 - [ ] 41I-mock-replay-suite          Every connector ships mock mode, replay fixtures, manifest tests, and offline deterministic examples.
 - [ ] 41J-executive-agent-connectors Personal Executive Agent uses email, calendar, tasks, chat, and files through Corvid-owned connectors.
 
@@ -2294,7 +2294,7 @@ corvid connectors verify-webhook --sig=<...>
 - [x] 41G1-linear-github-read        Linear/GitHub issue read/search flows work.
 - [x] 41G2-linear-github-write       Create/update/comment flows are approval-gated.
 - [x] 41H1-files-index-read          Local file indexing/read permissions/provenance snippets work.
-- [ ] 41H2-files-write-approval      File write/update/delete requires approval and records provenance.
+- [x] 41H2-files-write-approval      File write/update/delete requires approval and records provenance.
 - [ ] 41I1-all-mocks                 Every connector has mock mode and deterministic replay fixtures.
 - [ ] 41J1-exec-agent-connector-plan Personal Executive Agent connector wiring is specified.
 - [ ] 41J2-exec-agent-connector-proof Email/calendar/tasks/chat/files all run through connector mocks in tests.

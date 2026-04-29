@@ -32,4 +32,16 @@ range.
 - Index: `files:index:<root_id>:<stable-glob>`
 - Read: `files:read:<root_id>:<stable-path>`
 
-Writes land in 41H2 and require approval.
+Write scope:
+
+```text
+files.write
+```
+
+Create, update, and delete require approval IDs. Write receipts include content
+hash and provenance ID. Replay mode quarantines writes.
+
+Write operations:
+
+- `write`
+- `delete`

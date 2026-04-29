@@ -19,7 +19,7 @@ pub use calendar::{
 };
 pub use files::{
     file_manifest, FileConnector, FileIndexRequest, FileMetadata, FileReadRequest, FileSnippet,
-    FILE_CONNECTOR_MANIFEST,
+    FileWriteKind, FileWriteReceipt, FileWriteRequest, FILE_CONNECTOR_MANIFEST,
 };
 pub use gmail::{
     gmail_manifest, GmailConnector, GmailDraftRequest, GmailMessageMetadata, GmailSearchRequest,
