@@ -931,6 +931,16 @@ enum ObserveCommand {
         #[arg(long, value_name = "PATH")]
         trace_dir: Option<PathBuf>,
     },
+    /// Compare two lineage trace files or directories for production drift.
+    Drift {
+        /// Baseline lineage file or directory.
+        baseline: PathBuf,
+        /// Candidate lineage file or directory.
+        candidate: PathBuf,
+        /// Emit JSON for CI ingestion.
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -1220,6 +1230,11 @@ fn main_impl() -> ExitCode {
                 id_or_path,
                 trace_dir,
             } => observe_cmd::run_show(&id_or_path, trace_dir.as_deref()),
+            ObserveCommand::Drift {
+                baseline,
+                candidate,
+                json,
+            } => observe_cmd::run_drift(&baseline, &candidate, json),
         },
         Some(Command::TraceDiff {
             base_sha,

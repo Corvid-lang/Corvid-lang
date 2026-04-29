@@ -2136,7 +2136,7 @@ corvid approvals export --since=2026-04-01  # audit dump
 - [x] 40C-otel-export                OpenTelemetry export covers requests, jobs, LLM calls, tools, approvals, errors, retries, costs, and replay IDs.
 - [x] 40D-observe-command-basics     `corvid observe` lists traces, costs, approvals, failures, and hot spots from local stores.
 - [x] 40E-trace-to-eval              Production trace slices can be promoted into redacted regression/eval fixtures.
-- [ ] 40F-drift-regression-reports   Reports highlight schema failures, confidence drops, cost changes, latency changes, denial spikes, and tool-error spikes.
+- [x] 40F-drift-regression-reports   Reports highlight schema failures, confidence drops, cost changes, latency changes, denial spikes, and tool-error spikes.
 - [ ] 40G-human-review-queues        Low-confidence and high-risk outputs can enter human-review queues with trace/audit linkage.
 - [ ] 40H-contract-aware-grouping    Observability reports group incidents by guarantee, effect, budget, provenance, and approval rule.
 - [ ] 40I-maintainer-runbook         Docs show how maintainers answer cost, action, approval, data-touch, and replay questions from tooling.
@@ -2189,7 +2189,7 @@ corvid observe metrics --listen=:9090
 - [x] 40E1-trace-redaction           Production trace slices can be redacted deterministically.
 - [x] 40E2-eval-promotion            Redacted trace slices become regression/eval fixtures.
 - [x] 40F1-drift-metrics             Schema/confidence/cost/latency/denial/tool-error drift is computed.
-- [ ] 40F2-drift-report              Drift report is human-readable and CI-friendly.
+- [x] 40F2-drift-report              Drift report is human-readable and CI-friendly.
 - [ ] 40G1-review-queue-envelope     Human-review queue records link to trace/audit IDs.
 - [ ] 40G2-review-queue-ops          Low-confidence/high-risk outputs enter review and resolve with audit evidence.
 - [ ] 40H1-guarantee-grouping        Incidents group by guarantee/effect/budget/provenance/approval rule.

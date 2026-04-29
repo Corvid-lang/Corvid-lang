@@ -1,8 +1,9 @@
 //! Drift metrics computed from lineage trace sets.
 
 use crate::lineage::{LineageEvent, LineageKind, LineageStatus, LINEAGE_SCHEMA};
+use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct LineageDriftSummary {
     pub trace_count: u64,
     pub event_count: u64,
@@ -15,7 +16,7 @@ pub struct LineageDriftSummary {
     pub average_confidence: f64,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct LineageDriftReport {
     pub baseline: LineageDriftSummary,
     pub candidate: LineageDriftSummary,

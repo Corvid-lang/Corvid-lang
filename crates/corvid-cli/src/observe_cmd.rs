@@ -1,5 +1,7 @@
 use anyhow::{Context, Result};
-use corvid_runtime::{LineageEvent, LineageKind, LineageStatus};
+use corvid_runtime::{
+    compute_lineage_drift_report, LineageDriftReport, LineageEvent, LineageKind, LineageStatus,
+};
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -74,6 +76,23 @@ pub fn run_show(id_or_path: &str, trace_dir: Option<&Path>) -> Result<u8> {
     let report = build_observe_show(id_or_path, trace_dir)?;
     print!("{}", render_observe_show(&report));
     Ok(0)
+}
+
+pub fn run_drift(baseline: &Path, candidate: &Path, json: bool) -> Result<u8> {
+    let baseline_events = read_lineage_input(baseline)
+        .with_context(|| format!("reading baseline lineage input `{}`", baseline.display()))?;
+    let candidate_events = read_lineage_input(candidate)
+        .with_context(|| format!("reading candidate lineage input `{}`", candidate.display()))?;
+    let report = compute_lineage_drift_report(&baseline_events, &candidate_events);
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&report).context("serializing drift report")?
+        );
+    } else {
+        print!("{}", render_drift_report(&report));
+    }
+    Ok(drift_exit_code(&report))
 }
 
 pub fn build_observe_list(trace_dir: &Path) -> Result<ObserveListReport> {
@@ -211,6 +230,58 @@ pub fn render_observe_show(report: &ObserveShowReport) -> String {
             display_optional(&event.replay_key)
         ));
     }
+    out
+}
+
+pub fn render_drift_report(report: &LineageDriftReport) -> String {
+    let mut out = String::new();
+    out.push_str("corvid observe drift\n");
+    out.push_str(&format!(
+        "events: baseline={} candidate={} delta={}\n",
+        report.baseline.event_count,
+        report.candidate.event_count,
+        report.candidate.event_count as i128 - report.baseline.event_count as i128
+    ));
+    out.push_str(&format!(
+        "schema_violations: baseline={} candidate={} delta={}\n",
+        report.baseline.schema_violation_count,
+        report.candidate.schema_violation_count,
+        report.schema_violation_delta
+    ));
+    out.push_str(&format!(
+        "cost_usd: baseline={:.6} candidate={:.6} delta={:.6}\n",
+        report.baseline.total_cost_usd, report.candidate.total_cost_usd, report.cost_delta_usd
+    ));
+    out.push_str(&format!(
+        "latency_ms: baseline={} candidate={} delta={}\n",
+        report.baseline.total_latency_ms,
+        report.candidate.total_latency_ms,
+        report.latency_delta_ms
+    ));
+    out.push_str(&format!(
+        "denials: baseline={} candidate={} delta={}\n",
+        report.baseline.denial_count, report.candidate.denial_count, report.denial_delta
+    ));
+    out.push_str(&format!(
+        "tool_errors: baseline={} candidate={} delta={}\n",
+        report.baseline.tool_error_count,
+        report.candidate.tool_error_count,
+        report.tool_error_delta
+    ));
+    out.push_str(&format!(
+        "confidence: baseline={:.6} candidate={:.6} delta={:.6}\n",
+        report.baseline.average_confidence,
+        report.candidate.average_confidence,
+        report.confidence_delta
+    ));
+    out.push_str(&format!(
+        "verdict: {}\n",
+        if drift_exit_code(report) == 0 {
+            "stable"
+        } else {
+            "drift"
+        }
+    ));
     out
 }
 
@@ -380,6 +451,23 @@ fn read_lineage_events(path: &Path) -> Result<Vec<LineageEvent>> {
     Ok(events)
 }
 
+fn read_lineage_input(path: &Path) -> Result<Vec<LineageEvent>> {
+    if path.is_dir() {
+        let mut events = Vec::new();
+        let mut paths = fs::read_dir(path)?
+            .map(|entry| entry.map(|entry| entry.path()))
+            .collect::<std::io::Result<Vec<_>>>()?;
+        paths.sort();
+        for path in paths {
+            if is_lineage_jsonl(&path) {
+                events.extend(read_lineage_events(&path)?);
+            }
+        }
+        return Ok(events);
+    }
+    read_lineage_events(path)
+}
+
 fn resolve_lineage_path(id_or_path: &str, trace_dir: Option<&Path>) -> PathBuf {
     let direct = PathBuf::from(id_or_path);
     if direct.exists() || direct.extension().is_some() {
@@ -425,6 +513,16 @@ fn display_optional(value: &str) -> &str {
     } else {
         value
     }
+}
+
+fn drift_exit_code(report: &LineageDriftReport) -> u8 {
+    let regressed = report.schema_violation_delta > 0
+        || report.denial_delta > 0
+        || report.tool_error_delta > 0
+        || report.cost_delta_usd > 0.0
+        || report.latency_delta_ms > 0
+        || report.confidence_delta < 0.0;
+    u8::from(regressed)
 }
 
 #[cfg(test)]
@@ -523,5 +621,44 @@ mod tests {
         assert!(rendered.contains("approval.reachable_entrypoints_require_contract"));
         assert!(rendered.contains("events:"));
         assert!(rendered.contains("tool:send_email status=failed"));
+    }
+
+    #[test]
+    fn drift_report_is_stable_text_and_ci_exit_code() {
+        let mut baseline = LineageEvent::root("trace-1", LineageKind::Route, "POST /send", 1)
+            .finish(LineageStatus::Ok, 10);
+        baseline.cost_usd = 0.01;
+        baseline.confidence = 0.9;
+        let mut candidate = LineageEvent::root("trace-2", LineageKind::Route, "POST /send", 1)
+            .finish(LineageStatus::Denied, 30);
+        candidate.cost_usd = 0.04;
+        candidate.confidence = 0.5;
+
+        let report = compute_lineage_drift_report(&[baseline], &[candidate]);
+        let rendered = render_drift_report(&report);
+
+        assert!(rendered.contains("schema_violations:"));
+        assert!(rendered.contains("cost_usd: baseline=0.010000 candidate=0.040000"));
+        assert!(rendered.contains("denials: baseline=0 candidate=1 delta=1"));
+        assert!(rendered.contains("verdict: drift"));
+        assert_eq!(drift_exit_code(&report), 1);
+    }
+
+    #[test]
+    fn drift_reads_lineage_directories() {
+        let dir = tempfile::tempdir().unwrap();
+        let baseline_dir = dir.path().join("baseline");
+        let candidate_dir = dir.path().join("candidate");
+        fs::create_dir_all(&baseline_dir).unwrap();
+        fs::create_dir_all(&candidate_dir).unwrap();
+        let baseline = LineageEvent::root("trace-1", LineageKind::Route, "GET /", 1)
+            .finish(LineageStatus::Ok, 2);
+        let candidate = LineageEvent::root("trace-2", LineageKind::Route, "GET /", 1)
+            .finish(LineageStatus::Ok, 3);
+        write_lineage(&baseline_dir.join("a.lineage.jsonl"), &[baseline]);
+        write_lineage(&candidate_dir.join("b.lineage.jsonl"), &[candidate]);
+
+        assert_eq!(read_lineage_input(&baseline_dir).unwrap().len(), 1);
+        assert_eq!(read_lineage_input(&candidate_dir).unwrap().len(), 1);
     }
 }
