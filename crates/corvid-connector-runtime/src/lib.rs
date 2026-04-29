@@ -1,5 +1,6 @@
 pub mod auth;
 pub mod calendar;
+pub mod files;
 pub mod gmail;
 pub mod manifest;
 pub mod ms365;
@@ -15,6 +16,10 @@ pub use calendar::{
     calendar_manifest, CalendarAvailabilityRequest, CalendarAvailabilitySlot,
     CalendarCancelRequest, CalendarConnector, CalendarEvent, CalendarEventReadRequest,
     CalendarWriteReceipt, CalendarWriteRequest, CALENDAR_CONNECTOR_MANIFEST,
+};
+pub use files::{
+    file_manifest, FileConnector, FileIndexRequest, FileMetadata, FileReadRequest, FileSnippet,
+    FILE_CONNECTOR_MANIFEST,
 };
 pub use gmail::{
     gmail_manifest, GmailConnector, GmailDraftRequest, GmailMessageMetadata, GmailSearchRequest,
