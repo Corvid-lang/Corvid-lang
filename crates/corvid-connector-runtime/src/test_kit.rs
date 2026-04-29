@@ -99,6 +99,10 @@ fn fixture_auth(fixture: &ConnectorFixture) -> ConnectorAuthState {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{
+        CALENDAR_CONNECTOR_MANIFEST, FILE_CONNECTOR_MANIFEST, GMAIL_CONNECTOR_MANIFEST,
+        MS365_CONNECTOR_MANIFEST, SLACK_CONNECTOR_MANIFEST, TASK_CONNECTOR_MANIFEST,
+    };
 
     fn manifest() -> &'static str {
         r#"
@@ -188,5 +192,21 @@ policy = "quarantine_write"
         assert!(report.mock_ok);
         assert!(!report.replay_ok);
         assert!(report.replay_write_quarantined);
+    }
+
+    #[test]
+    fn all_shipped_connectors_have_valid_manifests() {
+        for (name, manifest) in [
+            ("gmail", GMAIL_CONNECTOR_MANIFEST),
+            ("ms365", MS365_CONNECTOR_MANIFEST),
+            ("calendar", CALENDAR_CONNECTOR_MANIFEST),
+            ("slack", SLACK_CONNECTOR_MANIFEST),
+            ("tasks", TASK_CONNECTOR_MANIFEST),
+            ("files", FILE_CONNECTOR_MANIFEST),
+        ] {
+            let manifest = parse_connector_manifest(manifest).unwrap();
+            let report = validate_connector_manifest(&manifest);
+            assert!(report.valid, "{name}: {report:?}");
+        }
     }
 }
