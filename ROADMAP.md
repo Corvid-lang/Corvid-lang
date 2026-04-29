@@ -2098,7 +2098,7 @@ corvid approvals export --since=2026-04-01  # audit dump
 - [x] 39B2-session-runtime           Session auth resolves an actor into route/job/trace context.
 - [x] 39B3-api-key-runtime           API-key auth supports service actors and redacted diagnostics.
 - [x] 39C1-jwt-verify-contract       JWT verification surface and failure diagnostics are defined.
-- [ ] 39C2-oauth-callback-state      OAuth callback state/token references are typed and replay/audit visible.
+- [x] 39C2-oauth-callback-state      OAuth callback state/token references are typed and replay/audit visible.
 - [ ] 39D1-tenant-role-model         User/org/role/permission records and helpers are typed.
 - [ ] 39D2-permission-propagation    Permissions propagate through routes, jobs, tools, and traces.
 - [ ] 39E1-approval-store            Approval queue persistence schema and stdlib envelopes exist.

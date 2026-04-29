@@ -80,6 +80,30 @@ public type JwtVerificationResult:
     redacted: Bool
     effect_meta: EffectEnvelope
 
+public type OAuthStateRef:
+    provider: String
+    tenant_id: String
+    actor_id: String
+    state_fingerprint: String
+    pkce_verifier_ref: String
+    nonce_fingerprint: String
+    expires_ms: Int
+    replay_key: String
+    redacted: Bool
+    effect_meta: EffectEnvelope
+
+public type OAuthTokenRef:
+    provider: String
+    tenant_id: String
+    actor_id: String
+    token_ref: String
+    scope_fingerprint: String
+    ciphertext_hash: String
+    expires_ms: Int
+    replay_key: String
+    redacted: Bool
+    effect_meta: EffectEnvelope
+
 public agent actor(id: String, tenant_id: String, display_name: String, actor_kind: String, auth_method: String, assurance_level: String, role_fingerprint: String, permission_fingerprint: String, trace_id: String) -> Actor:
     return Actor(id, tenant_id, display_name, actor_kind, auth_method, assurance_level, role_fingerprint, permission_fingerprint, trace_id, effect_envelope("std.auth.actor", trace_id, "", tenant_id + ":" + id, "auth:actor:" + trace_id))
 
@@ -136,3 +160,15 @@ public agent jwt_contract_safe(contract: JwtVerificationContract) -> Bool:
 
 public agent jwt_diagnostic_redacted(result: JwtVerificationResult) -> Bool:
     return result.redacted and result.failure_kind != "raw_token"
+
+public agent oauth_state(provider: String, tenant_id: String, actor_id: String, state_fingerprint: String, pkce_verifier_ref: String, nonce_fingerprint: String, expires_ms: Int, replay_key: String) -> OAuthStateRef:
+    return OAuthStateRef(provider, tenant_id, actor_id, state_fingerprint, pkce_verifier_ref, nonce_fingerprint, expires_ms, replay_key, true, effect_envelope("std.auth.oauth.state", provider, "", tenant_id + ":" + actor_id, replay_key))
+
+public agent oauth_token_ref(provider: String, tenant_id: String, actor_id: String, token_ref: String, scope_fingerprint: String, ciphertext_hash: String, expires_ms: Int, replay_key: String) -> OAuthTokenRef:
+    return OAuthTokenRef(provider, tenant_id, actor_id, token_ref, scope_fingerprint, ciphertext_hash, expires_ms, replay_key, true, effect_envelope("std.auth.oauth.token", provider, "", tenant_id + ":" + actor_id, replay_key))
+
+public agent oauth_state_replay_safe(state: OAuthStateRef) -> Bool:
+    return state.redacted and state.state_fingerprint != "" and state.pkce_verifier_ref != "" and state.replay_key != ""
+
+public agent oauth_token_redacted(token: OAuthTokenRef) -> Bool:
+    return token.redacted and token.ciphertext_hash != "" and token.token_ref != ""
