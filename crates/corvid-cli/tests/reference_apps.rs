@@ -776,6 +776,32 @@ fn beta_program_intake_and_closure_assets_exist_but_are_not_faked() {
 }
 
 #[test]
+fn claim_audit_inventory_is_machine_checked_and_aligned() {
+    let audit = Command::new(corvid_bin())
+        .arg("claim")
+        .arg("audit")
+        .arg("--json")
+        .current_dir(repo_root())
+        .output()
+        .expect("run claim audit");
+    assert!(
+        audit.status.success(),
+        "claim audit failed:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&audit.stdout),
+        String::from_utf8_lossy(&audit.stderr)
+    );
+    let report: Value = serde_json::from_slice(&audit.stdout).expect("parse claim audit report");
+    assert_eq!(report["finding_count"].as_u64(), Some(0));
+    assert!(report["claim_count"].as_u64().is_some_and(|count| count >= 10));
+
+    let inventory =
+        fs::read_to_string(repo_root().join("docs").join("claim-inventory.md"))
+            .expect("read claim inventory doc");
+    assert!(inventory.contains("corvid claim audit --json"));
+    assert!(inventory.contains("external beta feedback remain blocked"));
+}
+
+#[test]
 fn deploy_package_emits_dockerfile_and_oci_metadata() {
     let temp = tempfile::tempdir().expect("tempdir");
     let app = repo_root()

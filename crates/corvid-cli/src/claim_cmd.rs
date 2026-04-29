@@ -1,6 +1,7 @@
 //! `corvid claim --explain` — a quoteable, per-binary statement of
 //! what a Corvid cdylib actually proves.
 
+use std::fs;
 use std::path::Path;
 
 use anyhow::{anyhow, bail, Context, Result};
@@ -11,6 +12,45 @@ use corvid_abi::{
 };
 use corvid_guarantees::{GuaranteeClass, GUARANTEE_REGISTRY};
 use sha2::{Digest, Sha256};
+
+#[derive(Debug, serde::Serialize)]
+struct ClaimAuditFinding {
+    line: usize,
+    claim: String,
+    reason: String,
+}
+
+#[derive(Debug, serde::Serialize)]
+struct ClaimAuditReport {
+    inventory: String,
+    claim_count: usize,
+    finding_count: usize,
+    findings: Vec<ClaimAuditFinding>,
+}
+
+pub fn run_claim_audit(inventory: &Path, json: bool) -> Result<u8> {
+    let text = fs::read_to_string(inventory)
+        .with_context(|| format!("read claim inventory `{}`", inventory.display()))?;
+    let report = audit_claim_inventory(inventory, &text);
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&report).context("serialize claim audit report")?
+        );
+    } else {
+        println!("corvid claim audit");
+        println!("inventory: {}", report.inventory);
+        println!("claim_count: {}", report.claim_count);
+        println!("finding_count: {}", report.finding_count);
+        for finding in &report.findings {
+            println!(
+                "line {}: {} ({})",
+                finding.line, finding.claim, finding.reason
+            );
+        }
+    }
+    Ok(if report.findings.is_empty() { 0 } else { 1 })
+}
 
 pub fn run_claim_explain(
     cdylib: &Path,
@@ -91,6 +131,62 @@ pub fn run_claim_explain(
     }
 
     Ok(exit_code)
+}
+
+fn audit_claim_inventory(path: &Path, text: &str) -> ClaimAuditReport {
+    let mut claim_count = 0usize;
+    let mut findings = Vec::new();
+    for (index, line) in text.lines().enumerate() {
+        let trimmed = line.trim();
+        if !trimmed.starts_with('|')
+            || trimmed.contains("| Claim |")
+            || trimmed.contains("|---")
+            || trimmed.matches('|').count() < 3
+        {
+            continue;
+        }
+        let cells = trimmed
+            .trim_matches('|')
+            .split('|')
+            .map(str::trim)
+            .collect::<Vec<_>>();
+        if cells.len() < 2 {
+            continue;
+        }
+        claim_count += 1;
+        let claim = cells[0].to_string();
+        let evidence = cells[1];
+        let blocked = evidence.contains("blocked") || evidence.contains("non-scope");
+        let runnable = evidence.contains('`') || evidence.contains('[');
+        if !blocked && !runnable {
+            findings.push(ClaimAuditFinding {
+                line: index + 1,
+                claim,
+                reason: "claim must have runnable command, linked artifact, or explicit blocked/non-scope status".to_string(),
+            });
+        }
+        if contains_aspirational_word(evidence) && !blocked {
+            findings.push(ClaimAuditFinding {
+                line: index + 1,
+                claim: cells[0].to_string(),
+                reason: "evidence uses aspirational wording without blocked/non-scope status"
+                    .to_string(),
+            });
+        }
+    }
+    ClaimAuditReport {
+        inventory: path.display().to_string(),
+        claim_count,
+        finding_count: findings.len(),
+        findings,
+    }
+}
+
+fn contains_aspirational_word(value: &str) -> bool {
+    let lower = value.to_ascii_lowercase();
+    ["todo", "planned", "future", "soon", "will support"]
+        .iter()
+        .any(|word| lower.contains(word))
 }
 
 #[derive(Debug)]

@@ -612,12 +612,14 @@ enum Command {
     },
     /// Emit a self-contained provenance statement for a Corvid cdylib.
     Claim {
+        #[command(subcommand)]
+        command: Option<ClaimCommand>,
         /// Print the claim explanation. Kept as an explicit flag so
         /// command transcripts read as `corvid claim --explain <cdylib>`.
         #[arg(long)]
         explain: bool,
         /// Path to the cdylib `.so` / `.dll` / `.dylib`.
-        cdylib: PathBuf,
+        cdylib: Option<PathBuf>,
         /// Optional ed25519 verifying key. When supplied, the claim
         /// verifies the embedded ABI attestation and prints the key
         /// fingerprint.
@@ -739,6 +741,23 @@ enum ContractCommand {
     RegenDoc {
         /// Output path, e.g. `docs/core-semantics.md`.
         output: PathBuf,
+    },
+}
+
+#[derive(Subcommand)]
+enum ClaimCommand {
+    /// Audit launch-facing claims for runnable evidence or explicit non-scope status.
+    Audit {
+        /// Claim inventory markdown table.
+        #[arg(
+            long,
+            value_name = "PATH",
+            default_value = "docs/launch-claim-audit.md"
+        )]
+        inventory: PathBuf,
+        /// Emit JSON report.
+        #[arg(long)]
+        json: bool,
     },
 }
 
@@ -1399,11 +1418,25 @@ fn main_impl() -> ExitCode {
             } => cmd_package_publish(&source, &name, &version, &out, &url_base, &key, &key_id),
         },
         Some(Command::Claim {
+            command,
             explain,
             cdylib,
             key,
             source,
-        }) => claim_cmd::run_claim_explain(&cdylib, explain, key.as_deref(), source.as_deref()),
+        }) => match command {
+            Some(ClaimCommand::Audit { inventory, json }) => {
+                claim_cmd::run_claim_audit(&inventory, json)
+            }
+            None => {
+                if let Some(cdylib) = cdylib {
+                    claim_cmd::run_claim_explain(&cdylib, explain, key.as_deref(), source.as_deref())
+                } else {
+                    Err(anyhow::anyhow!(
+                        "`corvid claim --explain` requires a cdylib path"
+                    ))
+                }
+            }
+        },
         Some(Command::Repl) => cmd_repl(),
         Some(Command::Doctor) => cmd_doctor_v2(),
         Some(Command::Audit { file, json }) => audit_cmd::run_audit(&file, json),
