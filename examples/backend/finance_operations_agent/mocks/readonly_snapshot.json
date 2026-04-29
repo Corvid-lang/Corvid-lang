@@ -1,0 +1,39 @@
+{
+  "mode": "mock",
+  "readonly": true,
+  "regulated_advice": false,
+  "accounts": [
+    {
+      "id": "acct-1",
+      "provider": "mock_bank",
+      "balance_cents": 250000,
+      "currency": "USD",
+      "data_fingerprint": "sha256:account-demo"
+    }
+  ],
+  "budgets": [
+    {
+      "id": "budget-1",
+      "category": "software",
+      "monthly_limit_cents": 50000,
+      "spent_cents": 42000,
+      "status": "watch"
+    }
+  ],
+  "subscriptions": [
+    {
+      "id": "sub-1",
+      "merchant": "Cloud Tools",
+      "amount_cents": 9900,
+      "cadence": "monthly",
+      "next_due_at": "2026-05-01"
+    }
+  ],
+  "anomalies": [
+    {
+      "id": "anomaly-1",
+      "confidence": 0.86,
+      "explanation_fingerprint": "sha256:anomaly-explanation"
+    }
+  ]
+}

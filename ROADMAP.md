@@ -2388,7 +2388,7 @@ corvid run --target=server --mode=real             # real-provider mode behind e
 - [x] 42C5-exec-agent-hardening      Replay, evals, adversarial tests, and runbook are complete.
 - [x] 42D1-knowledge-ingestion       Knowledge app ingests docs with provenance and private/local mode.
 - [x] 42D2-knowledge-search-answer   Grounded search, citations, feedback evals, and answer provenance work.
-- [ ] 42E1-finance-readonly          Finance app aggregates read-only data and explains budgets/subscriptions.
+- [x] 42E1-finance-readonly          Finance app aggregates read-only data and explains budgets/subscriptions.
 - [ ] 42E2-finance-approval-audit    Payment intents are approval-gated with strict non-advice and audit posture.
 - [ ] 42F1-support-triage            Support app triages tickets and drafts policy-grounded replies.
 - [ ] 42F2-support-approvals-sla     Refund/escalation approvals, SLA jobs, and eval dashboard work.

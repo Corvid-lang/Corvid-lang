@@ -333,3 +333,50 @@ fn personal_knowledge_agent_search_answers_are_grounded_and_evaluated() {
     assert!(trace.contains("\"guarantee_id\":\"provenance-answer\""));
     assert!(!trace.contains("raw document"));
 }
+
+#[test]
+fn finance_operations_agent_readonly_snapshot_is_non_advice() {
+    let app = repo_root()
+        .join("examples")
+        .join("backend")
+        .join("finance_operations_agent");
+    let source = app.join("src").join("main.cor");
+    let check = Command::new(corvid_bin())
+        .arg("check")
+        .arg(&source)
+        .current_dir(repo_root())
+        .output()
+        .expect("check finance app");
+    assert!(
+        check.status.success(),
+        "finance app check failed:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&check.stdout),
+        String::from_utf8_lossy(&check.stderr)
+    );
+
+    let conn = Connection::open_in_memory().expect("in-memory sqlite");
+    conn.execute_batch("PRAGMA foreign_keys = ON;")
+        .expect("enable foreign keys");
+    execute_sql_dir(&conn, &app.join("migrations"), 1);
+    let seed_sql = fs::read_to_string(app.join("seeds").join("demo.sql")).expect("read seed sql");
+    conn.execute_batch(&seed_sql).expect("execute seed sql");
+
+    let table_count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_schema WHERE type = 'table' AND name LIKE 'finance_%'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("table count");
+    assert_eq!(table_count, 5);
+
+    let snapshot_text = fs::read_to_string(app.join("mocks").join("readonly_snapshot.json"))
+        .expect("read finance mock");
+    let snapshot: Value = serde_json::from_str(&snapshot_text).expect("parse finance mock");
+    assert_eq!(snapshot["readonly"].as_bool(), Some(true));
+    assert_eq!(snapshot["regulated_advice"].as_bool(), Some(false));
+    assert_eq!(snapshot["accounts"].as_array().expect("accounts").len(), 1);
+    assert!(snapshot["anomalies"][0]["confidence"]
+        .as_f64()
+        .is_some_and(|confidence| confidence >= 0.8));
+}

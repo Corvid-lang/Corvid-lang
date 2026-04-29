@@ -1,0 +1,114 @@
+effect finance_read:
+    cost: $0.01
+    trust: readonly
+    data: financial
+
+effect finance_ai:
+    cost: $0.05
+    trust: bounded
+    data: financial
+
+public type FinanceConfig:
+    service: String
+    connector_mode: String
+    regulated_advice: Bool
+    readonly_default: Bool
+
+public type FinanceAccount:
+    id: String
+    tenant_id: String
+    provider: String
+    display_name: String
+    balance_cents: Int
+    currency: String
+    data_fingerprint: String
+
+public type FinanceBudget:
+    id: String
+    tenant_id: String
+    category: String
+    monthly_limit_cents: Int
+    spent_cents: Int
+    status: String
+
+public type FinanceSubscription:
+    id: String
+    tenant_id: String
+    merchant: String
+    amount_cents: Int
+    cadence: String
+    next_due_at: String
+    status: String
+
+public type FinanceReminder:
+    id: String
+    tenant_id: String
+    kind: String
+    due_at: String
+    message_fingerprint: String
+
+public type FinanceAnomaly:
+    id: String
+    tenant_id: String
+    account_id: String
+    category: String
+    amount_cents: Int
+    confidence: Float
+    explanation_fingerprint: String
+
+public type FinanceReadonlySnapshot:
+    account: FinanceAccount
+    budget: FinanceBudget
+    subscription: FinanceSubscription
+    reminder: FinanceReminder
+    anomaly: FinanceAnomaly
+    total_balance_cents: Int
+    readonly: Bool
+    non_advice: Bool
+
+public @replayable
+agent finance_config() -> FinanceConfig:
+    return FinanceConfig("finance_operations_agent", "mock", false, true)
+
+public @replayable
+agent demo_account() -> FinanceAccount uses finance_read:
+    return FinanceAccount("acct-1", "tenant-1", "mock_bank", "Operating", 250000, "USD", "sha256:account-demo")
+
+public @replayable
+agent demo_budget() -> FinanceBudget uses finance_read:
+    return FinanceBudget("budget-1", "tenant-1", "software", 50000, 42000, "watch")
+
+public @replayable
+agent demo_subscription() -> FinanceSubscription uses finance_read:
+    return FinanceSubscription("sub-1", "tenant-1", "Cloud Tools", 9900, "monthly", "2026-05-01", "active")
+
+public @replayable
+agent demo_reminder() -> FinanceReminder uses finance_read:
+    return FinanceReminder("reminder-1", "tenant-1", "subscription_renewal", "2026-04-30", "sha256:renewal-reminder")
+
+public @replayable
+agent demo_anomaly() -> FinanceAnomaly uses finance_read, finance_ai:
+    return FinanceAnomaly("anomaly-1", "tenant-1", "acct-1", "software", 18000, 0.86, "sha256:anomaly-explanation")
+
+public @replayable
+agent readonly_snapshot() -> FinanceReadonlySnapshot uses finance_read, finance_ai:
+    account = demo_account()
+    budget = demo_budget()
+    subscription = demo_subscription()
+    reminder = demo_reminder()
+    anomaly = demo_anomaly()
+    return FinanceReadonlySnapshot(account, budget, subscription, reminder, anomaly, account.balance_cents, true, true)
+
+public @replayable
+agent readonly_snapshot_valid(snapshot: FinanceReadonlySnapshot) -> Bool:
+    return snapshot.readonly and snapshot.non_advice and snapshot.total_balance_cents == snapshot.account.balance_cents and snapshot.anomaly.confidence >= 0.8
+
+server finance_operations_agent_api:
+    route GET "/config" -> json FinanceConfig:
+        return finance_config()
+    route GET "/readonly/snapshot/mock" -> json FinanceReadonlySnapshot uses finance_read, finance_ai:
+        return readonly_snapshot()
+
+agent main() -> Bool:
+    snapshot = readonly_snapshot()
+    return readonly_snapshot_valid(snapshot)
