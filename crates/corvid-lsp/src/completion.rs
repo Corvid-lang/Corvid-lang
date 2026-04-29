@@ -239,6 +239,15 @@ fn add_declarations(items: &mut CompletionSet, file: &File) {
                     type_name(&mock.return_ty)
                 ),
             )),
+            Decl::Schedule(schedule) => items.add(symbol_item(
+                &schedule.target.name,
+                CompletionItemKind::EVENT,
+                "schedule",
+                format!(
+                    "schedule \"{}\" zone \"{}\" -> {}(...)",
+                    schedule.cron, schedule.zone, schedule.target.name
+                ),
+            )),
             Decl::Import(_) | Decl::Extend(_) => {}
         }
     }

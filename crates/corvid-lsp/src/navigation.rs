@@ -294,7 +294,11 @@ fn top_level_definitions(file: &File, resolved: &Resolved) -> Vec<Definition> {
                 server.name.span,
                 SymbolKind::CLASS,
             ),
-            Decl::Import(_) | Decl::Extend(_) => {}
+            // Schedule decls reference an existing target by name; the
+            // navigation surface defines that target via its own
+            // Decl::Agent / Decl::Tool entry, so the schedule itself
+            // does not produce a new top-level definition.
+            Decl::Import(_) | Decl::Extend(_) | Decl::Schedule(_) => {}
         }
     }
     out
