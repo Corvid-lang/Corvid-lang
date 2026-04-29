@@ -1,0 +1,12 @@
+[
+  {
+    "order_id": "ord_19",
+    "reason": "no defect; outside return window",
+    "user_id": "user_1"
+  },
+  {
+    "order_id": "ord_5",
+    "reason": "marketing copy matches product as shipped",
+    "user_id": "user_2"
+  }
+]

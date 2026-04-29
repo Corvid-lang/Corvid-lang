@@ -4,11 +4,11 @@
 
 ## Headline numbers
 
-Lines of audit-logic code required to answer all 3 representative audit questions against the stack's canonical trace surface (lower is better):
+Lines of audit-logic code required to answer all 5 representative audit questions against the stack's canonical trace surface (lower is better):
 
-- Corvid (JSONL trace under `target/trace/`): **41 LOC** (all 3 queries correct)
-- Python (LangChain + LangSmith): **bounty-open** (3/3 queries unimplemented)
-- TypeScript (Vercel AI SDK + OTEL): **bounty-open** (3/3 queries unimplemented)
+- Corvid (JSONL trace under `target/trace/`): **65 LOC** (all 5 queries correct)
+- Python (LangChain + LangSmith): **bounty-open** (5/5 queries unimplemented)
+- TypeScript (Vercel AI SDK + OTEL): **bounty-open** (5/5 queries unimplemented)
 
 ## Per-query verdicts
 
@@ -17,6 +17,8 @@ Lines of audit-logic code required to answer all 3 representative audit question
 | `01-list-refunds-issued` | 15 LOC | bounty-open | bounty-open |
 | `02-high-value-refunds` | 15 LOC | bounty-open | bounty-open |
 | `03-refunds-per-user` | 11 LOC | bounty-open | bounty-open |
+| `04-denied-refunds-with-rationale` | 12 LOC | bounty-open | bounty-open |
+| `05-approval-tokens-issued` | 12 LOC | bounty-open | bounty-open |
 
 ## Methodology
 

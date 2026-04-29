@@ -179,14 +179,15 @@ divergence (e.g. stripping retry counters or attempt IDs that
 genuinely vary across runs). The point is what the stack ships out
 of the box — not how aggressively a reviewer can normalize.
 
-### `benches/moat/time_to_audit/` — audit-logic LOC across 3 representative questions
+### `benches/moat/time_to_audit/` — audit-logic LOC across 5 representative questions
 
-Current published numbers (3 audit questions: list refunds, refunds
-over $50, refunds per user):
+Current published numbers (5 audit questions: list refunds, refunds
+over $50, refunds per user, denied refunds with LLM rationale,
+approval tokens issued):
 
-- Corvid (JSONL trace under `target/trace/`): **41 LOC** to answer all three correctly.
-- Python (LangChain + LangSmith): **bounty-open** (3/3 queries unimplemented).
-- TypeScript (Vercel AI SDK + OTEL): **bounty-open** (3/3 queries unimplemented).
+- Corvid (JSONL trace under `target/trace/`): **65 LOC** to answer all five correctly.
+- Python (LangChain + LangSmith): **bounty-open** (5/5 queries unimplemented).
+- TypeScript (Vercel AI SDK + OTEL): **bounty-open** (5/5 queries unimplemented).
 
 A submission counts if it lands a stack sub-tree
 (`runs/<stack>/queries/q01.<ext>` … `q03.<ext>`) plus an equivalent
