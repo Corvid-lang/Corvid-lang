@@ -2296,7 +2296,7 @@ corvid connectors verify-webhook --sig=<...>
 - [x] 41H1-files-index-read          Local file indexing/read permissions/provenance snippets work.
 - [x] 41H2-files-write-approval      File write/update/delete requires approval and records provenance.
 - [x] 41I1-all-mocks                 Every connector has mock mode and deterministic replay fixtures.
-- [ ] 41J1-exec-agent-connector-plan Personal Executive Agent connector wiring is specified.
+- [x] 41J1-exec-agent-connector-plan Personal Executive Agent connector wiring is specified.
 - [ ] 41J2-exec-agent-connector-proof Email/calendar/tasks/chat/files all run through connector mocks in tests.
 
 ### Phase 42 — Production reference applications (~10-14 weeks)
