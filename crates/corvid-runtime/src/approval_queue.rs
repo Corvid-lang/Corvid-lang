@@ -70,6 +70,18 @@ pub struct ApprovalQueueAuditEvent {
     pub created_ms: u64,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ApprovalAuditCoverage {
+    pub approval_id: String,
+    pub tenant_id: String,
+    pub trace_id: String,
+    pub current_status: String,
+    pub event_count: usize,
+    pub has_create: bool,
+    pub has_terminal_transition: bool,
+    pub complete: bool,
+}
+
 pub struct ApprovalQueueRuntime {
     conn: Mutex<Connection>,
 }
@@ -234,6 +246,47 @@ impl ApprovalQueueRuntime {
             events.push(row.map_err(sqlite_error)?);
         }
         Ok(events)
+    }
+
+    pub fn audit_coverage(&self, id: &str) -> Result<ApprovalAuditCoverage, RuntimeError> {
+        let approval = self
+            .get(id)?
+            .ok_or_else(|| RuntimeError::Other(format!("approval `{id}` not found")))?;
+        let events = self.audit_events(id)?;
+        let has_create = events.iter().any(|event| {
+            event.event_kind == "created"
+                && event.status_before.is_empty()
+                && event.status_after == "pending"
+                && event.trace_id == approval.trace_id
+                && event.tenant_id == approval.tenant_id
+        });
+        let has_terminal_transition = match approval.status.as_str() {
+            "approved" | "denied" | "expired" => events.iter().any(|event| {
+                event.status_before == "pending"
+                    && event.status_after == approval.status
+                    && event.trace_id == approval.trace_id
+                    && event.tenant_id == approval.tenant_id
+            }),
+            "pending" => true,
+            _ => false,
+        };
+        let all_trace_linked = events.iter().all(|event| {
+            event.approval_id == approval.id
+                && event.tenant_id == approval.tenant_id
+                && event.trace_id == approval.trace_id
+                && !event.actor_id.trim().is_empty()
+                && !event.event_kind.trim().is_empty()
+        });
+        Ok(ApprovalAuditCoverage {
+            approval_id: approval.id,
+            tenant_id: approval.tenant_id,
+            trace_id: approval.trace_id,
+            current_status: approval.status,
+            event_count: events.len(),
+            has_create,
+            has_terminal_transition,
+            complete: has_create && has_terminal_transition && all_trace_linked,
+        })
     }
 
     pub fn approve(
@@ -818,5 +871,52 @@ mod tests {
             .unwrap_err()
             .to_string()
             .contains("tenant"));
+    }
+
+    #[test]
+    fn approval_audit_coverage_proves_trace_linked_transition_evidence() {
+        let queue = ApprovalQueueRuntime::open_in_memory().unwrap();
+        let approval = queue
+            .create(ApprovalCreate {
+                id: "approval-audit".to_string(),
+                tenant_id: "org-1".to_string(),
+                requester_actor_id: "user-1".to_string(),
+                contract: contract(now_ms().saturating_add(60_000)),
+                risk_level: "external_side_effect".to_string(),
+                trace_id: "trace-audit".to_string(),
+            })
+            .unwrap();
+        let pending = queue.audit_coverage(&approval.id).unwrap();
+        assert!(pending.complete);
+        assert_eq!(pending.current_status, "pending");
+        assert_eq!(pending.event_count, 1);
+
+        queue
+            .comment(&approval.id, "org-1", "reviewer-1", "needs owner review")
+            .unwrap();
+        queue
+            .delegate(
+                &approval.id,
+                "org-1",
+                "reviewer-1",
+                "reviewer-2",
+                Some("owner review"),
+            )
+            .unwrap();
+        queue
+            .deny(&approval.id, "org-1", "reviewer-2", Some("unsafe target"))
+            .unwrap();
+
+        let coverage = queue.audit_coverage(&approval.id).unwrap();
+        assert!(coverage.complete);
+        assert!(coverage.has_create);
+        assert!(coverage.has_terminal_transition);
+        assert_eq!(coverage.current_status, "denied");
+        assert_eq!(coverage.trace_id, "trace-audit");
+        assert_eq!(coverage.event_count, 4);
+        let events = queue.audit_events(&approval.id).unwrap();
+        assert!(events.iter().all(|event| event.trace_id == "trace-audit"));
+        assert!(events.iter().all(|event| event.tenant_id == "org-1"));
+        assert!(events.iter().all(|event| event.approval_id == approval.id));
     }
 }

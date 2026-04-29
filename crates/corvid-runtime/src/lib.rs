@@ -102,8 +102,8 @@ pub use approvals::{
     ProgrammaticApprover, StdinApprover,
 };
 pub use approval_queue::{
-    ApprovalContractRecord, ApprovalCreate, ApprovalQueueAuditEvent, ApprovalQueueRecord,
-    ApprovalQueueRuntime,
+    ApprovalAuditCoverage, ApprovalContractRecord, ApprovalCreate, ApprovalQueueAuditEvent,
+    ApprovalQueueRecord, ApprovalQueueRuntime,
 };
 pub use auth::{
     authorize_trace_permission, hash_api_key_secret, hash_oauth_state, hash_session_secret,

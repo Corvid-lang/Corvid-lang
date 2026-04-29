@@ -2023,7 +2023,7 @@ corvid jobs drain --workers=all
 - [x] 39B-session-api-key-auth        `std.auth` supports sessions and API keys with typed actor propagation into routes and traces.
 - [ ] 39C-jwt-oauth-callbacks        JWT verification and OAuth callback handling work for connector authorization flows.
 - [x] 39D-tenant-role-permissions    User, organization, role, and permission checks propagate through routes, jobs, tools, and traces.
-- [ ] 39E-approval-queue-api         Approval create/list/inspect/approve/deny/expire/comment/delegate APIs ship with tests.
+- [x] 39E-approval-queue-api         Approval create/list/inspect/approve/deny/expire/comment/delegate APIs ship with tests.
 - [ ] 39F-generated-approval-contracts Dangerous tools generate typed approval contracts with target, cost, data, expiry, irreversibility, and required role.
 - [ ] 39G-approval-ui-contract       Backend exposes structured approval payloads that any frontend can render without parsing traces.
 - [ ] 39H-compiler-approval-reachability Compiler rejects dangerous route/job/tool paths with no reachable approval contract.
@@ -2103,7 +2103,7 @@ corvid approvals export --since=2026-04-01  # audit dump
 - [x] 39D2-permission-propagation    Permissions propagate through routes, jobs, tools, and traces.
 - [x] 39E1-approval-store            Approval queue persistence schema and stdlib envelopes exist.
 - [x] 39E2-approval-api              Create/list/inspect/approve/deny/expire/comment/delegate APIs work.
-- [ ] 39E3-approval-audit            Every approval transition writes audit and trace evidence.
+- [x] 39E3-approval-audit            Every approval transition writes audit and trace evidence.
 - [ ] 39F1-contract-generation       Dangerous tools generate typed approval contract records.
 - [ ] 39F2-contract-policy-check     Required role/expiry/irreversibility/cost/data rules are enforced.
 - [ ] 39G1-ui-payload-schema         Approval UI payload schema is stable and frontend-agnostic.
