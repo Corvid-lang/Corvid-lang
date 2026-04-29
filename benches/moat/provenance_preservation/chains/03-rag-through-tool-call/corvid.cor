@@ -1,0 +1,24 @@
+effect retrieval:
+    data: grounded
+
+effect db_lookup:
+    data: grounded
+
+effect llm:
+    cost: $0.05
+
+tool retrieve(query: String) -> Grounded<String> uses retrieval
+
+# Tool that takes a Grounded<String> and returns a Grounded<String>.
+# The tool's effect declares `data: grounded` so its provenance
+# composes with the input's.
+tool enrich_from_db(doc: Grounded<String>) -> Grounded<String> uses db_lookup
+
+prompt answer(doc: Grounded<String>, related: Grounded<String>) -> Grounded<String> uses llm:
+    "answer using {doc} and related {related}"
+    cites doc strictly
+
+agent retrieve_enrich_answer(query: String) -> Grounded<String>:
+    doc: Grounded<String> = retrieve(query)
+    related: Grounded<String> = enrich_from_db(doc)
+    return answer(doc, related)

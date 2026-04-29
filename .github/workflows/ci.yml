@@ -264,6 +264,34 @@ jobs:
       - name: cargo test -p corvid-runtime --features python
         run: cargo test -p corvid-runtime --features python --tests -- --nocapture
 
+  phase33-moat-provenance-preservation:
+    # Phase 33-N (provenance preservation rate benchmark). Static
+    # type-level analysis over multi-hop AI workflows; the drift
+    # gate compares the runner's regenerated RESULTS.md byte-for-byte
+    # against the committed file. A divergence means either the
+    # chains changed and the maintainer forgot to re-run, or the
+    # runner's classification heuristics changed and the committed
+    # RESULTS.md is stale.
+    name: 33 moat provenance preservation rate
+    runs-on: ubuntu-latest
+    needs: workspace-tests
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Run provenance preservation runner
+        run: |
+          python benches/moat/provenance_preservation/runner/run.py \
+            --chains-dir benches/moat/provenance_preservation/chains \
+            --out      /tmp/provenance_preservation_RESULTS.md
+
+      - name: Drift gate vs committed RESULTS.md
+        run: diff -u benches/moat/provenance_preservation/RESULTS.md /tmp/provenance_preservation_RESULTS.md
+
   phase33-moat-governance-lines:
     # Phase 33-N (governance line-count benchmark). Pure-Python counter
     # over the apps under benches/moat/governance_lines/apps. The drift

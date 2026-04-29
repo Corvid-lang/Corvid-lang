@@ -1,0 +1,18 @@
+id = "02-extract-translate"
+title = "Retrieve doc → extract entities → translate to Spanish"
+hops = 3
+description = """
+A pipeline that extracts named entities from a retrieved doc and
+translates them. Entities lose their source binding at the
+extraction step in convention-only stacks; the final translated
+list cannot point back to the document each entity came from.
+"""
+
+[expected]
+corvid = "preserved"
+python = "lost"
+typescript = "lost"
+
+corvid_provenance_type = "List<Grounded<String>>"
+python_baseline = "LangChain ExtractionChain + LLMChain"
+typescript_baseline = "Vercel AI SDK structured output + zod"

@@ -1,0 +1,18 @@
+id = "03-rag-through-tool-call"
+title = "Retrieve doc → tool call enriches → return final answer"
+hops = 3
+description = """
+A retrieval feeds a tool call (e.g. fetching a related record from
+a database). The tool's return value becomes part of the answer.
+The citation chain must traverse a tool boundary, which most
+unstructured stacks lose.
+"""
+
+[expected]
+corvid = "preserved"
+python = "lost"
+typescript = "lost"
+
+corvid_provenance_type = "Grounded<String>"
+python_baseline = "LangChain Tool + RetrievalQA"
+typescript_baseline = "Vercel AI SDK tool + zod"

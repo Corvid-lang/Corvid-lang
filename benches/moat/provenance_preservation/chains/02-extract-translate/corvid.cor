@@ -1,0 +1,23 @@
+effect retrieval:
+    data: grounded
+
+effect llm:
+    cost: $0.05
+
+tool retrieve(query: String) -> Grounded<String> uses retrieval
+
+# Extraction: typed surface returns List<Grounded<String>>. Each
+# extracted entity carries provenance back to the source doc.
+prompt extract_entities(doc: Grounded<String>) -> List<Grounded<String>> uses llm:
+    "extract named entities from: {doc}"
+    cites doc strictly
+
+# Translation: each translated entity preserves provenance.
+prompt translate(entity: Grounded<String>) -> Grounded<String> uses llm:
+    "translate to Spanish: {entity}"
+    cites entity strictly
+
+agent extract_then_translate(query: String) -> List<Grounded<String>>:
+    doc: Grounded<String> = retrieve(query)
+    entities: List<Grounded<String>> = extract_entities(doc)
+    return map(entities, translate)

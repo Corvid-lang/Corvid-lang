@@ -1,0 +1,18 @@
+id = "01-rag-summarise-aggregate"
+title = "Retrieve 3 docs → summarise each → aggregate into one answer"
+hops = 4
+description = """
+The classic multi-hop RAG pattern. After three transformations
+(retrieval → per-doc summary → aggregation), the citation chain
+typically does not survive in unstructured-string-based
+implementations.
+"""
+
+[expected]
+corvid = "preserved"
+python = "lost"
+typescript = "lost"
+
+corvid_provenance_type = "Grounded<String>"
+python_baseline = "LangChain RetrievalQAWithSources + LLMChain"
+typescript_baseline = "Vercel AI SDK streamObject + zod"
