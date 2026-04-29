@@ -144,6 +144,19 @@ fn std_jobs_compiles_as_corvid_source() {
 }
 
 #[test]
+fn std_auth_compiles_as_corvid_source() {
+    let repo = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(std::path::Path::parent)
+        .expect("repo root");
+    let source_path = repo.join("std").join("auth.cor");
+    let source = fs::read_to_string(&source_path).expect("std/auth.cor");
+
+    compile_to_ir_with_config_at_path(&source, &source_path, None)
+        .expect("std.auth should compile as a standalone Corvid module");
+}
+
+#[test]
 fn std_agent_compiles_as_corvid_source() {
     let repo = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
@@ -383,6 +396,28 @@ agent main() -> Bool:
     done = succeeded_job_state(running)
     letter = dead_letter(running, "provider_timeout", "sha256:failure")
     return retry_policy_valid(policy) and dead_letter_redacted(letter) and job_can_start(pending) and job_needs_approval(pending) and job_metadata_redacted(input, output) and leased.status == "leased" and running.attempts == 1 and done.status == "succeeded"
+"#,
+    );
+}
+
+#[test]
+fn std_auth_imported_helpers_typecheck() {
+    assert_imported_helpers_typecheck(
+        "auth",
+        true,
+        r#"
+import "./std/auth" use Actor, SessionRef, ApiKeyRef, AuthTraceContext, AuthDecision, user_actor, service_actor, session_ref, api_key_ref, auth_trace_for_session, auth_trace_for_api_key, allow_permission, deny_permission, actor_same_tenant, session_active, api_key_active, auth_secret_redacted, auth_trace_same_tenant
+
+agent main() -> Bool:
+    actor = user_actor("user-1", "org-1", "A User", "sha256:roles", "sha256:permissions", "trace-1")
+    sess = session_ref("sess-1", actor.id, actor.tenant_id, 1000, 9000, 2, "csrf-1", actor.trace_id)
+    service = service_actor("svc-1", "org-1", "CI", "sha256:scopes", "trace-2")
+    key = api_key_ref("key-1", service.id, service.tenant_id, service.permission_fingerprint, "argon2id", 9000, 2000, service.trace_id)
+    session_trace = auth_trace_for_session(actor, sess, "replay-session-1")
+    key_trace = auth_trace_for_api_key(service, key, "replay-key-1")
+    allowed = allow_permission(actor, session_trace, "CanReadInbox")
+    denied = deny_permission(service, key_trace, "CanApproveOwnAction", "service actor cannot self-approve")
+    return actor_same_tenant(actor, "org-1") and session_active(sess, 5000) and api_key_active(key, 5000) and auth_secret_redacted(sess, key) and auth_trace_same_tenant(session_trace, actor) and allowed.allowed and not denied.allowed
 "#,
     );
 }

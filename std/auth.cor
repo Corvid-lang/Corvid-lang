@@ -1,0 +1,98 @@
+# Standard auth, identity, tenant, and trace-context envelopes.
+
+import "./effects" use EffectEnvelope, effect_envelope
+
+public type Actor:
+    id: String
+    tenant_id: String
+    display_name: String
+    actor_kind: String
+    auth_method: String
+    assurance_level: String
+    role_fingerprint: String
+    permission_fingerprint: String
+    trace_id: String
+    effect_meta: EffectEnvelope
+
+public type SessionRef:
+    id: String
+    actor_id: String
+    tenant_id: String
+    issued_ms: Int
+    expires_ms: Int
+    rotation_counter: Int
+    csrf_binding_id: String
+    redacted: Bool
+    effect_meta: EffectEnvelope
+
+public type ApiKeyRef:
+    id: String
+    service_actor_id: String
+    tenant_id: String
+    scope_fingerprint: String
+    hash_algorithm: String
+    expires_ms: Int
+    last_used_ms: Int
+    redacted: Bool
+    effect_meta: EffectEnvelope
+
+public type AuthTraceContext:
+    trace_id: String
+    tenant_id: String
+    actor_id: String
+    auth_method: String
+    session_id: String
+    api_key_id: String
+    permission_fingerprint: String
+    replay_key: String
+    effect_meta: EffectEnvelope
+
+public type AuthDecision:
+    actor: Actor
+    tenant_id: String
+    permission: String
+    allowed: Bool
+    reason: String
+    trace: AuthTraceContext
+
+public agent actor(id: String, tenant_id: String, display_name: String, actor_kind: String, auth_method: String, assurance_level: String, role_fingerprint: String, permission_fingerprint: String, trace_id: String) -> Actor:
+    return Actor(id, tenant_id, display_name, actor_kind, auth_method, assurance_level, role_fingerprint, permission_fingerprint, trace_id, effect_envelope("std.auth.actor", trace_id, "", tenant_id + ":" + id, "auth:actor:" + trace_id))
+
+public agent user_actor(id: String, tenant_id: String, display_name: String, role_fingerprint: String, permission_fingerprint: String, trace_id: String) -> Actor:
+    return actor(id, tenant_id, display_name, "user", "session", "aal1", role_fingerprint, permission_fingerprint, trace_id)
+
+public agent service_actor(id: String, tenant_id: String, display_name: String, scope_fingerprint: String, trace_id: String) -> Actor:
+    return actor(id, tenant_id, display_name, "service", "api_key", "service", scope_fingerprint, scope_fingerprint, trace_id)
+
+public agent session_ref(id: String, actor_id: String, tenant_id: String, issued_ms: Int, expires_ms: Int, rotation_counter: Int, csrf_binding_id: String, trace_id: String) -> SessionRef:
+    return SessionRef(id, actor_id, tenant_id, issued_ms, expires_ms, rotation_counter, csrf_binding_id, true, effect_envelope("std.auth.session", trace_id, "", tenant_id + ":" + actor_id, "auth:session:" + id))
+
+public agent api_key_ref(id: String, service_actor_id: String, tenant_id: String, scope_fingerprint: String, hash_algorithm: String, expires_ms: Int, last_used_ms: Int, trace_id: String) -> ApiKeyRef:
+    return ApiKeyRef(id, service_actor_id, tenant_id, scope_fingerprint, hash_algorithm, expires_ms, last_used_ms, true, effect_envelope("std.auth.api_key", trace_id, "", tenant_id + ":" + service_actor_id, "auth:api_key:" + id))
+
+public agent auth_trace_for_session(actor: Actor, sess: SessionRef, replay_key: String) -> AuthTraceContext:
+    return AuthTraceContext(actor.trace_id, actor.tenant_id, actor.id, actor.auth_method, sess.id, "", actor.permission_fingerprint, replay_key, effect_envelope("std.auth.trace", actor.trace_id, "", actor.tenant_id + ":" + actor.id, replay_key))
+
+public agent auth_trace_for_api_key(actor: Actor, key: ApiKeyRef, replay_key: String) -> AuthTraceContext:
+    return AuthTraceContext(actor.trace_id, actor.tenant_id, actor.id, actor.auth_method, "", key.id, actor.permission_fingerprint, replay_key, effect_envelope("std.auth.trace", actor.trace_id, "", actor.tenant_id + ":" + actor.id, replay_key))
+
+public agent allow_permission(actor: Actor, trace: AuthTraceContext, permission: String) -> AuthDecision:
+    return AuthDecision(actor, actor.tenant_id, permission, true, "permission fingerprint matched by runtime resolver", trace)
+
+public agent deny_permission(actor: Actor, trace: AuthTraceContext, permission: String, reason: String) -> AuthDecision:
+    return AuthDecision(actor, actor.tenant_id, permission, false, reason, trace)
+
+public agent actor_same_tenant(actor: Actor, tenant_id: String) -> Bool:
+    return actor.tenant_id == tenant_id
+
+public agent session_active(sess: SessionRef, now_ms: Int) -> Bool:
+    return sess.issued_ms <= now_ms and now_ms < sess.expires_ms
+
+public agent api_key_active(key: ApiKeyRef, now_ms: Int) -> Bool:
+    return now_ms < key.expires_ms
+
+public agent auth_secret_redacted(sess: SessionRef, key: ApiKeyRef) -> Bool:
+    return sess.redacted and key.redacted and sess.id != "" and key.id != ""
+
+public agent auth_trace_same_tenant(trace: AuthTraceContext, actor: Actor) -> Bool:
+    return trace.tenant_id == actor.tenant_id and trace.actor_id == actor.id and trace.trace_id == actor.trace_id
