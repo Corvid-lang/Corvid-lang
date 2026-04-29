@@ -434,3 +434,42 @@ fn finance_operations_agent_payment_intents_are_approval_gated_and_audited() {
         String::from_utf8_lossy(&eval_out.stderr)
     );
 }
+
+#[test]
+fn customer_support_agent_triage_and_drafts_are_policy_grounded() {
+    let app = repo_root()
+        .join("examples")
+        .join("backend")
+        .join("customer_support_agent");
+    let check = Command::new(corvid_bin())
+        .arg("check")
+        .arg(app.join("src").join("main.cor"))
+        .current_dir(repo_root())
+        .output()
+        .expect("check support app");
+    assert!(
+        check.status.success(),
+        "support app check failed:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&check.stdout),
+        String::from_utf8_lossy(&check.stderr)
+    );
+
+    let conn = Connection::open_in_memory().expect("in-memory sqlite");
+    conn.execute_batch("PRAGMA foreign_keys = ON;")
+        .expect("enable foreign keys");
+    execute_sql_dir(&conn, &app.join("migrations"), 1);
+    let seed_sql = fs::read_to_string(app.join("seeds").join("demo.sql")).expect("read seed sql");
+    conn.execute_batch(&seed_sql).expect("execute seed sql");
+
+    let mock_text =
+        fs::read_to_string(app.join("mocks").join("triage_reply.json")).expect("read support mock");
+    let mock: Value = serde_json::from_str(&mock_text).expect("parse support mock");
+    assert_eq!(mock["triage"]["grounded"].as_bool(), Some(true));
+    assert_eq!(
+        mock["draft"]["approval_label"].as_str(),
+        Some("SendSupportReply")
+    );
+    assert!(mock["citation"]["provenance_id"]
+        .as_str()
+        .is_some_and(|id| id.starts_with("policy:")));
+}

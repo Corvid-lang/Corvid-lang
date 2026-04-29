@@ -2390,7 +2390,7 @@ corvid run --target=server --mode=real             # real-provider mode behind e
 - [x] 42D2-knowledge-search-answer   Grounded search, citations, feedback evals, and answer provenance work.
 - [x] 42E1-finance-readonly          Finance app aggregates read-only data and explains budgets/subscriptions.
 - [x] 42E2-finance-approval-audit    Payment intents are approval-gated with strict non-advice and audit posture.
-- [ ] 42F1-support-triage            Support app triages tickets and drafts policy-grounded replies.
+- [x] 42F1-support-triage            Support app triages tickets and drafts policy-grounded replies.
 - [ ] 42F2-support-approvals-sla     Refund/escalation approvals, SLA jobs, and eval dashboard work.
 - [ ] 42G1-code-ingestion-triage     Code app ingests repos, triages issues, and labels CI-aware risk.
 - [ ] 42G2-code-write-approval       Review comments/patch proposals/write actions require approval.

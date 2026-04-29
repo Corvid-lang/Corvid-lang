@@ -1,0 +1,88 @@
+effect ticket_read:
+    cost: $0.01
+    trust: workspace
+    data: customer
+
+effect policy_search:
+    cost: $0.01
+    trust: grounded
+    data: internal
+
+effect support_ai:
+    cost: $0.06
+    trust: bounded
+    data: customer
+
+public type SupportConfig:
+    service: String
+    connector_mode: String
+    policy_required: Bool
+
+public type SupportTicket:
+    id: String
+    tenant_id: String
+    customer_fingerprint: String
+    subject_fingerprint: String
+    priority: String
+    status: String
+
+public type PolicyCitation:
+    policy_id: String
+    title_fingerprint: String
+    section: String
+    provenance_id: String
+
+public type SupportTriage:
+    ticket: SupportTicket
+    category: String
+    priority: String
+    confidence: Float
+    citation: PolicyCitation
+    grounded: Bool
+
+public type SupportDraftReply:
+    ticket_id: String
+    body_fingerprint: String
+    citation: PolicyCitation
+    status: String
+    approval_label: String
+    grounded: Bool
+
+public @replayable
+agent support_config() -> SupportConfig:
+    return SupportConfig("customer_support_agent", "mock", true)
+
+public @replayable
+agent demo_ticket() -> SupportTicket uses ticket_read:
+    return SupportTicket("ticket-1", "tenant-1", "sha256:customer-demo", "sha256:subject-demo", "high", "open")
+
+public @replayable
+agent demo_policy_citation() -> PolicyCitation uses policy_search:
+    return PolicyCitation("policy-refund-1", "sha256:refund-policy", "refund.window", "policy:refund:window")
+
+public @replayable
+agent triage_ticket_mock() -> SupportTriage uses ticket_read, policy_search, support_ai:
+    ticket = demo_ticket()
+    citation = demo_policy_citation()
+    return SupportTriage(ticket, "refund_request", ticket.priority, 0.9, citation, citation.provenance_id != "")
+
+public @replayable
+agent draft_policy_grounded_reply_mock() -> SupportDraftReply uses ticket_read, policy_search, support_ai:
+    triage = triage_ticket_mock()
+    return SupportDraftReply(triage.ticket.id, "sha256:support-draft", triage.citation, "drafted", "SendSupportReply", triage.grounded)
+
+public @replayable
+agent support_triage_contract_valid(reply: SupportDraftReply) -> Bool:
+    return reply.grounded and reply.citation.provenance_id != "" and reply.approval_label == "SendSupportReply" and reply.status == "drafted"
+
+server customer_support_agent_api:
+    route GET "/config" -> json SupportConfig:
+        return support_config()
+    route GET "/tickets/triage/mock" -> json SupportTriage uses ticket_read, policy_search, support_ai:
+        return triage_ticket_mock()
+    route GET "/replies/draft/mock" -> json SupportDraftReply uses ticket_read, policy_search, support_ai:
+        return draft_policy_grounded_reply_mock()
+
+agent main() -> Bool:
+    reply = draft_policy_grounded_reply_mock()
+    return support_triage_contract_valid(reply)

@@ -1,0 +1,23 @@
+{
+  "mode": "mock",
+  "ticket": {
+    "id": "ticket-1",
+    "priority": "high",
+    "status": "open"
+  },
+  "triage": {
+    "category": "refund_request",
+    "confidence": 0.9,
+    "grounded": true
+  },
+  "draft": {
+    "body_fingerprint": "sha256:support-draft",
+    "approval_label": "SendSupportReply",
+    "status": "drafted"
+  },
+  "citation": {
+    "policy_id": "policy-refund-1",
+    "section": "refund.window",
+    "provenance_id": "policy:refund:window"
+  }
+}
