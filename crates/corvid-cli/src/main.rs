@@ -52,6 +52,7 @@ mod tour;
 mod trace_cmd;
 mod trace_dag;
 mod trace_diff;
+mod upgrade_cmd;
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -655,6 +656,11 @@ enum Command {
         #[arg(long, value_name = "DIR")]
         out: Option<PathBuf>,
     },
+    /// Check or apply source and stdlib migrations.
+    Upgrade {
+        #[command(subcommand)]
+        command: UpgradeCommand,
+    },
     /// Inspect and apply checked-in database migrations.
     Migrate {
         #[command(subcommand)]
@@ -777,6 +783,26 @@ enum DeployCommand {
         /// Output directory for generated artifacts.
         #[arg(long, value_name = "DIR")]
         out: Option<PathBuf>,
+    },
+}
+
+#[derive(Subcommand)]
+enum UpgradeCommand {
+    /// Report syntax and stdlib migrations without modifying files.
+    Check {
+        /// Source file or project directory to scan.
+        path: PathBuf,
+        /// Emit JSON findings.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Apply safe syntax and stdlib migrations.
+    Apply {
+        /// Source file or project directory to rewrite.
+        path: PathBuf,
+        /// Emit JSON findings.
+        #[arg(long)]
+        json: bool,
     },
 }
 
@@ -1415,6 +1441,10 @@ fn main_impl() -> ExitCode {
             });
             release_cmd::run_release(&channel, version.as_deref(), &out).map(|_| 0)
         }
+        Some(Command::Upgrade { command }) => match command {
+            UpgradeCommand::Check { path, json } => upgrade_cmd::run_check(&path, json),
+            UpgradeCommand::Apply { path, json } => upgrade_cmd::run_apply(&path, json),
+        },
         Some(Command::Migrate { command }) => match command {
             MigrateCommand::Status {
                 dir,

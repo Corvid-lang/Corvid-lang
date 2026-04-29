@@ -2510,7 +2510,7 @@ corvid claim audit                           # AI-assisted final claim audit (ad
 - [x] 43C3-k8s-systemd-manifests     Kubernetes and systemd manifests work or are explicitly scoped.
 - [x] 43D1-release-policy            Nightly/beta/stable SemVer and stability policy are documented.
 - [x] 43D2-release-automation        Release channel automation produces signed artifacts and changelog entries.
-- [ ] 43E1-syntax-stdlib-migrator    Syntax and stdlib migration tooling exists.
+- [x] 43E1-syntax-stdlib-migrator    Syntax and stdlib migration tooling exists.
 - [ ] 43E2-schema-trace-migrator     Schema, trace-format, and connector-manifest migrations exist.
 - [ ] 43F1-maintainer-runbooks       Release checklist, advisory process, compatibility policy, CI gates, benchmark reproduction, and claim review docs are complete.
 - [ ] 43G1-developer-tutorials       Backend, Personal Executive Agent, connector, approval, observability, and production checklist docs are complete.

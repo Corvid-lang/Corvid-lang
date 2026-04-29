@@ -830,6 +830,71 @@ fn release_command_emits_signed_artifacts_and_changelog() {
 }
 
 #[test]
+fn upgrade_command_reports_and_applies_source_stdlib_migrations() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let source = temp.path().join("legacy.cor");
+    fs::write(
+        &source,
+        "pub extern \"c\"\nagent classify() -> String:\n    return std.llm.complete(\"x\")\n",
+    )
+    .expect("write legacy source");
+
+    let check = Command::new(corvid_bin())
+        .arg("upgrade")
+        .arg("check")
+        .arg(&source)
+        .arg("--json")
+        .current_dir(repo_root())
+        .output()
+        .expect("run upgrade check");
+    assert!(
+        !check.status.success(),
+        "upgrade check should fail when migrations are pending"
+    );
+    let findings: Value =
+        serde_json::from_slice(&check.stdout).expect("parse upgrade check findings");
+    let findings = findings.as_array().expect("findings array");
+    assert_eq!(findings.len(), 2);
+    assert!(findings.iter().any(|finding| {
+        finding["rule_id"].as_str() == Some("syntax.pub_extern_agent_single_line")
+    }));
+    assert!(findings
+        .iter()
+        .any(|finding| finding["rule_id"].as_str() == Some("stdlib.llm_complete_to_agent_run")));
+
+    let apply = Command::new(corvid_bin())
+        .arg("upgrade")
+        .arg("apply")
+        .arg(&source)
+        .arg("--json")
+        .current_dir(repo_root())
+        .output()
+        .expect("run upgrade apply");
+    assert!(
+        apply.status.success(),
+        "upgrade apply failed:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&apply.stdout),
+        String::from_utf8_lossy(&apply.stderr)
+    );
+    let rewritten = fs::read_to_string(&source).expect("read rewritten source");
+    assert!(rewritten.contains("pub extern \"c\" agent classify"));
+    assert!(rewritten.contains("std.agent.run(\"x\")"));
+
+    let clean = Command::new(corvid_bin())
+        .arg("upgrade")
+        .arg("check")
+        .arg(&source)
+        .arg("--json")
+        .current_dir(repo_root())
+        .output()
+        .expect("run clean upgrade check");
+    assert!(clean.status.success());
+    let clean_findings: Value =
+        serde_json::from_slice(&clean.stdout).expect("parse clean findings");
+    assert_eq!(clean_findings.as_array().expect("clean array").len(), 0);
+}
+
+#[test]
 fn deploy_compose_emits_reference_app_manifest() {
     let temp = tempfile::tempdir().expect("tempdir");
     let app = repo_root()
