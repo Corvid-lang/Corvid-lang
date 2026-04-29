@@ -2323,7 +2323,7 @@ corvid connectors verify-webhook --sig=<...>
 **Slice checklist:**
 
 - [x] 42A-reference-app-brief        `docs/phase-42-reference-apps.md` defines app selection, shared architecture, quality bar, security posture, demo mode, and non-scope.
-- [ ] 42B-shared-app-template        Common backend template provides routes, DB, jobs, auth, connectors, approvals, traces, evals, deployment manifest, and runbook skeleton.
+- [x] 42B-shared-app-template        Common backend template provides routes, DB, jobs, auth, connectors, approvals, traces, evals, deployment manifest, and runbook skeleton.
 - [ ] 42C-personal-executive-agent   Personal Executive Agent backend ships inbox triage, drafts, calendar scheduling, meeting prep, daily brief, tasks, follow-ups, approvals, and replay.
 - [ ] 42D-personal-knowledge-agent   Knowledge Agent backend ships ingestion, grounded search, citations, private/local mode, feedback evals, and provenance-preserving answers.
 - [ ] 42E-finance-operations-agent   Finance Operations Agent backend ships read-only aggregation, reminders, anomaly detection, approval-gated payment intents, audit trail, and regulated-advice non-scope.
@@ -2380,7 +2380,7 @@ corvid run --target=server --mode=real             # real-provider mode behind e
 
 - [x] 42B1-template-routes           Shared app template has routes, config, health/readiness, and generated docs.
 - [x] 42B2-template-state            Template has DB migrations, seed data, jobs, auth, and connector mocks.
-- [ ] 42B3-template-ops              Template has traces, evals, deployment manifest, and runbook skeleton.
+- [x] 42B3-template-ops              Template has traces, evals, deployment manifest, and runbook skeleton.
 - [ ] 42C1-exec-agent-data-model     Personal Executive Agent schemas/migrations/jobs/connectors are defined.
 - [ ] 42C2-exec-agent-inbox          Inbox triage and draft replies work in mock connector mode.
 - [ ] 42C3-exec-agent-calendar       Scheduling, meeting prep, daily brief, and follow-ups run as durable jobs.

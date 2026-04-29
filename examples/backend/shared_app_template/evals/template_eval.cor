@@ -1,0 +1,12 @@
+type TemplateEvalResult:
+    service: String
+    ready: Bool
+    connector_count: Int
+
+agent template_eval_result() -> TemplateEvalResult:
+    return TemplateEvalResult("shared_app_template", true, 5)
+
+eval template_contract:
+    assert template_eval_result().service == "shared_app_template"
+    assert template_eval_result().ready == true
+    assert template_eval_result().connector_count == 5

@@ -1,0 +1,29 @@
+services:
+  shared-app-template:
+    image: corvid/shared-app-template:local
+    build:
+      context: ../../..
+      dockerfile: examples/backend/shared_app_template/deploy/Dockerfile
+    command:
+      - corvid
+      - run
+      - examples/backend/shared_app_template/src/main.cor
+    environment:
+      CORVID_APP_ENV: local
+      CORVID_CONNECTOR_MODE: mock
+      CORVID_DATABASE_URL: sqlite:/data/shared_app_template.db
+      CORVID_TRACE_DIR: /data/traces
+      CORVID_REQUIRE_APPROVALS: "true"
+    ports:
+      - "8080:8080"
+    volumes:
+      - shared-app-template-data:/data
+    healthcheck:
+      test: ["CMD", "corvid", "check", "examples/backend/shared_app_template/src/main.cor"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+
+volumes:
+  shared-app-template-data:
