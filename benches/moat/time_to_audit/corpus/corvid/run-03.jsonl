@@ -1,0 +1,9 @@
+{"kind":"schema_header","version":2,"writer":"corvid-vm","commit_sha":null,"source_path":null,"ts_ms":1777449094674,"run_id":"run-1777449094673"}
+{"kind":"seed_read","ts_ms":1777449094674,"run_id":"run-1777449094673","purpose":"rollout_default_seed","value":1777449094674}
+{"kind":"run_started","ts_ms":1777449094675,"run_id":"run-1777449094673","agent":"refund_bot","args":[{"message":"looks ok, just changed my mind","order_id":"ord_19","user_id":"user_1"}]}
+{"kind":"tool_call","ts_ms":1777449094676,"run_id":"run-1777449094673","tool":"get_order","args":["ord_19"]}
+{"kind":"tool_result","ts_ms":1777449094676,"run_id":"run-1777449094673","tool":"get_order","result":{"amount":14.95,"id":"ord_19","user_id":"user_1"}}
+{"kind":"llm_call","ts_ms":1777449094676,"run_id":"run-1777449094673","prompt":"decide_refund","model":"mock-1","model_version":null,"rendered":"\r\n    Decide whether this ticket deserves a refund. Consider the order amount,\r\n    the user's complaint, and fairness.\r\n    ","args":[{"message":"looks ok, just changed my mind","order_id":"ord_19","user_id":"user_1"},{"amount":14.95,"id":"ord_19","user_id":"user_1"}]}
+{"kind":"host_event","ts_ms":1777449094676,"run_id":"run-1777449094673","name":"llm.usage","payload":{"adapter":"mock-1","completion_tokens":0,"cost_usd":0.0,"currency":"USD","local":false,"model":"mock-1","privacy_tier":null,"prompt":"decide_refund","prompt_tokens":0,"provider":null,"total_tokens":0,"unit":"token"}}
+{"kind":"llm_result","ts_ms":1777449094676,"run_id":"run-1777449094673","prompt":"decide_refund","model":"mock-1","model_version":null,"result":{"reason":"no defect; outside return window","should_refund":false}}
+{"kind":"run_completed","ts_ms":1777449094676,"run_id":"run-1777449094673","ok":true,"result":{"reason":"no defect; outside return window","should_refund":false},"error":null}

@@ -1,0 +1,30 @@
+[
+  {
+    "amount": 49.99,
+    "llm_rationale": "user reported legitimate complaint",
+    "order_id": "ord_42",
+    "refund_id": "rf_ord_42",
+    "user_id": "user_1"
+  },
+  {
+    "amount": 129.5,
+    "llm_rationale": "size mismatch with order record",
+    "order_id": "ord_77",
+    "refund_id": "rf_ord_77",
+    "user_id": "user_2"
+  },
+  {
+    "amount": 219.0,
+    "llm_rationale": "non-delivery confirmed by carrier note",
+    "order_id": "ord_88",
+    "refund_id": "rf_ord_88",
+    "user_id": "user_3"
+  },
+  {
+    "amount": 67.25,
+    "llm_rationale": "split-shipment evidence in ticket",
+    "order_id": "ord_91",
+    "refund_id": "rf_ord_91",
+    "user_id": "user_2"
+  }
+]

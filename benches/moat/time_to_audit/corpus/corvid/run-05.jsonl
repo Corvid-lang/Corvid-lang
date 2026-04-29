@@ -1,0 +1,9 @@
+{"kind":"schema_header","version":2,"writer":"corvid-vm","commit_sha":null,"source_path":null,"ts_ms":1777449094695,"run_id":"run-1777449094693"}
+{"kind":"seed_read","ts_ms":1777449094696,"run_id":"run-1777449094693","purpose":"rollout_default_seed","value":1777449094695}
+{"kind":"run_started","ts_ms":1777449094697,"run_id":"run-1777449094693","agent":"refund_bot","args":[{"message":"trial item, not what was advertised","order_id":"ord_5","user_id":"user_2"}]}
+{"kind":"tool_call","ts_ms":1777449094698,"run_id":"run-1777449094693","tool":"get_order","args":["ord_5"]}
+{"kind":"tool_result","ts_ms":1777449094698,"run_id":"run-1777449094693","tool":"get_order","result":{"amount":8.4,"id":"ord_5","user_id":"user_2"}}
+{"kind":"llm_call","ts_ms":1777449094698,"run_id":"run-1777449094693","prompt":"decide_refund","model":"mock-1","model_version":null,"rendered":"\r\n    Decide whether this ticket deserves a refund. Consider the order amount,\r\n    the user's complaint, and fairness.\r\n    ","args":[{"message":"trial item, not what was advertised","order_id":"ord_5","user_id":"user_2"},{"amount":8.4,"id":"ord_5","user_id":"user_2"}]}
+{"kind":"host_event","ts_ms":1777449094698,"run_id":"run-1777449094693","name":"llm.usage","payload":{"adapter":"mock-1","completion_tokens":0,"cost_usd":0.0,"currency":"USD","local":false,"model":"mock-1","privacy_tier":null,"prompt":"decide_refund","prompt_tokens":0,"provider":null,"total_tokens":0,"unit":"token"}}
+{"kind":"llm_result","ts_ms":1777449094698,"run_id":"run-1777449094693","prompt":"decide_refund","model":"mock-1","model_version":null,"result":{"reason":"marketing copy matches product as shipped","should_refund":false}}
+{"kind":"run_completed","ts_ms":1777449094698,"run_id":"run-1777449094693","ok":true,"result":{"reason":"marketing copy matches product as shipped","should_refund":false},"error":null}

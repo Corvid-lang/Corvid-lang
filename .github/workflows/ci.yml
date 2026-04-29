@@ -431,3 +431,35 @@ jobs:
 
       - name: Drift gate vs committed RESULTS.md
         run: diff -u benches/moat/replay_determinism/RESULTS.md /tmp/replay_determinism_RESULTS.md
+
+  phase33-moat-time-to-audit:
+    # Phase 33-N (time-to-audit benchmark). For each stack with an
+    # implementation under runs/<stack>/queries/, runs every
+    # audit-question query, validates the answer byte-for-byte
+    # against the question's expected_answer.json, and counts
+    # audit-logic LOC. The drift gate diffs the regenerated
+    # RESULTS.md byte-for-byte against the committed file. The
+    # corpus_gen binary is part of the workspace; CI does not
+    # regenerate the corpus (it would require a full cargo build
+    # and produces traces with normalized fields that match
+    # byte-for-byte against the committed corpus, but that's not
+    # the property under test here — the audit-LOC count is).
+    name: 33 moat time-to-audit
+    runs-on: ubuntu-latest
+    needs: workspace-tests
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Run time-to-audit runner
+        run: |
+          python benches/moat/time_to_audit/runner/run.py \
+            --root benches/moat/time_to_audit \
+            --out  /tmp/time_to_audit_RESULTS.md
+
+      - name: Drift gate vs committed RESULTS.md
+        run: diff -u benches/moat/time_to_audit/RESULTS.md /tmp/time_to_audit_RESULTS.md

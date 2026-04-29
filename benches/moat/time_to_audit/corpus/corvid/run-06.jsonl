@@ -1,0 +1,15 @@
+{"kind":"schema_header","version":2,"writer":"corvid-vm","commit_sha":null,"source_path":null,"ts_ms":1777449094704,"run_id":"run-1777449094703"}
+{"kind":"seed_read","ts_ms":1777449094704,"run_id":"run-1777449094703","purpose":"rollout_default_seed","value":1777449094704}
+{"kind":"run_started","ts_ms":1777449094706,"run_id":"run-1777449094703","agent":"refund_bot","args":[{"message":"received only half the order","order_id":"ord_91","user_id":"user_2"}]}
+{"kind":"tool_call","ts_ms":1777449094706,"run_id":"run-1777449094703","tool":"get_order","args":["ord_91"]}
+{"kind":"tool_result","ts_ms":1777449094706,"run_id":"run-1777449094703","tool":"get_order","result":{"amount":67.25,"id":"ord_91","user_id":"user_2"}}
+{"kind":"llm_call","ts_ms":1777449094707,"run_id":"run-1777449094703","prompt":"decide_refund","model":"mock-1","model_version":null,"rendered":"\r\n    Decide whether this ticket deserves a refund. Consider the order amount,\r\n    the user's complaint, and fairness.\r\n    ","args":[{"message":"received only half the order","order_id":"ord_91","user_id":"user_2"},{"amount":67.25,"id":"ord_91","user_id":"user_2"}]}
+{"kind":"host_event","ts_ms":1777449094707,"run_id":"run-1777449094703","name":"llm.usage","payload":{"adapter":"mock-1","completion_tokens":0,"cost_usd":0.0,"currency":"USD","local":false,"model":"mock-1","privacy_tier":null,"prompt":"decide_refund","prompt_tokens":0,"provider":null,"total_tokens":0,"unit":"token"}}
+{"kind":"llm_result","ts_ms":1777449094707,"run_id":"run-1777449094703","prompt":"decide_refund","model":"mock-1","model_version":null,"result":{"reason":"split-shipment evidence in ticket","should_refund":true}}
+{"kind":"approval_request","ts_ms":1777449094707,"run_id":"run-1777449094703","label":"IssueRefund","args":["ord_91",67.25]}
+{"kind":"approval_decision","ts_ms":1777449094707,"run_id":"run-1777449094703","site":"IssueRefund","args":["ord_91",67.25],"accepted":true,"decider":"runtime-approver","rationale":null}
+{"kind":"approval_response","ts_ms":1777449094707,"run_id":"run-1777449094703","label":"IssueRefund","approved":true}
+{"kind":"approval_token_issued","ts_ms":1777449094707,"run_id":"run-1777449094703","token_id":"apr_220d7e55bbb1148ea7eac9234d22006234c1bcf925fc1ea24ddff9db9987f544","label":"IssueRefund","args":["ord_91",67.25],"scope":"one_time","issued_at_ms":1777449094707,"expires_at_ms":1777449394707}
+{"kind":"tool_call","ts_ms":1777449094707,"run_id":"run-1777449094703","tool":"issue_refund","args":["ord_91",67.25]}
+{"kind":"tool_result","ts_ms":1777449094707,"run_id":"run-1777449094703","tool":"issue_refund","result":{"amount":67.25,"refund_id":"rf_ord_91"}}
+{"kind":"run_completed","ts_ms":1777449094707,"run_id":"run-1777449094703","ok":true,"result":{"reason":"split-shipment evidence in ticket","should_refund":true},"error":null}

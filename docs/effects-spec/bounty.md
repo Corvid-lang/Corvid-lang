@@ -153,6 +153,28 @@ divergence (e.g. stripping retry counters or attempt IDs that
 genuinely vary across runs). The point is what the stack ships out
 of the box — not how aggressively a reviewer can normalize.
 
+### `benches/moat/time_to_audit/` — audit-logic LOC across 3 representative questions
+
+Current published numbers (3 audit questions: list refunds, refunds
+over $50, refunds per user):
+
+- Corvid (JSONL trace under `target/trace/`): **41 LOC** to answer all three correctly.
+- Python (LangChain + LangSmith): **bounty-open** (3/3 queries unimplemented).
+- TypeScript (Vercel AI SDK + OTEL): **bounty-open** (3/3 queries unimplemented).
+
+A submission counts if it lands a stack sub-tree
+(`runs/<stack>/queries/q01.<ext>` … `q03.<ext>`) plus an equivalent
+corpus produced by running the actual agent in that stack — not
+hand-rolled JSON. Each query reads `--corpus <dir>` and writes its
+answer to `--out <path>` as JSON; the runner validates each answer
+byte-for-byte against the question's `expected_answer.json` and
+counts audit-logic LOC (excluding blank lines, pure-comment lines,
+and a bounded `# region: cli-plumbing` block).
+
+Submissions are rejected if the corpus is hand-rolled, if the
+answer differs from `expected_answer.json`, or if the LOC count
+hides logic in unaccounted helper modules.
+
 ### Window
 
 The bounty window is rolling. The published numbers are

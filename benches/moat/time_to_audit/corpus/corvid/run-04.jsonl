@@ -1,0 +1,15 @@
+{"kind":"schema_header","version":2,"writer":"corvid-vm","commit_sha":null,"source_path":null,"ts_ms":1777449094684,"run_id":"run-1777449094682"}
+{"kind":"seed_read","ts_ms":1777449094685,"run_id":"run-1777449094682","purpose":"rollout_default_seed","value":1777449094684}
+{"kind":"run_started","ts_ms":1777449094687,"run_id":"run-1777449094682","agent":"refund_bot","args":[{"message":"delivered to wrong address; never received","order_id":"ord_88","user_id":"user_3"}]}
+{"kind":"tool_call","ts_ms":1777449094687,"run_id":"run-1777449094682","tool":"get_order","args":["ord_88"]}
+{"kind":"tool_result","ts_ms":1777449094687,"run_id":"run-1777449094682","tool":"get_order","result":{"amount":219.0,"id":"ord_88","user_id":"user_3"}}
+{"kind":"llm_call","ts_ms":1777449094687,"run_id":"run-1777449094682","prompt":"decide_refund","model":"mock-1","model_version":null,"rendered":"\r\n    Decide whether this ticket deserves a refund. Consider the order amount,\r\n    the user's complaint, and fairness.\r\n    ","args":[{"message":"delivered to wrong address; never received","order_id":"ord_88","user_id":"user_3"},{"amount":219.0,"id":"ord_88","user_id":"user_3"}]}
+{"kind":"host_event","ts_ms":1777449094687,"run_id":"run-1777449094682","name":"llm.usage","payload":{"adapter":"mock-1","completion_tokens":0,"cost_usd":0.0,"currency":"USD","local":false,"model":"mock-1","privacy_tier":null,"prompt":"decide_refund","prompt_tokens":0,"provider":null,"total_tokens":0,"unit":"token"}}
+{"kind":"llm_result","ts_ms":1777449094688,"run_id":"run-1777449094682","prompt":"decide_refund","model":"mock-1","model_version":null,"result":{"reason":"non-delivery confirmed by carrier note","should_refund":true}}
+{"kind":"approval_request","ts_ms":1777449094688,"run_id":"run-1777449094682","label":"IssueRefund","args":["ord_88",219.0]}
+{"kind":"approval_decision","ts_ms":1777449094688,"run_id":"run-1777449094682","site":"IssueRefund","args":["ord_88",219.0],"accepted":true,"decider":"runtime-approver","rationale":null}
+{"kind":"approval_response","ts_ms":1777449094688,"run_id":"run-1777449094682","label":"IssueRefund","approved":true}
+{"kind":"approval_token_issued","ts_ms":1777449094688,"run_id":"run-1777449094682","token_id":"apr_acb3d84ab33fb7c0064a512ba9f02eb81a5a44a59f0781041f95add60b44cfd1","label":"IssueRefund","args":["ord_88",219.0],"scope":"one_time","issued_at_ms":1777449094688,"expires_at_ms":1777449394688}
+{"kind":"tool_call","ts_ms":1777449094688,"run_id":"run-1777449094682","tool":"issue_refund","args":["ord_88",219.0]}
+{"kind":"tool_result","ts_ms":1777449094688,"run_id":"run-1777449094682","tool":"issue_refund","result":{"amount":219.0,"refund_id":"rf_ord_88"}}
+{"kind":"run_completed","ts_ms":1777449094688,"run_id":"run-1777449094682","ok":true,"result":{"reason":"non-delivery confirmed by carrier note","should_refund":true},"error":null}

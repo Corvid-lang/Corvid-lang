@@ -1,0 +1,15 @@
+{"kind":"schema_header","version":2,"writer":"corvid-vm","commit_sha":null,"source_path":null,"ts_ms":1777449094656,"run_id":"run-1777449094655"}
+{"kind":"seed_read","ts_ms":1777449094656,"run_id":"run-1777449094655","purpose":"rollout_default_seed","value":1777449094656}
+{"kind":"run_started","ts_ms":1777449094658,"run_id":"run-1777449094655","agent":"refund_bot","args":[{"message":"package arrived broken — please refund","order_id":"ord_42","user_id":"user_1"}]}
+{"kind":"tool_call","ts_ms":1777449094658,"run_id":"run-1777449094655","tool":"get_order","args":["ord_42"]}
+{"kind":"tool_result","ts_ms":1777449094658,"run_id":"run-1777449094655","tool":"get_order","result":{"amount":49.99,"id":"ord_42","user_id":"user_1"}}
+{"kind":"llm_call","ts_ms":1777449094661,"run_id":"run-1777449094655","prompt":"decide_refund","model":"mock-1","model_version":null,"rendered":"\r\n    Decide whether this ticket deserves a refund. Consider the order amount,\r\n    the user's complaint, and fairness.\r\n    ","args":[{"message":"package arrived broken — please refund","order_id":"ord_42","user_id":"user_1"},{"amount":49.99,"id":"ord_42","user_id":"user_1"}]}
+{"kind":"host_event","ts_ms":1777449094661,"run_id":"run-1777449094655","name":"llm.usage","payload":{"adapter":"mock-1","completion_tokens":0,"cost_usd":0.0,"currency":"USD","local":false,"model":"mock-1","privacy_tier":null,"prompt":"decide_refund","prompt_tokens":0,"provider":null,"total_tokens":0,"unit":"token"}}
+{"kind":"llm_result","ts_ms":1777449094661,"run_id":"run-1777449094655","prompt":"decide_refund","model":"mock-1","model_version":null,"result":{"reason":"user reported legitimate complaint","should_refund":true}}
+{"kind":"approval_request","ts_ms":1777449094661,"run_id":"run-1777449094655","label":"IssueRefund","args":["ord_42",49.99]}
+{"kind":"approval_decision","ts_ms":1777449094661,"run_id":"run-1777449094655","site":"IssueRefund","args":["ord_42",49.99],"accepted":true,"decider":"runtime-approver","rationale":null}
+{"kind":"approval_response","ts_ms":1777449094661,"run_id":"run-1777449094655","label":"IssueRefund","approved":true}
+{"kind":"approval_token_issued","ts_ms":1777449094661,"run_id":"run-1777449094655","token_id":"apr_728877fcc32ce45237e670429d9eb1b6ee03c8fb69539d3f38fcd9670e8a6602","label":"IssueRefund","args":["ord_42",49.99],"scope":"one_time","issued_at_ms":1777449094661,"expires_at_ms":1777449394661}
+{"kind":"tool_call","ts_ms":1777449094661,"run_id":"run-1777449094655","tool":"issue_refund","args":["ord_42",49.99]}
+{"kind":"tool_result","ts_ms":1777449094661,"run_id":"run-1777449094655","tool":"issue_refund","result":{"amount":49.99,"refund_id":"rf_ord_42"}}
+{"kind":"run_completed","ts_ms":1777449094661,"run_id":"run-1777449094655","ok":true,"result":{"reason":"user reported legitimate complaint","should_refund":true},"error":null}
