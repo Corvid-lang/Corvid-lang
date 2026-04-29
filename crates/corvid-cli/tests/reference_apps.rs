@@ -774,6 +774,62 @@ fn deploy_package_emits_dockerfile_and_oci_metadata() {
 }
 
 #[test]
+fn release_command_emits_signed_artifacts_and_changelog() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let out = temp.path().join("release");
+    let release = Command::new(corvid_bin())
+        .arg("release")
+        .arg("beta")
+        .arg("1.0.0-beta.1")
+        .arg("--out")
+        .arg(&out)
+        .env(
+            "CORVID_RELEASE_SIGNING_KEY",
+            "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+        )
+        .current_dir(repo_root())
+        .output()
+        .expect("run release command");
+    assert!(
+        release.status.success(),
+        "release failed:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&release.stdout),
+        String::from_utf8_lossy(&release.stderr)
+    );
+
+    let manifest_text =
+        fs::read_to_string(out.join("release-manifest.json")).expect("read release manifest");
+    let manifest: Value = serde_json::from_str(&manifest_text).expect("parse release manifest");
+    assert_eq!(manifest["schema"].as_str(), Some("corvid.release.manifest.v1"));
+    assert_eq!(manifest["channel"].as_str(), Some("beta"));
+    assert_eq!(manifest["version"].as_str(), Some("1.0.0-beta.1"));
+    assert!(manifest["binary_sha256"]
+        .as_str()
+        .is_some_and(|hash| hash.len() == 64));
+
+    let binary_name = manifest["binary"].as_str().expect("binary name");
+    assert!(out.join(binary_name).is_file(), "release binary must exist");
+    let checksums = fs::read_to_string(out.join("SHA256SUMS.txt")).expect("read checksums");
+    assert!(checksums.contains(binary_name), "{checksums}");
+    assert!(checksums.contains(manifest["binary_sha256"].as_str().unwrap()));
+
+    let changelog = fs::read_to_string(out.join("CHANGELOG.md")).expect("read changelog");
+    assert!(changelog.contains("Corvid 1.0.0-beta.1"));
+    assert!(changelog.contains("corvid upgrade --check"));
+    assert!(changelog.contains("corvid claim audit"));
+
+    let attestation_text = fs::read_to_string(out.join("release-attestation.dsse.json"))
+        .expect("read release attestation");
+    let attestation: Value =
+        serde_json::from_str(&attestation_text).expect("parse release attestation");
+    assert_eq!(
+        attestation["payloadType"].as_str(),
+        Some("application/vnd.corvid.release.manifest.v1+json")
+    );
+    assert_eq!(attestation["signatures"][0]["keyid"].as_str(), Some("release-channel"));
+}
+
+#[test]
 fn deploy_compose_emits_reference_app_manifest() {
     let temp = tempfile::tempdir().expect("tempdir");
     let app = repo_root()

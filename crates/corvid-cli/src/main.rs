@@ -44,6 +44,7 @@ mod lineage_cmd;
 mod observe_cmd;
 mod receipt_cache;
 mod receipt_cmd;
+mod release_cmd;
 mod replay;
 mod routing_report;
 mod test_from_traces;
@@ -643,6 +644,16 @@ enum Command {
     Deploy {
         #[command(subcommand)]
         command: DeployCommand,
+    },
+    /// Produce signed release-channel artifacts.
+    Release {
+        /// Release channel: nightly, beta, or stable.
+        channel: String,
+        /// Explicit version. Nightly requires `-nightly.`, beta requires `-beta.`, stable is plain SemVer.
+        version: Option<String>,
+        /// Output directory for generated release artifacts.
+        #[arg(long, value_name = "DIR")]
+        out: Option<PathBuf>,
     },
     /// Inspect and apply checked-in database migrations.
     Migrate {
@@ -1392,6 +1403,18 @@ fn main_impl() -> ExitCode {
                 deploy_cmd::run_systemd(&app, &out).map(|_| 0)
             }
         },
+        Some(Command::Release {
+            channel,
+            version,
+            out,
+        }) => {
+            let out = out.unwrap_or_else(|| {
+                PathBuf::from("target")
+                    .join("release")
+                    .join(channel.as_str())
+            });
+            release_cmd::run_release(&channel, version.as_deref(), &out).map(|_| 0)
+        }
         Some(Command::Migrate { command }) => match command {
             MigrateCommand::Status {
                 dir,

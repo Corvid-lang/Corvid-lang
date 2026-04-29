@@ -2447,7 +2447,7 @@ corvid run --target=server --mode=real             # real-provider mode behind e
 - [x] 43A-market-readiness-brief     `docs/phase-43-market-readiness.md` defines launch gates, release channels, support posture, security process, beta criteria, and non-scope.
 - [ ] 43B-deploy-package             `corvid deploy package` emits Dockerfile, OCI metadata, health/readiness config, migration runner, env schema, and signed build attestation.
 - [x] 43C-deployment-manifests       Docker Compose, single-service PaaS, Kubernetes, and systemd manifests work for at least one reference app.
-- [ ] 43D-release-channels           Nightly, beta, and stable release channels are documented and wired to SemVer/stability policy.
+- [x] 43D-release-channels           Nightly, beta, and stable release channels are documented and wired to SemVer/stability policy.
 - [ ] 43E-upgrade-migration-tools    Syntax, stdlib, schema, trace-format, and connector-manifest migrations have tooling and docs.
 - [ ] 43F-maintainer-docs            Release checklist, advisory process, compatibility policy, CI gates, benchmark reproduction, and claim review docs are complete.
 - [ ] 43G-developer-docs             Backend tutorial, Personal Executive Agent tutorial, connector guide, approval guide, observability guide, and production checklist are complete.
@@ -2509,7 +2509,7 @@ corvid claim audit                           # AI-assisted final claim audit (ad
 - [x] 43C2-paas-manifest             Fly/Render-style single-service deploy works.
 - [x] 43C3-k8s-systemd-manifests     Kubernetes and systemd manifests work or are explicitly scoped.
 - [x] 43D1-release-policy            Nightly/beta/stable SemVer and stability policy are documented.
-- [ ] 43D2-release-automation        Release channel automation produces signed artifacts and changelog entries.
+- [x] 43D2-release-automation        Release channel automation produces signed artifacts and changelog entries.
 - [ ] 43E1-syntax-stdlib-migrator    Syntax and stdlib migration tooling exists.
 - [ ] 43E2-schema-trace-migrator     Schema, trace-format, and connector-manifest migrations exist.
 - [ ] 43F1-maintainer-runbooks       Release checklist, advisory process, compatibility policy, CI gates, benchmark reproduction, and claim review docs are complete.
