@@ -9,8 +9,13 @@ use anyhow::{Context, Result};
 use corvid_driver::{
     default_eval_options, load_dotenv_walking, render_eval_report, run_evals_at_path_with_options,
 };
+use corvid_runtime::{
+    promote_lineage_events_to_eval, LineageEvent, LineageRedactionPolicy,
+    LINEAGE_EVAL_FIXTURE_SCHEMA,
+};
 use serde::Deserialize;
 use std::collections::{BTreeMap, BTreeSet};
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -20,6 +25,7 @@ pub fn run_eval(
     swap_model: Option<&str>,
     max_spend: Option<f64>,
     golden_traces: Option<&Path>,
+    promote_out: Option<&Path>,
 ) -> Result<u8> {
     if golden_traces.is_some() && swap_model.is_some() {
         anyhow::bail!("`corvid eval --golden-traces` and `--swap-model` are separate modes");
@@ -28,7 +34,7 @@ pub fn run_eval(
         return run_golden_trace_evals(inputs, source, trace_dir);
     }
     let Some(model) = swap_model else {
-        return run_source_evals(inputs, max_spend);
+        return run_source_evals(inputs, max_spend, promote_out);
     };
 
     if inputs.is_empty() {
@@ -39,7 +45,10 @@ pub fn run_eval(
     let mut exit_code = 0_u8;
     for input in inputs {
         let code = if input.is_dir() {
-            eprintln!("running trace-suite migration analysis: {}", input.display());
+            eprintln!(
+                "running trace-suite migration analysis: {}",
+                input.display()
+            );
             test_from_traces::run_test_from_traces(test_from_traces::TestFromTracesArgs {
                 trace_dir: input,
                 source,
@@ -109,18 +118,36 @@ fn run_golden_trace_evals(
     Ok(exit_code)
 }
 
-fn run_source_evals(inputs: &[PathBuf], max_spend: Option<f64>) -> Result<u8> {
+fn run_source_evals(
+    inputs: &[PathBuf],
+    max_spend: Option<f64>,
+    promote_out: Option<&Path>,
+) -> Result<u8> {
     if inputs
         .first()
         .and_then(|input| input.to_str())
         .is_some_and(|input| input == "compare")
     {
+        if promote_out.is_some() {
+            anyhow::bail!("`corvid eval compare` does not accept `--promote-out`");
+        }
         return run_compare(&inputs[1..]);
+    }
+    if inputs
+        .first()
+        .and_then(|input| input.to_str())
+        .is_some_and(|input| input == "promote")
+    {
+        return run_promote_lineage(&inputs[1..], promote_out);
+    }
+    if promote_out.is_some() {
+        anyhow::bail!("`--promote-out` is only valid with `corvid eval promote <trace>`");
     }
 
     if inputs.is_empty() {
         eprintln!("usage: `corvid eval <file.cor> [more.cor ...]`");
         eprintln!("       `corvid eval compare <base>..<head>`");
+        eprintln!("       `corvid eval promote <trace.lineage.jsonl> [--promote-out DIR]`");
         eprintln!(
             "For model migration analysis, use `corvid eval --swap-model <MODEL> --source <FILE> <TRACE_OR_DIR>...`."
         );
@@ -164,6 +191,76 @@ fn run_source_evals(inputs: &[PathBuf], max_spend: Option<f64>) -> Result<u8> {
     Ok(exit_code)
 }
 
+fn run_promote_lineage(inputs: &[PathBuf], out_dir: Option<&Path>) -> Result<u8> {
+    if inputs.is_empty() {
+        eprintln!(
+            "usage: `corvid eval promote <trace.lineage.jsonl> [more...] [--promote-out DIR]`"
+        );
+        return Ok(1);
+    }
+    let out_dir = out_dir.unwrap_or_else(|| Path::new("target/eval/lineage"));
+    fs::create_dir_all(out_dir)
+        .with_context(|| format!("creating eval fixture directory `{}`", out_dir.display()))?;
+    let policy = LineageRedactionPolicy::production_default();
+    for input in inputs {
+        let events = read_lineage_events(input)
+            .with_context(|| format!("reading lineage trace `{}`", input.display()))?;
+        let fixture = promote_lineage_events_to_eval(&events, &policy)
+            .with_context(|| format!("promoting lineage trace `{}`", input.display()))?;
+        let file_name = format!(
+            "{}.lineage-eval.json",
+            sanitize_file_stem(&fixture.trace_id)
+        );
+        let out_path = out_dir.join(file_name);
+        let json = serde_json::to_string_pretty(&fixture)
+            .context("serializing promoted lineage eval fixture")?;
+        fs::write(&out_path, format!("{json}\n"))
+            .with_context(|| format!("writing eval fixture `{}`", out_path.display()))?;
+        println!(
+            "promoted: {} -> {} ({}, events={}, fixture_hash={})",
+            input.display(),
+            out_path.display(),
+            LINEAGE_EVAL_FIXTURE_SCHEMA,
+            fixture.events.len(),
+            fixture.fixture_hash
+        );
+    }
+    Ok(0)
+}
+
+fn read_lineage_events(path: &Path) -> Result<Vec<LineageEvent>> {
+    let text = fs::read_to_string(path)?;
+    let mut events = Vec::new();
+    for (index, line) in text.lines().enumerate() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let event: LineageEvent = serde_json::from_str(trimmed)
+            .with_context(|| format!("line {} is not a lineage event", index + 1))?;
+        events.push(event);
+    }
+    Ok(events)
+}
+
+fn sanitize_file_stem(value: &str) -> String {
+    let sanitized = value
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_') {
+                ch
+            } else {
+                '-'
+            }
+        })
+        .collect::<String>();
+    if sanitized.is_empty() {
+        "trace".to_string()
+    } else {
+        sanitized
+    }
+}
+
 fn configured_max_spend(cli: Option<f64>) -> Result<Option<f64>> {
     if cli.is_some() {
         return Ok(cli);
@@ -180,9 +277,10 @@ fn configured_max_spend(cli: Option<f64>) -> Result<Option<f64>> {
 
 fn planned_eval_spend(inputs: &[PathBuf]) -> Result<f64> {
     inputs.iter().try_fold(0.0, |total, input| {
-        Ok(total + prior_eval_cost(input).with_context(|| {
-            format!("failed to estimate eval spend for `{}`", input.display())
-        })?)
+        Ok(total
+            + prior_eval_cost(input).with_context(|| {
+                format!("failed to estimate eval spend for `{}`", input.display())
+            })?)
     })
 }
 
@@ -310,7 +408,10 @@ fn load_summaries_from_path(path: &Path) -> Result<Vec<StoredEvalSummary>> {
     let mut files = Vec::new();
     collect_latest_summary_files(path, &mut files);
     files.sort();
-    files.into_iter().map(|file| read_summary_file(&file)).collect()
+    files
+        .into_iter()
+        .map(|file| read_summary_file(&file))
+        .collect()
 }
 
 fn read_summary_file(path: &Path) -> Result<StoredEvalSummary> {
@@ -547,11 +648,23 @@ fn build_compare_report(
         base: base.into(),
         head: head.into(),
         base_passed: base_summaries.iter().map(count_passed_evals).sum(),
-        base_total: base_summaries.iter().map(|summary| summary.evals.len()).sum(),
+        base_total: base_summaries
+            .iter()
+            .map(|summary| summary.evals.len())
+            .sum(),
         head_passed: head_summaries.iter().map(count_passed_evals).sum(),
-        head_total: head_summaries.iter().map(|summary| summary.evals.len()).sum(),
-        base_cost: base_summaries.iter().map(|summary| summary.trace.total_cost_usd).sum(),
-        head_cost: head_summaries.iter().map(|summary| summary.trace.total_cost_usd).sum(),
+        head_total: head_summaries
+            .iter()
+            .map(|summary| summary.evals.len())
+            .sum(),
+        base_cost: base_summaries
+            .iter()
+            .map(|summary| summary.trace.total_cost_usd)
+            .sum(),
+        head_cost: head_summaries
+            .iter()
+            .map(|summary| summary.trace.total_cost_usd)
+            .sum(),
         base_latency_ms: base_summaries
             .iter()
             .map(|summary| summary.trace.total_latency_ms)
@@ -707,13 +820,13 @@ mod tests {
 
     #[test]
     fn eval_without_inputs_prints_usage() {
-        let code = run_eval(&[], None, None, None, None).expect("usage returns an exit code");
+        let code = run_eval(&[], None, None, None, None, None).expect("usage returns an exit code");
         assert_eq!(code, 1);
     }
 
     #[test]
     fn eval_swap_model_requires_inputs() {
-        let err = run_eval(&[], None, Some("candidate"), None, None).unwrap_err();
+        let err = run_eval(&[], None, Some("candidate"), None, None, None).unwrap_err();
         assert!(
             err.to_string().contains("requires at least one trace"),
             "{err:#}"
@@ -738,7 +851,7 @@ mod tests {
         )
         .expect("summary");
 
-        let code = run_eval(&[source], None, None, Some(0.10), None).expect("budget result");
+        let code = run_eval(&[source], None, None, Some(0.10), None, None).expect("budget result");
         assert_eq!(code, 1);
     }
 
@@ -750,12 +863,61 @@ mod tests {
             Some("candidate"),
             None,
             Some(Path::new("traces")),
+            None,
         )
         .unwrap_err();
         assert!(
             err.to_string().contains("separate modes"),
             "unexpected error: {err:#}"
         );
+    }
+
+    #[test]
+    fn eval_promote_writes_redacted_lineage_fixture() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let trace_path = dir.path().join("trace-1.lineage.jsonl");
+        let out_dir = dir.path().join("fixtures");
+        let mut route = corvid_runtime::LineageEvent::root(
+            "trace-1",
+            corvid_runtime::LineageKind::Route,
+            "POST /send",
+            1,
+        )
+        .finish(corvid_runtime::LineageStatus::Ok, 10);
+        route.replay_key = "replay-secret".to_string();
+        let mut tool = corvid_runtime::LineageEvent::child(
+            &route,
+            corvid_runtime::LineageKind::Tool,
+            "email alice@example.com",
+            0,
+            2,
+        )
+        .finish(corvid_runtime::LineageStatus::Failed, 8);
+        tool.guarantee_id = "approval.reachable_entrypoints_require_contract".to_string();
+        tool.effect_ids = vec!["send_email".to_string()];
+        let body = [route, tool]
+            .iter()
+            .map(|event| serde_json::to_string(event).unwrap())
+            .collect::<Vec<_>>()
+            .join("\n");
+        std::fs::write(&trace_path, format!("{body}\n")).expect("trace");
+
+        let code = run_eval(
+            &[PathBuf::from("promote"), trace_path.clone()],
+            None,
+            None,
+            None,
+            None,
+            Some(&out_dir),
+        )
+        .expect("promote");
+        assert_eq!(code, 0);
+        let fixture_path = out_dir.join("trace-1.lineage-eval.json");
+        let json = std::fs::read_to_string(fixture_path).expect("fixture");
+        assert!(json.contains(LINEAGE_EVAL_FIXTURE_SCHEMA));
+        assert!(json.contains("fixture_hash"));
+        assert!(!json.contains("alice@example.com"));
+        assert!(!json.contains("replay-secret"));
     }
 
     #[test]
@@ -808,14 +970,26 @@ mod tests {
         let report = build_compare_report("base", "head", &[base], &[head]).expect("compare");
         assert!(report.has_regression());
         let rendered = report.render();
-        assert!(rendered.contains("pass rate: 1/1 (100.0%) -> 0/1 (0.0%)"), "{rendered}");
-        assert!(rendered.contains("cost: $0.010000 -> $0.030000"), "{rendered}");
+        assert!(
+            rendered.contains("pass rate: 1/1 (100.0%) -> 0/1 (0.0%)"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("cost: $0.010000 -> $0.030000"),
+            "{rendered}"
+        );
         assert!(rendered.contains("latency: 10 ms -> 25 ms"), "{rendered}");
         assert!(rendered.contains("prompts: +review -none"), "{rendered}");
-        assert!(rendered.contains("model routes: +draft:strong -draft:cheap"), "{rendered}");
+        assert!(
+            rendered.contains("model routes: +draft:strong -draft:cheap"),
+            "{rendered}"
+        );
         assert!(rendered.contains("prompt diffs:"), "{rendered}");
         assert!(rendered.contains("regression clusters:"), "{rendered}");
         assert!(rendered.contains("prompt change: 2"), "{rendered}");
-        assert!(rendered.contains("suite.cor :: quality :: assert <expr>: Passed -> Failed"), "{rendered}");
+        assert!(
+            rendered.contains("suite.cor :: quality :: assert <expr>: Passed -> Failed"),
+            "{rendered}"
+        );
     }
 }

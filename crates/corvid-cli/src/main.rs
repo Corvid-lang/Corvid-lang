@@ -383,6 +383,9 @@ enum Command {
         /// Replay a production trace directory as golden eval evidence.
         #[arg(long, value_name = "DIR")]
         golden_traces: Option<PathBuf>,
+        /// Output directory for `corvid eval promote <trace.lineage.jsonl>`.
+        #[arg(long, value_name = "DIR")]
+        promote_out: Option<PathBuf>,
     },
     /// Re-execute a recorded trace deterministically.
     ///
@@ -1120,12 +1123,14 @@ fn main_impl() -> ExitCode {
             swap_model,
             max_spend,
             golden_traces,
+            promote_out,
         }) => eval_cmd::run_eval(
             &inputs,
             source.as_deref(),
             swap_model.as_deref(),
             max_spend,
             golden_traces.as_deref(),
+            promote_out.as_deref(),
         ),
         Some(Command::Replay {
             trace,
