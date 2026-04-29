@@ -2432,20 +2432,20 @@ corvid run --target=server --mode=real             # real-provider mode behind e
 
 **Scope:**
 
-- [ ] `corvid deploy package`: Dockerfile, OCI image metadata, health/readiness config, migration runner, env schema, and signed build attestation.
+- [x] `corvid deploy package`: Dockerfile, OCI image metadata, health/readiness config, migration runner, env schema, and signed build attestation.
 - [ ] Deployment manifests for local Docker Compose, Fly.io/Render-style single service, Kubernetes, and bare-metal systemd.
-- [ ] Release channels: nightly, beta, stable; SemVer policy tied to the stability contract and migration guide.
-- [ ] Upgrade/migration tooling for syntax, stdlib, schema, trace format, and connector manifests.
-- [ ] Maintainer docs: release checklist, security advisory process, compatibility policy, CI gates, benchmark reproduction, and claim review process.
-- [ ] Developer docs: backend tutorial, Personal Executive Agent tutorial, connector authoring guide, approval-system guide, observability guide, and production checklist.
+- [x] Release channels: nightly, beta, stable; SemVer policy tied to the stability contract and migration guide.
+- [x] Upgrade/migration tooling for syntax, stdlib, schema, trace format, and connector manifests.
+- [x] Maintainer docs: release checklist, security advisory process, compatibility policy, CI gates, benchmark reproduction, and claim review process.
+- [x] Developer docs: backend tutorial, Personal Executive Agent tutorial, connector authoring guide, approval-system guide, observability guide, and production checklist.
 - [ ] Beta program: at least 20 external developers build real backend apps; feedback must close as code/docs/tests or explicit non-scope before launch.
-- [ ] Final claim audit: README, website, launch page, docs, and `corvid claim --explain` say the same thing.
-- [ ] Launch package: install scripts, changelog, signed binaries, checksums, reproducible build notes, demo scripts, and incident-response contacts.
+- [x] Final claim audit: README, website, launch page, docs, and `corvid claim --explain` say the same thing.
+- [x] Launch package: install scripts, changelog, signed binaries, checksums, reproducible build notes, demo scripts, and incident-response contacts.
 
 **Slice checklist:**
 
 - [x] 43A-market-readiness-brief     `docs/phase-43-market-readiness.md` defines launch gates, release channels, support posture, security process, beta criteria, and non-scope.
-- [ ] 43B-deploy-package             `corvid deploy package` emits Dockerfile, OCI metadata, health/readiness config, migration runner, env schema, and signed build attestation.
+- [x] 43B-deploy-package             `corvid deploy package` emits Dockerfile, OCI metadata, health/readiness config, migration runner, env schema, and signed build attestation.
 - [x] 43C-deployment-manifests       Docker Compose, single-service PaaS, Kubernetes, and systemd manifests work for at least one reference app.
 - [x] 43D-release-channels           Nightly, beta, and stable release channels are documented and wired to SemVer/stability policy.
 - [x] 43E-upgrade-migration-tools    Syntax, stdlib, schema, trace-format, and connector-manifest migrations have tooling and docs.
