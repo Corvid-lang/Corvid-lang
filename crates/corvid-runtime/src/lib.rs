@@ -31,6 +31,7 @@
 
 pub mod abi;
 pub mod adversarial;
+pub mod approval_policy;
 pub mod approval_queue;
 pub mod approvals;
 pub mod approver_bridge;
@@ -104,6 +105,10 @@ pub use approvals::{
 pub use approval_queue::{
     ApprovalAuditCoverage, ApprovalContractRecord, ApprovalCreate, ApprovalQueueAuditEvent,
     ApprovalQueueRecord, ApprovalQueueRuntime,
+};
+pub use approval_policy::{
+    validate_approval_contract_policy, validate_approval_contract_policy_at,
+    ApprovalContractPolicyReport,
 };
 pub use auth::{
     authorize_trace_permission, hash_api_key_secret, hash_oauth_state, hash_session_secret,

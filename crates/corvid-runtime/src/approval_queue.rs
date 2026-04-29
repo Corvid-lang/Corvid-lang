@@ -1,5 +1,6 @@
 use crate::errors::RuntimeError;
 use crate::tracing::now_ms;
+use crate::approval_policy::validate_approval_contract_policy_at;
 use rusqlite::{params, Connection, OptionalExtension};
 use std::path::Path;
 use std::sync::Mutex;
@@ -113,10 +114,12 @@ impl ApprovalQueueRuntime {
             ));
         }
         let now = now_ms();
-        if input.contract.expires_ms <= now {
-            return Err(RuntimeError::Other(
-                "approval contract expiry must be in the future".to_string(),
-            ));
+        let policy = validate_approval_contract_policy_at(&input.contract, now);
+        if !policy.valid {
+            return Err(RuntimeError::Other(format!(
+                "approval contract policy violation: {}",
+                policy.violations.join(",")
+            )));
         }
         let mut conn = self.conn.lock().unwrap();
         let tx = conn.transaction().map_err(sqlite_error)?;
@@ -755,7 +758,29 @@ mod tests {
                 trace_id: "trace-1".to_string(),
             })
             .unwrap_err();
-        assert!(err.to_string().contains("expiry"));
+        assert!(err.to_string().contains("expired_contract"));
+    }
+
+    #[test]
+    fn approval_store_enforces_contract_policy_before_queueing() {
+        let queue = ApprovalQueueRuntime::open_in_memory().unwrap();
+        let mut weak = contract(now_ms().saturating_add(60_000));
+        weak.required_role = "Member".to_string();
+        weak.data_class = "unknown".to_string();
+        let err = queue
+            .create(ApprovalCreate {
+                id: "approval-weak".to_string(),
+                tenant_id: "org-1".to_string(),
+                requester_actor_id: "user-1".to_string(),
+                contract: weak,
+                risk_level: "external_side_effect".to_string(),
+                trace_id: "trace-weak".to_string(),
+            })
+            .unwrap_err();
+        let message = err.to_string();
+        assert!(message.contains("irreversible_requires_elevated_role"));
+        assert!(message.contains("irreversible_requires_known_data_class"));
+        assert_eq!(queue.list_by_tenant("org-1").unwrap().len(), 0);
     }
 
     #[test]

@@ -2024,7 +2024,7 @@ corvid jobs drain --workers=all
 - [ ] 39C-jwt-oauth-callbacks        JWT verification and OAuth callback handling work for connector authorization flows.
 - [x] 39D-tenant-role-permissions    User, organization, role, and permission checks propagate through routes, jobs, tools, and traces.
 - [x] 39E-approval-queue-api         Approval create/list/inspect/approve/deny/expire/comment/delegate APIs ship with tests.
-- [ ] 39F-generated-approval-contracts Dangerous tools generate typed approval contracts with target, cost, data, expiry, irreversibility, and required role.
+- [x] 39F-generated-approval-contracts Dangerous tools generate typed approval contracts with target, cost, data, expiry, irreversibility, and required role.
 - [ ] 39G-approval-ui-contract       Backend exposes structured approval payloads that any frontend can render without parsing traces.
 - [ ] 39H-compiler-approval-reachability Compiler rejects dangerous route/job/tool paths with no reachable approval contract.
 - [ ] 39I-security-bypass-tests      Tests cover confused-deputy approval bypass, tenant-crossing approval reuse, stale approval replay, and privilege escalation.
@@ -2105,7 +2105,7 @@ corvid approvals export --since=2026-04-01  # audit dump
 - [x] 39E2-approval-api              Create/list/inspect/approve/deny/expire/comment/delegate APIs work.
 - [x] 39E3-approval-audit            Every approval transition writes audit and trace evidence.
 - [x] 39F1-contract-generation       Dangerous tools generate typed approval contract records.
-- [ ] 39F2-contract-policy-check     Required role/expiry/irreversibility/cost/data rules are enforced.
+- [x] 39F2-contract-policy-check     Required role/expiry/irreversibility/cost/data rules are enforced.
 - [ ] 39G1-ui-payload-schema         Approval UI payload schema is stable and frontend-agnostic.
 - [ ] 39G2-ui-contract-tests         Payloads can be rendered without parsing traces.
 - [ ] 39H1-reachability-analysis     Compiler checks route/job/tool paths for reachable approvals.
