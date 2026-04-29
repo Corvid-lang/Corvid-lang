@@ -2214,7 +2214,7 @@ corvid observe metrics --listen=:9090
 
 **Slice checklist:**
 
-- [ ] 41A-connector-design-brief     `docs/phase-41-connectors.md` defines connector manifest shape, OAuth/token state, effect profiles, mocks, replay, and non-scope.
+- [x] 41A-connector-design-brief     `docs/phase-41-connectors.md` defines connector manifest shape, OAuth/token state, effect profiles, mocks, replay, and non-scope.
 - [ ] 41B-connector-runtime-contract Shared connector runtime handles auth state, rate limits, retries, redaction, trace events, and mock mode.
 - [ ] 41C-gmail-google-workspace     Gmail/Google Workspace connector supports read/search/draft/send-with-approval and token refresh.
 - [ ] 41D-microsoft-365              Microsoft 365 connector supports Outlook mail, calendar basics, contacts, Graph auth, and tenant-aware scopes.
