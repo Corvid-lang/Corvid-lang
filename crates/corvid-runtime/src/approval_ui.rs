@@ -43,6 +43,12 @@ pub struct ApprovalUiAuditEvent {
     pub created_ms: u64,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ApprovalUiContractCheck {
+    pub renderable_without_trace_parsing: bool,
+    pub violations: Vec<String>,
+}
+
 pub fn approval_ui_payload(
     approval: &ApprovalQueueRecord,
     audit: &[ApprovalQueueAuditEvent],
@@ -80,6 +86,43 @@ pub fn approval_ui_payload(
         allowed_transitions: allowed_transitions(approval, viewer_actor_id, viewer_role),
         audit: audit.iter().map(ui_audit_event).collect(),
         redacted: true,
+    }
+}
+
+pub fn check_approval_ui_contract(payload: &ApprovalUiPayload) -> ApprovalUiContractCheck {
+    let mut violations = Vec::new();
+    if payload.schema_version != "corvid.approval.ui.v1" {
+        violations.push("unsupported_schema_version".to_string());
+    }
+    if payload.title.trim().is_empty() || payload.summary.trim().is_empty() {
+        violations.push("missing_display_text".to_string());
+    }
+    if payload.action.trim().is_empty() {
+        violations.push("missing_action".to_string());
+    }
+    if payload.target.kind.trim().is_empty() || payload.target.id.trim().is_empty() {
+        violations.push("missing_target".to_string());
+    }
+    if payload.required_role.trim().is_empty() {
+        violations.push("missing_required_role".to_string());
+    }
+    if !payload.max_cost_usd.is_finite() || payload.max_cost_usd < 0.0 {
+        violations.push("invalid_cost".to_string());
+    }
+    if payload.trace_id.trim().is_empty() || payload.replay_key.trim().is_empty() {
+        violations.push("missing_lineage_reference".to_string());
+    }
+    for transition in &payload.allowed_transitions {
+        if !matches!(
+            transition.as_str(),
+            "approve" | "deny" | "comment" | "delegate" | "expire"
+        ) {
+            violations.push(format!("unknown_transition:{transition}"));
+        }
+    }
+    ApprovalUiContractCheck {
+        renderable_without_trace_parsing: violations.is_empty(),
+        violations,
     }
 }
 
@@ -226,5 +269,40 @@ mod tests {
         assert_eq!(wrong_role.allowed_transitions, vec!["comment".to_string()]);
         let wrong_delegate = approval_ui_payload(&delegated, &audit, "reviewer-3", "Reviewer");
         assert_eq!(wrong_delegate.allowed_transitions, vec!["comment".to_string()]);
+    }
+
+    #[test]
+    fn approval_ui_contract_check_proves_payload_renderability() {
+        let queue = ApprovalQueueRuntime::open_in_memory().unwrap();
+        let approval = queue
+            .create(ApprovalCreate {
+                id: "approval-1".to_string(),
+                tenant_id: "org-1".to_string(),
+                requester_actor_id: "user-1".to_string(),
+                contract: contract(now_ms().saturating_add(60_000)),
+                risk_level: "external_side_effect".to_string(),
+                trace_id: "trace-1".to_string(),
+            })
+            .unwrap();
+        let payload = approval_ui_payload(
+            &approval,
+            &queue.audit_events(&approval.id).unwrap(),
+            "reviewer-1",
+            "Reviewer",
+        );
+        let check = check_approval_ui_contract(&payload);
+        assert!(check.renderable_without_trace_parsing, "{check:?}");
+
+        let mut broken = payload.clone();
+        broken.title = String::new();
+        broken.target.id = String::new();
+        broken.allowed_transitions.push("parse_trace".to_string());
+        let check = check_approval_ui_contract(&broken);
+        assert!(!check.renderable_without_trace_parsing);
+        assert!(check.violations.contains(&"missing_display_text".to_string()));
+        assert!(check.violations.contains(&"missing_target".to_string()));
+        assert!(check
+            .violations
+            .contains(&"unknown_transition:parse_trace".to_string()));
     }
 }

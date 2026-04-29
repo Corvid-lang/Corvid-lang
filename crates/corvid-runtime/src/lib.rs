@@ -112,7 +112,8 @@ pub use approval_policy::{
     ApprovalContractPolicyReport,
 };
 pub use approval_ui::{
-    approval_ui_payload, ApprovalUiAuditEvent, ApprovalUiPayload, ApprovalUiTarget,
+    approval_ui_payload, check_approval_ui_contract, ApprovalUiAuditEvent, ApprovalUiContractCheck,
+    ApprovalUiPayload, ApprovalUiTarget,
 };
 pub use auth::{
     authorize_trace_permission, hash_api_key_secret, hash_oauth_state, hash_session_secret,
