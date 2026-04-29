@@ -1,6 +1,7 @@
 use anyhow::{Context, Result};
 use corvid_runtime::{
-    compute_lineage_drift_report, LineageDriftReport, LineageEvent, LineageKind, LineageStatus,
+    compute_lineage_drift_report, group_lineage_incidents, LineageDriftReport, LineageEvent,
+    LineageIncidentGroup, LineageKind, LineageStatus,
 };
 use std::collections::BTreeMap;
 use std::fs;
@@ -42,6 +43,7 @@ pub struct ObserveShowReport {
     pub guarantee_groups: Vec<ObservedGroup>,
     pub effect_groups: Vec<ObservedGroup>,
     pub data_class_groups: Vec<ObservedGroup>,
+    pub incident_groups: Vec<LineageIncidentGroup>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -148,6 +150,7 @@ pub fn build_observe_show(id_or_path: &str, trace_dir: Option<&Path>) -> Result<
         guarantee_groups: build_groups(&events, GroupKind::Guarantee),
         effect_groups: build_groups(&events, GroupKind::Effect),
         data_class_groups: build_groups(&events, GroupKind::DataClass),
+        incident_groups: group_lineage_incidents(&events),
     })
 }
 
@@ -216,6 +219,7 @@ pub fn render_observe_show(report: &ObserveShowReport) -> String {
     render_groups(&mut out, "guarantees", &report.guarantee_groups);
     render_groups(&mut out, "effects", &report.effect_groups);
     render_groups(&mut out, "data_classes", &report.data_class_groups);
+    render_incident_groups(&mut out, &report.incident_groups);
     out.push_str("events:\n");
     for event in &report.events {
         out.push_str(&format!(
@@ -231,6 +235,27 @@ pub fn render_observe_show(report: &ObserveShowReport) -> String {
         ));
     }
     out
+}
+
+fn render_incident_groups(out: &mut String, groups: &[LineageIncidentGroup]) {
+    out.push_str("incidents:\n");
+    if groups.is_empty() {
+        out.push_str("- none\n");
+        return;
+    }
+    for group in groups {
+        out.push_str(&format!(
+            "- {:?}:{} count={} failed={} denied={} pending={} schema={} cost_usd={:.6}\n",
+            group.kind,
+            group.key,
+            group.count,
+            group.failed,
+            group.denied,
+            group.pending_review,
+            group.schema_violations,
+            group.cost_usd
+        ));
+    }
 }
 
 pub fn render_drift_report(report: &LineageDriftReport) -> String {
@@ -615,9 +640,11 @@ mod tests {
         assert_eq!(report.guarantee_groups[0].denials, 1);
         assert_eq!(report.effect_groups[0].key, "send_email");
         assert_eq!(report.data_class_groups[0].key, "private");
+        assert!(!report.incident_groups.is_empty());
 
         let rendered = render_observe_show(&report);
         assert!(rendered.contains("guarantees:"));
+        assert!(rendered.contains("incidents:"));
         assert!(rendered.contains("approval.reachable_entrypoints_require_contract"));
         assert!(rendered.contains("events:"));
         assert!(rendered.contains("tool:send_email status=failed"));
