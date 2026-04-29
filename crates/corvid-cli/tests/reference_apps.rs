@@ -714,4 +714,15 @@ fn deploy_package_emits_dockerfile_and_oci_metadata() {
     assert!(metadata["labels"]["dev.corvid.package.source_sha256"]
         .as_str()
         .is_some_and(|digest| digest.len() == 64));
+
+    let env_schema = fs::read_to_string(out.join("env.schema.json")).expect("read env schema");
+    assert!(env_schema.contains("CORVID_DATABASE_URL"));
+    assert!(env_schema.contains("CORVID_REQUIRE_APPROVALS"));
+    let health = fs::read_to_string(out.join("health.json")).expect("read health config");
+    assert!(health.contains("/healthz"));
+    assert!(health.contains("/readyz"));
+    let migrate = fs::read_to_string(out.join("migrate.sh")).expect("read migration runner");
+    assert!(migrate.contains("corvid migrate up"));
+    let startup = fs::read_to_string(out.join("startup-checks.md")).expect("read startup checks");
+    assert!(startup.contains("CORVID_TRACE_DIR"));
 }

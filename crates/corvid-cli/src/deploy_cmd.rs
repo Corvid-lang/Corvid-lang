@@ -49,10 +49,21 @@ pub fn run_package(app: &Path, out: &Path) -> Result<()> {
     let metadata_json =
         serde_json::to_string_pretty(&metadata).context("serialize OCI metadata")?;
     fs::write(out.join("oci-labels.json"), metadata_json).context("write OCI metadata")?;
+    fs::write(out.join("env.schema.json"), render_env_schema()).context("write env schema")?;
+    fs::write(out.join("health.json"), render_health_config()).context("write health config")?;
+    fs::write(out.join("migrate.sh"), render_migration_runner(app_name))
+        .context("write migration runner")?;
+    fs::write(
+        out.join("startup-checks.md"),
+        render_startup_checks(app_name),
+    )
+    .context("write startup checks")?;
 
     println!("deploy package: {}", out.display());
     println!("dockerfile: {}", out.join("Dockerfile").display());
     println!("oci metadata: {}", out.join("oci-labels.json").display());
+    println!("env schema: {}", out.join("env.schema.json").display());
+    println!("health config: {}", out.join("health.json").display());
     Ok(())
 }
 
@@ -72,6 +83,52 @@ COPY examples/backend/{app_name} examples/backend/{app_name}
 COPY std std
 HEALTHCHECK --interval=30s --timeout=10s --retries=3 CMD corvid check examples/backend/{app_name}/src/main.cor
 CMD ["corvid", "run", "examples/backend/{app_name}/src/main.cor"]
+"#
+    )
+}
+
+fn render_env_schema() -> &'static str {
+    r#"{
+  "required": {
+    "CORVID_APP_ENV": "local|staging|production",
+    "CORVID_CONNECTOR_MODE": "mock|replay|real",
+    "CORVID_DATABASE_URL": "sqlite:<path> or postgres://...",
+    "CORVID_TRACE_DIR": "writable trace directory",
+    "CORVID_REQUIRE_APPROVALS": "true"
+  }
+}
+"#
+}
+
+fn render_health_config() -> &'static str {
+    r#"{
+  "health": "/healthz",
+  "readiness": "/readyz",
+  "metrics": "/metrics",
+  "startup_checks": ["env", "migrations", "approvals", "trace_dir"]
+}
+"#
+}
+
+fn render_migration_runner(app_name: &str) -> String {
+    format!(
+        r#"#!/usr/bin/env sh
+set -eu
+corvid migrate status --dir examples/backend/{app_name}/migrations --database "$CORVID_DATABASE_URL"
+corvid migrate up --dir examples/backend/{app_name}/migrations --database "$CORVID_DATABASE_URL"
+"#
+    )
+}
+
+fn render_startup_checks(app_name: &str) -> String {
+    format!(
+        r#"# Startup Checks
+
+- `corvid check examples/backend/{app_name}/src/main.cor`
+- `corvid migrate status --dir examples/backend/{app_name}/migrations --database "$CORVID_DATABASE_URL"`
+- `CORVID_REQUIRE_APPROVALS=true`
+- `CORVID_TRACE_DIR` exists and is writable
+- `CORVID_CONNECTOR_MODE` is explicitly set
 "#
     )
 }
