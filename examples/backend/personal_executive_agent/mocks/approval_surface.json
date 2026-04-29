@@ -1,0 +1,36 @@
+{
+  "mode": "mock",
+  "service": "personal_executive_agent",
+  "contracts": [
+    {
+      "label": "SendExecutiveFollowUp",
+      "route": "POST /actions/follow-up/send",
+      "resource_kind": "email_thread",
+      "audit_required": true
+    },
+    {
+      "label": "EditCalendarEvent",
+      "route": "POST /actions/calendar/edit",
+      "resource_kind": "calendar_event",
+      "audit_required": true
+    },
+    {
+      "label": "EditTaskItem",
+      "route": "POST /actions/task/edit",
+      "resource_kind": "task",
+      "audit_required": true
+    },
+    {
+      "label": "SendChatMessage",
+      "route": "POST /actions/chat/send",
+      "resource_kind": "chat_channel",
+      "audit_required": true
+    },
+    {
+      "label": "SendFollowUpEmail",
+      "route": "POST /actions/follow-up/send",
+      "resource_kind": "email_thread",
+      "audit_required": true
+    }
+  ]
+}

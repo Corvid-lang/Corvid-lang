@@ -2384,7 +2384,7 @@ corvid run --target=server --mode=real             # real-provider mode behind e
 - [x] 42C1-exec-agent-data-model     Personal Executive Agent schemas/migrations/jobs/connectors are defined.
 - [x] 42C2-exec-agent-inbox          Inbox triage and draft replies work in mock connector mode.
 - [x] 42C3-exec-agent-calendar       Scheduling, meeting prep, daily brief, and follow-ups run as durable jobs.
-- [ ] 42C4-exec-agent-approval       Sends/edits are approval-gated and auditable.
+- [x] 42C4-exec-agent-approval       Sends/edits are approval-gated and auditable.
 - [ ] 42C5-exec-agent-hardening      Replay, evals, adversarial tests, and runbook are complete.
 - [ ] 42D1-knowledge-ingestion       Knowledge app ingests docs with provenance and private/local mode.
 - [ ] 42D2-knowledge-search-answer   Grounded search, citations, feedback evals, and answer provenance work.

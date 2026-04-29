@@ -14,6 +14,11 @@ effect calendar_read:
     trust: workspace
     data: private
 
+effect calendar_write:
+    cost: $0.02
+    trust: human_required
+    data: external
+
 effect executive_llm:
     cost: $0.35
     trust: bounded
@@ -28,6 +33,11 @@ effect task_write:
     cost: $0.01
     trust: workspace
     data: private
+
+effect chat_write:
+    cost: $0.01
+    trust: human_required
+    data: external
 
 public type ExecutiveJobContract:
     job_kind: String
@@ -106,6 +116,54 @@ public type FollowUpSendReceipt:
     trace_id: String
     status: String
 
+public type CalendarEditRequest:
+    tenant_id: String
+    actor_id: String
+    event_id: String
+    starts_at: String
+    ends_at: String
+    approval_id: String
+    trace_id: String
+
+public type CalendarEditReceipt:
+    event_id: String
+    tenant_id: String
+    approval_id: String
+    trace_id: String
+    status: String
+
+public type TaskEditRequest:
+    tenant_id: String
+    actor_id: String
+    task_id: String
+    external_ref: String
+    status: String
+    approval_id: String
+    trace_id: String
+
+public type TaskEditReceipt:
+    task_id: String
+    tenant_id: String
+    approval_id: String
+    trace_id: String
+    status: String
+
+public type ChatSendRequest:
+    tenant_id: String
+    actor_id: String
+    channel_id: String
+    body_fingerprint: String
+    approval_id: String
+    trace_id: String
+
+public type ChatSendReceipt:
+    message_id: String
+    tenant_id: String
+    channel_id: String
+    approval_id: String
+    trace_id: String
+    status: String
+
 public type ExecutiveApprovalProduct:
     approval: ApprovalQueueItem
     audit: ApprovalAuditEnvelope
@@ -114,6 +172,14 @@ public type ExecutiveApprovalProduct:
     tenant_safe: Bool
     auditable: Bool
     ready_to_execute: Bool
+
+public type ExecutiveApprovalSurface:
+    follow_up_email: ExecutiveApprovalProduct
+    calendar_edit: ApprovalContractRef
+    task_edit: ApprovalContractRef
+    chat_send: ApprovalContractRef
+    contract_count: Int
+    all_external_writes_gated: Bool
 
 public type ExecutiveTenant:
     id: String
@@ -281,6 +347,9 @@ public type ExecutiveSchemaManifest:
     default_mode: String
 
 tool send_follow_up_email(req: FollowUpSendRequest) -> FollowUpSendReceipt dangerous uses send_email
+tool edit_calendar_event(req: CalendarEditRequest) -> CalendarEditReceipt dangerous uses calendar_write
+tool edit_task_item(req: TaskEditRequest) -> TaskEditReceipt dangerous uses task_write
+tool send_chat_message(req: ChatSendRequest) -> ChatSendReceipt dangerous uses chat_write
 
 public @replayable
 agent executive_contract(job_kind: String, user_id: String, window_key: String, approval_label: String, needs_review: Bool) -> ExecutiveJobContract:
@@ -373,6 +442,18 @@ agent follow_up_approval_contract(tenant_id: String, thread_id: String, trace_id
     return approval_contract_ref("follow-up:" + thread_id, "v1", "SendExecutiveFollowUp", "email_thread", thread_id, tenant_id, "Reviewer", 0.25, "private", true, 4102444800000, "approval:follow_up:" + trace_id)
 
 public @replayable
+agent calendar_edit_approval_contract(tenant_id: String, event_id: String, trace_id: String) -> ApprovalContractRef:
+    return approval_contract_ref("calendar-edit:" + event_id, "v1", "EditCalendarEvent", "calendar_event", event_id, tenant_id, "Reviewer", 0.25, "private", true, 4102444800000, "approval:calendar:" + trace_id)
+
+public @replayable
+agent task_edit_approval_contract(tenant_id: String, task_id: String, trace_id: String) -> ApprovalContractRef:
+    return approval_contract_ref("task-edit:" + task_id, "v1", "EditTaskItem", "task", task_id, tenant_id, "Reviewer", 0.10, "private", true, 4102444800000, "approval:task:" + trace_id)
+
+public @replayable
+agent chat_send_approval_contract(tenant_id: String, channel_id: String, trace_id: String) -> ApprovalContractRef:
+    return approval_contract_ref("chat-send:" + channel_id, "v1", "SendChatMessage", "chat_channel", channel_id, tenant_id, "Reviewer", 0.10, "private", true, 4102444800000, "approval:chat:" + trace_id)
+
+public @replayable
 agent follow_up_approval_product(auth: AuthStatusResponse, thread_id: String, trace_id: String) -> ExecutiveApprovalProduct:
     contract = follow_up_approval_contract(auth.tenant_id, thread_id, trace_id)
     item = approval_queue_item("approval:" + thread_id, auth.tenant_id, auth.actor.id, contract, "external_side_effect", trace_id)
@@ -387,9 +468,29 @@ agent execute_approved_follow_up(req: FollowUpSendRequest) -> FollowUpSendReceip
     approve SendFollowUpEmail(req)
     return send_follow_up_email(req)
 
+agent execute_approved_calendar_edit(req: CalendarEditRequest) -> CalendarEditReceipt uses calendar_write:
+    approve EditCalendarEvent(req)
+    return edit_calendar_event(req)
+
+agent execute_approved_task_edit(req: TaskEditRequest) -> TaskEditReceipt uses task_write:
+    approve EditTaskItem(req)
+    return edit_task_item(req)
+
+agent execute_approved_chat_send(req: ChatSendRequest) -> ChatSendReceipt uses chat_write:
+    approve SendChatMessage(req)
+    return send_chat_message(req)
+
 public @replayable
 agent approval_product_contract_valid(product: ExecutiveApprovalProduct) -> Bool:
     return product.tenant_safe and product.auditable and product.ready_to_execute and product.review.accepted and product.action.approval_label == "SendFollowUpEmail"
+
+public @replayable
+agent approval_surface(auth: AuthStatusResponse, trace_id: String) -> ExecutiveApprovalSurface:
+    follow = follow_up_approval_product(auth, "thread-1", trace_id)
+    calendar = calendar_edit_approval_contract(auth.tenant_id, "event-1", trace_id)
+    task = task_edit_approval_contract(auth.tenant_id, "task-1", trace_id)
+    chat = chat_send_approval_contract(auth.tenant_id, "channel-1", trace_id)
+    return ExecutiveApprovalSurface(follow, calendar, task, chat, 5, approval_product_contract_valid(follow) and calendar.action == "EditCalendarEvent" and task.action == "EditTaskItem" and chat.action == "SendChatMessage")
 
 public @replayable
 agent demo_tenant() -> ExecutiveTenant:
@@ -564,8 +665,17 @@ server personal_executive_agent_api:
     route GET "/approvals/follow-up" -> json ExecutiveApprovalProduct:
         auth = auth_status("user-1", "tenant-1", "trace-approval-open")
         return follow_up_approval_product(auth, "thread-1", "trace-approval-open")
+    route GET "/approvals/surface" -> json ExecutiveApprovalSurface:
+        auth = auth_status("user-1", "tenant-1", "trace-approval-surface")
+        return approval_surface(auth, "trace-approval-surface")
     route POST "/actions/follow-up/send" body FollowUpSendRequest -> json FollowUpSendReceipt uses send_email:
         return execute_approved_follow_up(body)
+    route POST "/actions/calendar/edit" body CalendarEditRequest -> json CalendarEditReceipt uses calendar_write:
+        return execute_approved_calendar_edit(body)
+    route POST "/actions/task/edit" body TaskEditRequest -> json TaskEditReceipt uses task_write:
+        return execute_approved_task_edit(body)
+    route POST "/actions/chat/send" body ChatSendRequest -> json ChatSendReceipt uses chat_write:
+        return execute_approved_chat_send(body)
 
 schedule "0 7 * * 1-5" zone "America/New_York" -> daily_brief_job("active_users", "business_day") uses inbox_read, calendar_read, executive_llm
 schedule "0 6 * * 1-5" zone "America/New_York" -> meeting_prep_job("active_users", "business_day") uses inbox_read, calendar_read, executive_llm
@@ -580,7 +690,8 @@ agent main() -> Bool:
     auth = auth_status("user-1", "tenant-1", "trace-main-auth")
     service_auth = api_key_auth_status("service-1", "tenant-1", "trace-main-api-key")
     approval_product = follow_up_approval_product(auth, "thread-1", "trace-main-approval")
+    approvals = approval_surface(auth, "trace-main-approvals")
     triage_decision = triage_mock_inbox_thread("thread-1")
     draft_preview = draft_mock_reply("thread-1")
     durable_batch = durable_job_batch("user-1", "2026-04-29")
-    return executive_job_contract_valid(brief) and executive_job_contract_valid(prep) and executive_job_contract_valid(triage) and executive_job_contract_valid(follow) and executive_job_needs_human_before_external_send(follow) and auth.authenticated and service_auth.authenticated and approval_product_contract_valid(approval_product) and inbox_triage_contract_valid(triage_decision) and draft_reply_contract_valid(draft_preview) and durable_job_batch_valid(durable_batch)
+    return executive_job_contract_valid(brief) and executive_job_contract_valid(prep) and executive_job_contract_valid(triage) and executive_job_contract_valid(follow) and executive_job_needs_human_before_external_send(follow) and auth.authenticated and service_auth.authenticated and approval_product_contract_valid(approval_product) and approvals.all_external_writes_gated and inbox_triage_contract_valid(triage_decision) and draft_reply_contract_valid(draft_preview) and durable_job_batch_valid(durable_batch)

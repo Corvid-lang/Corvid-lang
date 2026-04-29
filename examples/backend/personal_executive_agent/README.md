@@ -51,6 +51,17 @@ counts that downstream slices must preserve.
 - `mocks/calendar_events.json` and `mocks/durable_jobs.json` are committed
   fixtures for local runs and restart/replay checks.
 
+## Approval-Gated Writes
+
+42C4 makes every external send/edit path explicit and auditable:
+
+- `POST /actions/follow-up/send` requires `SendFollowUpEmail`.
+- `POST /actions/calendar/edit` requires `EditCalendarEvent`.
+- `POST /actions/task/edit` requires `EditTaskItem`.
+- `POST /actions/chat/send` requires `SendChatMessage`.
+- `GET /approvals/surface` reports the approval surface, and
+  `mocks/approval_surface.json` keeps the expected labels/routes under test.
+
 ## Jobs
 
 - `daily_brief_job` reads inbox and calendar context, runs a bounded executive

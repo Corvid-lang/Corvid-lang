@@ -149,3 +149,44 @@ fn personal_executive_agent_calendar_and_durable_job_mocks_are_bounded() {
         Some("SendExecutiveFollowUp")
     );
 }
+
+#[test]
+fn personal_executive_agent_external_writes_are_approval_gated_and_auditable() {
+    let app = personal_executive_agent_root();
+    let source = fs::read_to_string(app.join("src").join("main.cor")).expect("read source");
+    let surface_text = fs::read_to_string(app.join("mocks").join("approval_surface.json"))
+        .expect("read approval surface");
+    let surface: Value = serde_json::from_str(&surface_text).expect("parse approval surface");
+    let contracts = surface["contracts"].as_array().expect("contracts array");
+    assert_eq!(contracts.len(), 5);
+
+    for contract in contracts {
+        let label = contract["label"].as_str().expect("approval label");
+        let route = contract["route"].as_str().expect("approval route");
+        assert_eq!(contract["audit_required"].as_bool(), Some(true));
+        assert!(
+            source.contains(&format!("approve {label}("))
+                || source.contains(&format!("\"{label}\"")),
+            "missing approve or contract for {label}"
+        );
+        let route_path = route
+            .strip_prefix("POST ")
+            .expect("approval surface route must be POST");
+        assert!(
+            source.contains(&format!("route POST \"{route_path}\"")),
+            "missing route {route}"
+        );
+    }
+
+    for dangerous_tool in [
+        "send_follow_up_email",
+        "edit_calendar_event",
+        "edit_task_item",
+        "send_chat_message",
+    ] {
+        assert!(
+            source.contains(&format!("tool {dangerous_tool}(")) && source.contains("dangerous"),
+            "missing dangerous tool contract for {dangerous_tool}"
+        );
+    }
+}
