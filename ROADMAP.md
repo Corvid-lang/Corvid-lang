@@ -2131,7 +2131,7 @@ corvid approvals export --since=2026-04-01  # audit dump
 
 **Slice checklist:**
 
-- [ ] 40A-observability-design-brief `docs/phase-40-observability.md` defines trace schema, metrics taxonomy, eval promotion, retention, redaction, and non-scope.
+- [x] 40A-observability-design-brief `docs/phase-40-observability.md` defines trace schema, metrics taxonomy, eval promotion, retention, redaction, and non-scope.
 - [ ] 40B-lineage-trace-model        Route -> job -> agent -> prompt -> tool -> approval -> DB lineage is represented in one trace model.
 - [ ] 40C-otel-export                OpenTelemetry export covers requests, jobs, LLM calls, tools, approvals, errors, retries, costs, and replay IDs.
 - [ ] 40D-observe-command-basics     `corvid observe` lists traces, costs, approvals, failures, and hot spots from local stores.
