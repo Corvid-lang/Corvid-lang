@@ -22,6 +22,12 @@ Mail.Read
 Calendars.Read
 ```
 
+## Tenant-Aware Refresh
+
+Refresh token state is tenant-bound. `ConnectorRefreshTokenState::refresh`
+rejects cross-tenant refresh attempts and revoked refresh tokens before issuing a
+new access-token state.
+
 ## Mock Mode
 
 Mock operations:

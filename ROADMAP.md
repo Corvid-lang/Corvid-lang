@@ -2217,7 +2217,7 @@ corvid observe metrics --listen=:9090
 - [x] 41A-connector-design-brief     `docs/phase-41-connectors.md` defines connector manifest shape, OAuth/token state, effect profiles, mocks, replay, and non-scope.
 - [x] 41B-connector-runtime-contract Shared connector runtime handles auth state, rate limits, retries, redaction, trace events, and mock mode.
 - [x] 41C-gmail-google-workspace     Gmail/Google Workspace connector supports read/search/draft/send-with-approval and token refresh.
-- [ ] 41D-microsoft-365              Microsoft 365 connector supports Outlook mail, calendar basics, contacts, Graph auth, and tenant-aware scopes.
+- [x] 41D-microsoft-365              Microsoft 365 connector supports Outlook mail, calendar basics, contacts, Graph auth, and tenant-aware scopes.
 - [ ] 41E-calendar-connector         Calendar connector supports availability, event create/update/cancel, reminders, and approval-gated external invites.
 - [ ] 41F-slack-connector            Slack connector supports channel/DM reads, draft/send-with-approval, threads, and workspace/user scoping.
 - [ ] 41G-task-project-connectors    Linear and GitHub issue connectors support typed create/update/comment flows with approval gates.
@@ -2286,7 +2286,7 @@ corvid connectors verify-webhook --sig=<...>
 - [x] 41C1-gmail-read-search         Gmail read/search metadata works with mock and real-provider env docs.
 - [x] 41C2-gmail-draft-send         Draft/send is approval-gated and replay-visible.
 - [x] 41D1-ms365-mail-calendar       Outlook mail/calendar basics work through Graph auth.
-- [ ] 41D2-ms365-tenant-scopes       Tenant-aware scopes and token refresh are tested.
+- [x] 41D2-ms365-tenant-scopes       Tenant-aware scopes and token refresh are tested.
 - [ ] 41E1-calendar-availability     Availability and event read paths work.
 - [ ] 41E2-calendar-write-approval   Event create/update/cancel and external invites require approval.
 - [ ] 41F1-slack-read-thread         Slack channel/DM/thread reads work with workspace scoping.

@@ -7,7 +7,7 @@ pub mod runtime;
 pub mod test_kit;
 pub mod trace;
 
-pub use auth::{ConnectorAuthError, ConnectorAuthState};
+pub use auth::{ConnectorAuthError, ConnectorAuthState, ConnectorRefreshTokenState};
 pub use gmail::{
     gmail_manifest, GmailConnector, GmailDraftRequest, GmailMessageMetadata, GmailSearchRequest,
     GmailSendRequest, GmailWriteReceipt, GMAIL_CONNECTOR_MANIFEST,
