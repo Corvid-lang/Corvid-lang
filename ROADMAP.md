@@ -2287,7 +2287,7 @@ corvid connectors verify-webhook --sig=<...>
 - [x] 41C2-gmail-draft-send         Draft/send is approval-gated and replay-visible.
 - [x] 41D1-ms365-mail-calendar       Outlook mail/calendar basics work through Graph auth.
 - [x] 41D2-ms365-tenant-scopes       Tenant-aware scopes and token refresh are tested.
-- [ ] 41E1-calendar-availability     Availability and event read paths work.
+- [x] 41E1-calendar-availability     Availability and event read paths work.
 - [ ] 41E2-calendar-write-approval   Event create/update/cancel and external invites require approval.
 - [ ] 41F1-slack-read-thread         Slack channel/DM/thread reads work with workspace scoping.
 - [ ] 41F2-slack-send-approval       Draft/send flows require approval and preserve audit evidence.
