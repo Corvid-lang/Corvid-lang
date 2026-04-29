@@ -2133,7 +2133,7 @@ corvid approvals export --since=2026-04-01  # audit dump
 
 - [x] 40A-observability-design-brief `docs/phase-40-observability.md` defines trace schema, metrics taxonomy, eval promotion, retention, redaction, and non-scope.
 - [x] 40B-lineage-trace-model        Route -> job -> agent -> prompt -> tool -> approval -> DB lineage is represented in one trace model.
-- [ ] 40C-otel-export                OpenTelemetry export covers requests, jobs, LLM calls, tools, approvals, errors, retries, costs, and replay IDs.
+- [x] 40C-otel-export                OpenTelemetry export covers requests, jobs, LLM calls, tools, approvals, errors, retries, costs, and replay IDs.
 - [ ] 40D-observe-command-basics     `corvid observe` lists traces, costs, approvals, failures, and hot spots from local stores.
 - [ ] 40E-trace-to-eval              Production trace slices can be promoted into redacted regression/eval fixtures.
 - [ ] 40F-drift-regression-reports   Reports highlight schema failures, confidence drops, cost changes, latency changes, denial spikes, and tool-error spikes.
@@ -2183,7 +2183,7 @@ corvid observe metrics --listen=:9090
 - [x] 40B1-trace-link-ids            Request/job/agent/prompt/tool/approval/DB events share stable lineage IDs.
 - [x] 40B2-lineage-render            Local command renders the lineage tree for one run.
 - [x] 40C1-otel-schema               OTel span/metric/log mapping is documented and tested.
-- [ ] 40C2-otel-exporter             Exporter emits request/job/LLM/tool/approval/error/retry/cost/replay data.
+- [x] 40C2-otel-exporter             Exporter emits request/job/LLM/tool/approval/error/retry/cost/replay data.
 - [ ] 40D1-observe-list              `corvid observe list` shows local runs, failures, costs, approvals, and hot spots.
 - [ ] 40D2-observe-show              `corvid observe show <id>` explains one run with contract-aware grouping.
 - [ ] 40E1-trace-redaction           Production trace slices can be redacted deterministically.

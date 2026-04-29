@@ -62,6 +62,7 @@ pub mod models;
 mod native_trace;
 pub mod observation_handles;
 pub mod observe;
+pub mod otel_export;
 pub mod otel_schema;
 pub mod prompt_cache;
 pub mod provenance;
@@ -179,6 +180,10 @@ pub use observe::{
     approval_summary, latency_histogram, provider_observations, route_summaries,
     runtime_observation_summary, ApprovalObservationSummary, LatencyObservation,
     ProviderObservation, RouteObservationSummary, RuntimeObservationSummary,
+};
+pub use otel_export::{
+    build_otel_export_batch, OtelExportBatch, OtelExportError, OtelExportReport,
+    OtelExporterConfig, OtelHttpExporter,
 };
 pub use otel_schema::{
     lineage_to_otel_span, required_otel_metrics, OtelMetricMapping, OtelSpanMapping,
