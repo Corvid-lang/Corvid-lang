@@ -522,3 +522,39 @@ fn customer_support_agent_approvals_sla_and_eval_dashboard_work() {
         String::from_utf8_lossy(&eval_out.stderr)
     );
 }
+
+#[test]
+fn code_maintenance_agent_ingests_and_triages_ci_aware_risk() {
+    let app = repo_root()
+        .join("examples")
+        .join("backend")
+        .join("code_maintenance_agent");
+    let check = Command::new(corvid_bin())
+        .arg("check")
+        .arg(app.join("src").join("main.cor"))
+        .current_dir(repo_root())
+        .output()
+        .expect("check code app");
+    assert!(
+        check.status.success(),
+        "code app check failed:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&check.stdout),
+        String::from_utf8_lossy(&check.stderr)
+    );
+
+    let conn = Connection::open_in_memory().expect("in-memory sqlite");
+    conn.execute_batch("PRAGMA foreign_keys = ON;")
+        .expect("enable foreign keys");
+    execute_sql_dir(&conn, &app.join("migrations"), 1);
+    let seed_sql = fs::read_to_string(app.join("seeds").join("demo.sql")).expect("read seed sql");
+    conn.execute_batch(&seed_sql).expect("execute seed sql");
+
+    let mock_text =
+        fs::read_to_string(app.join("mocks").join("triage.json")).expect("read code mock");
+    let mock: Value = serde_json::from_str(&mock_text).expect("parse code mock");
+    assert_eq!(mock["ci"]["status"].as_str(), Some("failed"));
+    assert_eq!(mock["risk"]["severity"].as_str(), Some("high"));
+    assert!(mock["risk"]["confidence"]
+        .as_f64()
+        .is_some_and(|confidence| confidence >= 0.8));
+}

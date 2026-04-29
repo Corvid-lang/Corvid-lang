@@ -1,0 +1,91 @@
+effect repo_read:
+    cost: $0.01
+    trust: workspace
+    data: code
+
+effect ci_read:
+    cost: $0.01
+    trust: workspace
+    data: code
+
+effect code_ai:
+    cost: $0.08
+    trust: bounded
+    data: code
+
+public type CodeConfig:
+    service: String
+    connector_mode: String
+    writes_require_approval: Bool
+
+public type RepoSnapshot:
+    id: String
+    tenant_id: String
+    provider: String
+    repo: String
+    commit_sha: String
+    tree_hash: String
+
+public type IssueSnapshot:
+    id: String
+    tenant_id: String
+    repo_id: String
+    title_fingerprint: String
+    body_fingerprint: String
+    status: String
+
+public type CiSignal:
+    id: String
+    repo_id: String
+    commit_sha: String
+    status: String
+    failing_job: String
+    log_fingerprint: String
+
+public type CodeRiskLabel:
+    issue: IssueSnapshot
+    ci: CiSignal
+    category: String
+    severity: String
+    confidence: Float
+    replay_key: String
+
+public @replayable
+agent code_config() -> CodeConfig:
+    return CodeConfig("code_maintenance_agent", "mock", true)
+
+public @replayable
+agent demo_repo() -> RepoSnapshot uses repo_read:
+    return RepoSnapshot("repo-1", "tenant-1", "github", "org/app", "abc123", "sha256:tree-demo")
+
+public @replayable
+agent demo_issue() -> IssueSnapshot uses repo_read:
+    repo = demo_repo()
+    return IssueSnapshot("issue-1", repo.tenant_id, repo.id, "sha256:issue-title", "sha256:issue-body", "open")
+
+public @replayable
+agent demo_ci_signal() -> CiSignal uses ci_read:
+    repo = demo_repo()
+    return CiSignal("ci-1", repo.id, repo.commit_sha, "failed", "unit-tests", "sha256:ci-log")
+
+public @replayable
+agent triage_issue_mock() -> CodeRiskLabel uses repo_read, ci_read, code_ai:
+    issue = demo_issue()
+    ci = demo_ci_signal()
+    return CodeRiskLabel(issue, ci, "test_regression", "high", 0.87, "code:triage:issue-1")
+
+public @replayable
+agent code_triage_valid(label: CodeRiskLabel) -> Bool:
+    return label.ci.status == "failed" and label.severity == "high" and label.confidence >= 0.8 and label.replay_key == "code:triage:issue-1"
+
+server code_maintenance_agent_api:
+    route GET "/config" -> json CodeConfig:
+        return code_config()
+    route GET "/repos/ingest/mock" -> json RepoSnapshot uses repo_read:
+        return demo_repo()
+    route GET "/issues/triage/mock" -> json CodeRiskLabel uses repo_read, ci_read, code_ai:
+        return triage_issue_mock()
+
+agent main() -> Bool:
+    label = triage_issue_mock()
+    return code_triage_valid(label)

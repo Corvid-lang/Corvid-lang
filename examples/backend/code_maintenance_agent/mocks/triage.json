@@ -1,0 +1,25 @@
+{
+  "mode": "mock",
+  "repo": {
+    "id": "repo-1",
+    "provider": "github",
+    "repo": "org/app",
+    "commit_sha": "abc123",
+    "tree_hash": "sha256:tree-demo"
+  },
+  "issue": {
+    "id": "issue-1",
+    "status": "open"
+  },
+  "ci": {
+    "status": "failed",
+    "failing_job": "unit-tests",
+    "log_fingerprint": "sha256:ci-log"
+  },
+  "risk": {
+    "category": "test_regression",
+    "severity": "high",
+    "confidence": 0.87,
+    "replay_key": "code:triage:issue-1"
+  }
+}
