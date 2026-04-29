@@ -88,6 +88,28 @@ fn maintainer_runbooks_cover_release_security_ci_benchmarks_and_claims() {
 }
 
 #[test]
+fn developer_production_guide_covers_backend_agent_connectors_approvals_observability() {
+    let guide = fs::read_to_string(repo_root().join("docs").join("developer-production-guide.md"))
+        .expect("read developer production guide");
+    for required in [
+        "## Backend Tutorial",
+        "## Personal Executive Agent Tutorial",
+        "## Connector Guide",
+        "## Approval Guide",
+        "## Observability Guide",
+        "## Production Checklist",
+        "## No-Prototype Rule",
+        "corvid build",
+        "corvid deploy package",
+        "dangerous",
+        "approval",
+        "trace id",
+    ] {
+        assert!(guide.contains(required), "missing {required}");
+    }
+}
+
+#[test]
 fn personal_executive_agent_data_model_migrations_and_connectors_are_real() {
     let app = personal_executive_agent_root();
     let conn = Connection::open_in_memory().expect("in-memory sqlite");
