@@ -107,3 +107,45 @@ fn personal_executive_agent_inbox_and_draft_mocks_are_approval_gated() {
         .as_str()
         .is_some_and(|key| key.starts_with("replay:draft:")));
 }
+
+#[test]
+fn personal_executive_agent_calendar_and_durable_job_mocks_are_bounded() {
+    let app = personal_executive_agent_root();
+    let calendar_text = fs::read_to_string(app.join("mocks").join("calendar_events.json"))
+        .expect("read calendar mock");
+    let jobs_text =
+        fs::read_to_string(app.join("mocks").join("durable_jobs.json")).expect("read jobs mock");
+    let calendar: Value = serde_json::from_str(&calendar_text).expect("parse calendar mock");
+    let jobs: Value = serde_json::from_str(&jobs_text).expect("parse jobs mock");
+
+    assert_eq!(calendar["mode"].as_str(), Some("mock"));
+    let availability = calendar["availability"]
+        .as_array()
+        .expect("availability array");
+    assert_eq!(availability.len(), 1);
+    assert_eq!(
+        availability[0]["approval_label"].as_str(),
+        Some("ScheduleCalendarEvent")
+    );
+    assert!(availability[0]["confidence"]
+        .as_f64()
+        .is_some_and(|confidence| confidence >= 0.8));
+
+    assert_eq!(jobs["queue"].as_str(), Some("personal_executive_agent"));
+    let job_items = jobs["jobs"].as_array().expect("jobs array");
+    assert_eq!(job_items.len(), 4);
+    for job in job_items {
+        assert!(job["replay_key"]
+            .as_str()
+            .is_some_and(|key| key.starts_with("executive:")));
+        assert!(job["uses"].as_array().is_some_and(|uses| !uses.is_empty()));
+    }
+    let follow_up = job_items
+        .iter()
+        .find(|job| job["kind"].as_str() == Some("follow_up"))
+        .expect("follow-up job");
+    assert_eq!(
+        follow_up["approval_label"].as_str(),
+        Some("SendExecutiveFollowUp")
+    );
+}

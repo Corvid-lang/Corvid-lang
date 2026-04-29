@@ -1,0 +1,31 @@
+{
+  "mode": "mock",
+  "queue": "personal_executive_agent",
+  "jobs": [
+    {
+      "kind": "daily_brief",
+      "schedule": "0 7 * * 1-5",
+      "uses": ["inbox_read", "calendar_read", "executive_llm"],
+      "replay_key": "executive:daily_brief:active_users:business_day"
+    },
+    {
+      "kind": "meeting_prep",
+      "schedule": "0 6 * * 1-5",
+      "uses": ["inbox_read", "calendar_read", "executive_llm"],
+      "replay_key": "executive:meeting_prep:active_users:business_day"
+    },
+    {
+      "kind": "email_triage",
+      "schedule": "*/10 8-18 * * 1-5",
+      "uses": ["inbox_read", "executive_llm", "task_write"],
+      "replay_key": "executive:email_triage:active_users:workday_window"
+    },
+    {
+      "kind": "follow_up",
+      "schedule": "*/15 8-18 * * 1-5",
+      "uses": ["inbox_read", "executive_llm", "send_email", "task_write"],
+      "approval_label": "SendExecutiveFollowUp",
+      "replay_key": "executive:follow_up:active_users:open_threads"
+    }
+  ]
+}

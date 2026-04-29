@@ -2383,7 +2383,7 @@ corvid run --target=server --mode=real             # real-provider mode behind e
 - [x] 42B3-template-ops              Template has traces, evals, deployment manifest, and runbook skeleton.
 - [x] 42C1-exec-agent-data-model     Personal Executive Agent schemas/migrations/jobs/connectors are defined.
 - [x] 42C2-exec-agent-inbox          Inbox triage and draft replies work in mock connector mode.
-- [ ] 42C3-exec-agent-calendar       Scheduling, meeting prep, daily brief, and follow-ups run as durable jobs.
+- [x] 42C3-exec-agent-calendar       Scheduling, meeting prep, daily brief, and follow-ups run as durable jobs.
 - [ ] 42C4-exec-agent-approval       Sends/edits are approval-gated and auditable.
 - [ ] 42C5-exec-agent-hardening      Replay, evals, adversarial tests, and runbook are complete.
 - [ ] 42D1-knowledge-ingestion       Knowledge app ingests docs with provenance and private/local mode.

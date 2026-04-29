@@ -232,6 +232,45 @@ public type ExecutiveDraftPreview:
     ready_for_review: Bool
     replay_key: String
 
+public type ExecutiveScheduleOption:
+    id: String
+    tenant_id: String
+    event_id: String
+    starts_at: String
+    ends_at: String
+    confidence: Float
+    approval_label: String
+    replay_key: String
+
+public type ExecutiveDailyBriefProduct:
+    brief: ExecutiveDailyBrief
+    inbox_priority_count: Int
+    meeting_packet_count: Int
+    follow_up_count: Int
+    generated_by_job: ExecutiveJobRun
+    replay_key: String
+
+public type ExecutiveMeetingPrepProduct:
+    packet: ExecutiveMeetingPrepPacket
+    event: ExecutiveCalendarEvent
+    generated_by_job: ExecutiveJobRun
+    replay_key: String
+
+public type ExecutiveFollowUpProduct:
+    follow_up: ExecutiveFollowUpItem
+    draft: ExecutiveDraftPreview
+    generated_by_job: ExecutiveJobRun
+    approval_label: String
+    replay_key: String
+
+public type ExecutiveDurableJobBatch:
+    daily_brief: ExecutiveJobRun
+    meeting_prep: ExecutiveJobRun
+    triage: ExecutiveJobRun
+    follow_up: ExecutiveJobRun
+    all_replay_safe: Bool
+    all_bounded: Bool
+
 public type ExecutiveSchemaManifest:
     service: String
     migration_count: Int
@@ -437,6 +476,45 @@ agent draft_reply_contract_valid(preview: ExecutiveDraftPreview) -> Bool:
     return preview.ready_for_review and preview.approval_label == "SendFollowUpEmail" and preview.body_fingerprint == preview.draft.body_fingerprint
 
 public @replayable
+agent demo_schedule_option() -> ExecutiveScheduleOption uses calendar_read, executive_llm:
+    event = demo_calendar_event()
+    return ExecutiveScheduleOption("schedule-option-1", event.tenant_id, event.id, event.starts_at, event.ends_at, 0.88, "ScheduleCalendarEvent", "replay:schedule:" + event.id)
+
+public @replayable
+agent durable_job_batch(user_id: String, day: String) -> ExecutiveDurableJobBatch uses inbox_read, calendar_read, executive_llm, task_write, send_email:
+    brief = daily_brief_job(user_id, day)
+    prep = meeting_prep_job(user_id, day)
+    triage = email_triage_job(user_id, day)
+    follow = follow_up_job(user_id, "thread-1")
+    replay_safe_batch = executive_job_contract_valid(brief) and executive_job_contract_valid(prep) and executive_job_contract_valid(triage) and executive_job_contract_valid(follow)
+    bounded_batch = brief.state.budget_usd <= 0.75 and prep.state.budget_usd <= 0.75 and triage.state.budget_usd <= 0.75 and follow.state.budget_usd <= 0.75
+    return ExecutiveDurableJobBatch(brief, prep, triage, follow, replay_safe_batch, bounded_batch)
+
+public @replayable
+agent daily_brief_product(user_id: String, day: String) -> ExecutiveDailyBriefProduct uses inbox_read, calendar_read, executive_llm:
+    brief = demo_daily_brief()
+    job = daily_brief_job(user_id, day)
+    return ExecutiveDailyBriefProduct(brief, brief.priority_count, brief.meeting_count, 1, job, "replay:daily_brief:" + user_id + ":" + day)
+
+public @replayable
+agent meeting_prep_product(user_id: String, day: String) -> ExecutiveMeetingPrepProduct uses inbox_read, calendar_read, executive_llm:
+    packet = demo_meeting_prep_packet()
+    event = demo_calendar_event()
+    job = meeting_prep_job(user_id, day)
+    return ExecutiveMeetingPrepProduct(packet, event, job, "replay:meeting_prep:" + user_id + ":" + day)
+
+public @replayable
+agent follow_up_product(user_id: String, thread_id: String) -> ExecutiveFollowUpProduct uses inbox_read, executive_llm, send_email, task_write:
+    follow = demo_follow_up_item()
+    draft = draft_mock_reply(thread_id)
+    job = follow_up_job(user_id, thread_id)
+    return ExecutiveFollowUpProduct(follow, draft, job, "SendFollowUpEmail", "replay:follow_up:" + user_id + ":" + thread_id)
+
+public @replayable
+agent durable_job_batch_valid(batch: ExecutiveDurableJobBatch) -> Bool:
+    return batch.all_replay_safe and batch.all_bounded and executive_job_needs_human_before_external_send(batch.follow_up)
+
+public @replayable
 agent executive_schema_manifest() -> ExecutiveSchemaManifest:
     return ExecutiveSchemaManifest("personal_executive_agent", 5, 12, 5, 4, 5, "mock")
 
@@ -465,6 +543,16 @@ server personal_executive_agent_api:
         return triage_mock_inbox_thread("thread-1")
     route GET "/drafts/reply/mock" -> json ExecutiveDraftPreview uses inbox_read, executive_llm:
         return draft_mock_reply("thread-1")
+    route GET "/calendar/schedule/mock" -> json ExecutiveScheduleOption uses calendar_read, executive_llm:
+        return demo_schedule_option()
+    route GET "/jobs/durable/mock" -> json ExecutiveDurableJobBatch uses inbox_read, calendar_read, executive_llm, task_write, send_email:
+        return durable_job_batch("user-1", "2026-04-29")
+    route GET "/brief/daily/mock" -> json ExecutiveDailyBriefProduct uses inbox_read, calendar_read, executive_llm:
+        return daily_brief_product("user-1", "2026-04-29")
+    route GET "/meeting-prep/mock" -> json ExecutiveMeetingPrepProduct uses inbox_read, calendar_read, executive_llm:
+        return meeting_prep_product("user-1", "2026-04-29")
+    route GET "/follow-ups/mock" -> json ExecutiveFollowUpProduct uses inbox_read, executive_llm, send_email, task_write:
+        return follow_up_product("user-1", "thread-1")
     route POST "/auth/session/login" body LoginRequest -> json LoginResponse:
         return session_login(body)
     route POST "/auth/api-key/login" body ApiKeyLoginRequest -> json ApiKeyLoginResponse:
@@ -494,4 +582,5 @@ agent main() -> Bool:
     approval_product = follow_up_approval_product(auth, "thread-1", "trace-main-approval")
     triage_decision = triage_mock_inbox_thread("thread-1")
     draft_preview = draft_mock_reply("thread-1")
-    return executive_job_contract_valid(brief) and executive_job_contract_valid(prep) and executive_job_contract_valid(triage) and executive_job_contract_valid(follow) and executive_job_needs_human_before_external_send(follow) and auth.authenticated and service_auth.authenticated and approval_product_contract_valid(approval_product) and inbox_triage_contract_valid(triage_decision) and draft_reply_contract_valid(draft_preview)
+    durable_batch = durable_job_batch("user-1", "2026-04-29")
+    return executive_job_contract_valid(brief) and executive_job_contract_valid(prep) and executive_job_contract_valid(triage) and executive_job_contract_valid(follow) and executive_job_needs_human_before_external_send(follow) and auth.authenticated and service_auth.authenticated and approval_product_contract_valid(approval_product) and inbox_triage_contract_valid(triage_decision) and draft_reply_contract_valid(draft_preview) and durable_job_batch_valid(durable_batch)

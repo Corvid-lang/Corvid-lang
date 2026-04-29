@@ -1,0 +1,16 @@
+{
+  "mode": "mock",
+  "provider": "calendar",
+  "availability": [
+    {
+      "id": "schedule-option-1",
+      "tenant_id": "tenant-1",
+      "event_id": "event-1",
+      "starts_at": "2026-04-29T14:00:00Z",
+      "ends_at": "2026-04-29T14:30:00Z",
+      "confidence": 0.88,
+      "approval_label": "ScheduleCalendarEvent",
+      "replay_key": "replay:schedule:event-1"
+    }
+  ]
+}
