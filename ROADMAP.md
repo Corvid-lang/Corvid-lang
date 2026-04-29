@@ -2223,7 +2223,7 @@ corvid observe metrics --listen=:9090
 - [x] 41G-task-project-connectors    Linear and GitHub issue connectors support typed create/update/comment flows with approval gates.
 - [x] 41H-local-files-connector      Local file connector supports indexed folders, read permissions, write approval, and provenance snippets.
 - [x] 41I-mock-replay-suite          Every connector ships mock mode, replay fixtures, manifest tests, and offline deterministic examples.
-- [ ] 41J-executive-agent-connectors Personal Executive Agent uses email, calendar, tasks, chat, and files through Corvid-owned connectors.
+- [x] 41J-executive-agent-connectors Personal Executive Agent uses email, calendar, tasks, chat, and files through Corvid-owned connectors.
 
 **Done when:** the Personal Executive Agent can connect to email, calendar, tasks, and files through Corvid-owned backend connectors, with explicit effects and approval contracts.
 
@@ -2297,7 +2297,7 @@ corvid connectors verify-webhook --sig=<...>
 - [x] 41H2-files-write-approval      File write/update/delete requires approval and records provenance.
 - [x] 41I1-all-mocks                 Every connector has mock mode and deterministic replay fixtures.
 - [x] 41J1-exec-agent-connector-plan Personal Executive Agent connector wiring is specified.
-- [ ] 41J2-exec-agent-connector-proof Email/calendar/tasks/chat/files all run through connector mocks in tests.
+- [x] 41J2-exec-agent-connector-proof Email/calendar/tasks/chat/files all run through connector mocks in tests.
 
 ### Phase 42 — Production reference applications (~10-14 weeks)
 
