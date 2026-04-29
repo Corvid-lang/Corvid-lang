@@ -1,0 +1,26 @@
+{
+  "mode": "mock",
+  "regulated_advice": false,
+  "payment_execution": "approval_required",
+  "intents": [
+    {
+      "id": "intent-1",
+      "source_account_id": "acct-1",
+      "payee_fingerprint": "sha256:payee-demo",
+      "amount_cents": 12500,
+      "currency": "USD",
+      "approval_label": "SubmitPaymentIntent",
+      "status": "approval_pending",
+      "non_advice": true
+    }
+  ],
+  "audit": [
+    {
+      "id": "audit-1",
+      "action": "SubmitPaymentIntent",
+      "approval_id": "approval:intent-1",
+      "trace_id": "trace-payment-intent",
+      "redacted": true
+    }
+  ]
+}

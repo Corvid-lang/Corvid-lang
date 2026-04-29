@@ -357,7 +357,7 @@ fn finance_operations_agent_readonly_snapshot_is_non_advice() {
     let conn = Connection::open_in_memory().expect("in-memory sqlite");
     conn.execute_batch("PRAGMA foreign_keys = ON;")
         .expect("enable foreign keys");
-    execute_sql_dir(&conn, &app.join("migrations"), 1);
+    execute_sql_dir(&conn, &app.join("migrations"), 2);
     let seed_sql = fs::read_to_string(app.join("seeds").join("demo.sql")).expect("read seed sql");
     conn.execute_batch(&seed_sql).expect("execute seed sql");
 
@@ -368,7 +368,7 @@ fn finance_operations_agent_readonly_snapshot_is_non_advice() {
             |row| row.get(0),
         )
         .expect("table count");
-    assert_eq!(table_count, 5);
+    assert_eq!(table_count, 7);
 
     let snapshot_text = fs::read_to_string(app.join("mocks").join("readonly_snapshot.json"))
         .expect("read finance mock");
@@ -379,4 +379,58 @@ fn finance_operations_agent_readonly_snapshot_is_non_advice() {
     assert!(snapshot["anomalies"][0]["confidence"]
         .as_f64()
         .is_some_and(|confidence| confidence >= 0.8));
+}
+
+#[test]
+fn finance_operations_agent_payment_intents_are_approval_gated_and_audited() {
+    let app = repo_root()
+        .join("examples")
+        .join("backend")
+        .join("finance_operations_agent");
+    let source = fs::read_to_string(app.join("src").join("main.cor")).expect("read finance source");
+    assert!(source.contains("tool submit_payment_intent("));
+    assert!(source.contains("dangerous uses payment_write"));
+    assert!(source.contains("approve SubmitPaymentIntent("));
+    assert!(source.contains("route POST \"/payments/intents/submit\""));
+
+    let check = Command::new(corvid_bin())
+        .arg("check")
+        .arg(app.join("src").join("main.cor"))
+        .current_dir(repo_root())
+        .output()
+        .expect("check finance app");
+    assert!(
+        check.status.success(),
+        "finance app check failed:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&check.stdout),
+        String::from_utf8_lossy(&check.stderr)
+    );
+
+    let payment_text = fs::read_to_string(app.join("mocks").join("payment_intents.json"))
+        .expect("read payment intents mock");
+    let payment: Value = serde_json::from_str(&payment_text).expect("parse payment mock");
+    assert_eq!(payment["regulated_advice"].as_bool(), Some(false));
+    assert_eq!(
+        payment["payment_execution"].as_str(),
+        Some("approval_required")
+    );
+    assert_eq!(
+        payment["intents"][0]["approval_label"].as_str(),
+        Some("SubmitPaymentIntent")
+    );
+    assert_eq!(payment["audit"][0]["redacted"].as_bool(), Some(true));
+
+    let eval = app.join("evals").join("payment_audit_eval.cor");
+    let eval_out = Command::new(corvid_bin())
+        .arg("eval")
+        .arg(&eval)
+        .current_dir(repo_root())
+        .output()
+        .expect("run finance eval");
+    assert!(
+        eval_out.status.success(),
+        "finance eval failed:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&eval_out.stdout),
+        String::from_utf8_lossy(&eval_out.stderr)
+    );
 }

@@ -8,6 +8,11 @@ effect finance_ai:
     trust: bounded
     data: financial
 
+effect payment_write:
+    cost: $0.02
+    trust: human_required
+    data: financial
+
 public type FinanceConfig:
     service: String
     connector_mode: String
@@ -66,6 +71,54 @@ public type FinanceReadonlySnapshot:
     readonly: Bool
     non_advice: Bool
 
+public type PaymentIntentRequest:
+    tenant_id: String
+    actor_id: String
+    source_account_id: String
+    payee_fingerprint: String
+    amount_cents: Int
+    currency: String
+    approval_id: String
+    trace_id: String
+
+public type PaymentIntentReceipt:
+    intent_id: String
+    tenant_id: String
+    approval_id: String
+    trace_id: String
+    status: String
+
+public type FinancePaymentIntent:
+    id: String
+    tenant_id: String
+    source_account_id: String
+    payee_fingerprint: String
+    amount_cents: Int
+    currency: String
+    approval_label: String
+    status: String
+    non_advice: Bool
+
+public type FinanceAuditRecord:
+    id: String
+    tenant_id: String
+    actor_id: String
+    action: String
+    status_before: String
+    status_after: String
+    approval_id: String
+    trace_id: String
+    redacted: Bool
+
+public type FinanceApprovalAuditSurface:
+    intent: FinancePaymentIntent
+    audit: FinanceAuditRecord
+    ready_for_approval: Bool
+    execute_without_approval: Bool
+    non_advice: Bool
+
+tool submit_payment_intent(req: PaymentIntentRequest) -> PaymentIntentReceipt dangerous uses payment_write
+
 public @replayable
 agent finance_config() -> FinanceConfig:
     return FinanceConfig("finance_operations_agent", "mock", false, true)
@@ -103,12 +156,39 @@ public @replayable
 agent readonly_snapshot_valid(snapshot: FinanceReadonlySnapshot) -> Bool:
     return snapshot.readonly and snapshot.non_advice and snapshot.total_balance_cents == snapshot.account.balance_cents and snapshot.anomaly.confidence >= 0.8
 
+public @replayable
+agent demo_payment_intent() -> FinancePaymentIntent:
+    return FinancePaymentIntent("intent-1", "tenant-1", "acct-1", "sha256:payee-demo", 12500, "USD", "SubmitPaymentIntent", "approval_pending", true)
+
+public @replayable
+agent demo_payment_audit() -> FinanceAuditRecord:
+    return FinanceAuditRecord("audit-1", "tenant-1", "user-1", "SubmitPaymentIntent", "draft", "approval_pending", "approval:intent-1", "trace-payment-intent", true)
+
+public @replayable
+agent payment_approval_surface() -> FinanceApprovalAuditSurface:
+    intent = demo_payment_intent()
+    audit = demo_payment_audit()
+    return FinanceApprovalAuditSurface(intent, audit, intent.approval_label == audit.action and audit.redacted, false, intent.non_advice)
+
+agent execute_approved_payment_intent(req: PaymentIntentRequest) -> PaymentIntentReceipt uses payment_write:
+    approve SubmitPaymentIntent(req)
+    return submit_payment_intent(req)
+
+public @replayable
+agent payment_approval_surface_valid(surface: FinanceApprovalAuditSurface) -> Bool:
+    return surface.ready_for_approval and not surface.execute_without_approval and surface.non_advice and surface.intent.status == "approval_pending"
+
 server finance_operations_agent_api:
     route GET "/config" -> json FinanceConfig:
         return finance_config()
     route GET "/readonly/snapshot/mock" -> json FinanceReadonlySnapshot uses finance_read, finance_ai:
         return readonly_snapshot()
+    route GET "/payments/intents/mock" -> json FinanceApprovalAuditSurface:
+        return payment_approval_surface()
+    route POST "/payments/intents/submit" body PaymentIntentRequest -> json PaymentIntentReceipt uses payment_write:
+        return execute_approved_payment_intent(body)
 
 agent main() -> Bool:
     snapshot = readonly_snapshot()
-    return readonly_snapshot_valid(snapshot)
+    payment = payment_approval_surface()
+    return readonly_snapshot_valid(snapshot) and payment_approval_surface_valid(payment)

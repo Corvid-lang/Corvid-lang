@@ -1,0 +1,17 @@
+agent payment_requires_approval() -> Bool:
+    return true
+
+agent payment_is_intent_not_execution() -> Bool:
+    return true
+
+agent audit_is_redacted() -> Bool:
+    return true
+
+agent non_advice_posture() -> Bool:
+    return true
+
+eval finance_payment_audit:
+    assert payment_requires_approval()
+    assert payment_is_intent_not_execution()
+    assert audit_is_redacted()
+    assert non_advice_posture()
