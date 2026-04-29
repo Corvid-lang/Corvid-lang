@@ -688,6 +688,10 @@ fn deploy_package_emits_dockerfile_and_oci_metadata() {
         .arg(&app)
         .arg("--out")
         .arg(&out)
+        .env(
+            "CORVID_DEPLOY_SIGNING_KEY",
+            "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+        )
         .current_dir(repo_root())
         .output()
         .expect("run deploy package");
@@ -725,4 +729,18 @@ fn deploy_package_emits_dockerfile_and_oci_metadata() {
     assert!(migrate.contains("corvid migrate up"));
     let startup = fs::read_to_string(out.join("startup-checks.md")).expect("read startup checks");
     assert!(startup.contains("CORVID_TRACE_DIR"));
+
+    let attestation =
+        fs::read_to_string(out.join("build-attestation.dsse.json")).expect("read attestation");
+    let envelope: Value = serde_json::from_str(&attestation).expect("parse attestation");
+    assert_eq!(
+        envelope["payloadType"].as_str(),
+        Some("application/vnd.corvid.deploy.attestation.v1+json")
+    );
+    assert_eq!(
+        envelope["signatures"][0]["keyid"].as_str(),
+        Some("deploy-package")
+    );
+    let verify = fs::read_to_string(out.join("VERIFY.md")).expect("read verify docs");
+    assert!(verify.contains("DSSE envelope"));
 }
