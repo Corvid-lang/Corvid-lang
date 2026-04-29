@@ -40,6 +40,7 @@ mod contract_cmd;
 mod cost_frontier;
 mod eval_cmd;
 mod lineage_cmd;
+mod observe_cmd;
 mod receipt_cache;
 mod receipt_cmd;
 mod replay;
@@ -474,6 +475,11 @@ enum Command {
         #[command(subcommand)]
         command: TraceCommand,
     },
+    /// Inspect Phase 40 lineage observability stores.
+    Observe {
+        #[command(subcommand)]
+        command: ObserveCommand,
+    },
     /// Behavior-diff a PR: compile the source at two git
     /// revisions, extract the Corvid ABI descriptor from each,
     /// and render a PR behavior receipt describing every
@@ -904,6 +910,17 @@ enum TraceCommand {
 }
 
 #[derive(Subcommand)]
+enum ObserveCommand {
+    /// List local lineage runs with costs, failures, approvals,
+    /// and the slowest span per run.
+    List {
+        /// Trace directory. Defaults to `target/trace`.
+        #[arg(long, value_name = "PATH")]
+        trace_dir: Option<PathBuf>,
+    },
+}
+
+#[derive(Subcommand)]
 enum AbiCommand {
     Dump {
         library: PathBuf,
@@ -1181,6 +1198,9 @@ fn main_impl() -> ExitCode {
                 id_or_path,
                 trace_dir,
             } => lineage_cmd::run_lineage(&id_or_path, trace_dir.as_deref()),
+        },
+        Some(Command::Observe { command }) => match command {
+            ObserveCommand::List { trace_dir } => observe_cmd::run_list(trace_dir.as_deref()),
         },
         Some(Command::TraceDiff {
             base_sha,

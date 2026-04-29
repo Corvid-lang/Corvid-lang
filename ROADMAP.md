@@ -2184,7 +2184,7 @@ corvid observe metrics --listen=:9090
 - [x] 40B2-lineage-render            Local command renders the lineage tree for one run.
 - [x] 40C1-otel-schema               OTel span/metric/log mapping is documented and tested.
 - [x] 40C2-otel-exporter             Exporter emits request/job/LLM/tool/approval/error/retry/cost/replay data.
-- [ ] 40D1-observe-list              `corvid observe list` shows local runs, failures, costs, approvals, and hot spots.
+- [x] 40D1-observe-list              `corvid observe list` shows local runs, failures, costs, approvals, and hot spots.
 - [ ] 40D2-observe-show              `corvid observe show <id>` explains one run with contract-aware grouping.
 - [ ] 40E1-trace-redaction           Production trace slices can be redacted deterministically.
 - [ ] 40E2-eval-promotion            Redacted trace slices become regression/eval fixtures.
