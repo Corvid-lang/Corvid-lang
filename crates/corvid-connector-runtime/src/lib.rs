@@ -5,6 +5,7 @@ pub mod gmail;
 pub mod manifest;
 pub mod ms365;
 pub mod rate_limit;
+pub mod real_client;
 pub mod runtime;
 pub mod slack;
 pub mod tasks;
@@ -36,6 +37,10 @@ pub use ms365::{
     Ms365MailMessage, Ms365MailSearchRequest, MS365_CONNECTOR_MANIFEST,
 };
 pub use rate_limit::{ConnectorRateLimit, ConnectorRateLimitDecision, ConnectorRateLimiter};
+pub use real_client::{
+    parse_retry_after_header, BearerTokenError, BearerTokenResolver, ConnectorRealClient,
+    OperationEndpoints, RealCallContext, RefuseRealMode, ReqwestRealClient,
+};
 pub use runtime::{
     ConnectorRequest, ConnectorResponse, ConnectorRuntime, ConnectorRuntimeError,
     ConnectorRuntimeMode,

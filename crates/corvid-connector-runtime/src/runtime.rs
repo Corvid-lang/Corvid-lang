@@ -1,9 +1,11 @@
 use crate::auth::{ConnectorAuthError, ConnectorAuthState};
 use crate::manifest::{ConnectorManifest, ConnectorScope, ConnectorScopeApproval};
 use crate::rate_limit::{ConnectorRateLimit, ConnectorRateLimiter};
+use crate::real_client::{ConnectorRealClient, RealCallContext, RefuseRealMode};
 use crate::trace::ConnectorTraceEvent;
 use serde_json::Value;
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConnectorRuntimeMode {
@@ -72,13 +74,32 @@ impl From<ConnectorAuthError> for ConnectorRuntimeError {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct ConnectorRuntime {
     manifest: ConnectorManifest,
     auth: ConnectorAuthState,
     mode: ConnectorRuntimeMode,
     rate_limiter: ConnectorRateLimiter,
     mocks: BTreeMap<String, Value>,
+    /// Real-mode dispatcher. Defaults to `RefuseRealMode`, which
+    /// returns `RealModeNotBound` for every operation — preserving
+    /// the pre-41K-A behaviour. A production deployment installs a
+    /// concrete client via `with_real_client(...)` (per slice 41K-B
+    /// for GitHub PAT, slice 41K-C for Gmail/Slack OAuth2).
+    real_client: Arc<dyn ConnectorRealClient>,
+}
+
+impl std::fmt::Debug for ConnectorRuntime {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ConnectorRuntime")
+            .field("manifest", &self.manifest)
+            .field("auth", &self.auth)
+            .field("mode", &self.mode)
+            .field("rate_limiter", &self.rate_limiter)
+            .field("mocks", &self.mocks)
+            .field("real_client", &"<dyn ConnectorRealClient>")
+            .finish()
+    }
 }
 
 impl ConnectorRuntime {
@@ -93,11 +114,23 @@ impl ConnectorRuntime {
             mode,
             rate_limiter: ConnectorRateLimiter::new(),
             mocks: BTreeMap::new(),
+            real_client: Arc::new(RefuseRealMode),
         }
     }
 
     pub fn insert_mock(&mut self, operation: impl Into<String>, payload: Value) {
         self.mocks.insert(operation.into(), payload);
+    }
+
+    /// Install a real-mode dispatcher. Without this call, real-mode
+    /// requests return `RealModeNotBound` — matching pre-41K-A
+    /// behaviour and preventing accidental live calls during local
+    /// development. Production deployments behind
+    /// `CORVID_PROVIDER_LIVE=1` (per the audit-correction track)
+    /// supply a concrete `ConnectorRealClient` here.
+    pub fn with_real_client(mut self, client: Arc<dyn ConnectorRealClient>) -> Self {
+        self.real_client = client;
+        self
     }
 
     pub fn execute(
@@ -158,7 +191,22 @@ impl ConnectorRuntime {
                 .cloned()
                 .ok_or_else(|| ConnectorRuntimeError::MissingMock(request.operation.clone()))?,
             ConnectorRuntimeMode::Real => {
-                return Err(ConnectorRuntimeError::RealModeNotBound(request.operation));
+                // Slice 41K-A: dispatch through `ConnectorRealClient`.
+                // When no real client has been installed, the default
+                // `RefuseRealMode` returns `RealModeNotBound`,
+                // preserving the pre-41K-A behaviour. A production
+                // deployment installs a concrete real client behind
+                // the `CORVID_PROVIDER_LIVE=1` env-var gate (slice
+                // 41L); per-connector clients land in 41K-B/C.
+                let ctx = RealCallContext {
+                    manifest: &self.manifest,
+                    scope: &scope,
+                    auth: &self.auth,
+                    operation: &request.operation,
+                    payload: &request.payload,
+                    now_ms: request.now_ms,
+                };
+                self.real_client.execute_real(&ctx)?
             }
         };
 
@@ -304,6 +352,103 @@ policy = "quarantine_write"
         assert!(matches!(
             err,
             ConnectorRuntimeError::ReplayWriteQuarantined(operation) if operation == "send"
+        ));
+    }
+
+    /// Slice 41K-A: a `ConnectorRuntime` constructed without a real
+    /// client preserves the pre-41K-A behaviour — real-mode requests
+    /// return `RealModeNotBound`. This is what guards against
+    /// accidental live calls during local development.
+    #[test]
+    fn real_mode_default_returns_real_mode_not_bound() {
+        let mut runtime = ConnectorRuntime::new(manifest(), auth(), ConnectorRuntimeMode::Real);
+        let err = runtime
+            .execute(ConnectorRequest {
+                scope_id: "gmail.read_metadata".to_string(),
+                operation: "read_metadata".to_string(),
+                payload: json!({}),
+                approval_id: String::new(),
+                replay_key: "replay-real".to_string(),
+                now_ms: 1,
+            })
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            ConnectorRuntimeError::RealModeNotBound(operation) if operation == "read_metadata"
+        ));
+    }
+
+    /// Slice 41K-A: when a concrete real client is wired via
+    /// `with_real_client`, real-mode requests dispatch through it
+    /// and return its payload. This is the architecture seam that
+    /// 41K-B (GitHub PAT) and 41K-C (Gmail/Slack OAuth2) plug into.
+    #[test]
+    fn real_mode_dispatches_to_bound_client() {
+        struct StubRealClient {
+            body: Value,
+        }
+        impl ConnectorRealClient for StubRealClient {
+            fn execute_real(
+                &self,
+                _ctx: &RealCallContext<'_>,
+            ) -> Result<Value, ConnectorRuntimeError> {
+                Ok(self.body.clone())
+            }
+        }
+
+        let stub = Arc::new(StubRealClient {
+            body: json!({"messages": [{"id": "live-1"}]}),
+        });
+        let mut runtime = ConnectorRuntime::new(manifest(), auth(), ConnectorRuntimeMode::Real)
+            .with_real_client(stub);
+        let response = runtime
+            .execute(ConnectorRequest {
+                scope_id: "gmail.read_metadata".to_string(),
+                operation: "read_metadata".to_string(),
+                payload: json!({}),
+                approval_id: String::new(),
+                replay_key: "replay-real-bound".to_string(),
+                now_ms: 1,
+            })
+            .unwrap();
+        assert_eq!(response.payload["messages"][0]["id"], "live-1");
+        assert_eq!(response.trace.mode, "real");
+    }
+
+    /// Slice 41K-A: the runtime forwards the rate-limit decision
+    /// produced by a bound real client (when the provider returns
+    /// 429 + Retry-After). The shared `ReqwestRealClient` translates
+    /// those into `RateLimited`; here we exercise the runtime path
+    /// from the bound client end.
+    #[test]
+    fn real_mode_propagates_rate_limited_from_bound_client() {
+        struct AlwaysRateLimited;
+        impl ConnectorRealClient for AlwaysRateLimited {
+            fn execute_real(
+                &self,
+                _ctx: &RealCallContext<'_>,
+            ) -> Result<Value, ConnectorRuntimeError> {
+                Err(ConnectorRuntimeError::RateLimited {
+                    retry_after_ms: 7_000,
+                })
+            }
+        }
+
+        let mut runtime = ConnectorRuntime::new(manifest(), auth(), ConnectorRuntimeMode::Real)
+            .with_real_client(Arc::new(AlwaysRateLimited));
+        let err = runtime
+            .execute(ConnectorRequest {
+                scope_id: "gmail.read_metadata".to_string(),
+                operation: "read_metadata".to_string(),
+                payload: json!({}),
+                approval_id: String::new(),
+                replay_key: "replay-rate".to_string(),
+                now_ms: 1,
+            })
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            ConnectorRuntimeError::RateLimited { retry_after_ms: 7_000 }
         ));
     }
 }
