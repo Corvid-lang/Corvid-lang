@@ -1,0 +1,49 @@
+# RAG-QA-bot reference implementation — Corvid.
+#
+# A bot that answers user questions over a corpus of internal docs.
+# Sharing a source doc directly with the user is the dangerous
+# action (could leak confidential material); the grounded answer
+# always carries citations back to the docs that informed it.
+
+effect doc_lookup:
+    data: grounded
+
+effect llm:
+    cost: $0.10
+
+effect share_externally:
+    trust: human_required
+    reversible: false
+    data: confidential
+
+type Question:
+    user_id: String
+    text: String
+
+type Answer:
+    text: String
+    sources: List<String>
+
+# Internal retrieval. Provenance is carried by `Grounded<T>`.
+tool retrieve_docs(query: String) -> List<Grounded<String>> uses doc_lookup
+
+# Sharing a raw source doc with the requester is the dangerous
+# action — it can leak material the user wasn't authorized to see.
+tool share_source(doc_id: String, user_id: String) -> String dangerous uses share_externally
+
+prompt synthesize(q: Grounded<String>, docs: List<Grounded<String>>) -> Grounded<String> uses llm:
+    "answer the question {q} using only: {docs}"
+    cites docs strictly
+
+@budget($10.00)
+@min_confidence(0.7)
+agent answer_question(q: Question) -> Answer:
+    grounded_q: Grounded<String> = wrap(q.text)
+    docs: List<Grounded<String>> = retrieve_docs(q.text)
+    grounded_answer: Grounded<String> = synthesize(grounded_q, docs)
+    return Answer(unwrap(grounded_answer), provenance(grounded_answer))
+
+@budget($1.00)
+agent share_source_doc(doc_id: String, user_id: String) -> String uses share_externally:
+    approve ShareSource(doc_id, user_id)
+    return share_source(doc_id, user_id)

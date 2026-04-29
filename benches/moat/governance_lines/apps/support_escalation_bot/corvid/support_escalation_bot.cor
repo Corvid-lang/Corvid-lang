@@ -1,0 +1,54 @@
+# Support-escalation-bot reference implementation — Corvid.
+#
+# A support agent that triages incoming tickets and can escalate
+# to the on-call oncall rotation. Paging humans is the dangerous
+# action (irreversible: it wakes someone up). Routing decisions
+# carry provenance back to the ticket history that justified them.
+
+effect ticket_lookup:
+    data: grounded
+
+effect llm:
+    cost: $0.10
+
+effect page_humans:
+    trust: human_required
+    reversible: false
+    data: external
+
+type Ticket:
+    id: String
+    customer_id: String
+    body: String
+    severity: String
+
+type Triage:
+    decision: String
+    rationale: String
+    sources: List<String>
+
+# Read-only; provenance preserved through Grounded<T>.
+tool fetch_history(customer_id: String) -> List<Grounded<String>> uses ticket_lookup
+
+# Paging on-call is the dangerous action. Wakes a human; cannot
+# be undone.
+tool escalate_to_oncall(ticket_id: String, severity: String) -> String dangerous uses page_humans
+
+prompt classify_severity(ticket: Grounded<String>, history: List<Grounded<String>>) -> Grounded<String> uses llm:
+    "decide severity for {ticket} given history {history}"
+    cites ticket strictly
+    cites history strictly
+
+@budget($5.00)
+@min_confidence(0.8)
+agent triage_ticket(t: Ticket) -> Triage:
+    grounded_ticket: Grounded<String> = wrap(t.body)
+    history: List<Grounded<String>> = fetch_history(t.customer_id)
+    decision: Grounded<String> = classify_severity(grounded_ticket, history)
+    return Triage(unwrap(decision), unwrap(decision), provenance(decision))
+
+@budget($1.00)
+@trust(human_required)
+agent escalate(t: Ticket, severity: String) -> String uses page_humans:
+    approve EscalateToOncall(t.id, severity)
+    return escalate_to_oncall(t.id, severity)

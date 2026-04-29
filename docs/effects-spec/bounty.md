@@ -130,6 +130,30 @@ threaded metadata, or convention-only `# sources kept here` markers do not
 count. The point is whether a downstream consumer can extract provenance
 *without reading the implementation*.
 
+### `benches/moat/governance_lines/` — governance LOC across reference apps
+
+Current published numbers (3 reference apps — refund_bot,
+rag_qa_bot, support_escalation_bot):
+
+| App | Corvid | Python | TypeScript |
+|---|---|---|---|
+| `refund_bot` | 9 | 31 | 43 |
+| `rag_qa_bot` | 15 | 35 | 52 |
+| `support_escalation_bot` | 16 | 39 | 55 |
+| **total** | **40** | **105** | **150** |
+
+A submission counts if it provides a more idiomatic Python or
+TypeScript implementation of any of the apps that *honestly*
+reduces the marked-governance line count — by using a library
+that genuinely shortens the surface, not by stripping
+governance checks. Naive implementations that drop the audit log,
+skip the budget cap, or remove the approval token do not count
+(they ship the bug class the line was preventing).
+
+A submission can also add a 4th, 5th, … reference app under
+`apps/<name>/` with all three stacks implementing the same
+intended behaviour. The runner picks it up automatically.
+
 ### `benches/moat/replay_determinism/` — deterministic re-execution of `refund_bot_demo`
 
 Current published numbers:
