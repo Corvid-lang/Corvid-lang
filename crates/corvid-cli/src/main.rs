@@ -33,6 +33,13 @@ mod approver_cmd;
 mod audit_cmd;
 mod approvals_cmd;
 mod auth_cmd;
+mod format;
+
+use format::{
+    approval_summary_value, approvals_inspect_summary, approvals_queue_summary,
+    audit_event_value, print_checkpoint_summary, print_job_summary, print_loop_limits,
+    print_loop_usage, print_schedule_summary, print_stall_check, print_stall_policy,
+};
 mod bench_cmd;
 mod bind_cmd;
 mod bundle_cmd;
@@ -67,9 +74,8 @@ use corvid_differential_verify::{
     render_corpus_grid, render_report, shrink_program, verify_corpus,
 };
 use corvid_runtime::queue::{
-    DurableQueueRuntime, JobApprovalDecision, JobCheckpointKind, JobLoopLimits, JobLoopUsage,
-    JobStallAction, JobStallCheck, JobStallPolicy, QueueJob, QueueScheduleManifest,
-    ScheduleMissedPolicy,
+    DurableQueueRuntime, JobApprovalDecision, JobCheckpointKind, JobStallAction,
+    QueueScheduleManifest, ScheduleMissedPolicy,
 };
 use cost_frontier::{build_frontier, render_frontier as render_cost_frontier, CostFrontierOptions};
 use routing_report::{build_report, render_report as render_routing_report, RoutingReportOptions};
@@ -2709,47 +2715,6 @@ fn cmd_approvals(command: ApprovalsCommand) -> Result<u8> {
     }
 }
 
-fn approval_summary_value(s: &approvals_cmd::ApprovalSummary) -> serde_json::Value {
-    serde_json::json!({
-        "id": s.id,
-        "status": s.status,
-        "action": s.action,
-        "target_kind": s.target_kind,
-        "target_id": s.target_id,
-        "required_role": s.required_role,
-        "risk_level": s.risk_level,
-        "max_cost_usd": s.max_cost_usd,
-        "expires_at_ms": s.expires_at_ms,
-        "created_at_ms": s.created_at_ms,
-        "trace_id": s.trace_id,
-    })
-}
-
-fn audit_event_value(e: &approvals_cmd::AuditEventSummary) -> serde_json::Value {
-    serde_json::json!({
-        "event_kind": e.event_kind,
-        "status_before": e.status_before,
-        "status_after": e.status_after,
-        "actor_id": e.actor_id,
-        "reason": e.reason,
-        "created_at_ms": e.created_at_ms,
-    })
-}
-
-fn approvals_queue_summary(out: &approvals_cmd::ApprovalsQueueOutput) -> serde_json::Value {
-    serde_json::json!({
-        "tenant_id": out.tenant_id,
-        "approvals": out.approvals.iter().map(approval_summary_value).collect::<Vec<_>>(),
-    })
-}
-
-fn approvals_inspect_summary(out: &approvals_cmd::ApprovalsInspectOutput) -> serde_json::Value {
-    serde_json::json!({
-        "approval": approval_summary_value(&out.approval),
-        "audit_events": out.audit_events.iter().map(audit_event_value).collect::<Vec<_>>(),
-    })
-}
-
 fn cmd_migrate(
     action: &str,
     dir: &Path,
@@ -3667,165 +3632,6 @@ fn cmd_jobs_checkpoint_resume(state: &Path, job_id: &str) -> Result<u8> {
         println!("last_checkpoint: ");
     }
     Ok(0)
-}
-
-fn print_checkpoint_summary(checkpoint: &corvid_runtime::queue::JobCheckpoint) {
-    println!("checkpoint: {}", checkpoint.id);
-    println!("job: {}", checkpoint.job_id);
-    println!("sequence: {}", checkpoint.sequence);
-    println!("kind: {}", checkpoint.kind.as_str());
-    println!("label: {}", checkpoint.label);
-    println!(
-        "payload_fingerprint: {}",
-        checkpoint.payload_fingerprint.as_deref().unwrap_or("")
-    );
-    println!("created_ms: {}", checkpoint.created_ms);
-}
-
-fn print_loop_limits(limits: &JobLoopLimits) {
-    println!("job: {}", limits.job_id);
-    println!(
-        "max_steps: {}",
-        limits
-            .max_steps
-            .map(|value| value.to_string())
-            .unwrap_or_default()
-    );
-    println!(
-        "max_wall_ms: {}",
-        limits
-            .max_wall_ms
-            .map(|value| value.to_string())
-            .unwrap_or_default()
-    );
-    println!(
-        "max_spend_usd: {}",
-        limits
-            .max_spend_usd
-            .map(|value| format!("{value:.6}"))
-            .unwrap_or_default()
-    );
-    println!(
-        "max_tool_calls: {}",
-        limits
-            .max_tool_calls
-            .map(|value| value.to_string())
-            .unwrap_or_default()
-    );
-    println!("limits_updated_ms: {}", limits.updated_ms);
-}
-
-fn print_loop_usage(usage: &JobLoopUsage) {
-    println!("job: {}", usage.job_id);
-    println!("steps: {}", usage.steps);
-    println!("wall_ms: {}", usage.wall_ms);
-    println!("spend_usd: {:.6}", usage.spend_usd);
-    println!("tool_calls: {}", usage.tool_calls);
-    println!("usage_updated_ms: {}", usage.updated_ms);
-}
-
-fn print_stall_policy(policy: &JobStallPolicy) {
-    println!("job: {}", policy.job_id);
-    println!("stall_after_ms: {}", policy.stall_after_ms);
-    println!("action: {}", policy.action.as_str());
-    println!("updated_ms: {}", policy.updated_ms);
-}
-
-fn print_stall_check(check: &JobStallCheck) {
-    println!("job: {}", check.job_id);
-    println!("stalled: {}", check.stalled);
-    println!(
-        "action_taken: {}",
-        check.action_taken.as_deref().unwrap_or("")
-    );
-    println!("last_heartbeat_ms: {}", check.last_heartbeat_ms);
-    println!("stall_after_ms: {}", check.stall_after_ms);
-    println!("elapsed_ms: {}", check.elapsed_ms);
-}
-
-fn print_schedule_summary(schedule: &QueueScheduleManifest) {
-    println!("schedule: {}", schedule.id);
-    println!("cron: {}", schedule.cron);
-    println!("zone: {}", schedule.zone);
-    println!("task: {}", schedule.task);
-    println!("missed_policy: {}", schedule.missed_policy.as_str());
-    println!("last_checked_ms: {}", schedule.last_checked_ms);
-    println!(
-        "last_fire_ms: {}",
-        schedule
-            .last_fire_ms
-            .map(|value| value.to_string())
-            .unwrap_or_default()
-    );
-    println!("max_retries: {}", schedule.max_retries);
-    println!("budget_usd: {:.4}", schedule.budget_usd);
-    println!(
-        "effect_summary: {}",
-        schedule.effect_summary.as_deref().unwrap_or("")
-    );
-    println!(
-        "replay_key_prefix: {}",
-        schedule.replay_key_prefix.as_deref().unwrap_or("")
-    );
-}
-
-fn print_job_summary(job: &QueueJob) {
-    println!("job: {}", job.id);
-    println!("task: {}", job.task);
-    println!(
-        "input_schema: {}",
-        job.input_schema.as_deref().unwrap_or("")
-    );
-    println!("status: {}", job.status.as_str());
-    println!("attempts: {}", job.attempts);
-    println!("max_retries: {}", job.max_retries);
-    println!("budget_usd: {:.4}", job.budget_usd);
-    println!(
-        "effect_summary: {}",
-        job.effect_summary.as_deref().unwrap_or("")
-    );
-    println!("replay_key: {}", job.replay_key.as_deref().unwrap_or(""));
-    println!(
-        "idempotency_key: {}",
-        job.idempotency_key.as_deref().unwrap_or("")
-    );
-    println!("output_kind: {}", job.output_kind.as_deref().unwrap_or(""));
-    println!(
-        "output_fingerprint: {}",
-        job.output_fingerprint.as_deref().unwrap_or("")
-    );
-    println!(
-        "failure_kind: {}",
-        job.failure_kind.as_deref().unwrap_or("")
-    );
-    println!(
-        "failure_fingerprint: {}",
-        job.failure_fingerprint.as_deref().unwrap_or("")
-    );
-    println!(
-        "next_run_ms: {}",
-        job.next_run_ms
-            .map(|value| value.to_string())
-            .unwrap_or_default()
-    );
-    println!("lease_owner: {}", job.lease_owner.as_deref().unwrap_or(""));
-    println!(
-        "lease_expires_ms: {}",
-        job.lease_expires_ms
-            .map(|value| value.to_string())
-            .unwrap_or_default()
-    );
-    println!("approval_id: {}", job.approval_id.as_deref().unwrap_or(""));
-    println!(
-        "approval_expires_ms: {}",
-        job.approval_expires_ms
-            .map(|value| value.to_string())
-            .unwrap_or_default()
-    );
-    println!(
-        "approval_reason: {}",
-        job.approval_reason.as_deref().unwrap_or("")
-    );
 }
 
 struct MigrationFile {
