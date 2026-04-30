@@ -112,9 +112,14 @@ impl std::fmt::Display for ConnectorManifestError {
             Self::WriteScopeWithoutApproval(scope) => {
                 write!(f, "write scope `{scope}` requires approval")
             }
-            Self::InvalidRateLimit(key) => write!(f, "rate limit `{key}` must have positive limit/window"),
+            Self::InvalidRateLimit(key) => {
+                write!(f, "rate limit `{key}` must have positive limit/window")
+            }
             Self::MissingSensitiveRedaction(class) => {
-                write!(f, "sensitive data class `{class}` requires a redaction rule")
+                write!(
+                    f,
+                    "sensitive data class `{class}` requires a redaction rule"
+                )
             }
             Self::MissingReplayPolicy(scope) => {
                 write!(f, "scope `{scope}` requires replay policy")
@@ -158,7 +163,9 @@ pub fn validate_connector_manifest(manifest: &ConnectorManifest) -> ConnectorVal
             diagnostics.push(ConnectorManifestError::DuplicateScope(scope.id.clone()));
         }
         if scope.provider_scope.trim().is_empty() {
-            diagnostics.push(ConnectorManifestError::MissingProviderScope(scope.id.clone()));
+            diagnostics.push(ConnectorManifestError::MissingProviderScope(
+                scope.id.clone(),
+            ));
         }
         if scope.data_classes.is_empty() {
             diagnostics.push(ConnectorManifestError::MissingDataClasses(scope.id.clone()));
@@ -172,7 +179,9 @@ pub fn validate_connector_manifest(manifest: &ConnectorManifest) -> ConnectorVal
             ));
         }
         if !scope_has_replay_policy(scope, &manifest.replay) {
-            diagnostics.push(ConnectorManifestError::MissingReplayPolicy(scope.id.clone()));
+            diagnostics.push(ConnectorManifestError::MissingReplayPolicy(
+                scope.id.clone(),
+            ));
         }
     }
 
