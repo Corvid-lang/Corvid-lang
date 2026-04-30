@@ -38,6 +38,7 @@ mod cli;
 mod doctor_cmd;
 mod format;
 mod migrate_cmd;
+mod run_cmd;
 mod verify_cmd;
 
 use build_cmd::cmd_build;
@@ -47,6 +48,7 @@ use cli::observe::*;
 use cli::package::*;
 use doctor_cmd::cmd_doctor_v2;
 use migrate_cmd::{cmd_migrate, cmd_migrate_down};
+use run_cmd::cmd_run;
 use verify_cmd::cmd_verify;
 use format::{
     approval_summary_value, approvals_inspect_summary, approvals_queue_summary,
@@ -3409,32 +3411,6 @@ fn cmd_check(file: &Path) -> Result<u8> {
     }
 }
 
-fn cmd_run(file: &Path, target: &str, tools_lib: Option<&Path>) -> Result<u8> {
-    let rt = match target {
-        "auto" => RunTarget::Auto,
-        "native" => RunTarget::Native,
-        "interp" | "interpreter" => RunTarget::Interpreter,
-        other => anyhow::bail!(
-            "unknown target `{other}`; valid: `auto` (default), `native`, `interpreter`"
-        ),
-    };
-    if let Some(lib) = tools_lib {
-        if !lib.exists() {
-            anyhow::bail!(
-                "--with-tools-lib `{}` does not exist — build the tools crate first (`cargo build -p <your-tools-crate> --release`)",
-                lib.display()
-            );
-        }
-    }
-    // Auto: native AOT tier when the IR is tool-free and uses only
-    // supported command-line boundary types, or when tool-using code
-    // has a companion tools staticlib provided.
-    // Interpreter otherwise (with a stderr notice). Native-required
-    // and interpreter-forced are the explicit overrides. See
-    // `RunTarget` docs in corvid-driver for the exact semantics.
-    run_with_target(file, rt, tools_lib)
-        .with_context(|| format!("failed to run `{}`", file.display()))
-}
 
 fn cmd_repl() -> Result<u8> {
     corvid_repl::Repl::run_stdio().context("failed to run `corvid repl`")?;
