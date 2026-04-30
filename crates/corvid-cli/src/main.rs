@@ -31,6 +31,7 @@
 mod abi_cmd;
 mod approver_cmd;
 mod audit_cmd;
+mod approvals_cmd;
 mod auth_cmd;
 mod bench_cmd;
 mod bind_cmd;
@@ -2508,6 +2509,7 @@ fn cmd_auth(command: AuthCommand) -> Result<u8> {
 }
 
 fn cmd_approvals(command: ApprovalsCommand) -> Result<u8> {
+    use approvals_cmd::*;
     use auth_cmd::*;
     match command {
         ApprovalsCommand::Queue {
@@ -2708,7 +2710,7 @@ fn cmd_approvals(command: ApprovalsCommand) -> Result<u8> {
     }
 }
 
-fn approval_summary_value(s: &auth_cmd::ApprovalSummary) -> serde_json::Value {
+fn approval_summary_value(s: &approvals_cmd::ApprovalSummary) -> serde_json::Value {
     serde_json::json!({
         "id": s.id,
         "status": s.status,
@@ -2724,7 +2726,7 @@ fn approval_summary_value(s: &auth_cmd::ApprovalSummary) -> serde_json::Value {
     })
 }
 
-fn audit_event_value(e: &auth_cmd::AuditEventSummary) -> serde_json::Value {
+fn audit_event_value(e: &approvals_cmd::AuditEventSummary) -> serde_json::Value {
     serde_json::json!({
         "event_kind": e.event_kind,
         "status_before": e.status_before,
@@ -2735,14 +2737,14 @@ fn audit_event_value(e: &auth_cmd::AuditEventSummary) -> serde_json::Value {
     })
 }
 
-fn approvals_queue_summary(out: &auth_cmd::ApprovalsQueueOutput) -> serde_json::Value {
+fn approvals_queue_summary(out: &approvals_cmd::ApprovalsQueueOutput) -> serde_json::Value {
     serde_json::json!({
         "tenant_id": out.tenant_id,
         "approvals": out.approvals.iter().map(approval_summary_value).collect::<Vec<_>>(),
     })
 }
 
-fn approvals_inspect_summary(out: &auth_cmd::ApprovalsInspectOutput) -> serde_json::Value {
+fn approvals_inspect_summary(out: &approvals_cmd::ApprovalsInspectOutput) -> serde_json::Value {
     serde_json::json!({
         "approval": approval_summary_value(&out.approval),
         "audit_events": out.audit_events.iter().map(audit_event_value).collect::<Vec<_>>(),

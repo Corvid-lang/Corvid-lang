@@ -1,13 +1,11 @@
-//! `corvid auth` + `corvid approvals` CLI surface — slice 39L.
+//! `corvid auth` CLI surface — slice 39L.
 //!
-//! Wires the Phase 39 auth + approval runtime into the top-level
-//! `corvid` CLI so an operator can manage sessions / API keys /
-//! OAuth tokens / approval queues from the shell rather than only
-//! from Rust callers. The runtime functions
-//! (`SessionAuthRuntime::create_api_key`,
-//! `ApprovalQueueRuntime::approve`, etc.) are unchanged; this
-//! slice contributes only the clap surface + JSON-rendering of
-//! the runtime's typed records.
+//! Wires the Phase 39 auth runtime into the top-level `corvid` CLI
+//! so an operator can manage sessions / API keys / OAuth tokens
+//! from the shell rather than only from Rust callers. The runtime
+//! functions (`SessionAuthRuntime::create_api_key`, etc.) are
+//! unchanged; this slice contributes only the clap surface +
+//! JSON-rendering of the runtime's typed records.
 //!
 //! `--auth-state` and `--approvals-state` default to
 //! `target/auth.db` and `target/approvals.db` respectively. Both
@@ -22,8 +20,12 @@
 //!   because it is small and tightly coupled to the deploy story.
 //!
 //! The `corvid approvals *` surface lives in the sibling
-//! [`crate::approvals_cmd`] module so the auth and approval
-//! lanes evolve independently.
+//! [`crate::approvals_cmd`] module so the auth and approval lanes
+//! evolve independently. The transition (`approve`/`deny`/`expire`)
+//! and interaction (`comment`/`delegate`/`batch`) helpers are
+//! still under this module mid-refactor; commits 20j-S1 #3 and #4
+//! relocate them to `approvals_cmd::transition` and
+//! `approvals_cmd::interaction`.
 
 pub mod keys;
 #[allow(unused_imports)]
@@ -31,11 +33,13 @@ pub use keys::*;
 
 use anyhow::{anyhow, Context, Result};
 use corvid_runtime::approval_authorization::ApprovalActorContext;
-use corvid_runtime::approval_queue::{
-    ApprovalQueueAuditEvent, ApprovalQueueRecord, ApprovalQueueRuntime,
-};
+use corvid_runtime::approval_queue::ApprovalQueueRuntime;
 use corvid_runtime::auth::SessionAuthRuntime;
 use std::path::PathBuf;
+
+use crate::approvals_cmd::{
+    summarise, summarise_audit, ApprovalSummary, AuditEventSummary,
+};
 
 #[derive(Debug, Clone)]
 pub struct AuthMigrateArgs {
@@ -79,129 +83,6 @@ pub fn run_auth_migrate(args: AuthMigrateArgs) -> Result<AuthMigrateOutput> {
         auth_initialised: true,
         approvals_initialised: true,
     })
-}
-
-#[derive(Debug, Clone)]
-pub struct ApprovalsQueueArgs {
-    pub approvals_state: PathBuf,
-    pub tenant_id: String,
-    /// Optional status filter: `pending`, `approved`, `denied`, `expired`.
-    pub status: Option<String>,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct ApprovalsQueueOutput {
-    pub tenant_id: String,
-    pub approvals: Vec<ApprovalSummary>,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct ApprovalSummary {
-    pub id: String,
-    pub status: String,
-    pub action: String,
-    pub target_kind: String,
-    pub target_id: String,
-    pub required_role: String,
-    pub risk_level: String,
-    pub max_cost_usd: f64,
-    pub expires_at_ms: u64,
-    pub created_at_ms: u64,
-    pub trace_id: String,
-}
-
-/// List approvals for a tenant, optionally filtered by status.
-pub fn run_approvals_queue(args: ApprovalsQueueArgs) -> Result<ApprovalsQueueOutput> {
-    let approvals = ApprovalQueueRuntime::open(&args.approvals_state)
-        .map_err(|e| anyhow!("approvals runtime init failed: {e}"))?;
-    let records = approvals
-        .list_by_tenant(&args.tenant_id)
-        .map_err(|e| anyhow!("list approvals: {e}"))?;
-    let filtered: Vec<ApprovalQueueRecord> = if let Some(status) = args.status {
-        records.into_iter().filter(|r| r.status == status).collect()
-    } else {
-        records
-    };
-    Ok(ApprovalsQueueOutput {
-        tenant_id: args.tenant_id,
-        approvals: filtered.into_iter().map(summarise).collect(),
-    })
-}
-
-fn summarise(record: ApprovalQueueRecord) -> ApprovalSummary {
-    ApprovalSummary {
-        id: record.id,
-        status: record.status,
-        action: record.action,
-        target_kind: record.target_kind,
-        target_id: record.target_id,
-        required_role: record.required_role,
-        risk_level: record.risk_level,
-        max_cost_usd: record.max_cost_usd,
-        expires_at_ms: record.expires_ms,
-        created_at_ms: record.created_ms,
-        trace_id: record.trace_id,
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct ApprovalsInspectArgs {
-    pub approvals_state: PathBuf,
-    pub tenant_id: String,
-    pub approval_id: String,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct ApprovalsInspectOutput {
-    pub approval: ApprovalSummary,
-    pub audit_events: Vec<AuditEventSummary>,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct AuditEventSummary {
-    pub event_kind: String,
-    pub status_before: String,
-    pub status_after: String,
-    pub actor_id: String,
-    pub reason: Option<String>,
-    pub created_at_ms: u64,
-}
-
-/// Inspect a single approval — returns the record + every audit
-/// event in chronological order.
-pub fn run_approvals_inspect(args: ApprovalsInspectArgs) -> Result<ApprovalsInspectOutput> {
-    let approvals = ApprovalQueueRuntime::open(&args.approvals_state)
-        .map_err(|e| anyhow!("approvals runtime init failed: {e}"))?;
-    let record = approvals
-        .get(&args.approval_id)
-        .map_err(|e| anyhow!("get approval: {e}"))?
-        .ok_or_else(|| anyhow!("approval `{}` not found", args.approval_id))?;
-    if record.tenant_id != args.tenant_id {
-        return Err(anyhow!(
-            "approval `{}` belongs to tenant `{}`, not `{}`",
-            args.approval_id,
-            record.tenant_id,
-            args.tenant_id
-        ));
-    }
-    let events = approvals
-        .audit_events(&args.approval_id)
-        .map_err(|e| anyhow!("approval audit: {e}"))?;
-    Ok(ApprovalsInspectOutput {
-        approval: summarise(record),
-        audit_events: events.into_iter().map(summarise_audit).collect(),
-    })
-}
-
-fn summarise_audit(event: ApprovalQueueAuditEvent) -> AuditEventSummary {
-    AuditEventSummary {
-        event_kind: event.event_kind,
-        status_before: event.status_before,
-        status_after: event.status_after,
-        actor_id: event.actor_id,
-        reason: event.reason,
-        created_at_ms: event.created_ms,
-    }
 }
 
 #[derive(Debug, Clone)]
@@ -372,58 +253,12 @@ pub fn run_approvals_batch(args: ApprovalsBatchArgs) -> Result<ApprovalsBatchOut
     Ok(ApprovalsBatchOutput { approved, failed })
 }
 
-#[derive(Debug, Clone)]
-pub struct ApprovalsExportArgs {
-    pub approvals_state: PathBuf,
-    pub tenant_id: String,
-    pub since_ms: Option<u64>,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct ApprovalsExportOutput {
-    pub tenant_id: String,
-    pub approvals: Vec<ApprovalExportEntry>,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct ApprovalExportEntry {
-    pub approval: ApprovalSummary,
-    pub audit_events: Vec<AuditEventSummary>,
-}
-
-/// Export every approval (with full audit trail) for a tenant
-/// since the supplied timestamp. The output is the auditable
-/// transcript a compliance review consumes.
-pub fn run_approvals_export(args: ApprovalsExportArgs) -> Result<ApprovalsExportOutput> {
-    let approvals = ApprovalQueueRuntime::open(&args.approvals_state)
-        .map_err(|e| anyhow!("approvals runtime init failed: {e}"))?;
-    let records = approvals
-        .list_by_tenant(&args.tenant_id)
-        .map_err(|e| anyhow!("list approvals: {e}"))?;
-    let mut entries = Vec::new();
-    for record in records {
-        if let Some(since) = args.since_ms {
-            if record.created_ms < since {
-                continue;
-            }
-        }
-        let events = approvals
-            .audit_events(&record.id)
-            .map_err(|e| anyhow!("audit events: {e}"))?;
-        entries.push(ApprovalExportEntry {
-            approval: summarise(record),
-            audit_events: events.into_iter().map(summarise_audit).collect(),
-        });
-    }
-    Ok(ApprovalsExportOutput {
-        tenant_id: args.tenant_id,
-        approvals: entries,
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::approvals_cmd::{
+        run_approvals_inspect, ApprovalsInspectArgs,
+    };
     use corvid_runtime::approval_queue::{ApprovalContractRecord, ApprovalCreate};
     use tempfile::tempdir;
 
@@ -488,28 +323,6 @@ mod tests {
         })
         .expect("re-migrate");
         assert!(out2.auth_initialised);
-    }
-
-    /// Slice 39L: `corvid approvals queue` lists by tenant, filters by status.
-    #[test]
-    fn approvals_queue_filters_by_status() {
-        let (_dir, _auth, approvals_state) = temp_paths();
-        seed_pending_approval(&approvals_state, "ap-1", "tenant-1", "Admin");
-        let out = run_approvals_queue(ApprovalsQueueArgs {
-            approvals_state: approvals_state.clone(),
-            tenant_id: "tenant-1".to_string(),
-            status: None,
-        })
-        .expect("queue");
-        assert_eq!(out.approvals.len(), 1);
-        assert_eq!(out.approvals[0].status, "pending");
-        let filtered = run_approvals_queue(ApprovalsQueueArgs {
-            approvals_state,
-            tenant_id: "tenant-1".to_string(),
-            status: Some("approved".to_string()),
-        })
-        .expect("queue filtered");
-        assert!(filtered.approvals.is_empty());
     }
 
     /// Slice 39L: `corvid approvals approve` walks the pending →
@@ -577,23 +390,6 @@ mod tests {
         assert!(err.to_string().contains("role"), "{err}");
     }
 
-    /// Slice 39L adversarial: `inspect` for an approval that
-    /// belongs to a different tenant fails with a clear message
-    /// (no cross-tenant disclosure).
-    #[test]
-    fn approvals_inspect_rejects_wrong_tenant() {
-        let (_dir, _auth, approvals_state) = temp_paths();
-        seed_pending_approval(&approvals_state, "ap-1", "tenant-1", "Admin");
-        let err = run_approvals_inspect(ApprovalsInspectArgs {
-            approvals_state,
-            tenant_id: "tenant-2".to_string(),
-            approval_id: "ap-1".to_string(),
-        })
-        .unwrap_err();
-        let msg = err.to_string();
-        assert!(msg.contains("tenant"), "{msg}");
-    }
-
     /// Slice 39L: `corvid approvals comment` records an audit
     /// event without changing status.
     #[test]
@@ -637,43 +433,8 @@ mod tests {
         assert_eq!(out.approved.len(), 1);
         assert_eq!(out.approved[0].id, "ap-1");
         assert_eq!(out.failed.len(), 2);
-        // ap-2 fails because actor's role is Admin, not Reviewer.
-        // ap-missing fails because the id does not exist.
         let failed_ids: Vec<&str> = out.failed.iter().map(|f| f.approval_id.as_str()).collect();
         assert!(failed_ids.contains(&"ap-2"));
         assert!(failed_ids.contains(&"ap-missing"));
-    }
-
-    /// Slice 39L: `corvid approvals export` emits the typed
-    /// approval + audit transcript a compliance review consumes.
-    #[test]
-    fn approvals_export_emits_record_with_audit_trail() {
-        let (_dir, _auth, approvals_state) = temp_paths();
-        seed_pending_approval(&approvals_state, "ap-1", "tenant-1", "Admin");
-        run_approvals_approve(ApprovalsTransitionArgs {
-            approvals_state: approvals_state.clone(),
-            tenant_id: "tenant-1".to_string(),
-            approval_id: "ap-1".to_string(),
-            actor_id: "actor-admin".to_string(),
-            role: "Admin".to_string(),
-            reason: None,
-        })
-        .unwrap();
-        let out = run_approvals_export(ApprovalsExportArgs {
-            approvals_state,
-            tenant_id: "tenant-1".to_string(),
-            since_ms: None,
-        })
-        .expect("export");
-        assert_eq!(out.approvals.len(), 1);
-        assert_eq!(out.approvals[0].approval.status, "approved");
-        assert!(out.approvals[0]
-            .audit_events
-            .iter()
-            .any(|e| e.event_kind == "created"));
-        assert!(out.approvals[0]
-            .audit_events
-            .iter()
-            .any(|e| e.event_kind == "approved"));
     }
 }
