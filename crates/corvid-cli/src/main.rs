@@ -37,6 +37,7 @@ mod cli;
 mod doctor_cmd;
 mod format;
 mod migrate_cmd;
+mod verify_cmd;
 
 use cli::jobs::*;
 use cli::migrate::*;
@@ -44,6 +45,7 @@ use cli::observe::*;
 use cli::package::*;
 use doctor_cmd::cmd_doctor_v2;
 use migrate_cmd::{cmd_migrate, cmd_migrate_down};
+use verify_cmd::cmd_verify;
 use format::{
     approval_summary_value, approvals_inspect_summary, approvals_queue_summary,
     audit_event_value, print_checkpoint_summary, print_job_summary, print_loop_limits,
@@ -79,9 +81,6 @@ use std::process::ExitCode;
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
-use corvid_differential_verify::{
-    render_corpus_grid, render_report, shrink_program, verify_corpus,
-};
 use corvid_runtime::queue::{DurableQueueRuntime, QueueScheduleManifest};
 use cost_frontier::{build_frontier, render_frontier as render_cost_frontier, CostFrontierOptions};
 use routing_report::{build_report, render_report as render_routing_report, RoutingReportOptions};
@@ -3648,48 +3647,6 @@ fn cmd_repl() -> Result<u8> {
     Ok(0)
 }
 
-fn cmd_verify(corpus: Option<&Path>, shrink: Option<&Path>, json: bool) -> Result<u8> {
-    match (corpus, shrink) {
-        (Some(dir), None) => {
-            let reports = verify_corpus(dir)?;
-            let divergent: Vec<_> = reports
-                .iter()
-                .filter(|report| !report.divergences.is_empty())
-                .collect();
-            println!("{}", render_corpus_grid(&reports));
-            if !divergent.is_empty() {
-                println!();
-                for (index, report) in divergent.iter().enumerate() {
-                    if index > 0 {
-                        println!();
-                    }
-                    println!("{}", render_report(report));
-                }
-            }
-            if json {
-                eprintln!("{}", serde_json::to_string_pretty(&reports)?);
-            }
-            Ok(if divergent.is_empty() { 0 } else { 1 })
-        }
-        (None, Some(file)) => {
-            let result = shrink_program(file)?;
-            println!(
-                "shrunk reproducer: {} -> {} (removed {} line(s))",
-                result.original.display(),
-                result.output.display(),
-                result.removed_lines
-            );
-            if json {
-                eprintln!("{}", serde_json::to_string_pretty(&result)?);
-            }
-            Ok(0)
-        }
-        (None, None) => {
-            anyhow::bail!("use `corvid verify --corpus <dir>` or `corvid verify --shrink <file>`")
-        }
-        (Some(_), Some(_)) => unreachable!("clap enforces conflicts"),
-    }
-}
 
 // ------------------------------------------------------------
 // Verification suites — effect-system spec, custom dimensions,
