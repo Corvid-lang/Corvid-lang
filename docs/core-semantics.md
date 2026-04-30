@@ -451,7 +451,7 @@ Across N concurrent workers, exactly one durable queue row exists for a given no
 
 **Positive tests:**
 
-- `crates/corvid-runtime/src/queue.rs::durable_queue_idempotency_key_collapses_duplicate_jobs`
+- `crates/corvid-runtime/src/queue/mod.rs::durable_queue_idempotency_key_collapses_duplicate_jobs`
 
 **Adversarial tests:**
 
@@ -480,7 +480,7 @@ A worker that drops uncleanly mid-step (the SIGKILL surrogate the queue runtime 
 
 **Positive tests:**
 
-- `crates/corvid-runtime/src/queue.rs::durable_queue_records_ordered_agent_checkpoints`
+- `crates/corvid-runtime/src/queue/mod.rs::durable_queue_records_ordered_agent_checkpoints`
 
 **Adversarial tests:**
 
@@ -770,11 +770,11 @@ Redacting the same lineage event twice with the same `LineageRedactionPolicy` yi
 
 **Positive tests:**
 
-- `crates/corvid-cli/src/observe_helpers_cmd.rs::drift_explain_attributes_model_swap`
+- `crates/corvid-cli/src/observe_helpers_cmd/eval_drift.rs::drift_explain_attributes_model_swap`
 
 **Adversarial tests:**
 
-- `crates/corvid-cli/src/observe_helpers_cmd.rs::drift_explain_surfaces_residual_when_status_flips_alone`
+- `crates/corvid-cli/src/observe_helpers_cmd/eval_drift.rs::drift_explain_surfaces_residual_when_status_flips_alone`
 
 #### `eval.promotion_signed_lineage`
 - **class**: runtime_checked
@@ -784,11 +784,11 @@ Redacting the same lineage event twice with the same `LineageRedactionPolicy` yi
 
 **Positive tests:**
 
-- `crates/corvid-cli/src/observe_helpers_cmd.rs::eval_generate_from_feedback_writes_redacted_fixture`
+- `crates/corvid-cli/src/observe_helpers_cmd/eval_from_feedback.rs::eval_generate_from_feedback_writes_redacted_fixture`
 
 **Adversarial tests:**
 
-- `crates/corvid-cli/src/observe_helpers_cmd.rs::eval_generate_from_feedback_missing_trace_id_refused`
+- `crates/corvid-cli/src/observe_helpers_cmd/eval_from_feedback.rs::eval_generate_from_feedback_missing_trace_id_refused`
 
 #### `review_queue.cost_of_being_wrong_ranking`
 - **class**: out_of_scope
