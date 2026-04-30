@@ -1184,6 +1184,37 @@ Users register local models (Ollama, vLLM, llama.cpp) with declared capabilities
 
 ---
 
+### Phase 20j — File responsibility re-audit + post-20i decomposition
+
+**Goal.** A 2026-04-30 audit pass found 36 files in the workspace that fail the CLAUDE.md responsibility rubric — five named directly (`corvid-cli/main.rs`, `corvid-runtime/queue.rs`, `corvid-driver/build.rs`, `corvid-guarantees/lib.rs`, `corvid-runtime/auth.rs`) plus 31 surfaced by a workspace-wide rubric sweep. Most are post-20i regrowth (`corvid-runtime/runtime.rs` grew 5.8× from 445 → 2,590 lines; `corvid-vm/value.rs` grew 1.2×; `corvid-vm/interp/prompt.rs` grew 1.4×); some are net-new (`corvid-codegen-cl/lowering/runtime.rs` at 3,220 lines, `corvid-cli/auth_cmd|connectors_cmd|observe_helpers_cmd` shipped this session at land-time-failing sizes). Hygiene phase before any further audit-correction work so the rubric remains the floor, not a snapshot.
+
+**Detailed plan:** [docs/phase-20j-refactor.md](./docs/phase-20j-refactor.md) — every file's rubric criterion, mixed concerns, target decomposition, per-extraction commit list, and validation gate.
+
+**Sequencing rules** (per CLAUDE.md "When splitting"):
+
+- One commit per file extraction. No batching.
+- Validation gate between every commit: `cargo check --workspace` + targeted `cargo test -p <crate> --lib` + `corvid verify --corpus tests/corpus`.
+- Push before starting the next extraction.
+- Pre-phase chat at every slice boundary (S, A, B, C) and every sub-slice (e.g., 20j-A1, 20j-A2). No autonomous chaining.
+- Zero semantic changes during a refactor commit. Move code, add `pub use` re-exports to preserve the public API.
+- Commit message: `refactor(<crate>): extract <responsibility> from <file>`.
+
+**Slices (estimated ~156 commits total):**
+
+- [ ] 20j-S — Session-introduced retro-splits (4 files, ~12 commits): `auth_cmd.rs`, `connectors_cmd.rs`, `observe_helpers_cmd.rs`, `jwt_verify.rs`. Atonement for files I shipped this session at sizes that already failed the rubric.
+- [ ] 20j-A — Large monoliths ≥1,500 lines (14 files, ~80 commits): `main.rs`, `queue.rs`, `lowering/runtime.rs`, `driver/lib.rs`, `runtime.rs`, `lowering/expr.rs`, `build.rs`, `guarantees/lib.rs`, `ffi_bridge.rs`, `auth.rs`, `parser/decl.rs`, `rust_backend.rs`, `replay/mod.rs`, `value.rs`. The five user-named plus nine audit-discovered.
+- [ ] 20j-B — Medium grab-bags 700–1,500 lines (15 files, ~52 commits): `interp.rs`, `dataflow.rs`, `prompt.rs`, `approval_queue.rs`, `rag.rs`, `test_from_traces.rs`, `eval_runner.rs`, `package_registry.rs`, `trace_diff/stacked.rs`, `catalog.rs`, `errors.rs`, `store.rs`, `replay_pool.rs`, `approver_bridge.rs`, `effects/cost.rs`.
+- [ ] 20j-C — Smaller-but-mixed (4 files, ~12 commits): `replay.rs` (cli), `approvals.rs`, `observe_cmd.rs`, `routing_report.rs`.
+
+**Phase-done criteria:**
+
+- Every `.rs` file ≥600 lines passes the rubric OR is documented as an integration-test exception (mirroring 20i).
+- Closing audit recorded in `docs/phase-20j-refactor.md` with per-file post-split line counts.
+- `learnings.md` updated per slice.
+- Memory record `project_phase_20j_closed.md` summarises regrowth vectors so future sessions don't repeat them.
+
+---
+
 ### Phase 21 — Replay (~5–6 months, maximal-flagship scope) ✅ closed — **THE FLAGSHIP WOW**
 
 **Goal.** Every run replayable by construction — and beyond. Baseline record + replay in both tiers, plus nine inventive features that push past every existing observability tool. Replay becomes a language-level, compile-time-guaranteed, regression-oracle-producing primitive.
