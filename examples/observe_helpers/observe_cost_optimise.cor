@@ -1,0 +1,42 @@
+# Generative cost-optimisation suggestions for one agent.
+#
+# The deterministic Rust handler ships the heuristic path
+# (`run_observe_cost_optimise`); this .cor source documents the
+# LLM-grounded version that proposes per-call route/cache/skip
+# suggestions.
+
+effect lineage_read:
+    data: grounded
+
+effect llm:
+    cost: $0.10
+
+type CostSuggestion:
+    kind: String                     # "cache" | "model_swap" | "skip_pre_validate" | ...
+    description: String
+    estimated_savings_usd: Float
+
+type CostOptimisationReport:
+    agent: String
+    total_cost_usd: Float
+    top_cost_centers: List<String>
+    suggestions: List<CostSuggestion>
+
+tool fetch_agent_traces(agent: String) -> List<Grounded<String>> uses lineage_read
+
+prompt suggest_optimisations(events: List<Grounded<String>>) -> Grounded<CostOptimisationReport> uses llm:
+    """
+    You are a production cost analyst. Given the lineage events
+    for one agent over a recent window, identify the top cost
+    centers and propose concrete suggestions: cache-on-repeat,
+    model-swap-via-progressive, skip-pre-validate. Each
+    suggestion must cite the events that justify it; reject
+    suggestions that cannot be backed by an event in the input.
+    """
+    cites events strictly
+
+@budget($0.10)
+@min_confidence(0.7)
+agent observe_cost_optimise(agent: String) -> Grounded<CostOptimisationReport>:
+    events: List<Grounded<String>> = fetch_agent_traces(agent)
+    return suggest_optimisations(events)

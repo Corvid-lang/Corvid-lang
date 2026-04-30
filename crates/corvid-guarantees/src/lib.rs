@@ -1134,6 +1134,105 @@ pub static GUARANTEE_REGISTRY: &[Guarantee] = &[
             "crates/corvid-runtime/src/lineage.rs::lineage_validation_fails_closed_for_missing_parent_or_duplicate_root",
         ],
     },
+    Guarantee {
+        id: "observability.redaction_determinism",
+        kind: GuaranteeKind::Observability,
+        class: GuaranteeClass::RuntimeChecked,
+        phase: Phase::Runtime,
+        description:
+            "Redacting the same lineage event twice with the same \
+             `LineageRedactionPolicy` yields byte-identical \
+             output; trace topology (trace_id, span_id, parent \
+             linkage) is preserved across redaction so observe / \
+             eval / OTel keep correlating after sensitive values \
+             are removed.",
+        out_of_scope_reason: "",
+        positive_test_refs: &[
+            "crates/corvid-runtime/src/lineage_redact.rs::redaction_preserves_topology_and_redacts_identifiers_deterministically",
+        ],
+        adversarial_test_refs: &[
+            "crates/corvid-runtime/src/lineage_redact.rs::redaction_preserves_topology_and_redacts_identifiers_deterministically",
+        ],
+    },
+    Guarantee {
+        id: "observability.contract_aware_grouping",
+        kind: GuaranteeKind::Observability,
+        class: GuaranteeClass::RuntimeChecked,
+        phase: Phase::Runtime,
+        description:
+            "`corvid observe show` groups incidents by \
+             guarantee_id, effect, budget, provenance, and \
+             approval rule rather than by service.name — so an \
+             analyst's first pivot lands on the contract that \
+             broke. Implemented by \
+             `lineage_incidents::group_lineage_incidents`.",
+        out_of_scope_reason: "",
+        positive_test_refs: &[
+            "crates/corvid-runtime/src/lineage_incidents.rs::incidents_group_by_guarantee_effect_budget_provenance_and_approval",
+        ],
+        adversarial_test_refs: &[
+            "crates/corvid-runtime/src/lineage_incidents.rs::incidents_group_by_guarantee_effect_budget_provenance_and_approval",
+        ],
+    },
+    Guarantee {
+        id: "eval.drift_attribution",
+        kind: GuaranteeKind::Observability,
+        class: GuaranteeClass::RuntimeChecked,
+        phase: Phase::Runtime,
+        description:
+            "`corvid eval-drift --explain` decomposes the drift \
+             between two trace runs into the four named \
+             dimensions (model_id, prompt_hash, \
+             retrieval_index_hash, input_fingerprint) plus a \
+             residual percentage for unattributable changes. The \
+             output's `sources` array carries the trace_id + \
+             span_id of every event the analysis consulted.",
+        out_of_scope_reason: "",
+        positive_test_refs: &[
+            "crates/corvid-cli/src/observe_helpers_cmd.rs::drift_explain_attributes_model_swap",
+        ],
+        adversarial_test_refs: &[
+            "crates/corvid-cli/src/observe_helpers_cmd.rs::drift_explain_surfaces_residual_when_status_flips_alone",
+        ],
+    },
+    Guarantee {
+        id: "eval.promotion_signed_lineage",
+        kind: GuaranteeKind::Observability,
+        class: GuaranteeClass::RuntimeChecked,
+        phase: Phase::Runtime,
+        description:
+            "`corvid eval-from-feedback` synthesises a typed \
+             eval fixture from a 'wrong answer' feedback record, \
+             redacting the matching lineage trace via the \
+             production redaction policy before writing the \
+             fixture. The fixture's `sources` field lists every \
+             redacted event so downstream consumers can \
+             reconstruct evidence without seeing raw identifiers.",
+        out_of_scope_reason: "",
+        positive_test_refs: &[
+            "crates/corvid-cli/src/observe_helpers_cmd.rs::eval_generate_from_feedback_writes_redacted_fixture",
+        ],
+        adversarial_test_refs: &[
+            "crates/corvid-cli/src/observe_helpers_cmd.rs::eval_generate_from_feedback_missing_trace_id_refused",
+        ],
+    },
+    Guarantee {
+        id: "review_queue.cost_of_being_wrong_ranking",
+        kind: GuaranteeKind::Observability,
+        class: GuaranteeClass::OutOfScope,
+        phase: Phase::Runtime,
+        description:
+            "`corvid review-queue list --rank=cost-of-being-wrong` \
+             surfaces low-confidence + high-risk outputs ranked \
+             by the `cost_of_being_wrong` policy.",
+        out_of_scope_reason:
+            "Review-queue envelopes ship at `corvid_runtime::review_queue`; \
+             the ranking CLI subcommand is not yet wired. A \
+             follow-up slice promotes this row when \
+             `corvid review-queue list` lands.",
+        positive_test_refs: &[],
+        adversarial_test_refs: &[],
+    },
     // ----- Platform: explicit non-defenses ------------------------
     Guarantee {
         id: "platform.host_kernel_compromise",

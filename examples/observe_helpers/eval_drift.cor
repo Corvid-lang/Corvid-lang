@@ -1,0 +1,50 @@
+# Drift attribution between two trace runs.
+#
+# The deterministic Rust handler
+# (`run_eval_drift_explain`) decomposes drift into the four
+# named dimensions (model / prompt / retrieval-index / input).
+# This .cor source documents the LLM-grounded version that
+# narrates the dimensions in plain language while citing the
+# specific event pairs that drove each contribution.
+
+effect lineage_read:
+    data: grounded
+
+effect llm:
+    cost: $0.05
+
+type DriftDimension:
+    name: String
+    contribution_percent: Float
+    narrative: String
+
+type DriftReport:
+    events_compared: Int
+    model_drift: DriftDimension
+    prompt_drift: DriftDimension
+    retrieval_index_drift: DriftDimension
+    input_drift: DriftDimension
+    residual_percent: Float
+
+tool fetch_trace_events_at(path: String) -> List<Grounded<String>> uses lineage_read
+
+prompt narrate_drift(
+    baseline: List<Grounded<String>>,
+    candidate: List<Grounded<String>>,
+) -> Grounded<DriftReport> uses llm:
+    """
+    Compare the baseline and candidate traces event-by-event by
+    (kind, name). For each matched pair, identify which of the
+    four dimensions changed (model_id, prompt_hash,
+    retrieval_index_hash, input_fingerprint) and narrate the
+    contribution in plain language. Cite the (trace_id, span_id)
+    of every pair you reason about.
+    """
+    cites baseline strictly
+    cites candidate strictly
+
+@budget($0.05)
+agent eval_drift(baseline_path: String, candidate_path: String) -> Grounded<DriftReport>:
+    baseline: List<Grounded<String>> = fetch_trace_events_at(baseline_path)
+    candidate: List<Grounded<String>> = fetch_trace_events_at(candidate_path)
+    return narrate_drift(baseline, candidate)

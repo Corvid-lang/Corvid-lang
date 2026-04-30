@@ -63,6 +63,11 @@ Per the no-shortcuts rule, every `out_of_scope` entry carries an explicit reason
 | `connector.replay_quarantine` | connector | out_of_scope | runtime |
 | `observability.otel_conformance` | observability | runtime_checked | runtime |
 | `observability.lineage_completeness` | observability | runtime_checked | runtime |
+| `observability.redaction_determinism` | observability | runtime_checked | runtime |
+| `observability.contract_aware_grouping` | observability | runtime_checked | runtime |
+| `eval.drift_attribution` | observability | runtime_checked | runtime |
+| `eval.promotion_signed_lineage` | observability | runtime_checked | runtime |
+| `review_queue.cost_of_being_wrong_ranking` | observability | out_of_scope | runtime |
 | `platform.host_kernel_compromise` | platform | out_of_scope | platform |
 | `platform.signing_key_compromise` | platform | out_of_scope | platform |
 | `platform.toolchain_compromise` | platform | out_of_scope | platform |
@@ -694,6 +699,70 @@ Every lineage event carries a (trace_id, span_id) pair plus parent linkage when 
 **Adversarial tests:**
 
 - `crates/corvid-runtime/src/lineage.rs::lineage_validation_fails_closed_for_missing_parent_or_duplicate_root`
+
+#### `observability.redaction_determinism`
+- **class**: runtime_checked
+- **phase**: runtime
+
+Redacting the same lineage event twice with the same `LineageRedactionPolicy` yields byte-identical output; trace topology (trace_id, span_id, parent linkage) is preserved across redaction so observe / eval / OTel keep correlating after sensitive values are removed.
+
+**Positive tests:**
+
+- `crates/corvid-runtime/src/lineage_redact.rs::redaction_preserves_topology_and_redacts_identifiers_deterministically`
+
+**Adversarial tests:**
+
+- `crates/corvid-runtime/src/lineage_redact.rs::redaction_preserves_topology_and_redacts_identifiers_deterministically`
+
+#### `observability.contract_aware_grouping`
+- **class**: runtime_checked
+- **phase**: runtime
+
+`corvid observe show` groups incidents by guarantee_id, effect, budget, provenance, and approval rule rather than by service.name — so an analyst's first pivot lands on the contract that broke. Implemented by `lineage_incidents::group_lineage_incidents`.
+
+**Positive tests:**
+
+- `crates/corvid-runtime/src/lineage_incidents.rs::incidents_group_by_guarantee_effect_budget_provenance_and_approval`
+
+**Adversarial tests:**
+
+- `crates/corvid-runtime/src/lineage_incidents.rs::incidents_group_by_guarantee_effect_budget_provenance_and_approval`
+
+#### `eval.drift_attribution`
+- **class**: runtime_checked
+- **phase**: runtime
+
+`corvid eval-drift --explain` decomposes the drift between two trace runs into the four named dimensions (model_id, prompt_hash, retrieval_index_hash, input_fingerprint) plus a residual percentage for unattributable changes. The output's `sources` array carries the trace_id + span_id of every event the analysis consulted.
+
+**Positive tests:**
+
+- `crates/corvid-cli/src/observe_helpers_cmd.rs::drift_explain_attributes_model_swap`
+
+**Adversarial tests:**
+
+- `crates/corvid-cli/src/observe_helpers_cmd.rs::drift_explain_surfaces_residual_when_status_flips_alone`
+
+#### `eval.promotion_signed_lineage`
+- **class**: runtime_checked
+- **phase**: runtime
+
+`corvid eval-from-feedback` synthesises a typed eval fixture from a 'wrong answer' feedback record, redacting the matching lineage trace via the production redaction policy before writing the fixture. The fixture's `sources` field lists every redacted event so downstream consumers can reconstruct evidence without seeing raw identifiers.
+
+**Positive tests:**
+
+- `crates/corvid-cli/src/observe_helpers_cmd.rs::eval_generate_from_feedback_writes_redacted_fixture`
+
+**Adversarial tests:**
+
+- `crates/corvid-cli/src/observe_helpers_cmd.rs::eval_generate_from_feedback_missing_trace_id_refused`
+
+#### `review_queue.cost_of_being_wrong_ranking`
+- **class**: out_of_scope
+- **phase**: runtime
+
+`corvid review-queue list --rank=cost-of-being-wrong` surfaces low-confidence + high-risk outputs ranked by the `cost_of_being_wrong` policy.
+
+> **Why out of scope:** Review-queue envelopes ship at `corvid_runtime::review_queue`; the ranking CLI subcommand is not yet wired. A follow-up slice promotes this row when `corvid review-queue list` lands.
 
 ### Platform — explicit non-defenses
 

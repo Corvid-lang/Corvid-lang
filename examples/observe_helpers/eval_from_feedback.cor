@@ -1,0 +1,51 @@
+# Synthesise an eval fixture from a "wrong answer" feedback
+# record.
+#
+# The deterministic Rust handler
+# (`run_eval_generate_from_feedback`) reads the feedback record,
+# looks up the matching trace, redacts via the production
+# redaction policy, and writes a typed eval fixture. This .cor
+# source documents the LLM-grounded version that, additionally,
+# generates a natural-language assertion the reviewer can
+# accept or modify before the fixture lands in the eval corpus.
+
+effect lineage_read:
+    data: grounded
+
+effect feedback_read:
+    data: grounded
+
+effect llm:
+    cost: $0.05
+
+type EvalFixture:
+    fixture_id: String
+    feedback_kind: String            # "wrong_answer" | "unsafe_action" | ...
+    redacted_lineage_count: Int
+    expected_assertion: String       # generated; reviewer can edit
+
+tool fetch_feedback(id: String) -> Grounded<String> uses feedback_read
+tool fetch_trace_events(trace_id: String) -> List<Grounded<String>> uses lineage_read
+
+prompt generate_assertion(
+    feedback: Grounded<String>,
+    events: List<Grounded<String>>,
+) -> Grounded<EvalFixture> uses llm:
+    """
+    You are an eval-corpus author. Given the user's "wrong
+    answer" feedback record and the lineage events that produced
+    the wrong answer, generate a typed eval-fixture: the
+    feedback_kind, a human-readable expected_assertion the
+    reviewer can accept or correct, and the redacted lineage
+    count. Cite both the feedback record and the events you
+    reason from.
+    """
+    cites feedback strictly
+    cites events strictly
+
+@budget($0.05)
+@min_confidence(0.6)
+agent eval_from_feedback(feedback_id: String, trace_id: String) -> Grounded<EvalFixture>:
+    feedback: Grounded<String> = fetch_feedback(feedback_id)
+    events: List<Grounded<String>> = fetch_trace_events(trace_id)
+    return generate_assertion(feedback, events)

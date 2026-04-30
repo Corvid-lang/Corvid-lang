@@ -1,0 +1,42 @@
+# RAG-grounded incident root cause for one trace.
+#
+# The deterministic Rust handler in
+# `crates/corvid-cli/src/observe_helpers_cmd.rs::run_observe_explain`
+# is the always-available path. This .cor source documents the
+# LLM-grounded version a production deployment runs once an LLM
+# adapter is wired through a `corvid run` path.
+
+effect lineage_read:
+    data: grounded
+
+effect llm:
+    cost: $0.05
+
+# `IncidentExplanation` carries the analysis result + the
+# Grounded<T>-shaped sources field linking back to the events
+# the LLM consulted.
+type IncidentExplanation:
+    trace_id: String
+    root_cause_kind: String          # "approval_denied" | "tool_failure" | "ok" | ...
+    suggested_next_steps: List<String>
+
+# Read every lineage event for the named trace. The grounded
+# data class means the prompt must cite the events it draws
+# its conclusions from.
+tool fetch_trace_events(trace_id: String) -> List<Grounded<String>> uses lineage_read
+
+prompt explain_incident(events: List<Grounded<String>>) -> Grounded<IncidentExplanation> uses llm:
+    """
+    You are a production incident analyst. Given the structured
+    lineage events for one trace, identify the first non-OK event,
+    classify its root cause, and propose concrete next steps.
+    The output must cite the trace_id + span_id of every event
+    it reasons about.
+    """
+    cites events strictly
+
+@budget($0.05)
+@min_confidence(0.7)
+agent observe_explain(trace_id: String) -> Grounded<IncidentExplanation>:
+    events: List<Grounded<String>> = fetch_trace_events(trace_id)
+    return explain_incident(events)
