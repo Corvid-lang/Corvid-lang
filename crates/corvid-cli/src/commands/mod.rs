@@ -4,7 +4,10 @@
 //! observe/eval/test/misc dispatch arms here, leaving main.rs
 //! as a thin entry-point shell.
 
+pub mod eval;
 pub mod jobs;
 
+#[allow(unused_imports)]
+pub use eval::*;
 #[allow(unused_imports)]
 pub use jobs::*;
