@@ -4,7 +4,7 @@ use anyhow::{anyhow, bail, Context, Result};
 use corvid_driver::{simulate_approver, verify_approver_source};
 use corvid_runtime::ApprovalRequest;
 
-use crate::ApproverCardFormat;
+use crate::cli::root::ApproverCardFormat;
 
 pub fn run_check(path: &Path, max_budget_usd: Option<f64>) -> Result<u8> {
     verify_approver_source(path, max_budget_usd)
