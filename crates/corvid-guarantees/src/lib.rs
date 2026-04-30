@@ -868,21 +868,21 @@ pub static GUARANTEE_REGISTRY: &[Guarantee] = &[
              align with the contract, or whose required \
              subject/tenant claim is missing. Out-of-scope at \
              Phase 39 base; promoted to `RuntimeChecked` by slice \
-             39K when `corvid-runtime/src/jwt_verify.rs` shipped.",
+             39K when `corvid-runtime/src/jwt_verify/` shipped.",
         out_of_scope_reason: "",
         positive_test_refs: &[
-            "crates/corvid-runtime/src/jwt_verify.rs::parse_alg_accepts_supported_and_refuses_others",
-            "crates/corvid-runtime/src/jwt_verify.rs::decoding_key_for_rsa_jwk_constructs",
-            "crates/corvid-runtime/src/jwt_verify.rs::error_slugs_are_stable_for_audit_log",
+            "crates/corvid-runtime/src/jwt_verify/mod.rs::parse_alg_accepts_supported_and_refuses_others",
+            "crates/corvid-runtime/src/jwt_verify/mod.rs::decoding_key_for_rsa_jwk_constructs",
+            "crates/corvid-runtime/src/jwt_verify/mod.rs::error_slugs_are_stable_for_audit_log",
         ],
         adversarial_test_refs: &[
-            "crates/corvid-runtime/src/jwt_verify.rs::kid_downgrade_returns_kid_not_found",
-            "crates/corvid-runtime/src/jwt_verify.rs::header_alg_must_match_contract_alg",
-            "crates/corvid-runtime/src/jwt_verify.rs::alg_none_in_header_is_refused",
-            "crates/corvid-runtime/src/jwt_verify.rs::malformed_token_is_refused_before_fetch",
-            "crates/corvid-runtime/src/jwt_verify.rs::jwks_fetch_failure_is_surfaced",
-            "crates/corvid-runtime/src/jwt_verify.rs::decoding_key_for_rejects_rsa_without_n",
-            "crates/corvid-runtime/src/jwt_verify.rs::decoding_key_for_rejects_unknown_kty",
+            "crates/corvid-runtime/src/jwt_verify/mod.rs::kid_downgrade_returns_kid_not_found",
+            "crates/corvid-runtime/src/jwt_verify/mod.rs::header_alg_must_match_contract_alg",
+            "crates/corvid-runtime/src/jwt_verify/mod.rs::alg_none_in_header_is_refused",
+            "crates/corvid-runtime/src/jwt_verify/mod.rs::malformed_token_is_refused_before_fetch",
+            "crates/corvid-runtime/src/jwt_verify/mod.rs::jwks_fetch_failure_is_surfaced",
+            "crates/corvid-runtime/src/jwt_verify/mod.rs::decoding_key_for_rejects_rsa_without_n",
+            "crates/corvid-runtime/src/jwt_verify/mod.rs::decoding_key_for_rejects_unknown_kty",
         ],
     },
     Guarantee {

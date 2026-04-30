@@ -544,23 +544,23 @@ API keys are stored only as Argon2id hashes; the plaintext leaves Corvid memory 
 - **class**: runtime_checked
 - **phase**: runtime
 
-JWT verification fetches the JWKS, picks the key by `kid`, verifies the signature with `jsonwebtoken`, and rejects tokens whose `kid` is missing from the current JWKS, whose alg does not match the contract, whose signature fails to verify, whose exp/iss/aud do not align with the contract, or whose required subject/tenant claim is missing. Out-of-scope at Phase 39 base; promoted to `RuntimeChecked` by slice 39K when `corvid-runtime/src/jwt_verify.rs` shipped.
+JWT verification fetches the JWKS, picks the key by `kid`, verifies the signature with `jsonwebtoken`, and rejects tokens whose `kid` is missing from the current JWKS, whose alg does not match the contract, whose signature fails to verify, whose exp/iss/aud do not align with the contract, or whose required subject/tenant claim is missing. Out-of-scope at Phase 39 base; promoted to `RuntimeChecked` by slice 39K when `corvid-runtime/src/jwt_verify/` shipped.
 
 **Positive tests:**
 
-- `crates/corvid-runtime/src/jwt_verify.rs::parse_alg_accepts_supported_and_refuses_others`
-- `crates/corvid-runtime/src/jwt_verify.rs::decoding_key_for_rsa_jwk_constructs`
-- `crates/corvid-runtime/src/jwt_verify.rs::error_slugs_are_stable_for_audit_log`
+- `crates/corvid-runtime/src/jwt_verify/mod.rs::parse_alg_accepts_supported_and_refuses_others`
+- `crates/corvid-runtime/src/jwt_verify/mod.rs::decoding_key_for_rsa_jwk_constructs`
+- `crates/corvid-runtime/src/jwt_verify/mod.rs::error_slugs_are_stable_for_audit_log`
 
 **Adversarial tests:**
 
-- `crates/corvid-runtime/src/jwt_verify.rs::kid_downgrade_returns_kid_not_found`
-- `crates/corvid-runtime/src/jwt_verify.rs::header_alg_must_match_contract_alg`
-- `crates/corvid-runtime/src/jwt_verify.rs::alg_none_in_header_is_refused`
-- `crates/corvid-runtime/src/jwt_verify.rs::malformed_token_is_refused_before_fetch`
-- `crates/corvid-runtime/src/jwt_verify.rs::jwks_fetch_failure_is_surfaced`
-- `crates/corvid-runtime/src/jwt_verify.rs::decoding_key_for_rejects_rsa_without_n`
-- `crates/corvid-runtime/src/jwt_verify.rs::decoding_key_for_rejects_unknown_kty`
+- `crates/corvid-runtime/src/jwt_verify/mod.rs::kid_downgrade_returns_kid_not_found`
+- `crates/corvid-runtime/src/jwt_verify/mod.rs::header_alg_must_match_contract_alg`
+- `crates/corvid-runtime/src/jwt_verify/mod.rs::alg_none_in_header_is_refused`
+- `crates/corvid-runtime/src/jwt_verify/mod.rs::malformed_token_is_refused_before_fetch`
+- `crates/corvid-runtime/src/jwt_verify/mod.rs::jwks_fetch_failure_is_surfaced`
+- `crates/corvid-runtime/src/jwt_verify/mod.rs::decoding_key_for_rejects_rsa_without_n`
+- `crates/corvid-runtime/src/jwt_verify/mod.rs::decoding_key_for_rejects_unknown_kty`
 
 #### `auth.oauth_pkce_required`
 - **class**: runtime_checked
