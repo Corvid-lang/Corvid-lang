@@ -16,6 +16,7 @@ pub mod jobs;
 pub mod migrate;
 pub mod observe;
 pub mod package;
+pub mod root;
 
 #[allow(unused_imports)]
 pub use jobs::*;
@@ -25,3 +26,5 @@ pub use migrate::*;
 pub use observe::*;
 #[allow(unused_imports)]
 pub use package::*;
+#[allow(unused_imports)]
+pub use root::*;
