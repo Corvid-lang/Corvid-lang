@@ -50,6 +50,7 @@ use cli::observe::*;
 use cli::package::*;
 use commands::eval::*;
 use commands::jobs::*;
+use commands::misc::*;
 use commands::test::*;
 use doctor_cmd::cmd_doctor_v2;
 use migrate_cmd::{cmd_migrate, cmd_migrate_down};
@@ -88,12 +89,11 @@ mod trace_dag;
 mod trace_diff;
 mod upgrade_cmd;
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::ExitCode;
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
-use routing_report::{build_report, render_report as render_routing_report, RoutingReportOptions};
 
 #[allow(unused_imports)]
 use corvid_driver::{
@@ -2098,15 +2098,6 @@ fn main_impl() -> ExitCode {
 // Commands
 // ------------------------------------------------------------
 
-fn cmd_new(name: &str) -> Result<u8> {
-    let root = scaffold_new(name).context("failed to scaffold project")?;
-    println!("created new Corvid project at `{}`", root.display());
-    println!("\nNext steps:");
-    println!("  cd {name}");
-    println!("  pip install corvid-runtime");
-    println!("  corvid run src/main.cor");
-    Ok(0)
-}
 
 fn cmd_connectors(command: ConnectorsCommand) -> Result<u8> {
     match command {
@@ -2612,97 +2603,4 @@ fn cmd_approvals(command: ApprovalsCommand) -> Result<u8> {
     }
 }
 
-
-fn cmd_check(file: &Path) -> Result<u8> {
-    let source = std::fs::read_to_string(file)
-        .with_context(|| format!("cannot read `{}`", file.display()))?;
-    let config = load_corvid_config_for(file);
-    let result = compile_with_config(&source, config.as_ref());
-    if result.ok() {
-        println!("ok: {} — no errors", file.display());
-        Ok(0)
-    } else {
-        eprint!("{}", render_all_pretty(&result.diagnostics, file, &source));
-        Ok(1)
-    }
-}
-
-
-fn cmd_repl() -> Result<u8> {
-    corvid_repl::Repl::run_stdio().context("failed to run `corvid repl`")?;
-    Ok(0)
-}
-
-
-// ------------------------------------------------------------
-// Verification suites — effect-system spec, custom dimensions,
-// adversarial bypass generation
-// ------------------------------------------------------------
-
-
-// ------------------------------------------------------------
-// Effect-diff tool
-// ------------------------------------------------------------
-
-fn cmd_effect_diff(before: &str, after: &str) -> Result<u8> {
-    let before_path = PathBuf::from(before);
-    let after_path = PathBuf::from(after);
-    println!(
-        "corvid effect-diff {} -> {}\n",
-        before_path.display(),
-        after_path.display(),
-    );
-    let before_snap = snapshot_revision(&before_path)
-        .with_context(|| format!("failed to snapshot `{}`", before_path.display()))?;
-    let after_snap = snapshot_revision(&after_path)
-        .with_context(|| format!("failed to snapshot `{}`", after_path.display()))?;
-    let diff = diff_snapshots(&before_snap, &after_snap);
-    print!("{}", render_effect_diff(&diff));
-    // Exit 1 when the diff is non-empty so CI can gate on
-    // "unexpected effect-shape drift" if the user wants it.
-    let any_change = !diff.added.is_empty() || !diff.removed.is_empty() || !diff.changed.is_empty();
-    Ok(if any_change { 1 } else { 0 })
-}
-
-// ------------------------------------------------------------
-// Dimension registry client
-// ------------------------------------------------------------
-
-fn cmd_add_dimension(spec: &str, registry: Option<&str>) -> Result<u8> {
-    let project_dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    println!("corvid add-dimension {spec}\n");
-    let outcome = corvid_driver::install_dimension_with_registry(spec, &project_dir, registry)?;
-    match outcome {
-        corvid_driver::AddDimensionOutcome::Added { name, target } => {
-            println!("installed `{name}` into {}", target.display());
-            println!("run `corvid test dimensions` to re-verify every dimension.");
-            Ok(0)
-        }
-        corvid_driver::AddDimensionOutcome::Rejected { reason } => {
-            eprintln!("rejected: {reason}");
-            Ok(1)
-        }
-    }
-}
-
-
-fn cmd_routing_report(
-    trace_dir: Option<&Path>,
-    since: Option<&str>,
-    since_commit: Option<&str>,
-    json: bool,
-) -> Result<u8> {
-    let trace_dir = trace_dir.unwrap_or_else(|| Path::new("target/trace"));
-    let report = build_report(RoutingReportOptions {
-        trace_dir,
-        since,
-        since_commit,
-    })?;
-    if json {
-        println!("{}", serde_json::to_string_pretty(&report)?);
-    } else {
-        print!("{}", render_routing_report(&report));
-    }
-    Ok(if report.healthy { 0 } else { 1 })
-}
 
