@@ -25,8 +25,11 @@
 //! consumes them.
 
 pub mod queue;
+pub mod transition;
 #[allow(unused_imports)]
 pub use queue::*;
+#[allow(unused_imports)]
+pub use transition::*;
 
 use corvid_runtime::approval_queue::{
     ApprovalQueueAuditEvent, ApprovalQueueRecord,

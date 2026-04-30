@@ -135,7 +135,7 @@ pub fn run_approvals_export(args: ApprovalsExportArgs) -> Result<ApprovalsExport
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::auth_cmd::{run_approvals_approve, ApprovalsTransitionArgs};
+    use crate::approvals_cmd::transition::{run_approvals_approve, ApprovalsTransitionArgs};
     use corvid_runtime::approval_queue::{
         ApprovalContractRecord, ApprovalCreate, ApprovalQueueRuntime,
     };
