@@ -55,12 +55,12 @@ Per the no-shortcuts rule, every `out_of_scope` entry carries an explicit reason
 | `approval.policy_clause_static_check` | auth | out_of_scope | typecheck |
 | `approval.batch_equivalence_typed` | auth | out_of_scope | typecheck |
 | `approval.confused_deputy_typecheck` | auth | out_of_scope | typecheck |
-| `connector.scope_minimum_enforced` | connector | out_of_scope | runtime |
+| `connector.scope_minimum_enforced` | connector | runtime_checked | runtime |
 | `connector.write_requires_approval` | connector | out_of_scope | typecheck |
-| `connector.rate_limit_respects_provider` | connector | out_of_scope | runtime |
+| `connector.rate_limit_respects_provider` | connector | runtime_checked | runtime |
 | `connector.contract_drift_detected` | connector | out_of_scope | runtime |
-| `connector.webhook_signature_verified` | connector | out_of_scope | runtime |
-| `connector.replay_quarantine` | connector | out_of_scope | runtime |
+| `connector.webhook_signature_verified` | connector | runtime_checked | runtime |
+| `connector.replay_quarantine` | connector | runtime_checked | runtime |
 | `observability.otel_conformance` | observability | runtime_checked | runtime |
 | `observability.lineage_completeness` | observability | runtime_checked | runtime |
 | `observability.redaction_determinism` | observability | runtime_checked | runtime |
@@ -620,12 +620,20 @@ A reachable path from any route or job to a `@dangerous` tool must have an `appr
 ### Connectors
 
 #### `connector.scope_minimum_enforced`
-- **class**: out_of_scope
+- **class**: runtime_checked
 - **phase**: runtime
 
-A connector cannot use a scope its manifest does not declare; the runtime rejects requests whose required scope is not in the declared scope set.
+A connector cannot use a scope its manifest does not declare and an actor cannot use a scope its auth state does not authorise. The runtime fires `ConnectorAuthError::MissingScope` (or `UnknownScope`) before any HTTP layer touches the network, so a leaked low-scope token cannot escalate to a higher-scope operation by guessing the scope id.
 
-> **Why out of scope:** Manifest parser ships; the runtime real-mode call path (which is the only place where scope is consulted against a live token) returns `RealModeNotBound`. Slice 41K promotes.
+**Positive tests:**
+
+- `crates/corvid-connector-runtime/src/runtime.rs::mock_mode_checks_auth_rate_limit_and_emits_trace`
+
+**Adversarial tests:**
+
+- `crates/corvid-connector-runtime/tests/threat_corpus.rs::t1_github_rejects_unauthorised_scope`
+- `crates/corvid-connector-runtime/tests/threat_corpus.rs::t1_gmail_rejects_unauthorised_scope`
+- `crates/corvid-connector-runtime/tests/threat_corpus.rs::t1_slack_rejects_unauthorised_scope`
 
 #### `connector.write_requires_approval`
 - **class**: out_of_scope
@@ -636,12 +644,20 @@ A connector method whose effect set names a write (`gmail.send`, `slack.post`, `
 > **Why out of scope:** Manifest declares write effects but the connector AST surface is not yet parser-level — connectors today are configured by Rust data, not source. Slice 41L promotes.
 
 #### `connector.rate_limit_respects_provider`
-- **class**: out_of_scope
+- **class**: runtime_checked
 - **phase**: runtime
 
-A connector honors the provider's rate-limit advice (`Retry-After`, 429, 5xx) using the limit declared in the manifest as an upper bound.
+A connector honors the provider's rate-limit advice (`Retry-After`, 429, 5xx). The shared `ReqwestRealClient` parses RFC 7231 `Retry-After` integer-seconds into milliseconds via `parse_retry_after_header` and surfaces it as `ConnectorRuntimeError::RateLimited { retry_after_ms }`, which the runtime forwards verbatim to the caller instead of retrying behind their back.
 
-> **Why out of scope:** Rate-limit envelope exists; the real-mode HTTP retry path that consumes it is not implemented. Slice 41K promotes.
+**Positive tests:**
+
+- `crates/corvid-connector-runtime/src/real_client.rs::parse_retry_after_seconds_form`
+
+**Adversarial tests:**
+
+- `crates/corvid-connector-runtime/src/real_client.rs::parse_retry_after_returns_none_for_malformed`
+- `crates/corvid-connector-runtime/src/runtime.rs::real_mode_propagates_rate_limited_from_bound_client`
+- `crates/corvid-connector-runtime/tests/threat_corpus.rs::t5_rate_limited_propagates_retry_after_ms`
 
 #### `connector.contract_drift_detected`
 - **class**: out_of_scope
@@ -649,23 +665,42 @@ A connector honors the provider's rate-limit advice (`Retry-After`, 429, 5xx) us
 
 `corvid connectors check --live` compares the manifest to the live (or recorded-cassette) provider response shape and exits non-zero when fields drift.
 
-> **Why out of scope:** `corvid connectors check` CLI is unwired. Slice 41L promotes.
+> **Why out of scope:** Slice 41L wired `corvid connectors check`, which validates every shipped manifest against the manifest schema and reports diagnostics per connector (`shipped_manifests` → `validate_connector_manifest`). The `--live` drift-narration path that compares the manifest to a live provider response shape is gated behind `CORVID_PROVIDER_LIVE=1` and currently returns an explicit `Err` directing the caller to slice 41M-C; until that slice ships, drift detection itself is not exercised end-to-end and this row stays out of scope.
 
 #### `connector.webhook_signature_verified`
-- **class**: out_of_scope
+- **class**: runtime_checked
 - **phase**: runtime
 
-Inbound webhook payloads from Slack, GitHub, and Linear are HMAC-SHA256 verified against the manifest's `webhook_signed_by` secret reference; failure rejects the payload before any handler runs.
+Inbound webhook payloads from Slack, GitHub, and Linear are HMAC-SHA256 verified against the manifest's shared secret before any handler runs. Per-provider schemes are honored: GitHub uses `X-Hub-Signature-256: sha256=<hex>`, Slack uses `v0:<ts>:<body>` with a 5-minute replay window, and Linear uses a bare hex digest. Comparison is constant-time; a malformed header, mismatched digest, or stale Slack timestamp returns a categorical `WebhookVerificationOutcome` that the dispatcher must reject before any side effect.
 
-> **Why out of scope:** `hmac` and `sha2` are not imported by `corvid-connector-runtime`. Slice 41M promotes.
+**Positive tests:**
+
+- `crates/corvid-connector-runtime/src/webhook_verify.rs::github_verifies_correct_signature`
+- `crates/corvid-connector-runtime/src/webhook_verify.rs::slack_verifies_correct_signature_inside_window`
+- `crates/corvid-connector-runtime/src/webhook_verify.rs::linear_verifies_correct_signature`
+
+**Adversarial tests:**
+
+- `crates/corvid-connector-runtime/tests/threat_corpus.rs::t7_github_webhook_forgery_rejected`
+- `crates/corvid-connector-runtime/tests/threat_corpus.rs::t7_slack_webhook_replay_outside_window_rejected`
+- `crates/corvid-connector-runtime/tests/threat_corpus.rs::t7_linear_webhook_wrong_secret_rejected`
 
 #### `connector.replay_quarantine`
-- **class**: out_of_scope
+- **class**: runtime_checked
 - **phase**: runtime
 
-A connector running in replay mode must not issue real provider calls; the runtime quarantines outbound HTTP when the active mode is `Replay`.
+A connector running in replay mode must not perform provider writes. The runtime returns `ConnectorRuntimeError::ReplayWriteQuarantined` for any scope whose effects include a `*.write` or `send_*` effect when the active mode is `Replay`, regardless of whether a real client is bound. Read-shaped operations still complete from the recorded cassette so deterministic replay continues to work.
 
-> **Why out of scope:** Replay mode exists in the connector runtime but real mode is `RealModeNotBound`, so the quarantine guard is not exercisable end-to-end. Slice 41K promotes.
+**Positive tests:**
+
+- `crates/corvid-connector-runtime/src/test_kit.rs::fixture_runs_mock_and_replay_read_paths`
+
+**Adversarial tests:**
+
+- `crates/corvid-connector-runtime/src/runtime.rs::replay_mode_quarantines_writes`
+- `crates/corvid-connector-runtime/src/test_kit.rs::fixture_proves_replay_write_quarantine`
+- `crates/corvid-connector-runtime/src/calendar.rs::calendar_replay_quarantines_writes`
+- `crates/corvid-connector-runtime/src/slack.rs::slack_replay_quarantines_writes`
 
 ### Observability and evals
 

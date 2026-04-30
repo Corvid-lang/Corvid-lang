@@ -991,19 +991,25 @@ pub static GUARANTEE_REGISTRY: &[Guarantee] = &[
     Guarantee {
         id: "connector.scope_minimum_enforced",
         kind: GuaranteeKind::Connector,
-        class: GuaranteeClass::OutOfScope,
+        class: GuaranteeClass::RuntimeChecked,
         phase: Phase::Runtime,
         description:
             "A connector cannot use a scope its manifest does not \
-             declare; the runtime rejects requests whose required \
-             scope is not in the declared scope set.",
-        out_of_scope_reason:
-            "Manifest parser ships; the runtime real-mode call path \
-             (which is the only place where scope is consulted \
-             against a live token) returns `RealModeNotBound`. Slice \
-             41K promotes.",
-        positive_test_refs: &[],
-        adversarial_test_refs: &[],
+             declare and an actor cannot use a scope its auth state \
+             does not authorise. The runtime fires \
+             `ConnectorAuthError::MissingScope` (or `UnknownScope`) \
+             before any HTTP layer touches the network, so a leaked \
+             low-scope token cannot escalate to a higher-scope \
+             operation by guessing the scope id.",
+        out_of_scope_reason: "",
+        positive_test_refs: &[
+            "crates/corvid-connector-runtime/src/runtime.rs::mock_mode_checks_auth_rate_limit_and_emits_trace",
+        ],
+        adversarial_test_refs: &[
+            "crates/corvid-connector-runtime/tests/threat_corpus.rs::t1_github_rejects_unauthorised_scope",
+            "crates/corvid-connector-runtime/tests/threat_corpus.rs::t1_gmail_rejects_unauthorised_scope",
+            "crates/corvid-connector-runtime/tests/threat_corpus.rs::t1_slack_rejects_unauthorised_scope",
+        ],
     },
     Guarantee {
         id: "connector.write_requires_approval",
@@ -1026,18 +1032,25 @@ pub static GUARANTEE_REGISTRY: &[Guarantee] = &[
     Guarantee {
         id: "connector.rate_limit_respects_provider",
         kind: GuaranteeKind::Connector,
-        class: GuaranteeClass::OutOfScope,
+        class: GuaranteeClass::RuntimeChecked,
         phase: Phase::Runtime,
         description:
             "A connector honors the provider's rate-limit advice \
-             (`Retry-After`, 429, 5xx) using the limit declared in \
-             the manifest as an upper bound.",
-        out_of_scope_reason:
-            "Rate-limit envelope exists; the real-mode HTTP retry \
-             path that consumes it is not implemented. Slice 41K \
-             promotes.",
-        positive_test_refs: &[],
-        adversarial_test_refs: &[],
+             (`Retry-After`, 429, 5xx). The shared `ReqwestRealClient` \
+             parses RFC 7231 `Retry-After` integer-seconds into \
+             milliseconds via `parse_retry_after_header` and surfaces \
+             it as `ConnectorRuntimeError::RateLimited { retry_after_ms }`, \
+             which the runtime forwards verbatim to the caller \
+             instead of retrying behind their back.",
+        out_of_scope_reason: "",
+        positive_test_refs: &[
+            "crates/corvid-connector-runtime/src/real_client.rs::parse_retry_after_seconds_form",
+        ],
+        adversarial_test_refs: &[
+            "crates/corvid-connector-runtime/src/real_client.rs::parse_retry_after_returns_none_for_malformed",
+            "crates/corvid-connector-runtime/src/runtime.rs::real_mode_propagates_rate_limited_from_bound_client",
+            "crates/corvid-connector-runtime/tests/threat_corpus.rs::t5_rate_limited_propagates_retry_after_ms",
+        ],
     },
     Guarantee {
         id: "connector.contract_drift_detected",
@@ -1049,42 +1062,71 @@ pub static GUARANTEE_REGISTRY: &[Guarantee] = &[
              to the live (or recorded-cassette) provider response \
              shape and exits non-zero when fields drift.",
         out_of_scope_reason:
-            "`corvid connectors check` CLI is unwired. Slice 41L \
-             promotes.",
+            "Slice 41L wired `corvid connectors check`, which validates \
+             every shipped manifest against the manifest schema and \
+             reports diagnostics per connector \
+             (`shipped_manifests` → `validate_connector_manifest`). \
+             The `--live` drift-narration path that compares the \
+             manifest to a live provider response shape is gated \
+             behind `CORVID_PROVIDER_LIVE=1` and currently returns \
+             an explicit `Err` directing the caller to slice 41M-C; \
+             until that slice ships, drift detection itself is not \
+             exercised end-to-end and this row stays out of scope.",
         positive_test_refs: &[],
         adversarial_test_refs: &[],
     },
     Guarantee {
         id: "connector.webhook_signature_verified",
         kind: GuaranteeKind::Connector,
-        class: GuaranteeClass::OutOfScope,
+        class: GuaranteeClass::RuntimeChecked,
         phase: Phase::Runtime,
         description:
             "Inbound webhook payloads from Slack, GitHub, and Linear \
-             are HMAC-SHA256 verified against the manifest's \
-             `webhook_signed_by` secret reference; failure rejects \
-             the payload before any handler runs.",
-        out_of_scope_reason:
-            "`hmac` and `sha2` are not imported by `corvid-connector-runtime`. \
-             Slice 41M promotes.",
-        positive_test_refs: &[],
-        adversarial_test_refs: &[],
+             are HMAC-SHA256 verified against the manifest's shared \
+             secret before any handler runs. Per-provider schemes are \
+             honored: GitHub uses `X-Hub-Signature-256: sha256=<hex>`, \
+             Slack uses `v0:<ts>:<body>` with a 5-minute replay \
+             window, and Linear uses a bare hex digest. Comparison is \
+             constant-time; a malformed header, mismatched digest, or \
+             stale Slack timestamp returns a categorical \
+             `WebhookVerificationOutcome` that the dispatcher must \
+             reject before any side effect.",
+        out_of_scope_reason: "",
+        positive_test_refs: &[
+            "crates/corvid-connector-runtime/src/webhook_verify.rs::github_verifies_correct_signature",
+            "crates/corvid-connector-runtime/src/webhook_verify.rs::slack_verifies_correct_signature_inside_window",
+            "crates/corvid-connector-runtime/src/webhook_verify.rs::linear_verifies_correct_signature",
+        ],
+        adversarial_test_refs: &[
+            "crates/corvid-connector-runtime/tests/threat_corpus.rs::t7_github_webhook_forgery_rejected",
+            "crates/corvid-connector-runtime/tests/threat_corpus.rs::t7_slack_webhook_replay_outside_window_rejected",
+            "crates/corvid-connector-runtime/tests/threat_corpus.rs::t7_linear_webhook_wrong_secret_rejected",
+        ],
     },
     Guarantee {
         id: "connector.replay_quarantine",
         kind: GuaranteeKind::Connector,
-        class: GuaranteeClass::OutOfScope,
+        class: GuaranteeClass::RuntimeChecked,
         phase: Phase::Runtime,
         description:
-            "A connector running in replay mode must not issue real \
-             provider calls; the runtime quarantines outbound HTTP \
-             when the active mode is `Replay`.",
-        out_of_scope_reason:
-            "Replay mode exists in the connector runtime but real \
-             mode is `RealModeNotBound`, so the quarantine guard is \
-             not exercisable end-to-end. Slice 41K promotes.",
-        positive_test_refs: &[],
-        adversarial_test_refs: &[],
+            "A connector running in replay mode must not perform \
+             provider writes. The runtime returns \
+             `ConnectorRuntimeError::ReplayWriteQuarantined` for any \
+             scope whose effects include a `*.write` or `send_*` \
+             effect when the active mode is `Replay`, regardless of \
+             whether a real client is bound. Read-shaped operations \
+             still complete from the recorded cassette so deterministic \
+             replay continues to work.",
+        out_of_scope_reason: "",
+        positive_test_refs: &[
+            "crates/corvid-connector-runtime/src/test_kit.rs::fixture_runs_mock_and_replay_read_paths",
+        ],
+        adversarial_test_refs: &[
+            "crates/corvid-connector-runtime/src/runtime.rs::replay_mode_quarantines_writes",
+            "crates/corvid-connector-runtime/src/test_kit.rs::fixture_proves_replay_write_quarantine",
+            "crates/corvid-connector-runtime/src/calendar.rs::calendar_replay_quarantines_writes",
+            "crates/corvid-connector-runtime/src/slack.rs::slack_replay_quarantines_writes",
+        ],
     },
     // ----- Observability (Phase 40) ------------------------------
     Guarantee {
