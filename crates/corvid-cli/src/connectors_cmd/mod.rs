@@ -1,4 +1,5 @@
-//! `corvid connectors` CLI subcommand surface — slice 41L.
+//! `corvid connectors` CLI subcommand surface — slice 41L,
+//! decomposed in Phase 20j-S2.
 //!
 //! Wires the Phase 41 connector runtime into the `corvid` CLI.
 //! Users get a top-level surface for inspecting available
@@ -13,22 +14,35 @@
 //! standalone primitive so a CI hook or `curl | corvid connectors
 //! verify-webhook` pipeline can validate inbound payloads
 //! independently of an HTTP server.
+//!
+//! The module is split per CLI surface (Phase 20j-S2):
+//!
+//! - [`support`] — shared helpers (manifest catalog, runtime-error
+//!   projection, list-row summary, OAuth2 PKCE primitives).
+//! - The per-subcommand splits (`list`, `check`, `run`, `oauth`,
+//!   `verify_webhook`) land in commits 2-5; for now the
+//!   subcommand bodies stay in this file and call into `support`.
+
+mod support;
 
 use anyhow::{anyhow, Context, Result};
 use corvid_connector_runtime::{
-    calendar_manifest, file_manifest, github_pat_real_client, gmail_manifest, gmail_real_client,
-    ms365_manifest, slack_manifest, slack_real_client, task_manifest, validate_connector_manifest,
-    verify_webhook, BearerTokenResolver, ConnectorAuthState, ConnectorManifest,
-    ConnectorRealClient, ConnectorRequest, ConnectorRuntime, ConnectorRuntimeError,
-    ConnectorRuntimeMode, InMemoryOAuth2Store, OAuth2RefreshResolver, OAuth2Tokens,
-    ReqwestRefreshHook, WebhookProvider, WebhookVerificationOutcome, WebhookVerifyInputs,
+    github_pat_real_client, gmail_real_client, slack_real_client,
+    validate_connector_manifest, verify_webhook, BearerTokenResolver, ConnectorAuthState,
+    ConnectorRealClient, ConnectorRequest, ConnectorRuntime, ConnectorRuntimeMode,
+    InMemoryOAuth2Store, OAuth2RefreshResolver, OAuth2Tokens, ReqwestRefreshHook,
+    WebhookProvider, WebhookVerificationOutcome, WebhookVerifyInputs,
 };
 use serde_json::Value;
 use sha2::Sha256;
-use std::collections::BTreeSet;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
+
+use support::{
+    map_runtime_error, pkce_code_challenge, random_b64url_bytes, shipped_connector_names,
+    shipped_manifests, summarise_manifest, url_encode,
+};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ConnectorListEntry {
@@ -520,108 +534,6 @@ fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
         diff |= x ^ y;
     }
     diff == 0
-}
-
-fn shipped_manifests() -> Result<Vec<(&'static str, ConnectorManifest)>> {
-    Ok(vec![
-        ("calendar", calendar_manifest()?),
-        ("files", file_manifest()?),
-        ("gmail", gmail_manifest()?),
-        ("ms365", ms365_manifest()?),
-        ("slack", slack_manifest()?),
-        ("tasks", task_manifest()?),
-    ])
-}
-
-fn shipped_connector_names() -> Vec<&'static str> {
-    vec!["calendar", "files", "gmail", "ms365", "slack", "tasks"]
-}
-
-fn summarise_manifest(manifest: &ConnectorManifest) -> ConnectorListEntry {
-    let modes: Vec<String> = manifest
-        .mode
-        .iter()
-        .map(|m| match m {
-            corvid_connector_runtime::ConnectorMode::Mock => "mock".to_string(),
-            corvid_connector_runtime::ConnectorMode::Replay => "replay".to_string(),
-            corvid_connector_runtime::ConnectorMode::Real => "real".to_string(),
-        })
-        .collect();
-    let write_scopes: Vec<String> = manifest
-        .scope
-        .iter()
-        .filter(|s| {
-            s.effects
-                .iter()
-                .any(|e| e.contains(".write") || e.starts_with("send_"))
-        })
-        .map(|s| s.id.clone())
-        .collect();
-    let rate_limit_summary = if manifest.rate_limit.is_empty() {
-        "none".to_string()
-    } else {
-        manifest
-            .rate_limit
-            .iter()
-            .map(|rl| format!("{}={}/{}ms", rl.key, rl.limit, rl.window_ms))
-            .collect::<Vec<_>>()
-            .join(", ")
-    };
-    let _: BTreeSet<()> = BTreeSet::new();
-    ConnectorListEntry {
-        name: manifest.name.clone(),
-        provider: manifest.provider.clone(),
-        modes,
-        scope_count: manifest.scope.len(),
-        write_scopes,
-        rate_limit_summary,
-        redaction_count: manifest.redaction.len(),
-    }
-}
-
-fn map_runtime_error(err: ConnectorRuntimeError) -> anyhow::Error {
-    anyhow!("{err}")
-}
-
-fn url_encode(value: &str) -> String {
-    let mut out = String::with_capacity(value.len() + 8);
-    for byte in value.bytes() {
-        match byte {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
-                out.push(byte as char);
-            }
-            b' ' => out.push_str("%20"),
-            _ => out.push_str(&format!("%{byte:02X}")),
-        }
-    }
-    out
-}
-
-fn random_b64url_bytes(n: usize) -> String {
-    use base64::Engine;
-    // Use a deterministic-but-unpredictable per-call source: the
-    // process's nanoseconds + a hash of a fresh allocation address.
-    // Production use should plumb an OS-supplied RNG; this keeps the
-    // CLI command self-contained and doesn't pull in `rand`.
-    let mut seed = (std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or(0)) as u64;
-    let addr_seed = (&seed as *const _ as usize) as u64;
-    seed = seed.wrapping_add(addr_seed);
-    let mut bytes = Vec::with_capacity(n);
-    for _ in 0..n {
-        seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
-        bytes.push((seed >> 33) as u8);
-    }
-    base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(&bytes)
-}
-
-fn pkce_code_challenge(verifier: &str) -> String {
-    use base64::Engine;
-    use sha2::Digest;
-    let digest = Sha256::digest(verifier.as_bytes());
-    base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(digest)
 }
 
 #[cfg(test)]
