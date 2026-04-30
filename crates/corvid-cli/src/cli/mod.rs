@@ -13,6 +13,9 @@
 //! follow as the dispatch tree is extracted.
 
 pub mod jobs;
+pub mod package;
 
 #[allow(unused_imports)]
 pub use jobs::*;
+#[allow(unused_imports)]
+pub use package::*;
