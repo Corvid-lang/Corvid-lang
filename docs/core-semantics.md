@@ -548,19 +548,19 @@ JWT verification fetches the JWKS, picks the key by `kid`, verifies the signatur
 
 **Positive tests:**
 
-- `crates/corvid-runtime/src/jwt_verify/mod.rs::parse_alg_accepts_supported_and_refuses_others`
-- `crates/corvid-runtime/src/jwt_verify/mod.rs::decoding_key_for_rsa_jwk_constructs`
+- `crates/corvid-runtime/src/jwt_verify/verifier.rs::parse_alg_accepts_supported_and_refuses_others`
+- `crates/corvid-runtime/src/jwt_verify/verifier.rs::decoding_key_for_rsa_jwk_constructs`
 - `crates/corvid-runtime/src/jwt_verify/mod.rs::error_slugs_are_stable_for_audit_log`
 
 **Adversarial tests:**
 
-- `crates/corvid-runtime/src/jwt_verify/mod.rs::kid_downgrade_returns_kid_not_found`
-- `crates/corvid-runtime/src/jwt_verify/mod.rs::header_alg_must_match_contract_alg`
-- `crates/corvid-runtime/src/jwt_verify/mod.rs::alg_none_in_header_is_refused`
-- `crates/corvid-runtime/src/jwt_verify/mod.rs::malformed_token_is_refused_before_fetch`
-- `crates/corvid-runtime/src/jwt_verify/mod.rs::jwks_fetch_failure_is_surfaced`
-- `crates/corvid-runtime/src/jwt_verify/mod.rs::decoding_key_for_rejects_rsa_without_n`
-- `crates/corvid-runtime/src/jwt_verify/mod.rs::decoding_key_for_rejects_unknown_kty`
+- `crates/corvid-runtime/src/jwt_verify/verifier.rs::kid_downgrade_returns_kid_not_found`
+- `crates/corvid-runtime/src/jwt_verify/verifier.rs::header_alg_must_match_contract_alg`
+- `crates/corvid-runtime/src/jwt_verify/verifier.rs::alg_none_in_header_is_refused`
+- `crates/corvid-runtime/src/jwt_verify/verifier.rs::malformed_token_is_refused_before_fetch`
+- `crates/corvid-runtime/src/jwt_verify/verifier.rs::jwks_fetch_failure_is_surfaced`
+- `crates/corvid-runtime/src/jwt_verify/verifier.rs::decoding_key_for_rejects_rsa_without_n`
+- `crates/corvid-runtime/src/jwt_verify/verifier.rs::decoding_key_for_rejects_unknown_kty`
 
 #### `auth.oauth_pkce_required`
 - **class**: runtime_checked
