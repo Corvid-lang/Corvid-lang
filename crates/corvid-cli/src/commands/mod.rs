@@ -6,8 +6,11 @@
 
 pub mod eval;
 pub mod jobs;
+pub mod test;
 
 #[allow(unused_imports)]
 pub use eval::*;
 #[allow(unused_imports)]
 pub use jobs::*;
+#[allow(unused_imports)]
+pub use test::*;
