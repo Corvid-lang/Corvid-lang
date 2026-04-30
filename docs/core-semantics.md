@@ -61,6 +61,8 @@ Per the no-shortcuts rule, every `out_of_scope` entry carries an explicit reason
 | `connector.contract_drift_detected` | connector | out_of_scope | runtime |
 | `connector.webhook_signature_verified` | connector | out_of_scope | runtime |
 | `connector.replay_quarantine` | connector | out_of_scope | runtime |
+| `observability.otel_conformance` | observability | runtime_checked | runtime |
+| `observability.lineage_completeness` | observability | runtime_checked | runtime |
 | `platform.host_kernel_compromise` | platform | out_of_scope | platform |
 | `platform.signing_key_compromise` | platform | out_of_scope | platform |
 | `platform.toolchain_compromise` | platform | out_of_scope | platform |
@@ -659,6 +661,39 @@ Inbound webhook payloads from Slack, GitHub, and Linear are HMAC-SHA256 verified
 A connector running in replay mode must not issue real provider calls; the runtime quarantines outbound HTTP when the active mode is `Replay`.
 
 > **Why out of scope:** Replay mode exists in the connector runtime but real mode is `RealModeNotBound`, so the quarantine guard is not exercisable end-to-end. Slice 41K promotes.
+
+### Observability and evals
+
+#### `observability.otel_conformance`
+- **class**: runtime_checked
+- **phase**: runtime
+
+Lineage events flow through the standard `opentelemetry` + `opentelemetry-otlp` SDK and emit OTLP/HTTP spans whose attributes carry `corvid.guarantee_id`, `corvid.cost_usd`, `corvid.approval_id`, `corvid.replay_key`. The attribute set is constructed by `corvid_runtime::otel_sdk_export::corvid_span_attributes` and the live wire path is exercised by the docker-compose Jaeger harness in `docs/observability-conformance.md`.
+
+**Positive tests:**
+
+- `crates/corvid-runtime/src/otel_sdk_export.rs::span_attributes_include_corvid_named_keys`
+- `crates/corvid-runtime/src/otel_sdk_export.rs::span_name_uses_corvid_prefix_with_kind`
+- `crates/corvid-runtime/src/otel_sdk_export.rs::span_kind_maps_lineage_to_otel`
+
+**Adversarial tests:**
+
+- `crates/corvid-runtime/src/otel_sdk_export.rs::span_attributes_omit_missing_optional_keys`
+- `crates/corvid-runtime/src/otel_sdk_export.rs::sdk_exporter_reaches_in_process_otlp_receiver`
+
+#### `observability.lineage_completeness`
+- **class**: runtime_checked
+- **phase**: runtime
+
+Every lineage event carries a (trace_id, span_id) pair plus parent linkage when a parent exists, so a SQL JOIN against the local trace store reconstructs the route → job → agent → prompt → tool → approval → DB tree. Validated on every event via `corvid_runtime::lineage::validate_lineage`.
+
+**Positive tests:**
+
+- `crates/corvid-runtime/src/lineage.rs::lineage_ids_are_stable_and_parented_across_backend_kinds`
+
+**Adversarial tests:**
+
+- `crates/corvid-runtime/src/lineage.rs::lineage_validation_fails_closed_for_missing_parent_or_duplicate_root`
 
 ### Platform — explicit non-defenses
 

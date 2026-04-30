@@ -48,6 +48,7 @@ pub enum GuaranteeKind {
     Jobs,
     Auth,
     Connector,
+    Observability,
     Platform,
 }
 
@@ -71,6 +72,7 @@ impl GuaranteeKind {
             GuaranteeKind::Jobs => "jobs",
             GuaranteeKind::Auth => "auth",
             GuaranteeKind::Connector => "connector",
+            GuaranteeKind::Observability => "observability",
             GuaranteeKind::Platform => "platform",
         }
     }
@@ -89,6 +91,7 @@ impl GuaranteeKind {
         GuaranteeKind::Jobs,
         GuaranteeKind::Auth,
         GuaranteeKind::Connector,
+        GuaranteeKind::Observability,
         GuaranteeKind::Platform,
     ];
 }
@@ -1082,6 +1085,54 @@ pub static GUARANTEE_REGISTRY: &[Guarantee] = &[
              not exercisable end-to-end. Slice 41K promotes.",
         positive_test_refs: &[],
         adversarial_test_refs: &[],
+    },
+    // ----- Observability (Phase 40) ------------------------------
+    Guarantee {
+        id: "observability.otel_conformance",
+        kind: GuaranteeKind::Observability,
+        class: GuaranteeClass::RuntimeChecked,
+        phase: Phase::Runtime,
+        description:
+            "Lineage events flow through the standard \
+             `opentelemetry` + `opentelemetry-otlp` SDK and emit \
+             OTLP/HTTP spans whose attributes carry \
+             `corvid.guarantee_id`, `corvid.cost_usd`, \
+             `corvid.approval_id`, `corvid.replay_key`. The \
+             attribute set is constructed by \
+             `corvid_runtime::otel_sdk_export::corvid_span_attributes` \
+             and the live wire path is exercised by the \
+             docker-compose Jaeger harness in \
+             `docs/observability-conformance.md`.",
+        out_of_scope_reason: "",
+        positive_test_refs: &[
+            "crates/corvid-runtime/src/otel_sdk_export.rs::span_attributes_include_corvid_named_keys",
+            "crates/corvid-runtime/src/otel_sdk_export.rs::span_name_uses_corvid_prefix_with_kind",
+            "crates/corvid-runtime/src/otel_sdk_export.rs::span_kind_maps_lineage_to_otel",
+        ],
+        adversarial_test_refs: &[
+            "crates/corvid-runtime/src/otel_sdk_export.rs::span_attributes_omit_missing_optional_keys",
+            "crates/corvid-runtime/src/otel_sdk_export.rs::sdk_exporter_reaches_in_process_otlp_receiver",
+        ],
+    },
+    Guarantee {
+        id: "observability.lineage_completeness",
+        kind: GuaranteeKind::Observability,
+        class: GuaranteeClass::RuntimeChecked,
+        phase: Phase::Runtime,
+        description:
+            "Every lineage event carries a (trace_id, span_id) \
+             pair plus parent linkage when a parent exists, so a \
+             SQL JOIN against the local trace store reconstructs \
+             the route → job → agent → prompt → tool → approval \
+             → DB tree. Validated on every event via \
+             `corvid_runtime::lineage::validate_lineage`.",
+        out_of_scope_reason: "",
+        positive_test_refs: &[
+            "crates/corvid-runtime/src/lineage.rs::lineage_ids_are_stable_and_parented_across_backend_kinds",
+        ],
+        adversarial_test_refs: &[
+            "crates/corvid-runtime/src/lineage.rs::lineage_validation_fails_closed_for_missing_parent_or_duplicate_root",
+        ],
     },
     // ----- Platform: explicit non-defenses ------------------------
     Guarantee {

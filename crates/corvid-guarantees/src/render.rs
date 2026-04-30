@@ -155,6 +155,7 @@ fn kind_heading(kind: GuaranteeKind) -> &'static str {
         GuaranteeKind::Jobs => "Durable jobs",
         GuaranteeKind::Auth => "Auth and approvals",
         GuaranteeKind::Connector => "Connectors",
+        GuaranteeKind::Observability => "Observability and evals",
         GuaranteeKind::Platform => "Platform — explicit non-defenses",
     }
 }
