@@ -2510,7 +2510,6 @@ fn cmd_auth(command: AuthCommand) -> Result<u8> {
 
 fn cmd_approvals(command: ApprovalsCommand) -> Result<u8> {
     use approvals_cmd::*;
-    use auth_cmd::*;
     match command {
         ApprovalsCommand::Queue {
             approvals_state,

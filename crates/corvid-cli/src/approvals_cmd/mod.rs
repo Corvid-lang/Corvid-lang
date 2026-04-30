@@ -24,8 +24,11 @@
 //! `summarise_audit`) live in this file because every sub-module
 //! consumes them.
 
+pub mod interaction;
 pub mod queue;
 pub mod transition;
+#[allow(unused_imports)]
+pub use interaction::*;
 #[allow(unused_imports)]
 pub use queue::*;
 #[allow(unused_imports)]
