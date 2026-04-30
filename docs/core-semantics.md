@@ -40,10 +40,10 @@ Per the no-shortcuts rule, every `out_of_scope` entry carries an explicit reason
 | `abi_attestation.sign_requires_claim_coverage` | abi_attestation | static | codegen |
 | `jobs.cron_schedule_durable` | jobs | runtime_checked | runtime |
 | `jobs.retry_budget_bound` | jobs | out_of_scope | runtime |
-| `jobs.idempotency_key_uniqueness` | jobs | out_of_scope | runtime |
+| `jobs.idempotency_key_uniqueness` | jobs | runtime_checked | runtime |
 | `jobs.lease_exclusivity` | jobs | out_of_scope | runtime |
-| `jobs.durable_resume` | jobs | out_of_scope | runtime |
-| `jobs.cron_dst_correct` | jobs | out_of_scope | runtime |
+| `jobs.durable_resume` | jobs | runtime_checked | runtime |
+| `jobs.cron_dst_correct` | jobs | runtime_checked | runtime |
 | `jobs.approval_wait_resume` | jobs | out_of_scope | runtime |
 | `jobs.loop_bounds_enforced` | jobs | out_of_scope | runtime |
 | `auth.session_rotation_on_privilege_change` | auth | out_of_scope | runtime |
@@ -437,12 +437,18 @@ A `schedule "cron" zone "…" -> job(args)` declaration persists to the durable 
 > **Why out of scope:** The runtime queue and lease envelopes are shipped, but `@retry` is not yet a parser-level attribute. Slice 38K promotes this row to `RuntimeChecked` when the multi-worker runner consumes the attribute end-to-end.
 
 #### `jobs.idempotency_key_uniqueness`
-- **class**: out_of_scope
+- **class**: runtime_checked
 - **phase**: runtime
 
-`@idempotency(key: ...)` collapses duplicate dangerous work: across N concurrent workers, exactly one execution of a job sharing one idempotency key may succeed.
+Across N concurrent workers, exactly one durable queue row exists for a given non-null idempotency key. Enforced by a partial UNIQUE INDEX on `queue_jobs(idempotency_key) WHERE idempotency_key IS NOT NULL` in the SQLite schema, plus the existing `enqueue_typed_idempotent` collision-fallback path that returns the surviving row when the insert hits the UNIQUE constraint.
 
-> **Why out of scope:** The idempotency-key column exists on the queue table but the `@idempotency` attribute is not yet parser-level and the 4-concurrent-worker test is missing. Slice 38L promotes this to `RuntimeChecked` together with that test.
+**Positive tests:**
+
+- `crates/corvid-runtime/src/queue.rs::durable_queue_idempotency_key_collapses_duplicate_jobs`
+
+**Adversarial tests:**
+
+- `crates/corvid-runtime/tests/durability_corpus.rs::t38l_d1_four_workers_collapse_to_one_row`
 
 #### `jobs.lease_exclusivity`
 - **class**: out_of_scope
@@ -453,20 +459,33 @@ A job lease prevents two workers from running the same job concurrently. Lease e
 > **Why out of scope:** Lease envelopes ship; the multi-worker runner that actually contests for them is not yet wired (only single-shot `RunOne` exists). Slice 38K promotes.
 
 #### `jobs.durable_resume`
-- **class**: out_of_scope
+- **class**: runtime_checked
 - **phase**: runtime
 
-A worker SIGKILL'd mid-step resumes from the last checkpoint with no double tool call and no double LLM spend on restart.
+A worker that drops uncleanly mid-step (the SIGKILL surrogate the queue runtime is responsible for) leaves behind durable checkpoint rows; a fresh worker that opens the same SQLite file after the lease TTL elapses can re-lease the job and resume from those checkpoints. SQLite WAL fsync makes this property structural. The count-bounded `no double LLM call` extension joins the Phase 21 Replay corpus when step-skip semantics land at the VM layer.
 
-> **Why out of scope:** Checkpoint envelopes ship; the SIGKILL crash-recovery integration test is missing. Slice 38L promotes.
+**Positive tests:**
+
+- `crates/corvid-runtime/src/queue.rs::durable_queue_records_ordered_agent_checkpoints`
+
+**Adversarial tests:**
+
+- `crates/corvid-runtime/tests/durability_corpus.rs::t38l_d3_checkpoints_survive_unclean_shutdown`
 
 #### `jobs.cron_dst_correct`
-- **class**: out_of_scope
+- **class**: runtime_checked
 - **phase**: runtime
 
-Cron schedules respect the declared timezone across daylight-savings transitions: spring-forward fires once, fall-back fires once.
+Cron schedules expressed in `America/New_York` (and other DST-observing timezones) produce monotonic UTC fire times across the spring-forward and fall-back transitions, with no duplicates and no fire at the non-existent local instant. `chrono-tz` is wired into the queue runtime; the cron-crate's `Schedule::after` iterator is timezone-aware.
 
-> **Why out of scope:** `chrono-tz` is not yet a runtime dependency and the DST test corpus does not exist. Slice 38M promotes.
+**Positive tests:**
+
+- `crates/corvid-runtime/tests/durability_corpus.rs::t38l_d2_dst_spring_forward_is_deterministic`
+- `crates/corvid-runtime/tests/durability_corpus.rs::t38l_d2_dst_fall_back_is_monotonic`
+
+**Adversarial tests:**
+
+- `crates/corvid-runtime/tests/durability_corpus.rs::t38l_d2_dst_spring_forward_is_deterministic`
 
 #### `jobs.approval_wait_resume`
 - **class**: out_of_scope

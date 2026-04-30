@@ -2234,6 +2234,18 @@ impl DurableQueueRuntime {
                 );
                 create index if not exists queue_jobs_status on queue_jobs(status);
                 create index if not exists queue_jobs_replay_key on queue_jobs(replay_key);
+                /* Slice 38L: enforce that no two pending/active jobs share an
+                 * idempotency_key. The partial-unique-index form (WHERE
+                 * idempotency_key IS NOT NULL) is supported since SQLite
+                 * 3.8.0 and lets jobs without an idempotency key coexist
+                 * (the column is NULL by default for non-idempotent jobs).
+                 * Combined with the existing on-collision fallback to
+                 * get_by_idempotency_key in enqueue_typed_idempotent, the
+                 * 4-concurrent-worker test from the Phase 38 audit
+                 * correction provably collapses duplicates to one. */
+                create unique index if not exists queue_jobs_idempotency_key
+                    on queue_jobs(idempotency_key)
+                    where idempotency_key is not null;
                 create table if not exists queue_schedules (
                     id text primary key,
                     cron text not null,

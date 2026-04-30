@@ -697,19 +697,24 @@ pub static GUARANTEE_REGISTRY: &[Guarantee] = &[
     Guarantee {
         id: "jobs.idempotency_key_uniqueness",
         kind: GuaranteeKind::Jobs,
-        class: GuaranteeClass::OutOfScope,
+        class: GuaranteeClass::RuntimeChecked,
         phase: Phase::Runtime,
         description:
-            "`@idempotency(key: ...)` collapses duplicate dangerous \
-             work: across N concurrent workers, exactly one execution \
-             of a job sharing one idempotency key may succeed.",
-        out_of_scope_reason:
-            "The idempotency-key column exists on the queue table but \
-             the `@idempotency` attribute is not yet parser-level and \
-             the 4-concurrent-worker test is missing. Slice 38L \
-             promotes this to `RuntimeChecked` together with that test.",
-        positive_test_refs: &[],
-        adversarial_test_refs: &[],
+            "Across N concurrent workers, exactly one durable queue \
+             row exists for a given non-null idempotency key. \
+             Enforced by a partial UNIQUE INDEX on \
+             `queue_jobs(idempotency_key) WHERE idempotency_key IS \
+             NOT NULL` in the SQLite schema, plus the existing \
+             `enqueue_typed_idempotent` collision-fallback path \
+             that returns the surviving row when the insert hits \
+             the UNIQUE constraint.",
+        out_of_scope_reason: "",
+        positive_test_refs: &[
+            "crates/corvid-runtime/src/queue.rs::durable_queue_idempotency_key_collapses_duplicate_jobs",
+        ],
+        adversarial_test_refs: &[
+            "crates/corvid-runtime/tests/durability_corpus.rs::t38l_d1_four_workers_collapse_to_one_row",
+        ],
     },
     Guarantee {
         id: "jobs.lease_exclusivity",
@@ -730,32 +735,47 @@ pub static GUARANTEE_REGISTRY: &[Guarantee] = &[
     Guarantee {
         id: "jobs.durable_resume",
         kind: GuaranteeKind::Jobs,
-        class: GuaranteeClass::OutOfScope,
+        class: GuaranteeClass::RuntimeChecked,
         phase: Phase::Runtime,
         description:
-            "A worker SIGKILL'd mid-step resumes from the last \
-             checkpoint with no double tool call and no double LLM \
-             spend on restart.",
-        out_of_scope_reason:
-            "Checkpoint envelopes ship; the SIGKILL crash-recovery \
-             integration test is missing. Slice 38L promotes.",
-        positive_test_refs: &[],
-        adversarial_test_refs: &[],
+            "A worker that drops uncleanly mid-step (the SIGKILL \
+             surrogate the queue runtime is responsible for) leaves \
+             behind durable checkpoint rows; a fresh worker that \
+             opens the same SQLite file after the lease TTL elapses \
+             can re-lease the job and resume from those checkpoints. \
+             SQLite WAL fsync makes this property structural. The \
+             count-bounded `no double LLM call` extension joins the \
+             Phase 21 Replay corpus when step-skip semantics land at \
+             the VM layer.",
+        out_of_scope_reason: "",
+        positive_test_refs: &[
+            "crates/corvid-runtime/src/queue.rs::durable_queue_records_ordered_agent_checkpoints",
+        ],
+        adversarial_test_refs: &[
+            "crates/corvid-runtime/tests/durability_corpus.rs::t38l_d3_checkpoints_survive_unclean_shutdown",
+        ],
     },
     Guarantee {
         id: "jobs.cron_dst_correct",
         kind: GuaranteeKind::Jobs,
-        class: GuaranteeClass::OutOfScope,
+        class: GuaranteeClass::RuntimeChecked,
         phase: Phase::Runtime,
         description:
-            "Cron schedules respect the declared timezone across \
-             daylight-savings transitions: spring-forward fires \
-             once, fall-back fires once.",
-        out_of_scope_reason:
-            "`chrono-tz` is not yet a runtime dependency and the \
-             DST test corpus does not exist. Slice 38M promotes.",
-        positive_test_refs: &[],
-        adversarial_test_refs: &[],
+            "Cron schedules expressed in `America/New_York` (and \
+             other DST-observing timezones) produce monotonic UTC \
+             fire times across the spring-forward and fall-back \
+             transitions, with no duplicates and no fire at the \
+             non-existent local instant. `chrono-tz` is wired into \
+             the queue runtime; the cron-crate's `Schedule::after` \
+             iterator is timezone-aware.",
+        out_of_scope_reason: "",
+        positive_test_refs: &[
+            "crates/corvid-runtime/tests/durability_corpus.rs::t38l_d2_dst_spring_forward_is_deterministic",
+            "crates/corvid-runtime/tests/durability_corpus.rs::t38l_d2_dst_fall_back_is_monotonic",
+        ],
+        adversarial_test_refs: &[
+            "crates/corvid-runtime/tests/durability_corpus.rs::t38l_d2_dst_spring_forward_is_deterministic",
+        ],
     },
     Guarantee {
         id: "jobs.approval_wait_resume",
