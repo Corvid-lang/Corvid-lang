@@ -38,6 +38,7 @@ mod cli;
 mod doctor_cmd;
 mod format;
 mod migrate_cmd;
+mod package_cmd;
 mod run_cmd;
 mod verify_cmd;
 
@@ -48,6 +49,10 @@ use cli::observe::*;
 use cli::package::*;
 use doctor_cmd::cmd_doctor_v2;
 use migrate_cmd::{cmd_migrate, cmd_migrate_down};
+use package_cmd::{
+    cmd_add_package, cmd_package_metadata, cmd_package_publish, cmd_package_verify_lock,
+    cmd_package_verify_registry, cmd_remove_package, cmd_update_package,
+};
 use run_cmd::cmd_run;
 use verify_cmd::cmd_verify;
 use format::{
@@ -3681,167 +3686,6 @@ fn cmd_add_dimension(spec: &str, registry: Option<&str>) -> Result<u8> {
     }
 }
 
-fn cmd_add_package(spec: &str, registry: Option<&str>) -> Result<u8> {
-    let project_dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    println!("corvid add {spec}\n");
-    let outcome = corvid_driver::add_package(spec, &project_dir, registry)?;
-    match outcome {
-        corvid_driver::AddPackageOutcome::Added {
-            uri,
-            version,
-            lockfile,
-            exports,
-        } => {
-            println!(
-                "added `{uri}` ({version}) to {} with {exports} exported contract item{}",
-                lockfile.display(),
-                if exports == 1 { "" } else { "s" }
-            );
-            Ok(0)
-        }
-        corvid_driver::AddPackageOutcome::Rejected { reason } => {
-            eprintln!("package rejected: {reason}");
-            Ok(1)
-        }
-    }
-}
-
-fn cmd_remove_package(name: &str) -> Result<u8> {
-    let project_dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    println!("corvid remove {name}\n");
-    let outcome = corvid_driver::remove_package(name, &project_dir)?;
-    match outcome {
-        corvid_driver::PackageMutationOutcome::Removed {
-            name,
-            manifest_updated,
-            lock_entries_removed,
-            lockfile,
-        } => {
-            println!(
-                "removed `{name}` (manifest: {}, lock entries: {})",
-                if manifest_updated {
-                    "updated"
-                } else {
-                    "unchanged"
-                },
-                lock_entries_removed
-            );
-            println!("lockfile: {}", lockfile.display());
-            Ok(0)
-        }
-        corvid_driver::PackageMutationOutcome::Rejected { reason } => {
-            eprintln!("package rejected: {reason}");
-            Ok(1)
-        }
-        corvid_driver::PackageMutationOutcome::Updated { .. } => unreachable!(),
-    }
-}
-
-fn cmd_update_package(spec: &str, registry: Option<&str>) -> Result<u8> {
-    let project_dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    println!("corvid update {spec}\n");
-    let outcome = corvid_driver::update_package(spec, &project_dir, registry)?;
-    match outcome {
-        corvid_driver::PackageMutationOutcome::Updated {
-            uri,
-            version,
-            lockfile,
-            exports,
-        } => {
-            println!(
-                "updated `{uri}` ({version}) in {} with {exports} exported contract item{}",
-                lockfile.display(),
-                if exports == 1 { "" } else { "s" }
-            );
-            Ok(0)
-        }
-        corvid_driver::PackageMutationOutcome::Rejected { reason } => {
-            eprintln!("package rejected: {reason}");
-            Ok(1)
-        }
-        corvid_driver::PackageMutationOutcome::Removed { .. } => unreachable!(),
-    }
-}
-
-fn cmd_package_publish(
-    source: &Path,
-    name: &str,
-    version: &str,
-    out: &Path,
-    url_base: &str,
-    key: &str,
-    key_id: &str,
-) -> Result<u8> {
-    let outcome = corvid_driver::publish_package(corvid_driver::PublishPackageOptions {
-        source,
-        name,
-        version,
-        out_dir: out,
-        url_base,
-        signing_seed_hex: key,
-        key_id,
-    })?;
-    println!(
-        "published `{}` to {}\nartifact: {}\nsha256: {}",
-        outcome.uri,
-        outcome.index.display(),
-        outcome.artifact.display(),
-        outcome.sha256
-    );
-    Ok(0)
-}
-
-fn cmd_package_metadata(
-    source: &Path,
-    name: &str,
-    version: &str,
-    signature: Option<&str>,
-    json: bool,
-) -> Result<u8> {
-    let metadata = corvid_driver::package_metadata_from_source(source, name, version, signature)?;
-    if json {
-        println!("{}", serde_json::to_string_pretty(&metadata)?);
-    } else {
-        print!(
-            "{}",
-            corvid_driver::render_package_metadata_markdown(&metadata)
-        );
-    }
-    Ok(0)
-}
-
-fn cmd_package_verify_registry(registry: &str, json: bool) -> Result<u8> {
-    let report = corvid_driver::verify_registry_contract(registry)?;
-    if json {
-        println!("{}", serde_json::to_string_pretty(&report)?);
-    } else {
-        println!("corvid package verify-registry {registry}\n");
-        println!("checked package entries: {}", report.checked);
-        if report.failures.is_empty() {
-            println!("registry contract: ok");
-        } else {
-            println!("registry contract: failed");
-            for failure in &report.failures {
-                println!(
-                    "- {}@{}: {}",
-                    failure.package, failure.version, failure.reason
-                );
-            }
-        }
-    }
-    Ok(if report.is_clean() { 0 } else { 1 })
-}
-
-fn cmd_package_verify_lock(json: bool) -> Result<u8> {
-    let project_dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    let report = corvid_driver::verify_package_lock(&project_dir)?;
-    if json {
-        println!("{}", serde_json::to_string_pretty(&report)?);
-    } else {
-        print!("{}", corvid_driver::render_package_conflict_report(&report));
-    }
-    Ok(if report.is_clean() { 0 } else { 1 })
-}
 
 fn cmd_routing_report(
     trace_dir: Option<&Path>,
