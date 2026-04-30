@@ -23,19 +23,22 @@
 //!   `verify_webhook`) land in commits 2-5; for now the
 //!   subcommand bodies stay in this file and call into `support`.
 
+pub mod check;
 pub mod list;
 mod support;
 
+#[allow(unused_imports)]
+pub use check::*;
 #[allow(unused_imports)]
 pub use list::*;
 
 use anyhow::{anyhow, Context, Result};
 use corvid_connector_runtime::{
-    github_pat_real_client, gmail_real_client, slack_real_client,
-    validate_connector_manifest, verify_webhook, BearerTokenResolver, ConnectorAuthState,
-    ConnectorRealClient, ConnectorRequest, ConnectorRuntime, ConnectorRuntimeMode,
-    InMemoryOAuth2Store, OAuth2RefreshResolver, OAuth2Tokens, ReqwestRefreshHook,
-    WebhookProvider, WebhookVerificationOutcome, WebhookVerifyInputs,
+    github_pat_real_client, gmail_real_client, slack_real_client, verify_webhook,
+    BearerTokenResolver, ConnectorAuthState, ConnectorRealClient, ConnectorRequest,
+    ConnectorRuntime, ConnectorRuntimeMode, InMemoryOAuth2Store, OAuth2RefreshResolver,
+    OAuth2Tokens, ReqwestRefreshHook, WebhookProvider, WebhookVerificationOutcome,
+    WebhookVerifyInputs,
 };
 use serde_json::Value;
 use sha2::Sha256;
@@ -47,13 +50,6 @@ use support::{
     map_runtime_error, pkce_code_challenge, random_b64url_bytes, shipped_connector_names,
     shipped_manifests, url_encode,
 };
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct ConnectorCheckEntry {
-    pub name: String,
-    pub valid: bool,
-    pub diagnostics: Vec<String>,
-}
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ConnectorRunOutput {
@@ -77,50 +73,6 @@ pub struct WebhookVerifyOutput {
     pub valid: bool,
     pub algorithm: String,
     pub outcome: String,
-}
-
-/// Validates every shipped connector manifest and returns one
-/// `ConnectorCheckEntry` per connector. With `live = true` the
-/// caller indicates real-provider drift detection should run; this
-/// slice flags it as a deferred bounty-extension behaviour and the
-/// per-connector live drift narrator lands in slice 41M alongside
-/// the webhook receive end-to-end.
-pub fn run_check(live: bool) -> Result<Vec<ConnectorCheckEntry>> {
-    let manifests = shipped_manifests()?;
-    let mut entries = Vec::with_capacity(manifests.len());
-    for (name, manifest) in manifests {
-        let report = validate_connector_manifest(&manifest);
-        let diagnostics = report
-            .diagnostics
-            .iter()
-            .map(|d| format!("{d}"))
-            .collect::<Vec<_>>();
-        entries.push(ConnectorCheckEntry {
-            name: name.to_string(),
-            valid: report.valid,
-            diagnostics,
-        });
-    }
-    if live && std::env::var("CORVID_PROVIDER_LIVE").as_deref() != Ok("1") {
-        return Err(anyhow!(
-            "`--live` requires `CORVID_PROVIDER_LIVE=1` plus per-provider \
-             credentials — refusing to issue live drift probes without \
-             explicit opt-in. The default `corvid connectors check` \
-             validates manifests without any network call."
-        ));
-    }
-    // Live drift narration is deferred to slice 41M (per the
-    // ROADMAP audit-correction track). Surfacing this honestly
-    // rather than silently no-op'ing.
-    if live {
-        return Err(anyhow!(
-            "Live drift narration is implemented end-to-end in slice 41M \
-             (per `docs/effects-spec/bounty.md`). This slice ships \
-             manifest-only validation; rerun without `--live` for the \
-             validation report."
-        ));
-    }
-    Ok(entries)
 }
 
 /// Drive a connector operation against a chosen mode. Mock /
@@ -520,18 +472,6 @@ fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// Slice 41L: `corvid connectors check` flags every shipped
-    /// manifest as valid (manifests are static and CI-tested
-    /// elsewhere). With `--live` the command refuses without
-    /// `CORVID_PROVIDER_LIVE=1`.
-    #[test]
-    fn check_passes_for_shipped_manifests() {
-        let entries = run_check(false).expect("check");
-        for entry in &entries {
-            assert!(entry.valid, "{}: {:?}", entry.name, entry.diagnostics);
-        }
-    }
 
     /// Slice 41L: `connectors run --mode=mock` injects the
     /// supplied mock payload and returns it through the runtime.
