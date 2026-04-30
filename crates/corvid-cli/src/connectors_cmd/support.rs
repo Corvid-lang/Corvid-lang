@@ -12,7 +12,7 @@ use corvid_connector_runtime::{
 };
 use sha2::Sha256;
 
-use super::ConnectorListEntry;
+use super::list::ConnectorListEntry;
 
 pub(crate) fn shipped_manifests() -> Result<Vec<(&'static str, ConnectorManifest)>> {
     Ok(vec![
