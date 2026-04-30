@@ -782,10 +782,9 @@ pub static GUARANTEE_REGISTRY: &[Guarantee] = &[
         out_of_scope_reason: "",
         positive_test_refs: &[
             "crates/corvid-runtime/tests/durability_corpus.rs::t38l_d2_dst_spring_forward_is_deterministic",
-            "crates/corvid-runtime/tests/durability_corpus.rs::t38l_d2_dst_fall_back_is_monotonic",
         ],
         adversarial_test_refs: &[
-            "crates/corvid-runtime/tests/durability_corpus.rs::t38l_d2_dst_spring_forward_is_deterministic",
+            "crates/corvid-runtime/tests/durability_corpus.rs::t38l_d2_dst_fall_back_is_monotonic",
         ],
     },
     Guarantee {
@@ -1193,7 +1192,7 @@ pub static GUARANTEE_REGISTRY: &[Guarantee] = &[
             "crates/corvid-runtime/src/lineage_redact.rs::redaction_preserves_topology_and_redacts_identifiers_deterministically",
         ],
         adversarial_test_refs: &[
-            "crates/corvid-runtime/src/lineage_redact.rs::redaction_preserves_topology_and_redacts_identifiers_deterministically",
+            "crates/corvid-runtime/src/lineage_redact.rs::redaction_removes_obvious_secrets_from_serialized_lineage",
         ],
     },
     Guarantee {
@@ -1213,7 +1212,7 @@ pub static GUARANTEE_REGISTRY: &[Guarantee] = &[
             "crates/corvid-runtime/src/lineage_incidents.rs::incidents_group_by_guarantee_effect_budget_provenance_and_approval",
         ],
         adversarial_test_refs: &[
-            "crates/corvid-runtime/src/lineage_incidents.rs::incidents_group_by_guarantee_effect_budget_provenance_and_approval",
+            "crates/corvid-runtime/src/lineage_incidents.rs::non_incident_ok_events_are_not_grouped",
         ],
     },
     Guarantee {
@@ -1374,6 +1373,17 @@ pub const SIGNED_CDYLIB_CLAIM_GUARANTEE_IDS: &[&str] = &[
     "abi_attestation.descriptor_match",
     "abi_attestation.sign_requires_claim_coverage",
     "jobs.cron_schedule_durable",
+    "jobs.idempotency_key_uniqueness",
+    "jobs.lease_exclusivity",
+    "jobs.durable_resume",
+    "jobs.cron_dst_correct",
+    "auth.api_key_at_rest_hashed",
+    "auth.jwt_kid_rotation",
+    "auth.oauth_pkce_required",
+    "connector.scope_minimum_enforced",
+    "connector.rate_limit_respects_provider",
+    "connector.webhook_signature_verified",
+    "connector.replay_quarantine",
 ];
 
 pub fn signed_cdylib_claim_guarantees() -> impl Iterator<Item = &'static Guarantee> {

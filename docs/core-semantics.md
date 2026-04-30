@@ -495,11 +495,10 @@ Cron schedules expressed in `America/New_York` (and other DST-observing timezone
 **Positive tests:**
 
 - `crates/corvid-runtime/tests/durability_corpus.rs::t38l_d2_dst_spring_forward_is_deterministic`
-- `crates/corvid-runtime/tests/durability_corpus.rs::t38l_d2_dst_fall_back_is_monotonic`
 
 **Adversarial tests:**
 
-- `crates/corvid-runtime/tests/durability_corpus.rs::t38l_d2_dst_spring_forward_is_deterministic`
+- `crates/corvid-runtime/tests/durability_corpus.rs::t38l_d2_dst_fall_back_is_monotonic`
 
 #### `jobs.approval_wait_resume`
 - **class**: out_of_scope
@@ -747,7 +746,7 @@ Redacting the same lineage event twice with the same `LineageRedactionPolicy` yi
 
 **Adversarial tests:**
 
-- `crates/corvid-runtime/src/lineage_redact.rs::redaction_preserves_topology_and_redacts_identifiers_deterministically`
+- `crates/corvid-runtime/src/lineage_redact.rs::redaction_removes_obvious_secrets_from_serialized_lineage`
 
 #### `observability.contract_aware_grouping`
 - **class**: runtime_checked
@@ -761,7 +760,7 @@ Redacting the same lineage event twice with the same `LineageRedactionPolicy` yi
 
 **Adversarial tests:**
 
-- `crates/corvid-runtime/src/lineage_incidents.rs::incidents_group_by_guarantee_effect_budget_provenance_and_approval`
+- `crates/corvid-runtime/src/lineage_incidents.rs::non_incident_ok_events_are_not_grouped`
 
 #### `eval.drift_attribution`
 - **class**: runtime_checked
