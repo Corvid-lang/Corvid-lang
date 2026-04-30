@@ -24,6 +24,11 @@ benches/corvid/generated/
 
 # MSVC object files leaked from cdylib_emission tests by cl.exe
 crates/corvid-codegen-cl/*.obj
+crates/corvid-cli/*.obj
+
+# cdylib_catalog_demo C-host build outputs + runtime trace dumps
+examples/cdylib_catalog_demo/host_c/*.exe
+examples/cdylib_catalog_demo/trace_output/
 
 # Phase 23-F browser CI test dependencies (Playwright + browsers
 # install per-runner; not committed).
