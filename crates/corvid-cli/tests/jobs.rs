@@ -1145,3 +1145,80 @@ fn jobs_dlq_inspects_dead_lettered_jobs() {
     );
     assert!(stdout.contains("replay_key:replay:email:d1"), "{stdout}");
 }
+
+/// Slice 38K integration: `corvid jobs run --workers=N
+/// --max-runtime-ms=...` drains every queued job through the
+/// no-op default executor and reports the per-outcome counters.
+/// Exercises the binary end-to-end (multi-worker pool spawned
+/// from the CLI; each worker leases, runs, completes; the
+/// command exits 0 with the expected counters).
+#[test]
+fn jobs_run_multi_worker_drains_pending_jobs() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let state = dir.path().join("jobs-38k.sqlite");
+
+    // Enqueue 8 jobs so 4 workers each have ~2 to claim.
+    for i in 0..8 {
+        let enqueue = Command::new(corvid_bin())
+            .args([
+                "jobs",
+                "enqueue",
+                "--state",
+                state.to_str().unwrap(),
+                "--task",
+                "noop",
+                "--payload",
+                &format!("{{\"i\":{i}}}"),
+                "--max-retries",
+                "1",
+                "--budget-usd",
+                "0.0",
+                "--effect-summary",
+                "test",
+                "--replay-key",
+                &format!("rk:run:{i}"),
+            ])
+            .output()
+            .expect("run jobs enqueue");
+        assert!(
+            enqueue.status.success(),
+            "enqueue {i} failed: stderr={}",
+            String::from_utf8_lossy(&enqueue.stderr),
+        );
+    }
+
+    // Run a 4-worker pool with a finite max-runtime so the test
+    // doesn't hang. The default no-op executor succeeds every job.
+    let run = Command::new(corvid_bin())
+        .args([
+            "jobs",
+            "run",
+            "--state",
+            state.to_str().unwrap(),
+            "--workers",
+            "4",
+            "--lease-ttl-ms",
+            "5000",
+            "--idle-poll-ms",
+            "20",
+            "--max-runtime-ms",
+            "2000",
+        ])
+        .output()
+        .expect("run jobs run");
+    assert!(
+        run.status.success(),
+        "jobs run failed: stderr={}",
+        String::from_utf8_lossy(&run.stderr),
+    );
+    let stdout = String::from_utf8_lossy(&run.stdout);
+    assert!(stdout.contains("workers: 4"), "{stdout}");
+    assert!(stdout.contains("lease_ttl_ms: 5000"), "{stdout}");
+    // The default no-op executor succeeds every job. With 8 jobs
+    // and 4 workers, the result line reports succeeded=8.
+    assert!(
+        stdout.contains("succeeded=8"),
+        "expected all 8 to succeed: {stdout}",
+    );
+    assert!(stdout.contains("failed=0"), "{stdout}");
+}

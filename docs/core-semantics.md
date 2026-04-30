@@ -41,7 +41,7 @@ Per the no-shortcuts rule, every `out_of_scope` entry carries an explicit reason
 | `jobs.cron_schedule_durable` | jobs | runtime_checked | runtime |
 | `jobs.retry_budget_bound` | jobs | out_of_scope | runtime |
 | `jobs.idempotency_key_uniqueness` | jobs | runtime_checked | runtime |
-| `jobs.lease_exclusivity` | jobs | out_of_scope | runtime |
+| `jobs.lease_exclusivity` | jobs | runtime_checked | runtime |
 | `jobs.durable_resume` | jobs | runtime_checked | runtime |
 | `jobs.cron_dst_correct` | jobs | runtime_checked | runtime |
 | `jobs.approval_wait_resume` | jobs | out_of_scope | runtime |
@@ -451,12 +451,19 @@ Across N concurrent workers, exactly one durable queue row exists for a given no
 - `crates/corvid-runtime/tests/durability_corpus.rs::t38l_d1_four_workers_collapse_to_one_row`
 
 #### `jobs.lease_exclusivity`
-- **class**: out_of_scope
+- **class**: runtime_checked
 - **phase**: runtime
 
-A job lease prevents two workers from running the same job concurrently. Lease expiry plus heartbeat extension survives worker crash without double execution.
+A job lease prevents two workers from running the same job concurrently. Slice 38K's `WorkerPool` over `DurableQueueRuntime` runs N tokio tasks each contesting `lease_next_at`; the SQLite UPDATE that flips `pending` → `leased` is atomic, so exactly one worker wins each contention round. Lease expiry plus a fresh worker re-leasing is shipped (slice 38L's D3 test); heartbeat extension for long-running steps remains a follow-up.
 
-> **Why out of scope:** Lease envelopes ship; the multi-worker runner that actually contests for them is not yet wired (only single-shot `RunOne` exists). Slice 38K promotes.
+**Positive tests:**
+
+- `crates/corvid-runtime/src/worker_pool.rs::t38k_pool_runs_each_job_exactly_once`
+
+**Adversarial tests:**
+
+- `crates/corvid-runtime/src/worker_pool.rs::t38k_two_workers_cannot_both_lease_same_job`
+- `crates/corvid-runtime/src/worker_pool.rs::t38k_pool_drains_gracefully_without_claiming_new_work`
 
 #### `jobs.durable_resume`
 - **class**: runtime_checked

@@ -719,18 +719,26 @@ pub static GUARANTEE_REGISTRY: &[Guarantee] = &[
     Guarantee {
         id: "jobs.lease_exclusivity",
         kind: GuaranteeKind::Jobs,
-        class: GuaranteeClass::OutOfScope,
+        class: GuaranteeClass::RuntimeChecked,
         phase: Phase::Runtime,
         description:
             "A job lease prevents two workers from running the same \
-             job concurrently. Lease expiry plus heartbeat extension \
-             survives worker crash without double execution.",
-        out_of_scope_reason:
-            "Lease envelopes ship; the multi-worker runner that \
-             actually contests for them is not yet wired (only \
-             single-shot `RunOne` exists). Slice 38K promotes.",
-        positive_test_refs: &[],
-        adversarial_test_refs: &[],
+             job concurrently. Slice 38K's `WorkerPool` over \
+             `DurableQueueRuntime` runs N tokio tasks each \
+             contesting `lease_next_at`; the SQLite UPDATE that \
+             flips `pending` → `leased` is atomic, so exactly one \
+             worker wins each contention round. Lease expiry plus \
+             a fresh worker re-leasing is shipped (slice 38L's D3 \
+             test); heartbeat extension for long-running steps \
+             remains a follow-up.",
+        out_of_scope_reason: "",
+        positive_test_refs: &[
+            "crates/corvid-runtime/src/worker_pool.rs::t38k_pool_runs_each_job_exactly_once",
+        ],
+        adversarial_test_refs: &[
+            "crates/corvid-runtime/src/worker_pool.rs::t38k_two_workers_cannot_both_lease_same_job",
+            "crates/corvid-runtime/src/worker_pool.rs::t38k_pool_drains_gracefully_without_claiming_new_work",
+        ],
     },
     Guarantee {
         id: "jobs.durable_resume",

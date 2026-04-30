@@ -1914,6 +1914,19 @@ fn main_impl() -> ExitCode {
                 fail_fingerprint,
                 retry_base_ms,
             ),
+            JobsCommand::Run {
+                state,
+                workers,
+                lease_ttl_ms,
+                idle_poll_ms,
+                max_runtime_ms,
+            } => cmd_jobs_run(
+                &state,
+                workers,
+                lease_ttl_ms,
+                idle_poll_ms,
+                max_runtime_ms,
+            ),
             JobsCommand::Inspect { state, job } => cmd_jobs_inspect(&state, &job),
             JobsCommand::Retry { state, job } => cmd_jobs_retry(&state, &job),
             JobsCommand::Cancel { state, job } => cmd_jobs_cancel(&state, &job),
@@ -2852,6 +2865,69 @@ fn cmd_jobs_run_one(
             Ok(0)
         }
     }
+}
+
+fn cmd_jobs_run(
+    state: &Path,
+    workers: usize,
+    lease_ttl_ms: u64,
+    idle_poll_ms: u64,
+    max_runtime_ms: u64,
+) -> Result<u8> {
+    use corvid_runtime::worker_pool::WorkerPool;
+    use std::sync::atomic::Ordering;
+    use std::sync::Arc;
+
+    let queue = Arc::new(DurableQueueRuntime::open(state)?);
+    let pool = WorkerPool::new(queue.clone(), workers)
+        .with_lease_ttl_ms(lease_ttl_ms)
+        .with_idle_poll_ms(idle_poll_ms);
+    let drain = pool.drain_handle();
+    let counters = pool.counters();
+    let drain_for_signal = drain.clone();
+
+    println!("corvid jobs run");
+    println!("state: {}", state.display());
+    println!("workers: {workers}");
+    println!("lease_ttl_ms: {lease_ttl_ms}");
+    println!("idle_poll_ms: {idle_poll_ms}");
+    if max_runtime_ms > 0 {
+        println!("max_runtime_ms: {max_runtime_ms}");
+    } else {
+        println!("max_runtime_ms: 0 (run until Ctrl-C)");
+    }
+
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?;
+    runtime.block_on(async move {
+        // Best-effort Ctrl-C handler (Unix + Windows): signal
+        // drain when received. If signal::ctrl_c is unavailable
+        // (e.g. running detached), we still respect
+        // max_runtime_ms.
+        tokio::spawn(async move {
+            if (tokio::signal::ctrl_c().await).is_ok() {
+                drain_for_signal.store(true, Ordering::SeqCst);
+            }
+        });
+        let handles = pool.spawn();
+        if max_runtime_ms > 0 {
+            tokio::time::sleep(std::time::Duration::from_millis(max_runtime_ms)).await;
+            drain.store(true, Ordering::SeqCst);
+        }
+        for h in handles {
+            let _ = h.await;
+        }
+    });
+
+    println!(
+        "result: succeeded={} failed={} skipped={} total={}",
+        counters.succeeded(),
+        counters.failed(),
+        counters.skipped(),
+        counters.total()
+    );
+    Ok(0)
 }
 
 fn cmd_jobs_inspect(state: &Path, job_id: &str) -> Result<u8> {
@@ -4838,6 +4914,32 @@ enum JobsCommand {
         /// Base backoff in milliseconds for failed attempts.
         #[arg(long, default_value = "1000")]
         retry_base_ms: u64,
+    },
+    /// Run an N-worker async pool over the local queue. Each
+    /// worker independently leases the next ready job, runs the
+    /// shipped no-op executor (production callers wire their
+    /// own), and finalises via complete_leased / fail_leased.
+    /// Slice 38K's audit-correction surface — the multi-worker
+    /// runner the audit found absent. Default lease TTL = 60s,
+    /// default idle poll = 100ms. Press Ctrl-C to drain.
+    Run {
+        /// SQLite state file used by the durable local queue.
+        #[arg(long, value_name = "PATH", default_value = "target/corvid-jobs.sqlite")]
+        state: PathBuf,
+        /// Number of concurrent workers.
+        #[arg(long, default_value = "1")]
+        workers: usize,
+        /// Lease TTL in milliseconds.
+        #[arg(long, default_value = "60000")]
+        lease_ttl_ms: u64,
+        /// Idle poll interval when the queue is empty.
+        #[arg(long, default_value = "100")]
+        idle_poll_ms: u64,
+        /// Run for at most this many milliseconds, then drain.
+        /// 0 = run until Ctrl-C / external drain. Tests use a
+        /// finite duration so they don't hang.
+        #[arg(long, default_value = "0")]
+        max_runtime_ms: u64,
     },
     /// Inspect one job and its operational metadata.
     Inspect {

@@ -75,6 +75,8 @@ pub mod provenance;
 pub mod python_ffi;
 pub mod queue;
 pub mod rag;
+/// Slice 38K: multi-worker durable-queue runner over `queue`.
+pub mod worker_pool;
 pub mod record;
 pub mod redact;
 pub mod replay;
