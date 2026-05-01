@@ -41,7 +41,7 @@
 #![allow(unsafe_code)]
 
 use crate::abi::{CorvidString, REGISTERED_TOOL_COUNT};
-use crate::approvals::{bench_approval_wait_ns, ProgrammaticApprover, StdinApprover};
+use crate::approvals::{ProgrammaticApprover, StdinApprover};
 use crate::llm::anthropic::AnthropicAdapter;
 use crate::llm::gemini::GeminiAdapter;
 use crate::llm::mock::{
@@ -53,241 +53,24 @@ use crate::llm::openai_compat::OpenAiCompatibleAdapter;
 use crate::redact::RedactionSet;
 use crate::errors::RuntimeError;
 use crate::runtime::{Runtime, RuntimeBuilder};
-use crate::tracing::{bench_trace_overhead_ns, fresh_run_id, Tracer};
+use crate::tracing::{fresh_run_id, Tracer};
 use corvid_trace_schema::{TraceEvent, WRITER_NATIVE};
 use std::ffi::{c_char, CString};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicPtr, AtomicU64, Ordering};
+use std::sync::atomic::Ordering;
 use std::sync::{Arc, OnceLock};
 use std::time::Instant;
 
-static BENCH_JSON_BRIDGE_NS: AtomicU64 = AtomicU64::new(0);
+mod state;
+pub use state::{
+    corvid_bench_approval_wait_ns, corvid_bench_json_bridge_ns, corvid_bench_mock_dispatch_ns,
+    corvid_bench_prompt_wait_ns, corvid_bench_tool_wait_ns, corvid_bench_trace_overhead_ns,
+    corvid_runtime_embed_init_default, corvid_runtime_init, corvid_runtime_is_replay,
+    corvid_runtime_probe, corvid_runtime_shutdown, runtime,
+};
+pub(crate) use state::bridge;
+use state::{record_json_bridge_ns, BridgeState, BRIDGE};
 
-fn record_json_bridge_ns(start: Instant, prompt_wait_before: u64, mock_dispatch_before: u64) {
-    let elapsed_ns = start.elapsed().as_nanos() as u64;
-    let prompt_wait_ns = bench_prompt_wait_ns().saturating_sub(prompt_wait_before);
-    let mock_dispatch_ns = bench_mock_dispatch_ns().saturating_sub(mock_dispatch_before);
-    let residual = elapsed_ns
-        .saturating_sub(prompt_wait_ns)
-        .saturating_sub(mock_dispatch_ns);
-    BENCH_JSON_BRIDGE_NS.fetch_add(residual, Ordering::Relaxed);
-}
-
-/// The bridge state owned for the lifetime of a compiled Corvid
-/// process. Constructed eagerly by `corvid_runtime_init` and stored
-/// behind the `BRIDGE` atomic pointer below. Dropped by
-/// `corvid_runtime_shutdown`. The layout is private — compiled code
-/// never sees the struct, only the bridge function surface.
-pub struct BridgeState {
-    /// Multi-thread tokio runtime. Owns the worker-thread pool.
-    /// `new_multi_thread` default is num_cpus workers. Env override
-    /// via `CORVID_TOKIO_WORKERS` is respected if present.
-    tokio: tokio::runtime::Runtime,
-    /// The Corvid runtime — tool registry, LLM adapters, approver,
-    /// tracer. Shared behind `Arc` for downstream futures to clone
-    /// freely without contending on the bridge pointer.
-    corvid: Arc<Runtime>,
-}
-
-impl BridgeState {
-    /// A handle into the tokio runtime that async bridge calls use to
-    /// `block_on`. Cheap to clone; caller does not need a handle for
-    /// every call.
-    pub(crate) fn tokio_handle(&self) -> tokio::runtime::Handle {
-        self.tokio.handle().clone()
-    }
-
-    /// Clone of the `Arc<Runtime>` — tool/prompt bridges move this into
-    /// an async block so the future doesn't borrow the bridge.
-    pub(crate) fn corvid_runtime(&self) -> Arc<Runtime> {
-        Arc::clone(&self.corvid)
-    }
-}
-
-/// Global pointer to the process-wide bridge state.
-///
-/// `AtomicPtr<BridgeState>` deliberately NOT `OnceCell` or `Lazy` —
-/// this is eager init, not lazy. Before `corvid_runtime_init` returns
-/// this is null; after it returns it points at a `Box::leak`'d
-/// `BridgeState`. Readers load with `Ordering::Acquire` to pair with
-/// the `Ordering::Release` store in init.
-static BRIDGE: AtomicPtr<BridgeState> = AtomicPtr::new(std::ptr::null_mut());
-
-/// Read the bridge pointer and panic if init hasn't run. Returns a
-/// `&'static BridgeState` because the `Box::leak` that created it gave
-/// the allocation program lifetime.
-pub(crate) fn bridge() -> &'static BridgeState {
-    let p = BRIDGE.load(Ordering::Acquire);
-    if p.is_null() {
-        panic!(
-            "corvid runtime bridge accessed before `corvid_runtime_init()` was called — this is a codegen bug, not a runtime issue"
-        );
-    }
-    // SAFETY: Non-null guaranteed by the check above. Pointer was
-    // published via Release store in `corvid_runtime_init`; we observe
-    // via Acquire here, so all writes that happened before the store
-    // are visible to us. Box::leak gave the allocation program
-    // lifetime so the `&'static` is sound.
-    unsafe { &*p }
-}
-
-/// Probe function. Returns 42. Used by the early smoke
-/// test to verify the staticlib builds and links correctly into a
-/// compiled Corvid binary before any of the real bridge surface lands.
-/// Kept permanently because smoke-testing the FFI path on any future
-/// toolchain change is cheap — just call it.
-#[no_mangle]
-pub extern "C" fn corvid_runtime_probe() -> i64 {
-    42
-}
-
-#[no_mangle]
-pub extern "C" fn corvid_bench_prompt_wait_ns() -> u64 {
-    bench_prompt_wait_ns()
-}
-
-#[no_mangle]
-pub extern "C" fn corvid_bench_tool_wait_ns() -> u64 {
-    0
-}
-
-#[no_mangle]
-pub extern "C" fn corvid_bench_approval_wait_ns() -> u64 {
-    bench_approval_wait_ns()
-}
-
-#[no_mangle]
-pub extern "C" fn corvid_bench_mock_dispatch_ns() -> u64 {
-    bench_mock_dispatch_ns()
-}
-
-#[no_mangle]
-pub extern "C" fn corvid_bench_trace_overhead_ns() -> u64 {
-    bench_trace_overhead_ns()
-}
-
-#[no_mangle]
-pub extern "C" fn corvid_bench_json_bridge_ns() -> u64 {
-    BENCH_JSON_BRIDGE_NS.load(Ordering::Relaxed)
-}
-
-/// Construct the tokio runtime + the Corvid `Runtime` and store them
-/// behind the global bridge pointer. MUST be called exactly once,
-/// eagerly, before any other bridge function. Second call panics;
-/// bridge functions called before it panic.
-///
-/// Adapter configuration follows the same env-var pattern the driver
-/// uses for the interpreter tier:
-///
-///   `CORVID_MODEL`       — default model name
-///   `ANTHROPIC_API_KEY`  — present → AnthropicAdapter registered
-///   `OPENAI_API_KEY`     — present → OpenAiAdapter registered
-///   `CORVID_APPROVE_AUTO` — `1` selects ProgrammaticApprover::always_yes,
-///                          else stdin approver (the interactive default)
-///   `CORVID_TOKIO_WORKERS` — integer override for worker thread count
-///                            (default: num_cpus)
-///
-/// Returns 0 on success. Non-zero return values are reserved for
-/// future error codes; today the function panics on any failure
-/// since init failure means the program cannot continue.
-#[no_mangle]
-pub extern "C" fn corvid_runtime_init() -> i32 {
-    if !BRIDGE.load(Ordering::Acquire).is_null() {
-        panic!("corvid_runtime_init called twice");
-    }
-
-    let ptr = Box::into_raw(Box::new(BridgeState {
-        tokio: build_tokio_runtime(),
-        corvid: Arc::new(build_corvid_runtime()),
-    }));
-
-    BRIDGE.store(ptr, Ordering::Release);
-
-    // Walk every `#[tool]` metadata entry linked into this
-    // binary. Today we just record the count for diagnostics; later
-    // 14e plumbs these entries into the approve-policy table, and a
-    // future `corvid check` command can cross-verify the signatures
-    // against the `.cor` source.
-    //
-    // This walk is cold-path — once per program startup, O(n) in the
-    // number of tools. For any realistic program, n < 100.
-    let mut count: i64 = 0;
-    for _meta in iter_registered_tools() {
-        count += 1;
-    }
-    record_registered_tool_count(count);
-
-    0
-}
-
-/// Idempotent runtime init for embedded cdylib/staticlib calls.
-///
-/// Unlike `corvid_runtime_init`, this helper is safe to invoke on
-/// every exported library call. The first call installs a minimal
-/// process-global runtime with deny-all approvals and no live
-/// adapters/tools; later calls are a no-op.
-#[no_mangle]
-pub extern "C" fn corvid_runtime_embed_init_default() -> i32 {
-    if !BRIDGE.load(Ordering::Acquire).is_null() {
-        return 0;
-    }
-    let ptr = Box::into_raw(Box::new(BridgeState {
-        tokio: build_tokio_runtime(),
-        corvid: Arc::new(build_embedded_corvid_runtime()),
-    }));
-    match BRIDGE.compare_exchange(
-        std::ptr::null_mut(),
-        ptr,
-        Ordering::AcqRel,
-        Ordering::Acquire,
-    ) {
-        Ok(_) => 0,
-        Err(_) => {
-            // SAFETY: compare_exchange failure means we still own `ptr`.
-            unsafe {
-                drop(Box::from_raw(ptr));
-            }
-            0
-        }
-    }
-}
-
-/// Drop the bridge state cleanly. The codegen-emitted main registers
-/// this with `atexit`. After it runs, any further bridge call panics
-/// (the post-shutdown null state is indistinguishable from pre-init,
-/// and either situation means something is wrong in the codegen).
-#[no_mangle]
-pub extern "C" fn corvid_runtime_shutdown() {
-    let ptr = BRIDGE.swap(std::ptr::null_mut(), Ordering::AcqRel);
-    if ptr.is_null() {
-        return; // already shut down or never initialised — no-op, idempotent
-    }
-    // SAFETY: Pointer came from `Box::into_raw` in `corvid_runtime_init`
-    // and is owned by us (we just atomically swapped it out so no
-    // concurrent reader sees it any more).
-    let bridge = unsafe { Box::from_raw(ptr) };
-    if let Some(path) = std::env::var_os("CORVID_REPLAY_DIFFERENTIAL_REPORT_PATH") {
-        if let Err(err) = bridge
-            .corvid
-            .write_replay_differential_report(PathBuf::from(path))
-        {
-            eprintln!("corvid replay differential report write failed: {err}");
-        }
-    }
-    if let Some(path) = std::env::var_os("CORVID_REPLAY_MUTATION_REPORT_PATH") {
-        if let Err(err) = bridge
-            .corvid
-            .write_replay_mutation_report(PathBuf::from(path))
-        {
-            eprintln!("corvid replay mutation report write failed: {err}");
-        }
-    }
-    // Dropping the bridge state drops the tokio runtime (joining worker
-    // threads) and the Corvid runtime Arc.
-    drop(bridge);
-    crate::grounded_handles::emit_debug_leak_warning();
-    crate::observation_handles::emit_debug_leak_warning();
-}
 
 /// Tool-call bridge for the narrow case `fn(no args) -> Int`.
 ///
@@ -389,18 +172,6 @@ pub unsafe extern "C" fn corvid_tool_call_sync_int(
 /// `corvid_runtime_init` hasn't run — matches the eager-init contract.
 pub fn tokio_handle() -> tokio::runtime::Handle {
     bridge().tokio_handle()
-}
-
-/// Clone of the process-global `Arc<Runtime>`. Available to anything
-/// that needs to dispatch through the runtime from a non-C-ABI
-/// context (e.g. in-process tests).
-pub fn runtime() -> std::sync::Arc<crate::runtime::Runtime> {
-    bridge().corvid_runtime()
-}
-
-#[no_mangle]
-pub extern "C" fn corvid_runtime_is_replay() -> bool {
-    bridge().corvid_runtime().is_replay_mode()
 }
 
 /// Convert a Corvid-owned `String` descriptor into a NUL-terminated C string.
