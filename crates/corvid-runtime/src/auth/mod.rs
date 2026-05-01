@@ -1,14 +1,13 @@
 use crate::errors::RuntimeError;
 use crate::tracing::now_ms;
-use argon2::{
-    password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString},
-    Argon2,
-};
-use rand_core::OsRng;
 use rusqlite::{params, Connection, OptionalExtension};
 use sha2::{Digest, Sha256};
 use std::path::Path;
 use std::sync::Mutex;
+
+mod api_keys;
+pub use api_keys::{hash_api_key_secret, verify_api_key_secret};
+use api_keys::read_api_key_row;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AuthActor {
@@ -1079,23 +1078,6 @@ pub fn hash_oauth_state(raw_state: &str) -> String {
     format!("sha256:{:x}", hasher.finalize())
 }
 
-pub fn hash_api_key_secret(raw_key: &str) -> Result<String, RuntimeError> {
-    validate_non_empty("api key secret", raw_key)?;
-    let salt = SaltString::generate(&mut OsRng);
-    Argon2::default()
-        .hash_password(raw_key.as_bytes(), &salt)
-        .map(|hash| hash.to_string())
-        .map_err(|err| RuntimeError::Other(format!("failed to hash api key: {err}")))
-}
-
-pub fn verify_api_key_secret(raw_key: &str, encoded_hash: &str) -> Result<bool, RuntimeError> {
-    validate_non_empty("api key secret", raw_key)?;
-    let parsed = PasswordHash::new(encoded_hash)
-        .map_err(|err| RuntimeError::Other(format!("invalid stored api key hash: {err}")))?;
-    Ok(Argon2::default()
-        .verify_password(raw_key.as_bytes(), &parsed)
-        .is_ok())
-}
 
 pub fn validate_jwt_verification_contract(
     contract: &JwtVerificationContract,
@@ -1165,7 +1147,7 @@ pub fn authorize_trace_permission(
     }
 }
 
-fn validate_non_empty(label: &str, value: &str) -> Result<(), RuntimeError> {
+pub(super) fn validate_non_empty(label: &str, value: &str) -> Result<(), RuntimeError> {
     if value.trim().is_empty() {
         Err(RuntimeError::Other(format!("{label} must not be empty")))
     } else {
@@ -1215,20 +1197,6 @@ fn read_session_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<SessionRecord> 
     })
 }
 
-fn read_api_key_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ApiKeyRecord> {
-    Ok(ApiKeyRecord {
-        id: row.get(0)?,
-        service_actor_id: row.get(1)?,
-        tenant_id: row.get(2)?,
-        key_hash: row.get(3)?,
-        scope_fingerprint: row.get(4)?,
-        expires_ms: row.get::<_, i64>(5)? as u64,
-        last_used_ms: row.get::<_, Option<i64>>(6)?.map(|value| value as u64),
-        revoked_ms: row.get::<_, Option<i64>>(7)?.map(|value| value as u64),
-        created_ms: row.get::<_, i64>(8)? as u64,
-        updated_ms: row.get::<_, i64>(9)? as u64,
-    })
-}
 
 fn read_oauth_state_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<OAuthStateRecord> {
     Ok(OAuthStateRecord {
