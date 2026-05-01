@@ -216,3 +216,32 @@ pub fn runtime() -> Arc<Runtime> {
 pub extern "C" fn corvid_runtime_is_replay() -> bool {
     bridge().corvid_runtime().is_replay_mode()
 }
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn probe_returns_42() {
+        assert_eq!(corvid_runtime_probe(), 42);
+    }
+
+    // Note: init/shutdown tests can't run in parallel because the
+    // bridge is a process-global. Kept to a single sequenced test
+    // that covers both paths. Ignored by default to keep the standard
+    // `cargo test` path clean of global-state mutation; run explicitly
+    // with `cargo test -- --ignored init_and_shutdown_cycle`.
+    #[test]
+    #[ignore = "mutates the process-global BRIDGE; run with --ignored"]
+    fn init_and_shutdown_cycle() {
+        assert_eq!(corvid_runtime_init(), 0);
+        assert!(!BRIDGE.load(Ordering::Acquire).is_null());
+        // Second init must panic — verified via a separate test run;
+        // can't assert here without crashing the test process. Just
+        // confirm shutdown works.
+        corvid_runtime_shutdown();
+        assert!(BRIDGE.load(Ordering::Acquire).is_null());
+        // Shutdown is idempotent — second call is a no-op, not a panic.
+        corvid_runtime_shutdown();
+        assert!(BRIDGE.load(Ordering::Acquire).is_null());
+    }
+}
