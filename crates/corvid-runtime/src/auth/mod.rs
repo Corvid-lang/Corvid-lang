@@ -1,12 +1,12 @@
 use crate::errors::RuntimeError;
 use crate::tracing::now_ms;
 use rusqlite::{params, Connection, OptionalExtension};
-use sha2::{Digest, Sha256};
 use std::path::Path;
 use std::sync::Mutex;
 
 mod api_keys;
 mod approvals;
+mod audit;
 mod oauth;
 mod sessions;
 pub use api_keys::{hash_api_key_secret, verify_api_key_secret};
@@ -14,6 +14,7 @@ pub use approvals::{authorize_trace_permission, validate_jwt_verification_contra
 pub use oauth::hash_oauth_state;
 pub use sessions::hash_session_secret;
 use api_keys::read_api_key_row;
+use audit::{read_audit_row, stable_suffix};
 use oauth::read_oauth_state_row;
 use sessions::{read_actor_row, read_session_row};
 
@@ -1084,35 +1085,11 @@ pub(super) fn validate_non_empty(label: &str, value: &str) -> Result<(), Runtime
     }
 }
 
-fn stable_suffix(event_kind: &str, session_id: Option<&str>, trace_id: Option<&str>) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(event_kind.as_bytes());
-    hasher.update(b":");
-    hasher.update(session_id.unwrap_or("").as_bytes());
-    hasher.update(b":");
-    hasher.update(trace_id.unwrap_or("").as_bytes());
-    let digest = format!("{:x}", hasher.finalize());
-    digest[..16].to_string()
-}
 
 
 
 
 
-fn read_audit_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<AuthAuditEvent> {
-    Ok(AuthAuditEvent {
-        id: row.get(0)?,
-        event_kind: row.get(1)?,
-        actor_id: row.get(2)?,
-        tenant_id: row.get(3)?,
-        session_id: row.get(4)?,
-        api_key_id: row.get(5)?,
-        trace_id: row.get(6)?,
-        status: row.get(7)?,
-        reason: row.get(8)?,
-        created_ms: row.get::<_, i64>(9)? as u64,
-    })
-}
 
 #[cfg(test)]
 mod tests {
