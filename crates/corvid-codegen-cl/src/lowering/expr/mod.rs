@@ -2,6 +2,7 @@ use super::*;
 
 mod binop;
 mod constructors;
+mod overflow;
 pub(super) use binop::{
     lower_binop_strict, lower_binop_wrapping, lower_short_circuit, lower_unop, lower_unop_wrapping,
 };
@@ -9,6 +10,7 @@ pub(super) use constructors::{
     emit_grounded_value_attestation, emit_option_wrapper_value, emit_result_wrapper_value,
     lower_result_constructor, lower_string_literal, lower_struct_constructor,
 };
+pub(super) use overflow::{trap_on_zero, with_overflow_trap};
 
 pub(super) fn lower_container_maybe_borrowed(
     builder: &mut FunctionBuilder,
@@ -199,62 +201,6 @@ pub(super) fn lower_string_binop_with_ownership(
 
 
 
-/// Run an overflow-producing Cranelift op, branch to an overflow handler
-/// block on the flag, and return the sum/diff/product value.
-fn with_overflow_trap<F>(
-    builder: &mut FunctionBuilder,
-    _l: ClValue,
-    _r: ClValue,
-    module: &mut ObjectModule,
-    runtime: &RuntimeFuncs,
-    op: F,
-) -> Result<ClValue, CodegenError>
-where
-    F: FnOnce(&mut FunctionBuilder) -> (ClValue, ClValue),
-{
-    let (result, overflow) = op(builder);
-    let overflow_block = builder.create_block();
-    let cont_block = builder.create_block();
-    builder
-        .ins()
-        .brif(overflow, overflow_block, &[], cont_block, &[]);
-
-    builder.switch_to_block(overflow_block);
-    builder.seal_block(overflow_block);
-    let callee_ref = module.declare_func_in_func(runtime.overflow, builder.func);
-    builder.ins().call(callee_ref, &[]);
-    builder
-        .ins()
-        .trap(cranelift_codegen::ir::TrapCode::INTEGER_OVERFLOW);
-
-    builder.switch_to_block(cont_block);
-    builder.seal_block(cont_block);
-    Ok(result)
-}
-
-fn trap_on_zero(
-    builder: &mut FunctionBuilder,
-    divisor: ClValue,
-    module: &mut ObjectModule,
-    runtime: &RuntimeFuncs,
-) {
-    let zero = builder.ins().iconst(I64, 0);
-    let is_zero = builder.ins().icmp(IntCC::Equal, divisor, zero);
-    let trap_block = builder.create_block();
-    let cont_block = builder.create_block();
-    builder
-        .ins()
-        .brif(is_zero, trap_block, &[], cont_block, &[]);
-    builder.switch_to_block(trap_block);
-    builder.seal_block(trap_block);
-    let callee_ref = module.declare_func_in_func(runtime.overflow, builder.func);
-    builder.ins().call(callee_ref, &[]);
-    builder
-        .ins()
-        .trap(cranelift_codegen::ir::TrapCode::INTEGER_OVERFLOW);
-    builder.switch_to_block(cont_block);
-    builder.seal_block(cont_block);
-}
 
 pub(super) fn lower_expr(
     builder: &mut FunctionBuilder,
