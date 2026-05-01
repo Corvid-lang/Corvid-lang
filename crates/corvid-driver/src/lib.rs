@@ -103,6 +103,7 @@ use corvid_types::{
 
 
 mod build;
+mod config_loader;
 mod diagnostic;
 mod law;
 mod replay;
@@ -111,6 +112,7 @@ mod scaffold;
 mod eval_runner;
 mod test_runner;
 mod trace_fresh;
+pub use config_loader::{load_corvid_config_for, load_corvid_config_with_path_for};
 pub use replay::{
     configure_replay_mode, run_replay_from_source, run_replay_from_source_with_builder,
     run_replay_from_source_with_builder_async, ReplayMode, ReplayOutcome,
@@ -166,34 +168,6 @@ impl CompileResult {
 /// before codegen would make it misleading.
 pub fn compile(source: &str) -> CompileResult {
     compile_with_config(source, None)
-}
-
-/// Walk upward from `source_path.parent()` looking for `corvid.toml`.
-/// Returns `None` when no file is found or when parsing fails — a
-/// malformed file doesn't crash the compile; instead it surfaces
-/// through `typecheck_with_config` as an `InvalidCustomDimension`
-/// diagnostic at the source file's top span.
-pub fn load_corvid_config_for(source_path: &Path) -> Option<CorvidConfig> {
-    load_corvid_config_with_path_for(source_path).map(|(_, config)| config)
-}
-
-/// Walk upward from `source_path.parent()` looking for `corvid.toml`,
-/// returning both the config path and the parsed config. Use this when
-/// tooling must resolve config-relative paths such as dimension proofs.
-pub fn load_corvid_config_with_path_for(source_path: &Path) -> Option<(PathBuf, CorvidConfig)> {
-    let start = source_path.parent()?;
-    let mut cur: Option<&Path> = Some(start);
-    while let Some(dir) = cur {
-        let candidate = dir.join("corvid.toml");
-        if candidate.exists() {
-            return CorvidConfig::load_from_path(&candidate)
-                .ok()
-                .flatten()
-                .map(|config| (candidate, config));
-        }
-        cur = dir.parent();
-    }
-    None
 }
 
 /// Compile with an explicit `corvid.toml` configuration (for user-defined
