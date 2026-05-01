@@ -40,7 +40,7 @@
 
 #![allow(unsafe_code)]
 
-use crate::abi::{CorvidString, REGISTERED_TOOL_COUNT};
+use crate::abi::CorvidString;
 use crate::llm::mock::{
     bench_mock_dispatch_ns, bench_prompt_wait_ns, env_mock_string_reply_sync,
 };
@@ -54,6 +54,7 @@ use std::time::Instant;
 mod state;
 mod strings;
 mod tokio_handle;
+mod tool_iter;
 pub use state::{
     corvid_bench_approval_wait_ns, corvid_bench_json_bridge_ns, corvid_bench_mock_dispatch_ns,
     corvid_bench_prompt_wait_ns, corvid_bench_tool_wait_ns, corvid_bench_trace_overhead_ns,
@@ -65,7 +66,9 @@ pub use strings::{
     string_from_static_str,
 };
 pub use tokio_handle::tokio_handle;
+pub use tool_iter::iter_registered_tools;
 pub(crate) use state::bridge;
+pub(crate) use tool_iter::record_registered_tool_count;
 pub(crate) use strings::{borrow_corvid_string, read_corvid_string};
 use state::{record_json_bridge_ns, BridgeState, BRIDGE};
 use tokio_handle::{build_corvid_runtime, build_embedded_corvid_runtime, build_tokio_runtime};
@@ -342,18 +345,6 @@ fn trace_mock_llm_attempt(
     });
 }
 
-
-/// Iterate every `ToolMetadata` registered via `#[tool]` across all
-/// linked tool crates. Used by `corvid_runtime_init` at startup.
-pub fn iter_registered_tools() -> impl Iterator<Item = &'static crate::abi::ToolMetadata> {
-    inventory::iter::<crate::abi::ToolMetadata>().into_iter()
-}
-
-/// Snapshot the tool-registration count so diagnostics can surface it.
-/// Called once during `corvid_runtime_init` after iterating inventory.
-pub(crate) fn record_registered_tool_count(n: i64) {
-    REGISTERED_TOOL_COUNT.store(n, std::sync::atomic::Ordering::Relaxed);
-}
 
 // ------------------------------------------------------------
 // Typed prompt-dispatch bridges.
