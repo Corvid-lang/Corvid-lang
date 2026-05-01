@@ -6,10 +6,13 @@ use std::path::Path;
 use std::sync::Mutex;
 
 mod api_keys;
+mod oauth;
 mod sessions;
 pub use api_keys::{hash_api_key_secret, verify_api_key_secret};
+pub use oauth::hash_oauth_state;
 pub use sessions::hash_session_secret;
 use api_keys::read_api_key_row;
+use oauth::read_oauth_state_row;
 use sessions::{read_actor_row, read_session_row};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1068,12 +1071,6 @@ impl SessionAuthRuntime {
 }
 
 
-pub fn hash_oauth_state(raw_state: &str) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(b"corvid-auth-oauth-state-v1:");
-    hasher.update(raw_state.as_bytes());
-    format!("sha256:{:x}", hasher.finalize())
-}
 
 
 pub fn validate_jwt_verification_contract(
@@ -1166,22 +1163,6 @@ fn stable_suffix(event_kind: &str, session_id: Option<&str>, trace_id: Option<&s
 
 
 
-fn read_oauth_state_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<OAuthStateRecord> {
-    Ok(OAuthStateRecord {
-        id: row.get(0)?,
-        provider: row.get(1)?,
-        tenant_id: row.get(2)?,
-        actor_id: row.get(3)?,
-        state_hash: row.get(4)?,
-        pkce_verifier_ref: row.get(5)?,
-        nonce_fingerprint: row.get(6)?,
-        expires_ms: row.get::<_, i64>(7)? as u64,
-        replay_key: row.get(8)?,
-        used_ms: row.get::<_, Option<i64>>(9)?.map(|value| value as u64),
-        created_ms: row.get::<_, i64>(10)? as u64,
-        updated_ms: row.get::<_, i64>(11)? as u64,
-    })
-}
 
 fn read_audit_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<AuthAuditEvent> {
     Ok(AuthAuditEvent {
