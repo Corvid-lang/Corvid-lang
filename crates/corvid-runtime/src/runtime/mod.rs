@@ -10,17 +10,12 @@ use crate::approvals::{
 };
 use crate::calibration::CalibrationStore;
 use crate::cache::{build_cache_key, CacheKey, CacheKeyInput};
-use crate::capability_contract::{
-    run_capability_contracts, CapabilityContractOptions, CapabilityContractReport,
-};
 use crate::errors::RuntimeError;
 use crate::human::{HumanChoiceRequest, HumanInputRequest, HumanInteractor, StdinHumanInteractor};
 use crate::http::HttpClient;
 use crate::io::IoRuntime;
-use crate::llm::{
-    LlmAdapter, LlmRegistry, LlmRequest, LlmRequestRef, LlmResponse, ProviderHealth,
-};
-use crate::models::{ModelCatalog, ModelSelection, RegisteredModel};
+use crate::llm::{LlmAdapter, LlmRegistry, LlmRequest, LlmRequestRef, LlmResponse};
+use crate::models::{ModelCatalog, RegisteredModel};
 use crate::prompt_cache::PromptCache;
 #[cfg(feature = "python")]
 use crate::python_ffi::{PythonRuntime, PythonSandboxProfile};
@@ -28,7 +23,9 @@ use crate::queue::QueueRuntime;
 use crate::record::Recorder;
 use crate::replay::ReplaySource;
 use crate::secrets::SecretRuntime;
-use crate::store::{StoreKind, StoreManager, StorePolicySet, StoreRecord};
+use crate::store::StoreManager;
+#[cfg(test)]
+use crate::store::{StoreKind, StorePolicySet, StoreRecord};
 use crate::tools::ToolRegistry;
 use crate::tracing::{fresh_run_id, now_ms, Tracer};
 use crate::usage::{normalized_total_tokens, LlmUsageLedger, LlmUsageRecord};
@@ -36,11 +33,12 @@ use corvid_trace_schema::{TraceEvent, WRITER_INTERPRETER};
 use sha2::{Digest, Sha256};
 use std::path::Path;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::AtomicU64;
 use std::sync::Arc;
 
 mod io;
 mod jobs;
+mod model_catalog;
 mod replay_reports;
 mod store_dispatch;
 
@@ -101,13 +99,7 @@ impl Runtime {
 
 
 
-    pub fn model_catalog(&self) -> &ModelCatalog {
-        &self.model_catalog
-    }
 
-    pub fn provider_health(&self) -> Vec<ProviderHealth> {
-        self.llms.health()
-    }
 
 
     pub fn cache_key(&self, input: CacheKeyInput) -> Result<CacheKey, RuntimeError> {
@@ -126,12 +118,6 @@ impl Runtime {
     }
 
 
-    pub async fn check_model_capability_contracts(
-        &self,
-        options: CapabilityContractOptions,
-    ) -> Result<CapabilityContractReport, RuntimeError> {
-        run_capability_contracts(self, options).await
-    }
 
 
 
@@ -207,100 +193,6 @@ impl Runtime {
         });
     }
 
-    pub fn select_cheapest_model_for_capability(
-        &self,
-        required_capability: &str,
-        prompt_tokens: u64,
-        completion_tokens: u64,
-    ) -> Result<ModelSelection, RuntimeError> {
-        if let Some(err) = &self.model_catalog_error {
-            return Err(err.clone());
-        }
-        self.model_catalog.select_cheapest_by_capability(
-            required_capability,
-            prompt_tokens,
-            completion_tokens,
-        )
-    }
-
-    pub fn select_cheapest_model_for_requirements(
-        &self,
-        required_capability: Option<&str>,
-        required_output_format: Option<&str>,
-        prompt_tokens: u64,
-        completion_tokens: u64,
-    ) -> Result<ModelSelection, RuntimeError> {
-        if let Some(err) = &self.model_catalog_error {
-            return Err(err.clone());
-        }
-        self.model_catalog.select_cheapest_by_requirements(
-            required_capability,
-            required_output_format,
-            prompt_tokens,
-            completion_tokens,
-        )
-    }
-
-    pub fn describe_named_model(
-        &self,
-        model_name: &str,
-        prompt_tokens: u64,
-        completion_tokens: u64,
-    ) -> Result<ModelSelection, RuntimeError> {
-        if let Some(err) = &self.model_catalog_error {
-            return Err(err.clone());
-        }
-        Ok(self
-            .model_catalog
-            .describe_named_model(model_name, prompt_tokens, completion_tokens))
-    }
-
-    pub fn model_version(&self, model_name: &str) -> Option<String> {
-        if model_name.is_empty() {
-            return None;
-        }
-        self.model_catalog
-            .get(model_name)
-            .and_then(|model| model.version.clone())
-    }
-
-    pub fn choose_rollout_variant(&self, variant_percent: f64) -> Result<bool, RuntimeError> {
-        if variant_percent <= 0.0 {
-            return Ok(false);
-        }
-        if variant_percent >= 100.0 {
-            return Ok(true);
-        }
-        self.next_rollout_sample()
-            .map(|sample| sample < (variant_percent / 100.0))
-    }
-
-    fn next_rollout_sample(&self) -> Result<f64, RuntimeError> {
-        let next = if let Some(replay) = self.replay_source()? {
-            let next = replay.replay_rollout_sample()?;
-            self.rollout_state.store(next, Ordering::SeqCst);
-            next
-        } else {
-            loop {
-                let current = self.rollout_state.load(Ordering::Relaxed);
-                let next = current
-                    .wrapping_mul(6364136223846793005)
-                    .wrapping_add(1442695040888963407);
-                if self
-                    .rollout_state
-                    .compare_exchange(current, next, Ordering::SeqCst, Ordering::SeqCst)
-                    .is_ok()
-                {
-                    break next;
-                }
-            }
-        };
-        if let Some(recorder) = &self.recorder {
-            recorder.emit_seed_read("rollout_cohort", next);
-        }
-        let mantissa = next >> 11;
-        Ok(mantissa as f64 / ((1_u64 << 53) as f64))
-    }
 
 
     fn emit_host_event(&self, name: &str, payload: serde_json::Value) {
