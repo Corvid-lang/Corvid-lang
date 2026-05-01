@@ -46,13 +46,13 @@ use crate::llm::mock::{
 };
 use crate::errors::RuntimeError;
 use corvid_trace_schema::TraceEvent;
-use std::ffi::{c_char, CString};
 use std::path::PathBuf;
 use std::sync::atomic::Ordering;
 use std::sync::OnceLock;
 use std::time::Instant;
 
 mod state;
+mod strings;
 mod tokio_handle;
 pub use state::{
     corvid_bench_approval_wait_ns, corvid_bench_json_bridge_ns, corvid_bench_mock_dispatch_ns,
@@ -60,8 +60,13 @@ pub use state::{
     corvid_runtime_embed_init_default, corvid_runtime_init, corvid_runtime_is_replay,
     corvid_runtime_probe, corvid_runtime_shutdown, runtime,
 };
+pub use strings::{
+    corvid_free_string, corvid_string_into_cstr, release_string, string_from_rust,
+    string_from_static_str,
+};
 pub use tokio_handle::tokio_handle;
 pub(crate) use state::bridge;
+pub(crate) use strings::{borrow_corvid_string, read_corvid_string};
 use state::{record_json_bridge_ns, BridgeState, BRIDGE};
 use tokio_handle::{build_corvid_runtime, build_embedded_corvid_runtime, build_tokio_runtime};
 
@@ -162,32 +167,6 @@ pub unsafe extern "C" fn corvid_tool_call_sync_int(
 // consumed by compile-time-generated code.
 // ------------------------------------------------------------
 
-
-/// Convert a Corvid-owned `String` descriptor into a NUL-terminated C string.
-///
-/// Ownership transfer:
-/// - input `value` is consumed and released
-/// - returned pointer is heap-owned by Corvid and must be freed with
-///   `corvid_free_string`
-#[no_mangle]
-pub unsafe extern "C" fn corvid_string_into_cstr(value: CorvidString) -> *mut c_char {
-    let text = unsafe { read_corvid_string(value) };
-    unsafe { release_string(value) };
-    CString::new(text)
-        .expect("Corvid string contained interior NUL; `extern \"c\"` string returns must be NUL-free")
-        .into_raw()
-}
-
-#[no_mangle]
-pub unsafe extern "C" fn corvid_free_string(value: *const c_char) {
-    if value.is_null() {
-        return;
-    }
-    // SAFETY: `value` must have come from `corvid_string_into_cstr`.
-    unsafe {
-        let _ = CString::from_raw(value as *mut c_char);
-    }
-}
 
 fn panic_if_replay_runtime_error(context: &str, err: &RuntimeError) {
     if matches!(
@@ -363,78 +342,6 @@ fn trace_mock_llm_attempt(
     });
 }
 
-// ------------------------------------------------------------
-// String helpers consumed by `corvid_runtime::abi`'s conversion
-// traits. Declared here because they cross the FFI boundary — the
-// bytes they allocate are visible to compiled Corvid code as
-// refcounted Corvid Strings.
-// ------------------------------------------------------------
-
-extern "C" {
-    /// Allocate a heap Corvid String from `bytes` + `length`.
-    /// Implemented in C (`runtime/strings.c`). Returns a descriptor
-    /// pointer with refcount 1.
-    fn corvid_string_from_bytes(bytes: *const u8, length: i64) -> *const u8;
-
-    /// Allocate an immortal Corvid String from `bytes` + `length`.
-    /// Used for repeated runtime fixture values where per-use release
-    /// work is pure overhead.
-    fn corvid_string_from_static_bytes(bytes: *const u8, length: i64) -> *const u8;
-
-    /// Decrement a Corvid String's refcount, freeing when it hits 0.
-    /// The refcount sentinel `i64::MIN` short-circuits for immortal
-    /// `.rodata` literals.
-    fn corvid_release(descriptor: *const u8);
-}
-
-/// Allocate a Corvid String from a Rust `String`. The returned
-/// `CorvidString` has refcount 1 — caller takes ownership.
-pub fn string_from_rust(s: String) -> CorvidString {
-    let bytes = s.as_bytes();
-    let ptr = bytes.as_ptr();
-    let len = bytes.len() as i64;
-    // SAFETY: `corvid_string_from_bytes` reads `len` bytes starting
-    // at `ptr`. We hold `s` alive for the duration of the call, so
-    // the bytes are valid. The returned descriptor owns its own
-    // allocation — caller is free to drop `s` after this returns.
-    let descriptor = unsafe { corvid_string_from_bytes(ptr, len) };
-    // SAFETY: `CorvidString` is `#[repr(transparent)]` over a
-    // descriptor pointer; transmuting from a raw pointer of the same
-    // layout is sound. Using `transmute_copy` is overkill — a plain
-    // pointer cast is enough, but we use an unsafe block to make the
-    // layout assumption auditable.
-    unsafe { std::mem::transmute(descriptor) }
-}
-
-/// Allocate an immortal Corvid String from a borrowed Rust string.
-/// The returned value can be copied and released arbitrarily; the
-/// immortal refcount sentinel makes release a no-op.
-pub fn string_from_static_str(s: &str) -> CorvidString {
-    let bytes = s.as_bytes();
-    let ptr = bytes.as_ptr();
-    let len = bytes.len() as i64;
-    let descriptor = unsafe { corvid_string_from_static_bytes(ptr, len) };
-    unsafe { std::mem::transmute(descriptor) }
-}
-
-/// Release a `CorvidString`'s refcount. Used by the `FromCorvidAbi`
-/// impl on `String` after copying bytes out — paired with the implicit
-/// retain the caller's `+0 ABI` contract performed on entry.
-///
-/// # Safety
-///
-/// `cs` must come from valid codegen- or runtime-emitted source
-/// (i.e. the caller followed the Corvid ABI when passing the value).
-pub unsafe fn release_string(cs: CorvidString) {
-    // SAFETY: Transmuting a `#[repr(transparent)]` wrapper back to its
-    // single field is sound. `corvid_release` expects a descriptor
-    // pointer (the type alias for "CorvidString at the ABI") and
-    // tolerates null by short-circuiting.
-    unsafe {
-        let descriptor: *const u8 = std::mem::transmute(cs);
-        corvid_release(descriptor);
-    }
-}
 
 /// Iterate every `ToolMetadata` registered via `#[tool]` across all
 /// linked tool crates. Used by `corvid_runtime_init` at startup.
@@ -499,16 +406,6 @@ pub(super) fn trace_path_from_env() -> Option<PathBuf> {
     std::env::var_os("CORVID_TRACE_PATH").map(PathBuf::from)
 }
 
-/// Read a `CorvidString` as an owned Rust `String`.
-pub(crate) unsafe fn read_corvid_string(cs: CorvidString) -> String {
-    use crate::abi::FromCorvidAbi;
-    String::from_corvid_abi(cs)
-}
-
-/// Borrow a `CorvidString` as UTF-8 for the duration of the call.
-pub(crate) unsafe fn borrow_corvid_string<'a>(cs: &'a CorvidString) -> &'a str {
-    unsafe { cs.as_str() }
-}
 
 /// Format-instruction text per return type. Sent in the system prompt.
 fn format_instruction_int() -> &'static str {
