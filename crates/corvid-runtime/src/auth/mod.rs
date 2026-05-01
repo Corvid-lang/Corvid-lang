@@ -6,9 +6,11 @@ use std::path::Path;
 use std::sync::Mutex;
 
 mod api_keys;
+mod approvals;
 mod oauth;
 mod sessions;
 pub use api_keys::{hash_api_key_secret, verify_api_key_secret};
+pub use approvals::{authorize_trace_permission, validate_jwt_verification_contract};
 pub use oauth::hash_oauth_state;
 pub use sessions::hash_session_secret;
 use api_keys::read_api_key_row;
@@ -1073,73 +1075,6 @@ impl SessionAuthRuntime {
 
 
 
-pub fn validate_jwt_verification_contract(
-    contract: &JwtVerificationContract,
-) -> JwtContractDiagnostic {
-    let failure = if contract.issuer.trim().is_empty() {
-        Some("missing_issuer")
-    } else if contract.audience.trim().is_empty() {
-        Some("missing_audience")
-    } else if contract.jwks_url.trim().is_empty() {
-        Some("missing_jwks_url")
-    } else if !(contract.jwks_url.starts_with("https://")
-        || contract.jwks_url.starts_with("http://localhost")
-        || contract.jwks_url.starts_with("http://127.0.0.1"))
-    {
-        Some("jwks_url_not_https")
-    } else if !matches!(
-        contract.algorithm.as_str(),
-        "RS256" | "ES256" | "EdDSA"
-    ) {
-        Some("unsupported_algorithm")
-    } else if contract.required_subject_claim.trim().is_empty() {
-        Some("missing_subject_claim")
-    } else if contract.required_tenant_claim.trim().is_empty() {
-        Some("missing_tenant_claim")
-    } else if contract.clock_skew_ms > 300_000 {
-        Some("clock_skew_too_large")
-    } else {
-        None
-    };
-    JwtContractDiagnostic {
-        valid: failure.is_none(),
-        failure_kind: failure.map(str::to_string),
-        redacted: true,
-    }
-}
-
-pub fn authorize_trace_permission(
-    actor: &AuthActor,
-    trace: &AuthTraceContext,
-    requirement: &PermissionRequirement,
-) -> AuthorizationDecision {
-    let reason = if actor.tenant_id != requirement.tenant_id {
-        Some("actor tenant does not match requirement tenant")
-    } else if trace.tenant_id != requirement.tenant_id {
-        Some("trace tenant does not match requirement tenant")
-    } else if trace.actor_id != actor.id {
-        Some("trace actor does not match actor")
-    } else if trace.trace_id != requirement.trace_id {
-        Some("trace id does not match requirement")
-    } else if actor.permission_fingerprint != requirement.permission_fingerprint {
-        Some("actor permission fingerprint does not satisfy requirement")
-    } else if trace.permission_fingerprint != requirement.permission_fingerprint {
-        Some("trace permission fingerprint does not satisfy requirement")
-    } else {
-        None
-    };
-    AuthorizationDecision {
-        allowed: reason.is_none(),
-        actor_id: actor.id.clone(),
-        tenant_id: requirement.tenant_id.clone(),
-        permission: requirement.permission.clone(),
-        surface_kind: requirement.surface_kind.clone(),
-        surface_id: requirement.surface_id.clone(),
-        trace_id: requirement.trace_id.clone(),
-        reason: reason.unwrap_or("permission propagated").to_string(),
-        redacted: true,
-    }
-}
 
 pub(super) fn validate_non_empty(label: &str, value: &str) -> Result<(), RuntimeError> {
     if value.trim().is_empty() {
