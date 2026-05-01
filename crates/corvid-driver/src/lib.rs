@@ -107,7 +107,10 @@ mod eval_runner;
 mod test_runner;
 mod trace_fresh;
 pub use config_loader::{load_corvid_config_for, load_corvid_config_with_path_for};
-pub use pipeline::{compile, compile_with_config, compile_with_config_at_path, CompileResult};
+pub use pipeline::{
+    compile, compile_to_ir, compile_to_ir_with_config, compile_to_ir_with_config_at_path,
+    compile_with_config, compile_with_config_at_path, CompileResult,
+};
 pub(crate) use pipeline::{lower_driver_file, typecheck_driver_file};
 pub use replay::{
     configure_replay_mode, run_replay_from_source, run_replay_from_source_with_builder,
@@ -144,48 +147,6 @@ pub use test_runner::{
 
 
 
-
-/// Compile a source string to IR. Returns the IR or the full diagnostic list.
-pub fn compile_to_ir(source: &str) -> Result<IrFile, Vec<Diagnostic>> {
-    compile_to_ir_with_config(source, None)
-}
-
-/// Compile a file-backed source string to IR with module-aware import
-/// resolution. Production paths that have a real `.cor` path should
-/// use this instead of [`compile_to_ir_with_config`].
-pub fn compile_to_ir_with_config_at_path(
-    source: &str,
-    source_path: &Path,
-    config: Option<&CorvidConfig>,
-) -> Result<IrFile, Vec<Diagnostic>> {
-    let mut diagnostics: Vec<Diagnostic> = Vec::new();
-    let tokens = match lex(source) {
-        Ok(t) => t,
-        Err(errs) => {
-            diagnostics.extend(errs.into_iter().map(Diagnostic::from));
-            return Err(diagnostics);
-        }
-    };
-    let (file, parse_errs) = parse_file(&tokens);
-    diagnostics.extend(parse_errs.into_iter().map(Diagnostic::from));
-    let resolved = resolve(&file);
-    diagnostics.extend(resolved.errors.iter().cloned().map(Diagnostic::from));
-    let typechecked = typecheck_driver_file(&file, &resolved, source_path, config);
-    diagnostics.extend(typechecked.diagnostics);
-    diagnostics.extend(
-        typechecked
-            .result
-            .checked
-            .errors
-            .iter()
-            .cloned()
-            .map(Diagnostic::from),
-    );
-    if !diagnostics.is_empty() {
-        return Err(diagnostics);
-    }
-    Ok(lower_driver_file(&file, &resolved, &typechecked.result))
-}
 
 /// Compile a source string all the way to a `CorvidAbi` descriptor.
 ///
@@ -247,32 +208,6 @@ pub fn compile_to_abi_with_config(
             generated_at,
         },
     ))
-}
-
-/// IR-lowering variant that consumes an explicit `corvid.toml` config
-/// so user-defined effect dimensions are visible to the type checker.
-pub fn compile_to_ir_with_config(
-    source: &str,
-    config: Option<&CorvidConfig>,
-) -> Result<IrFile, Vec<Diagnostic>> {
-    let mut diagnostics: Vec<Diagnostic> = Vec::new();
-    let tokens = match lex(source) {
-        Ok(t) => t,
-        Err(errs) => {
-            diagnostics.extend(errs.into_iter().map(Diagnostic::from));
-            return Err(diagnostics);
-        }
-    };
-    let (file, parse_errs) = parse_file(&tokens);
-    diagnostics.extend(parse_errs.into_iter().map(Diagnostic::from));
-    let resolved = resolve(&file);
-    diagnostics.extend(resolved.errors.iter().cloned().map(Diagnostic::from));
-    let checked = typecheck_with_config(&file, &resolved, config);
-    diagnostics.extend(checked.errors.iter().cloned().map(Diagnostic::from));
-    if !diagnostics.is_empty() {
-        return Err(diagnostics);
-    }
-    Ok(lower(&file, &resolved, &checked))
 }
 
 /// Compile a `.cor` file and run the chosen agent against `runtime`.

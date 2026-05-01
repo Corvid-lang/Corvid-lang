@@ -25,8 +25,10 @@ use crate::diagnostic::Diagnostic;
 use crate::modules::{build_module_resolution, ModuleLoadError};
 
 mod compile;
+mod ir;
 
 pub use compile::{compile, compile_with_config, compile_with_config_at_path, CompileResult};
+pub use ir::{compile_to_ir, compile_to_ir_with_config, compile_to_ir_with_config_at_path};
 
 pub(crate) struct DriverTypecheck {
     pub(crate) checked: Checked,
