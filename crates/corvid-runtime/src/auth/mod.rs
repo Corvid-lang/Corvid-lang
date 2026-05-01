@@ -6,8 +6,11 @@ use std::path::Path;
 use std::sync::Mutex;
 
 mod api_keys;
+mod sessions;
 pub use api_keys::{hash_api_key_secret, verify_api_key_secret};
+pub use sessions::hash_session_secret;
 use api_keys::read_api_key_row;
+use sessions::{read_actor_row, read_session_row};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AuthActor {
@@ -1064,12 +1067,6 @@ impl SessionAuthRuntime {
     }
 }
 
-pub fn hash_session_secret(raw_token: &str) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(b"corvid-auth-session-v1:");
-    hasher.update(raw_token.as_bytes());
-    format!("sha256:{:x}", hasher.finalize())
-}
 
 pub fn hash_oauth_state(raw_state: &str) -> String {
     let mut hasher = Sha256::new();
@@ -1166,36 +1163,7 @@ fn stable_suffix(event_kind: &str, session_id: Option<&str>, trace_id: Option<&s
     digest[..16].to_string()
 }
 
-fn read_actor_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<AuthActor> {
-    Ok(AuthActor {
-        id: row.get(0)?,
-        tenant_id: row.get(1)?,
-        display_name: row.get(2)?,
-        actor_kind: row.get(3)?,
-        auth_method: row.get(4)?,
-        assurance_level: row.get(5)?,
-        role_fingerprint: row.get(6)?,
-        permission_fingerprint: row.get(7)?,
-        created_ms: row.get::<_, i64>(8)? as u64,
-        updated_ms: row.get::<_, i64>(9)? as u64,
-    })
-}
 
-fn read_session_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<SessionRecord> {
-    Ok(SessionRecord {
-        id: row.get(0)?,
-        actor_id: row.get(1)?,
-        tenant_id: row.get(2)?,
-        token_hash: row.get(3)?,
-        issued_ms: row.get::<_, i64>(4)? as u64,
-        expires_ms: row.get::<_, i64>(5)? as u64,
-        rotation_counter: row.get::<_, i64>(6)? as u64,
-        csrf_binding_id: row.get(7)?,
-        revoked_ms: row.get::<_, Option<i64>>(8)?.map(|value| value as u64),
-        created_ms: row.get::<_, i64>(9)? as u64,
-        updated_ms: row.get::<_, i64>(10)? as u64,
-    })
-}
 
 
 fn read_oauth_state_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<OAuthStateRecord> {
