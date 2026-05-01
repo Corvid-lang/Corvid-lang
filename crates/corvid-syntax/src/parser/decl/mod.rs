@@ -14,14 +14,15 @@ use crate::token::TokKind;
 use corvid_ast::{
     AgentDecl, BinaryOp, Block, Decl, DimensionDecl, DimensionValue, Effect, EffectDecl,
     ExternAbi, OwnershipAnnotation, OwnershipMode,
-    EvalAssert, EvalDecl, ExtendDecl, ExtendMethod, ExtendMethodKind, Field, FixtureDecl, Ident,
+    EvalAssert, EvalDecl, ExtendDecl, ExtendMethod, ExtendMethodKind, FixtureDecl, Ident,
     HttpMethod, HttpRouteDecl,
     MockDecl, ModelDecl, ModelField, Param, RoutePathParam, RouteResponse, RouteResponseKind,
     ScheduleDecl, ServerDecl, Span, StoreDecl, StoreKind, StorePolicy, ToolDecl, TestDecl,
-    TypeDecl, TypeRef, Visibility,
+    TypeRef, Visibility,
 };
 
 mod import;
+mod type_field;
 
 impl<'a> Parser<'a> {
     pub(super) fn parse_decl(&mut self) -> Result<Decl, ParseError> {
@@ -117,65 +118,6 @@ impl<'a> Parser<'a> {
                 span: self.peek_span(),
             }),
         }
-    }
-
-    // -- type ----------------------------------------------------
-
-    fn parse_type_decl(&mut self, visibility: Visibility) -> Result<TypeDecl, ParseError> {
-        let start = self.peek_span();
-        self.bump(); // type
-
-        let (name, name_span) = self.expect_ident()?;
-        self.expect(TokKind::Colon, "`:` after type name")?;
-        self.expect_newline()?;
-
-        if !matches!(self.peek(), TokKind::Indent) {
-            return Err(ParseError {
-                kind: ParseErrorKind::ExpectedBlock,
-                span: self.peek_span(),
-            });
-        }
-        self.bump(); // Indent
-
-        let mut fields = Vec::new();
-        while !matches!(self.peek(), TokKind::Dedent | TokKind::Eof) {
-            self.skip_newlines();
-            if matches!(self.peek(), TokKind::Dedent | TokKind::Eof) {
-                break;
-            }
-            match self.parse_field() {
-                Ok(f) => fields.push(f),
-                Err(e) => {
-                    self.errors.push(e);
-                    self.sync_to_statement_boundary();
-                }
-            }
-        }
-        let end = self.peek_span();
-        if matches!(self.peek(), TokKind::Dedent) {
-            self.bump();
-        }
-
-        Ok(TypeDecl {
-            name: Ident::new(name, name_span),
-            fields,
-            visibility,
-            span: start.merge(end),
-        })
-    }
-
-    fn parse_field(&mut self) -> Result<Field, ParseError> {
-        let start = self.peek_span();
-        let (name, name_span) = self.expect_ident()?;
-        self.expect(TokKind::Colon, "`:` between field name and type")?;
-        let ty = self.parse_type_ref()?;
-        let end = ty.span();
-        self.expect_newline()?;
-        Ok(Field {
-            name: Ident::new(name, name_span),
-            ty,
-            span: start.merge(end),
-        })
     }
 
     fn parse_store_decl(
