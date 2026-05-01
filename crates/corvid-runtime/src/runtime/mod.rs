@@ -8,7 +8,7 @@
 use crate::approvals::{
     ApprovalDecision, ApprovalRequest, ApprovalToken, Approver, StdinApprover,
 };
-use crate::calibration::{CalibrationStats, CalibrationStore};
+use crate::calibration::CalibrationStore;
 use crate::cache::{build_cache_key, CacheKey, CacheKeyInput};
 use crate::capability_contract::{
     run_capability_contracts, CapabilityContractOptions, CapabilityContractReport,
@@ -21,21 +21,17 @@ use crate::llm::{
     LlmAdapter, LlmRegistry, LlmRequest, LlmRequestRef, LlmResponse, ProviderHealth,
 };
 use crate::models::{ModelCatalog, ModelSelection, RegisteredModel};
-use crate::observe::{
-    provider_observations, runtime_observation_summary, ProviderObservation,
-    RuntimeObservationSummary,
-};
 use crate::prompt_cache::PromptCache;
 #[cfg(feature = "python")]
 use crate::python_ffi::{PythonRuntime, PythonSandboxProfile};
 use crate::queue::QueueRuntime;
 use crate::record::Recorder;
-use crate::replay::{ReplayDifferentialReport, ReplayMutationReport, ReplaySource};
+use crate::replay::ReplaySource;
 use crate::secrets::SecretRuntime;
 use crate::store::{StoreKind, StoreManager, StorePolicySet, StoreRecord};
 use crate::tools::ToolRegistry;
 use crate::tracing::{fresh_run_id, now_ms, Tracer};
-use crate::usage::{normalized_total_tokens, LlmUsageLedger, LlmUsageRecord, LlmUsageTotals};
+use crate::usage::{normalized_total_tokens, LlmUsageLedger, LlmUsageRecord};
 use corvid_trace_schema::{TraceEvent, WRITER_INTERPRETER};
 use sha2::{Digest, Sha256};
 use std::path::Path;
@@ -45,6 +41,7 @@ use std::sync::Arc;
 
 mod io;
 mod jobs;
+mod replay_reports;
 
 const APPROVAL_TOKEN_SCOPE_ONE_TIME: &str = "one_time";
 const APPROVAL_TOKEN_TTL_MS: u64 = 5 * 60 * 1000;
@@ -96,87 +93,12 @@ impl Runtime {
         &self.tracer
     }
 
-    pub fn recorder(&self) -> Option<&Recorder> {
-        self.recorder.as_deref()
-    }
-
-    pub fn is_replay_mode(&self) -> bool {
-        matches!(self.mode, RuntimeMode::Replay(_))
-    }
-
-    pub fn replay_uses_live_llm(&self) -> bool {
-        matches!(&self.mode, RuntimeMode::Replay(source) if source.uses_live_llm())
-    }
 
     pub fn default_model(&self) -> &str {
         &self.default_model
     }
 
-    pub fn record_calibration(
-        &self,
-        prompt: &str,
-        model: &str,
-        confidence: f64,
-        actual_correct: bool,
-    ) {
-        self.calibration
-            .record(prompt, model, confidence, actual_correct);
-    }
 
-    pub fn calibration_stats(&self, prompt: &str, model: &str) -> Option<CalibrationStats> {
-        self.calibration.stats(prompt, model)
-    }
-
-    pub fn replay_differential_report(&self) -> Option<ReplayDifferentialReport> {
-        match &self.mode {
-            RuntimeMode::Live => None,
-            RuntimeMode::Replay(source) => source.differential_report(),
-        }
-    }
-
-    pub fn replay_mutation_report(&self) -> Option<ReplayMutationReport> {
-        match &self.mode {
-            RuntimeMode::Live => None,
-            RuntimeMode::Replay(source) => source.mutation_report(),
-        }
-    }
-
-    pub fn write_replay_differential_report(
-        &self,
-        path: impl AsRef<Path>,
-    ) -> Result<(), RuntimeError> {
-        let path = path.as_ref();
-        let Some(report) = self.replay_differential_report() else {
-            return Ok(());
-        };
-        let bytes = serde_json::to_vec_pretty(&report).map_err(|err| {
-            RuntimeError::Other(format!(
-                "failed to serialize replay differential report: {err}"
-            ))
-        })?;
-        std::fs::write(path, bytes).map_err(|err| {
-            RuntimeError::Other(format!(
-                "failed to write replay differential report to `{}`: {err}",
-                path.display()
-            ))
-        })
-    }
-
-    pub fn write_replay_mutation_report(&self, path: impl AsRef<Path>) -> Result<(), RuntimeError> {
-        let path = path.as_ref();
-        let Some(report) = self.replay_mutation_report() else {
-            return Ok(());
-        };
-        let bytes = serde_json::to_vec_pretty(&report).map_err(|err| {
-            RuntimeError::Other(format!("failed to serialize replay mutation report: {err}"))
-        })?;
-        std::fs::write(path, bytes).map_err(|err| {
-            RuntimeError::Other(format!(
-                "failed to write replay mutation report to `{}`: {err}",
-                path.display()
-            ))
-        })
-    }
 
     pub fn model_catalog(&self) -> &ModelCatalog {
         &self.model_catalog
@@ -186,23 +108,6 @@ impl Runtime {
         self.llms.health()
     }
 
-    pub fn llm_usage_records(&self) -> Vec<LlmUsageRecord> {
-        self.usage_ledger.records()
-    }
-
-    pub fn llm_usage_totals_by_provider(&self) -> std::collections::BTreeMap<String, LlmUsageTotals> {
-        self.usage_ledger.totals_by_provider()
-    }
-
-    pub fn observation_summary(&self) -> RuntimeObservationSummary {
-        let usage = self.llm_usage_records();
-        let health = self.provider_health();
-        runtime_observation_summary(&usage, &health)
-    }
-
-    pub fn provider_observations(&self) -> Vec<ProviderObservation> {
-        provider_observations(&self.provider_health())
-    }
 
     pub fn cache_key(&self, input: CacheKeyInput) -> Result<CacheKey, RuntimeError> {
         let key = build_cache_key(input)?;
@@ -219,24 +124,6 @@ impl Runtime {
         Ok(key)
     }
 
-    pub fn emit_observation_summary(&self) -> RuntimeObservationSummary {
-        let summary = self.observation_summary();
-        self.emit_host_event(
-            "std.observe.summary",
-            serde_json::json!({
-                "llm_calls": summary.llm_calls,
-                "local_llm_calls": summary.local_llm_calls,
-                "prompt_tokens": summary.prompt_tokens,
-                "completion_tokens": summary.completion_tokens,
-                "total_tokens": summary.total_tokens,
-                "cost_usd": summary.cost_usd,
-                "currency": "USD",
-                "provider_count": summary.provider_count,
-                "degraded_provider_count": summary.degraded_provider_count,
-            }),
-        );
-        summary
-    }
 
     pub async fn check_model_capability_contracts(
         &self,
@@ -600,34 +487,6 @@ impl Runtime {
         Ok(mantissa as f64 / ((1_u64 << 53) as f64))
     }
 
-    pub fn prepare_run(&self, agent: &str, args: &[serde_json::Value]) -> Result<(), RuntimeError> {
-        if let Some(replay) = self.replay_source()? {
-            replay.prepare_run(agent, args)?;
-        }
-        Ok(())
-    }
-
-    pub fn complete_run(
-        &self,
-        ok: bool,
-        result: Option<&serde_json::Value>,
-        error: Option<&str>,
-    ) -> Result<(), RuntimeError> {
-        if let Some(replay) = self.replay_source()? {
-            replay.complete_run(ok, result, error)?;
-        }
-        Ok(())
-    }
-
-    fn replay_source(&self) -> Result<Option<&ReplaySource>, RuntimeError> {
-        if let Some(err) = &self.replay_error {
-            return Err(err.clone());
-        }
-        Ok(match &self.mode {
-            RuntimeMode::Live => None,
-            RuntimeMode::Replay(source) => Some(source),
-        })
-    }
 
     fn emit_host_event(&self, name: &str, payload: serde_json::Value) {
         if !self.tracer.is_enabled() {
