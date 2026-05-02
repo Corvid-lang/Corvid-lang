@@ -2,9 +2,13 @@ mod cursor;
 mod differential;
 mod diverge;
 mod mutation;
+mod mutation_validate;
 mod result_factory;
 mod substitute;
 
+use mutation_validate::{
+    mutated_approval_result, mutated_json_result, mutated_llm_result, validate_mutation,
+};
 use result_factory::{
     next_approval_outcome_event, replayed_approval_result, replayed_event_json,
     replayed_json_result, ReplayApprovalTraceOutcome,
@@ -37,9 +41,9 @@ enum ReplayMode {
 }
 
 #[derive(Debug, Clone)]
-struct ReplayMutation {
-    step_1based: usize,
-    replacement: serde_json::Value,
+pub(super) struct ReplayMutation {
+    pub(super) step_1based: usize,
+    pub(super) replacement: serde_json::Value,
     report: Arc<Mutex<ReplayMutationReport>>,
     state: Arc<Mutex<ReplayMutationState>>,
 }
@@ -816,170 +820,12 @@ impl ReplayMutation {
     }
 }
 
-fn validate_mutation(
-    path: &Path,
-    events: &[TraceEvent],
-    step_1based: usize,
-    replacement: &serde_json::Value,
-) -> Result<(), RuntimeError> {
-    if step_1based == 0 {
-        return Err(RuntimeError::InvalidReplayMutation {
-            step: 0,
-            message: "step indices are 1-based".into(),
-        });
-    }
-    let mut substitutable_step = 0usize;
-    let mut index = 0usize;
-    while index < events.len() {
-        if is_initial_metadata(&events[index]) || substitute::is_dispatch_metadata(&events[index]) {
-            index += 1;
-            continue;
-        }
-        match &events[index] {
-            TraceEvent::ToolCall { .. }
-            | TraceEvent::LlmCall { .. }
-            | TraceEvent::ApprovalRequest { .. } => {
-                substitutable_step += 1;
-                if substitutable_step == step_1based {
-                    let result_index = next_non_metadata_index(events, index + 1).ok_or_else(|| {
-                        RuntimeError::ReplayTraceLoad {
-                            path: path.to_path_buf(),
-                            message: format!(
-                                "trace is missing a result event for substitutable step {step_1based}"
-                            ),
-                        }
-                    })?;
-                    validate_mutation_replacement(step_1based, &events[result_index], replacement)?;
-                    return Ok(());
-                }
-            }
-            _ => {}
-        }
-        index += 1;
-    }
-    Err(RuntimeError::InvalidReplayMutation {
-        step: step_1based,
-        message: format!("trace only has {substitutable_step} substitutable steps"),
-    })
-}
 
-fn validate_mutation_replacement(
-    step: usize,
-    recorded_result: &TraceEvent,
-    replacement: &serde_json::Value,
-) -> Result<(), RuntimeError> {
-    match recorded_result {
-        TraceEvent::ApprovalResponse { .. } => {
-            if replacement.is_boolean() {
-                Ok(())
-            } else {
-                Err(RuntimeError::InvalidReplayMutation {
-                    step,
-                    message: format!(
-                        "replacement for approval_response must be bool, got {}",
-                        json_kind(replacement)
-                    ),
-                })
-            }
-        }
-        TraceEvent::ToolResult { result, .. } | TraceEvent::LlmResult { result, .. } => {
-            if same_json_kind(result, replacement) {
-                Ok(())
-            } else {
-                Err(RuntimeError::InvalidReplayMutation {
-                    step,
-                    message: format!(
-                        "replacement kind {} does not match recorded result kind {}",
-                        json_kind(replacement),
-                        json_kind(result)
-                    ),
-                })
-            }
-        }
-        other => Err(RuntimeError::InvalidReplayMutation {
-            step,
-            message: format!("expected a result event after the mutated call, got {}", event_kind(other)),
-        }),
-    }
-}
 
-fn next_non_metadata_index(events: &[TraceEvent], mut index: usize) -> Option<usize> {
-    while index < events.len() {
-        if substitute::is_dispatch_metadata(&events[index]) {
-            index += 1;
-        } else {
-            return Some(index);
-        }
-    }
-    None
-}
 
-fn mutated_json_result(
-    mutation: &ReplayMutation,
-    recorded_call: &TraceEvent,
-    recorded_result: TraceEvent,
-) -> Result<serde_json::Value, RuntimeError> {
-    validate_mutation_result_pair(recorded_call, &recorded_result, mutation.step_1based)?;
-    Ok(mutation.replacement.clone())
-}
 
-fn mutated_llm_result(
-    mutation: &ReplayMutation,
-    recorded_call: &TraceEvent,
-    recorded_result: TraceEvent,
-) -> Result<LlmResponse, RuntimeError> {
-    Ok(LlmResponse::new(
-        mutated_json_result(mutation, recorded_call, recorded_result)?,
-        TokenUsage::default(),
-    ))
-}
 
-fn mutated_approval_result(
-    mutation: &ReplayMutation,
-    recorded_call: &TraceEvent,
-    recorded_result: ReplayApprovalTraceOutcome,
-) -> Result<ReplayApprovalOutcome, RuntimeError> {
-    validate_mutation_result_pair(recorded_call, &recorded_result.response, mutation.step_1based)?;
-    let approved = mutation
-        .replacement
-        .as_bool()
-        .ok_or_else(|| RuntimeError::InvalidReplayMutation {
-            step: mutation.step_1based,
-            message: "replacement for approval_response must be bool".into(),
-        })?;
-    Ok(ReplayApprovalOutcome {
-        approved,
-        decision: recorded_result.decision,
-    })
-}
 
-fn validate_mutation_result_pair(
-    recorded_call: &TraceEvent,
-    recorded_result: &TraceEvent,
-    step: usize,
-) -> Result<(), RuntimeError> {
-    let valid = matches!(
-        (recorded_call, recorded_result),
-        (TraceEvent::ToolCall { .. }, TraceEvent::ToolResult { .. })
-            | (TraceEvent::LlmCall { .. }, TraceEvent::LlmResult { .. })
-            | (
-                TraceEvent::ApprovalRequest { .. },
-                TraceEvent::ApprovalResponse { .. }
-            )
-    );
-    if valid {
-        Ok(())
-    } else {
-        Err(RuntimeError::InvalidReplayMutation {
-            step,
-            message: format!(
-                "recorded step pairs {} with {}, expected matching call/result kinds",
-                event_kind(recorded_call),
-                event_kind(recorded_result)
-            ),
-        })
-    }
-}
 
 
 
@@ -991,7 +837,7 @@ fn event_to_json(event: &TraceEvent) -> serde_json::Value {
     serde_json::to_value(event).unwrap_or_else(|_| serde_json::json!({ "debug": format!("{event:?}") }))
 }
 
-fn event_kind(event: &TraceEvent) -> &'static str {
+pub(super) fn event_kind(event: &TraceEvent) -> &'static str {
     match event {
         TraceEvent::SchemaHeader { .. } => "schema_header",
         TraceEvent::RunStarted { .. } => "run_started",
@@ -1025,7 +871,7 @@ fn event_kind(event: &TraceEvent) -> &'static str {
     }
 }
 
-fn json_kind(value: &serde_json::Value) -> &'static str {
+pub(super) fn json_kind(value: &serde_json::Value) -> &'static str {
     match value {
         serde_json::Value::Null => "null",
         serde_json::Value::Bool(_) => "bool",
@@ -1036,7 +882,7 @@ fn json_kind(value: &serde_json::Value) -> &'static str {
     }
 }
 
-fn same_json_kind(left: &serde_json::Value, right: &serde_json::Value) -> bool {
+pub(super) fn same_json_kind(left: &serde_json::Value, right: &serde_json::Value) -> bool {
     json_kind(left) == json_kind(right)
 }
 
