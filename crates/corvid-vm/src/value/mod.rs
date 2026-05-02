@@ -22,7 +22,9 @@ use std::sync::{Arc, Mutex, Weak};
 use tokio::sync::{mpsc, Mutex as AsyncMutex};
 
 mod display;
+mod weak;
 pub use display::value_confidence;
+pub use weak::{ListWeakValue, StructWeakValue, WeakValue};
 
 /// A runtime value.
 #[derive(Debug)]
@@ -253,10 +255,10 @@ pub(crate) struct BoxedInner {
 }
 
 #[derive(Debug)]
-pub struct StructValue(Arc<StructInner>);
+pub struct StructValue(pub(super) Arc<StructInner>);
 
 #[derive(Debug)]
-pub struct ListValue(Arc<ListInner>);
+pub struct ListValue(pub(super) Arc<ListInner>);
 
 #[derive(Debug)]
 pub struct BoxedValue(Arc<BoxedInner>);
@@ -296,14 +298,7 @@ enum StreamSenderKind {
     Unbounded(mpsc::UnboundedSender<Result<StreamChunk, InterpError>>),
 }
 
-pub enum WeakValue {
-    String(Weak<str>),
-    Struct(StructWeakValue),
-    List(ListWeakValue),
-}
 
-pub struct StructWeakValue(Weak<StructInner>);
-pub struct ListWeakValue(Weak<ListInner>);
 
 #[derive(Clone)]
 pub(crate) enum ObjectRef {
@@ -666,27 +661,6 @@ impl PartialEq for BoxedValue {
     }
 }
 
-impl Clone for WeakValue {
-    fn clone(&self) -> Self {
-        match self {
-            WeakValue::String(w) => WeakValue::String(w.clone()),
-            WeakValue::Struct(w) => WeakValue::Struct(w.clone()),
-            WeakValue::List(w) => WeakValue::List(w.clone()),
-        }
-    }
-}
-
-impl Clone for StructWeakValue {
-    fn clone(&self) -> Self {
-        Self(self.0.clone())
-    }
-}
-
-impl Clone for ListWeakValue {
-    fn clone(&self) -> Self {
-        Self(self.0.clone())
-    }
-}
 
 
 impl Clone for Value {
@@ -1006,40 +980,6 @@ impl StreamChunk {
 }
 
 
-impl WeakValue {
-    pub fn upgrade(&self) -> Option<Value> {
-        match self {
-            WeakValue::String(value) => value.upgrade().map(Value::String),
-            WeakValue::Struct(value) => {
-                let upgraded = value.0.upgrade()?;
-                if upgraded.meta.strong_count() == 0 {
-                    None
-                } else {
-                    upgraded.meta.retain();
-                    Some(Value::Struct(StructValue(upgraded)))
-                }
-            }
-            WeakValue::List(value) => {
-                let upgraded = value.0.upgrade()?;
-                if upgraded.meta.strong_count() == 0 {
-                    None
-                } else {
-                    upgraded.meta.retain();
-                    Some(Value::List(ListValue(upgraded)))
-                }
-            }
-        }
-    }
-
-    fn ptr_eq(&self, other: &WeakValue) -> bool {
-        match (self, other) {
-            (WeakValue::String(a), WeakValue::String(b)) => Weak::ptr_eq(a, b),
-            (WeakValue::Struct(a), WeakValue::Struct(b)) => Weak::ptr_eq(&a.0, &b.0),
-            (WeakValue::List(a), WeakValue::List(b)) => Weak::ptr_eq(&a.0, &b.0),
-            _ => false,
-        }
-    }
-}
 
 #[cfg(test)]
 mod tests {
