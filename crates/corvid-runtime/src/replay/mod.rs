@@ -2,7 +2,13 @@ mod cursor;
 mod differential;
 mod diverge;
 mod mutation;
+mod result_factory;
 mod substitute;
+
+use result_factory::{
+    next_approval_outcome_event, replayed_approval_result, replayed_event_json,
+    replayed_json_result, ReplayApprovalTraceOutcome,
+};
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -975,93 +981,11 @@ fn validate_mutation_result_pair(
     }
 }
 
-fn replayed_json_result(tool: &str, event: TraceEvent) -> Result<serde_json::Value, RuntimeError> {
-    match event {
-        TraceEvent::ToolResult { result, .. } | TraceEvent::LlmResult { result, .. } => Ok(result),
-        TraceEvent::ApprovalResponse { approved, .. } => Ok(serde_json::json!(approved)),
-        other => Err(RuntimeError::ReplayDivergence(ReplayDivergence {
-            step: 0,
-            expected: other,
-            got_kind: "tool_result",
-            got_description: format!("tool={tool}"),
-        })),
-    }
-}
 
-fn replayed_approval_result(
-    label: &str,
-    outcome: ReplayApprovalTraceOutcome,
-) -> Result<ReplayApprovalOutcome, RuntimeError> {
-    match outcome.response {
-        TraceEvent::ApprovalResponse { approved, .. } => Ok(ReplayApprovalOutcome {
-            approved,
-            decision: outcome.decision,
-        }),
-        TraceEvent::ToolResult { result, .. } | TraceEvent::LlmResult { result, .. } => {
-            Ok(ReplayApprovalOutcome {
-                approved: coerce_json_to_bool(&result),
-                decision: outcome.decision,
-            })
-        }
-        other => Err(RuntimeError::ReplayDivergence(ReplayDivergence {
-            step: 0,
-            expected: other,
-            got_kind: "approval_response",
-            got_description: format!("label={label}"),
-        })),
-    }
-}
 
-struct ReplayApprovalTraceOutcome {
-    decision: Option<ReplayApprovalDecision>,
-    response: TraceEvent,
-}
 
-fn next_approval_outcome_event(
-    cursor: &mut TraceCursor,
-    events: &[TraceEvent],
-) -> ReplayApprovalTraceOutcome {
-    match cursor.next_event(events) {
-        TraceEvent::ApprovalDecision {
-            accepted,
-            decider,
-            rationale,
-            ..
-        } => ReplayApprovalTraceOutcome {
-            decision: Some(ReplayApprovalDecision {
-                accepted,
-                decider,
-                rationale,
-            }),
-            response: cursor.next_event(events),
-        },
-        other => ReplayApprovalTraceOutcome {
-            decision: None,
-            response: other,
-        },
-    }
-}
 
-fn replayed_event_json(event: &TraceEvent) -> serde_json::Value {
-    match event {
-        TraceEvent::ToolResult { result, .. } | TraceEvent::LlmResult { result, .. } => {
-            result.clone()
-        }
-        TraceEvent::ApprovalResponse { approved, .. } => serde_json::json!(approved),
-        _ => serde_json::Value::Null,
-    }
-}
 
-fn coerce_json_to_bool(value: &serde_json::Value) -> bool {
-    match value {
-        serde_json::Value::Bool(v) => *v,
-        serde_json::Value::Null => false,
-        serde_json::Value::Number(n) => n.as_i64().map(|v| v != 0).unwrap_or(true),
-        serde_json::Value::String(s) => !s.is_empty(),
-        serde_json::Value::Array(values) => !values.is_empty(),
-        serde_json::Value::Object(map) => !map.is_empty(),
-    }
-}
 
 fn event_to_json(event: &TraceEvent) -> serde_json::Value {
     serde_json::to_value(event).unwrap_or_else(|_| serde_json::json!({ "debug": format!("{event:?}") }))
