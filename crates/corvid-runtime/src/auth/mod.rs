@@ -14,7 +14,6 @@ pub use approvals::{authorize_trace_permission, validate_jwt_verification_contra
 pub use oauth::hash_oauth_state;
 pub use sessions::hash_session_secret;
 use api_keys::read_api_key_row;
-use audit::{read_audit_row, stable_suffix};
 use oauth::read_oauth_state_row;
 use sessions::{read_actor_row, read_session_row};
 
@@ -745,26 +744,6 @@ impl SessionAuthRuntime {
         })
     }
 
-    pub fn audit_events(&self) -> Result<Vec<AuthAuditEvent>, RuntimeError> {
-        let conn = self.conn.lock().unwrap();
-        let mut stmt = conn
-            .prepare(
-                "select id, event_kind, actor_id, tenant_id, session_id, api_key_id, trace_id, status, reason, created_ms
-                 from auth_audit_events order by created_ms, id",
-            )
-            .map_err(|err| RuntimeError::Other(format!("failed to prepare auth audit list: {err}")))?;
-        let rows = stmt
-            .query_map([], read_audit_row)
-            .map_err(|err| RuntimeError::Other(format!("failed to list auth audit events: {err}")))?;
-        let mut events = Vec::new();
-        for row in rows {
-            events.push(row.map_err(|err| {
-                RuntimeError::Other(format!("failed to decode auth audit event: {err}"))
-            })?);
-        }
-        Ok(events)
-    }
-
     fn init(&self) -> Result<(), RuntimeError> {
         self.conn
             .lock()
@@ -981,96 +960,6 @@ impl SessionAuthRuntime {
             .map_err(|err| RuntimeError::Other(format!("failed to read oauth state by hash: {err}")))
     }
 
-    fn audit_session_denied(
-        &self,
-        session: &SessionRecord,
-        trace_id: &str,
-        reason: &str,
-    ) -> Result<(), RuntimeError> {
-        self.insert_audit(
-            "session.resolve",
-            Some(&session.actor_id),
-            Some(&session.tenant_id),
-            Some(&session.id),
-            None,
-            Some(trace_id),
-            "denied",
-            reason,
-        )
-    }
-
-    fn audit_api_key_denied(
-        &self,
-        key: &ApiKeyRecord,
-        trace_id: &str,
-        reason: &str,
-    ) -> Result<(), RuntimeError> {
-        self.insert_audit(
-            "api_key.resolve",
-            Some(&key.service_actor_id),
-            Some(&key.tenant_id),
-            None,
-            Some(&key.id),
-            Some(trace_id),
-            "denied",
-            reason,
-        )
-    }
-
-    fn audit_oauth_denied(
-        &self,
-        state: &OAuthStateRecord,
-        trace_id: &str,
-        reason: &str,
-    ) -> Result<(), RuntimeError> {
-        self.insert_audit(
-            "oauth.callback",
-            Some(&state.actor_id),
-            Some(&state.tenant_id),
-            None,
-            None,
-            Some(trace_id),
-            "denied",
-            reason,
-        )
-    }
-
-    fn insert_audit(
-        &self,
-        event_kind: &str,
-        actor_id: Option<&str>,
-        tenant_id: Option<&str>,
-        session_id: Option<&str>,
-        api_key_id: Option<&str>,
-        trace_id: Option<&str>,
-        status: &str,
-        reason: &str,
-    ) -> Result<(), RuntimeError> {
-        let now = now_ms();
-        let id = format!("auth_audit_{now}_{}", stable_suffix(event_kind, session_id, trace_id));
-        self.conn
-            .lock()
-            .unwrap()
-            .execute(
-                "insert into auth_audit_events
-                 (id, event_kind, actor_id, tenant_id, session_id, api_key_id, trace_id, status, reason, created_ms)
-                 values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
-                params![
-                    id,
-                    event_kind,
-                    actor_id,
-                    tenant_id,
-                    session_id,
-                    api_key_id,
-                    trace_id,
-                    status,
-                    reason,
-                    now as i64,
-                ],
-            )
-            .map_err(|err| RuntimeError::Other(format!("failed to insert auth audit event: {err}")))?;
-        Ok(())
-    }
 }
 
 
