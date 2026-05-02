@@ -12,7 +12,8 @@
 
 use std::sync::Weak;
 
-use super::{ListInner, ListValue, StructInner, StructValue, Value};
+use super::cells::{ListInner, StructInner};
+use super::{ListValue, StructValue, Value};
 
 pub enum WeakValue {
     String(Weak<str>),
