@@ -17,13 +17,15 @@ use corvid_ast::BackpressurePolicy;
 use corvid_resolve::DefId;
 use corvid_runtime::{ProvenanceChain, ProvenanceEntry, ProvenanceKind};
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, AtomicU8, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 
 mod display;
+mod heap;
 mod stream;
 mod weak;
 pub use display::value_confidence;
+pub(crate) use heap::Color;
+use heap::HeapMeta;
 pub(crate) use stream::{StreamChunk, StreamSender};
 pub use stream::StreamValue;
 pub use weak::{ListWeakValue, StructWeakValue, WeakValue};
@@ -153,88 +155,6 @@ impl PartialValue {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(u8)]
-pub(crate) enum Color {
-    Black = 0,
-    Gray = 1,
-    White = 2,
-    Purple = 3,
-}
-
-#[derive(Debug)]
-struct HeapMeta {
-    strong: AtomicUsize,
-    shadow: AtomicUsize,
-    color: AtomicU8,
-    buffered: AtomicBool,
-}
-
-impl HeapMeta {
-    fn new() -> Self {
-        Self {
-            strong: AtomicUsize::new(1),
-            shadow: AtomicUsize::new(0),
-            color: AtomicU8::new(Color::Black as u8),
-            buffered: AtomicBool::new(false),
-        }
-    }
-
-    fn retain(&self) {
-        self.strong.fetch_add(1, Ordering::Relaxed);
-    }
-
-    fn release(&self) -> usize {
-        self.strong.fetch_sub(1, Ordering::AcqRel)
-    }
-
-    fn strong_count(&self) -> usize {
-        self.strong.load(Ordering::Acquire)
-    }
-
-    fn set_strong(&self, value: usize) {
-        self.strong.store(value, Ordering::Release);
-    }
-
-    fn shadow_count(&self) -> usize {
-        self.shadow.load(Ordering::Acquire)
-    }
-
-    fn set_shadow(&self, value: usize) {
-        self.shadow.store(value, Ordering::Release);
-    }
-
-    fn inc_shadow(&self) {
-        self.shadow.fetch_add(1, Ordering::Relaxed);
-    }
-
-    fn dec_shadow(&self) {
-        let old = self.shadow.fetch_sub(1, Ordering::AcqRel);
-        debug_assert!(old > 0, "shadow count underflow");
-    }
-
-    fn color(&self) -> Color {
-        match self.color.load(Ordering::Acquire) {
-            0 => Color::Black,
-            1 => Color::Gray,
-            2 => Color::White,
-            3 => Color::Purple,
-            other => panic!("invalid heap color {other}"),
-        }
-    }
-
-    fn set_color(&self, color: Color) {
-        self.color.store(color as u8, Ordering::Release);
-    }
-
-    fn buffered(&self) -> bool {
-        self.buffered.load(Ordering::Acquire)
-    }
-
-    fn set_buffered(&self, value: bool) {
-        self.buffered.store(value, Ordering::Release);
-    }
-}
 
 #[derive(Debug)]
 pub(crate) struct StructInner {
