@@ -1,17 +1,19 @@
 mod cursor;
 mod differential;
 mod diverge;
+mod event_classify;
 mod mutation;
 mod mutation_validate;
 mod result_factory;
 mod substitute;
 
+use event_classify::{display_step, event_to_json};
 use mutation_validate::{
     mutated_approval_result, mutated_json_result, mutated_llm_result, validate_mutation,
 };
 use result_factory::{
     next_approval_outcome_event, replayed_approval_result, replayed_event_json,
-    replayed_json_result, ReplayApprovalTraceOutcome,
+    replayed_json_result,
 };
 
 use std::path::{Path, PathBuf};
@@ -833,62 +835,6 @@ impl ReplayMutation {
 
 
 
-fn event_to_json(event: &TraceEvent) -> serde_json::Value {
-    serde_json::to_value(event).unwrap_or_else(|_| serde_json::json!({ "debug": format!("{event:?}") }))
-}
-
-pub(super) fn event_kind(event: &TraceEvent) -> &'static str {
-    match event {
-        TraceEvent::SchemaHeader { .. } => "schema_header",
-        TraceEvent::RunStarted { .. } => "run_started",
-        TraceEvent::RunCompleted { .. } => "run_completed",
-        TraceEvent::ToolCall { .. } => "tool_call",
-        TraceEvent::ToolResult { .. } => "tool_result",
-        TraceEvent::LlmCall { .. } => "llm_call",
-        TraceEvent::LlmResult { .. } => "llm_result",
-        TraceEvent::PromptCache { .. } => "prompt_cache",
-        TraceEvent::ApprovalRequest { .. } => "approval_request",
-        TraceEvent::ApprovalDecision { .. } => "approval_decision",
-        TraceEvent::ApprovalResponse { .. } => "approval_response",
-        TraceEvent::ApprovalTokenIssued { .. } => "approval_token_issued",
-        TraceEvent::ApprovalScopeViolation { .. } => "approval_scope_violation",
-        TraceEvent::HumanInputRequest { .. } => "human_input_request",
-        TraceEvent::HumanInputResponse { .. } => "human_input_response",
-        TraceEvent::HumanChoiceRequest { .. } => "human_choice_request",
-        TraceEvent::HumanChoiceResponse { .. } => "human_choice_response",
-        TraceEvent::HostEvent { .. } => "host_event",
-        TraceEvent::SeedRead { .. } => "seed_read",
-        TraceEvent::ClockRead { .. } => "clock_read",
-        TraceEvent::ModelSelected { .. } => "model_selected",
-        TraceEvent::ProgressiveEscalation { .. } => "progressive_escalation",
-        TraceEvent::ProgressiveExhausted { .. } => "progressive_exhausted",
-        TraceEvent::StreamUpgrade { .. } => "stream_upgrade",
-        TraceEvent::AbVariantChosen { .. } => "ab_variant_chosen",
-        TraceEvent::EnsembleVote { .. } => "ensemble_vote",
-        TraceEvent::AdversarialPipelineCompleted { .. } => "adversarial_pipeline_completed",
-        TraceEvent::AdversarialContradiction { .. } => "adversarial_contradiction",
-        TraceEvent::ProvenanceEdge { .. } => "provenance_edge",
-    }
-}
-
-pub(super) fn json_kind(value: &serde_json::Value) -> &'static str {
-    match value {
-        serde_json::Value::Null => "null",
-        serde_json::Value::Bool(_) => "bool",
-        serde_json::Value::Number(_) => "number",
-        serde_json::Value::String(_) => "string",
-        serde_json::Value::Array(_) => "array",
-        serde_json::Value::Object(_) => "object",
-    }
-}
-
-pub(super) fn same_json_kind(left: &serde_json::Value, right: &serde_json::Value) -> bool {
-    json_kind(left) == json_kind(right)
-}
-
-fn display_step(index: usize) -> usize {
-    index + 1
-}
 
 #[cfg(test)]
 mod tests {

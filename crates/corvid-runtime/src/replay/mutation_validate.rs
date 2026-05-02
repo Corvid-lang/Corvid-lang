@@ -18,9 +18,10 @@ use std::path::Path;
 
 use corvid_trace_schema::TraceEvent;
 
+use super::event_classify::{event_kind, json_kind, same_json_kind};
 use super::result_factory::ReplayApprovalTraceOutcome;
 use super::substitute::{is_dispatch_metadata, is_initial_metadata};
-use super::{event_kind, json_kind, same_json_kind, ReplayApprovalOutcome, ReplayMutation};
+use super::{ReplayApprovalOutcome, ReplayMutation};
 use crate::errors::RuntimeError;
 use crate::llm::{LlmResponse, TokenUsage};
 
