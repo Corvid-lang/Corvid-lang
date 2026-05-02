@@ -7,9 +7,11 @@
 //! into the typed report rows.
 //!
 //! `event_ts_ms` is the trace-event timestamp extractor used by
-//! the since-filter. The five `*Agg` structs are the per-axis
-//! accumulators; they're consumed once at the end of
-//! `build_report` to produce the typed `*Row` records.
+//! the since-filter. `percentile50` is the latency stats helper
+//! used to fill `p50_latency_ms` on each per-model row. The
+//! five `*Agg` structs are the per-axis accumulators; they're
+//! consumed once at the end of `build_report` to produce the
+//! typed `*Row` records.
 
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::fs;
@@ -22,9 +24,9 @@ use corvid_runtime::TraceEvent;
 use time::format_description::well_known::Rfc3339;
 use time::OffsetDateTime;
 
+use super::render::{fmt_conf, model_label};
 use super::{
-    fmt_conf, model_label, percentile50, EscalationRow, ModelUsageRow, RoutingReport,
-    RoutingReportOptions, StrategyRow,
+    EscalationRow, ModelUsageRow, RoutingReport, RoutingReportOptions, StrategyRow,
 };
 
 #[derive(Default)]
@@ -510,4 +512,12 @@ fn event_ts_ms(event: &TraceEvent) -> u64 {
         | TraceEvent::AdversarialContradiction { ts_ms, .. }
         | TraceEvent::ProvenanceEdge { ts_ms, .. } => *ts_ms,
     }
+}
+
+fn percentile50(values: &mut [u64]) -> Option<u64> {
+    if values.is_empty() {
+        return None;
+    }
+    values.sort_unstable();
+    Some(values[values.len() / 2])
 }
