@@ -11,7 +11,7 @@
 mod effect_compose;
 #[path = "interp/expr.rs"]
 mod expr;
-#[path = "interp/prompt.rs"]
+#[path = "interp/prompt/mod.rs"]
 mod prompt;
 #[path = "interp/replay.rs"]
 mod replay;
