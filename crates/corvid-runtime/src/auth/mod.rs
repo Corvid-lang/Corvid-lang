@@ -186,12 +186,7 @@ impl SessionAuthRuntime {
             )
             .map_err(|err| RuntimeError::Other(format!("failed to initialize auth schema: {err}")))
     }
-
 }
-
-
-
-
 
 pub(super) fn validate_non_empty(label: &str, value: &str) -> Result<(), RuntimeError> {
     if value.trim().is_empty() {
@@ -200,12 +195,6 @@ pub(super) fn validate_non_empty(label: &str, value: &str) -> Result<(), Runtime
         Ok(())
     }
 }
-
-
-
-
-
-
 
 #[cfg(test)]
 mod tests {
@@ -234,113 +223,6 @@ mod tests {
             permission_fingerprint: "sha256:service-scopes".to_string(),
             ..actor(id, tenant_id)
         }
-    }
-
-    #[test]
-    fn session_runtime_resolves_actor_context_and_survives_restart() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("auth.sqlite");
-        {
-            let auth = SessionAuthRuntime::open(&path).unwrap();
-            auth.upsert_actor(actor("user-1", "org-1")).unwrap();
-            let session = auth
-                .create_session(SessionCreate {
-                    id: "sess-1".to_string(),
-                    actor_id: "user-1".to_string(),
-                    tenant_id: "org-1".to_string(),
-                    raw_token: "raw-session-secret".to_string(),
-                    issued_ms: 1_000,
-                    expires_ms: 9_000,
-                    csrf_binding_id: "csrf-1".to_string(),
-                })
-                .unwrap();
-            assert_eq!(session.token_hash, hash_session_secret("raw-session-secret"));
-            assert!(!session.token_hash.contains("raw-session-secret"));
-        }
-
-        let auth = SessionAuthRuntime::open(&path).unwrap();
-        let resolved = auth
-            .resolve_session(
-                "raw-session-secret",
-                "org-1",
-                "trace-1",
-                "replay-auth-1",
-                5_000,
-            )
-            .unwrap();
-        assert_eq!(resolved.actor.id, "user-1");
-        assert_eq!(resolved.trace.tenant_id, "org-1");
-        assert_eq!(resolved.trace.actor_id, "user-1");
-        assert_eq!(resolved.trace.session_id, "sess-1");
-        assert_eq!(resolved.trace.replay_key, "replay-auth-1");
-        let audit = auth.audit_events().unwrap();
-        assert_eq!(audit.len(), 1);
-        assert_eq!(audit[0].status, "allowed");
-        assert_eq!(audit[0].session_id.as_deref(), Some("sess-1"));
-    }
-
-    #[test]
-    fn session_runtime_rejects_expired_revoked_and_cross_tenant_sessions() {
-        let auth = SessionAuthRuntime::open_in_memory().unwrap();
-        auth.upsert_actor(actor("user-1", "org-1")).unwrap();
-        auth.create_session(SessionCreate {
-            id: "sess-1".to_string(),
-            actor_id: "user-1".to_string(),
-            tenant_id: "org-1".to_string(),
-            raw_token: "secret-1".to_string(),
-            issued_ms: 1_000,
-            expires_ms: 2_000,
-            csrf_binding_id: "csrf-1".to_string(),
-        })
-        .unwrap();
-
-        let expired = auth
-            .resolve_session("secret-1", "org-1", "trace-expired", "replay-expired", 2_000)
-            .unwrap_err();
-        assert!(expired.to_string().contains("session expired"));
-        let tenant = auth
-            .resolve_session("secret-1", "org-2", "trace-tenant", "replay-tenant", 1_500)
-            .unwrap_err();
-        assert!(tenant.to_string().contains("tenant mismatch"));
-        auth.revoke_session("sess-1", 1_600).unwrap();
-        let revoked = auth
-            .resolve_session("secret-1", "org-1", "trace-revoked", "replay-revoked", 1_700)
-            .unwrap_err();
-        assert!(revoked.to_string().contains("session revoked"));
-
-        let audit = auth.audit_events().unwrap();
-        assert_eq!(audit.len(), 3);
-        assert!(audit.iter().all(|event| event.status == "denied"));
-        assert!(audit.iter().all(|event| {
-            !event.reason.contains("secret-1") && !event.id.contains("secret-1")
-        }));
-    }
-
-    #[test]
-    fn session_rotation_invalidates_old_token_and_preserves_rotation_counter() {
-        let auth = SessionAuthRuntime::open_in_memory().unwrap();
-        auth.upsert_actor(actor("user-1", "org-1")).unwrap();
-        auth.create_session(SessionCreate {
-            id: "sess-1".to_string(),
-            actor_id: "user-1".to_string(),
-            tenant_id: "org-1".to_string(),
-            raw_token: "old-secret".to_string(),
-            issued_ms: 1_000,
-            expires_ms: 5_000,
-            csrf_binding_id: "csrf-1".to_string(),
-        })
-        .unwrap();
-
-        let rotated = auth.rotate_session("sess-1", "new-secret", 8_000).unwrap();
-        assert_eq!(rotated.rotation_counter, 1);
-        assert_eq!(rotated.token_hash, hash_session_secret("new-secret"));
-        assert!(auth
-            .resolve_session("old-secret", "org-1", "trace-old", "replay-old", 2_000)
-            .is_err());
-        let resolved = auth
-            .resolve_session("new-secret", "org-1", "trace-new", "replay-new", 2_000)
-            .unwrap();
-        assert_eq!(resolved.session.rotation_counter, 1);
     }
 
     #[test]
@@ -379,7 +261,10 @@ mod tests {
         assert_eq!(resolved.actor.actor_kind, "service");
         assert_eq!(resolved.trace.api_key_id, "key-1");
         assert_eq!(resolved.trace.session_id, "");
-        assert_eq!(resolved.api_key.last_used_ms, Some(resolved.api_key.updated_ms));
+        assert_eq!(
+            resolved.api_key.last_used_ms,
+            Some(resolved.api_key.updated_ms)
+        );
         let audit = auth.audit_events().unwrap();
         assert_eq!(audit.len(), 1);
         assert_eq!(audit[0].event_kind, "api_key.resolve");
@@ -410,30 +295,45 @@ mod tests {
             scope_fingerprint: "sha256:user-scopes".to_string(),
             expires_ms,
         });
-        assert!(user_key
-            .unwrap_err()
-            .to_string()
-            .contains("service actors"));
+        assert!(user_key.unwrap_err().to_string().contains("service actors"));
 
         let wrong_tenant = auth
-            .resolve_api_key("secret-1", "org-2", "trace-tenant", "replay-tenant", now_ms())
+            .resolve_api_key(
+                "secret-1",
+                "org-2",
+                "trace-tenant",
+                "replay-tenant",
+                now_ms(),
+            )
             .unwrap_err();
         assert!(wrong_tenant.to_string().contains("key not found"));
 
         let expired = auth
-            .resolve_api_key("secret-1", "org-1", "trace-expired", "replay-expired", expires_ms)
+            .resolve_api_key(
+                "secret-1",
+                "org-1",
+                "trace-expired",
+                "replay-expired",
+                expires_ms,
+            )
             .unwrap_err();
         assert!(expired.to_string().contains("key expired"));
 
         auth.revoke_api_key("key-1", now_ms()).unwrap();
         let revoked = auth
-            .resolve_api_key("secret-1", "org-1", "trace-revoked", "replay-revoked", now_ms())
+            .resolve_api_key(
+                "secret-1",
+                "org-1",
+                "trace-revoked",
+                "replay-revoked",
+                now_ms(),
+            )
             .unwrap_err();
         assert!(revoked.to_string().contains("key not found"));
         let audit = auth.audit_events().unwrap();
-        assert!(audit.iter().all(|event| {
-            !event.reason.contains("secret-1") && !event.id.contains("secret-1")
-        }));
+        assert!(audit
+            .iter()
+            .all(|event| { !event.reason.contains("secret-1") && !event.id.contains("secret-1") }));
     }
 
     #[test]
@@ -452,7 +352,10 @@ mod tests {
         assert_eq!(ok.failure_kind, None);
         assert!(ok.redacted);
 
-        for (algorithm, failure) in [("none", "unsupported_algorithm"), ("HS256", "unsupported_algorithm")] {
+        for (algorithm, failure) in [
+            ("none", "unsupported_algorithm"),
+            ("HS256", "unsupported_algorithm"),
+        ] {
             let mut bad = contract.clone();
             bad.algorithm = algorithm.to_string();
             let diagnostic = validate_jwt_verification_contract(&bad);
@@ -465,7 +368,10 @@ mod tests {
         insecure.jwks_url = "http://issuer.example/jwks.json".to_string();
         let diagnostic = validate_jwt_verification_contract(&insecure);
         assert!(!diagnostic.valid);
-        assert_eq!(diagnostic.failure_kind.as_deref(), Some("jwks_url_not_https"));
+        assert_eq!(
+            diagnostic.failure_kind.as_deref(),
+            Some("jwks_url_not_https")
+        );
         assert!(diagnostic.redacted);
     }
 

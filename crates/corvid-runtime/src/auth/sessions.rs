@@ -74,9 +74,9 @@ impl SessionAuthRuntime {
                 "session expiry must be after issue time".to_string(),
             ));
         }
-        let actor = self
-            .get_actor(&input.actor_id)?
-            .ok_or_else(|| RuntimeError::Other(format!("auth actor `{}` not found", input.actor_id)))?;
+        let actor = self.get_actor(&input.actor_id)?.ok_or_else(|| {
+            RuntimeError::Other(format!("auth actor `{}` not found", input.actor_id))
+        })?;
         if actor.tenant_id != input.tenant_id {
             return Err(RuntimeError::Other(
                 "session actor tenant mismatch".to_string(),
@@ -237,7 +237,11 @@ impl SessionAuthRuntime {
             .ok_or_else(|| RuntimeError::Other(format!("auth session `{session_id}` not found")))
     }
 
-    pub fn revoke_session(&self, session_id: &str, at_ms: u64) -> Result<SessionRecord, RuntimeError> {
+    pub fn revoke_session(
+        &self,
+        session_id: &str,
+        at_ms: u64,
+    ) -> Result<SessionRecord, RuntimeError> {
         validate_non_empty("session id", session_id)?;
         self.conn
             .lock()
@@ -266,5 +270,147 @@ impl SessionAuthRuntime {
             )
             .optional()
             .map_err(|err| RuntimeError::Other(format!("failed to read session by token: {err}")))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn actor(id: &str, tenant_id: &str) -> AuthActor {
+        AuthActor {
+            id: id.to_string(),
+            tenant_id: tenant_id.to_string(),
+            display_name: "Ada".to_string(),
+            actor_kind: "user".to_string(),
+            auth_method: "session".to_string(),
+            assurance_level: "aal1".to_string(),
+            role_fingerprint: "sha256:roles".to_string(),
+            permission_fingerprint: "sha256:permissions".to_string(),
+            created_ms: 1,
+            updated_ms: 1,
+        }
+    }
+
+    #[test]
+    fn session_runtime_resolves_actor_context_and_survives_restart() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("auth.sqlite");
+        {
+            let auth = SessionAuthRuntime::open(&path).unwrap();
+            auth.upsert_actor(actor("user-1", "org-1")).unwrap();
+            let session = auth
+                .create_session(SessionCreate {
+                    id: "sess-1".to_string(),
+                    actor_id: "user-1".to_string(),
+                    tenant_id: "org-1".to_string(),
+                    raw_token: "raw-session-secret".to_string(),
+                    issued_ms: 1_000,
+                    expires_ms: 9_000,
+                    csrf_binding_id: "csrf-1".to_string(),
+                })
+                .unwrap();
+            assert_eq!(
+                session.token_hash,
+                hash_session_secret("raw-session-secret")
+            );
+            assert!(!session.token_hash.contains("raw-session-secret"));
+        }
+
+        let auth = SessionAuthRuntime::open(&path).unwrap();
+        let resolved = auth
+            .resolve_session(
+                "raw-session-secret",
+                "org-1",
+                "trace-1",
+                "replay-auth-1",
+                5_000,
+            )
+            .unwrap();
+        assert_eq!(resolved.actor.id, "user-1");
+        assert_eq!(resolved.trace.tenant_id, "org-1");
+        assert_eq!(resolved.trace.actor_id, "user-1");
+        assert_eq!(resolved.trace.session_id, "sess-1");
+        assert_eq!(resolved.trace.replay_key, "replay-auth-1");
+        let audit = auth.audit_events().unwrap();
+        assert_eq!(audit.len(), 1);
+        assert_eq!(audit[0].status, "allowed");
+        assert_eq!(audit[0].session_id.as_deref(), Some("sess-1"));
+    }
+
+    #[test]
+    fn session_runtime_rejects_expired_revoked_and_cross_tenant_sessions() {
+        let auth = SessionAuthRuntime::open_in_memory().unwrap();
+        auth.upsert_actor(actor("user-1", "org-1")).unwrap();
+        auth.create_session(SessionCreate {
+            id: "sess-1".to_string(),
+            actor_id: "user-1".to_string(),
+            tenant_id: "org-1".to_string(),
+            raw_token: "secret-1".to_string(),
+            issued_ms: 1_000,
+            expires_ms: 2_000,
+            csrf_binding_id: "csrf-1".to_string(),
+        })
+        .unwrap();
+
+        let expired = auth
+            .resolve_session(
+                "secret-1",
+                "org-1",
+                "trace-expired",
+                "replay-expired",
+                2_000,
+            )
+            .unwrap_err();
+        assert!(expired.to_string().contains("session expired"));
+        let tenant = auth
+            .resolve_session("secret-1", "org-2", "trace-tenant", "replay-tenant", 1_500)
+            .unwrap_err();
+        assert!(tenant.to_string().contains("tenant mismatch"));
+        auth.revoke_session("sess-1", 1_600).unwrap();
+        let revoked = auth
+            .resolve_session(
+                "secret-1",
+                "org-1",
+                "trace-revoked",
+                "replay-revoked",
+                1_700,
+            )
+            .unwrap_err();
+        assert!(revoked.to_string().contains("session revoked"));
+
+        let audit = auth.audit_events().unwrap();
+        assert_eq!(audit.len(), 3);
+        assert!(audit.iter().all(|event| event.status == "denied"));
+        assert!(audit
+            .iter()
+            .all(|event| { !event.reason.contains("secret-1") && !event.id.contains("secret-1") }));
+    }
+
+    #[test]
+    fn session_rotation_invalidates_old_token_and_preserves_rotation_counter() {
+        let auth = SessionAuthRuntime::open_in_memory().unwrap();
+        auth.upsert_actor(actor("user-1", "org-1")).unwrap();
+        auth.create_session(SessionCreate {
+            id: "sess-1".to_string(),
+            actor_id: "user-1".to_string(),
+            tenant_id: "org-1".to_string(),
+            raw_token: "old-secret".to_string(),
+            issued_ms: 1_000,
+            expires_ms: 5_000,
+            csrf_binding_id: "csrf-1".to_string(),
+        })
+        .unwrap();
+
+        let rotated = auth.rotate_session("sess-1", "new-secret", 8_000).unwrap();
+        assert_eq!(rotated.rotation_counter, 1);
+        assert_eq!(rotated.token_hash, hash_session_secret("new-secret"));
+        assert!(auth
+            .resolve_session("old-secret", "org-1", "trace-old", "replay-old", 2_000)
+            .is_err());
+        let resolved = auth
+            .resolve_session("new-secret", "org-1", "trace-new", "replay-new", 2_000)
+            .unwrap();
+        assert_eq!(resolved.session.rotation_counter, 1);
     }
 }
