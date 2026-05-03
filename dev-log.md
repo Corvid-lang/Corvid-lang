@@ -6273,3 +6273,23 @@ Validation:
 - `cargo check --workspace`
 - `cargo run -q -p corvid-cli -- verify --corpus tests/corpus`
   (exit 2 with the established Windows `whoami` linker signature)
+
+---
+
+## 2026-05-03 — Slice 33N moat benchmarks
+
+- Closed the moat benchmark slice against the committed inventory: 50
+  compile-time rejection cases and 3 governance-line reference apps are present.
+- Re-ran both deterministic runners and confirmed their generated
+  `RESULTS.md` output matches the committed tables byte-for-byte.
+- Updated stale README/ROADMAP language that still described the benchmark
+  corpus as seed or partial coverage.
+
+Validation:
+- `python benches/moat/governance_lines/runner/count.py --apps-dir benches/moat/governance_lines/apps --out target/governance_lines_RESULTS.md`
+- `git diff --no-index -- benches/moat/governance_lines/RESULTS.md target/governance_lines_RESULTS.md`
+- `python benches/moat/compile_time_rejection/runner/run.py --cases-dir benches/moat/compile_time_rejection/cases --out target/compile_time_rejection_RESULTS.md`
+- `git diff --no-index -- benches/moat/compile_time_rejection/RESULTS.md target/compile_time_rejection_RESULTS.md`
+- `cargo check --workspace`
+- `cargo run -q -p corvid-cli -- verify --corpus tests/corpus`
+  (exit 2 with the established Windows `whoami` linker signature)

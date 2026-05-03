@@ -3527,3 +3527,11 @@ known environmental baseline, use a parity harness that is genuinely
 cross-platform and avoids that baseline. For the current repo, the
 WASM/Wasmtime harness is the right installer/doctor companion because it runs
 the same generated module path on Linux, macOS, and Windows.
+
+## benchmark closeouts
+
+Before assuming a large benchmark slice still needs corpus work, count the
+committed cases and rerun the deterministic drift gates. The 33N scaffold had
+already grown to the full 50 compile-time cases and 3 governance apps; the real
+remaining work was closing stale README/ROADMAP language after runner output
+matched committed results byte-for-byte.

@@ -78,6 +78,9 @@ benches/moat/
 │   └── RESULTS.md                       published line-count table
 ```
 
+The governance corpus currently covers `refund_bot`, `rag_qa_bot`, and
+`support_escalation_bot`, each implemented in Corvid, Python, and TypeScript.
+
 ## How to add a new case / app
 
 Each subdirectory's README documents the exact procedure. The principle:
