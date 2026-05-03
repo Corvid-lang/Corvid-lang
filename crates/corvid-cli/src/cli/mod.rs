@@ -15,6 +15,7 @@
 pub mod approvals;
 pub mod auth;
 pub mod bench;
+pub mod bundle;
 pub mod claim;
 pub mod connectors;
 pub mod contract;
@@ -33,6 +34,8 @@ pub use approvals::*;
 pub use auth::*;
 #[allow(unused_imports)]
 pub use bench::*;
+#[allow(unused_imports)]
+pub use bundle::*;
 #[allow(unused_imports)]
 pub use claim::*;
 #[allow(unused_imports)]

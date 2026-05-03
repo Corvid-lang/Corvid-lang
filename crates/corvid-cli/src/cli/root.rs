@@ -21,6 +21,7 @@ use std::path::PathBuf;
 pub use super::approvals::ApprovalsCommand;
 pub use super::auth::{AuthCommand, AuthKeysCommand};
 pub use super::bench::BenchCommand;
+pub use super::bundle::BundleCommand;
 pub use super::claim::ClaimCommand;
 pub use super::connectors::{ConnectorsCommand, ConnectorsOauthCommand};
 pub use super::contract::ContractCommand;
@@ -692,54 +693,6 @@ pub enum Command {
     Approvals {
         #[command(subcommand)]
         command: ApprovalsCommand,
-    },
-}
-
-#[derive(Subcommand)]
-pub enum BundleCommand {
-    Verify {
-        path: PathBuf,
-        #[arg(long)]
-        rebuild: bool,
-    },
-    Diff {
-        old: PathBuf,
-        new: PathBuf,
-        #[arg(long)]
-        json: bool,
-    },
-    Audit {
-        path: PathBuf,
-        #[arg(long)]
-        question: Option<String>,
-        #[arg(long)]
-        json: bool,
-    },
-    Explain {
-        path: PathBuf,
-        #[arg(long)]
-        json: bool,
-    },
-    Report {
-        path: PathBuf,
-        #[arg(long, default_value = "soc2")]
-        format: String,
-        #[arg(long)]
-        json: bool,
-    },
-    Query {
-        path: PathBuf,
-        #[arg(long, value_name = "DELTA_KEY")]
-        delta: String,
-        #[arg(long, value_name = "NAME")]
-        predecessor: Option<String>,
-        #[arg(long)]
-        json: bool,
-    },
-    Lineage {
-        path: PathBuf,
-        #[arg(long)]
-        json: bool,
     },
 }
 
