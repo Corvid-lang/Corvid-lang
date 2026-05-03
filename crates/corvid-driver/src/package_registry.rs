@@ -16,16 +16,15 @@ use serde::{Deserialize, Serialize};
 use crate::import_integrity::sha256_hex;
 use crate::modules::summarize_module_source;
 use crate::package_lock::{
-    load_or_empty_at, lock_path_for_project, remove_packages_by_name, upsert_package,
-    write_package_lock, LockedPackage,
+    load_or_empty_at, lock_path_for_project, remove_packages_by_name, write_package_lock,
 };
-use crate::package_manifest::{dependency, remove_dependency, upsert_dependency};
-use crate::package_policy::{load_package_policy, package_policy_violation};
-use crate::package_version::{
-    normalize_version, parse_package_spec, validate_package_name, PackageSpec,
-};
+use crate::package_manifest::{dependency, remove_dependency};
+use crate::package_version::{normalize_version, parse_package_spec, validate_package_name};
 
 const DEFAULT_REGISTRY: &str = "https://registry.corvid.dev/index.toml";
+mod add;
+pub use add::add_package;
+use add::select_package;
 
 #[derive(Debug, Clone)]
 pub enum AddPackageOutcome {
@@ -119,87 +118,6 @@ struct RegistryPackage {
     semantic_summary: Option<ModuleSemanticSummary>,
 }
 
-pub fn add_package(
-    spec: &str,
-    project_dir: &Path,
-    registry: Option<&str>,
-) -> Result<AddPackageOutcome> {
-    let spec = parse_package_spec(spec)?;
-    let registry_location = registry
-        .map(str::to_string)
-        .or_else(|| std::env::var("CORVID_PACKAGE_REGISTRY").ok())
-        .unwrap_or_else(|| DEFAULT_REGISTRY.to_string());
-    let index = load_registry_index(&registry_location)?;
-    let Some(selected) = select_package(&index, &spec)? else {
-        return Ok(AddPackageOutcome::Rejected {
-            reason: format!(
-                "registry `{registry_location}` has no package `{}` matching the requested version",
-                spec.name
-            ),
-        });
-    };
-
-    let bytes = fetch_bytes(&selected.url)
-        .with_context(|| format!("failed to fetch package source `{}`", selected.url))?;
-    let actual = sha256_hex(&bytes);
-    if !actual.eq_ignore_ascii_case(&selected.sha256) {
-        return Ok(AddPackageOutcome::Rejected {
-            reason: format!(
-                "package `{}`@{} failed registry hash verification: expected sha256:{}, actual sha256:{actual}",
-                selected.name, selected.version, selected.sha256
-            ),
-        });
-    }
-    let source = String::from_utf8(bytes)
-        .with_context(|| format!("package `{}`@{} is not valid UTF-8", selected.name, selected.version))?;
-    let summary = summarize_module_source(&source)
-        .map_err(|message| anyhow!("package `{}`@{} failed semantic summary build: {message}", selected.name, selected.version))?;
-    let policy = load_package_policy(project_dir)?;
-    if let Some(reason) = package_policy_violation(&summary, &policy, selected.signature.as_deref()) {
-        return Ok(AddPackageOutcome::Rejected { reason });
-    }
-    if let Some(signature) = &selected.signature {
-        if let Err(message) = verify_package_signature(selected, &summary, signature) {
-            return Ok(AddPackageOutcome::Rejected { reason: message });
-        }
-    }
-
-    let lockfile = lock_path_for_project(project_dir);
-    let mut lock = load_or_empty_at(&lockfile).map_err(|message| anyhow!(message))?;
-    let uri = selected
-        .uri
-        .clone()
-        .unwrap_or_else(|| format!("corvid://{}/v{}", selected.name, selected.version));
-    upsert_package(
-        &mut lock,
-        LockedPackage {
-            uri: uri.clone(),
-            url: selected.url.clone(),
-            sha256: selected.sha256.to_ascii_lowercase(),
-            registry: selected
-                .registry
-                .clone()
-                .or_else(|| Some(registry_location.clone())),
-            signature: selected.signature.clone(),
-            semantic_summary: Some(summary.clone()),
-        },
-    );
-    write_package_lock(&lockfile, &lock).map_err(|message| anyhow!(message))?;
-    upsert_dependency(
-        project_dir,
-        &spec.name,
-        &spec.raw_requirement,
-        Some(registry_location.as_str()),
-    )?;
-
-    Ok(AddPackageOutcome::Added {
-        uri,
-        version: selected.version.clone(),
-        lockfile,
-        exports: summary.exports.len(),
-    })
-}
-
 pub fn remove_package(spec: &str, project_dir: &Path) -> Result<PackageMutationOutcome> {
     validate_package_name(spec)?;
     let manifest_updated = remove_dependency(project_dir, spec)?.is_some();
@@ -238,7 +156,9 @@ pub fn update_package(
                 lockfile,
                 exports,
             }),
-            AddPackageOutcome::Rejected { reason } => Ok(PackageMutationOutcome::Rejected { reason }),
+            AddPackageOutcome::Rejected { reason } => {
+                Ok(PackageMutationOutcome::Rejected { reason })
+            }
         };
     }
     validate_package_name(spec)?;
@@ -303,7 +223,11 @@ pub fn publish_package(options: PublishPackageOptions<'_>) -> Result<PublishPack
         signature: None,
         semantic_summary: Some(summary),
     };
-    package.signature = Some(sign_package(&package, options.signing_seed_hex, options.key_id)?);
+    package.signature = Some(sign_package(
+        &package,
+        options.signing_seed_hex,
+        options.key_id,
+    )?);
 
     let index_path = options.out_dir.join("index.toml");
     let mut index = match std::fs::read_to_string(&index_path) {
@@ -372,14 +296,18 @@ pub fn verify_registry_contract(location: &str) -> Result<RegistryVerificationRe
         let source = match String::from_utf8(fetched.bytes) {
             Ok(source) => source,
             Err(err) => {
-                report.failures.push(failure(package, format!("artifact is not UTF-8: {err}")));
+                report
+                    .failures
+                    .push(failure(package, format!("artifact is not UTF-8: {err}")));
                 continue;
             }
         };
         let summary = match summarize_module_source(&source) {
             Ok(summary) => summary,
             Err(err) => {
-                report.failures.push(failure(package, format!("semantic summary failed: {err}")));
+                report
+                    .failures
+                    .push(failure(package, format!("semantic summary failed: {err}")));
                 continue;
             }
         };
@@ -401,30 +329,12 @@ pub fn verify_registry_contract(location: &str) -> Result<RegistryVerificationRe
     Ok(report)
 }
 
-fn select_package<'a>(
-    index: &'a RegistryIndex,
-    spec: &PackageSpec,
-) -> Result<Option<&'a RegistryPackage>> {
-    let mut candidates = Vec::new();
-    for package in &index.package {
-        if package.name != spec.name {
-            continue;
-        }
-        let version = Version::parse(&normalize_version(&package.version))
-            .with_context(|| format!("registry package `{}` has invalid version `{}`", package.name, package.version))?;
-        if spec.requirement.matches(&version) {
-            candidates.push((version, package));
-        }
-    }
-    candidates.sort_by(|a, b| a.0.cmp(&b.0));
-    Ok(candidates.pop().map(|(_, package)| package))
-}
-
 fn load_registry_index(location: &str) -> Result<RegistryIndex> {
     let source = if location.starts_with("http://") || location.starts_with("https://") {
         let bytes = fetch_bytes(location)
             .with_context(|| format!("failed to fetch registry index `{location}`"))?;
-        String::from_utf8(bytes).with_context(|| format!("registry index `{location}` is not UTF-8"))?
+        String::from_utf8(bytes)
+            .with_context(|| format!("registry index `{location}` is not UTF-8"))?
     } else {
         let path = Path::new(location);
         let path = if path.is_dir() {
@@ -440,7 +350,9 @@ fn load_registry_index(location: &str) -> Result<RegistryIndex> {
 
 fn fetch_bytes(location: &str) -> Result<Vec<u8>> {
     if location.starts_with("http://") || location.starts_with("https://") {
-        let response = ureq::get(location).call().map_err(|err| anyhow!(err.to_string()))?;
+        let response = ureq::get(location)
+            .call()
+            .map_err(|err| anyhow!(err.to_string()))?;
         if !(200..=299).contains(&response.status()) {
             return Err(anyhow!("HTTP status {}", response.status()));
         }
@@ -488,7 +400,9 @@ fn validate_registry_entry_contract(package: &RegistryPackage) -> Result<(), Str
         return Err("artifact URL must be http(s)".to_string());
     }
     if package.url.contains('?') || package.url.contains('#') {
-        return Err("artifact URL must be immutable: query strings and fragments are forbidden".to_string());
+        return Err(
+            "artifact URL must be immutable: query strings and fragments are forbidden".to_string(),
+        );
     }
     if !package.url.ends_with(".cor") {
         return Err("artifact URL must point at a `.cor` source artifact".to_string());
@@ -511,7 +425,9 @@ struct FetchedPackage {
 }
 
 fn fetch_package_for_verification(location: &str) -> Result<FetchedPackage> {
-    let response = ureq::get(location).call().map_err(|err| anyhow!(err.to_string()))?;
+    let response = ureq::get(location)
+        .call()
+        .map_err(|err| anyhow!(err.to_string()))?;
     if !(200..=299).contains(&response.status()) {
         return Err(anyhow!("HTTP status {}", response.status()));
     }
@@ -577,18 +493,37 @@ fn verify_package_signature(
             package.name, package.version
         ));
     }
-    let key = decode_hex_32(parts[2])
-        .map_err(|err| format!("package `{}`@{} has invalid verifying key: {err}", package.name, package.version))?;
-    let verifying_key = VerifyingKey::from_bytes(&key)
-        .map_err(|err| format!("package `{}`@{} has invalid verifying key: {err}", package.name, package.version))?;
-    let sig_bytes = decode_hex_64(parts[3])
-        .map_err(|err| format!("package `{}`@{} has invalid signature: {err}", package.name, package.version))?;
+    let key = decode_hex_32(parts[2]).map_err(|err| {
+        format!(
+            "package `{}`@{} has invalid verifying key: {err}",
+            package.name, package.version
+        )
+    })?;
+    let verifying_key = VerifyingKey::from_bytes(&key).map_err(|err| {
+        format!(
+            "package `{}`@{} has invalid verifying key: {err}",
+            package.name, package.version
+        )
+    })?;
+    let sig_bytes = decode_hex_64(parts[3]).map_err(|err| {
+        format!(
+            "package `{}`@{} has invalid signature: {err}",
+            package.name, package.version
+        )
+    })?;
     let sig = Signature::from_bytes(&sig_bytes);
-    let subject = package_signature_subject(&signed_package)
-        .map_err(|err| format!("package `{}`@{} signature subject failed: {err}", package.name, package.version))?;
-    verifying_key
-        .verify(&subject, &sig)
-        .map_err(|err| format!("package `{}`@{} signature verification failed: {err}", package.name, package.version))
+    let subject = package_signature_subject(&signed_package).map_err(|err| {
+        format!(
+            "package `{}`@{} signature subject failed: {err}",
+            package.name, package.version
+        )
+    })?;
+    verifying_key.verify(&subject, &sig).map_err(|err| {
+        format!(
+            "package `{}`@{} signature verification failed: {err}",
+            package.name, package.version
+        )
+    })
 }
 
 fn package_signature_subject(package: &RegistryPackage) -> Result<Vec<u8>> {
@@ -601,10 +536,7 @@ fn package_signature_subject(package: &RegistryPackage) -> Result<Vec<u8>> {
         "corvid-package-v1\nname:{}\nversion:{}\nuri:{}\nurl:{}\nsha256:{}\nsummary:{}\n",
         package.name,
         package.version,
-        package
-            .uri
-            .as_deref()
-            .unwrap_or("<none>"),
+        package.uri.as_deref().unwrap_or("<none>"),
         package.url,
         package.sha256.to_ascii_lowercase(),
         summary_json
@@ -699,8 +631,7 @@ mod tests {
             version: version.to_string(),
             uri: None,
             url: "package.cor".to_string(),
-            sha256: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
-                .to_string(),
+            sha256: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef".to_string(),
             registry: None,
             signature: None,
             semantic_summary: None,
@@ -746,7 +677,10 @@ sha256 = \"{digest}\"
         assert!(lock.contains("semantic_summary"));
         assert!(lock.contains("SafetyReceipt"));
         let manifest = fs::read_to_string(tmp.path().join("corvid.toml")).unwrap();
-        assert!(manifest.contains("[dependencies.\"@anthropic/safety-baseline\"]"), "{manifest}");
+        assert!(
+            manifest.contains("[dependencies.\"@anthropic/safety-baseline\"]"),
+            "{manifest}"
+        );
         assert!(manifest.contains("version = \"2.3\""), "{manifest}");
     }
 
@@ -776,8 +710,8 @@ sha256 = \"{digest}\"
         )
         .unwrap();
 
-        let outcome = add_package("@scope/helper@1", tmp.path(), Some(index.to_str().unwrap()))
-            .unwrap();
+        let outcome =
+            add_package("@scope/helper@1", tmp.path(), Some(index.to_str().unwrap())).unwrap();
 
         assert!(matches!(
             outcome,
@@ -810,8 +744,12 @@ sha256 = \"{digest}\"
             key_id: "test-key",
         })
         .unwrap();
-        let outcome = add_package("@scope/name@1", tmp.path(), Some(published.index.to_str().unwrap()))
-            .unwrap();
+        let outcome = add_package(
+            "@scope/name@1",
+            tmp.path(),
+            Some(published.index.to_str().unwrap()),
+        )
+        .unwrap();
 
         assert!(matches!(outcome, AddPackageOutcome::Added { .. }));
         let lock = fs::read_to_string(tmp.path().join("Corvid.lock")).unwrap();
@@ -848,12 +786,20 @@ sha256 = \"{digest}\"
         let sig_last = sig_end - 1;
         index.replace_range(
             sig_last..sig_end,
-            if &index[sig_last..sig_end] == "0" { "1" } else { "0" },
+            if &index[sig_last..sig_end] == "0" {
+                "1"
+            } else {
+                "0"
+            },
         );
         fs::write(&published.index, index).unwrap();
 
-        let outcome = add_package("@scope/name@1", tmp.path(), Some(published.index.to_str().unwrap()))
-            .unwrap();
+        let outcome = add_package(
+            "@scope/name@1",
+            tmp.path(),
+            Some(published.index.to_str().unwrap()),
+        )
+        .unwrap();
 
         assert!(matches!(
             outcome,
@@ -887,8 +833,8 @@ sha256 = \"{digest}\"
         )
         .unwrap();
 
-        let report = verify_registry_contract(tmp.path().join("index.toml").to_str().unwrap())
-            .unwrap();
+        let report =
+            verify_registry_contract(tmp.path().join("index.toml").to_str().unwrap()).unwrap();
 
         assert!(report.is_clean(), "{report:?}");
         assert_eq!(report.checked, 1);
@@ -918,8 +864,8 @@ sha256 = \"{digest}\"
         )
         .unwrap();
 
-        let report = verify_registry_contract(tmp.path().join("index.toml").to_str().unwrap())
-            .unwrap();
+        let report =
+            verify_registry_contract(tmp.path().join("index.toml").to_str().unwrap()).unwrap();
 
         assert_eq!(report.failures.len(), 1, "{report:?}");
         assert!(report.failures[0].reason.contains("immutable"));
