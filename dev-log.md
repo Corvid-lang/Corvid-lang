@@ -6188,3 +6188,23 @@ Validation:
 - `cargo test -p corvid-guarantees --lib`
 - `cargo run -q -p corvid-cli -- verify --corpus tests/corpus`
   (exit 2 with the established Windows `whoami` linker signature)
+
+---
+
+## 2026-05-03 — Slice 32-U stdlib adversarial expansion
+
+- Added named adversarial coverage for every `std.*` module in
+  `crates/corvid-driver/tests/stdlib.rs`, extending the existing
+  `std.db` token-redaction test across AI, HTTP, IO, secrets, observe,
+  cache, queue, jobs, auth, approvals, agent, RAG, and effects.
+- The new negative programs assert unsafe helper surfaces cannot be
+  imported or called, while source-shape assertions preserve redaction,
+  effect metadata, provenance, effect-key, and replay-key fields.
+- Updated ROADMAP and the Phase 32 stdlib audit doc so the closure gate
+  reflects per-module compile + imported-helper + adversarial coverage.
+
+Validation:
+- `cargo test -p corvid-driver --test stdlib`
+- `cargo check --workspace`
+- `cargo run -q -p corvid-cli -- verify --corpus tests/corpus`
+  (exit 2 with the established Windows `whoami` linker signature)

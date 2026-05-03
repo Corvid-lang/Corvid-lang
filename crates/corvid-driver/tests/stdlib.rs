@@ -243,6 +243,278 @@ fn std_db_token_surface_does_not_expose_raw_token_values() {
     );
 }
 
+fn std_source(module_name: &str) -> String {
+    let repo = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(std::path::Path::parent)
+        .expect("repo root");
+    fs::read_to_string(repo.join("std").join(format!("{module_name}.cor")))
+        .unwrap_or_else(|e| panic!("std/{module_name}.cor: {e}"))
+}
+
+fn assert_std_adversarial_program_rejected(
+    module_name: &str,
+    with_effects_dep: bool,
+    main_source: &str,
+) {
+    let dir = tempfile::tempdir().unwrap();
+    fs::create_dir_all(dir.path().join("std")).unwrap();
+    let repo = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(std::path::Path::parent)
+        .expect("repo root");
+    let module_filename = format!("{module_name}.cor");
+    fs::copy(
+        repo.join("std").join(&module_filename),
+        dir.path().join("std").join(&module_filename),
+    )
+    .unwrap_or_else(|e| panic!("copy std/{module_filename}: {e}"));
+    if with_effects_dep {
+        fs::copy(
+            repo.join("std").join("effects.cor"),
+            dir.path().join("std").join("effects.cor"),
+        )
+        .unwrap_or_else(|e| panic!("copy std/effects.cor: {e}"));
+    }
+
+    let main_path = dir.path().join("main.cor");
+    fs::write(&main_path, main_source).unwrap();
+    let result = compile_to_ir_with_config_at_path(main_source, &main_path, None);
+    assert!(
+        result.is_err(),
+        "std.{module_name} adversarial program should be rejected"
+    );
+}
+
+#[test]
+fn std_ai_adversarial_raw_trace_event_surface_is_rejected() {
+    assert_std_adversarial_program_rejected(
+        "ai",
+        true,
+        r#"
+import "./std/ai" use raw_trace_event
+
+agent main() -> String:
+    return raw_trace_event("llm", "prompt", "secret")
+"#,
+    );
+    let source = std_source("ai");
+    assert!(source.contains("TraceEventSummary"));
+    assert!(source.contains("effect_meta: EffectEnvelope"));
+}
+
+#[test]
+fn std_http_adversarial_untagged_network_request_surface_is_rejected() {
+    assert_std_adversarial_program_rejected(
+        "http",
+        true,
+        r#"
+import "./std/http" use http_get_without_network_effect
+
+agent main() -> String:
+    req = http_get_without_network_effect("https://api.example.test")
+    return req.url
+"#,
+    );
+    let source = std_source("http");
+    assert!(source.contains("effect_envelope(\"std.http.request\""));
+}
+
+#[test]
+fn std_io_adversarial_write_without_filesystem_effect_surface_is_rejected() {
+    assert_std_adversarial_program_rejected(
+        "io",
+        true,
+        r#"
+import "./std/io" use file_write_without_filesystem_effect
+
+agent main() -> Int:
+    write = file_write_without_filesystem_effect("/tmp/out.txt", 5)
+    return write.bytes
+"#,
+    );
+    let source = std_source("io");
+    assert!(source.contains("\"filesystem.write\""));
+    assert!(source.contains("effect_envelope(\"std.io.write\""));
+}
+
+#[test]
+fn std_secrets_adversarial_secret_value_leak_surface_is_rejected() {
+    assert_std_adversarial_program_rejected(
+        "secrets",
+        true,
+        r#"
+import "./std/secrets" use secret_value
+
+agent main() -> String:
+    return secret_value("OPENAI_API_KEY")
+"#,
+    );
+    let source = std_source("secrets");
+    assert!(source.contains("value_redacted: Bool"));
+    assert!(!source.contains("value: String"));
+}
+
+#[test]
+fn std_observe_adversarial_raw_provider_payload_surface_is_rejected() {
+    assert_std_adversarial_program_rejected(
+        "observe",
+        true,
+        r#"
+import "./std/observe" use raw_provider_payload
+
+agent main() -> String:
+    return raw_provider_payload("openai")
+"#,
+    );
+    let source = std_source("observe");
+    assert!(source.contains("RuntimeObservationSummary"));
+    assert!(source.contains("effect_envelope(\"std.observe.runtime\""));
+}
+
+#[test]
+fn std_cache_adversarial_cache_key_without_effect_key_is_rejected() {
+    assert_std_adversarial_program_rejected(
+        "cache",
+        true,
+        r#"
+import "./std/cache" use cache_key
+
+agent main() -> String:
+    key = cache_key("answers", "weather", "fp-1", "prov-1")
+    return key.fingerprint
+"#,
+    );
+    let source = std_source("cache");
+    assert!(source.contains("effect_key: String"));
+    assert!(source.contains("effect_envelope(\"std.cache.key\""));
+}
+
+#[test]
+fn std_queue_adversarial_job_without_replay_key_is_rejected() {
+    assert_std_adversarial_program_rejected(
+        "queue",
+        true,
+        r#"
+import "./std/queue" use pending_job
+
+agent main() -> String:
+    job = pending_job("job-1", "summarize", 3, 0.50, "std.ai")
+    return job.id
+"#,
+    );
+    let source = std_source("queue");
+    assert!(source.contains("replay_key: String"));
+    assert!(source.contains("effect_envelope(\"std.queue.job\""));
+}
+
+#[test]
+fn std_jobs_adversarial_unredacted_job_payload_surface_is_rejected() {
+    assert_std_adversarial_program_rejected(
+        "jobs",
+        true,
+        r#"
+import "./std/jobs" use job_input_raw
+
+agent main() -> String:
+    input = job_input_raw("daily_brief", "full payload", "DailyBriefInput")
+    return input.raw_payload
+"#,
+    );
+    let source = std_source("jobs");
+    assert!(source.contains("redacted: Bool"));
+    assert!(source.contains("job_metadata_redacted"));
+}
+
+#[test]
+fn std_auth_adversarial_raw_api_key_surface_is_rejected() {
+    assert_std_adversarial_program_rejected(
+        "auth",
+        true,
+        r#"
+import "./std/auth" use api_key_secret
+
+agent main() -> String:
+    return api_key_secret("key-1")
+"#,
+    );
+    let source = std_source("auth");
+    assert!(source.contains("hash_algorithm: String"));
+    assert!(source.contains("redacted: Bool"));
+    assert!(!source.contains("secret_value"));
+}
+
+#[test]
+fn std_approvals_adversarial_queue_item_without_contract_is_rejected() {
+    assert_std_adversarial_program_rejected(
+        "approvals",
+        true,
+        r#"
+import "./std/approvals" use approval_queue_item_without_contract
+
+agent main() -> String:
+    item = approval_queue_item_without_contract("approval-1", "org-1", "user-1")
+    return item.id
+"#,
+    );
+    let source = std_source("approvals");
+    assert!(source.contains("ApprovalContractRef"));
+    assert!(source.contains("redacted: Bool"));
+}
+
+#[test]
+fn std_agent_adversarial_grounded_answer_without_provenance_is_rejected() {
+    assert_std_adversarial_program_rejected(
+        "agent",
+        true,
+        r#"
+import "./std/agent" use answer_without_provenance
+
+agent main() -> String:
+    answer = answer_without_provenance("yes")
+    return answer.answer
+"#,
+    );
+    let source = std_source("agent");
+    assert!(source.contains("provenance_key: String"));
+    assert!(source.contains("provenance_key != \"\""));
+}
+
+#[test]
+fn std_rag_adversarial_retrieved_chunk_without_provenance_is_rejected() {
+    assert_std_adversarial_program_rejected(
+        "rag",
+        true,
+        r#"
+import "./std/rag" use retrieved_chunk_without_provenance
+
+agent main() -> Bool:
+    return retrieved_chunk_without_provenance("doc-1")
+"#,
+    );
+    let source = std_source("rag");
+    assert!(source.contains("provenance_key: String"));
+    assert!(source.contains("chunk.provenance_key != \"\""));
+}
+
+#[test]
+fn std_effects_adversarial_envelope_without_replay_key_is_rejected() {
+    assert_std_adversarial_program_rejected(
+        "effects",
+        false,
+        r#"
+import "./std/effects" use effect_envelope
+
+agent main() -> Bool:
+    effect = effect_envelope("std.http.request", "prov-1", "", "fp-1")
+    return effect.replay_key != ""
+"#,
+    );
+    let source = std_source("effects");
+    assert!(source.contains("replay_key: String"));
+    assert!(source.contains("replay_safe"));
+}
+
 // ---------------------------------------------------------------
 // Imported-helpers typecheck tests. Each exercises the full
 // public surface of one std/*.cor module from a user-side

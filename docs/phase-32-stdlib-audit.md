@@ -171,15 +171,18 @@ declared capability / trust / data / replay metadata in their traces.
 
 ## Aggregate test coverage
 
-`crates/corvid-driver/tests/stdlib.rs` ships 25 tests:
+`crates/corvid-driver/tests/stdlib.rs` ships per-module coverage:
 
-- 11 `compiles_as_corvid_source` tests (one per module: ai, http, io,
-  secrets, observe, cache, queue, jobs, agent, rag, effects, db).
-- 12 `imported_helpers_typecheck` tests (each module's public surface
-  is import-typechecked from host code so consumers cannot use a
-  helper with the wrong arity / type / effect row).
-- 2 adversarial tests (the token-redaction test plus the structured
-  effect-meta enforcement on imported `std.ai`).
+- `compiles_as_corvid_source` tests for every module: ai, http, io,
+  secrets, observe, cache, queue, jobs, auth, approvals, agent, rag,
+  effects, and db.
+- `imported_helpers_typecheck` tests for every module's public surface,
+  so consumers cannot use a helper with the wrong arity / type / effect
+  row.
+- Named adversarial tests for every module: secret value leaks, untagged
+  HTTP/IO/cache/queue/job surfaces, raw auth/approval/observe/AI payload
+  surfaces, missing provenance for agent/RAG answers, missing replay keys
+  for effects, and the `std.db` token-redaction surface.
 
 Every module has `cargo test -p corvid-driver --test stdlib` running
 on every push through the workspace-tests CI job.
@@ -187,14 +190,7 @@ on every push through the workspace-tests CI job.
 ## Where the ROADMAP claims have a real gap
 
 None identified. Every Phase 32 ROADMAP `[x]` slice has matching
-source + at least one test. The only structural item to track:
-
-- The `std.db` adversarial-coverage row is currently the only
-  module with a per-surface adversarial test; promoting more modules
-  to carry a named adversarial test (e.g. `std.secrets` value-leak
-  attempt rejected, `std.io` write-without-`filesystem.write`-effect
-  rejected) would deepen the coverage. Tracked as **slice 32-U-stdlib-adversarial-expansion**
-  for a future audit; not blocking Phase 32's `[x]`.
+source + compile, imported-helper, and per-module adversarial coverage.
 
 ## Verdict
 

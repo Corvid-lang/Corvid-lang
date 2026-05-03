@@ -3495,3 +3495,12 @@ self-hosted indexes are not the same as operating a hosted registry. Avoid
 default service URLs unless the service actually exists, and keep the
 `OutOfScope` guarantee id aligned with docs and generated semantics so the
 honesty boundary is machine-visible.
+
+## stdlib adversarial coverage
+
+For repo-native Corvid stdlib modules, many safety boundaries are exported
+helper shape plus metadata fields rather than Rust runtime branches. Negative
+import/call tests are useful adversarial coverage: they prove there is no
+public unsafe helper with the bypass shape, while source-shape assertions pin
+redaction, provenance, effect-key, and replay-key metadata in the module that
+owns the surface.
