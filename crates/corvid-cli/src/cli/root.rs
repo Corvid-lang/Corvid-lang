@@ -15,11 +15,12 @@
 //! `cli::package`. The 16 remaining enums in this file are
 //! candidates for the same per-group treatment in Tier B.
 
-use clap::{Parser, Subcommand, ValueEnum};
+use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
 pub use super::abi::AbiCommand;
 pub use super::approvals::ApprovalsCommand;
+pub use super::approver::{ApproverCardFormat, ApproverCommand};
 pub use super::auth::{AuthCommand, AuthKeysCommand};
 pub use super::bench::BenchCommand;
 pub use super::bundle::BundleCommand;
@@ -696,37 +697,6 @@ pub enum Command {
         #[command(subcommand)]
         command: ApprovalsCommand,
     },
-}
-
-#[derive(Subcommand)]
-pub enum ApproverCommand {
-    Check {
-        approver: PathBuf,
-        #[arg(long, value_name = "USD")]
-        max_budget_usd: Option<f64>,
-    },
-    Simulate {
-        approver: PathBuf,
-        site_label: String,
-        #[arg(long, value_name = "JSON")]
-        args: String,
-        #[arg(long, value_name = "USD")]
-        max_budget_usd: Option<f64>,
-    },
-    Card {
-        site_label: String,
-        #[arg(long, value_name = "JSON")]
-        args: String,
-        #[arg(long, value_enum, default_value_t = ApproverCardFormat::Text)]
-        format: ApproverCardFormat,
-    },
-}
-
-#[derive(Debug, Clone, Copy, ValueEnum)]
-pub enum ApproverCardFormat {
-    Text,
-    Json,
-    Html,
 }
 
 #[derive(Subcommand)]

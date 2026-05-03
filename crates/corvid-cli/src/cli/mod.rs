@@ -14,6 +14,7 @@
 
 pub mod abi;
 pub mod approvals;
+pub mod approver;
 pub mod auth;
 pub mod bench;
 pub mod bundle;
@@ -34,6 +35,8 @@ pub mod upgrade;
 pub use abi::*;
 #[allow(unused_imports)]
 pub use approvals::*;
+#[allow(unused_imports)]
+pub use approver::*;
 #[allow(unused_imports)]
 pub use auth::*;
 #[allow(unused_imports)]
