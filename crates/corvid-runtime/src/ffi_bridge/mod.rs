@@ -44,6 +44,7 @@ use crate::abi::CorvidString;
 use crate::errors::RuntimeError;
 use std::path::PathBuf;
 
+mod approval_exports;
 mod llm_dispatch;
 mod prompt_exports;
 mod replay_exports;
@@ -51,6 +52,7 @@ mod state;
 mod strings;
 mod tokio_handle;
 mod tool_iter;
+pub use approval_exports::{corvid_approve_sync, corvid_citation_verify_or_panic};
 pub use prompt_exports::{
     corvid_prompt_call_bool, corvid_prompt_call_float, corvid_prompt_call_int,
     corvid_prompt_call_string,
@@ -186,53 +188,6 @@ fn panic_if_replay_runtime_error(context: &str, err: &RuntimeError) {
 
 pub(super) fn trace_path_from_env() -> Option<PathBuf> {
     std::env::var_os("CORVID_TRACE_PATH").map(PathBuf::from)
-}
-
-#[no_mangle]
-pub unsafe extern "C" fn corvid_citation_verify_or_panic(
-    prompt_name: CorvidString,
-    context: CorvidString,
-    response: CorvidString,
-) -> bool {
-    let prompt_name_ref = unsafe { borrow_corvid_string(&prompt_name) };
-    let context_ref = unsafe { borrow_corvid_string(&context) };
-    let response_ref = unsafe { borrow_corvid_string(&response) };
-    if crate::citation::citation_verified(context_ref, response_ref) {
-        return true;
-    }
-
-    panic!(
-        "citation verification failed for prompt `{prompt_name_ref}`: response does not reference content from the cited context parameter"
-    );
-}
-
-#[no_mangle]
-pub unsafe extern "C" fn corvid_approve_sync(
-    label: CorvidString,
-    arg_types: CorvidString,
-    argc: i64,
-    args_ptr: i64,
-) -> bool {
-    let label = unsafe { read_corvid_string(label) };
-    let arg_tags = unsafe { borrow_corvid_string(&arg_types) };
-    let args = unsafe { crate::native_trace::decode_trace_values(arg_tags, argc, args_ptr) };
-    let state = bridge();
-    let runtime = state.corvid_runtime();
-    let label_for_call = label.clone();
-    let result = state
-        .tokio_handle()
-        .block_on(async move { runtime.approval_gate(&label_for_call, args).await });
-    match result {
-        Ok(()) => true,
-        Err(e) => {
-            panic_if_replay_runtime_error(
-                &format!("corvid_approve_sync: approval `{label}` failed"),
-                &e,
-            );
-            eprintln!("corvid_approve_sync: approval `{label}` failed: {e}");
-            false
-        }
-    }
 }
 
 // ------------------------------------------------------------
