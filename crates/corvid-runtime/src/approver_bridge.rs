@@ -12,7 +12,14 @@ use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 
 mod compile;
+mod state;
+
 use compile::{compile_approver_source, validate_approver_safety};
+pub(crate) use state::registered_approver_overlay;
+use state::RegisteredApprover;
+pub use state::{
+    clear_registered_approver, evaluate_registered_approver, register_approver_from_source,
+};
 
 const APPROVER_AGENT_NAME: &str = "approve_site";
 const APPROVER_PRELUDE: &str = r#"
@@ -111,96 +118,6 @@ pub struct ApprovalDecisionInfo {
 pub struct SimulatedApproverDecision {
     pub accepted: bool,
     pub rationale: String,
-}
-
-#[derive(Debug, Clone)]
-struct RegisteredApprover {
-    source_path: PathBuf,
-    abi: AbiAgent,
-    program: MiniApproverProgram,
-    display_budget_usd: f64,
-    signature_json: String,
-    name_c: CString,
-    symbol_c: CString,
-    source_file_c: CString,
-    signature_json_c: CString,
-}
-
-pub(crate) struct RegisteredApproverOverlay {
-    pub abi: AbiAgent,
-    pub display_budget_usd: f64,
-    pub signature_json: String,
-    pub name_ptr: *const c_char,
-    pub symbol_ptr: *const c_char,
-    pub source_file_ptr: *const c_char,
-    pub signature_json_ptr: *const c_char,
-    pub signature_json_len: usize,
-}
-
-fn state() -> &'static Mutex<Option<RegisteredApprover>> {
-    static STATE: OnceLock<Mutex<Option<RegisteredApprover>>> = OnceLock::new();
-    STATE.get_or_init(|| Mutex::new(None))
-}
-
-pub fn register_approver_from_source(
-    source_path: &Path,
-    max_budget_usd_per_call: f64,
-) -> Result<(), ApproverLoadError> {
-    let mut compiled = compile_approver_source(source_path)?;
-    validate_approver_safety(&compiled.abi, max_budget_usd_per_call)?;
-    compiled.display_budget_usd = compiled
-        .abi
-        .budget
-        .as_ref()
-        .map(|budget| budget.usd_per_call)
-        .or_else(|| {
-            if max_budget_usd_per_call > 0.0 {
-                Some(max_budget_usd_per_call)
-            } else {
-                None
-            }
-        })
-        .unwrap_or(f64::NAN);
-    *state().lock().unwrap() = Some(compiled);
-    Ok(())
-}
-
-pub fn clear_registered_approver() {
-    *state().lock().unwrap() = None;
-}
-
-pub(crate) fn registered_approver_overlay() -> Option<RegisteredApproverOverlay> {
-    let guard = state().lock().unwrap();
-    let registered = guard.as_ref()?;
-    Some(RegisteredApproverOverlay {
-        abi: registered.abi.clone(),
-        display_budget_usd: registered.display_budget_usd,
-        signature_json: registered.signature_json.clone(),
-        name_ptr: registered.name_c.as_ptr(),
-        symbol_ptr: registered.symbol_c.as_ptr(),
-        source_file_ptr: registered.source_file_c.as_ptr(),
-        signature_json_ptr: registered.signature_json_c.as_ptr(),
-        signature_json_len: registered.signature_json_c.as_bytes().len(),
-    })
-}
-
-pub fn evaluate_registered_approver(
-    site: &ApprovalSiteInput,
-    args: &[Value],
-) -> Result<Option<ApprovalDecisionInfo>, String> {
-    let approver = state().lock().unwrap().clone();
-    let Some(approver) = approver else {
-        return Ok(None);
-    };
-    let decision = approver.program.evaluate(site, args)?;
-    Ok(Some(ApprovalDecisionInfo {
-        accepted: decision.accepted,
-        decider: format!(
-            "corvid-agent:{}",
-            approver.source_path.to_string_lossy().replace('\\', "/")
-        ),
-        rationale: decision.rationale,
-    }))
 }
 
 pub fn simulate_approver_source(
