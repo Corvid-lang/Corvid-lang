@@ -6,6 +6,7 @@ mod operand;
 mod overflow;
 mod try_propagate;
 mod try_retry;
+mod wrappers;
 pub(super) use binop::{
     lower_binop_strict, lower_binop_wrapping, lower_short_circuit, lower_unop, lower_unop_wrapping,
 };
@@ -20,6 +21,7 @@ pub(super) use operand::{
 pub(super) use overflow::{trap_on_zero, with_overflow_trap};
 pub(super) use try_propagate::{lower_try_propagate_option, lower_try_propagate_result};
 pub(super) use try_retry::{lower_try_retry_option, lower_try_retry_result};
+use wrappers::tool_wrapper_symbol;
 
 pub(super) fn lower_expr(
     builder: &mut FunctionBuilder,
@@ -994,12 +996,4 @@ pub(super) fn lower_expr(
             ))
         }
     }
-}
-
-fn tool_wrapper_symbol(tool_name: &str) -> String {
-    let mangled: String = tool_name
-        .chars()
-        .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
-        .collect();
-    format!("__corvid_tool_{mangled}")
 }
