@@ -195,6 +195,3 @@ pub(super) fn validate_non_empty(label: &str, value: &str) -> Result<(), Runtime
         Ok(())
     }
 }
-
-#[cfg(test)]
-mod tests {}
