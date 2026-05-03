@@ -227,13 +227,13 @@ jobs:
         working-directory: examples/wasm_browser_demo/test
         run: npx playwright test
 
-  phase30-python-ffi:
+  python-features:
     # Phase 30-J: Python FFI integration tests must run on every push.
     # The default workspace test run does NOT enable the `python`
     # feature flag, so a regression in the pyo3 call bridge, GIL
     # handling, type marshaling, or trace event emission would not be
     # caught without this matrix entry.
-    name: 30 python FFI runtime
+    name: python-features
     runs-on: ubuntu-latest
     needs: workspace-tests
     steps:

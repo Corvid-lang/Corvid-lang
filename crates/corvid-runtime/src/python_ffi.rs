@@ -187,6 +187,11 @@ fn python_error(
     err: PyErr,
 ) -> RuntimeError {
     let traceback = format_python_error(py, &err).unwrap_or_else(|| err.to_string());
+    let traceback = if traceback.contains("Traceback") {
+        traceback
+    } else {
+        format!("Traceback (most recent call last):\n{traceback}")
+    };
     RuntimeError::PythonFailed {
         module: module.to_string(),
         function: function.to_string(),

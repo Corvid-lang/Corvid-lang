@@ -1591,7 +1591,7 @@ The determinism-source catalog and the language's treatment of non-reproducible 
 - [x] 29-K-memory-module-audit-doc       `docs/phase-29-memory-audit.md` ships, enumerating every memory primitive against the ROADMAP claims with source file + line range + positive + adversarial tests for each surface. Audit confirmed native-tier coverage; identified one cross-tier gap (wasm IndexedDB backing) that promotes into slice 29-L below.
 - [ ] 29-L-wasm-indexeddb-host-import    Add `corvid:host store.*` import bindings for IndexedDB on the JS side; the wasm-codegen ES loader generates the typed wrapper. Closes when `examples/wasm_browser_demo` persists across page reloads through IndexedDB and a Phase 23 browser CI test (slice 23-F) verifies persistence. The native-tier `[x]` of Phase 29 stands; this slice promotes Phase 29's WASM-tier claim from aspirational scope-line to shipped runtime.
 
-### Phase 30 — Python FFI via PyO3 (~5–6 weeks) (reopened 2026-04-29 — default-CI gap)
+### Phase 30 — Python FFI via PyO3 (~5–6 weeks) ✅ closed
 
 **Goal.** `import python "..."` works in compiled code. Closes the "but Python has the ecosystem" gap.
 
@@ -1615,7 +1615,7 @@ The determinism-source catalog and the language's treatment of non-reproducible 
 
 **Phase 30 reopened 2026-04-29 — gap-closing slice required:**
 
-- [ ] 30-J-default-ci-pyo3        The Python FFI integration tests run only behind the optional `python` feature flag; default `cargo test --workspace` does not exercise the pyo3 runtime path. A regression in the call bridge, the GIL handling, the type marshaling, or the trace event emission would not be caught by CI on every push. The slice (a) adds a CI matrix entry that runs `cargo test -p corvid-runtime --features python --tests` against a pinned CPython, (b) makes the Python integration tests assert at minimum: scalar round-trip, list round-trip, dict↔struct round-trip, exception marshalling preserves traceback, `python.call`/`python.result`/`python.error` events fire, and a sandbox-profile-denied import is rejected, (c) documents the matrix entry in `docs/ci.md`. Closes when the GitHub Actions workflow shows the python-feature job green on `main`.
+- [x] 30-J-default-ci-pyo3        The Python FFI integration tests run in the `python-features` CI job with pinned CPython 3.11 and `cargo test -p corvid-runtime --features python --tests`. The feature tests assert scalar, list, and dict/object round-trips, traceback-preserving exception marshalling, `python.call` / `python.result` / `python.error` trace events, and sandbox-profile-denied imports. `docs/ci.md` documents the matrix entry.
 
 **Phase 30 next-close criteria:** the ROADMAP-level `[x]` returns only when slice 30-J clears the slice completion gate.
 

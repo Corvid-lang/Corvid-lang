@@ -520,6 +520,7 @@ If `cargo fmt --check` fails because `cargo-fmt` is not installed, install the R
 - [docs/effects-spec/](./docs/effects-spec/): AI-native effect system, grounding, budgets, confidence, streaming, model substrate, replay, and verification specs.
 - [docs/core-semantics.md](./docs/core-semantics.md): generated guarantee registry with ids, classes, phases, and test references.
 - [docs/security-model.md](./docs/security-model.md): signed artifact trust boundary, host acceptance workflow, and explicit non-goals.
+- [docs/ci.md](./docs/ci.md): CI matrix, including optional Python FFI feature coverage.
 - [docs/bundle-format.md](./docs/bundle-format.md): signed bundle and receipt format.
 - [ARCHITECTURE.md](./ARCHITECTURE.md): compiler design and repo structure.
 - [CONTRIBUTING.md](./CONTRIBUTING.md): project rules and contribution expectations.

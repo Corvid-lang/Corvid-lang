@@ -3504,3 +3504,10 @@ import/call tests are useful adversarial coverage: they prove there is no
 public unsafe helper with the bypass shape, while source-shape assertions pin
 redaction, provenance, effect-key, and replay-key metadata in the module that
 owns the surface.
+
+## optional feature CI
+
+Feature-gated runtime paths need their own named CI job, not a comment in the
+default workspace tests. Keep the job id behavioral (`python-features`), pin
+the external runtime version, and document exactly which optional contracts the
+job covers so future maintainers know why it is separate.

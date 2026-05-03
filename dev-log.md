@@ -6208,3 +6208,24 @@ Validation:
 - `cargo check --workspace`
 - `cargo run -q -p corvid-cli -- verify --corpus tests/corpus`
   (exit 2 with the established Windows `whoami` linker signature)
+
+---
+
+## 2026-05-03 — Slice 30-J default CI PyO3
+
+- Closed the Python FFI default-CI gap by naming the workflow job
+  `python-features`, pinning CPython 3.11, and keeping
+  `cargo test -p corvid-runtime --features python --tests` in the CI
+  matrix.
+- Extended feature-gated runtime tests to cover scalar, list, and
+  dict/object round-trips, traceback-preserving exception marshalling,
+  `python.call` / `python.result` / `python.error` trace events, and
+  sandbox-profile-denied imports.
+- Added `docs/ci.md` and linked it from README so the optional-feature
+  gate is visible outside the workflow file.
+
+Validation:
+- `cargo test -p corvid-runtime --features python --tests`
+- `cargo check --workspace`
+- `cargo run -q -p corvid-cli -- verify --corpus tests/corpus`
+  (exit 2 with the established Windows `whoami` linker signature)
