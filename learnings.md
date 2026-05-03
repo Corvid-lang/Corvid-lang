@@ -3478,3 +3478,12 @@ large files remain valid under the strict rubric because they are one command
 enum, one renderer, one declaration function, one type implementation, or a
 pure integration-test module. The audit has to name the responsibility, not
 just count lines.
+
+## regression corpus naming
+
+An internal seed corpus and a public submission process are different claims.
+Call the checked-in fixtures a seed or internal regression corpus until
+accepted external reports actually land in that corpus. The bounty page and
+issue template can be documented as the intake path, but source, specs, and
+roadmap copy should not imply the corpus has already been fed by external
+submissions.

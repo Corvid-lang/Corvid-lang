@@ -43,11 +43,11 @@ Five independent techniques run on every build. A regression in any one fails CI
 
 **Inventive angle.** Each rewrite carries a **law reference**. When a rewrite breaks a profile, the divergence report cites the law: "α-equivalence broken at path/to/file.cor:42." Users learn the algebra by reading failures.
 
-## 4. Bounty-fed regression corpus
+## 4. Seed regression corpus with public submission process
 
 **What it checks.** Every historical bypass attempt lives permanently in the codebase. New releases must reject every historical bypass. Contributors who find new bypasses get credit + a permanent entry in the corpus.
 
-**Why it matters.** Soundness claims compound: the more attacks a verifier has survived, the more credible future claims become. Bounty-fed corpora have delivered for SAT solvers, cryptographic libraries, and fuzzers; no prior effect system has one.
+**Why it matters.** Soundness claims compound: the more attacks a verifier has survived, the more credible future claims become. Seeded regression corpora plus a public submission path have delivered for SAT solvers, cryptographic libraries, and fuzzers; no prior effect system has one.
 
 **Implementation status.** [`docs/effects-spec/counterexamples/composition/`](./counterexamples/composition/) holds the seed corpus (five composition attacks). Each fixture names the bypass, bug exposed, fix/proof mechanism, and seed-corpus credit. The meta-verification harness (see §5) uses this corpus today. The public process is live in [`bounty.md`](./bounty.md), with a structured GitHub issue template at [`.github/ISSUE_TEMPLATE/effect-bypass.yml`](../../.github/ISSUE_TEMPLATE/effect-bypass.yml).
 
@@ -119,7 +119,7 @@ Any failure blocks the build. Shipped in commit `4d4944b`.
 | Cross-tier differential verification (§1) | ✅ live, corpus + shrinker + blame | ✅ |
 | Preserved-semantics fuzzing (§3) | 🔨 slice A shipped, slices B/C in progress | partial |
 | Adversarial LLM generation (§2) | ✅ deterministic taxonomy + compiler classifier live; provider sampling can feed same harness later | partial |
-| Bounty-fed regression corpus (§4) | ✅ seed corpus, meta-gate, bounty page, and issue template live | ✅ |
+| Seed regression corpus with public submission process (§4) | ✅ seed corpus, meta-gate, bounty page, and issue template live | ✅ |
 | Self-verifying verification (§5) | ✅ live | ✅ |
 | Algebraic-law proptest (§6) | ✅ live, 10k cases per law | ✅ |
 | Spec↔compiler sync (§7) | ✅ live | ✅ |

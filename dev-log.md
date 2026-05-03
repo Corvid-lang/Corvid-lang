@@ -6033,6 +6033,25 @@ Validation:
 - CI YAML reviewed against the existing workflow structure.
 - `cargo test -p corvid-abi --test byte_fuzz_corpus -- --nocapture`
 
+## 2026-05-03 - Slice 20m: honest regression-corpus naming
+
+Closed the Phase 20m audit-correction slice by removing the old aspirational
+bounty wording from the verification corpus surfaces. The corpus is now
+described as a seed/internal regression corpus with a public submission process
+for future accepted reports, which matches what actually ships: checked-in
+counterexamples, the meta-verification gate, `docs/effects-spec/bounty.md`, and
+the GitHub issue template.
+
+The ROADMAP entry for 20m is ticked, and the already-closed Phase 20j/20k
+headings now carry the closed marker while the file was being touched.
+
+Validation:
+
+- `rg -n -i <old phrase> .` returns zero hits.
+- `cargo check --workspace`
+- `cargo run -q -p corvid-cli -- verify --corpus tests/corpus` exits with the
+  established Windows `whoami` linker baseline.
+
 ## 2026-04-28 - Phase 36A: backend core design brief
 
 Slice 36A is complete. Added `docs/phase-36-backend-core.md` as the

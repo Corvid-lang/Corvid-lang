@@ -20,7 +20,7 @@ This directory is the normative specification of Corvid's dimensional effect sys
 | [09 — Typed model substrate](./09-model-substrate.md) | `model` declarations, capability-based routing, content-aware dispatch |
 | [10 — FFI, generics, async interactions](./10-interactions.md) | How the effect system composes across language boundaries |
 | [11 — Related work](./11-related-work.md) | Koka row polymorphism, Eff handlers, Frank abilities, Haskell monad transformers, Rust `unsafe`, capability-based security, linear types, session types |
-| [12 — Verification methodology](./12-verification.md) | Cross-tier differential verification, adversarial generation, preserved-semantics fuzzing, bounty-fed regression corpus |
+| [12 — Verification methodology](./12-verification.md) | Cross-tier differential verification, adversarial generation, preserved-semantics fuzzing, seed regression corpus with public submission process |
 | [13 — Typed model substrate: what shipped](./13-model-substrate-shipped.md) | Phase 20h compiler track — `model` decls, `requires:` capability, `route:`, `progressive:`, `rollout`, jurisdiction/compliance/privacy dims. Real compiling examples, implementation references, shipping trail. |
 | [14 — Replay, prod-as-test-suite, and behavior-diff: what shipped](./14-replay.md) | Phase 21 thesis — every run writes a trace; prod traces are the regression suite; PRs carry a signed behavior receipt. `@replayable` / `@deterministic`, the `replay` language primitive, `corvid test --from-traces` + `--promote`, `corvid trace-diff`, shadow daemon, determinism axes. |
 | [counterexamples/](./counterexamples/) | Every historical bypass attempt as a permanent regression test |

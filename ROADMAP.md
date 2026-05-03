@@ -498,7 +498,7 @@ Pre-phase chat caught two limiting shortcuts in my brief and reshaped the phase 
 
 ---
 
-### Phase 20 — Effect rigor + grounding + cost + streaming (~14–16 weeks) — **THE MOAT PHASE** (reopened 2026-04-29 — bounty corpus naming gap)
+### Phase 20 — Effect rigor + grounding + cost + streaming (~14–16 weeks) — **THE MOAT PHASE** ✅ closed
 
 **Goal.** The phase that defines what makes Corvid Corvid. All compile-time, all language-level. Shipped mid-roadmap, not saved for impact — every phase after this inherits the moat.
 
@@ -670,7 +670,7 @@ If profiles diverge, the composition algebra is **non-compositional** — it dep
 - [x] proptest driver that generates programs + applies rewrites + checks profile equality — driver framework live in `crates/corvid-differential-verify/src/fuzz.rs`
 - [x] Divergence reports name the rewrite rule that caused the profile drift — `corvid test rewrites` runs the preserved-semantics matrix and drift failures cite the rewrite rule, semantic law, first changed line, original/rewritten profiles, and shrunk reproducer.
 
-##### 5. Bounty-fed regression corpus
+##### 5. Seed regression corpus plus bounty intake
 
 Phase 20g ships with a **standing bounty surface**:
 
@@ -1147,7 +1147,7 @@ Users register local models (Ollama, vLLM, llama.cpp) with declared capabilities
 
 **Phase 20 reopened 2026-04-29 — gap-closing slice required:**
 
-- [ ] 20m-bounty-corpus-honest-naming     The slice originally landed an *internal* regression-corpus generator under the name "bounty-fed regression corpus." No public bug-bounty intake exists today. Either rename throughout the codebase + ROADMAP + docs to `regression-corpus` (internal), or build the external bounty intake (post-v1.0 scope). Either way: every reference to "bounty" in source comments, docs, and ROADMAP must match what actually ships. No aspirational vocabulary. Closes when grep for `bounty-fed` returns zero hits or every hit is qualified with "(future external bounty program — currently internal-only)."
+- [x] 20m-bounty-corpus-honest-naming     The internal regression-corpus generator no longer uses wording that implies external bounty submissions already fed the corpus. Existing bounty references now describe the concrete submission page, issue template, and future accepted-report flow. Closes because grep for the old aspirational phrase returns zero hits.
 
 **Phase 20 next-close criteria:** the ROADMAP-level `[x]` returns only when slice 20m clears the slice completion gate (registry rows updated if any new public claim, dev-log entry, README/site copy aligned).
 
@@ -1184,7 +1184,7 @@ Users register local models (Ollama, vLLM, llama.cpp) with declared capabilities
 
 ---
 
-### Phase 20j — File responsibility re-audit + post-20i decomposition
+### Phase 20j — File responsibility re-audit + post-20i decomposition ✅ closed
 
 **Goal.** A 2026-04-30 audit pass found 36 files in the workspace that fail the CLAUDE.md responsibility rubric — five named directly (`corvid-cli/main.rs`, `corvid-runtime/queue.rs`, `corvid-driver/build.rs`, `corvid-guarantees/lib.rs`, `corvid-runtime/auth.rs`) plus 31 surfaced by a workspace-wide rubric sweep. Most are post-20i regrowth (`corvid-runtime/runtime.rs` grew 5.8× from 445 → 2,590 lines; `corvid-vm/value.rs` grew 1.2×; `corvid-vm/interp/prompt.rs` grew 1.4×); some are net-new (`corvid-codegen-cl/lowering/runtime.rs` at 3,220 lines, `corvid-cli/auth_cmd|connectors_cmd|observe_helpers_cmd` shipped this session at land-time-failing sizes). Hygiene phase before any further audit-correction work so the rubric remains the floor, not a snapshot.
 
@@ -1215,7 +1215,7 @@ Users register local models (Ollama, vLLM, llama.cpp) with declared capabilities
 
 ---
 
-### Phase 20k — Strict single-responsibility pass
+### Phase 20k — Strict single-responsibility pass ✅ closed
 
 **Goal.** Tighten the CLAUDE.md responsibility rubric from "1–2" to **exactly one** responsibility per file, with three carve-outs (inline `#[cfg(test)] mod tests`, a type with its inherent + canonical-derive impls, and facade modules). Run a workspace audit against the strict rule and decompose files that pass under "1–2" but fail under "exactly 1."
 
@@ -1736,7 +1736,7 @@ The determinism-source catalog and the language's treatment of non-reproducible 
 **Scope:**
 
 - [x] Rewrite the repo root `README.md` with the full inventions catalog up top, above the install instructions. Every entry has a 2-line pitch + code example + link to spec.
-- [x] Category structure matching the moat: **Safety at compile time** (approve gates, dimensional effects, Grounded<T>, @min_confidence, @budget), **AI-native ergonomics** (agent/tool/prompt/approve/effect/model keywords, evals with trace assertions, replay), **Adaptive routing** (20h model substrate — capability routing, content-aware dispatch, progressive refinement, ensemble voting, adversarial validation, jurisdiction/compliance, privacy tiers, cost-frontier exploration), **Streaming** (20f — live cost termination, per-element provenance, mid-stream escalation, progressive structured types, resumption tokens, fan-out/fan-in), **Verification** (20g — cross-tier differential verification, LLM-driven adversarial bypass generation, executable interactive spec, preserved-semantics fuzzing, bounty-fed regression corpus).
+- [x] Category structure matching the moat: **Safety at compile time** (approve gates, dimensional effects, Grounded<T>, @min_confidence, @budget), **AI-native ergonomics** (agent/tool/prompt/approve/effect/model keywords, evals with trace assertions, replay), **Adaptive routing** (20h model substrate — capability routing, content-aware dispatch, progressive refinement, ensemble voting, adversarial validation, jurisdiction/compliance, privacy tiers, cost-frontier exploration), **Streaming** (20f — live cost termination, per-element provenance, mid-stream escalation, progressive structured types, resumption tokens, fan-out/fan-in), **Verification** (20g — cross-tier differential verification, LLM-driven adversarial bypass generation, executable interactive spec, preserved-semantics fuzzing, seed regression corpus with public submission process).
 - [x] Landing page rewrite (`docs/site/`): every invention gets a runnable playground example. "Corvid is faster than Python at X" / "safer than TypeScript at Y" claims are supported with side-by-side comparisons that actually run.
 - [x] Runnable invention index: `corvid tour --topic <name>` CLI command opens the REPL pre-loaded with compiler-checked demos; `corvid tour --list` shows the shipped catalog across safety, AI-native ergonomics, adaptive routing, streaming, and verification.
 - [x] Cross-references: each invention in the README links to (a) the roadmap slice that shipped it, (b) the spec section that formalizes it, (c) the example in the tour, (d) the test that validates it.

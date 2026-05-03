@@ -121,4 +121,4 @@ Session types (Honda, Vasconcelos, Kubo; Rust's `session_types` crate) describe 
 
 ## Next
 
-[12 — Verification methodology](./12-verification.md) — cross-tier differential verification, adversarial LLM bypass generation, preserved-semantics fuzzing, bounty-fed regression corpus, self-verifying verification.
+[12 — Verification methodology](./12-verification.md) — cross-tier differential verification, adversarial LLM bypass generation, preserved-semantics fuzzing, seed regression corpus with public submission process, self-verifying verification.
