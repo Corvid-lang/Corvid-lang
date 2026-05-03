@@ -44,6 +44,9 @@ use super::stack_attribution::Attribution;
 /// independently.
 pub(super) const STACK_RECEIPT_SCHEMA_VERSION: u32 = 2;
 
+mod anomaly;
+pub(super) use anomaly::{build_anomaly, Anomaly, AnomalyClass, AnomalySeverity};
+
 // ---------------------------------------------------------------
 // Public types
 // ---------------------------------------------------------------
@@ -129,85 +132,6 @@ pub(super) struct StackDelta {
     pub introduced_at: String,
 }
 
-/// Typed anomaly surfaced by the composer. Cache-integrity is the
-/// only class intended to hard-fail; every other class surfaces in
-/// the receipt with a non-zero policy exit so reviewers can see
-/// exactly what tripped.
-#[derive(Debug, Clone, Serialize)]
-pub(super) struct Anomaly {
-    pub class: AnomalyClass,
-    pub severity: AnomalySeverity,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub introduced_at: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub affected_agent: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub affected_family: Option<String>,
-    pub affected_deltas: Vec<String>,
-    /// Structured reason string. LLM `narrative` + `remediation`
-    /// remain `None` at compose time; the LLM-surface commit of
-    /// this slice populates them.
-    pub detail: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub narrative: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub remediation: Option<String>,
-    /// Canonical sha256 over structured fields. GitLab /
-    /// CodeClimate renderers dedupe by this across re-runs of the
-    /// same stack — same inputs → same fingerprint → no phantom
-    /// "new" findings on every re-run.
-    pub fingerprint: String,
-}
-
-#[allow(dead_code)]
-#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub(super) enum AnomalyClass {
-    /// Per-commit receipt or envelope hash mismatched on
-    /// retrieval from the content-addressed cache. Security
-    /// signal — consumers never proceed past this. (Produced by
-    /// the cache-integration commit, not this composer commit;
-    /// variant reserved here for schema stability.)
-    CacheIntegrity,
-    /// Two adjacent Class B transitions on the same entity where
-    /// the first's `to` ≠ the second's `from`. Usually indicates
-    /// a rebase artifact, a cherry-pick that scrambled
-    /// intermediates, or an algebra bug in per-commit delta
-    /// emission.
-    AlgebraicChainBreak,
-    /// Two Class A lifecycle deltas in the same direction
-    /// (`added` then `added`, `gained` then `gained`, etc.)
-    /// without an intervening inverse. Well-formed git history
-    /// shouldn't produce this.
-    SameDirectionDuplicate,
-    /// Same-agent delta applied out of semantic order (e.g.
-    /// `dangerous_gained:X` before `added:X`). Reserved — the
-    /// composer doesn't enforce base-state ordering in this
-    /// commit; the later ordering-check commit populates it.
-    OrderingViolation,
-    /// A delta references an agent not present in the commit's
-    /// ABI, or a trace exercises agents not in any waypoint.
-    /// Reserved — metadata-drift checks land with replay
-    /// integration.
-    CrossReferenceDrift,
-    /// Algebra predicted no behavior change on a (trace, commit)
-    /// pair; replay showed divergence. Reserved — populated by
-    /// the predictive-replay commit.
-    PredictionMismatch,
-}
-
-#[allow(dead_code)]
-#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub(super) enum AnomalySeverity {
-    /// Composer refuses to proceed. Only cache-integrity uses
-    /// this today.
-    HardFail,
-    /// Surfaces in the receipt with non-zero policy exit; receipt
-    /// still emits so reviewers can see it.
-    Surface,
-}
-
 /// Input to the composer: one commit's contribution to the stack.
 /// The caller — typically the trace-diff driver after walking the
 /// commit range — materializes this from per-commit receipts that
@@ -262,7 +186,11 @@ pub(super) fn compose_stack(
             });
 
             match parse_delta_key(&delta.key) {
-                Some(DeltaKind::Lifecycle { family, entity, polarity }) => {
+                Some(DeltaKind::Lifecycle {
+                    family,
+                    entity,
+                    polarity,
+                }) => {
                     apply_lifecycle(
                         &mut lifecycle_state,
                         &mut anomalies,
@@ -273,7 +201,12 @@ pub(super) fn compose_stack(
                         &input.commit_sha,
                     );
                 }
-                Some(DeltaKind::Transition { family, entity, from, to }) => {
+                Some(DeltaKind::Transition {
+                    family,
+                    entity,
+                    from,
+                    to,
+                }) => {
                     apply_transition(
                         &mut transition_state,
                         &mut anomalies,
@@ -568,46 +501,6 @@ fn apply_transition(
     }
 }
 
-fn build_anomaly(
-    class: AnomalyClass,
-    severity: AnomalySeverity,
-    introduced_at: Option<String>,
-    affected_agent: Option<String>,
-    affected_family: Option<String>,
-    affected_deltas: Vec<String>,
-    detail: String,
-) -> Anomaly {
-    let mut hasher = Sha256::new();
-    hasher.update(format!("{:?}", class).as_bytes());
-    hasher.update(b"|");
-    hasher.update(introduced_at.as_deref().unwrap_or("").as_bytes());
-    hasher.update(b"|");
-    hasher.update(affected_agent.as_deref().unwrap_or("").as_bytes());
-    hasher.update(b"|");
-    hasher.update(affected_family.as_deref().unwrap_or("").as_bytes());
-    hasher.update(b"|");
-    for d in &affected_deltas {
-        hasher.update(d.as_bytes());
-        hasher.update(b"\n");
-    }
-    hasher.update(b"|");
-    hasher.update(detail.as_bytes());
-    let fingerprint = hex::encode(hasher.finalize());
-
-    Anomaly {
-        class,
-        severity,
-        introduced_at,
-        affected_agent,
-        affected_family,
-        affected_deltas,
-        detail,
-        narrative: None,
-        remediation: None,
-        fingerprint,
-    }
-}
-
 /// Compute the content-addressed stack hash: sha256 of sorted
 /// per-commit receipt hashes concatenated with the range spec.
 /// Same inputs → same hash (natural memoization); different
@@ -616,10 +509,8 @@ fn build_anomaly(
 /// addressed — swapping a component for a different-hash
 /// component necessarily changes the stack hash.
 fn compute_stack_hash(components: &[StackComponent], range_spec: &str) -> String {
-    let mut receipt_hashes: Vec<&str> = components
-        .iter()
-        .map(|c| c.receipt_hash.as_str())
-        .collect();
+    let mut receipt_hashes: Vec<&str> =
+        components.iter().map(|c| c.receipt_hash.as_str()).collect();
     receipt_hashes.sort_unstable();
 
     let mut hasher = Sha256::new();
@@ -664,7 +555,11 @@ mod tests {
     #[test]
     fn parse_lifecycle_gained() {
         match parse_delta_key("agent.dangerous_gained:refund_bot") {
-            Some(DeltaKind::Lifecycle { family, entity, polarity }) => {
+            Some(DeltaKind::Lifecycle {
+                family,
+                entity,
+                polarity,
+            }) => {
                 assert_eq!(family, "agent.dangerous");
                 assert_eq!(entity, "refund_bot");
                 assert_eq!(polarity, 1);
@@ -676,7 +571,11 @@ mod tests {
     #[test]
     fn parse_lifecycle_lost() {
         match parse_delta_key("agent.provenance.grounded_lost:bot") {
-            Some(DeltaKind::Lifecycle { family, entity, polarity }) => {
+            Some(DeltaKind::Lifecycle {
+                family,
+                entity,
+                polarity,
+            }) => {
                 assert_eq!(family, "agent.provenance.grounded");
                 assert_eq!(entity, "bot");
                 assert_eq!(polarity, -1);
@@ -688,7 +587,11 @@ mod tests {
     #[test]
     fn parse_lifecycle_added_with_multi_part_entity() {
         match parse_delta_key("agent.approval.label_added:bot:IssueRefund") {
-            Some(DeltaKind::Lifecycle { family, entity, polarity }) => {
+            Some(DeltaKind::Lifecycle {
+                family,
+                entity,
+                polarity,
+            }) => {
                 assert_eq!(family, "agent.approval.label");
                 assert_eq!(entity, "bot:IssueRefund");
                 assert_eq!(polarity, 1);
@@ -700,7 +603,11 @@ mod tests {
     #[test]
     fn parse_agent_added_dot_form() {
         match parse_delta_key("agent.added:foo") {
-            Some(DeltaKind::Lifecycle { family, entity, polarity }) => {
+            Some(DeltaKind::Lifecycle {
+                family,
+                entity,
+                polarity,
+            }) => {
                 assert_eq!(family, "agent.lifecycle");
                 assert_eq!(entity, "foo");
                 assert_eq!(polarity, 1);
@@ -712,7 +619,12 @@ mod tests {
     #[test]
     fn parse_transition_simple() {
         match parse_delta_key("agent.trust_tier_changed:bot:autonomous->human_required") {
-            Some(DeltaKind::Transition { family, entity, from, to }) => {
+            Some(DeltaKind::Transition {
+                family,
+                entity,
+                from,
+                to,
+            }) => {
                 assert_eq!(family, "agent.trust_tier");
                 assert_eq!(entity, "bot");
                 assert_eq!(from, "autonomous");
@@ -725,7 +637,12 @@ mod tests {
     #[test]
     fn parse_transition_with_label_in_entity() {
         match parse_delta_key("agent.approval.tier_changed:bot:IssueRefund:strict->lenient") {
-            Some(DeltaKind::Transition { family, entity, from, to }) => {
+            Some(DeltaKind::Transition {
+                family,
+                entity,
+                from,
+                to,
+            }) => {
                 assert_eq!(family, "agent.approval.tier");
                 assert_eq!(entity, "bot:IssueRefund");
                 assert_eq!(from, "strict");
@@ -745,13 +662,22 @@ mod tests {
     impl std::fmt::Debug for DeltaKind {
         fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
             match self {
-                DeltaKind::Lifecycle { family, entity, polarity } => f
+                DeltaKind::Lifecycle {
+                    family,
+                    entity,
+                    polarity,
+                } => f
                     .debug_struct("Lifecycle")
                     .field("family", family)
                     .field("entity", entity)
                     .field("polarity", polarity)
                     .finish(),
-                DeltaKind::Transition { family, entity, from, to } => f
+                DeltaKind::Transition {
+                    family,
+                    entity,
+                    from,
+                    to,
+                } => f
                     .debug_struct("Transition")
                     .field("family", family)
                     .field("entity", entity)
@@ -769,7 +695,10 @@ mod tests {
     #[test]
     fn class_a_add_then_remove_cancels_to_identity() {
         let r = compose_stack(
-            "base", "head", "src/a.cor", "base..head",
+            "base",
+            "head",
+            "src/a.cor",
+            "base..head",
             vec![
                 input("c1", vec![delta("agent.added:foo", "new")]),
                 input("c2", vec![delta("agent.removed:foo", "removed")]),
@@ -777,7 +706,8 @@ mod tests {
         );
         assert!(
             r.normal_form.is_empty(),
-            "add+remove should cancel; got: {:?}", r.normal_form
+            "add+remove should cancel; got: {:?}",
+            r.normal_form
         );
         assert_eq!(r.history.len(), 2);
         assert!(r.anomalies.is_empty());
@@ -786,7 +716,10 @@ mod tests {
     #[test]
     fn class_a_net_positive_survives_with_introduced_at_last_commit() {
         let r = compose_stack(
-            "base", "head", "src/a.cor", "base..head",
+            "base",
+            "head",
+            "src/a.cor",
+            "base..head",
             vec![
                 input("c1", vec![delta("agent.added:foo", "new")]),
                 input("c2", vec![delta("agent.removed:foo", "removed")]),
@@ -804,7 +737,10 @@ mod tests {
     #[test]
     fn class_a_same_direction_twice_is_anomaly() {
         let r = compose_stack(
-            "base", "head", "src/a.cor", "base..head",
+            "base",
+            "head",
+            "src/a.cor",
+            "base..head",
             vec![
                 input("c1", vec![delta("agent.added:foo", "")]),
                 input("c2", vec![delta("agent.added:foo", "redundant add")]),
@@ -821,10 +757,19 @@ mod tests {
     #[test]
     fn class_a_dangerous_gained_lost_cancels() {
         let r = compose_stack(
-            "base", "head", "src/a.cor", "base..head",
+            "base",
+            "head",
+            "src/a.cor",
+            "base..head",
             vec![
-                input("c1", vec![delta("agent.dangerous_gained:bot", "became dangerous")]),
-                input("c2", vec![delta("agent.dangerous_lost:bot", "no longer dangerous")]),
+                input(
+                    "c1",
+                    vec![delta("agent.dangerous_gained:bot", "became dangerous")],
+                ),
+                input(
+                    "c2",
+                    vec![delta("agent.dangerous_lost:bot", "no longer dangerous")],
+                ),
             ],
         );
         assert!(r.normal_form.is_empty());
@@ -833,15 +778,22 @@ mod tests {
     #[test]
     fn class_a_dep_added_removed_cancels_per_dep() {
         let r = compose_stack(
-            "base", "head", "src/a.cor", "base..head",
+            "base",
+            "head",
+            "src/a.cor",
+            "base..head",
             vec![
-                input("c1", vec![
-                    delta("agent.provenance.dep_added:bot:param_a", ""),
-                    delta("agent.provenance.dep_added:bot:param_b", ""),
-                ]),
-                input("c2", vec![
-                    delta("agent.provenance.dep_removed:bot:param_a", ""),
-                ]),
+                input(
+                    "c1",
+                    vec![
+                        delta("agent.provenance.dep_added:bot:param_a", ""),
+                        delta("agent.provenance.dep_added:bot:param_b", ""),
+                    ],
+                ),
+                input(
+                    "c2",
+                    vec![delta("agent.provenance.dep_removed:bot:param_a", "")],
+                ),
             ],
         );
         // `param_a` canceled; `param_b` survives.
@@ -859,7 +811,10 @@ mod tests {
     #[test]
     fn class_b_composes_associatively() {
         let r = compose_stack(
-            "base", "head", "src/a.cor", "base..head",
+            "base",
+            "head",
+            "src/a.cor",
+            "base..head",
             vec![
                 input("c1", vec![delta("agent.trust_tier_changed:bot:A->B", "")]),
                 input("c2", vec![delta("agent.trust_tier_changed:bot:B->C", "")]),
@@ -868,7 +823,8 @@ mod tests {
         assert_eq!(r.normal_form.len(), 1);
         assert!(
             r.normal_form[0].key.ends_with("A->C"),
-            "expected composed A->C, got {}", r.normal_form[0].key
+            "expected composed A->C, got {}",
+            r.normal_form[0].key
         );
         assert_eq!(r.normal_form[0].introduced_at, "c2");
         assert!(r.anomalies.is_empty());
@@ -877,7 +833,10 @@ mod tests {
     #[test]
     fn class_b_round_trip_cancels() {
         let r = compose_stack(
-            "base", "head", "src/a.cor", "base..head",
+            "base",
+            "head",
+            "src/a.cor",
+            "base..head",
             vec![
                 input("c1", vec![delta("agent.trust_tier_changed:bot:A->B", "")]),
                 input("c2", vec![delta("agent.trust_tier_changed:bot:B->A", "")]),
@@ -892,7 +851,10 @@ mod tests {
     #[test]
     fn class_b_chain_break_is_anomaly() {
         let r = compose_stack(
-            "base", "head", "src/a.cor", "base..head",
+            "base",
+            "head",
+            "src/a.cor",
+            "base..head",
             vec![
                 input("c1", vec![delta("agent.trust_tier_changed:bot:A->B", "")]),
                 input("c2", vec![delta("agent.trust_tier_changed:bot:C->D", "")]),
@@ -905,7 +867,10 @@ mod tests {
     #[test]
     fn class_b_long_chain_composes_to_endpoints() {
         let r = compose_stack(
-            "base", "head", "src/a.cor", "base..head",
+            "base",
+            "head",
+            "src/a.cor",
+            "base..head",
             vec![
                 input("c1", vec![delta("agent.trust_tier_changed:bot:A->B", "")]),
                 input("c2", vec![delta("agent.trust_tier_changed:bot:B->C", "")]),
@@ -925,16 +890,25 @@ mod tests {
         // part of the entity (so per-label transitions compose
         // independently).
         let r = compose_stack(
-            "base", "head", "src/a.cor", "base..head",
+            "base",
+            "head",
+            "src/a.cor",
+            "base..head",
             vec![
-                input("c1", vec![delta(
-                    "agent.approval.tier_changed:bot:IssueRefund:strict->lenient",
-                    "",
-                )]),
-                input("c2", vec![delta(
-                    "agent.approval.tier_changed:bot:IssueRefund:lenient->strict",
-                    "",
-                )]),
+                input(
+                    "c1",
+                    vec![delta(
+                        "agent.approval.tier_changed:bot:IssueRefund:strict->lenient",
+                        "",
+                    )],
+                ),
+                input(
+                    "c2",
+                    vec![delta(
+                        "agent.approval.tier_changed:bot:IssueRefund:lenient->strict",
+                        "",
+                    )],
+                ),
             ],
         );
         assert!(
@@ -950,7 +924,10 @@ mod tests {
     #[test]
     fn different_agents_commute_freely() {
         let r = compose_stack(
-            "base", "head", "src/a.cor", "base..head",
+            "base",
+            "head",
+            "src/a.cor",
+            "base..head",
             vec![
                 input("c1", vec![delta("agent.added:foo", "")]),
                 input("c2", vec![delta("agent.added:bar", "")]),
@@ -963,7 +940,10 @@ mod tests {
     #[test]
     fn history_preserves_every_delta_in_commit_order() {
         let r = compose_stack(
-            "base", "head", "src/a.cor", "base..head",
+            "base",
+            "head",
+            "src/a.cor",
+            "base..head",
             vec![
                 input("c1", vec![delta("agent.added:foo", "1")]),
                 input("c2", vec![delta("agent.removed:foo", "2")]),
@@ -979,10 +959,14 @@ mod tests {
     #[test]
     fn unrecognized_delta_keys_pass_to_history_only() {
         let r = compose_stack(
-            "base", "head", "src/a.cor", "base..head",
-            vec![
-                input("c1", vec![delta("some.future.delta:X", "unknown shape")]),
-            ],
+            "base",
+            "head",
+            "src/a.cor",
+            "base..head",
+            vec![input(
+                "c1",
+                vec![delta("some.future.delta:X", "unknown shape")],
+            )],
         );
         assert_eq!(r.history.len(), 1);
         assert!(r.normal_form.is_empty());
@@ -1000,7 +984,10 @@ mod tests {
     fn stack_hash_is_deterministic_across_runs() {
         let build = || {
             compose_stack(
-                "base", "head", "src/a.cor", "base..head",
+                "base",
+                "head",
+                "src/a.cor",
+                "base..head",
                 vec![
                     input("c1", vec![delta("agent.added:foo", "")]),
                     input("c2", vec![delta("agent.removed:foo", "")]),
@@ -1013,11 +1000,17 @@ mod tests {
     #[test]
     fn stack_hash_differs_across_different_ranges() {
         let r1 = compose_stack(
-            "base", "head", "src/a.cor", "base..head",
+            "base",
+            "head",
+            "src/a.cor",
+            "base..head",
             vec![input("c1", vec![])],
         );
         let r2 = compose_stack(
-            "base", "head", "src/a.cor", "main..feature",
+            "base",
+            "head",
+            "src/a.cor",
+            "main..feature",
             vec![input("c1", vec![])],
         );
         assert_ne!(r1.stack_hash, r2.stack_hash);
@@ -1029,11 +1022,17 @@ mod tests {
         // change the stack hash because we sort receipt hashes
         // canonically before hashing.
         let r1 = compose_stack(
-            "base", "head", "src/a.cor", "base..head",
+            "base",
+            "head",
+            "src/a.cor",
+            "base..head",
             vec![input("c1", vec![]), input("c2", vec![])],
         );
         let r2 = compose_stack(
-            "base", "head", "src/a.cor", "base..head",
+            "base",
+            "head",
+            "src/a.cor",
+            "base..head",
             vec![input("c2", vec![]), input("c1", vec![])],
         );
         assert_eq!(r1.stack_hash, r2.stack_hash);
@@ -1043,7 +1042,10 @@ mod tests {
     fn anomaly_fingerprints_are_deterministic() {
         let build = || {
             compose_stack(
-                "base", "head", "src/a.cor", "base..head",
+                "base",
+                "head",
+                "src/a.cor",
+                "base..head",
                 vec![
                     input("c1", vec![delta("agent.added:foo", "")]),
                     input("c2", vec![delta("agent.added:foo", "")]),
@@ -1062,7 +1064,10 @@ mod tests {
         // version + the three top-level arrays exist is enough
         // for a shape smoke test.
         let r = compose_stack(
-            "base", "head", "src/a.cor", "base..head",
+            "base",
+            "head",
+            "src/a.cor",
+            "base..head",
             vec![input("c1", vec![delta("agent.added:foo", "")])],
         );
         let json = serde_json::to_string_pretty(&r).expect("serialize");
