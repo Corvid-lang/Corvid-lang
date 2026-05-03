@@ -5,19 +5,21 @@
 //! and adapters, freeze with `.build()`. Pass `&Runtime` to the
 //! interpreter.
 
-use crate::approvals::{Approver, StdinApprover};
 #[cfg(test)]
 use crate::approvals::ApprovalToken;
+use crate::approvals::Approver;
 use crate::cache::{build_cache_key, CacheKey, CacheKeyInput};
 use crate::calibration::CalibrationStore;
 use crate::errors::RuntimeError;
-use crate::human::{HumanInteractor, StdinHumanInteractor};
 use crate::http::HttpClient;
+use crate::human::HumanInteractor;
 use crate::io::IoRuntime;
-use crate::llm::{LlmAdapter, LlmRegistry};
+use crate::llm::LlmRegistry;
 #[cfg(test)]
 use crate::llm::LlmRequest;
-use crate::models::{ModelCatalog, RegisteredModel};
+use crate::models::ModelCatalog;
+#[cfg(test)]
+use crate::models::RegisteredModel;
 use crate::prompt_cache::PromptCache;
 #[cfg(feature = "python")]
 use crate::python_ffi::{PythonRuntime, PythonSandboxProfile};
@@ -29,14 +31,19 @@ use crate::store::StoreManager;
 #[cfg(test)]
 use crate::store::{StoreKind, StorePolicySet, StoreRecord};
 use crate::tools::ToolRegistry;
-use crate::tracing::{fresh_run_id, now_ms, Tracer};
+use crate::tracing::{now_ms, Tracer};
 use crate::usage::LlmUsageLedger;
-use corvid_trace_schema::{TraceEvent, WRITER_INTERPRETER};
-use std::path::Path;
+use corvid_trace_schema::TraceEvent;
+#[cfg(test)]
+use corvid_trace_schema::WRITER_INTERPRETER;
+#[cfg(test)]
 use std::path::PathBuf;
 use std::sync::atomic::AtomicU64;
 use std::sync::Arc;
 
+pub use builder::RuntimeBuilder;
+
+mod builder;
 mod io;
 mod jobs;
 mod llm_dispatch;
@@ -94,15 +101,9 @@ impl Runtime {
         &self.tracer
     }
 
-
     pub fn default_model(&self) -> &str {
         &self.default_model
     }
-
-
-
-
-
 
     pub fn cache_key(&self, input: CacheKeyInput) -> Result<CacheKey, RuntimeError> {
         let key = build_cache_key(input)?;
@@ -118,11 +119,6 @@ impl Runtime {
         );
         Ok(key)
     }
-
-
-
-
-
 
     #[cfg(feature = "python")]
     pub fn call_python_function(
@@ -181,7 +177,6 @@ impl Runtime {
         }
     }
 
-
     #[cfg(feature = "python")]
     fn emit_python_event(&self, name: &str, payload: serde_json::Value) {
         if !self.tracer.is_enabled() {
@@ -195,8 +190,6 @@ impl Runtime {
         });
     }
 
-
-
     fn emit_host_event(&self, name: &str, payload: serde_json::Value) {
         if !self.tracer.is_enabled() {
             return;
@@ -207,240 +200,6 @@ impl Runtime {
             name: name.to_string(),
             payload,
         });
-    }
-
-}
-
-
-pub struct RuntimeBuilder {
-    tools: ToolRegistry,
-    llms: LlmRegistry,
-    approver: Option<Arc<dyn Approver>>,
-    human: Option<Arc<dyn HumanInteractor>>,
-    tracer: Option<Tracer>,
-    trace_schema_writer: &'static str,
-    default_model: String,
-    model_catalog: ModelCatalog,
-    model_catalog_root: Option<PathBuf>,
-    rollout_seed: Option<u64>,
-    replay_trace: Option<PathBuf>,
-    replay_model_swap: Option<String>,
-    replay_mutation: Option<(usize, serde_json::Value)>,
-    stores: StoreManager,
-}
-
-impl Default for RuntimeBuilder {
-    fn default() -> Self {
-        Self {
-            tools: ToolRegistry::default(),
-            llms: LlmRegistry::default(),
-            approver: None,
-            human: None,
-            tracer: None,
-            trace_schema_writer: WRITER_INTERPRETER,
-            default_model: String::new(),
-            model_catalog: ModelCatalog::default(),
-            model_catalog_root: None,
-            rollout_seed: None,
-            replay_trace: None,
-            replay_model_swap: None,
-            replay_mutation: None,
-            stores: StoreManager::default(),
-        }
-    }
-}
-
-impl RuntimeBuilder {
-    pub fn tool<F, Fut>(mut self, name: impl Into<String>, handler: F) -> Self
-    where
-        F: Fn(Vec<serde_json::Value>) -> Fut + Send + Sync + 'static,
-        Fut: std::future::Future<Output = Result<serde_json::Value, RuntimeError>> + Send + 'static,
-    {
-        self.tools.register(name, handler);
-        self
-    }
-
-    pub fn llm(mut self, adapter: Arc<dyn LlmAdapter>) -> Self {
-        self.llms.register(adapter);
-        self
-    }
-
-    pub fn approver(mut self, approver: Arc<dyn Approver>) -> Self {
-        self.approver = Some(approver);
-        self
-    }
-
-    pub fn human_interactor(mut self, human: Arc<dyn HumanInteractor>) -> Self {
-        self.human = Some(human);
-        self
-    }
-
-    pub fn tracer(mut self, tracer: Tracer) -> Self {
-        self.tracer = Some(tracer);
-        self
-    }
-
-    pub fn trace_schema_writer(mut self, writer: &'static str) -> Self {
-        self.trace_schema_writer = writer;
-        self
-    }
-
-    /// Open a JSONL trace file under `dir` with a fresh run id.
-    pub fn trace_to(self, dir: &Path) -> Self {
-        let tracer = Tracer::open(dir, fresh_run_id());
-        self.tracer(tracer)
-    }
-
-    pub fn default_model(mut self, model: impl Into<String>) -> Self {
-        self.default_model = model.into();
-        self
-    }
-
-    pub fn model(mut self, model: RegisteredModel) -> Self {
-        self.model_catalog.register(model);
-        self
-    }
-
-    pub fn model_catalog(mut self, catalog: ModelCatalog) -> Self {
-        self.model_catalog = catalog;
-        self
-    }
-
-    pub fn model_catalog_root(mut self, root: impl Into<PathBuf>) -> Self {
-        self.model_catalog_root = Some(root.into());
-        self
-    }
-
-    pub fn stores(mut self, stores: StoreManager) -> Self {
-        self.stores = stores;
-        self
-    }
-
-    pub fn sqlite_store(mut self, path: impl AsRef<Path>) -> Result<Self, RuntimeError> {
-        self.stores = StoreManager::sqlite(path)?;
-        Ok(self)
-    }
-
-    pub fn rollout_seed(mut self, seed: u64) -> Self {
-        self.rollout_seed = Some(seed);
-        self
-    }
-
-    pub fn replay_from(mut self, path: impl Into<PathBuf>) -> Self {
-        self.replay_trace = Some(path.into());
-        self
-    }
-
-    pub fn replay_model_swap(mut self, model: impl Into<String>) -> Self {
-        self.replay_model_swap = Some(model.into());
-        self
-    }
-
-    pub fn differential_replay_from(
-        mut self,
-        path: impl Into<PathBuf>,
-        model: impl Into<String>,
-    ) -> Self {
-        self.replay_trace = Some(path.into());
-        self.replay_model_swap = Some(model.into());
-        self
-    }
-
-    pub fn mutation_replay_from(
-        mut self,
-        path: impl Into<PathBuf>,
-        step_1based: usize,
-        replacement: serde_json::Value,
-    ) -> Self {
-        self.replay_trace = Some(path.into());
-        self.replay_mutation = Some((step_1based, replacement));
-        self
-    }
-
-    pub fn build(self) -> Runtime {
-        let mut model_catalog = self.model_catalog;
-        let model_catalog_error = if model_catalog.is_empty() {
-            let start = self
-                .model_catalog_root
-                .or_else(|| std::env::current_dir().ok());
-            match start {
-                Some(start) => match ModelCatalog::load_walking(&start) {
-                    Ok(Some(loaded)) => {
-                        model_catalog.extend(loaded);
-                        None
-                    }
-                    Ok(None) => None,
-                    Err(err) => Some(err),
-                },
-                None => None,
-            }
-        } else {
-            None
-        };
-        let tracer = self.tracer.unwrap_or_else(Tracer::null);
-        let recorder = Recorder::for_tracer(&tracer, self.trace_schema_writer).map(Arc::new);
-        let (mode, replay_error, rollout_seed) = if let Some(path) = self.replay_trace {
-            let replay_load = if let Some((step_1based, replacement)) = self.replay_mutation {
-                ReplaySource::from_path_for_writer_with_mutation(
-                    path,
-                    self.trace_schema_writer,
-                    step_1based,
-                    replacement,
-                )
-            } else if let Some(model) = self.replay_model_swap {
-                ReplaySource::from_path_for_writer_with_model(path, self.trace_schema_writer, model)
-            } else {
-                ReplaySource::from_path_for_writer(path, self.trace_schema_writer)
-            };
-            match replay_load {
-                Ok(source) => (
-                    RuntimeMode::Replay(source.clone()),
-                    None,
-                    source.initial_rollout_seed(),
-                ),
-                Err(err) => (
-                    RuntimeMode::Live,
-                    Some(err),
-                    self.rollout_seed.unwrap_or_else(crate::tracing::now_ms),
-                ),
-            }
-        } else {
-            (
-                RuntimeMode::Live,
-                None,
-                self.rollout_seed.unwrap_or_else(crate::tracing::now_ms),
-            )
-        };
-        if let Some(recorder) = &recorder {
-            recorder.emit_schema_header();
-            recorder.emit_seed_read("rollout_default_seed", rollout_seed);
-        }
-        Runtime {
-            tools: self.tools,
-            llms: self.llms,
-            approver: self
-                .approver
-                .unwrap_or_else(|| Arc::new(StdinApprover::new())),
-            human: self
-                .human
-                .unwrap_or_else(|| Arc::new(StdinHumanInteractor::new())),
-            tracer,
-            recorder,
-            mode,
-            replay_error,
-            default_model: self.default_model,
-            model_catalog,
-            model_catalog_error,
-            rollout_state: Arc::new(AtomicU64::new(rollout_seed)),
-            calibration: CalibrationStore::default(),
-            prompt_cache: PromptCache::default(),
-            stores: self.stores,
-            usage_ledger: LlmUsageLedger::new(),
-            http: HttpClient::new(),
-            io: IoRuntime::new(),
-            secrets: SecretRuntime::new(),
-            queue: QueueRuntime::new(),
-        }
     }
 }
 
@@ -850,14 +609,7 @@ mod tests {
                     issued_at_ms,
                     expires_at_ms,
                     ..
-                } => Some((
-                    token_id,
-                    label,
-                    args,
-                    scope,
-                    *issued_at_ms,
-                    *expires_at_ms,
-                )),
+                } => Some((token_id, label, args, scope, *issued_at_ms, *expires_at_ms)),
                 _ => None,
             })
             .expect("approval token event");
@@ -1113,9 +865,7 @@ mod tests {
         let event = events
             .iter()
             .find_map(|event| match event {
-                TraceEvent::HostEvent { name, payload, .. }
-                    if name == "std.observe.summary" =>
-                {
+                TraceEvent::HostEvent { name, payload, .. } if name == "std.observe.summary" => {
                     Some(payload)
                 }
                 _ => None,
