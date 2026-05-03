@@ -13,6 +13,7 @@
 //! follow as the dispatch tree is extracted.
 
 pub mod bench;
+pub mod connectors;
 pub mod contract;
 pub mod jobs;
 pub mod migrate;
@@ -22,6 +23,8 @@ pub mod root;
 
 #[allow(unused_imports)]
 pub use bench::*;
+#[allow(unused_imports)]
+pub use connectors::*;
 #[allow(unused_imports)]
 pub use contract::*;
 #[allow(unused_imports)]
