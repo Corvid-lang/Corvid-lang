@@ -1,5 +1,5 @@
-//! `corvid package` clap argument tree — slice 33 / package
-//! manager surface, decomposed in Phase 20j-A1.
+//! `corvid package` clap argument tree — package format and
+//! local/self-hosted registry tooling, decomposed in Phase 20j-A1.
 //!
 //! Owns the [`PackageCommand`] subcommand enum that the
 //! `corvid package metadata|verify-registry|verify-lock|publish`
@@ -9,6 +9,9 @@ use clap::Subcommand;
 use std::path::PathBuf;
 
 #[derive(Subcommand)]
+#[command(
+    after_help = "Package management is format-and-tooling only: no Corvid-hosted registry service runs yet. Publish writes a local registry directory; --url-base may be file:// or any http endpoint you run yourself."
+)]
 pub enum PackageCommand {
     /// Render the public semantic metadata page for a source package.
     Metadata {
@@ -27,7 +30,7 @@ pub enum PackageCommand {
         #[arg(long)]
         json: bool,
     },
-    /// Verify a registry index and all referenced source artifacts.
+    /// Verify a local or self-hosted registry index and all referenced source artifacts.
     VerifyRegistry {
         /// Registry index URL, local index.toml, or registry directory.
         registry: String,
@@ -41,7 +44,7 @@ pub enum PackageCommand {
         #[arg(long)]
         json: bool,
     },
-    /// Publish a signed source package into a registry directory.
+    /// Publish a signed source package into a local registry directory.
     Publish {
         /// Source `.cor` file to publish.
         source: PathBuf,
@@ -54,7 +57,7 @@ pub enum PackageCommand {
         /// Registry output directory. `index.toml` is created/updated here.
         #[arg(long, value_name = "DIR")]
         out: PathBuf,
-        /// Public URL prefix where copied package artifacts will be served.
+        /// Artifact URL prefix: file:// or any http endpoint you run yourself.
         #[arg(long, value_name = "URL")]
         url_base: String,
         /// 32-byte Ed25519 signing seed as 64 hex chars.

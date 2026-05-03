@@ -238,10 +238,12 @@ pub enum Command {
         registry: Option<String>,
     },
     /// Add a Corvid package dependency and write/update Corvid.lock.
+    /// No Corvid-hosted package registry runs yet; pass --registry or set
+    /// CORVID_PACKAGE_REGISTRY to a local/self-hosted index.
     Add {
         /// Package spec in `@scope/name@version` form.
         spec: String,
-        /// Registry index URL or local `index.toml` path.
+        /// Local or self-hosted registry index URL, directory, or `index.toml` path.
         #[arg(long)]
         registry: Option<String>,
     },
@@ -251,10 +253,13 @@ pub enum Command {
         name: String,
     },
     /// Refresh a Corvid package dependency through its registry.
+    /// No Corvid-hosted package registry runs yet; use the manifest registry,
+    /// --registry, or CORVID_PACKAGE_REGISTRY.
     Update {
         /// Package name in `@scope/name` form, or a full `@scope/name@version` spec.
         spec: String,
-        /// Registry index URL or local `index.toml` path. Overrides the manifest registry.
+        /// Local or self-hosted registry index URL, directory, or `index.toml` path.
+        /// Overrides the manifest registry.
         #[arg(long)]
         registry: Option<String>,
     },

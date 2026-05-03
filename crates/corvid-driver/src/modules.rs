@@ -1383,7 +1383,7 @@ public type SafetyReceipt:
 uri = \"corvid://@anthropic/safety-baseline/v2.3\"
 url = \"{url}\"
 sha256 = \"{digest}\"
-registry = \"https://registry.corvid.dev\"
+registry = \"https://packages.example.test/index.toml\"
 signature = \"unsigned:test-fixture\"
 "
             ),

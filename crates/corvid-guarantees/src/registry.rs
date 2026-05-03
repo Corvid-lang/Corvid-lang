@@ -428,11 +428,11 @@ pub static GUARANTEE_REGISTRY: &[Guarantee] = &[
              guarantee id in the descriptor's signed claim set.",
         out_of_scope_reason: "",
         positive_test_refs: &[
-            "crates/corvid-driver/src/build.rs::signed_claim_coverage_accepts_registered_contracts",
+            "crates/corvid-driver/src/build/tests.rs::signed_claim_coverage_accepts_registered_contracts",
         ],
         adversarial_test_refs: &[
-            "crates/corvid-driver/src/build.rs::signed_claim_coverage_rejects_missing_declared_contract_id",
-            "crates/corvid-driver/src/build.rs::signed_claim_coverage_rejects_out_of_scope_contract_id",
+            "crates/corvid-driver/src/build/tests.rs::signed_claim_coverage_rejects_missing_declared_contract_id",
+            "crates/corvid-driver/src/build/tests.rs::signed_claim_coverage_rejects_out_of_scope_contract_id",
         ],
     },
     // ----- Jobs (Phase 38) ---------------------------------------
@@ -454,10 +454,10 @@ pub static GUARANTEE_REGISTRY: &[Guarantee] = &[
              this guarantee in its descriptor.",
         out_of_scope_reason: "",
         positive_test_refs: &[
-            "crates/corvid-driver/src/build.rs::signed_claim_coverage_walks_schedule_decl",
+            "crates/corvid-driver/src/build/tests.rs::signed_claim_coverage_walks_schedule_decl",
         ],
         adversarial_test_refs: &[
-            "crates/corvid-driver/src/build.rs::signed_claim_coverage_rejects_schedule_without_jobs_coverage",
+            "crates/corvid-driver/src/build/tests.rs::signed_claim_coverage_rejects_schedule_without_jobs_coverage",
         ],
     },
     Guarantee {
@@ -493,7 +493,7 @@ pub static GUARANTEE_REGISTRY: &[Guarantee] = &[
              the UNIQUE constraint.",
         out_of_scope_reason: "",
         positive_test_refs: &[
-            "crates/corvid-runtime/src/queue/mod.rs::durable_queue_idempotency_key_collapses_duplicate_jobs",
+            "crates/corvid-runtime/src/queue/tests/durable_basics.rs::durable_queue_idempotency_key_collapses_duplicate_jobs",
         ],
         adversarial_test_refs: &[
             "crates/corvid-runtime/tests/durability_corpus.rs::t38l_d1_four_workers_collapse_to_one_row",
@@ -540,7 +540,7 @@ pub static GUARANTEE_REGISTRY: &[Guarantee] = &[
              the VM layer.",
         out_of_scope_reason: "",
         positive_test_refs: &[
-            "crates/corvid-runtime/src/queue/mod.rs::durable_queue_records_ordered_agent_checkpoints",
+            "crates/corvid-runtime/src/queue/tests/checkpoints.rs::durable_queue_records_ordered_agent_checkpoints",
         ],
         adversarial_test_refs: &[
             "crates/corvid-runtime/tests/durability_corpus.rs::t38l_d3_checkpoints_survive_unclean_shutdown",
@@ -628,10 +628,10 @@ pub static GUARANTEE_REGISTRY: &[Guarantee] = &[
              `corvid-runtime/src/auth.rs`.",
         out_of_scope_reason: "",
         positive_test_refs: &[
-            "crates/corvid-runtime/src/auth.rs::api_key_runtime_resolves_service_actor_with_argon2_hash_and_redacted_audit",
+            "crates/corvid-runtime/src/auth/api_keys.rs::api_key_runtime_resolves_service_actor_with_argon2_hash_and_redacted_audit",
         ],
         adversarial_test_refs: &[
-            "crates/corvid-runtime/src/auth.rs::api_key_runtime_rejects_wrong_tenant_revoked_expired_and_user_actors",
+            "crates/corvid-runtime/src/auth/api_keys.rs::api_key_runtime_rejects_wrong_tenant_revoked_expired_and_user_actors",
         ],
     },
     Guarantee {
@@ -676,10 +676,10 @@ pub static GUARANTEE_REGISTRY: &[Guarantee] = &[
              single-use, tenant-scoped, and expiry-bound.",
         out_of_scope_reason: "",
         positive_test_refs: &[
-            "crates/corvid-runtime/src/auth.rs::oauth_callback_state_is_hashed_single_use_and_restart_safe",
+            "crates/corvid-runtime/src/auth/oauth.rs::oauth_callback_state_is_hashed_single_use_and_restart_safe",
         ],
         adversarial_test_refs: &[
-            "crates/corvid-runtime/src/auth.rs::oauth_callback_rejects_expired_and_cross_tenant_state",
+            "crates/corvid-runtime/src/auth/oauth.rs::oauth_callback_rejects_expired_and_cross_tenant_state",
         ],
     },
     Guarantee {
@@ -1107,7 +1107,7 @@ pub static GUARANTEE_REGISTRY: &[Guarantee] = &[
         adversarial_test_refs: &[],
     },
     Guarantee {
-        id: "platform.hosted_registry_available",
+        id: "package.hosted_registry_available",
         kind: GuaranteeKind::Platform,
         class: GuaranteeClass::OutOfScope,
         phase: Phase::Platform,
@@ -1115,11 +1115,11 @@ pub static GUARANTEE_REGISTRY: &[Guarantee] = &[
             "A Corvid-operated public package registry service that \
              serves the published index format and source artifacts.",
         out_of_scope_reason:
-            "No hosted Corvid-operated registry service runs at v1.0. \
+            "No hosted Corvid package registry service runs yet; \
              The CLI ships the published index format + signed-publish \
              tooling (`corvid package publish`, `verify-registry`, \
-             `verify-lock`) and accepts any user-supplied `--url-base` \
-             (file://, self-hosted https, S3, CDN). A hosted public \
+             `verify-lock`) and `--url-base` accepts file:// and any \
+             http endpoint a user runs themselves. A hosted public \
              registry is post-v1.0 work; see `docs/package-manager-scope.md` \
              for the full boundary.",
         positive_test_refs: &[],
@@ -1145,4 +1145,3 @@ pub fn by_class(class: GuaranteeClass) -> impl Iterator<Item = &'static Guarante
 pub fn by_kind(kind: GuaranteeKind) -> impl Iterator<Item = &'static Guarantee> {
     GUARANTEE_REGISTRY.iter().filter(move |g| g.kind == kind)
 }
-

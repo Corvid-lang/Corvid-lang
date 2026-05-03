@@ -71,7 +71,7 @@ Per the no-shortcuts rule, every `out_of_scope` entry carries an explicit reason
 | `platform.host_kernel_compromise` | platform | out_of_scope | platform |
 | `platform.signing_key_compromise` | platform | out_of_scope | platform |
 | `platform.toolchain_compromise` | platform | out_of_scope | platform |
-| `platform.hosted_registry_available` | platform | out_of_scope | platform |
+| `package.hosted_registry_available` | platform | out_of_scope | platform |
 
 ## Detail
 
@@ -412,12 +412,12 @@ After signature validation, the recovered attestation payload must bit-match the
 
 **Positive tests:**
 
-- `crates/corvid-driver/src/build.rs::signed_claim_coverage_accepts_registered_contracts`
+- `crates/corvid-driver/src/build/tests.rs::signed_claim_coverage_accepts_registered_contracts`
 
 **Adversarial tests:**
 
-- `crates/corvid-driver/src/build.rs::signed_claim_coverage_rejects_missing_declared_contract_id`
-- `crates/corvid-driver/src/build.rs::signed_claim_coverage_rejects_out_of_scope_contract_id`
+- `crates/corvid-driver/src/build/tests.rs::signed_claim_coverage_rejects_missing_declared_contract_id`
+- `crates/corvid-driver/src/build/tests.rs::signed_claim_coverage_rejects_out_of_scope_contract_id`
 
 ### Durable jobs
 
@@ -429,11 +429,11 @@ A `schedule "cron" zone "…" -> job(args)` declaration persists to the durable 
 
 **Positive tests:**
 
-- `crates/corvid-driver/src/build.rs::signed_claim_coverage_walks_schedule_decl`
+- `crates/corvid-driver/src/build/tests.rs::signed_claim_coverage_walks_schedule_decl`
 
 **Adversarial tests:**
 
-- `crates/corvid-driver/src/build.rs::signed_claim_coverage_rejects_schedule_without_jobs_coverage`
+- `crates/corvid-driver/src/build/tests.rs::signed_claim_coverage_rejects_schedule_without_jobs_coverage`
 
 #### `jobs.retry_budget_bound`
 - **class**: out_of_scope
@@ -451,7 +451,7 @@ Across N concurrent workers, exactly one durable queue row exists for a given no
 
 **Positive tests:**
 
-- `crates/corvid-runtime/src/queue/mod.rs::durable_queue_idempotency_key_collapses_duplicate_jobs`
+- `crates/corvid-runtime/src/queue/tests/durable_basics.rs::durable_queue_idempotency_key_collapses_duplicate_jobs`
 
 **Adversarial tests:**
 
@@ -480,7 +480,7 @@ A worker that drops uncleanly mid-step (the SIGKILL surrogate the queue runtime 
 
 **Positive tests:**
 
-- `crates/corvid-runtime/src/queue/mod.rs::durable_queue_records_ordered_agent_checkpoints`
+- `crates/corvid-runtime/src/queue/tests/checkpoints.rs::durable_queue_records_ordered_agent_checkpoints`
 
 **Adversarial tests:**
 
@@ -534,11 +534,11 @@ API keys are stored only as Argon2id hashes; the plaintext leaves Corvid memory 
 
 **Positive tests:**
 
-- `crates/corvid-runtime/src/auth.rs::api_key_runtime_resolves_service_actor_with_argon2_hash_and_redacted_audit`
+- `crates/corvid-runtime/src/auth/api_keys.rs::api_key_runtime_resolves_service_actor_with_argon2_hash_and_redacted_audit`
 
 **Adversarial tests:**
 
-- `crates/corvid-runtime/src/auth.rs::api_key_runtime_rejects_wrong_tenant_revoked_expired_and_user_actors`
+- `crates/corvid-runtime/src/auth/api_keys.rs::api_key_runtime_rejects_wrong_tenant_revoked_expired_and_user_actors`
 
 #### `auth.jwt_kid_rotation`
 - **class**: runtime_checked
@@ -570,11 +570,11 @@ OAuth callback state requires PKCE for public clients; the state record carries 
 
 **Positive tests:**
 
-- `crates/corvid-runtime/src/auth.rs::oauth_callback_state_is_hashed_single_use_and_restart_safe`
+- `crates/corvid-runtime/src/auth/oauth.rs::oauth_callback_state_is_hashed_single_use_and_restart_safe`
 
 **Adversarial tests:**
 
-- `crates/corvid-runtime/src/auth.rs::oauth_callback_rejects_expired_and_cross_tenant_state`
+- `crates/corvid-runtime/src/auth/oauth.rs::oauth_callback_rejects_expired_and_cross_tenant_state`
 
 #### `auth.csrf_double_submit`
 - **class**: out_of_scope
@@ -824,13 +824,13 @@ Defending against a compromised Rust toolchain, Cranelift release, or system lin
 
 > **Why out of scope:** Reproducible builds across heterogeneous toolchains are a post-v1.0 hardening goal. Today Corvid trusts the rustc and Cranelift releases the user installs; the bilateral verifier (Slice 35-H) is the closest approximation of toolchain-independence available pre-v1.0.
 
-#### `platform.hosted_registry_available`
+#### `package.hosted_registry_available`
 - **class**: out_of_scope
 - **phase**: platform
 
 A Corvid-operated public package registry service that serves the published index format and source artifacts.
 
-> **Why out of scope:** No hosted Corvid-operated registry service runs at v1.0. The CLI ships the published index format + signed-publish tooling (`corvid package publish`, `verify-registry`, `verify-lock`) and accepts any user-supplied `--url-base` (file://, self-hosted https, S3, CDN). A hosted public registry is post-v1.0 work; see `docs/package-manager-scope.md` for the full boundary.
+> **Why out of scope:** No hosted Corvid package registry service runs yet; The CLI ships the published index format + signed-publish tooling (`corvid package publish`, `verify-registry`, `verify-lock`) and `--url-base` accepts file:// and any http endpoint a user runs themselves. A hosted public registry is post-v1.0 work; see `docs/package-manager-scope.md` for the full boundary.
 
 ## Updating this document
 

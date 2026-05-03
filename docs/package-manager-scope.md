@@ -27,7 +27,7 @@ A hosted registry service does not run as part of v1.0.
   corvid package metadata <source.cor> --name=<...> --version=<...>
   corvid package verify-registry --registry=<dir>
   corvid package verify-lock
-  corvid add <package>@<semver>
+  corvid add <package>@<semver> --registry=<index.toml|dir|url>
   corvid remove <package>
   corvid update [<package>]
   ```
@@ -45,15 +45,15 @@ A hosted registry service does not run as part of v1.0.
 
 - **A hosted registry service at `registry.corvid.dev` or anywhere else.**
   No production registry runs. No package has been published to a public
-  index Corvid maintainers operate. The CLI's `--url-base` accepts any URL
-  the user has access to (`file://`, a self-hosted nginx, an S3 bucket, a
-  pre-signed object store URL); Corvid does not provide one.
+  index Corvid maintainers operate. The CLI's `--url-base` accepts `file://`
+  and any http endpoint a user runs themselves; Corvid does not provide one.
 - **Discovery / search.** There is no `corvid search` against a public index.
 - **Package pages on a website.** `corvid package metadata` renders the same
   data a website would; no website serves it.
 - **Transitive dependency installation from a public index.** `corvid add`
-  works against any URL base the user supplies; the user is responsible for
-  pointing it at a server that hosts the registry index format above.
+  works against any registry index URL, directory, or `index.toml` path the
+  user supplies; the user is responsible for pointing it at a location that
+  hosts the registry index format above.
 - **Yanking, deprecation, ownership transfer, account systems.** No registry
   service means no operational surface for these.
 
@@ -87,7 +87,8 @@ fact that no Corvid-operated public service runs.
 ## Where the boundary appears in the codebase
 
 - `crates/corvid-driver/src/package_registry.rs` — `publish_package()` writes
-  the index entry; nothing in this file connects to a network service.
+  the index entry and `corvid add` requires an explicit registry location
+  through `--registry`, the manifest, or `CORVID_PACKAGE_REGISTRY`.
 - `crates/corvid-driver/src/package_manifest.rs` — manifest parser.
 - `crates/corvid-driver/src/package_lock.rs` — lockfile reader/writer.
 - `crates/corvid-driver/src/package_version.rs` — semver resolution.
@@ -101,11 +102,10 @@ references. The format is what Corvid ships.
 
 ## Registry guarantee row
 
-The registry entry `package.hosted_registry_available` (added 2026-04-29
-under Phase 35-style honesty rules) is registered as `OutOfScope` with the
-reason: *"no hosted Corvid-operated registry service runs at v1.0; the CLI
-accepts any user-supplied `--url-base` for the published index format. A
-hosted public registry is post-v1.0 work."*
+The registry entry `package.hosted_registry_available` is registered as
+`OutOfScope` with the reason: *"no hosted Corvid package registry service runs
+yet; `--url-base` accepts file:// and any http endpoint a user runs
+themselves."*
 
 Anyone reading `corvid contract list --class=out_of_scope` will see this
 boundary alongside the other explicit non-defenses.

@@ -1462,16 +1462,16 @@ The determinism-source catalog and the language's treatment of non-reproducible 
 - [x] 24-E-navigation        Single-file navigation over resolver identity: go-to-definition, find-references, rename edits, and workspace symbol search across open documents. Navigation uses DefId/LocalId bindings, not text search, so local rename does not touch unrelated declarations with the same spelling.
 - [x] 24-F-vscode-client     Reference VS Code extension at `extensions/vscode-corvid`: registers `.cor`, starts `corvid-lsp`, wires diagnostics/hover/completion/definition/references/rename/workspace symbols, ships syntax highlighting, language configuration, snippets for AI-native constructs, restart/log commands, and a local verification script.
 
-### Phase 25 — Package manager (~6–8 weeks) (reopened 2026-04-29 — hosted-registry honesty gap)
+### Phase 25 — Package manager (~6–8 weeks) ✅ closed
 
 **Goal.** Users can share Corvid code and AI capabilities with guarantees. Table stakes for any language anyone takes seriously, made Corvid-native by distributing effect, provenance, approval, budget, and replay contracts alongside source.
 
-**Hard dep:** nothing internal. Major external work: registry hosting.
+**Hard dep:** nothing internal. Major external work: hosted registry operations, explicitly outside v1.0.
 
 **Scope:**
 - `corvid add <pkg>`, `corvid remove`, `corvid update` CLI.
 - `Corvid.lock` lockfile with exact resolved versions, content hashes, semantic summaries, and signed publish metadata.
-- Registry service: stateless HTTP API + CDN for source package tarballs. Hosting at `registry.corvid.dev`.
+- Registry format and tooling: signed source package publish to a directory, local/self-hosted index resolution, and verification commands. No Corvid-hosted registry service runs yet.
 - SemVer-based resolution with conflict detection.
 - Effect-aware resolution: `corvid add` can warn or fail when a package exceeds a project policy for trust, cost, data, replayability, approvals, or grounded outputs.
 - Package pages and CLI metadata expose exported agents/tools/prompts, effect profile, approval boundaries, provenance guarantees, and replay guarantees.
@@ -1490,7 +1490,7 @@ The determinism-source catalog and the language's treatment of non-reproducible 
 
 **Phase 25 reopened 2026-04-29 — gap-closing slice required:**
 
-- [ ] 25-G-no-hosted-registry-honesty   The current implementation is a *package format + local resolver + signed-publish-to-a-directory*; `registry.corvid.dev` does not exist as a running service. The slice must (a) update `README.md` and the package CLI `--help` output to make the "format-and-tooling, no hosted service yet" boundary explicit, (b) add `docs/package-manager-scope.md` documenting what works locally vs what requires a hosted registry, (c) add a registry entry `package.hosted_registry_available` as `OutOfScope` with reason "no hosted service runs yet; `--url-base` accepts file:// and any http endpoint a user runs themselves," and (d) ensure no website / launch-page copy implies the hosted registry exists. Closes when grep against README + landing page returns zero un-qualified mentions of `registry.corvid.dev`.
+- [x] 25-G-no-hosted-registry-honesty   The current implementation is a *package format + local resolver + signed-publish-to-a-directory*; no Corvid-hosted registry exists as a running service. README, package CLI help, `docs/package-manager-scope.md`, and the `package.hosted_registry_available` `OutOfScope` guarantee row make the "format-and-tooling, no hosted service yet" boundary explicit. Closes when grep against README + landing page returns zero un-qualified mentions of `registry.corvid.dev`.
 
 **Phase 25 next-close criteria:** the ROADMAP-level `[x]` returns only when slice 25-G clears the slice completion gate.
 

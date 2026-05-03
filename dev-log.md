@@ -6122,7 +6122,7 @@ not phase-level rollbacks.
   `registry.corvid.dev` service runs. README + landing-page surfaces are
   already clean (grep returns zero un-qualified registry mentions). The
   slice ships `docs/package-manager-scope.md` documenting the boundary,
-  links it from README, and registers `platform.hosted_registry_available`
+  links it from README, and registers `package.hosted_registry_available`
   as `OutOfScope` in the canonical guarantee registry with the explicit
   reason that any user-supplied `--url-base` works.
 
@@ -6146,7 +6146,7 @@ not phase-level rollbacks.
 1. `docs/package-manager-scope.md` — full registry-scope doc (slice 25-G).
 2. README link to bounty + package-manager-scope (slice 20m partial,
    slice 25-G partial).
-3. `platform.hosted_registry_available` registry entry as `OutOfScope`
+3. `package.hosted_registry_available` registry entry as `OutOfScope`
    with concrete reason.
 4. CI matrix entry `phase30-python-ffi` (slice 30-J).
 5. ROADMAP slice entries 20m, 23-F, 25-G, 29-K, 30-J, 32-T with the
@@ -6164,4 +6164,27 @@ Validation:
 - `cargo test -p corvid-guarantees --lib` (18 passed).
 - `cargo run -q -p corvid-cli -- contract regen-doc docs/core-semantics.md`
   (drift gate green; doc grew from 17.3 KB to 18.0 KB with the new
-  `platform.hosted_registry_available` row).
+  `package.hosted_registry_available` row).
+
+---
+
+## 2026-05-03 — Slice 25-G hosted-registry honesty
+
+- Closed the package-manager honesty gap by making the shipped boundary
+  explicit: Corvid has package format, lockfile, signed-publish, and
+  local/self-hosted registry tooling; no Corvid-hosted package registry
+  service runs yet.
+- Removed the implicit `registry.corvid.dev` default from `corvid add`.
+  Users now pass `--registry`, rely on the manifest registry, or set
+  `CORVID_PACKAGE_REGISTRY` for a local/self-hosted index.
+- Aligned README, package CLI help, package docs, ROADMAP, and the canonical
+  guarantee row on `package.hosted_registry_available` as `OutOfScope`.
+
+Validation:
+- `cargo check --workspace`
+- `cargo test -p corvid-driver package_registry --lib`
+- `cargo test -p corvid-cli --bin corvid`
+- `cargo test -p corvid-cli --test package_help`
+- `cargo test -p corvid-guarantees --lib`
+- `cargo run -q -p corvid-cli -- verify --corpus tests/corpus`
+  (exit 2 with the established Windows `whoami` linker signature)

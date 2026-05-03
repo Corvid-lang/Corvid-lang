@@ -17,11 +17,10 @@ use crate::import_integrity::sha256_hex;
 #[cfg(test)]
 use crate::package_version::parse_package_spec;
 
-const DEFAULT_REGISTRY: &str = "https://registry.corvid.dev/index.toml";
 mod add;
 pub use add::add_package;
 #[cfg(test)]
-use add::select_package;
+use add::{resolve_registry_location, select_package};
 mod remove;
 pub use remove::remove_package;
 mod update;
@@ -319,6 +318,18 @@ mod tests {
         let spec = parse_package_spec("@anthropic/safety-baseline@2.3").unwrap();
         let selected = select_package(&index, &spec).unwrap().unwrap();
         assert_eq!(selected.version, "2.3.4");
+    }
+
+    #[test]
+    fn package_add_requires_explicit_registry_location() {
+        let reason = resolve_registry_location(None, None).unwrap_err();
+
+        assert!(
+            reason.contains("no hosted Corvid package registry"),
+            "{reason}"
+        );
+        assert!(reason.contains("--registry"), "{reason}");
+        assert!(reason.contains("CORVID_PACKAGE_REGISTRY"), "{reason}");
     }
 
     fn registry_pkg(version: &str) -> RegistryPackage {

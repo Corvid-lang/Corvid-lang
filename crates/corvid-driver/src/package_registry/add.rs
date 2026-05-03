@@ -16,7 +16,7 @@ use crate::package_version::{normalize_version, parse_package_spec, PackageSpec}
 
 use super::{
     fetch_bytes, load_registry_index, verify_package_signature, AddPackageOutcome, RegistryIndex,
-    RegistryPackage, DEFAULT_REGISTRY,
+    RegistryPackage,
 };
 
 pub fn add_package(
@@ -25,10 +25,11 @@ pub fn add_package(
     registry: Option<&str>,
 ) -> Result<AddPackageOutcome> {
     let spec = parse_package_spec(spec)?;
-    let registry_location = registry
-        .map(str::to_string)
-        .or_else(|| std::env::var("CORVID_PACKAGE_REGISTRY").ok())
-        .unwrap_or_else(|| DEFAULT_REGISTRY.to_string());
+    let registry_location =
+        match resolve_registry_location(registry, std::env::var("CORVID_PACKAGE_REGISTRY").ok()) {
+            Ok(location) => location,
+            Err(reason) => return Ok(AddPackageOutcome::Rejected { reason }),
+        };
     let index = load_registry_index(&registry_location)?;
     let Some(selected) = select_package(&index, &spec)? else {
         return Ok(AddPackageOutcome::Rejected {
@@ -108,6 +109,20 @@ pub fn add_package(
         lockfile,
         exports: summary.exports.len(),
     })
+}
+
+pub(super) fn resolve_registry_location(
+    registry: Option<&str>,
+    env_registry: Option<String>,
+) -> std::result::Result<String, String> {
+    registry
+        .map(str::to_string)
+        .or(env_registry)
+        .ok_or_else(|| {
+            "no hosted Corvid package registry runs yet; pass --registry <index.toml|dir|url> \
+             or set CORVID_PACKAGE_REGISTRY to a local or self-hosted registry index"
+                .to_string()
+        })
 }
 
 pub(super) fn select_package<'a>(

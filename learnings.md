@@ -3487,3 +3487,11 @@ accepted external reports actually land in that corpus. The bounty page and
 issue template can be documented as the intake path, but source, specs, and
 roadmap copy should not imply the corpus has already been fed by external
 submissions.
+
+## hosted registry claims
+
+Package format, signed-publish tooling, and a resolver that can read local or
+self-hosted indexes are not the same as operating a hosted registry. Avoid
+default service URLs unless the service actually exists, and keep the
+`OutOfScope` guarantee id aligned with docs and generated semantics so the
+honesty boundary is machine-visible.

@@ -13,9 +13,9 @@ locked in `Corvid.lock`:
 ```toml
 [[package]]
 uri = "corvid://@anthropic/safety-baseline/v2.3"
-url = "https://registry.corvid.dev/@anthropic/safety-baseline/v2.3/policy.cor"
+url = "file:///srv/corvid-registry/@anthropic/safety-baseline/v2.3/policy.cor"
 sha256 = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
-registry = "https://registry.corvid.dev"
+registry = "./registry/index.toml"
 signature = "ed25519:..."
 ```
 
@@ -51,7 +51,7 @@ The registry index is TOML:
 name = "@anthropic/safety-baseline"
 version = "2.3.4"
 uri = "corvid://@anthropic/safety-baseline/v2.3.4"
-url = "https://registry.corvid.dev/@anthropic/safety-baseline/v2.3.4/policy.cor"
+url = "file:///srv/corvid-registry/@anthropic/safety-baseline/v2.3.4/policy.cor"
 sha256 = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 signature = "ed25519:..."
 ```
@@ -135,7 +135,7 @@ corvid package publish policy.cor \
   --name @anthropic/safety-baseline \
   --version 2.3.4 \
   --out ./registry \
-  --url-base https://registry.corvid.dev/@anthropic/safety-baseline \
+  --url-base file:///srv/corvid-registry/@anthropic/safety-baseline \
   --key 0000000000000000000000000000000000000000000000000000000000000000 \
   --key-id anthropic-release
 ```
@@ -159,7 +159,7 @@ content-addressed source registry, not a trusted server:
 
 ```text
 corvid package verify-registry ./registry/index.toml
-corvid package verify-registry https://registry.corvid.dev/index.toml --json
+corvid package verify-registry ./registry/index.toml --json
 ```
 
 The verifier checks each index entry for:

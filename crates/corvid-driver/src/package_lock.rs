@@ -151,7 +151,7 @@ mod tests {
                 url: "https://example.com/name-v1.2.cor".to_string(),
                 sha256: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
                     .to_string(),
-                registry: Some("https://registry.corvid.dev".to_string()),
+                registry: Some("https://packages.example.test/index.toml".to_string()),
                 signature: Some("ed25519:abc".to_string()),
                 semantic_summary: None,
             }],
