@@ -44,12 +44,13 @@ use corvid_runtime::{
     TestFromTracesOptions, TestFromTracesReport, TraceHarnessMode, TraceHarnessRequest,
     TraceHarnessRun, TraceOutcome, Verdict,
 };
-use corvid_trace_schema::{read_events_from_path, validate_supported_schema, TraceEvent};
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use time::format_description::well_known::Rfc3339;
-use time::OffsetDateTime;
+
+mod load;
+
+use load::{load_all_traces, parse_since, LoadedTrace};
 
 /// Exit code returned when the regression harness has run and at
 /// least one trace diverged. Distinguishes "ran-and-found-drift"
@@ -170,9 +171,7 @@ pub fn run_test_from_traces(args: TestFromTracesArgs<'_>) -> Result<u8> {
         // may have pointed `--only-prompt classify` at a dir whose
         // traces don't exercise classify; that's a valid CI state
         // (nothing to test), not a failure.
-        println!(
-            "no traces selected by the configured filters; nothing to test."
-        );
+        println!("no traces selected by the configured filters; nothing to test.");
         return Ok(0);
     }
 
@@ -189,8 +188,7 @@ pub fn run_test_from_traces(args: TestFromTracesArgs<'_>) -> Result<u8> {
 
     // Collect the filtered trace paths — the harness consumes a
     // Vec<PathBuf> of the filtered set.
-    let filtered_paths: Vec<PathBuf> =
-        filtered.iter().map(|trace| trace.path.clone()).collect();
+    let filtered_paths: Vec<PathBuf> = filtered.iter().map(|trace| trace.path.clone()).collect();
 
     // Prompt mode: AutoStdin reads [y/N/a/q] on TTY and fails
     // closed (Reject with a one-time warning) on non-TTY. That
@@ -204,7 +202,10 @@ pub fn run_test_from_traces(args: TestFromTracesArgs<'_>) -> Result<u8> {
         prompt_mode: PromotePromptMode::AutoStdin,
     };
 
-    eprintln!("dispatching through regression harness ({} traces)...", filtered.len());
+    eprintln!(
+        "dispatching through regression harness ({} traces)...",
+        filtered.len()
+    );
     eprintln!();
 
     // Run the harness on a single-threaded tokio runtime so the
@@ -231,14 +232,13 @@ pub fn run_test_from_traces(args: TestFromTracesArgs<'_>) -> Result<u8> {
         anyhow::bail!("regression harness aborted (user quit during promotion)");
     }
 
-    let exit_code = if report.summary.diverged == 0
-        && report.summary.flaky == 0
-        && report.summary.errored == 0
-    {
-        0
-    } else {
-        EXIT_DIVERGED
-    };
+    let exit_code =
+        if report.summary.diverged == 0 && report.summary.flaky == 0 && report.summary.errored == 0
+        {
+            0
+        } else {
+            EXIT_DIVERGED
+        };
     Ok(exit_code)
 }
 
@@ -307,17 +307,13 @@ async fn dispatch_replay(
     mode: ReplayMode,
 ) -> Result<TraceHarnessRun, corvid_runtime::RuntimeError> {
     let base_builder = default_runtime_builder();
-    let outcome = run_replay_from_source_with_builder_async(
-        trace_path,
-        source_path,
-        mode,
-        base_builder,
-    )
-    .await
-    .map_err(|err| corvid_runtime::RuntimeError::ReplayTraceLoad {
-        path: trace_path.to_path_buf(),
-        message: format!("{err:#}"),
-    })?;
+    let outcome =
+        run_replay_from_source_with_builder_async(trace_path, source_path, mode, base_builder)
+            .await
+            .map_err(|err| corvid_runtime::RuntimeError::ReplayTraceLoad {
+                path: trace_path.to_path_buf(),
+                message: format!("{err:#}"),
+            })?;
 
     let final_output = outcome.result_value.as_ref().map(|v| {
         // Reuse corvid-vm's value_to_json is not accessible from
@@ -403,109 +399,6 @@ fn render_outcome(outcome: &TraceOutcome) {
     }
 }
 
-/// One trace file's summary after load + validation.
-struct LoadedTrace {
-    path: PathBuf,
-    /// Unique prompt names seen in `LlmCall` events.
-    prompts: BTreeSet<String>,
-    /// Unique tool names seen in `ToolCall` events.
-    tools: BTreeSet<String>,
-    /// Unique approval labels seen in `ApprovalRequest` events.
-    approvals: BTreeSet<String>,
-    /// True iff any `ApprovalRequest` event is present. Equivalent
-    /// to "exercises a `@dangerous` tool" by the compiler's
-    /// approve-before-dangerous guarantee.
-    has_approval_event: bool,
-    /// Count of substitutable events (ToolCall + LlmCall +
-    /// ApprovalRequest). Used for the execution plan preview.
-    llm_calls: usize,
-    tool_calls: usize,
-    approval_requests: usize,
-    /// Maximum ts_ms across events in the trace. Used by `--since`.
-    max_ts_ms: u64,
-}
-
-fn load_all_traces(dir: &Path) -> Result<Vec<LoadedTrace>> {
-    let mut jsonl_files = Vec::new();
-    for entry in std::fs::read_dir(dir)
-        .with_context(|| format!("failed to read directory `{}`", dir.display()))?
-    {
-        let entry = entry
-            .with_context(|| format!("failed to read a directory entry under `{}`", dir.display()))?;
-        let path = entry.path();
-        if path.is_file() && path.extension().and_then(|e| e.to_str()) == Some("jsonl") {
-            jsonl_files.push(path);
-        }
-    }
-    jsonl_files.sort();
-
-    let mut out = Vec::with_capacity(jsonl_files.len());
-    for path in jsonl_files {
-        let events = read_events_from_path(&path).with_context(|| {
-            format!("failed to load trace `{}`", path.display())
-        })?;
-        if events.is_empty() {
-            anyhow::bail!("trace `{}` is empty", path.display());
-        }
-        validate_supported_schema(&events).with_context(|| {
-            format!("trace `{}` uses an unsupported schema", path.display())
-        })?;
-        out.push(summarize(&path, &events));
-    }
-    Ok(out)
-}
-
-fn summarize(path: &Path, events: &[TraceEvent]) -> LoadedTrace {
-    let mut prompts = BTreeSet::new();
-    let mut tools = BTreeSet::new();
-    let mut approvals = BTreeSet::new();
-    let mut llm_calls = 0usize;
-    let mut tool_calls = 0usize;
-    let mut approval_requests = 0usize;
-    let mut max_ts_ms = 0u64;
-    for event in events {
-        let ts = event_ts_ms(event);
-        if ts > max_ts_ms {
-            max_ts_ms = ts;
-        }
-        match event {
-            TraceEvent::LlmCall { prompt, .. } => {
-                prompts.insert(prompt.clone());
-                llm_calls += 1;
-            }
-            TraceEvent::ToolCall { tool, .. } => {
-                tools.insert(tool.clone());
-                tool_calls += 1;
-            }
-            TraceEvent::ApprovalRequest { label, .. } => {
-                approvals.insert(label.clone());
-                approval_requests += 1;
-            }
-            _ => {}
-        }
-    }
-    LoadedTrace {
-        path: path.to_path_buf(),
-        has_approval_event: !approvals.is_empty(),
-        prompts,
-        tools,
-        approvals,
-        llm_calls,
-        tool_calls,
-        approval_requests,
-        max_ts_ms,
-    }
-}
-
-fn parse_since(since: Option<&str>) -> Result<Option<u64>> {
-    let Some(s) = since else {
-        return Ok(None);
-    };
-    let ts = OffsetDateTime::parse(s, &Rfc3339)
-        .with_context(|| format!("invalid --since timestamp `{s}`; expected RFC3339"))?;
-    Ok(Some((ts.unix_timestamp_nanos() / 1_000_000) as u64))
-}
-
 fn print_preview(
     dir: &Path,
     initial_count: usize,
@@ -515,10 +408,7 @@ fn print_preview(
 ) {
     println!("corvid test --from-traces {}", dir.display());
     println!();
-    println!(
-        "Scanning traces in `{}`...",
-        dir.display()
-    );
+    println!("Scanning traces in `{}`...", dir.display());
     println!("  found {initial_count} .jsonl file(s)");
     for (flag, arg, count) in applied_filters {
         let arg_text = if arg.is_empty() {
@@ -555,9 +445,7 @@ fn print_preview(
          {approval_requests} approval(s)"
     );
     let model_text = match args.replay_model {
-        Some(id) => format!(
-            "differential vs. `{id}` (divergences will be reported per trace)"
-        ),
+        Some(id) => format!("differential vs. `{id}` (divergences will be reported per trace)"),
         None => "recorded (default — exact substitution)".into(),
     };
     println!("  model:         {model_text}");
@@ -611,10 +499,7 @@ fn render_set(set: &BTreeSet<String>) -> String {
     if set.is_empty() {
         "<none>".into()
     } else {
-        format!(
-            "{{{}}}",
-            set.iter().cloned().collect::<Vec<_>>().join(", ")
-        )
+        format!("{{{}}}", set.iter().cloned().collect::<Vec<_>>().join(", "))
     }
 }
 
@@ -628,48 +513,11 @@ fn print_not_implemented_note() {
     );
 }
 
-/// Event timestamp extractor. Mirrors the same helper in
-/// `trace_cmd.rs` / `routing_report.rs`; refactoring to a shared
-/// crate-level module is out of scope for this slice.
-fn event_ts_ms(event: &TraceEvent) -> u64 {
-    match event {
-        TraceEvent::SchemaHeader { ts_ms, .. }
-        | TraceEvent::RunStarted { ts_ms, .. }
-        | TraceEvent::RunCompleted { ts_ms, .. }
-        | TraceEvent::ToolCall { ts_ms, .. }
-        | TraceEvent::ToolResult { ts_ms, .. }
-        | TraceEvent::LlmCall { ts_ms, .. }
-        | TraceEvent::LlmResult { ts_ms, .. }
-        | TraceEvent::PromptCache { ts_ms, .. }
-        | TraceEvent::ApprovalRequest { ts_ms, .. }
-        | TraceEvent::ApprovalDecision { ts_ms, .. }
-        | TraceEvent::ApprovalResponse { ts_ms, .. }
-        | TraceEvent::ApprovalTokenIssued { ts_ms, .. }
-        | TraceEvent::ApprovalScopeViolation { ts_ms, .. }
-        | TraceEvent::HumanInputRequest { ts_ms, .. }
-        | TraceEvent::HumanInputResponse { ts_ms, .. }
-        | TraceEvent::HumanChoiceRequest { ts_ms, .. }
-        | TraceEvent::HumanChoiceResponse { ts_ms, .. }
-        | TraceEvent::HostEvent { ts_ms, .. }
-        | TraceEvent::SeedRead { ts_ms, .. }
-        | TraceEvent::ClockRead { ts_ms, .. }
-        | TraceEvent::ModelSelected { ts_ms, .. }
-        | TraceEvent::ProgressiveEscalation { ts_ms, .. }
-        | TraceEvent::ProgressiveExhausted { ts_ms, .. }
-        | TraceEvent::StreamUpgrade { ts_ms, .. }
-        | TraceEvent::AbVariantChosen { ts_ms, .. }
-        | TraceEvent::EnsembleVote { ts_ms, .. }
-        | TraceEvent::AdversarialPipelineCompleted { ts_ms, .. }
-        | TraceEvent::AdversarialContradiction { ts_ms, .. }
-        | TraceEvent::ProvenanceEdge { ts_ms, .. } => *ts_ms,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use corvid_trace_schema::{
-        write_events_to_path, SCHEMA_VERSION, WRITER_INTERPRETER,
+        write_events_to_path, TraceEvent, SCHEMA_VERSION, WRITER_INTERPRETER,
     };
     use serde_json::json;
 
@@ -868,10 +716,7 @@ mod tests {
         let dir = test_dir();
         write_trace(&dir, TraceShape::new("run-1").prompt("classify"));
         write_trace(&dir, TraceShape::new("run-2").tool("get_order"));
-        write_trace(
-            &dir,
-            TraceShape::new("run-3").approval("IssueRefund"),
-        );
+        write_trace(&dir, TraceShape::new("run-3").approval("IssueRefund"));
         let traces = load_all_traces(&dir).unwrap();
         let refs: Vec<&LoadedTrace> = traces.iter().collect();
         let (prompts, tools, approvals) = aggregate_coverage(&refs);
@@ -891,10 +736,7 @@ mod tests {
         // ran successfully before the source check.
         let dir = test_dir();
         write_trace(&dir, TraceShape::new("run-safe").prompt("classify"));
-        write_trace(
-            &dir,
-            TraceShape::new("run-danger").approval("IssueRefund"),
-        );
+        write_trace(&dir, TraceShape::new("run-danger").approval("IssueRefund"));
         let mut a = args(&dir);
         a.only_dangerous = true;
         let err = run_test_from_traces(a).unwrap_err();
@@ -928,7 +770,10 @@ mod tests {
             .filter(|t| t.prompts.contains("classify"))
             .collect();
         assert_eq!(kept.len(), 1);
-        assert_eq!(kept[0].prompts.iter().next().map(String::as_str), Some("classify"));
+        assert_eq!(
+            kept[0].prompts.iter().next().map(String::as_str),
+            Some("classify")
+        );
     }
 
     #[test]
@@ -951,11 +796,15 @@ mod tests {
         let dir = test_dir();
         write_trace(
             &dir,
-            TraceShape::new("run-old").prompt("classify").at_ts_ms(1_600_000_000_000),
+            TraceShape::new("run-old")
+                .prompt("classify")
+                .at_ts_ms(1_600_000_000_000),
         );
         write_trace(
             &dir,
-            TraceShape::new("run-new").prompt("classify").at_ts_ms(1_700_000_000_000),
+            TraceShape::new("run-new")
+                .prompt("classify")
+                .at_ts_ms(1_700_000_000_000),
         );
         let mut a = args(&dir);
         a.since = Some("2020-09-13T12:26:40Z");
@@ -1069,7 +918,9 @@ mod tests {
         let dir = test_dir();
         write_trace(
             &dir,
-            TraceShape::new("run-a").prompt("classify").tool("get_order"),
+            TraceShape::new("run-a")
+                .prompt("classify")
+                .tool("get_order"),
         );
         write_trace(&dir, TraceShape::new("run-b").prompt("classify"));
         write_trace(&dir, TraceShape::new("run-c").tool("get_order"));
