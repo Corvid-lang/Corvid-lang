@@ -592,6 +592,7 @@ impl<'a> Checker<'a> {
 mod call;
 mod case;
 mod decl;
+mod decl_eval;
 mod effect_decl;
 mod expr;
 mod import_call;
