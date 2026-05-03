@@ -41,38 +41,38 @@
 #![allow(unsafe_code)]
 
 use crate::abi::CorvidString;
-use crate::llm::mock::{
-    bench_mock_dispatch_ns, bench_prompt_wait_ns, env_mock_string_reply_sync,
-};
 use crate::errors::RuntimeError;
-use corvid_trace_schema::TraceEvent;
+use crate::llm::mock::{bench_mock_dispatch_ns, bench_prompt_wait_ns, env_mock_string_reply_sync};
 use std::path::PathBuf;
-use std::sync::atomic::Ordering;
-use std::sync::OnceLock;
 use std::time::Instant;
 
+mod llm_dispatch;
 mod state;
 mod strings;
 mod tokio_handle;
 mod tool_iter;
+use llm_dispatch::{
+    build_system_prompt, call_llm_once, format_instruction_bool, format_instruction_float,
+    format_instruction_int, parse_bool, parse_float, parse_int, prompt_max_retries,
+    trace_mock_llm_attempt, using_env_mock_llm,
+};
+pub(crate) use state::bridge;
 pub use state::{
     corvid_bench_approval_wait_ns, corvid_bench_json_bridge_ns, corvid_bench_mock_dispatch_ns,
     corvid_bench_prompt_wait_ns, corvid_bench_tool_wait_ns, corvid_bench_trace_overhead_ns,
     corvid_runtime_embed_init_default, corvid_runtime_init, corvid_runtime_is_replay,
     corvid_runtime_probe, corvid_runtime_shutdown, runtime,
 };
+use state::{record_json_bridge_ns, BridgeState, BRIDGE};
+pub(crate) use strings::{borrow_corvid_string, read_corvid_string};
 pub use strings::{
     corvid_free_string, corvid_string_into_cstr, release_string, string_from_rust,
     string_from_static_str,
 };
 pub use tokio_handle::tokio_handle;
-pub use tool_iter::iter_registered_tools;
-pub(crate) use state::bridge;
-pub(crate) use tool_iter::record_registered_tool_count;
-pub(crate) use strings::{borrow_corvid_string, read_corvid_string};
-use state::{record_json_bridge_ns, BridgeState, BRIDGE};
 use tokio_handle::{build_corvid_runtime, build_embedded_corvid_runtime, build_tokio_runtime};
-
+pub use tool_iter::iter_registered_tools;
+pub(crate) use tool_iter::record_registered_tool_count;
 
 /// Tool-call bridge for the narrow case `fn(no args) -> Int`.
 ///
@@ -101,10 +101,7 @@ use tokio_handle::{build_corvid_runtime, build_embedded_corvid_runtime, build_to
 /// keeps alive for the duration of the call. The runtime bridge must
 /// have been initialised via `corvid_runtime_init` first.
 #[no_mangle]
-pub unsafe extern "C" fn corvid_tool_call_sync_int(
-    name_ptr: *const u8,
-    name_len: usize,
-) -> i64 {
+pub unsafe extern "C" fn corvid_tool_call_sync_int(name_ptr: *const u8, name_len: usize) -> i64 {
     // SAFETY: Caller contract — pointer + length describe valid UTF-8
     // bytes alive for the call. Empty name is handled by the `is_null`
     // check rather than slicing into a null pointer.
@@ -170,7 +167,6 @@ pub unsafe extern "C" fn corvid_tool_call_sync_int(
 // consumed by compile-time-generated code.
 // ------------------------------------------------------------
 
-
 fn panic_if_replay_runtime_error(context: &str, err: &RuntimeError) {
     if matches!(
         err,
@@ -203,27 +199,29 @@ fn replay_tool_value(name: &str, args: Vec<serde_json::Value>) -> serde_json::Va
 }
 
 fn expect_tool_result_int(name: &str, value: serde_json::Value) -> i64 {
-    value
-        .as_i64()
-        .unwrap_or_else(|| panic!("corvid native replay tool `{name}` returned non-int JSON: {value}"))
+    value.as_i64().unwrap_or_else(|| {
+        panic!("corvid native replay tool `{name}` returned non-int JSON: {value}")
+    })
 }
 
 fn expect_tool_result_bool(name: &str, value: serde_json::Value) -> bool {
-    value
-        .as_bool()
-        .unwrap_or_else(|| panic!("corvid native replay tool `{name}` returned non-bool JSON: {value}"))
+    value.as_bool().unwrap_or_else(|| {
+        panic!("corvid native replay tool `{name}` returned non-bool JSON: {value}")
+    })
 }
 
 fn expect_tool_result_float(name: &str, value: serde_json::Value) -> f64 {
-    value
-        .as_f64()
-        .unwrap_or_else(|| panic!("corvid native replay tool `{name}` returned non-float JSON: {value}"))
+    value.as_f64().unwrap_or_else(|| {
+        panic!("corvid native replay tool `{name}` returned non-float JSON: {value}")
+    })
 }
 
 fn expect_tool_result_string(name: &str, value: serde_json::Value) -> String {
     value
         .as_str()
-        .unwrap_or_else(|| panic!("corvid native replay tool `{name}` returned non-string JSON: {value}"))
+        .unwrap_or_else(|| {
+            panic!("corvid native replay tool `{name}` returned non-string JSON: {value}")
+        })
         .to_owned()
 }
 
@@ -300,52 +298,6 @@ pub unsafe extern "C" fn corvid_replay_tool_call_nothing(
     expect_tool_result_null(&tool_name, replay_tool_value(&tool_name, args));
 }
 
-fn trace_mock_llm_attempt(
-    state: &BridgeState,
-    prompt_name: &str,
-    model: &str,
-    rendered: &str,
-    args: &[serde_json::Value],
-    result: serde_json::Value,
-) {
-    let runtime = state.corvid_runtime();
-    let tracer = runtime.tracer();
-    if !tracer.is_enabled() {
-        return;
-    }
-    let effective_model = if model.is_empty() {
-        runtime.default_model()
-    } else {
-        model
-    };
-    tracer.emit(TraceEvent::LlmCall {
-        ts_ms: crate::tracing::now_ms(),
-        run_id: tracer.run_id().to_string(),
-        prompt: prompt_name.to_string(),
-        model: if effective_model.is_empty() {
-            None
-        } else {
-            Some(effective_model.to_string())
-        },
-        model_version: runtime.model_version(effective_model),
-        rendered: Some(rendered.to_string()),
-        args: args.to_vec(),
-    });
-    tracer.emit(TraceEvent::LlmResult {
-        ts_ms: crate::tracing::now_ms(),
-        run_id: tracer.run_id().to_string(),
-        prompt: prompt_name.to_string(),
-        model: if effective_model.is_empty() {
-            None
-        } else {
-            Some(effective_model.to_string())
-        },
-        model_version: runtime.model_version(effective_model),
-        result,
-    });
-}
-
-
 // ------------------------------------------------------------
 // Typed prompt-dispatch bridges.
 //
@@ -378,122 +330,8 @@ fn trace_mock_llm_attempt(
 // better LLM behavior because the model has the type contract.
 // ------------------------------------------------------------
 
-use crate::llm::LlmRequestRef;
-
-/// Default retry count when `CORVID_PROMPT_MAX_RETRIES` env is unset.
-const DEFAULT_PROMPT_MAX_RETRIES: u32 = 3;
-
-fn prompt_max_retries() -> u32 {
-    static VALUE: OnceLock<u32> = OnceLock::new();
-    *VALUE.get_or_init(|| {
-        std::env::var("CORVID_PROMPT_MAX_RETRIES")
-            .ok()
-            .and_then(|s| s.parse().ok())
-            .unwrap_or(DEFAULT_PROMPT_MAX_RETRIES)
-    })
-}
-
 pub(super) fn trace_path_from_env() -> Option<PathBuf> {
     std::env::var_os("CORVID_TRACE_PATH").map(PathBuf::from)
-}
-
-
-/// Format-instruction text per return type. Sent in the system prompt.
-fn format_instruction_int() -> &'static str {
-    "Output only a single integer literal — no quotes, no explanation, no formatting, no thousands separators. Examples: 42, -7, 0."
-}
-
-fn format_instruction_bool() -> &'static str {
-    "Output only the word `true` or `false` — lowercase, no quotes, no explanation, no surrounding text."
-}
-
-fn format_instruction_float() -> &'static str {
-    "Output only a single decimal number — no quotes, no explanation, no scientific notation prefix beyond what `f64::parse` accepts. Examples: 3.14, -0.5, 42.0."
-}
-
-fn using_env_mock_llm() -> bool {
-    static ENABLED: OnceLock<bool> = OnceLock::new();
-    let enabled =
-        *ENABLED.get_or_init(|| std::env::var("CORVID_TEST_MOCK_LLM").ok().as_deref() == Some("1"));
-    enabled && !BRIDGE.load(Ordering::Acquire).is_null() && !bridge().corvid_runtime().is_replay_mode()
-}
-
-/// Build the system prompt sent to the LLM. Encodes the function
-/// signature + return-type instruction + (after retries) escalating
-/// reminders. `attempt` is 0-indexed; `last_failure` is `Some(text)`
-/// on retry attempts and contains the LLM's previous (unparseable)
-/// response.
-fn build_system_prompt(
-    signature: &str,
-    format_instruction: &str,
-    attempt: u32,
-    last_failure: Option<&str>,
-) -> String {
-    let mut sys = format!(
-        "You are a function with signature `{signature}`. The user message contains the rendered prompt body. Compute and return the appropriate value, formatted as follows.\n\nFormat: {format_instruction}"
-    );
-    if attempt > 0 {
-        if let Some(prev) = last_failure {
-            sys.push_str(&format!(
-                "\n\nIMPORTANT: Your previous response `{prev}` could not be parsed. Respond with ONLY the value in the exact format described above — nothing else, no surrounding text, no explanation."
-            ));
-        }
-        if attempt >= 2 {
-            sys.push_str("\n\nThis is your last attempt. The format requirements are absolute.");
-        }
-    }
-    sys
-}
-
-/// Single LLM call within the retry loop. Returns the response text
-/// (not the parsed value — parsing happens per-return-type in each
-/// bridge).
-fn call_llm_once(
-    state: &BridgeState,
-    prompt_name: &str,
-    model: &str,
-    rendered: &str,
-    args: &[serde_json::Value],
-    system_prompt: &str,
-) -> Result<String, String> {
-    let runtime = state.corvid_runtime();
-    let combined = if using_env_mock_llm() || (runtime.is_replay_mode() && !runtime.replay_uses_live_llm()) {
-        rendered.to_owned()
-    } else {
-        // Combine system prompt + user-side rendered prompt with two
-        // newlines. Adapters that have native system-prompt support could
-        // separate these later; for now the concat is universal.
-        let mut combined = String::with_capacity(system_prompt.len() + 2 + rendered.len());
-        combined.push_str(system_prompt);
-        combined.push_str("\n\n");
-        combined.push_str(rendered);
-        combined
-    };
-    let req = LlmRequestRef {
-        prompt: prompt_name,
-        model,
-        rendered: &combined,
-        args,
-        output_schema: None,
-    };
-    let resp = state.tokio_handle().block_on(async move {
-        runtime
-            .call_llm_ref_with_trace_rendered(req, Some(rendered))
-            .await
-    });
-    match resp {
-        Ok(r) => match r.value {
-            serde_json::Value::String(s) => Ok(s),
-            other => Ok(other.to_string()),
-        },
-        Err(e) => {
-            panic_if_replay_runtime_error(
-                &format!("corvid prompt `{prompt_name}` (model `{model}`) replay failed"),
-                &e,
-            );
-            Err(format!("{e}"))
-        }
-    }
 }
 
 #[no_mangle]
@@ -534,7 +372,11 @@ pub unsafe extern "C" fn corvid_prompt_call_int(
                             serde_json::Value::from(value),
                         );
                         unsafe { release_string(reply) };
-                        record_json_bridge_ns(bridge_start, prompt_wait_before, mock_dispatch_before);
+                        record_json_bridge_ns(
+                            bridge_start,
+                            prompt_wait_before,
+                            mock_dispatch_before,
+                        );
                         return value;
                     }
                     trace_mock_llm_attempt(
@@ -642,7 +484,11 @@ pub unsafe extern "C" fn corvid_prompt_call_bool(
                             serde_json::Value::from(value),
                         );
                         unsafe { release_string(reply) };
-                        record_json_bridge_ns(bridge_start, prompt_wait_before, mock_dispatch_before);
+                        record_json_bridge_ns(
+                            bridge_start,
+                            prompt_wait_before,
+                            mock_dispatch_before,
+                        );
                         return value;
                     }
                     trace_mock_llm_attempt(
@@ -752,7 +598,11 @@ pub unsafe extern "C" fn corvid_prompt_call_float(
                                 .unwrap_or_else(|| serde_json::Value::String(value.to_string())),
                         );
                         unsafe { release_string(reply) };
-                        record_json_bridge_ns(bridge_start, prompt_wait_before, mock_dispatch_before);
+                        record_json_bridge_ns(
+                            bridge_start,
+                            prompt_wait_before,
+                            mock_dispatch_before,
+                        );
                         return value;
                     }
                     trace_mock_llm_attempt(
@@ -880,9 +730,7 @@ pub unsafe extern "C" fn corvid_prompt_call_string(
             record_json_bridge_ns(bridge_start, prompt_wait_before, mock_dispatch_before);
             text.into_corvid_abi()
         }
-        Err(e) => panic!(
-            "corvid prompt `{prompt_name}` (model `{model}`): adapter failed: {e}"
-        ),
+        Err(e) => panic!("corvid prompt `{prompt_name}` (model `{model}`): adapter failed: {e}"),
     }
 }
 
@@ -933,44 +781,6 @@ pub unsafe extern "C" fn corvid_approve_sync(
     }
 }
 
-/// Parse helpers — tolerant of common LLM quirks (surrounding quotes,
-/// whitespace, code-fence wrappers).
-fn strip_response(s: &str) -> &str {
-    let t = s.trim();
-    // Strip a single layer of code-fence: ```...```, ```rust...```, ```\n...```
-    if t.starts_with("```") && t.ends_with("```") && t.len() >= 6 {
-        let inner = &t[3..t.len() - 3];
-        // Trim a leading language tag like ```rust\n...
-        let after_lang = inner
-            .find('\n')
-            .map(|nl| &inner[nl + 1..])
-            .unwrap_or(inner);
-        return after_lang.trim();
-    }
-    t
-}
-
-fn parse_int(s: &str) -> Option<i64> {
-    let t = strip_response(s);
-    let t = t.trim_matches(|c: char| c == '"' || c == '\'').trim();
-    t.parse::<i64>().ok()
-}
-
-fn parse_bool(s: &str) -> Option<bool> {
-    let t = strip_response(s).trim().trim_matches(|c: char| c == '"' || c == '\'');
-    match t.to_ascii_lowercase().as_str() {
-        "true" | "1" | "yes" => Some(true),
-        "false" | "0" | "no" => Some(false),
-        _ => None,
-    }
-}
-
-fn parse_float(s: &str) -> Option<f64> {
-    let t = strip_response(s).trim().trim_matches(|c: char| c == '"' || c == '\'');
-    t.parse::<f64>().ok()
-}
-
 // ------------------------------------------------------------
 // Internal helpers (safe Rust, no FFI).
 // ------------------------------------------------------------
-
