@@ -12,6 +12,7 @@
 //! bench / trace / receipt / bundle / deploy / upgrade arg trees
 //! follow as the dispatch tree is extracted.
 
+pub mod approvals;
 pub mod auth;
 pub mod bench;
 pub mod connectors;
@@ -22,6 +23,8 @@ pub mod observe;
 pub mod package;
 pub mod root;
 
+#[allow(unused_imports)]
+pub use approvals::*;
 #[allow(unused_imports)]
 pub use auth::*;
 #[allow(unused_imports)]
