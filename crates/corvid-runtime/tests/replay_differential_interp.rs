@@ -129,7 +129,6 @@ fn llm_result_step(trace_path: &Path, prompt: &str) -> usize {
             )
         })
         .unwrap()
-        + 1
 }
 
 fn tool_call_step(trace_path: &Path, tool: &str) -> usize {
