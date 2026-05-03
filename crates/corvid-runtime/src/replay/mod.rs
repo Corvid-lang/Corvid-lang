@@ -1,3 +1,4 @@
+mod approval_outcome;
 mod cursor;
 mod differential;
 mod diverge;
@@ -22,6 +23,7 @@ use std::sync::{Arc, Mutex};
 
 use crate::errors::RuntimeError;
 use crate::llm::{LlmRegistry, LlmRequestRef, LlmResponse, TokenUsage};
+pub use approval_outcome::{ReplayApprovalDecision, ReplayApprovalOutcome};
 use corvid_trace_schema::{
     read_events_from_path, validate_supported_schema, TraceEvent, WRITER_INTERPRETER,
 };
@@ -51,19 +53,6 @@ pub struct ReplaySource {
     cursor: Arc<Mutex<TraceCursor>>,
     initial_rollout_seed: u64,
     mode: ReplayMode,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ReplayApprovalDecision {
-    pub accepted: bool,
-    pub decider: String,
-    pub rationale: Option<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ReplayApprovalOutcome {
-    pub approved: bool,
-    pub decision: Option<ReplayApprovalDecision>,
 }
 
 impl ReplaySource {
