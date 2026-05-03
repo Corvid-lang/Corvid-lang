@@ -8,152 +8,16 @@ use corvid_abi::{
 use corvid_trace_schema::TraceEvent;
 use std::collections::HashMap;
 use std::ffi::{c_char, CString};
-use std::sync::{Arc, OnceLock};
+use std::sync::OnceLock;
 
-#[repr(C)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CorvidTrustTier {
-    Autonomous = 0,
-    HumanRequired = 1,
-    SecurityReview = 2,
-}
-
-#[repr(C)]
-#[derive(Debug, Clone, Copy)]
-pub struct CorvidAgentHandle {
-    pub name: *const c_char,
-    pub symbol: *const c_char,
-    pub source_file: *const c_char,
-    pub source_line: u32,
-    pub trust_tier: u8,
-    pub cost_bound_usd: f64,
-    pub reversible: u8,
-    pub latency_instant: u8,
-    pub replayable: u8,
-    pub deterministic: u8,
-    pub dangerous: u8,
-    pub pub_extern_c: u8,
-    pub requires_approval: u8,
-    pub grounded_source_count: u32,
-    pub param_count: u32,
-}
-
-#[repr(C)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct CorvidFindAgentsResult {
-    pub status: CorvidFindAgentsStatus,
-    pub matched_count: usize,
-    pub error_message: *const c_char,
-}
-
-#[repr(C)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
-pub enum CorvidCallStatus {
-    Ok = 0,
-    AgentNotFound = 1,
-    BadArgs = 2,
-    UnsupportedSig = 3,
-    ApprovalRequired = 4,
-    BudgetExceeded = 5,
-    RuntimeError = 6,
-}
-
-#[repr(C)]
-#[derive(Debug, Clone, Copy)]
-pub struct CorvidApprovalRequired {
-    pub site_name: *const c_char,
-    pub predicate_json: *const c_char,
-    pub args_json: *const c_char,
-    pub rationale_prompt: *const c_char,
-}
-
-#[repr(C)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
-pub enum CorvidPreFlightStatus {
-    Ok = 0,
-    AgentNotFound = 1,
-    BadArgs = 2,
-    UnsupportedSig = 3,
-}
-
-#[repr(C)]
-#[derive(Debug, Clone, Copy)]
-pub struct CorvidPreFlight {
-    pub status: CorvidPreFlightStatus,
-    pub cost_bound_usd: f64,
-    pub requires_approval: u8,
-    pub effect_row_json: *const c_char,
-    pub grounded_source_set_json: *const c_char,
-    pub bad_args_message: *const c_char,
-}
-
-#[repr(i32)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CorvidApprovalDecision {
-    Accept = 0,
-    Reject = 1,
-}
-
-pub type CorvidApproverFn =
-    unsafe extern "C" fn(*const CorvidApprovalRequired, *mut std::ffi::c_void) -> i32;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ScalarAbiType {
-    Int,
-    Float,
-    Bool,
-    String,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ScalarReturnType {
-    Int,
-    Float,
-    Bool,
-    String,
-    Nothing,
-}
-
-pub(crate) struct ScalarInvocation {
-    pub result: serde_json::Value,
-    pub observation_handle: u64,
-}
-
-pub(crate) type ScalarInvoker =
-    Arc<dyn Fn(&[serde_json::Value]) -> Result<ScalarInvocation, RuntimeError> + Send + Sync>;
-
-#[derive(Debug, Clone, serde::Serialize)]
-pub struct OwnedApprovalRequired {
-    pub site_name: String,
-    pub predicate_json: String,
-    pub args_json: String,
-    pub rationale_prompt: String,
-}
-
-#[derive(Debug, Clone, serde::Serialize)]
-pub struct OwnedPreFlight {
-    pub status: CorvidPreFlightStatus,
-    pub cost_bound_usd: f64,
-    pub requires_approval: bool,
-    pub effect_row_json: String,
-    pub grounded_source_set_json: String,
-    pub bad_args_message: Option<String>,
-}
-
-#[derive(Debug, Clone, serde::Serialize)]
-pub struct OwnedCallOutcome {
-    pub status: CorvidCallStatus,
-    pub result_json: Option<String>,
-    pub approval: Option<OwnedApprovalRequired>,
-    pub observation_handle: u64,
-}
-
-#[derive(Debug, Clone, serde::Serialize)]
-pub struct OwnedFindAgentsOutcome {
-    pub status: CorvidFindAgentsStatus,
-    pub matched_indices: Vec<usize>,
-    pub error_message: Option<String>,
-}
+mod types;
+pub use types::{
+    CorvidAgentHandle, CorvidApprovalDecision, CorvidApprovalRequired, CorvidApproverFn,
+    CorvidCallStatus, CorvidFindAgentsResult, CorvidPreFlight, CorvidPreFlightStatus,
+    CorvidTrustTier, OwnedApprovalRequired, OwnedCallOutcome, OwnedFindAgentsOutcome,
+    OwnedPreFlight,
+};
+pub(crate) use types::{ScalarAbiType, ScalarInvocation, ScalarInvoker, ScalarReturnType};
 
 enum CatalogInvoker {
     Introspection(IntrospectionKind),
@@ -203,7 +67,10 @@ pub fn descriptor_json() -> Result<(&'static str, usize), RuntimeError> {
 
 pub fn descriptor_json_ptr() -> Result<(*const c_char, usize), RuntimeError> {
     let state = catalog()?;
-    Ok((state.descriptor_json_c.as_ptr(), state.descriptor_json.len()))
+    Ok((
+        state.descriptor_json_c.as_ptr(),
+        state.descriptor_json.len(),
+    ))
 }
 
 pub fn descriptor_hash() -> Result<[u8; 32], RuntimeError> {
@@ -227,7 +94,11 @@ pub fn list_agents() -> Result<&'static [CorvidAgentHandle], RuntimeError> {
 pub(crate) fn list_agent_handles_owned() -> Result<Vec<CorvidAgentHandle>, RuntimeError> {
     let state = catalog()?;
     let mut handles = Vec::with_capacity(state.agents.len() + 1);
-    for entry in state.agents.iter().filter(|entry| is_introspection_agent(&entry.abi.name)) {
+    for entry in state
+        .agents
+        .iter()
+        .filter(|entry| is_introspection_agent(&entry.abi.name))
+    {
         handles.push(handle_from_entry(entry));
     }
     if let Some(overlay) = crate::approver_bridge::registered_approver_overlay() {
@@ -273,13 +144,23 @@ pub fn agent_signature_json(
     name: &str,
 ) -> Result<Option<(&'static str, usize, *const c_char)>, RuntimeError> {
     if name == "__corvid_approver" {
-        return Ok(crate::approver_bridge::registered_approver_overlay().map(|overlay| {
-            let value: &'static str = Box::leak(overlay.signature_json.into_boxed_str());
-            (value, overlay.signature_json_len, overlay.signature_json_ptr)
-        }));
+        return Ok(
+            crate::approver_bridge::registered_approver_overlay().map(|overlay| {
+                let value: &'static str = Box::leak(overlay.signature_json.into_boxed_str());
+                (
+                    value,
+                    overlay.signature_json_len,
+                    overlay.signature_json_ptr,
+                )
+            }),
+        );
     }
     let state = catalog()?;
-    let Some(entry) = state.by_name.get(name).and_then(|idx| state.agents.get(*idx)) else {
+    let Some(entry) = state
+        .by_name
+        .get(name)
+        .and_then(|idx| state.agents.get(*idx))
+    else {
         return Ok(None);
     };
     let value = entry
@@ -394,7 +275,9 @@ fn load_catalog() -> Result<CatalogState, RuntimeError> {
         let effect_row_json = serde_json::to_string(&abi.effects)
             .map_err(|err| RuntimeError::Other(format!("serialize effect row: {err}")))?;
         let grounded_source_set_json = serde_json::to_string(&abi.provenance.grounded_param_deps)
-            .map_err(|err| RuntimeError::Other(format!("serialize grounded source set: {err}")))?;
+            .map_err(|err| {
+            RuntimeError::Other(format!("serialize grounded source set: {err}"))
+        })?;
         let invoker = build_invoker(&abi)?;
         by_name.insert(abi.name.clone(), agents.len());
         agents.push(AgentCatalogEntry {
@@ -434,7 +317,11 @@ fn pre_flight_impl(agent_name: &str, args_json: &str) -> Result<OwnedPreFlight, 
         });
     }
     let state = catalog()?;
-    let Some(entry) = state.by_name.get(agent_name).and_then(|idx| state.agents.get(*idx)) else {
+    let Some(entry) = state
+        .by_name
+        .get(agent_name)
+        .and_then(|idx| state.agents.get(*idx))
+    else {
         return Ok(OwnedPreFlight {
             status: CorvidPreFlightStatus::AgentNotFound,
             cost_bound_usd: f64::NAN,
@@ -493,7 +380,11 @@ fn call_agent_impl(agent_name: &str, args_json: &str) -> Result<OwnedCallOutcome
         });
     }
     let state = catalog()?;
-    let Some(entry) = state.by_name.get(agent_name).and_then(|idx| state.agents.get(*idx)) else {
+    let Some(entry) = state
+        .by_name
+        .get(agent_name)
+        .and_then(|idx| state.agents.get(*idx))
+    else {
         return Ok(OwnedCallOutcome {
             status: CorvidCallStatus::AgentNotFound,
             result_json: None,
@@ -546,15 +437,13 @@ fn call_agent_impl(agent_name: &str, args_json: &str) -> Result<OwnedCallOutcome
 
     let invocation = match &entry.invoker {
         CatalogInvoker::Introspection(kind) => {
-            let scope = crate::observation_handles::begin_observation(finite_option(cost_bound_for(
-                &entry.abi,
-            )));
-            introspection_call(*kind, validated.args.clone())
-                .map(|result| (result, scope.finish()))
+            let scope = crate::observation_handles::begin_observation(finite_option(
+                cost_bound_for(&entry.abi),
+            ));
+            introspection_call(*kind, validated.args.clone()).map(|result| (result, scope.finish()))
         }
-        CatalogInvoker::Scalar(invoker) => {
-            (invoker)(&validated.args).map(|invocation| (invocation.result, invocation.observation_handle))
-        }
+        CatalogInvoker::Scalar(invoker) => (invoker)(&validated.args)
+            .map(|invocation| (invocation.result, invocation.observation_handle)),
         CatalogInvoker::Unsupported { .. } => unreachable!(),
     };
     let (result, observation_handle) = match invocation {
@@ -584,7 +473,11 @@ fn call_agent_impl(agent_name: &str, args_json: &str) -> Result<OwnedCallOutcome
 fn find_agents_where_impl(filter_json: &str) -> Result<OwnedFindAgentsOutcome, RuntimeError> {
     let state = catalog()?;
     let mut agents = Vec::with_capacity(state.agents.len() + 1);
-    for entry in state.agents.iter().filter(|entry| is_introspection_agent(&entry.abi.name)) {
+    for entry in state
+        .agents
+        .iter()
+        .filter(|entry| is_introspection_agent(&entry.abi.name))
+    {
         agents.push(filter_agent_from_entry(entry, None));
     }
     if let Some(overlay) = crate::approver_bridge::registered_approver_overlay() {
@@ -612,7 +505,10 @@ struct ValidatedArgs {
     args: Vec<serde_json::Value>,
 }
 
-fn validate_args_for_entry(entry: &AgentCatalogEntry, args_json: &str) -> Result<ValidatedArgs, String> {
+fn validate_args_for_entry(
+    entry: &AgentCatalogEntry,
+    args_json: &str,
+) -> Result<ValidatedArgs, String> {
     let value: serde_json::Value = serde_json::from_str(args_json)
         .map_err(|err| format!("args_json must be a JSON array: {err}"))?;
     let serde_json::Value::Array(args) = value else {
@@ -721,10 +617,7 @@ fn build_approval_required(
     })
 }
 
-fn emit_embedded_rejected_approval(
-    approval: &OwnedApprovalRequired,
-    args: &[serde_json::Value],
-) {
+fn emit_embedded_rejected_approval(approval: &OwnedApprovalRequired, args: &[serde_json::Value]) {
     crate::ffi_bridge::corvid_runtime_embed_init_default();
     let runtime = crate::ffi_bridge::runtime();
     let tracer = runtime.tracer();
@@ -767,12 +660,18 @@ fn introspection_call(
     args: Vec<serde_json::Value>,
 ) -> Result<serde_json::Value, RuntimeError> {
     match kind {
-        IntrospectionKind::DescriptorJson => Ok(serde_json::Value::String(descriptor_json()?.0.to_string())),
+        IntrospectionKind::DescriptorJson => {
+            Ok(serde_json::Value::String(descriptor_json()?.0.to_string()))
+        }
         IntrospectionKind::Verify => {
             let expected = args
                 .first()
                 .and_then(|value| value.as_str())
-                .ok_or_else(|| RuntimeError::Marshal("`__corvid_abi_verify` expects one String hash argument".to_string()))?;
+                .ok_or_else(|| {
+                    RuntimeError::Marshal(
+                        "`__corvid_abi_verify` expects one String hash argument".to_string(),
+                    )
+                })?;
             let expected = decode_hex_hash(expected)?;
             Ok(serde_json::Value::Bool(verify_hash(&expected)?))
         }
@@ -786,10 +685,9 @@ fn introspection_call(
                 .collect::<Result<Vec<_>, _>>()
                 .map_err(|err| RuntimeError::Marshal(format!("serialize agent catalog: {err}")))?;
             if let Some(overlay) = crate::approver_bridge::registered_approver_overlay() {
-                agents.push(
-                    serde_json::to_value(&overlay.abi)
-                        .map_err(|err| RuntimeError::Marshal(format!("serialize approver overlay: {err}")))?,
-                );
+                agents.push(serde_json::to_value(&overlay.abi).map_err(|err| {
+                    RuntimeError::Marshal(format!("serialize approver overlay: {err}"))
+                })?);
             }
             let mut user_agents = state
                 .agents
@@ -800,15 +698,20 @@ fn introspection_call(
                 .map_err(|err| RuntimeError::Marshal(format!("serialize agent catalog: {err}")))?;
             agents.append(&mut user_agents);
             Ok(serde_json::Value::String(
-                serde_json::to_string(&agents)
-                    .map_err(|err| RuntimeError::Marshal(format!("serialize agent list JSON: {err}")))?,
+                serde_json::to_string(&agents).map_err(|err| {
+                    RuntimeError::Marshal(format!("serialize agent list JSON: {err}"))
+                })?,
             ))
         }
         IntrospectionKind::AgentSignatureJson => {
             let name = args
                 .first()
                 .and_then(|value| value.as_str())
-                .ok_or_else(|| RuntimeError::Marshal("`__corvid_agent_signature_json` expects one String argument".to_string()))?;
+                .ok_or_else(|| {
+                    RuntimeError::Marshal(
+                        "`__corvid_agent_signature_json` expects one String argument".to_string(),
+                    )
+                })?;
             let signature = agent_signature_json(name)?
                 .map(|(json, _, _)| json.to_string())
                 .unwrap_or_default();
@@ -818,28 +721,38 @@ fn introspection_call(
             let agent = args
                 .first()
                 .and_then(|value| value.as_str())
-                .ok_or_else(|| RuntimeError::Marshal("`__corvid_pre_flight` expects agent name".to_string()))?;
+                .ok_or_else(|| {
+                    RuntimeError::Marshal("`__corvid_pre_flight` expects agent name".to_string())
+                })?;
             let args_json = args
                 .get(1)
                 .and_then(|value| value.as_str())
-                .ok_or_else(|| RuntimeError::Marshal("`__corvid_pre_flight` expects args JSON".to_string()))?;
+                .ok_or_else(|| {
+                    RuntimeError::Marshal("`__corvid_pre_flight` expects args JSON".to_string())
+                })?;
             Ok(serde_json::Value::String(
-                serde_json::to_string(&pre_flight(agent, args_json))
-                    .map_err(|err| RuntimeError::Marshal(format!("serialize preflight JSON: {err}")))?,
+                serde_json::to_string(&pre_flight(agent, args_json)).map_err(|err| {
+                    RuntimeError::Marshal(format!("serialize preflight JSON: {err}"))
+                })?,
             ))
         }
         IntrospectionKind::CallAgent => {
             let agent = args
                 .first()
                 .and_then(|value| value.as_str())
-                .ok_or_else(|| RuntimeError::Marshal("`__corvid_call_agent` expects agent name".to_string()))?;
+                .ok_or_else(|| {
+                    RuntimeError::Marshal("`__corvid_call_agent` expects agent name".to_string())
+                })?;
             let args_json = args
                 .get(1)
                 .and_then(|value| value.as_str())
-                .ok_or_else(|| RuntimeError::Marshal("`__corvid_call_agent` expects args JSON".to_string()))?;
+                .ok_or_else(|| {
+                    RuntimeError::Marshal("`__corvid_call_agent` expects args JSON".to_string())
+                })?;
             Ok(serde_json::Value::String(
-                serde_json::to_string(&call_agent(agent, args_json))
-                    .map_err(|err| RuntimeError::Marshal(format!("serialize call outcome JSON: {err}")))?,
+                serde_json::to_string(&call_agent(agent, args_json)).map_err(|err| {
+                    RuntimeError::Marshal(format!("serialize call outcome JSON: {err}"))
+                })?,
             ))
         }
         IntrospectionKind::FindAgentsWhere => {
@@ -862,7 +775,8 @@ fn introspection_call(
 }
 
 fn cstring(value: &str) -> Result<CString, RuntimeError> {
-    CString::new(value).map_err(|err| RuntimeError::Other(format!("catalog string contained NUL: {err}")))
+    CString::new(value)
+        .map_err(|err| RuntimeError::Other(format!("catalog string contained NUL: {err}")))
 }
 
 fn handle_from_entry(entry: &AgentCatalogEntry) -> CorvidAgentHandle {
@@ -871,7 +785,9 @@ fn handle_from_entry(entry: &AgentCatalogEntry) -> CorvidAgentHandle {
         symbol: entry.symbol_c.as_ptr(),
         source_file: entry.source_file_c.as_ptr(),
         source_line: entry.abi.source_line,
-        trust_tier: effect_filter::trust_tier_to_handle_value(entry.abi.effects.trust_tier.as_deref()),
+        trust_tier: effect_filter::trust_tier_to_handle_value(
+            entry.abi.effects.trust_tier.as_deref(),
+        ),
         cost_bound_usd: cost_bound_for(&entry.abi),
         reversible: entry
             .abi
@@ -902,7 +818,8 @@ fn is_introspection_agent(name: &str) -> bool {
 }
 
 fn cost_bound_for(agent: &AbiAgent) -> f64 {
-    agent.budget
+    agent
+        .budget
         .as_ref()
         .map(|budget| budget.usd_per_call)
         .or_else(|| agent.effects.cost.as_ref().map(|cost| cost.projected_usd))
