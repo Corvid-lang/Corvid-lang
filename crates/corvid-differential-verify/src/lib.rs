@@ -20,6 +20,9 @@ pub mod fuzz;
 pub mod render;
 pub mod rewrite;
 
+use render::{render_data, render_latency, render_trust};
+pub use render::{render_corpus_grid, render_report};
+
 const VERIFY_MODEL: &str = "verify-mock";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -190,81 +193,6 @@ pub fn shrink_program(path: &Path) -> Result<ShrinkResult> {
         output,
         removed_lines: original.lines().count().saturating_sub(lines.len()),
     })
-}
-
-pub fn render_corpus_grid(reports: &[DivergenceReport]) -> String {
-    let mut lines = vec![
-        format!(
-            "{:<34} {:<7} {:<7} {:<7} {:<7} {:<9}",
-            "program", "check", "interp", "native", "replay", "verdict"
-        ),
-        format!(
-            "{:-<34} {:-<7} {:-<7} {:-<7} {:-<7} {:-<9}",
-            "", "", "", "", "", ""
-        ),
-    ];
-    for report in reports {
-        let interp = &report.reports[1].profile;
-        let cells: Vec<_> = report
-            .reports
-            .iter()
-            .map(|tier| {
-                if tier.profile == *interp {
-                    "agree"
-                } else {
-                    "diff"
-                }
-            })
-            .collect();
-        let verdict = if report.divergences.is_empty() {
-            "ok"
-        } else {
-            "diverges"
-        };
-        lines.push(format!(
-            "{:<34} {:<7} {:<7} {:<7} {:<7} {:<9}",
-            report
-                .program
-                .file_name()
-                .and_then(|name| name.to_str())
-                .unwrap_or("<unknown>"),
-            cells[0],
-            cells[1],
-            cells[2],
-            cells[3],
-            verdict
-        ));
-    }
-    lines.join("\n")
-}
-
-pub fn render_report(report: &DivergenceReport) -> String {
-    let mut lines = vec![format!("{}", report.program.display())];
-    for tier in &report.reports {
-        lines.push(format!(
-            "  {:<11} cost=${:.4} trust={} reversible={} data={} latency={} confidence={:.2}",
-            format!("{:?}", tier.tier).to_lowercase(),
-            tier.profile.cost,
-            render_trust(&tier.profile.trust),
-            tier.profile.reversible,
-            render_data(&tier.profile.data),
-            render_latency(&tier.profile.latency),
-            tier.profile.confidence,
-        ));
-    }
-    if report.divergences.is_empty() {
-        lines.push("  divergences: none".into());
-    } else {
-        lines.push(format!("  divergences: {}", report.divergences.len()));
-        for divergence in &report.divergences {
-            lines.push(format!(
-                "    {} [{}]",
-                divergence.dimension,
-                render_divergence_class(&divergence.classification)
-            ));
-        }
-    }
-    lines.join("\n")
 }
 
 impl Frontend {
@@ -943,47 +871,6 @@ fn select_entry_agent(ir: &corvid_ir::IrFile) -> Result<String> {
         .find(|agent| agent.name == "main")
         .map(|agent| agent.name.clone())
         .ok_or_else(|| anyhow!("multiple agents declared and none named `main`"))
-}
-
-fn render_trust(level: &TrustLevel) -> String {
-    match level {
-        TrustLevel::Autonomous => "autonomous".into(),
-        TrustLevel::SupervisorRequired => "supervisor_required".into(),
-        TrustLevel::HumanRequired => "human_required".into(),
-        TrustLevel::Custom(name) => name.clone(),
-    }
-}
-
-fn render_data(data: &BTreeSet<DataCategory>) -> String {
-    if data.is_empty() {
-        "none".into()
-    } else {
-        data.iter()
-            .map(|category| category.0.as_str())
-            .collect::<Vec<_>>()
-            .join(",")
-    }
-}
-
-fn render_latency(latency: &LatencyLevel) -> String {
-    match latency {
-        LatencyLevel::Instant => "instant".into(),
-        LatencyLevel::Fast => "fast".into(),
-        LatencyLevel::Medium => "medium".into(),
-        LatencyLevel::Slow => "slow".into(),
-        LatencyLevel::Streaming { backpressure } => match backpressure {
-            policy => format!("streaming({})", policy.label()),
-        },
-        LatencyLevel::Custom(name) => name.clone(),
-    }
-}
-
-fn render_divergence_class(class: &DivergenceClass) -> &'static str {
-    match class {
-        DivergenceClass::StaticOverapproximated => "static-overapprox",
-        DivergenceClass::StaticTooLoose => "static-too-loose",
-        DivergenceClass::TierMismatch => "tier-mismatch",
-    }
 }
 
 fn trust_rank(level: &TrustLevel) -> u8 {

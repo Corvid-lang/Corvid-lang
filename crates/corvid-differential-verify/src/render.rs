@@ -4,6 +4,9 @@
     ImportSource, Literal, MockDecl, Param, PromptDecl, Stmt, ToolDecl, TypeRef, UnaryOp,
     Visibility,
 };
+use std::collections::BTreeSet;
+
+use crate::{DataCategory, DivergenceClass, DivergenceReport, LatencyLevel, TrustLevel};
 
 pub fn render_file(file: &File) -> String {
     let mut out = String::new();
@@ -695,5 +698,121 @@ fn render_string_literal(value: &str) -> String {
 fn push_indent(indent: usize, out: &mut String) {
     for _ in 0..indent {
         out.push_str("    ");
+    }
+}
+
+pub fn render_corpus_grid(reports: &[DivergenceReport]) -> String {
+    let mut lines = vec![
+        format!(
+            "{:<34} {:<7} {:<7} {:<7} {:<7} {:<9}",
+            "program", "check", "interp", "native", "replay", "verdict"
+        ),
+        format!(
+            "{:-<34} {:-<7} {:-<7} {:-<7} {:-<7} {:-<9}",
+            "", "", "", "", "", ""
+        ),
+    ];
+    for report in reports {
+        let interp = &report.reports[1].profile;
+        let cells: Vec<_> = report
+            .reports
+            .iter()
+            .map(|tier| {
+                if tier.profile == *interp {
+                    "agree"
+                } else {
+                    "diff"
+                }
+            })
+            .collect();
+        let verdict = if report.divergences.is_empty() {
+            "ok"
+        } else {
+            "diverges"
+        };
+        lines.push(format!(
+            "{:<34} {:<7} {:<7} {:<7} {:<7} {:<9}",
+            report
+                .program
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("<unknown>"),
+            cells[0],
+            cells[1],
+            cells[2],
+            cells[3],
+            verdict
+        ));
+    }
+    lines.join("\n")
+}
+
+pub fn render_report(report: &DivergenceReport) -> String {
+    let mut lines = vec![format!("{}", report.program.display())];
+    for tier in &report.reports {
+        lines.push(format!(
+            "  {:<11} cost=${:.4} trust={} reversible={} data={} latency={} confidence={:.2}",
+            format!("{:?}", tier.tier).to_lowercase(),
+            tier.profile.cost,
+            render_trust(&tier.profile.trust),
+            tier.profile.reversible,
+            render_data(&tier.profile.data),
+            render_latency(&tier.profile.latency),
+            tier.profile.confidence,
+        ));
+    }
+    if report.divergences.is_empty() {
+        lines.push("  divergences: none".into());
+    } else {
+        lines.push(format!("  divergences: {}", report.divergences.len()));
+        for divergence in &report.divergences {
+            lines.push(format!(
+                "    {} [{}]",
+                divergence.dimension,
+                render_divergence_class(&divergence.classification)
+            ));
+        }
+    }
+    lines.join("\n")
+}
+
+pub(crate) fn render_trust(level: &TrustLevel) -> String {
+    match level {
+        TrustLevel::Autonomous => "autonomous".into(),
+        TrustLevel::SupervisorRequired => "supervisor_required".into(),
+        TrustLevel::HumanRequired => "human_required".into(),
+        TrustLevel::Custom(name) => name.clone(),
+    }
+}
+
+pub(crate) fn render_data(data: &BTreeSet<DataCategory>) -> String {
+    if data.is_empty() {
+        "none".into()
+    } else {
+        data.iter()
+            .map(|category| category.0.as_str())
+            .collect::<Vec<_>>()
+            .join(",")
+    }
+}
+
+pub(crate) fn render_latency(latency: &LatencyLevel) -> String {
+    match latency {
+        LatencyLevel::Instant => "instant".into(),
+        LatencyLevel::Fast => "fast".into(),
+        LatencyLevel::Medium => "medium".into(),
+        LatencyLevel::Slow => "slow".into(),
+        LatencyLevel::Streaming { backpressure } => match backpressure {
+            policy => format!("streaming({})", policy.label()),
+        },
+        LatencyLevel::Custom(name) => name.clone(),
+    }
+}
+
+fn render_divergence_class(class: &DivergenceClass) -> &'static str {
+    match class {
+        DivergenceClass::StaticOverapproximated => "static-overapprox",
+        DivergenceClass::StaticTooLoose => "static-too-loose",
+        DivergenceClass::TierMismatch => "tier-mismatch",
     }
 }
