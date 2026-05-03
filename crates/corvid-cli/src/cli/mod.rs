@@ -23,6 +23,7 @@ pub mod jobs;
 pub mod migrate;
 pub mod observe;
 pub mod package;
+pub mod receipt;
 pub mod root;
 pub mod upgrade;
 
@@ -48,6 +49,8 @@ pub use migrate::*;
 pub use observe::*;
 #[allow(unused_imports)]
 pub use package::*;
+#[allow(unused_imports)]
+pub use receipt::*;
 #[allow(unused_imports)]
 pub use root::*;
 #[allow(unused_imports)]
