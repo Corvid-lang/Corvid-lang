@@ -21,6 +21,7 @@ use std::path::PathBuf;
 pub use super::approvals::ApprovalsCommand;
 pub use super::auth::{AuthCommand, AuthKeysCommand};
 pub use super::bench::BenchCommand;
+pub use super::claim::ClaimCommand;
 pub use super::connectors::{ConnectorsCommand, ConnectorsOauthCommand};
 pub use super::contract::ContractCommand;
 use super::jobs::JobsCommand;
@@ -688,23 +689,6 @@ pub enum Command {
     Approvals {
         #[command(subcommand)]
         command: ApprovalsCommand,
-    },
-}
-
-#[derive(Subcommand)]
-pub enum ClaimCommand {
-    /// Audit launch-facing claims for runnable evidence or explicit non-scope status.
-    Audit {
-        /// Claim inventory markdown table.
-        #[arg(
-            long,
-            value_name = "PATH",
-            default_value = "docs/launch-claim-audit.md"
-        )]
-        inventory: PathBuf,
-        /// Emit JSON report.
-        #[arg(long)]
-        json: bool,
     },
 }
 
