@@ -6,9 +6,9 @@ use corvid_driver::{
 };
 use corvid_ir::IrFile;
 use corvid_runtime::{
-    AnthropicAdapter, EnvVarMockAdapter, OpenAiAdapter, ProgrammaticApprover,
-    RedactionSet, ReplayDifferentialReport, ReplayDivergence, ReplayMutationReport, Runtime,
-    RuntimeError, TraceEvent, Tracer, WRITER_INTERPRETER, WRITER_NATIVE,
+    AnthropicAdapter, EnvVarMockAdapter, OpenAiAdapter, ProgrammaticApprover, RedactionSet,
+    ReplayDifferentialReport, ReplayDivergence, ReplayMutationReport, Runtime, RuntimeError,
+    TraceEvent, Tracer, WRITER_INTERPRETER, WRITER_NATIVE,
 };
 use corvid_syntax::{lex, parse_file};
 use corvid_trace_schema::{read_events_from_path, validate_supported_schema};
@@ -20,137 +20,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::sync::Semaphore;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum TrustTier {
-    Autonomous,
-    HumanRequired,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct DimensionSnapshot {
-    pub cost: f64,
-    pub latency_ms: u64,
-    pub trust_tier: Option<TrustTier>,
-    pub budget_declared: Option<f64>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct ProvenanceSnapshot {
-    pub nodes: BTreeSet<String>,
-    pub root_sources: BTreeSet<String>,
-    pub has_chain: bool,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DangerousToolSpec {
-    pub tool: String,
-    pub approval_label: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct AgentInvariantInfo {
-    pub agent: String,
-    pub replayable: bool,
-    pub deterministic: bool,
-    pub grounded_return: bool,
-    pub budget_declared: Option<f64>,
-    pub dangerous_tools: Vec<DangerousToolSpec>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MutationSpec {
-    pub step_1based: usize,
-    pub replacement: serde_json::Value,
-    pub label: String,
-}
-
-#[derive(Debug, Clone)]
-pub enum ShadowExecutionMode {
-    Replay,
-    Differential { model: String },
-    Mutation(MutationSpec),
-}
-
-#[derive(Debug, Clone)]
-pub struct ShadowReplayOutcome {
-    pub trace_path: PathBuf,
-    pub run_id: String,
-    pub agent: String,
-    pub recorded_events: Vec<TraceEvent>,
-    pub shadow_trace_path: PathBuf,
-    pub shadow_events: Vec<TraceEvent>,
-    pub recorded_output: Option<serde_json::Value>,
-    pub shadow_output: Option<serde_json::Value>,
-    pub replay_divergence: Option<ReplayDivergence>,
-    pub differential_report: Option<ReplayDifferentialReport>,
-    pub mutation_report: Option<ReplayMutationReport>,
-    pub recorded_dimensions: DimensionSnapshot,
-    pub shadow_dimensions: DimensionSnapshot,
-    pub recorded_provenance: ProvenanceSnapshot,
-    pub shadow_provenance: ProvenanceSnapshot,
-    pub metadata: AgentInvariantInfo,
-    pub mode: String,
-    pub ok: bool,
-    pub error: Option<String>,
-}
-
-impl ShadowReplayOutcome {
-    pub fn normalized_recorded_events(&self) -> Vec<serde_json::Value> {
-        self.recorded_events
-            .iter()
-            .map(normalize_event_json)
-            .collect()
-    }
-
-    pub fn normalized_shadow_events(&self) -> Vec<serde_json::Value> {
-        self.shadow_events.iter().map(normalize_event_json).collect()
-    }
-
-    pub fn traces_match(&self) -> bool {
-        self.normalized_recorded_events() == self.normalized_shadow_events()
-    }
-
-    pub fn seed_clock_positions(events: &[TraceEvent]) -> Vec<(usize, &'static str)> {
-        events
-            .iter()
-            .enumerate()
-            .filter_map(|(idx, event)| match event {
-                TraceEvent::SeedRead { .. } => Some((idx, "seed")),
-                TraceEvent::ClockRead { .. } => Some((idx, "clock")),
-                _ => None,
-            })
-            .collect()
-    }
-}
-
-#[derive(Debug, Clone)]
-pub enum ShadowExecutorError {
-    Io(String),
-    Compile(String),
-    TraceLoad(String),
-    Runtime(RuntimeError),
-    Interp(String),
-    UnsupportedProgramPath(PathBuf),
-}
-
-impl std::fmt::Display for ShadowExecutorError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Io(msg) => f.write_str(msg),
-            Self::Compile(msg) => f.write_str(msg),
-            Self::TraceLoad(msg) => f.write_str(msg),
-            Self::Runtime(err) => err.fmt(f),
-            Self::Interp(msg) => f.write_str(msg),
-            Self::UnsupportedProgramPath(path) => write!(
-                f,
-                "shadow daemon v1 requires `daemon.ir_path` to point at a `.cor` source file; `{}` is not supported yet",
-                path.display()
-            ),
-        }
-    }
-}
-
-impl std::error::Error for ShadowExecutorError {}
+mod spec;
+pub use spec::*;
 
 #[async_trait]
 pub trait ShadowReplayExecutor: Send + Sync {
@@ -203,7 +74,9 @@ pub struct NativeShadowExecutor {
 impl InterpreterShadowExecutor {
     pub fn from_program_path(path: &Path) -> Result<Self, ShadowExecutorError> {
         if path.extension().and_then(|ext| ext.to_str()) != Some("cor") {
-            return Err(ShadowExecutorError::UnsupportedProgramPath(path.to_path_buf()));
+            return Err(ShadowExecutorError::UnsupportedProgramPath(
+                path.to_path_buf(),
+            ));
         }
         let (ir, metadata) = parse_program_source(path)
             .map_err(|err| ShadowExecutorError::Compile(err.to_string()))?;
@@ -215,10 +88,8 @@ impl InterpreterShadowExecutor {
     }
 
     fn build_runtime(&self, trace_path: &Path, mode: &ShadowExecutionMode) -> Runtime {
-        let emit_dir = std::env::temp_dir().join(format!(
-            "corvid-shadow-{}",
-            corvid_runtime::fresh_run_id()
-        ));
+        let emit_dir =
+            std::env::temp_dir().join(format!("corvid-shadow-{}", corvid_runtime::fresh_run_id()));
         let _ = std::fs::create_dir_all(&emit_dir);
         let tracer = Tracer::open(&emit_dir, corvid_runtime::fresh_run_id())
             .with_redaction(RedactionSet::empty());
@@ -240,9 +111,9 @@ impl InterpreterShadowExecutor {
 
         match mode {
             ShadowExecutionMode::Replay => builder.replay_from(trace_path).build(),
-            ShadowExecutionMode::Differential { model } => {
-                builder.differential_replay_from(trace_path, model.clone()).build()
-            }
+            ShadowExecutionMode::Differential { model } => builder
+                .differential_replay_from(trace_path, model.clone())
+                .build(),
             ShadowExecutionMode::Mutation(spec) => builder
                 .mutation_replay_from(trace_path, spec.step_1based, spec.replacement.clone())
                 .build(),
@@ -253,7 +124,9 @@ impl InterpreterShadowExecutor {
 impl NativeShadowExecutor {
     pub fn from_program_path(path: &Path) -> Result<Self, ShadowExecutorError> {
         if path.extension().and_then(|ext| ext.to_str()) != Some("cor") {
-            return Err(ShadowExecutorError::UnsupportedProgramPath(path.to_path_buf()));
+            return Err(ShadowExecutorError::UnsupportedProgramPath(
+                path.to_path_buf(),
+            ));
         }
         let source = std::fs::read_to_string(path)
             .map_err(|err| ShadowExecutorError::Io(format!("read `{}`: {err}", path.display())))?;
@@ -361,9 +234,9 @@ impl ShadowReplayExecutor for InterpreterShadowExecutor {
         let error = run_result.as_ref().err().map(|err| err.to_string());
         let ok = run_result.is_ok();
         let replay_divergence = match run_result.as_ref().err().map(|err| &err.kind) {
-            Some(corvid_vm::InterpErrorKind::Runtime(RuntimeError::ReplayDivergence(divergence))) => {
-                Some(divergence.clone())
-            }
+            Some(corvid_vm::InterpErrorKind::Runtime(RuntimeError::ReplayDivergence(
+                divergence,
+            ))) => Some(divergence.clone()),
             Some(corvid_vm::InterpErrorKind::Runtime(err)) => {
                 return Err(ShadowExecutorError::Runtime(err.clone()));
             }
@@ -378,14 +251,14 @@ impl ShadowReplayExecutor for InterpreterShadowExecutor {
             ))
         })?;
 
-        let metadata = self
-            .metadata
-            .get(&agent.name)
-            .cloned()
-            .unwrap_or_else(|| AgentInvariantInfo {
-                agent: agent.name.clone(),
-                ..AgentInvariantInfo::default()
-            });
+        let metadata =
+            self.metadata
+                .get(&agent.name)
+                .cloned()
+                .unwrap_or_else(|| AgentInvariantInfo {
+                    agent: agent.name.clone(),
+                    ..AgentInvariantInfo::default()
+                });
 
         Ok(ShadowReplayOutcome {
             trace_path: trace_path.to_path_buf(),
@@ -489,8 +362,10 @@ impl ShadowReplayExecutor for NativeShadowExecutor {
             .map(|(json, _param)| native_arg_from_json(json))
             .collect::<Result<Vec<_>, _>>()?;
 
-        let shadow_trace_path = std::env::temp_dir()
-            .join(format!("corvid-shadow-native-{}.jsonl", corvid_runtime::fresh_run_id()));
+        let shadow_trace_path = std::env::temp_dir().join(format!(
+            "corvid-shadow-native-{}.jsonl",
+            corvid_runtime::fresh_run_id()
+        ));
         let differential_report_path = std::env::temp_dir().join(format!(
             "corvid-shadow-native-diff-{}.json",
             corvid_runtime::fresh_run_id()
@@ -508,8 +383,10 @@ impl ShadowReplayExecutor for NativeShadowExecutor {
         match &mode {
             ShadowExecutionMode::Replay => {}
             ShadowExecutionMode::Differential { model } => {
-                cmd.env("CORVID_REPLAY_MODEL", model)
-                    .env("CORVID_REPLAY_DIFFERENTIAL_REPORT_PATH", &differential_report_path);
+                cmd.env("CORVID_REPLAY_MODEL", model).env(
+                    "CORVID_REPLAY_DIFFERENTIAL_REPORT_PATH",
+                    &differential_report_path,
+                );
             }
             ShadowExecutionMode::Mutation(spec) => {
                 cmd.env("CORVID_REPLAY_MUTATE_STEP", spec.step_1based.to_string())
@@ -546,14 +423,14 @@ impl ShadowReplayExecutor for NativeShadowExecutor {
         let differential_report = read_optional_json(&differential_report_path)?;
         let mutation_report = read_optional_json(&mutation_report_path)?;
 
-        let metadata = self
-            .metadata
-            .get(&agent.name)
-            .cloned()
-            .unwrap_or_else(|| AgentInvariantInfo {
-                agent: agent.name.clone(),
-                ..AgentInvariantInfo::default()
-            });
+        let metadata =
+            self.metadata
+                .get(&agent.name)
+                .cloned()
+                .unwrap_or_else(|| AgentInvariantInfo {
+                    agent: agent.name.clone(),
+                    ..AgentInvariantInfo::default()
+                });
 
         Ok(ShadowReplayOutcome {
             trace_path: trace_path.to_path_buf(),
@@ -587,8 +464,8 @@ pub fn parse_program_source(path: &Path) -> Result<(IrFile, HashMap<String, Agen
     let source = std::fs::read_to_string(path)
         .with_context(|| format!("failed to read `{}`", path.display()))?;
     let config = load_corvid_config_for(path);
-    let ir =
-        compile_to_ir_with_config_at_path(&source, path, config.as_ref()).map_err(|diagnostics| {
+    let ir = compile_to_ir_with_config_at_path(&source, path, config.as_ref()).map_err(
+        |diagnostics| {
             anyhow::anyhow!(
                 "{}",
                 diagnostics
@@ -597,7 +474,8 @@ pub fn parse_program_source(path: &Path) -> Result<(IrFile, HashMap<String, Agen
                     .collect::<Vec<_>>()
                     .join("\n")
             )
-        })?;
+        },
+    )?;
 
     let tokens = lex(&source).map_err(|errs| {
         anyhow::anyhow!(
@@ -624,10 +502,12 @@ pub fn parse_program_source(path: &Path) -> Result<(IrFile, HashMap<String, Agen
         .decls
         .iter()
         .filter_map(|decl| match decl {
-            Decl::Tool(tool) if matches!(tool.effect, Effect::Dangerous) => Some(DangerousToolSpec {
-                tool: tool.name.name.clone(),
-                approval_label: approval_label_for_tool(&tool.name.name),
-            }),
+            Decl::Tool(tool) if matches!(tool.effect, Effect::Dangerous) => {
+                Some(DangerousToolSpec {
+                    tool: tool.name.name.clone(),
+                    approval_label: approval_label_for_tool(&tool.name.name),
+                })
+            }
             _ => None,
         })
         .collect::<Vec<_>>();
@@ -698,12 +578,12 @@ where
 {
     match std::fs::read_to_string(path) {
         Ok(raw) if raw.trim().is_empty() => Ok(None),
-        Ok(raw) => serde_json::from_str(&raw)
-            .map(Some)
-            .map_err(|err| ShadowExecutorError::TraceLoad(format!(
+        Ok(raw) => serde_json::from_str(&raw).map(Some).map_err(|err| {
+            ShadowExecutorError::TraceLoad(format!(
                 "failed to parse native replay report `{}`: {err}",
                 path.display()
-            ))),
+            ))
+        }),
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(None),
         Err(err) => Err(ShadowExecutorError::TraceLoad(format!(
             "failed to read native replay report `{}`: {err}",
@@ -797,10 +677,7 @@ fn normalize_event_json(event: &TraceEvent) -> serde_json::Value {
             "args": args,
         }),
         TraceEvent::RunCompleted {
-            ok,
-            result,
-            error,
-            ..
+            ok, result, error, ..
         } => serde_json::json!({
             "kind": "run_completed",
             "ts_ms": 0,
