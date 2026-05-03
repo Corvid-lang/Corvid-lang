@@ -3,6 +3,7 @@ mod differential;
 mod diverge;
 mod event_classify;
 mod mutation;
+mod mutation_session;
 mod mutation_validate;
 mod result_factory;
 mod substitute;
@@ -30,6 +31,7 @@ pub use differential::{
 };
 pub use diverge::ReplayDivergence;
 pub use mutation::{MutationDivergence, ReplayMutationReport};
+use mutation_session::{ReplayMutation, ReplayMutationState};
 use substitute::is_initial_metadata;
 
 #[derive(Debug, Clone)]
@@ -40,19 +42,6 @@ enum ReplayMode {
         report: Arc<Mutex<ReplayDifferentialReport>>,
     },
     Mutation(ReplayMutation),
-}
-
-#[derive(Debug, Clone)]
-pub(super) struct ReplayMutation {
-    pub(super) step_1based: usize,
-    pub(super) replacement: serde_json::Value,
-    report: Arc<Mutex<ReplayMutationReport>>,
-    state: Arc<Mutex<ReplayMutationState>>,
-}
-
-#[derive(Debug, Clone, Default)]
-struct ReplayMutationState {
-    next_step: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -160,7 +149,9 @@ impl ReplaySource {
         let initial_rollout_seed = events
             .iter()
             .find_map(|event| match event {
-                TraceEvent::SeedRead { purpose, value, .. } if purpose == "rollout_default_seed" => {
+                TraceEvent::SeedRead { purpose, value, .. }
+                    if purpose == "rollout_default_seed" =>
+                {
                     Some(*value)
                 }
                 _ => None,
@@ -225,25 +216,26 @@ impl ReplaySource {
         }
     }
 
-    pub fn prepare_run(
-        &self,
-        agent: &str,
-        args: &[serde_json::Value],
-    ) -> Result<(), RuntimeError> {
+    pub fn prepare_run(&self, agent: &str, args: &[serde_json::Value]) -> Result<(), RuntimeError> {
         let mut cursor = self.cursor.lock().unwrap();
         cursor
             .expect_next(
                 &self.events,
-                |event| matches!(
-                    event,
-                    TraceEvent::RunStarted {
-                        agent: expected_agent,
-                        args: expected_args,
-                        ..
-                    } if expected_agent == agent && expected_args == args
-                ),
+                |event| {
+                    matches!(
+                        event,
+                        TraceEvent::RunStarted {
+                            agent: expected_agent,
+                            args: expected_args,
+                            ..
+                        } if expected_agent == agent && expected_args == args
+                    )
+                },
                 "run_started",
-                format!("agent={agent} args={}", serde_json::Value::Array(args.to_vec())),
+                format!(
+                    "agent={agent} args={}",
+                    serde_json::Value::Array(args.to_vec())
+                ),
             )
             .map(|_| ())
             .map_err(RuntimeError::ReplayDivergence)
@@ -261,17 +253,19 @@ impl ReplaySource {
                 cursor
                     .expect_next(
                         &self.events,
-                        |event| matches!(
-                            event,
-                            TraceEvent::RunCompleted {
-                                ok: expected_ok,
-                                result: expected_result,
-                                error: expected_error,
-                                ..
-                            } if *expected_ok == ok
-                                && expected_result.as_ref() == result
-                                && expected_error.as_deref() == error
-                        ),
+                        |event| {
+                            matches!(
+                                event,
+                                TraceEvent::RunCompleted {
+                                    ok: expected_ok,
+                                    result: expected_result,
+                                    error: expected_error,
+                                    ..
+                                } if *expected_ok == ok
+                                    && expected_result.as_ref() == result
+                                    && expected_error.as_deref() == error
+                            )
+                        },
                         "run_completed",
                         format!(
                             "ok={ok} result={} error={}",
@@ -360,7 +354,9 @@ impl ReplaySource {
                 }
             }
         }
-        cursor.finish(&self.events).map_err(RuntimeError::ReplayDivergence)
+        cursor
+            .finish(&self.events)
+            .map_err(RuntimeError::ReplayDivergence)
     }
 
     pub fn replay_tool_call(
@@ -374,16 +370,21 @@ impl ReplaySource {
                 cursor
                     .expect_next(
                         &self.events,
-                        |event| matches!(
-                            event,
-                            TraceEvent::ToolCall {
-                                tool: expected_tool,
-                                args: expected_args,
-                                ..
-                            } if expected_tool == tool && expected_args == args
-                        ),
+                        |event| {
+                            matches!(
+                                event,
+                                TraceEvent::ToolCall {
+                                    tool: expected_tool,
+                                    args: expected_args,
+                                    ..
+                                } if expected_tool == tool && expected_args == args
+                            )
+                        },
                         "tool_call",
-                        format!("tool={tool} args={}", serde_json::Value::Array(args.to_vec())),
+                        format!(
+                            "tool={tool} args={}",
+                            serde_json::Value::Array(args.to_vec())
+                        ),
                     )
                     .map_err(RuntimeError::ReplayDivergence)?;
             }
@@ -431,14 +432,16 @@ impl ReplaySource {
                     cursor
                         .expect_next(
                             &self.events,
-                            |event| matches!(
-                                event,
-                                TraceEvent::ToolCall {
-                                    tool: expected_tool,
-                                    args: expected_args,
-                                    ..
-                                } if expected_tool == tool && expected_args == args
-                            ),
+                            |event| {
+                                matches!(
+                                    event,
+                                    TraceEvent::ToolCall {
+                                        tool: expected_tool,
+                                        args: expected_args,
+                                        ..
+                                    } if expected_tool == tool && expected_args == args
+                                )
+                            },
                             "tool_call",
                             format!(
                                 "tool={tool} args={}",
@@ -617,10 +620,7 @@ impl ReplaySource {
         };
 
         match &self.mode {
-            ReplayMode::Substitute => Ok(LlmResponse::new(
-                recorded_result,
-                TokenUsage::default(),
-            )),
+            ReplayMode::Substitute => Ok(LlmResponse::new(recorded_result, TokenUsage::default())),
             ReplayMode::Differential { .. } => {
                 let live = llms.call(&live_req).await?;
                 if live.value != recorded_result {
@@ -633,10 +633,7 @@ impl ReplaySource {
                 }
                 Ok(live)
             }
-            ReplayMode::Mutation(_) => Ok(LlmResponse::new(
-                recorded_result,
-                TokenUsage::default(),
-            )),
+            ReplayMode::Mutation(_) => Ok(LlmResponse::new(recorded_result, TokenUsage::default())),
         }
     }
 
@@ -651,16 +648,21 @@ impl ReplaySource {
                 cursor
                     .expect_next(
                         &self.events,
-                        |event| matches!(
-                            event,
-                            TraceEvent::ApprovalRequest {
-                                label: expected_label,
-                                args: expected_args,
-                                ..
-                            } if expected_label == label && expected_args == args
-                        ),
+                        |event| {
+                            matches!(
+                                event,
+                                TraceEvent::ApprovalRequest {
+                                    label: expected_label,
+                                    args: expected_args,
+                                    ..
+                                } if expected_label == label && expected_args == args
+                            )
+                        },
                         "approval_request",
-                        format!("label={label} args={}", serde_json::Value::Array(args.to_vec())),
+                        format!(
+                            "label={label} args={}",
+                            serde_json::Value::Array(args.to_vec())
+                        ),
                     )
                     .map_err(RuntimeError::ReplayDivergence)?;
             }
@@ -708,14 +710,16 @@ impl ReplaySource {
                     cursor
                         .expect_next(
                             &self.events,
-                            |event| matches!(
-                                event,
-                                TraceEvent::ApprovalRequest {
-                                    label: expected_label,
-                                    args: expected_args,
-                                    ..
-                                } if expected_label == label && expected_args == args
-                            ),
+                            |event| {
+                                matches!(
+                                    event,
+                                    TraceEvent::ApprovalRequest {
+                                        label: expected_label,
+                                        args: expected_args,
+                                        ..
+                                    } if expected_label == label && expected_args == args
+                                )
+                            },
                             "approval_request",
                             format!(
                                 "label={label} args={}",
@@ -752,7 +756,10 @@ impl ReplaySource {
                 return replayed_approval_result(label, recorded_result);
             }
         }
-        replayed_approval_result(label, next_approval_outcome_event(&mut cursor, &self.events))
+        replayed_approval_result(
+            label,
+            next_approval_outcome_event(&mut cursor, &self.events),
+        )
     }
 
     pub fn replay_rollout_sample(&self) -> Result<u64, RuntimeError> {
@@ -760,10 +767,12 @@ impl ReplaySource {
         match cursor
             .expect_next(
                 &self.events,
-                |event| matches!(
-                    event,
-                    TraceEvent::SeedRead { purpose, .. } if purpose == "rollout_cohort"
-                ),
+                |event| {
+                    matches!(
+                        event,
+                        TraceEvent::SeedRead { purpose, .. } if purpose == "rollout_cohort"
+                    )
+                },
                 "seed_read",
                 "purpose=rollout_cohort".into(),
             )
@@ -814,28 +823,6 @@ impl ReplaySource {
     }
 }
 
-impl ReplayMutation {
-    fn next_step(&self) -> usize {
-        let mut state = self.state.lock().unwrap();
-        state.next_step += 1;
-        state.next_step
-    }
-}
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 #[cfg(test)]
 mod tests {
     use super::{ReplaySource, SubstitutionDivergence};
@@ -859,7 +846,10 @@ mod tests {
         )
         .unwrap();
         let err = ReplaySource::from_path(&path).unwrap_err();
-        assert!(matches!(err, RuntimeError::CrossTierReplayUnsupported { .. }));
+        assert!(matches!(
+            err,
+            RuntimeError::CrossTierReplayUnsupported { .. }
+        ));
     }
 
     #[test]
@@ -899,8 +889,8 @@ mod tests {
             ],
         )
         .unwrap();
-        let replay = ReplaySource::from_path_for_writer_with_model(&path, "interpreter", "mock-2")
-            .unwrap();
+        let replay =
+            ReplaySource::from_path_for_writer_with_model(&path, "interpreter", "mock-2").unwrap();
         replay.record_substitution_divergence(SubstitutionDivergence {
             step: 1,
             expected: TraceEvent::RunStarted {
