@@ -69,9 +69,9 @@ impl SessionAuthRuntime {
                 "oauth state expiry must be in the future".to_string(),
             ));
         }
-        let actor = self
-            .get_actor(&input.actor_id)?
-            .ok_or_else(|| RuntimeError::Other(format!("auth actor `{}` not found", input.actor_id)))?;
+        let actor = self.get_actor(&input.actor_id)?.ok_or_else(|| {
+            RuntimeError::Other(format!("auth actor `{}` not found", input.actor_id))
+        })?;
         if actor.tenant_id != input.tenant_id {
             return Err(RuntimeError::Other(
                 "oauth actor tenant mismatch".to_string(),
@@ -181,9 +181,9 @@ impl SessionAuthRuntime {
                 params![state.id, at_ms as i64],
             )
             .map_err(|err| RuntimeError::Other(format!("failed to mark oauth state used: {err}")))?;
-        let state = self
-            .get_oauth_state(&state.id)?
-            .ok_or_else(|| RuntimeError::Other("oauth state disappeared after callback".to_string()))?;
+        let state = self.get_oauth_state(&state.id)?.ok_or_else(|| {
+            RuntimeError::Other("oauth state disappeared after callback".to_string())
+        })?;
         let trace = AuthTraceContext {
             trace_id: trace_id.to_string(),
             tenant_id: state.tenant_id.clone(),
@@ -226,5 +226,100 @@ impl SessionAuthRuntime {
             )
             .optional()
             .map_err(|err| RuntimeError::Other(format!("failed to read oauth state by hash: {err}")))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::auth::AuthActor;
+
+    fn actor(id: &str, tenant_id: &str) -> AuthActor {
+        AuthActor {
+            id: id.to_string(),
+            tenant_id: tenant_id.to_string(),
+            display_name: "Ada".to_string(),
+            actor_kind: "user".to_string(),
+            auth_method: "session".to_string(),
+            assurance_level: "aal1".to_string(),
+            role_fingerprint: "sha256:roles".to_string(),
+            permission_fingerprint: "sha256:permissions".to_string(),
+            created_ms: 1,
+            updated_ms: 1,
+        }
+    }
+
+    #[test]
+    fn oauth_callback_state_is_hashed_single_use_and_restart_safe() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("auth.sqlite");
+        let expires_ms = now_ms().saturating_add(60_000);
+        {
+            let auth = SessionAuthRuntime::open(&path).unwrap();
+            auth.upsert_actor(actor("user-1", "org-1")).unwrap();
+            let state = auth
+                .create_oauth_state(OAuthStateCreate {
+                    id: "oauth-state-1".to_string(),
+                    provider: "google".to_string(),
+                    tenant_id: "org-1".to_string(),
+                    actor_id: "user-1".to_string(),
+                    raw_state: "raw-oauth-state".to_string(),
+                    pkce_verifier_ref: "pkce-ref-1".to_string(),
+                    nonce_fingerprint: "sha256:nonce".to_string(),
+                    expires_ms,
+                    replay_key: "replay-oauth-1".to_string(),
+                })
+                .unwrap();
+            assert_eq!(state.state_hash, hash_oauth_state("raw-oauth-state"));
+            assert!(!state.state_hash.contains("raw-oauth-state"));
+            assert_eq!(state.used_ms, None);
+        }
+
+        let auth = SessionAuthRuntime::open(&path).unwrap();
+        let resolved = auth
+            .resolve_oauth_callback("raw-oauth-state", "org-1", "trace-oauth-1", now_ms())
+            .unwrap();
+        assert_eq!(resolved.actor.id, "user-1");
+        assert_eq!(resolved.trace.auth_method, "oauth");
+        assert_eq!(resolved.trace.replay_key, "replay-oauth-1");
+        assert!(resolved.state.used_ms.is_some());
+
+        let replay = auth
+            .resolve_oauth_callback("raw-oauth-state", "org-1", "trace-oauth-2", now_ms())
+            .unwrap_err();
+        assert!(replay.to_string().contains("state already used"));
+        let audit = auth.audit_events().unwrap();
+        assert_eq!(audit.len(), 2);
+        assert!(audit.iter().all(|event| {
+            !event.reason.contains("raw-oauth-state") && !event.id.contains("raw-oauth-state")
+        }));
+    }
+
+    #[test]
+    fn oauth_callback_rejects_expired_and_cross_tenant_state() {
+        let auth = SessionAuthRuntime::open_in_memory().unwrap();
+        auth.upsert_actor(actor("user-1", "org-1")).unwrap();
+        let expires_ms = now_ms().saturating_add(60_000);
+        auth.create_oauth_state(OAuthStateCreate {
+            id: "oauth-state-1".to_string(),
+            provider: "github".to_string(),
+            tenant_id: "org-1".to_string(),
+            actor_id: "user-1".to_string(),
+            raw_state: "state-1".to_string(),
+            pkce_verifier_ref: "pkce-ref-1".to_string(),
+            nonce_fingerprint: "sha256:nonce".to_string(),
+            expires_ms,
+            replay_key: "replay-oauth-1".to_string(),
+        })
+        .unwrap();
+
+        let tenant = auth
+            .resolve_oauth_callback("state-1", "org-2", "trace-tenant", now_ms())
+            .unwrap_err();
+        assert!(tenant.to_string().contains("tenant mismatch"));
+        let expired = auth
+            .resolve_oauth_callback("state-1", "org-1", "trace-expired", expires_ms)
+            .unwrap_err();
+        assert!(expired.to_string().contains("state expired"));
     }
 }
