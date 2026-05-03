@@ -15,6 +15,8 @@ mod expr;
 mod prompt;
 #[path = "interp/replay.rs"]
 mod replay;
+#[path = "interp/run_validate.rs"]
+mod run_validate;
 #[path = "interp/stmt.rs"]
 mod stmt;
 #[path = "interp/stream_ops.rs"]
@@ -24,6 +26,9 @@ mod test_runner;
 #[path = "interp/test_trace.rs"]
 mod test_trace;
 
+pub use run_validate::{
+    bind_and_run_agent, build_struct, run_agent, run_agent_stepping, run_agent_with_env,
+};
 pub use test_runner::{
     run_all_tests, run_all_tests_with_options, run_test, SnapshotOptions, TestAssertionExecution,
     TestAssertionStatus, TestExecution, TestRunOptions, TraceFixtureOptions,
@@ -33,10 +38,8 @@ use self::expr::{eval_binop, eval_literal, eval_unop, require_bool};
 use crate::conv::{json_to_value, value_to_json};
 use crate::env::Env;
 use crate::errors::{InterpError, InterpErrorKind};
-use crate::step::{self, ConfidenceGateStep, StepAction, StepController, StepEvent, StepMode};
-use crate::value::{
-    value_confidence, BoxedValue, ListValue, StreamChunk, StreamSender, StructValue, Value,
-};
+use crate::step::{self, ConfidenceGateStep, StepAction, StepController, StepEvent};
+use crate::value::{value_confidence, BoxedValue, ListValue, StreamChunk, StreamSender, Value};
 use async_recursion::async_recursion;
 use corvid_ast::{BinaryOp, Span};
 use corvid_ir::{
@@ -44,197 +47,11 @@ use corvid_ir::{
     IrType,
 };
 use corvid_resolve::{DefId, LocalId};
-use corvid_runtime::{Runtime, RuntimeError, TraceEvent};
+use corvid_runtime::Runtime;
 use corvid_types::Type;
 use effect_compose::{composed_confidence, default_stream_backpressure, stream_start_is_retryable};
 use std::collections::HashMap;
 use std::sync::Arc;
-
-/// Public entry point: run `agent_name` with `args` against `runtime`.
-///
-/// The runtime owns tool/LLM/approval dispatch and tracing. Pass a
-/// minimal runtime built via `Runtime::builder().build()` for tests
-/// that don't exercise external calls.
-pub async fn run_agent(
-    ir: &IrFile,
-    agent_name: &str,
-    args: Vec<Value>,
-    runtime: &Runtime,
-) -> Result<Value, InterpError> {
-    run_agent_with_env(ir, agent_name, args, runtime)
-        .await
-        .map(|(value, _env)| value)
-}
-
-pub async fn run_agent_with_env(
-    ir: &IrFile,
-    agent_name: &str,
-    args: Vec<Value>,
-    runtime: &Runtime,
-) -> Result<(Value, Env), InterpError> {
-    let agent = ir
-        .agents
-        .iter()
-        .find(|a| a.name == agent_name)
-        .ok_or_else(|| {
-            InterpError::new(
-                InterpErrorKind::DispatchFailed(format!("no agent named `{agent_name}`")),
-                Span::new(0, 0),
-            )
-        })?;
-
-    let json_args: Vec<serde_json::Value> = args.iter().map(value_to_json).collect();
-    runtime
-        .prepare_run(agent_name, &json_args)
-        .map_err(|e| InterpError::new(InterpErrorKind::Runtime(e), Span::new(0, 0)))?;
-
-    runtime.tracer().emit(TraceEvent::RunStarted {
-        ts_ms: corvid_runtime::now_ms(),
-        run_id: runtime.tracer().run_id().to_string(),
-        agent: agent_name.to_string(),
-        args: json_args,
-    });
-
-    let mut interp = Interpreter::new(ir, runtime);
-    let bind_result = interp.bind_params(agent, args);
-    let outcome = match bind_result {
-        Ok(()) => interp
-            .run_body(agent)
-            .await
-            .map(|value| (value, interp.env.clone())),
-        Err(e) => Err(e),
-    };
-
-    let result_json = outcome
-        .as_ref()
-        .ok()
-        .map(|(value, _env)| value_to_json(value));
-    let error_text = outcome.as_ref().err().map(|error| error.to_string());
-    if should_validate_run_completion(&outcome) {
-        runtime
-            .complete_run(outcome.is_ok(), result_json.as_ref(), error_text.as_deref())
-            .map_err(|e| InterpError::new(InterpErrorKind::Runtime(e), Span::new(0, 0)))?;
-    }
-    runtime.tracer().emit(TraceEvent::RunCompleted {
-        ts_ms: corvid_runtime::now_ms(),
-        run_id: runtime.tracer().run_id().to_string(),
-        ok: outcome.is_ok(),
-        result: result_json,
-        error: error_text,
-    });
-    outcome
-}
-
-/// Run an agent with step-through control. The `hook` receives events at
-/// tool/prompt/approval/agent-call boundaries (and optionally at every
-/// statement) and decides whether to continue, override, or abort.
-pub async fn run_agent_stepping(
-    ir: &IrFile,
-    agent_name: &str,
-    args: Vec<Value>,
-    runtime: &Runtime,
-    hook: Arc<dyn crate::step::StepHook>,
-    mode: StepMode,
-) -> Result<(Value, Env), InterpError> {
-    let agent = ir
-        .agents
-        .iter()
-        .find(|a| a.name == agent_name)
-        .ok_or_else(|| {
-            InterpError::new(
-                InterpErrorKind::DispatchFailed(format!("no agent named `{agent_name}`")),
-                Span::new(0, 0),
-            )
-        })?;
-
-    let json_args: Vec<serde_json::Value> = args.iter().map(value_to_json).collect();
-    runtime
-        .prepare_run(agent_name, &json_args)
-        .map_err(|e| InterpError::new(InterpErrorKind::Runtime(e), Span::new(0, 0)))?;
-
-    runtime.tracer().emit(TraceEvent::RunStarted {
-        ts_ms: corvid_runtime::now_ms(),
-        run_id: runtime.tracer().run_id().to_string(),
-        agent: agent_name.to_string(),
-        args: json_args,
-    });
-
-    let mut interp = Interpreter::new(ir, runtime);
-    interp.stepper = Some(StepController::new(hook, mode));
-    let bind_result = interp.bind_params(agent, args);
-    let outcome = match bind_result {
-        Ok(()) => interp
-            .run_body(agent)
-            .await
-            .map(|value| (value, interp.env.clone())),
-        Err(e) => Err(e),
-    };
-
-    let _ = interp
-        .maybe_yield(StepEvent::Completed {
-            agent_name: agent_name.to_string(),
-            ok: outcome.is_ok(),
-            result: outcome.as_ref().ok().map(|(v, _)| v.clone()),
-            result_confidence: outcome.as_ref().ok().map(|(v, _)| value_confidence(v)),
-            error: outcome.as_ref().err().map(|e| e.to_string()),
-        })
-        .await;
-
-    let result_json = outcome.as_ref().ok().map(|(value, _)| value_to_json(value));
-    let error_text = outcome.as_ref().err().map(|error| error.to_string());
-    if should_validate_run_completion(&outcome) {
-        runtime
-            .complete_run(outcome.is_ok(), result_json.as_ref(), error_text.as_deref())
-            .map_err(|e| InterpError::new(InterpErrorKind::Runtime(e), Span::new(0, 0)))?;
-    }
-    runtime.tracer().emit(TraceEvent::RunCompleted {
-        ts_ms: corvid_runtime::now_ms(),
-        run_id: runtime.tracer().run_id().to_string(),
-        ok: outcome.is_ok(),
-        result: result_json,
-        error: error_text,
-    });
-    outcome
-}
-
-/// Pre-bind specific locals and run an agent. Used by tests that want
-/// to inject pre-built struct parameters bypassing the parameter list.
-pub async fn bind_and_run_agent(
-    ir: &IrFile,
-    agent_name: &str,
-    params_with_values: Vec<(LocalId, Value)>,
-    fallback_args: Vec<Value>,
-    runtime: &Runtime,
-) -> Result<Value, InterpError> {
-    if params_with_values.is_empty() {
-        return run_agent(ir, agent_name, fallback_args, runtime).await;
-    }
-    let agent = ir
-        .agents
-        .iter()
-        .find(|a| a.name == agent_name)
-        .ok_or_else(|| {
-            InterpError::new(
-                InterpErrorKind::DispatchFailed(format!("no agent named `{agent_name}`")),
-                Span::new(0, 0),
-            )
-        })?;
-    let mut interp = Interpreter::new(ir, runtime);
-    for (id, v) in params_with_values {
-        interp.env.bind(id, v);
-    }
-    interp.run_body(agent).await
-}
-
-/// Build a struct `Value` from field name → value pairs. Convenience used
-/// by tests to construct struct arguments to inject into agent runs.
-pub fn build_struct(
-    type_id: DefId,
-    type_name: &str,
-    fields: impl IntoIterator<Item = (String, Value)>,
-) -> Value {
-    Value::Struct(StructValue::new(type_id, type_name.to_string(), fields))
-}
 
 /// Control-flow outcome of evaluating a statement or block.
 #[derive(Debug, Clone)]
@@ -258,20 +75,6 @@ impl ExprFlow {
             ExprFlow::Propagate(v) => Err(v),
         }
     }
-}
-
-fn should_validate_run_completion(outcome: &Result<(Value, Env), InterpError>) -> bool {
-    !matches!(
-        outcome,
-        Err(InterpError {
-            kind: InterpErrorKind::Runtime(
-                RuntimeError::ReplayDivergence(_)
-                    | RuntimeError::ReplayTraceLoad { .. }
-                    | RuntimeError::CrossTierReplayUnsupported { .. }
-            ),
-            ..
-        })
-    )
 }
 
 struct Interpreter<'ir> {
