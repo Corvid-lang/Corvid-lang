@@ -18,6 +18,7 @@ pub mod bench;
 pub mod claim;
 pub mod connectors;
 pub mod contract;
+pub mod deploy;
 pub mod jobs;
 pub mod migrate;
 pub mod observe;
@@ -36,6 +37,8 @@ pub use claim::*;
 pub use connectors::*;
 #[allow(unused_imports)]
 pub use contract::*;
+#[allow(unused_imports)]
+pub use deploy::*;
 #[allow(unused_imports)]
 pub use jobs::*;
 #[allow(unused_imports)]
