@@ -6252,3 +6252,24 @@ Validation:
 - `cargo check --workspace`
 - `cargo run -q -p corvid-cli -- verify --corpus tests/corpus`
   (exit 2 with the established Windows `whoami` linker signature)
+
+---
+
+## 2026-05-03 — Slice 33I platform parity
+
+- Added a `platform-parity` GitHub Actions matrix for Ubuntu, macOS, and
+  Windows.
+- Each matrix leg runs the checked-in platform installer, then executes
+  `corvid doctor` and the WASM/Wasmtime cross-platform parity harness.
+- Documented the matrix in `docs/ci.md` and ticked the ROADMAP slice while
+  keeping the known Windows native `whoami` linker baseline out of this gate.
+
+Validation:
+- `./install/install.ps1`
+- `corvid doctor`
+- `cargo test -p corvid-codegen-wasm --test wasmtime_parity`
+- `cargo test -p corvid-cli --test doctor`
+- `cargo run -q -p corvid-cli -- doctor`
+- `cargo check --workspace`
+- `cargo run -q -p corvid-cli -- verify --corpus tests/corpus`
+  (exit 2 with the established Windows `whoami` linker signature)

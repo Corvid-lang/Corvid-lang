@@ -3519,3 +3519,11 @@ scalar. Keep durable browser state in the generated ES host layer for now: emit
 a typed async store helper, have the demo call it around the WASM run, and make
 the browser CI reload the page to prove persistence instead of pretending the
 WASM module can synchronously block on IndexedDB.
+
+## platform parity gates
+
+When a platform-parity slice needs Windows coverage but the native linker has a
+known environmental baseline, use a parity harness that is genuinely
+cross-platform and avoids that baseline. For the current repo, the
+WASM/Wasmtime harness is the right installer/doctor companion because it runs
+the same generated module path on Linux, macOS, and Windows.

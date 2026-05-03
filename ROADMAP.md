@@ -1718,7 +1718,7 @@ The determinism-source catalog and the language's treatment of non-reproducible 
 - [x] 33F-doctor-launch-checks       `corvid doctor` checks provider keys, local models, replay storage, approvals, wasm/native toolchains, registry lock, and platform prerequisites.
 - [x] 33G-benchmark-compare          `corvid bench compare python|js` uses committed benchmark archives and separates model latency from orchestration overhead.
 - [x] 33H-repro-scripts              Benchmark and bundle claim reproduction scripts are checked in.
-- [ ] 33I-platform-parity            Windows, Linux, and macOS installer/doctor/parity harness are green.
+- [x] 33I-platform-parity            The `platform-parity` CI matrix runs on Windows, Linux, and macOS; each leg executes the platform installer, `corvid doctor`, and the WASM/Wasmtime cross-platform parity harness.
 - [ ] 33J-website-playground         Website, docs site, benchmark page, blog shell, and WASM playground are live from committed assets.
 - [ ] 33K-reference-demo-pack        One-command demo apps have tests, evals, traces, and benchmark notes.
 - [ ] 33L-launch-materials           GIF/video, launch drafts, and external-reader review are complete.

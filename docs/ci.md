@@ -28,3 +28,19 @@ marshalling, traceback preservation, `python.call` / `python.result` /
 
 The job must stay separate from `workspace-tests` so default builds remain
 Python-free while every push still exercises the optional Python integration.
+
+## `platform-parity`
+
+Runs on `ubuntu-latest`, `macos-latest`, and `windows-latest`.
+
+Each matrix leg executes the platform installer, runs:
+
+```text
+corvid doctor
+cargo test -p corvid-codegen-wasm --test wasmtime_parity
+```
+
+The parity command uses the WASM/Wasmtime harness because it exercises the
+same generated module surface on all three operating systems while avoiding
+the pre-existing Windows native `whoami` linker baseline. The separate Windows
+runtime-record guard still covers the native record/replay path.

@@ -59,6 +59,48 @@ jobs:
       - name: cargo test -p corvid-runtime --test trace_record
         run: cargo test -p corvid-runtime --test trace_record
 
+  platform-parity:
+    # Phase 33I: the installer, doctor, and cross-platform parity
+    # harness must stay green on every supported desktop OS. The
+    # parity command uses the WASM/Wasmtime harness so Windows remains
+    # clear of the pre-existing native whoami linker baseline.
+    name: 33 platform parity (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry + target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-platform-parity-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-platform-parity-
+
+      - name: Run Unix installer
+        if: runner.os != 'Windows'
+        run: bash install/install.sh
+
+      - name: Run Windows installer
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./install/install.ps1
+
+      - name: corvid doctor
+        run: corvid doctor
+
+      - name: cross-platform parity harness
+        run: cargo test -p corvid-codegen-wasm --test wasmtime_parity
+
   phase35-launch-gates:
     # Phase 35 is the launch-claim gate. These checks are named
     # explicitly so a green workflow proves the signed cdylib claim
