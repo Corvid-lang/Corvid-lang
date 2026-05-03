@@ -358,20 +358,54 @@ Pass criteria:
 
 ## Phase-done checklist
 
-- [ ] 20k-audit complete; candidate list recorded in this document.
-- [ ] 20k-A10c complete (5 commits).
-- [ ] All audit-discovered sub-slices complete.
-- [ ] Workspace re-audit confirms every `.rs` file in `crates/` passes
+- [x] 20k-audit complete; candidate list recorded in this document.
+- [x] 20k-A10c complete (6 commits).
+- [x] All audit-discovered sub-slices complete.
+- [x] Workspace re-audit confirms every `.rs` file in `crates/` passes
   the strict rubric or is a documented carve-out.
-- [ ] `docs/phase-20k-refactor.md` updated with closing inventory:
+- [x] `docs/phase-20k-refactor.md` updated with closing inventory:
   per-file post-split line counts and target-module list, mirroring
   20j's closing-audit format.
-- [ ] `learnings.md` updated per slice.
-- [ ] ROADMAP.md's Phase 20k entry is checked.
-- [ ] Memory record `project_phase_20k_closed.md` written summarising
+- [x] `learnings.md` updated per slice.
+- [x] ROADMAP.md's Phase 20k entry is checked.
+- [x] Memory record `project_phase_20k_closed.md` written summarising
   which concept-pairings tend to coexist (records + facade, type +
   cross-domain tests, dispatch + recording) so future sessions know
   what to keep apart from the start.
+
+## Closing Audit Record
+
+Closed on 2026-05-03. The closing pass enumerated every Rust source
+file under `crates/` at or above 600 lines and re-checked the 15
+Phase 20k strict-rubric violators against the strict rule and
+carve-outs. The 15 audited failures are closed. Files still above 600
+lines are documented carve-outs: pure integration-test modules, a
+single type plus its inherent implementation, a single algorithm or
+renderer, or a facade/command surface whose items all feed one
+dispatch responsibility.
+
+| Slice | Root result | Extracted target modules |
+|---|---:|---|
+| 20k-A10c auth records/tests | `auth/mod.rs` 189 | `records.rs`; domain tests relocated into `sessions.rs`, `api_keys.rs`, `oauth.rs`, `approvals.rs` |
+| 20k-A2c queue root/tests | `queue/mod.rs` 163 | `durable.rs`, `audit.rs`, `tests/durable_basics.rs`, `tests/leases.rs`, `tests/checkpoints.rs`, `tests/approvals.rs`, `tests/loops.rs`, `tests/scheduler.rs` |
+| 20k-A5b runtime builder/tests | `runtime/mod.rs` 352 | `builder.rs`, `tests/store.rs`, `tests/python.rs`, `tests/approvals.rs`, `tests/llm.rs`, `tests/io_http.rs`, `tests/secrets_cache.rs` |
+| 20k-A1b CLI arg tree | `cli/root.rs` 697 | `cli/bench.rs`, `contract.rs`, `connectors.rs`, `auth.rs`, `approvals.rs`, `claim.rs`, `deploy.rs`, `upgrade.rs`, `receipt.rs`, `bundle.rs`, `trace.rs`, `abi.rs`, `approver.rs`, `capsule.rs` |
+| 20k-A3b lowering runtime | `lowering/runtime/mod.rs` 31 | `symbols.rs`, `declare.rs`, `funcs.rs`, `payload.rs` |
+| 20k-A6b lowering expr | `lowering/expr/mod.rs` 984 | `operand.rs`, `wrappers.rs`; root remains the single expression-lowering dispatcher |
+| 20k-A13b replay records | `replay/mod.rs` 868 | `mutation_session.rs`, `approval_outcome.rs`; root remains the replay-source/type surface |
+| 20k-A9b FFI bridge | `ffi_bridge/mod.rs` 183 | `llm_dispatch.rs`, `prompt_exports.rs`, `replay_exports.rs`, `approval_exports.rs` |
+| 20k-A1c CLI dispatch | `dispatch.rs` 684 | `dispatch/connectors.rs`, `dispatch/auth.rs`, `dispatch/approvals.rs`; root remains the top-level command dispatcher |
+| 20k-D1 rewrite renderer | `rewrite.rs` 1174 | `render.rs`; root remains the rewrite engine and rule set |
+| 20k-D2 differential root | `differential-verify/lib.rs` 607 | `render.rs`, `diff.rs`, `shrink.rs`; root remains tier orchestration |
+| 20k-T1 declaration checker | `checker/decl.rs` 203 | `decl_eval.rs`, `decl_extern_c.rs`, `decl_replayability.rs` |
+| 20k-R1 catalog C API | `catalog_c_api/mod.rs` 184 | `invoke_matrix.rs`, `approval_bridge.rs`, `grounded_bridge.rs`, `catalog_exports.rs` |
+| 20k-IR1 IR root tests | `corvid-ir/src/lib.rs` 40 | `tests/lower_basic.rs`, `tests/lower_effects.rs`, `tests/lower_replay.rs`, `tests/lower_imports.rs`, `tests/types.rs` |
+| 20k-CLI1 eval command | `eval_cmd.rs` 258 | `eval_cmd/compare.rs`, `eval_cmd/promote.rs` |
+
+Validation for the final code sub-slices matched the phase gate:
+`cargo check --workspace` passed, targeted crate tests passed, and
+`cargo run -q -p corvid-cli -- verify --corpus tests/corpus` continued
+to match the established Windows `exit=2` `whoami` linker baseline.
 
 ## Sequencing reminder
 

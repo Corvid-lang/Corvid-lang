@@ -3453,3 +3453,28 @@ signature, because piping to `tail` hides the failing command's exit status.
 `rustfmt` on a `#[path]` root module can follow and rewrite sibling modules.
 For scoped refactor commits, format touched leaf files directly and restore any
 incidental sibling formatting before committing.
+
+## Phase 20k strict responsibility closeout
+
+The stricter "exactly one responsibility" pass mostly found concept pairings
+that the looser 20j rubric intentionally allowed: records plus an actor
+facade, a facade plus cross-domain tests, and command dispatch plus embedded
+subcommand-specific logic. The durable pattern is to keep the facade in the
+root and move records, tests, and per-subcommand logic to named siblings.
+
+Cross-domain test relocation works best when the original test harness stays
+as a shared parent module until the final extraction. For test files with
+embedded source programs, preserve the moved block text exactly; stripping
+indentation from Rust code also strips indentation inside the embedded Corvid
+program and changes parser behavior.
+
+Public API preservation is cleaner with narrow `pub(super)` helpers than with
+record re-exports. When a root only needs one field from a moved private
+record, expose a domain helper such as `read_summary_cost_usd` instead of
+making the whole record visible again.
+
+Line count stayed useful as a smoke test but not as the final rule. Several
+large files remain valid under the strict rubric because they are one command
+enum, one renderer, one declaration function, one type implementation, or a
+pure integration-test module. The audit has to name the responsibility, not
+just count lines.

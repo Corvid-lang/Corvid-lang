@@ -1228,28 +1228,28 @@ Users register local models (Ollama, vLLM, llama.cpp) with declared capabilities
 **Slices** (15 violators, ~67 commits — audit closed 2026-05-03):
 
 - [x] 20k-audit — fresh workspace sweep against the strict rule. Findings recorded in [docs/phase-20k-refactor.md](./docs/phase-20k-refactor.md).
-- [ ] 20k-A10c — `corvid-runtime/src/auth/mod.rs` (764 → ~150, 6 commits). Records + per-domain test relocation. Pattern reference for cross-domain test splits.
-- [ ] 20k-A1b — `corvid-cli/src/cli/root.rs` (1,369 → ~150, 14 commits). 17 sibling subcommand enums per-group split. Largest single sub-slice.
-- [ ] 20k-A1c — `corvid-cli/src/dispatch.rs` (1,192 → ~600, 3 commits).
-- [ ] 20k-A2c — `corvid-runtime/src/queue/mod.rs` (1,527 → ~340, 7 commits). Cross-domain test cluster splits per sibling.
-- [ ] 20k-A3b — `corvid-codegen-cl/src/lowering/runtime/mod.rs` (1,431 → facade, 4 commits).
-- [ ] 20k-A5b — `corvid-runtime/src/runtime/mod.rs` (1,414 → ~450, 7 commits). Builder + per-domain test relocation.
-- [ ] 20k-A6b — `corvid-codegen-cl/src/lowering/expr/mod.rs` (1,192 → ~970, 2 commits).
-- [ ] 20k-A9b — `corvid-runtime/src/ffi_bridge/mod.rs` (976 → ~250, 4 commits). LLM-orchestration helper + per-export-family split.
-- [ ] 20k-A13b — `corvid-runtime/src/replay/mod.rs` (924 → ~600, 2 commits).
-- [ ] 20k-CLI1 — `corvid-cli/src/eval_cmd.rs` (995 → ~470, 2 commits).
-- [ ] 20k-D1 — `corvid-differential-verify/src/rewrite.rs` (1,929 → ~1,200, 1 commit). AST renderer extraction.
-- [ ] 20k-D2 — `corvid-differential-verify/src/lib.rs` (1,020 → ~400, 3 commits). Render + diff + shrink extraction.
-- [ ] 20k-IR1 — `corvid-ir/src/lib.rs` (1,009 → ~10, 5 commits). 991-line cross-cutting test block split per concern.
-- [ ] 20k-R1 — `corvid-runtime/src/catalog_c_api.rs` (1,385 → ~400, 4 commits).
-- [ ] 20k-T1 — `corvid-types/src/checker/decl.rs` (1,010 → ~470, 3 commits).
+- [x] 20k-A10c — `corvid-runtime/src/auth/mod.rs` (764 → ~150, 6 commits). Records + per-domain test relocation. Pattern reference for cross-domain test splits.
+- [x] 20k-A1b — `corvid-cli/src/cli/root.rs` (1,369 → ~150, 14 commits). 17 sibling subcommand enums per-group split. Largest single sub-slice.
+- [x] 20k-A1c — `corvid-cli/src/dispatch.rs` (1,192 → ~600, 3 commits).
+- [x] 20k-A2c — `corvid-runtime/src/queue/mod.rs` (1,527 → ~340, 7 commits). Cross-domain test cluster splits per sibling.
+- [x] 20k-A3b — `corvid-codegen-cl/src/lowering/runtime/mod.rs` (1,431 → facade, 4 commits).
+- [x] 20k-A5b — `corvid-runtime/src/runtime/mod.rs` (1,414 → ~450, 7 commits). Builder + per-domain test relocation.
+- [x] 20k-A6b — `corvid-codegen-cl/src/lowering/expr/mod.rs` (1,192 → ~970, 2 commits).
+- [x] 20k-A9b — `corvid-runtime/src/ffi_bridge/mod.rs` (976 → ~250, 4 commits). LLM-orchestration helper + per-export-family split.
+- [x] 20k-A13b — `corvid-runtime/src/replay/mod.rs` (924 → ~600, 2 commits).
+- [x] 20k-CLI1 — `corvid-cli/src/eval_cmd.rs` (995 → ~470, 2 commits).
+- [x] 20k-D1 — `corvid-differential-verify/src/rewrite.rs` (1,929 → ~1,200, 1 commit). AST renderer extraction.
+- [x] 20k-D2 — `corvid-differential-verify/src/lib.rs` (1,020 → ~400, 3 commits). Render + diff + shrink extraction.
+- [x] 20k-IR1 — `corvid-ir/src/lib.rs` (1,009 → ~10, 5 commits). 991-line cross-cutting test block split per concern.
+- [x] 20k-R1 — `corvid-runtime/src/catalog_c_api.rs` (1,385 → ~400, 4 commits).
+- [x] 20k-T1 — `corvid-types/src/checker/decl.rs` (1,010 → ~470, 3 commits).
 
 **Phase-done criteria:**
 
-- Every `.rs` file in `crates/` passes the strict rubric OR is documented as an integration-test exception.
-- Closing audit recorded in `docs/phase-20k-refactor.md` with per-file post-split line counts.
-- `learnings.md` updated per slice.
-- Memory record `project_phase_20k_closed.md` summarises which concept-pairings tend to coexist (so future sessions know what to keep apart).
+- [x] Every `.rs` file in `crates/` passes the strict rubric OR is documented as an integration-test exception.
+- [x] Closing audit recorded in `docs/phase-20k-refactor.md` with per-file post-split line counts.
+- [x] `learnings.md` updated per slice.
+- [x] Memory record `project_phase_20k_closed.md` summarises which concept-pairings tend to coexist (so future sessions know what to keep apart).
 
 ---
 
