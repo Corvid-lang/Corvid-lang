@@ -71,7 +71,7 @@ pub(crate) fn request_host_approval(request: &OwnedApprovalRequired) -> Approval
         LAST_APPROVAL_DETAIL.with(|slot| *slot.borrow_mut() = Some(detail));
         return ApprovalRequestOutcome::MissingOrRejected;
     };
-    super::reset_transients();
+    super::grounded_bridge::reset_transients();
     let c_request = owned_approval_to_c(request);
     let decision = unsafe { callback(&c_request, registration.user_data as *mut c_void) };
     let detail = ApprovalDecisionInfo {
@@ -181,14 +181,16 @@ pub(crate) fn evaluate_approval_predicate(
             return crate::approver_bridge::CorvidPredicateResult {
                 status: crate::approver_bridge::CorvidPredicateStatus::BadArgs,
                 requires_approval: 0,
-                bad_args_message: super::stash_transient("args_json must be a JSON array"),
+                bad_args_message: super::grounded_bridge::stash_transient(
+                    "args_json must be a JSON array",
+                ),
             }
         }
         Err(err) => {
             return crate::approver_bridge::CorvidPredicateResult {
                 status: crate::approver_bridge::CorvidPredicateStatus::BadArgs,
                 requires_approval: 0,
-                bad_args_message: super::stash_transient(&format!(
+                bad_args_message: super::grounded_bridge::stash_transient(&format!(
                     "args_json must be a JSON array: {err}"
                 )),
             }
@@ -205,7 +207,7 @@ pub(crate) fn evaluate_approval_predicate(
         return crate::approver_bridge::CorvidPredicateResult {
             status: crate::approver_bridge::CorvidPredicateStatus::BadArgs,
             requires_approval: 0,
-            bad_args_message: super::stash_transient(&format!(
+            bad_args_message: super::grounded_bridge::stash_transient(&format!(
                 "arity mismatch for approval site `{site_name}`: expected {arity}, got {}",
                 args.len()
             )),
@@ -220,10 +222,10 @@ pub(crate) fn evaluate_approval_predicate(
 
 pub(super) fn owned_approval_to_c(value: &OwnedApprovalRequired) -> CorvidApprovalRequired {
     CorvidApprovalRequired {
-        site_name: super::stash_transient(&value.site_name),
-        predicate_json: super::stash_transient(&value.predicate_json),
-        args_json: super::stash_transient(&value.args_json),
-        rationale_prompt: super::stash_transient(&value.rationale_prompt),
+        site_name: super::grounded_bridge::stash_transient(&value.site_name),
+        predicate_json: super::grounded_bridge::stash_transient(&value.predicate_json),
+        args_json: super::grounded_bridge::stash_transient(&value.args_json),
+        rationale_prompt: super::grounded_bridge::stash_transient(&value.rationale_prompt),
     }
 }
 
@@ -232,12 +234,14 @@ pub(super) fn owned_preflight_to_c(value: &OwnedPreFlight) -> CorvidPreFlight {
         status: value.status,
         cost_bound_usd: value.cost_bound_usd,
         requires_approval: value.requires_approval as u8,
-        effect_row_json: super::stash_transient(&value.effect_row_json),
-        grounded_source_set_json: super::stash_transient(&value.grounded_source_set_json),
+        effect_row_json: super::grounded_bridge::stash_transient(&value.effect_row_json),
+        grounded_source_set_json: super::grounded_bridge::stash_transient(
+            &value.grounded_source_set_json,
+        ),
         bad_args_message: value
             .bad_args_message
             .as_deref()
-            .map(super::stash_transient)
+            .map(super::grounded_bridge::stash_transient)
             .unwrap_or(ptr::null()),
     }
 }
@@ -264,7 +268,7 @@ pub unsafe extern "C" fn corvid_record_host_event(
     payload_json: *const c_char,
     payload_len: usize,
 ) -> CorvidHostEventStatus {
-    let Ok(name) = super::read_c_string(name) else {
+    let Ok(name) = super::grounded_bridge::read_c_string(name) else {
         return CorvidHostEventStatus::RuntimeError;
     };
     let _ = crate::ffi_bridge::corvid_runtime_embed_init_default();
@@ -300,7 +304,7 @@ pub unsafe extern "C" fn corvid_mark_preapproved_request(
     args_json: *const c_char,
     args_len: usize,
 ) -> bool {
-    let Ok(site_name) = super::read_c_string(site_name) else {
+    let Ok(site_name) = super::grounded_bridge::read_c_string(site_name) else {
         return false;
     };
     if args_json.is_null() {
@@ -333,7 +337,7 @@ pub unsafe extern "C" fn corvid_register_approver_from_source(
     if !out_error_message.is_null() {
         *out_error_message = ptr::null_mut();
     }
-    let Ok(source_path) = super::read_c_string(source_path) else {
+    let Ok(source_path) = super::grounded_bridge::read_c_string(source_path) else {
         return crate::approver_bridge::CorvidApproverLoadStatus::IoError;
     };
     match register_corvid_approver_source(
@@ -369,14 +373,14 @@ pub unsafe extern "C" fn corvid_approval_predicate_json(
     if !out_len.is_null() {
         *out_len = 0;
     }
-    let Ok(site_name) = super::read_c_string(site_name) else {
+    let Ok(site_name) = super::grounded_bridge::read_c_string(site_name) else {
         return ptr::null();
     };
-    super::reset_transients();
+    super::grounded_bridge::reset_transients();
     let Some(json) = approval_predicate_json(&site_name) else {
         return ptr::null();
     };
-    let ptr = super::stash_transient(&json);
+    let ptr = super::grounded_bridge::stash_transient(&json);
     if !out_len.is_null() {
         *out_len = json.len();
     }
@@ -389,7 +393,7 @@ pub unsafe extern "C" fn corvid_evaluate_approval_predicate(
     args_json: *const c_char,
     args_len: usize,
 ) -> crate::approver_bridge::CorvidPredicateResult {
-    let Ok(site_name) = super::read_c_string(site_name) else {
+    let Ok(site_name) = super::grounded_bridge::read_c_string(site_name) else {
         return crate::approver_bridge::CorvidPredicateResult {
             status: crate::approver_bridge::CorvidPredicateStatus::BadArgs,
             requires_approval: 0,
@@ -402,7 +406,7 @@ pub unsafe extern "C" fn corvid_evaluate_approval_predicate(
         let bytes = std::slice::from_raw_parts(args_json as *const u8, args_len);
         String::from_utf8_lossy(bytes).into_owned()
     };
-    super::reset_transients();
+    super::grounded_bridge::reset_transients();
     evaluate_approval_predicate(&site_name, &args_json)
 }
 
