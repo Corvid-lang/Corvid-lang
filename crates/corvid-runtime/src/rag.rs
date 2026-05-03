@@ -7,95 +7,12 @@ use sha2::{Digest, Sha256};
 use std::path::Path;
 use std::time::Duration;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RagDocument {
-    pub id: String,
-    pub source: String,
-    pub media_type: String,
-    pub text: String,
-}
+mod types;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RagChunk {
-    pub doc_id: String,
-    pub chunk_id: String,
-    pub source: String,
-    pub text: String,
-    pub start_char: usize,
-    pub end_char: usize,
-    pub provenance_key: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RagChunkingConfig {
-    pub max_chars: usize,
-    pub overlap_chars: usize,
-    pub trim_whitespace: bool,
-    pub prefer_sentence_boundary: bool,
-}
-
-impl RagChunkingConfig {
-    pub fn new(max_chars: usize, overlap_chars: usize) -> Self {
-        Self {
-            max_chars,
-            overlap_chars,
-            trim_whitespace: true,
-            prefer_sentence_boundary: true,
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct RagSearchHit {
-    pub chunk: RagChunk,
-    pub score: f32,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct RagEmbeddingRecord {
-    pub chunk_id: String,
-    pub values: Vec<f32>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct EmbedderConfig {
-    pub provider: String,
-    pub model: String,
-    pub endpoint: Option<String>,
-}
-
-impl EmbedderConfig {
-    pub fn openai(model: impl Into<String>) -> Self {
-        Self {
-            provider: "openai".to_string(),
-            model: model.into(),
-            endpoint: None,
-        }
-    }
-
-    pub fn ollama(model: impl Into<String>, endpoint: impl Into<String>) -> Self {
-        Self {
-            provider: "ollama".to_string(),
-            model: model.into(),
-            endpoint: Some(endpoint.into()),
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct EmbeddingVector {
-    pub index: usize,
-    pub values: Vec<f32>,
-}
-
-pub trait RagEmbedder: Send + Sync {
-    fn provider(&self) -> &str;
-    fn model(&self) -> &str;
-    fn embed<'a>(
-        &'a self,
-        texts: &'a [String],
-    ) -> BoxFuture<'a, Result<Vec<EmbeddingVector>, RuntimeError>>;
-}
+pub use types::{
+    EmbedderConfig, EmbeddingVector, RagChunk, RagChunkingConfig, RagDocument, RagEmbedder,
+    RagEmbeddingRecord, RagSearchHit,
+};
 
 pub const OPENAI_EMBEDDING_BASE: &str = "https://api.openai.com";
 pub const OLLAMA_EMBEDDING_BASE: &str = "http://localhost:11434";
@@ -161,10 +78,13 @@ impl RagEmbedder for OpenAiEmbedder {
                     message: format!("HTTP send failed: {err}"),
                 })?;
             let status = response.status();
-            let body = response.text().await.map_err(|err| RuntimeError::AdapterFailed {
-                adapter: "std.rag.openai".to_string(),
-                message: format!("reading response body failed: {err}"),
-            })?;
+            let body = response
+                .text()
+                .await
+                .map_err(|err| RuntimeError::AdapterFailed {
+                    adapter: "std.rag.openai".to_string(),
+                    message: format!("reading response body failed: {err}"),
+                })?;
             if !status.is_success() {
                 return Err(RuntimeError::AdapterFailed {
                     adapter: "std.rag.openai".to_string(),
@@ -237,10 +157,13 @@ impl RagEmbedder for OllamaEmbedder {
                     message: format!("HTTP send failed: {err}"),
                 })?;
             let status = response.status();
-            let body = response.text().await.map_err(|err| RuntimeError::AdapterFailed {
-                adapter: "std.rag.ollama".to_string(),
-                message: format!("reading response body failed: {err}"),
-            })?;
+            let body = response
+                .text()
+                .await
+                .map_err(|err| RuntimeError::AdapterFailed {
+                    adapter: "std.rag.ollama".to_string(),
+                    message: format!("reading response body failed: {err}"),
+                })?;
             if !status.is_success() {
                 return Err(RuntimeError::AdapterFailed {
                     adapter: "std.rag.ollama".to_string(),
@@ -335,9 +258,7 @@ pub fn chunk_document_with_config(
     if chars.is_empty() {
         return Ok(Vec::new());
     }
-    let overlap = config
-        .overlap_chars
-        .min(config.max_chars.saturating_sub(1));
+    let overlap = config.overlap_chars.min(config.max_chars.saturating_sub(1));
     let mut chunks = Vec::new();
     let mut start = 0;
     while start < chars.len() {
@@ -391,8 +312,9 @@ impl RagSqliteIndex {
     }
 
     pub fn open_in_memory() -> Result<Self, RuntimeError> {
-        let conn = Connection::open_in_memory()
-            .map_err(|err| RuntimeError::Other(format!("failed to open RAG memory index: {err}")))?;
+        let conn = Connection::open_in_memory().map_err(|err| {
+            RuntimeError::Other(format!("failed to open RAG memory index: {err}"))
+        })?;
         let index = Self { conn };
         index.init()?;
         Ok(index)
@@ -403,17 +325,21 @@ impl RagSqliteIndex {
             .execute(
                 "insert or replace into rag_documents (id, source, media_type, text)
                  values (?1, ?2, ?3, ?4)",
-                params![document.id, document.source, document.media_type, document.text],
+                params![
+                    document.id,
+                    document.source,
+                    document.media_type,
+                    document.text
+                ],
             )
             .map_err(|err| RuntimeError::Other(format!("failed to insert RAG document: {err}")))?;
         Ok(())
     }
 
     pub fn insert_chunks(&mut self, chunks: &[RagChunk]) -> Result<(), RuntimeError> {
-        let tx = self
-            .conn
-            .transaction()
-            .map_err(|err| RuntimeError::Other(format!("failed to start RAG chunk insert: {err}")))?;
+        let tx = self.conn.transaction().map_err(|err| {
+            RuntimeError::Other(format!("failed to start RAG chunk insert: {err}"))
+        })?;
         for chunk in chunks {
             tx.execute(
                 "insert or replace into rag_chunks
@@ -488,10 +414,9 @@ impl RagSqliteIndex {
         &mut self,
         embeddings: &[RagEmbeddingRecord],
     ) -> Result<(), RuntimeError> {
-        let tx = self
-            .conn
-            .transaction()
-            .map_err(|err| RuntimeError::Other(format!("failed to start RAG embedding insert: {err}")))?;
+        let tx = self.conn.transaction().map_err(|err| {
+            RuntimeError::Other(format!("failed to start RAG embedding insert: {err}"))
+        })?;
         for embedding in embeddings {
             let payload = serde_json::to_string(&embedding.values).map_err(|err| {
                 RuntimeError::Other(format!("failed to encode RAG embedding vector: {err}"))
@@ -546,8 +471,9 @@ impl RagSqliteIndex {
             .map_err(|err| RuntimeError::Other(format!("failed to query RAG embeddings: {err}")))?;
         let mut hits = Vec::new();
         for row in rows {
-            let (chunk, values_json) = row
-                .map_err(|err| RuntimeError::Other(format!("failed to read RAG embedding row: {err}")))?;
+            let (chunk, values_json) = row.map_err(|err| {
+                RuntimeError::Other(format!("failed to read RAG embedding row: {err}"))
+            })?;
             let values: Vec<f32> = serde_json::from_str(&values_json).map_err(|err| {
                 RuntimeError::Other(format!("failed to decode RAG embedding vector: {err}"))
             })?;
@@ -795,12 +721,13 @@ fn parse_embedding_values(
     adapter: &str,
     missing_message: &str,
 ) -> Result<Vec<f32>, RuntimeError> {
-    let array = value
-        .and_then(|value| value.as_array())
-        .ok_or_else(|| RuntimeError::AdapterFailed {
-            adapter: adapter.to_string(),
-            message: missing_message.to_string(),
-        })?;
+    let array =
+        value
+            .and_then(|value| value.as_array())
+            .ok_or_else(|| RuntimeError::AdapterFailed {
+                adapter: adapter.to_string(),
+                message: missing_message.to_string(),
+            })?;
     let mut values = Vec::with_capacity(array.len());
     for item in array {
         let number = item.as_f64().ok_or_else(|| RuntimeError::AdapterFailed {
@@ -827,9 +754,23 @@ fn extract_html_text(html: &str) -> String {
                     .split_whitespace()
                     .next()
                     .unwrap_or("");
-                if matches!(tag, "br" | "p" | "div" | "li" | "tr" | "section" | "article"
-                    | "header" | "footer" | "h1" | "h2" | "h3" | "h4" | "h5" | "h6")
-                {
+                if matches!(
+                    tag,
+                    "br" | "p"
+                        | "div"
+                        | "li"
+                        | "tr"
+                        | "section"
+                        | "article"
+                        | "header"
+                        | "footer"
+                        | "h1"
+                        | "h2"
+                        | "h3"
+                        | "h4"
+                        | "h5"
+                        | "h6"
+                ) {
                     out.push('\n');
                 }
                 tag_name.clear();
@@ -994,7 +935,8 @@ mod tests {
 
     #[test]
     fn sqlite_index_searches_embeddings_by_similarity() {
-        let doc = document_from_text("doc1", "memory", "text/plain", "alpha beta gamma delta").unwrap();
+        let doc =
+            document_from_text("doc1", "memory", "text/plain", "alpha beta gamma delta").unwrap();
         let chunks = chunk_document(&doc, 6, 0).unwrap();
         let mut index = RagSqliteIndex::open_in_memory().unwrap();
         index.insert_document(&doc).unwrap();
