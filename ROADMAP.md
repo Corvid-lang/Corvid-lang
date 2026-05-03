@@ -1215,6 +1215,31 @@ Users register local models (Ollama, vLLM, llama.cpp) with declared capabilities
 
 ---
 
+### Phase 20k — Strict single-responsibility pass
+
+**Goal.** Tighten the CLAUDE.md responsibility rubric from "1–2" to **exactly one** responsibility per file, with three carve-outs (inline `#[cfg(test)] mod tests`, a type with its inherent + canonical-derive impls, and facade modules). Run a workspace audit against the strict rule and decompose files that pass under "1–2" but fail under "exactly 1."
+
+**Why this phase exists.** 20j closed with the original 37 mixed-domain failures decomposed, but several roots still hold two cohesive concepts (e.g. `auth/mod.rs` = records + actor surface + tests; `queue/mod.rs` = DurableQueueRuntime read-side + ~1,140-line cross-domain test cluster). Under the strict rule those become two responsibilities and need to split. Lifts the rubric floor without softening it.
+
+**Detailed plan:** [docs/phase-20k-refactor.md](./docs/phase-20k-refactor.md) — closing-audit-driven candidate list, per-file decomposition, validation gate.
+
+**Sequencing rules** (same as 20j): one commit per file extraction, push between, pre-phase chat per sub-slice, zero semantic changes during a refactor commit.
+
+**Slices** (estimated commit count finalised after the audit step):
+
+- [ ] 20k-audit — fresh workspace sweep against the strict rule. Spawn a `general-purpose` agent with the same prompt shape that found the 31 violators in 20j; record candidates in `docs/phase-20k-refactor.md` with rubric criterion failed and proposed decomposition.
+- [ ] 20k-A10c — `corvid-runtime/src/auth/mod.rs` (764 → ~150). Already named in 20j's closing audit as the deferred records-and-tests split. First sub-slice; serves as the pattern reference.
+- [ ] 20k-* — additional sub-slices defined by the audit step.
+
+**Phase-done criteria:**
+
+- Every `.rs` file in `crates/` passes the strict rubric OR is documented as an integration-test exception.
+- Closing audit recorded in `docs/phase-20k-refactor.md` with per-file post-split line counts.
+- `learnings.md` updated per slice.
+- Memory record `project_phase_20k_closed.md` summarises which concept-pairings tend to coexist (so future sessions know what to keep apart).
+
+---
+
 ### Phase 21 — Replay (~5–6 months, maximal-flagship scope) ✅ closed — **THE FLAGSHIP WOW**
 
 **Goal.** Every run replayable by construction — and beyond. Baseline record + replay in both tiers, plus nine inventive features that push past every existing observability tool. Replay becomes a language-level, compile-time-guaranteed, regression-oracle-producing primitive.

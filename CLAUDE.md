@@ -4,20 +4,26 @@ Rules that apply to every piece of work in this repo. Machine-enforceable where 
 
 ## File responsibility discipline
 
-**Every source file holds 1–2 responsibilities.** Line count is a *heuristic for where to look* — it is not the rule.
+**Every source file holds exactly one responsibility.** Line count is a *heuristic for where to look* — it is not the rule.
 
 A file fails this discipline when any of these hold:
 
 1. It mixes unrelated top-level concepts (parsing + lexing; checking + IR lowering; dispatch + recording).
-2. It has 5+ public items representing unrelated domains.
-3. It has 3+ internal sections that share no state.
+2. It has 2+ public items representing unrelated domains.
+3. It has 2+ internal sections that share no state.
 
 A 3,000-line file that does one thing cleanly is fine. A 400-line grab bag is not.
+
+**Three explicit carve-outs (these still count as one responsibility):**
+
+1. **Inline `#[cfg(test)] mod tests`** — co-located unit tests for the file's own type/concept are part of that responsibility, not a second one. Extract the tests when they grow past ~300 lines OR when they cover sibling-module concerns rather than this file's own concept.
+2. **A type and its inherent + canonical-derive trait impls** — `struct Foo`, `impl Foo`, `impl Clone for Foo`, `impl Drop for Foo`, `impl PartialEq for Foo` are one responsibility ("the Foo type"). Cross-cutting trait impls implemented for many types (e.g. a `Render` trait implemented for ten record types) get their own file per impl-cluster.
+3. **A facade module** that exists to compose siblings is itself one responsibility — "the facade." Re-exports + a thin orchestrator struct + a small dispatcher all count as one concern, even though they're three syntactic items.
 
 **When a file fails the rubric:**
 
 - If you are already modifying the file for a feature, split it in the same branch but as a separate commit that precedes the feature commit.
-- If the file is untouched by your current work, file it as a Phase 20i/j audit candidate and move on — do not refactor pre-emptively.
+- If the file is untouched by your current work, file it as a Phase 20i/j/k audit candidate and move on — do not refactor pre-emptively.
 
 **When splitting:**
 
