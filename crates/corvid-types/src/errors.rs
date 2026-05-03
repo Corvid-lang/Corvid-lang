@@ -15,12 +15,12 @@
 //! a public Corvid promise.
 
 use corvid_ast::Span;
-use std::fmt;
 
 mod error_kind;
 pub use error_kind::TypeErrorKind;
 mod warning_kind;
 pub use warning_kind::TypeWarningKind;
+mod display;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct TypeError {
@@ -93,37 +93,5 @@ impl TypeWarning {
 
     pub fn hint(&self) -> Option<String> {
         self.kind.hint()
-    }
-}
-
-impl fmt::Display for TypeError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "[{}..{}] {}",
-            self.span.start,
-            self.span.end,
-            self.message()
-        )?;
-        if let Some(hint) = self.hint() {
-            write!(f, "\n  help: {hint}")?;
-        }
-        Ok(())
-    }
-}
-
-impl fmt::Display for TypeWarning {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "[{}..{}] {}",
-            self.span.start,
-            self.span.end,
-            self.message()
-        )?;
-        if let Some(hint) = self.hint() {
-            write!(f, "\n  help: {hint}")?;
-        }
-        Ok(())
     }
 }
