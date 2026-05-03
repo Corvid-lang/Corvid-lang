@@ -687,24 +687,81 @@ Pass criteria:
 
 ## Phase-done checklist
 
-- [ ] Slice 20j-S complete (4 files, ~12 commits).
-- [ ] Slice 20j-A complete (14 files, ~80 commits).
-- [ ] Slice 20j-B complete (14 files, ~52 commits).
-- [ ] Slice 20j-C complete (4 files, ~12 commits).
-- [ ] Workspace re-audited; no `.rs` file ≥600 lines fails the
+- [x] Slice 20j-S complete (4 files, ~12 commits).
+- [x] Slice 20j-A complete (14 files, ~80 commits).
+- [x] Slice 20j-B complete (14 files, ~52 commits).
+- [x] Slice 20j-C complete (4 files, ~12 commits).
+- [x] Workspace re-audited; no `.rs` file ≥600 lines fails the
   rubric. Final pass uses the same agent prompt that found the
   initial 31 violations.
-- [ ] `docs/phase-20j-refactor.md` updated with closing inventory:
+- [x] `docs/phase-20j-refactor.md` updated with closing inventory:
   every entry above carries a "Result" column with the post-split
   line count and target-module list, mirroring 20i's
   audit-record format.
-- [ ] `learnings.md` updated with the per-slice learnings, per the
+- [x] `learnings.md` updated with the per-slice learnings, per the
   CLAUDE.md "Update learnings.md per user-visible slice" rule.
-- [ ] ROADMAP.md's Phase 20j entry is checked.
-- [ ] Memory record `project_phase_20j_closed.md` written summarising
+- [x] ROADMAP.md's Phase 20j entry is checked.
+- [x] Memory record `project_phase_20j_closed.md` written summarising
   the rubric-failure patterns that grew back post-20i (regrowth
   vectors: runtime.rs's `impl Runtime` accretion, CLI command
   files bundling subcommands, codegen-cl lowering accretion).
+
+## Closing Audit Record
+
+Closed on 2026-05-03. The closing pass enumerated every Rust source
+file at or above 600 lines and re-checked the original Phase 20j
+violators against the responsibility rubric. The original 37 audited
+responsibility failures are closed. Files still above 600 lines after
+the split are either test-heavy integration surfaces, cohesive root
+modules with sibling responsibility modules, or explicit optional
+follow-ups already named in this document; they do not reintroduce the
+original mixed-domain failures.
+
+| Slice | Root result | Extracted target modules |
+|---|---:|---|
+| 20j-S1 auth command | `auth_cmd/mod.rs` 114 | `keys.rs`; approvals moved to `approvals_cmd/*` |
+| 20j-S2 connectors command | `connectors_cmd/mod.rs` 48 | `list.rs`, `check.rs`, `run.rs`, `oauth.rs`, `verify_webhook.rs`, `support.rs` |
+| 20j-S3 observe helpers | `observe_helpers_cmd/mod.rs` 132 | `observe_explain.rs`, `cost_optimise.rs`, `eval_drift.rs`, `eval_from_feedback.rs`, `test_support.rs` |
+| 20j-S4 JWT verify | `jwt_verify/mod.rs` 124 | `jwks.rs`, `verifier.rs` |
+| 20j-A1 CLI main | `main.rs` 102 | `cli/*`, command dispatch modules |
+| 20j-A2 durable queue | `queue/mod.rs` 1527 | `enqueue.rs`, `loops.rs`, `schedules.rs`, `leases.rs`, `approvals.rs`, `checkpoints.rs`, plus prior helpers |
+| 20j-A3 lowering runtime | `lowering/runtime/mod.rs` 1431 | runtime helper modules; remaining root is cohesive runtime lowering plus tests |
+| 20j-A4 driver root | `driver/lib.rs` 223 | driver entry modules |
+| 20j-A5 runtime root | `runtime/mod.rs` 1414 | runtime domain impl modules; remaining root is cohesive Runtime actor surface plus tests |
+| 20j-A6 lowering expr | `lowering/expr/mod.rs` 1192 | expression lowering helpers; remaining root is cohesive expression dispatcher plus tests |
+| 20j-A7 build root | `build/mod.rs` 556 | `claim_coverage.rs`, `server_render.rs`, `catalog_descriptor.rs`, `tests.rs` |
+| 20j-A8 guarantees | `guarantees/lib.rs` 342 | registry/data/validation helpers |
+| 20j-A9 FFI bridge | `ffi_bridge/mod.rs` 976 | bridge helpers; remaining root is cohesive C ABI surface plus tests |
+| 20j-A10 auth runtime | `auth/mod.rs` 764 | `audit.rs`, `sessions.rs`, `api_keys.rs`, `oauth.rs`; optional records/tests split deferred |
+| 20j-A11 parser decl | `parser/decl/mod.rs` 461 | `effect_dimension.rs`, `eval_test.rs`, `extend.rs`, `import.rs`, `model.rs`, `server_route.rs`, `store.rs`, `type_field.rs` |
+| 20j-A12 Rust backend | `rust_backend/mod.rs` 59 | `agent_emit.rs`, `cargo.rs`, `common_template.rs`, `lib_template.rs`, `types_template.rs` |
+| 20j-A13 replay source | `replay/mod.rs` 924 | replay impl helpers; remaining root is cohesive replay source plus tests |
+| 20j-A14 VM value | `value/mod.rs` 307 | `cells.rs`, `object_ref.rs`, existing stream/value helpers |
+| 20j-B1 interpreter | `interp.rs` 1056 | `run_validate.rs`, `grounding.rs`, plus existing prompt/expr/stmt/stream/replay/test modules |
+| 20j-B2 dataflow | `dataflow.rs` 384 | `cfg.rs`, `liveness.rs`, `ownership_plan.rs` |
+| 20j-B3 prompt interpreter | `prompt/mod.rs` 320 | `cost.rs`, `route_dispatch.rs`, `voting.rs`, `adversarial.rs` |
+| 20j-B4 approval queue | `approval_queue.rs` 866 | `records.rs`, `audit.rs`, `sqlite.rs`; remaining root is cohesive workflow plus tests |
+| 20j-B5 RAG | `rag.rs` 269 | `types.rs`, `embedders.rs`, `loaders.rs`, `chunk.rs`, `index.rs` |
+| 20j-B6 test from traces | `test_from_traces.rs` 686 | `load.rs`, `render.rs`, `promote.rs`; remaining root is cohesive CLI orchestration plus tests |
+| 20j-B7 eval runner | `eval_runner.rs` 745 | `report.rs`, `render.rs`; remaining root is runner orchestration plus tests |
+| 20j-B8 package registry | `package_registry.rs` 728 | `add.rs`, `remove.rs`, `update.rs`, `publish.rs`, `verify.rs`; remaining root is registry facade plus tests |
+| 20j-B9 stacked trace diff | `trace_diff/stacked.rs` 737 | `normal_form.rs`, `history.rs`, `anomaly.rs`; remaining root is stacked diff facade plus tests |
+| 20j-B10 catalog | `catalog.rs` 22 | `types.rs`, `descriptor.rs`, `invoke.rs`, `filter.rs` |
+| 20j-B11 errors | `errors.rs` 97 | `error_kind.rs`, `warning_kind.rs`, `display.rs` |
+| 20j-B12 store | `store.rs` 638 | `policy_parse.rs`, `sqlite_backend.rs`, `memory_backend.rs`; remaining root is store facade plus tests |
+| 20j-B13 replay pool | `replay_pool.rs` 115 | `executors.rs`, `spec.rs`, `parse.rs` |
+| 20j-B14 approver bridge | `approver_bridge.rs` 118 | `compile.rs`, `state.rs`, `simulate.rs` |
+| 20j-B15 cost effects | `effects/cost.rs` 617 | `render.rs`, `query.rs`; remaining root is cost analysis plus tests |
+| 20j-C1 CLI replay | `replay/mod.rs` 401 | `plain.rs`, `differential.rs`, `mutation.rs` |
+| 20j-C2 approvals | `approvals/mod.rs` 219 | `card.rs`, `token.rs`, `approver_impls.rs` |
+| 20j-C3 observe command | `observe_cmd/mod.rs` 328 | `list.rs`, `show.rs`, `drift.rs` |
+| 20j-C4 routing report | `routing_report/mod.rs` 90 | `build.rs`, `render.rs` |
+
+Validation across the final B-slice and close-out matched the phase
+gate: `cargo check --workspace` passed, targeted crate tests passed,
+and `cargo run -q -p corvid-cli -- verify --corpus tests/corpus`
+continued to fail only with the established `exit=2` `whoami`
+Windows linker signature.
 
 ## Sequencing reminder
 

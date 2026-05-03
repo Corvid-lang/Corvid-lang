@@ -1201,10 +1201,10 @@ Users register local models (Ollama, vLLM, llama.cpp) with declared capabilities
 
 **Slices (estimated ~156 commits total):**
 
-- [ ] 20j-S — Session-introduced retro-splits (4 files, ~12 commits): `auth_cmd.rs`, `connectors_cmd.rs`, `observe_helpers_cmd.rs`, `jwt_verify.rs`. Atonement for files I shipped this session at sizes that already failed the rubric.
-- [ ] 20j-A — Large monoliths ≥1,500 lines (14 files, ~80 commits): `main.rs`, `queue.rs`, `lowering/runtime.rs`, `driver/lib.rs`, `runtime.rs`, `lowering/expr.rs`, `build.rs`, `guarantees/lib.rs`, `ffi_bridge.rs`, `auth.rs`, `parser/decl.rs`, `rust_backend.rs`, `replay/mod.rs`, `value.rs`. The five user-named plus nine audit-discovered.
-- [ ] 20j-B — Medium grab-bags 700–1,500 lines (15 files, ~52 commits): `interp.rs`, `dataflow.rs`, `prompt.rs`, `approval_queue.rs`, `rag.rs`, `test_from_traces.rs`, `eval_runner.rs`, `package_registry.rs`, `trace_diff/stacked.rs`, `catalog.rs`, `errors.rs`, `store.rs`, `replay_pool.rs`, `approver_bridge.rs`, `effects/cost.rs`.
-- [ ] 20j-C — Smaller-but-mixed (4 files, ~12 commits): `replay.rs` (cli), `approvals.rs`, `observe_cmd.rs`, `routing_report.rs`.
+- [x] 20j-S — Session-introduced retro-splits (4 files, ~12 commits): `auth_cmd.rs`, `connectors_cmd.rs`, `observe_helpers_cmd.rs`, `jwt_verify.rs`. Atonement for files I shipped this session at sizes that already failed the rubric.
+- [x] 20j-A — Large monoliths ≥1,500 lines (14 files, ~80 commits): `main.rs`, `queue.rs`, `lowering/runtime.rs`, `driver/lib.rs`, `runtime.rs`, `lowering/expr.rs`, `build.rs`, `guarantees/lib.rs`, `ffi_bridge.rs`, `auth.rs`, `parser/decl.rs`, `rust_backend.rs`, `replay/mod.rs`, `value.rs`. The five user-named plus nine audit-discovered.
+- [x] 20j-B — Medium grab-bags 700–1,500 lines (15 files, ~52 commits): `interp.rs`, `dataflow.rs`, `prompt.rs`, `approval_queue.rs`, `rag.rs`, `test_from_traces.rs`, `eval_runner.rs`, `package_registry.rs`, `trace_diff/stacked.rs`, `catalog.rs`, `errors.rs`, `store.rs`, `replay_pool.rs`, `approver_bridge.rs`, `effects/cost.rs`.
+- [x] 20j-C — Smaller-but-mixed (4 files, ~12 commits): `replay.rs` (cli), `approvals.rs`, `observe_cmd.rs`, `routing_report.rs`.
 
 **Phase-done criteria:**
 

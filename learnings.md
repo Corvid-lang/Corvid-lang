@@ -3431,3 +3431,25 @@ claims become a byproduct of shipped proof instead of a separate cleanup pass.
 ## Contributing / feedback
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). The rules of the road are: design chat before code, per-scope commits at every boundary, dev-log entry for every session, no shortcuts. The `learnings.md` file you're reading gets updated when each user-visible feature ships.
+
+## Phase 20j file-responsibility closeout
+
+Responsibility regrowth mostly followed three repeatable paths: large actor
+impls collected new domains, CLI command files absorbed sibling subcommands,
+and lowering/codegen roots accreted helper passes. The durable fix was not a
+line-count target by itself; it was naming the domain boundary and moving each
+domain into a sibling module with the same public facade.
+
+Multi-impl splits across sibling modules are now a proven pattern for runtime
+actors. They keep call sites stable while moving methods by responsibility.
+When siblings need helper access, `pub(super)` on the helper or field is enough;
+larger re-export surfaces were not needed.
+
+The validation baseline matters more than command tails. On Windows, `corvid
+verify --corpus tests/corpus` currently exits `2` with the known `whoami`
+linker error; capture the real exit code with file redirection and compare the
+signature, because piping to `tail` hides the failing command's exit status.
+
+`rustfmt` on a `#[path]` root module can follow and rewrite sibling modules.
+For scoped refactor commits, format touched leaf files directly and restore any
+incidental sibling formatting before committing.
