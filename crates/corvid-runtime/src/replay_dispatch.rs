@@ -76,38 +76,44 @@ pub fn find_first_replay_match(
     while i < events.len() {
         match &events[i] {
             TraceEvent::ToolCall { tool, args, .. } => {
+                let Some(result_index) = next_non_dispatch_metadata(&events, i + 1) else {
+                    return malformed_pair(path, "tool_call", i + 1);
+                };
                 let Some(TraceEvent::ToolResult {
                     tool: result_tool,
                     result,
                     ..
-                }) = events.get(i + 1)
+                }) = events.get(result_index)
                 else {
                     return malformed_pair(path, "tool_call", i + 1);
                 };
                 if result_tool != tool {
-                    return malformed_pair(path, "tool_call", i + 1);
+                    return malformed_pair(path, "tool_call", result_index + 1);
                 }
                 if let Some(found) = match_tool_call(tool, args, result, arms) {
                     return Ok(Some(found));
                 }
-                i += 2;
+                i = result_index + 1;
             }
             TraceEvent::LlmCall { prompt, .. } => {
+                let Some(result_index) = next_non_dispatch_metadata(&events, i + 1) else {
+                    return malformed_pair(path, "llm_call", i + 1);
+                };
                 let Some(TraceEvent::LlmResult {
                     prompt: result_prompt,
                     result,
                     ..
-                }) = events.get(i + 1)
+                }) = events.get(result_index)
                 else {
                     return malformed_pair(path, "llm_call", i + 1);
                 };
                 if result_prompt != prompt {
-                    return malformed_pair(path, "llm_call", i + 1);
+                    return malformed_pair(path, "llm_call", result_index + 1);
                 }
                 if let Some(found) = match_llm_call(prompt, result, arms) {
                     return Ok(Some(found));
                 }
-                i += 2;
+                i = result_index + 1;
             }
             TraceEvent::ApprovalRequest { label, .. } => {
                 let (response_index, response_label, approved) = match events.get(i + 1) {
@@ -142,6 +148,36 @@ pub fn find_first_replay_match(
     }
 
     Ok(None)
+}
+
+fn next_non_dispatch_metadata(events: &[TraceEvent], mut index: usize) -> Option<usize> {
+    while index < events.len() {
+        if is_dispatch_metadata(&events[index]) {
+            index += 1;
+        } else {
+            return Some(index);
+        }
+    }
+    None
+}
+
+fn is_dispatch_metadata(event: &TraceEvent) -> bool {
+    matches!(
+        event,
+        TraceEvent::ModelSelected { .. }
+            | TraceEvent::HostEvent { .. }
+            | TraceEvent::ProgressiveEscalation { .. }
+            | TraceEvent::ProgressiveExhausted { .. }
+            | TraceEvent::StreamUpgrade { .. }
+            | TraceEvent::PromptCache { .. }
+            | TraceEvent::ApprovalTokenIssued { .. }
+            | TraceEvent::ApprovalScopeViolation { .. }
+            | TraceEvent::AbVariantChosen { .. }
+            | TraceEvent::EnsembleVote { .. }
+            | TraceEvent::AdversarialPipelineCompleted { .. }
+            | TraceEvent::AdversarialContradiction { .. }
+            | TraceEvent::ProvenanceEdge { .. }
+    )
 }
 
 fn malformed_pair<T>(
