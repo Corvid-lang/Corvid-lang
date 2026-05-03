@@ -24,6 +24,7 @@ pub mod migrate;
 pub mod observe;
 pub mod package;
 pub mod root;
+pub mod upgrade;
 
 #[allow(unused_imports)]
 pub use approvals::*;
@@ -49,3 +50,5 @@ pub use observe::*;
 pub use package::*;
 #[allow(unused_imports)]
 pub use root::*;
+#[allow(unused_imports)]
+pub use upgrade::*;

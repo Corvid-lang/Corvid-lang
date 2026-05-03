@@ -29,6 +29,7 @@ use super::jobs::JobsCommand;
 use super::migrate::MigrateCommand;
 use super::observe::ObserveCommand;
 use super::package::PackageCommand;
+pub use super::upgrade::UpgradeCommand;
 
 #[derive(Parser)]
 #[command(name = "corvid", version, about = "The Corvid language compiler")]
@@ -690,26 +691,6 @@ pub enum Command {
     Approvals {
         #[command(subcommand)]
         command: ApprovalsCommand,
-    },
-}
-
-#[derive(Subcommand)]
-pub enum UpgradeCommand {
-    /// Report syntax and stdlib migrations without modifying files.
-    Check {
-        /// Source file or project directory to scan.
-        path: PathBuf,
-        /// Emit JSON findings.
-        #[arg(long)]
-        json: bool,
-    },
-    /// Apply safe syntax and stdlib migrations.
-    Apply {
-        /// Source file or project directory to rewrite.
-        path: PathBuf,
-        /// Emit JSON findings.
-        #[arg(long)]
-        json: bool,
     },
 }
 
