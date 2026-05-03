@@ -29,13 +29,15 @@ test.describe("WASM browser approval demo", () => {
       }
     });
 
-    await page.goto("/web/");
+    const dbName = `corvid-wasm-browser-demo-test-${Date.now()}`;
+    await page.goto(`/web/?db=${dbName}`);
 
     // --- Wait for the WASM module to instantiate -----------------
     await expect(page.locator("#status")).toContainText(
       "WASM module loaded.",
       { timeout: 30_000 }
     );
+    await expect(page.locator("#status")).toContainText("Persisted runs: 0");
 
     // --- Approve path: should run the tool and show a non-zero result ---
     await page.locator("#amount").fill("120");
@@ -44,6 +46,7 @@ test.describe("WASM browser approval demo", () => {
     await expect(page.locator("#result")).not.toHaveText("not run");
     await expect(page.locator("#status")).toContainText(/Approval requested for \$120/);
     await expect(page.locator("#status")).toContainText(/Decision: approved/);
+    await expect(page.locator("#status")).toContainText("Persisted runs: 1");
 
     let traceText = await page.locator("#trace").textContent();
     expect(traceText).toBeTruthy();
@@ -69,8 +72,8 @@ test.describe("WASM browser approval demo", () => {
 
     const approval = trace.find((event) => event.kind === "approval_decision");
     expect(approval).toBeDefined();
-    expect(approval.approved).toBe(true);
-    expect(approval.label).toBe("IssueRefund");
+    expect(approval.accepted).toBe(true);
+    expect(approval.site).toBe("IssueRefund");
 
     // --- Deny path: tool must NOT fire; the page reports trap. ---
     await page.locator("#deny").click();
@@ -84,10 +87,32 @@ test.describe("WASM browser approval demo", () => {
     trace = JSON.parse(traceText);
     const denyDecisions = trace
       .filter((event) => event.kind === "approval_decision")
-      .map((event) => event.approved);
+      .map((event) => event.accepted);
     expect(denyDecisions).toContain(false);
 
     // No console / page errors during the run.
     expect(consoleErrors).toEqual([]);
+  });
+
+  test("persists refund run state across page reloads through IndexedDB", async ({ page }) => {
+    const dbName = `corvid-wasm-browser-demo-reload-${Date.now()}`;
+    await page.goto(`/web/?db=${dbName}`);
+    await expect(page.locator("#status")).toContainText(
+      "WASM module loaded.",
+      { timeout: 30_000 }
+    );
+
+    await page.locator("#amount").fill("120");
+    await page.locator("#approve").click();
+    await expect(page.locator("#status")).toContainText("Persisted runs: 1");
+    await expect(page.locator("#status")).toContainText("Last persisted result: $120");
+
+    await page.reload();
+    await expect(page.locator("#status")).toContainText(
+      "WASM module loaded.",
+      { timeout: 30_000 }
+    );
+    await expect(page.locator("#status")).toContainText("Persisted runs: 1");
+    await expect(page.locator("#status")).toContainText("Last persisted result: $120");
   });
 });

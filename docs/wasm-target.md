@@ -23,7 +23,9 @@ Scalar prompts, tools, and approvals lower to typed imports from the
 
 The generated JS loader exposes `adaptImports(host)` so browser and edge hosts
 can provide `{ prompts, tools, approvals }` maps without writing raw
-`WebAssembly.Imports` objects by hand.
+`WebAssembly.Imports` objects by hand. It also exports
+`createIndexedDbStoreHost(options)`, a typed `store.get` / `store.put` /
+`store.delete` host helper backed by IndexedDB for browser-side durable state.
 
 `instantiate(host, { trace })` records Phase 21-style trace events while the
 WASM module runs. `trace` may be an array, a callback, or an object with an
@@ -34,10 +36,10 @@ to JSON-safe numbers when possible, or strings when they exceed JavaScript's
 safe integer range.
 
 Unsupported AI-native features still fail loudly. Strings, structs,
-provenance handles, stream callbacks, and replay trace recording require the
-next host ABI slices. Browser and edge deployment must preserve Corvid's effect,
-approval, provenance, budget, and replay contracts instead of compiling those
-features away.
+provenance handles, stream callbacks, and direct in-WASM asynchronous store
+calls require later host ABI slices. Browser and edge deployment must preserve
+Corvid's effect, approval, provenance, budget, and replay contracts instead of
+compiling those features away.
 
 ## Example
 
@@ -67,6 +69,10 @@ export function instantiate(
   hostOrImports?: WebAssembly.Imports | CorvidWasmHost,
   options?: { trace?: CorvidWasmTraceSink },
 ): Promise<CorvidWasmModule>;
+
+export function createIndexedDbStoreHost(
+  options?: { dbName?: string; storeName?: string },
+): Promise<CorvidWasmHost & { close(): void }>;
 ```
 
 ## Browser Demo
@@ -75,7 +81,10 @@ The committed browser smoke demo lives in
 `examples/wasm_browser_demo`. It compiles `src/refund_gate.cor` to WASM,
 loads the generated ES module from `target/wasm/refund_gate.js`, supplies typed
 prompt/tool/approval host capabilities, displays the approval decision, and
-renders the generated trace events.
+renders the generated trace events. The page uses the generated
+`createIndexedDbStoreHost` helper to persist run count and last result across
+reloads through IndexedDB; the Phase 23 browser CI test covers that persistence
+path.
 
 ```powershell
 examples/wasm_browser_demo/verify.ps1

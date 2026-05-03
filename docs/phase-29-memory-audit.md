@@ -72,25 +72,16 @@ into a named follow-up slice.
 | Claim | Source | Status |
 |---|---|---|
 | SQLite (native) backing | [store.rs:372-558](../crates/corvid-runtime/src/store.rs) | Shipped. |
-| IndexedDB (wasm) backing | Not yet shipped — WASM tier today uses the in-memory backend through host imports | **Gap**: tracked under Phase 23 follow-ups. The ROADMAP scope line for "IndexedDB (wasm)" is currently aspirational; mark explicitly in Phase 23 / Phase 29 cross-reference until the host import lands. |
+| IndexedDB (wasm) backing | `crates/corvid-codegen-wasm/src/companions.rs` emits `createIndexedDbStoreHost`, a typed browser host helper for `store.get` / `store.put` / `store.delete` backed by IndexedDB. | `examples/wasm_browser_demo/test/browser.spec.js` reloads the demo and verifies persisted run count + last result survive through IndexedDB. |
 
 ## Where the ROADMAP claims have a real gap
 
-One row above flagged: **wasm IndexedDB backing** is not shipped. The
-runtime today routes WASM store calls through the host imports defined
-in Phase 23, and the host JS side is free to wire any backend. The
-shipped browser demo uses an in-memory JS store. Promoting this to a
-real IndexedDB host import is a follow-up:
-
-- [ ] 29-L-wasm-indexeddb-host-import — Add `corvid:host store.*` import
-  bindings for IndexedDB on the JS side; the wasm-codegen ES loader
-  generates the typed wrapper. Closes when `examples/wasm_browser_demo`
-  persists across page reloads through IndexedDB and a Phase 23 browser
-  CI test verifies persistence.
-
-This slice belongs to Phase 23 / Phase 29 cross-reference; it is not
-required for Phase 29's native-tier `[x]`, but it is required before
-the WASM tier can claim "long-lived state" alongside native.
+The previous audit flagged **wasm IndexedDB backing** as the one cross-tier
+gap. Slice 29-L closed that browser-host layer: the generated ES loader now
+exports an IndexedDB-backed typed store host, and the committed browser demo
+uses it to persist run state across reloads. Direct asynchronous store calls
+from inside the scalar WASM module remain out of the current synchronous WASM
+ABI boundary; the shipped browser host state path is no longer aspirational.
 
 ## Verdict
 

@@ -885,6 +885,8 @@ agent main() -> Int:
         assert!(artifacts.js_loader.contains("kind: 'run_started'"));
         assert!(artifacts.ts_types.contains("'answer': () => bigint"));
         assert!(artifacts.ts_types.contains("CorvidWasmTraceSink"));
+        assert!(artifacts.js_loader.contains("createIndexedDbStoreHost"));
+        assert!(artifacts.ts_types.contains("CorvidWasmStoreHost"));
         assert!(artifacts.manifest_json.contains("\"kind\": \"prompt\""));
     }
 

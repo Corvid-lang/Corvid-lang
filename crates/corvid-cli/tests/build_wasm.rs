@@ -55,9 +55,11 @@ agent add_one(x: Int) -> Int:
     let js = std::fs::read_to_string(js_path).expect("js loader");
     assert!(js.contains("WebAssembly.instantiateStreaming"));
     assert!(js.contains("add_one(x)"));
+    assert!(js.contains("createIndexedDbStoreHost"));
 
     let ts = std::fs::read_to_string(ts_path).expect("ts types");
     assert!(ts.contains("add_one(x: bigint): bigint"));
+    assert!(ts.contains("CorvidWasmStoreHost"));
 
     let manifest = std::fs::read_to_string(manifest_path).expect("manifest");
     assert!(manifest.contains("\"target\": \"wasm32-unknown-unknown\""));
@@ -132,15 +134,18 @@ fn committed_wasm_browser_demo_builds_and_uses_generated_loader() {
     let loader = std::fs::read_to_string(out_dir.join("refund_gate.js")).expect("loader");
     assert!(loader.contains("kind: 'approval_decision'"));
     assert!(loader.contains("kind: 'tool_result'"));
+    assert!(loader.contains("createIndexedDbStoreHost"));
 
     let types = std::fs::read_to_string(out_dir.join("refund_gate.d.ts")).expect("types");
     assert!(types.contains("review_refund(amount: bigint): bigint"));
     assert!(types.contains("'IssueRefund': (arg1: bigint) => boolean"));
+    assert!(types.contains("CorvidIndexedDbStoreHost"));
 
     let page = std::fs::read_to_string(demo.join("web").join("index.html")).expect("page");
     assert!(page.contains("demo.js"));
     let browser_host = std::fs::read_to_string(demo.join("web").join("demo.js")).expect("host");
     assert!(browser_host.contains("../target/wasm/refund_gate.js"));
+    assert!(browser_host.contains("createIndexedDbStoreHost"));
     assert!(browser_host.contains("approvals"));
     assert!(browser_host.contains("trace"));
 }

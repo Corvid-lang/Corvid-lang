@@ -32,10 +32,16 @@ if ($Loader -notmatch "kind: 'approval_decision'") {
 if ($Loader -notmatch "kind: 'run_completed'") {
     throw "generated loader does not record run completion"
 }
+if ($Loader -notmatch "createIndexedDbStoreHost") {
+    throw "generated loader does not expose the IndexedDB store host"
+}
 
 $Types = Get-Content (Join-Path $OutDir "refund_gate.d.ts") -Raw
 if ($Types -notmatch "CorvidWasmHost") {
     throw "generated TypeScript host interface missing"
+}
+if ($Types -notmatch "CorvidWasmStoreHost") {
+    throw "generated TypeScript store host interface missing"
 }
 if ($Types -notmatch "review_refund\(amount: bigint\): bigint") {
     throw "generated TypeScript agent signature missing"
@@ -44,6 +50,9 @@ if ($Types -notmatch "review_refund\(amount: bigint\): bigint") {
 $Demo = Get-Content (Join-Path $PSScriptRoot "web\demo.js") -Raw
 if ($Demo -notmatch "\.\./target/wasm/refund_gate\.js") {
     throw "browser demo does not import the generated loader"
+}
+if ($Demo -notmatch "createIndexedDbStoreHost") {
+    throw "browser demo does not use the generated IndexedDB store host"
 }
 
 Write-Host "wasm browser demo OK"

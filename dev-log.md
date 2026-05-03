@@ -6229,3 +6229,26 @@ Validation:
 - `cargo check --workspace`
 - `cargo run -q -p corvid-cli -- verify --corpus tests/corpus`
   (exit 2 with the established Windows `whoami` linker signature)
+
+---
+
+## 2026-05-03 — Slice 29-L WASM IndexedDB host import
+
+- Added a generated `createIndexedDbStoreHost` ES-loader helper that exposes
+  typed browser-side `store.get` / `store.put` / `store.delete` operations
+  backed by IndexedDB.
+- Updated the WASM browser demo to use the generated store host and persist
+  run count plus last result across page reloads.
+- Extended the Phase 23 Playwright browser test, CLI build assertions, demo
+  verify scripts, and WASM docs so the IndexedDB persistence path is covered
+  by CI and documented.
+
+Validation:
+- `cargo test -p corvid-codegen-wasm --lib`
+- `cargo test -p corvid-cli --test build_wasm`
+- `examples/wasm_browser_demo/verify.ps1`
+- `npx playwright test` from `examples/wasm_browser_demo/test`
+- `cargo test -p corvid-cli --bin corvid`
+- `cargo check --workspace`
+- `cargo run -q -p corvid-cli -- verify --corpus tests/corpus`
+  (exit 2 with the established Windows `whoami` linker signature)

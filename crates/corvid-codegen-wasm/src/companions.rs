@@ -196,6 +196,49 @@ fn emit_js_loader(
     out.push_str("export function adaptImports(host = {}, trace = undefined) {\n");
     out.push_str("  return adaptImportsWithContext(host, makeTraceContext(trace));\n");
     out.push_str("}\n\n");
+    out.push_str("function indexedDbRequest(request) {\n");
+    out.push_str("  return new Promise((resolve, reject) => {\n");
+    out.push_str("    request.onsuccess = () => resolve(request.result);\n");
+    out.push_str("    request.onerror = () => reject(request.error ?? new Error('IndexedDB request failed'));\n");
+    out.push_str("  });\n");
+    out.push_str("}\n\n");
+    out.push_str("export async function createIndexedDbStoreHost(options = {}) {\n");
+    out.push_str("  const dbName = options.dbName ?? 'corvid-wasm-store';\n");
+    out.push_str("  const storeName = options.storeName ?? 'records';\n");
+    out.push_str("  const db = await new Promise((resolve, reject) => {\n");
+    out.push_str("    if (!globalThis.indexedDB) {\n");
+    out.push_str("      reject(new Error('IndexedDB is not available'));\n");
+    out.push_str("      return;\n");
+    out.push_str("    }\n");
+    out.push_str("    const request = globalThis.indexedDB.open(dbName, 1);\n");
+    out.push_str("    request.onupgradeneeded = () => {\n");
+    out.push_str("      if (!request.result.objectStoreNames.contains(storeName)) request.result.createObjectStore(storeName);\n");
+    out.push_str("    };\n");
+    out.push_str("    request.onsuccess = () => resolve(request.result);\n");
+    out.push_str("    request.onerror = () => reject(request.error ?? new Error('open IndexedDB store failed'));\n");
+    out.push_str("  });\n");
+    out.push_str("  function objectStore(mode) {\n");
+    out.push_str("    return db.transaction(storeName, mode).objectStore(storeName);\n");
+    out.push_str("  }\n");
+    out.push_str("  return {\n");
+    out.push_str("    store: {\n");
+    out.push_str("      async get(key) {\n");
+    out.push_str("        const value = await indexedDbRequest(objectStore('readonly').get(String(key)));\n");
+    out.push_str("        return value === undefined ? null : value;\n");
+    out.push_str("      },\n");
+    out.push_str("      async put(key, value) {\n");
+    out.push_str("        await indexedDbRequest(objectStore('readwrite').put(value, String(key)));\n");
+    out.push_str("        return value;\n");
+    out.push_str("      },\n");
+    out.push_str("      async delete(key) {\n");
+    out.push_str("        await indexedDbRequest(objectStore('readwrite').delete(String(key)));\n");
+    out.push_str("      },\n");
+    out.push_str("    },\n");
+    out.push_str("    close() {\n");
+    out.push_str("      db.close();\n");
+    out.push_str("    },\n");
+    out.push_str("  };\n");
+    out.push_str("}\n\n");
     out.push_str("export async function instantiate(hostOrImports = {}, options = {}) {\n");
     out.push_str("  const traceContext = makeTraceContext(options.trace);\n");
     out.push_str("  const imports = hostOrImports['corvid:host'] ? hostOrImports : adaptImportsWithContext(hostOrImports, traceContext);\n");
@@ -296,7 +339,18 @@ fn emit_ts_types(
         out.push_str(&format!("    '{}': {};\n", import.source_name, host_fn_type(import)?));
     }
     out.push_str("  };\n");
+    out.push_str("  store?: CorvidWasmStoreHost;\n");
     out.push_str("}\n\n");
+    out.push_str("export interface CorvidWasmStoreHost {\n");
+    out.push_str("  get(key: string): Promise<unknown | null>;\n");
+    out.push_str("  put(key: string, value: unknown): Promise<unknown>;\n");
+    out.push_str("  delete(key: string): Promise<void>;\n");
+    out.push_str("}\n\n");
+    out.push_str("export interface CorvidIndexedDbStoreOptions {\n");
+    out.push_str("  dbName?: string;\n");
+    out.push_str("  storeName?: string;\n");
+    out.push_str("}\n\n");
+    out.push_str("export type CorvidIndexedDbStoreHost = CorvidWasmHost & { close(): void };\n\n");
     out.push_str("export interface CorvidWasmModule {\n");
     for agent in agents {
         let params = agent
@@ -321,6 +375,9 @@ fn emit_ts_types(
     );
     out.push_str(
         "export function adaptImports(host?: CorvidWasmHost, trace?: CorvidWasmTraceSink): WebAssembly.Imports;\n",
+    );
+    out.push_str(
+        "export function createIndexedDbStoreHost(options?: CorvidIndexedDbStoreOptions): Promise<CorvidIndexedDbStoreHost>;\n",
     );
     out.push_str(
         "export function instantiate(hostOrImports?: WebAssembly.Imports | CorvidWasmHost, options?: CorvidWasmInstantiateOptions): Promise<CorvidWasmModule>;\n",

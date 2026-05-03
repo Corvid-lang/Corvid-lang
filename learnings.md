@@ -3511,3 +3511,11 @@ Feature-gated runtime paths need their own named CI job, not a comment in the
 default workspace tests. Keep the job id behavioral (`python-features`), pin
 the external runtime version, and document exactly which optional contracts the
 job covers so future maintainers know why it is separate.
+
+## wasm browser storage
+
+IndexedDB is asynchronous, while the current Corvid WASM ABI is synchronous and
+scalar. Keep durable browser state in the generated ES host layer for now: emit
+a typed async store helper, have the demo call it around the WASM run, and make
+the browser CI reload the page to prove persistence instead of pretending the
+WASM module can synchronously block on IndexedDB.

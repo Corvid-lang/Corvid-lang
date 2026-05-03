@@ -2,8 +2,8 @@
 
 This is the Phase 23 browser smoke demo. It compiles one Corvid source file to
 WASM, loads the generated ES module in a browser, supplies typed host
-capabilities, displays the approval boundary, and records replay-compatible
-trace events from the generated loader.
+capabilities, displays the approval boundary, records replay-compatible trace
+events from the generated loader, and persists run state through IndexedDB.
 
 ## Build
 
@@ -27,10 +27,12 @@ The page imports `../target/wasm/refund_gate.js`, which loads
 - `prompts.refund_score(amount): bigint`
 - `approvals.IssueRefund(amount): boolean`
 - `tools.issue_refund(amount): bigint`
+- `store.get` / `store.put` through the generated IndexedDB helper
 
 The trace panel shows `schema_header`, `run_started`, `llm_call/result`,
 `approval_request/decision/response`, `tool_call/result`, and `run_completed`
-events produced by the generated loader.
+events produced by the generated loader. The status line shows the persisted
+run count and last result after a reload.
 
 ## Verify
 

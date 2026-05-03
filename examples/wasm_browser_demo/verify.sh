@@ -14,8 +14,11 @@ done
 
 grep -q "kind: 'approval_decision'" "$OUT/refund_gate.js"
 grep -q "kind: 'run_completed'" "$OUT/refund_gate.js"
+grep -q "createIndexedDbStoreHost" "$OUT/refund_gate.js"
 grep -q "CorvidWasmHost" "$OUT/refund_gate.d.ts"
+grep -q "CorvidWasmStoreHost" "$OUT/refund_gate.d.ts"
 grep -q "review_refund(amount: bigint): bigint" "$OUT/refund_gate.d.ts"
 grep -q "../target/wasm/refund_gate.js" "$DEMO/web/demo.js"
+grep -q "createIndexedDbStoreHost" "$DEMO/web/demo.js"
 
 echo "wasm browser demo OK"

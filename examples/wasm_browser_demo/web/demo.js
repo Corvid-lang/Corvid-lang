@@ -1,4 +1,4 @@
-import { instantiate } from "../target/wasm/refund_gate.js";
+import { createIndexedDbStoreHost, instantiate } from "../target/wasm/refund_gate.js";
 
 const amountInput = document.querySelector("#amount");
 const approveButton = document.querySelector("#approve");
@@ -9,13 +9,25 @@ const traceEl = document.querySelector("#trace");
 
 let approveNext = true;
 const trace = [];
+const params = new URLSearchParams(window.location.search);
+const storeHost = await createIndexedDbStoreHost({
+  dbName: params.get("db") ?? "corvid-wasm-browser-demo",
+  storeName: "refund-runs",
+});
+let persistedRuns = Number((await storeHost.store.get("runCount")) ?? 0);
+let lastPersistedResult = await storeHost.store.get("lastResult");
 
 function renderTrace() {
   traceEl.textContent = JSON.stringify(trace, null, 2);
 }
 
 function setStatus(message) {
-  statusEl.textContent = message;
+  const last = lastPersistedResult === null || lastPersistedResult === undefined
+    ? "none"
+    : lastPersistedResult === "blocked"
+      ? "blocked"
+      : `$${BigInt(lastPersistedResult).toString()}`;
+  statusEl.textContent = `${message} Persisted runs: ${persistedRuns}. Last persisted result: ${last}.`;
 }
 
 function riskScore(amount) {
@@ -43,18 +55,28 @@ const host = {
   },
 };
 
-const corvid = await instantiate(host, { trace });
+const corvid = await instantiate({ ...host, store: storeHost.store }, { trace });
 renderTrace();
 setStatus("WASM module loaded. Run the agent to record prompt, approval, tool, and run events.");
 
-function runWithDecision(decision) {
+async function runWithDecision(decision) {
   approveNext = decision;
   const amount = BigInt(Math.trunc(Number(amountInput.value || 0)));
   try {
     const result = corvid.review_refund(amount);
+    persistedRuns += 1;
+    lastPersistedResult = result.toString();
+    await storeHost.store.put("runCount", persistedRuns);
+    await storeHost.store.put("lastResult", lastPersistedResult);
     resultEl.textContent = `$${result.toString()}`;
-    setStatus(result === 0n ? "No dangerous action was taken." : "Refund completed through the approved dangerous tool.");
+    setStatus(result === 0n
+      ? "No dangerous action was taken."
+      : `Approval requested for $${amount.toString()}. Decision: approved. Refund completed through the approved dangerous tool.`);
   } catch (error) {
+    persistedRuns += 1;
+    lastPersistedResult = "blocked";
+    await storeHost.store.put("runCount", persistedRuns);
+    await storeHost.store.put("lastResult", lastPersistedResult);
     resultEl.textContent = "blocked";
     setStatus(`The WASM agent trapped after a denied approval: ${error.message ?? error}`);
   }

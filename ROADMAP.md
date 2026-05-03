@@ -1589,7 +1589,7 @@ The determinism-source catalog and the language's treatment of non-reproducible 
 **Phase 29 follow-up audit (2026-04-29) — epistemic verification:**
 
 - [x] 29-K-memory-module-audit-doc       `docs/phase-29-memory-audit.md` ships, enumerating every memory primitive against the ROADMAP claims with source file + line range + positive + adversarial tests for each surface. Audit confirmed native-tier coverage; identified one cross-tier gap (wasm IndexedDB backing) that promotes into slice 29-L below.
-- [ ] 29-L-wasm-indexeddb-host-import    Add `corvid:host store.*` import bindings for IndexedDB on the JS side; the wasm-codegen ES loader generates the typed wrapper. Closes when `examples/wasm_browser_demo` persists across page reloads through IndexedDB and a Phase 23 browser CI test (slice 23-F) verifies persistence. The native-tier `[x]` of Phase 29 stands; this slice promotes Phase 29's WASM-tier claim from aspirational scope-line to shipped runtime.
+- [x] 29-L-wasm-indexeddb-host-import    The wasm-codegen ES loader exports a typed `createIndexedDbStoreHost` wrapper for browser-side `store.get` / `store.put` / `store.delete`; `examples/wasm_browser_demo` uses it to persist run count and last result across page reloads, and the Phase 23 Playwright browser CI test verifies persistence.
 
 ### Phase 30 — Python FFI via PyO3 (~5–6 weeks) ✅ closed
 
