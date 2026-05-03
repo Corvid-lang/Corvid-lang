@@ -11,6 +11,9 @@ use std::ffi::{c_char, CString};
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 
+mod compile;
+use compile::{compile_approver_source, validate_approver_safety};
+
 const APPROVER_AGENT_NAME: &str = "approve_site";
 const APPROVER_PRELUDE: &str = r#"
 type ApprovalSite:
@@ -225,175 +228,6 @@ pub fn simulate_approver_source(
     })
 }
 
-fn compile_approver_source(source_path: &Path) -> Result<RegisteredApprover, ApproverLoadError> {
-    let source = std::fs::read_to_string(source_path).map_err(|err| ApproverLoadError {
-        status: CorvidApproverLoadStatus::IoError,
-        message: format!("read approver source `{}`: {err}", source_path.display()),
-    })?;
-    let combined = format!("{APPROVER_PRELUDE}\n{source}");
-    let tokens = lex(&combined).map_err(|errs| ApproverLoadError {
-        status: CorvidApproverLoadStatus::CompileError,
-        message: format!("lex approver source: {errs:?}"),
-    })?;
-    let (file, parse_errors) = parse_file(&tokens);
-    if !parse_errors.is_empty() {
-        return Err(ApproverLoadError {
-            status: CorvidApproverLoadStatus::CompileError,
-            message: format!("parse approver source: {parse_errors:?}"),
-        });
-    }
-    let resolved = resolve(&file);
-    if !resolved.errors.is_empty() {
-        return Err(ApproverLoadError {
-            status: CorvidApproverLoadStatus::CompileError,
-            message: format!("resolve approver source: {:?}", resolved.errors),
-        });
-    }
-    let checked = typecheck_with_config(&file, &resolved, None::<&CorvidConfig>);
-    if !checked.errors.is_empty() {
-        return Err(ApproverLoadError {
-            status: CorvidApproverLoadStatus::CompileError,
-            message: format!("typecheck approver source: {:?}", checked.errors),
-        });
-    }
-    let mut abi_file = file.clone();
-    for decl in &mut abi_file.decls {
-        if let Decl::Agent(agent) = decl {
-            if agent.name.name == APPROVER_AGENT_NAME {
-                agent.extern_abi = Some(ExternAbi::C);
-            }
-        }
-    }
-    let ir = lower(&abi_file, &resolved, &checked);
-    let effect_decls = file
-        .decls
-        .iter()
-        .filter_map(|decl| match decl {
-            Decl::Effect(effect) => Some(effect.clone()),
-            _ => None,
-        })
-        .collect::<Vec<_>>();
-    let registry = EffectRegistry::from_decls(&effect_decls);
-    let abi = emit_abi(
-        &abi_file,
-        &resolved,
-        &checked,
-        &ir,
-        &registry,
-        &EmitOptions {
-            source_path: &source_path.to_string_lossy().replace('\\', "/"),
-            source_text: &combined,
-            compiler_version: env!("CARGO_PKG_VERSION"),
-            generated_at: "1970-01-01T00:00:00Z",
-        },
-    )
-    .agents
-    .into_iter()
-    .find(|agent| agent.name == APPROVER_AGENT_NAME)
-    .ok_or_else(|| ApproverLoadError {
-        status: CorvidApproverLoadStatus::MissingAgent,
-        message: format!("no `{APPROVER_AGENT_NAME}` agent found in approver source"),
-    })?;
-    verify_approver_signature(&abi)?;
-    let mut overlay_abi = abi.clone();
-    overlay_abi.name = "__corvid_approver".to_string();
-    overlay_abi.symbol = "__corvid_approver".to_string();
-    overlay_abi.attributes.pub_extern_c = false;
-    overlay_abi.attributes.dangerous = false;
-    overlay_abi.approval_contract.required = false;
-    overlay_abi.approval_contract.labels.clear();
-    let signature_json = serde_json::to_string_pretty(&overlay_abi).map_err(|err| ApproverLoadError {
-        status: CorvidApproverLoadStatus::CompileError,
-        message: format!("serialize approver overlay ABI: {err}"),
-    })?;
-    Ok(RegisteredApprover {
-        source_path: source_path.to_path_buf(),
-        abi: overlay_abi,
-        program: MiniApproverProgram::from_file(&file)?,
-        display_budget_usd: f64::NAN,
-        signature_json: signature_json.clone(),
-        name_c: CString::new("__corvid_approver").expect("valid approver overlay name"),
-        symbol_c: CString::new("__corvid_approver").expect("valid approver overlay symbol"),
-        source_file_c: CString::new(source_path.to_string_lossy().replace('\\', "/"))
-            .expect("valid approver overlay source path"),
-        signature_json_c: CString::new(signature_json).expect("valid approver overlay signature"),
-    })
-}
-
-fn verify_approver_signature(abi: &AbiAgent) -> Result<(), ApproverLoadError> {
-    if abi.params.len() != 3 {
-        return Err(ApproverLoadError {
-            status: CorvidApproverLoadStatus::BadSignature,
-            message: format!(
-                "`{APPROVER_AGENT_NAME}` must take exactly 3 params, got {}",
-                abi.params.len()
-            ),
-        });
-    }
-    verify_struct(&abi.params[0].ty, "ApprovalSite", "parameter 1 `site`")?;
-    verify_struct(&abi.params[1].ty, "ApprovalArgs", "parameter 2 `args`")?;
-    verify_struct(&abi.params[2].ty, "ApprovalContext", "parameter 3 `ctx`")?;
-    verify_struct(&abi.return_type, "ApprovalDecision", "return type")?;
-    Ok(())
-}
-
-fn verify_struct(
-    ty: &TypeDescription,
-    expected: &str,
-    where_: &str,
-) -> Result<(), ApproverLoadError> {
-    match ty {
-        TypeDescription::Struct { name } if name == expected => Ok(()),
-        other => Err(ApproverLoadError {
-            status: CorvidApproverLoadStatus::BadSignature,
-            message: format!(
-                "`{APPROVER_AGENT_NAME}` {where_} must be `{expected}`, got `{other:?}`"
-            ),
-        }),
-    }
-}
-
-fn validate_approver_safety(
-    abi: &AbiAgent,
-    max_budget_usd_per_call: f64,
-) -> Result<(), ApproverLoadError> {
-    if abi.attributes.dangerous {
-        return Err(ApproverLoadError {
-            status: CorvidApproverLoadStatus::Unsafe,
-            message: "approver may not be `@dangerous`".to_string(),
-        });
-    }
-    if abi
-        .effects
-        .trust_tier
-        .as_deref()
-        .map(|tier| tier != "autonomous")
-        .unwrap_or(false)
-    {
-        return Err(ApproverLoadError {
-            status: CorvidApproverLoadStatus::Unsafe,
-            message: "approver trust tier must be `autonomous`".to_string(),
-        });
-    }
-    if max_budget_usd_per_call > 0.0 {
-        let budget = abi
-            .budget
-            .as_ref()
-            .map(|budget| budget.usd_per_call)
-            .or_else(|| abi.effects.cost.as_ref().map(|cost| cost.projected_usd))
-            .unwrap_or(0.0);
-        if budget > max_budget_usd_per_call {
-            return Err(ApproverLoadError {
-                status: CorvidApproverLoadStatus::OverBudget,
-                message: format!(
-                    "approver budget ${budget:.3} exceeds host ceiling ${max_budget_usd_per_call:.3}"
-                ),
-            });
-        }
-    }
-    Ok(())
-}
-
 fn parse_args_array(args_json: &str) -> Result<Vec<Value>, String> {
     let value: Value = serde_json::from_str(args_json)
         .map_err(|err| format!("args_json must be a JSON array: {err}"))?;
@@ -458,23 +292,34 @@ impl MiniApproverProgram {
                 _ => None,
             })
             .collect();
-        Ok(Self { body, struct_fields })
+        Ok(Self {
+            body,
+            struct_fields,
+        })
     }
 
-    fn evaluate(&self, site: &ApprovalSiteInput, args: &[Value]) -> Result<ApprovalDecisionInfo, String> {
+    fn evaluate(
+        &self,
+        site: &ApprovalSiteInput,
+        args: &[Value],
+    ) -> Result<ApprovalDecisionInfo, String> {
         let mut env = BTreeMap::new();
         env.insert("site".to_string(), site_value(site));
         env.insert("args".to_string(), args_value(args));
         env.insert("ctx".to_string(), context_value(site));
         let value = match self.eval_block(&self.body, &mut env)? {
             MiniControl::Return(value) => value,
-            MiniControl::Continue => return Err("approver body must return ApprovalDecision".to_string()),
+            MiniControl::Continue => {
+                return Err("approver body must return ApprovalDecision".to_string())
+            }
         };
         let MiniValue::Struct { type_name, fields } = value else {
             return Err("approver must return ApprovalDecision".to_string());
         };
         if type_name != "ApprovalDecision" {
-            return Err(format!("approver returned `{type_name}`, expected ApprovalDecision"));
+            return Err(format!(
+                "approver returned `{type_name}`, expected ApprovalDecision"
+            ));
         }
         let accepted = match fields.get("accepted") {
             Some(MiniValue::Bool(value)) => *value,
@@ -609,7 +454,9 @@ impl MiniApproverProgram {
                     fields,
                 })
             }
-            Expr::BinOp { op, left, right, .. } => {
+            Expr::BinOp {
+                op, left, right, ..
+            } => {
                 let left = self.eval_expr(left, env)?;
                 let right = self.eval_expr(right, env)?;
                 self.eval_binop(*op, left, right)
@@ -629,7 +476,12 @@ impl MiniApproverProgram {
         }
     }
 
-    fn eval_binop(&self, op: BinaryOp, left: MiniValue, right: MiniValue) -> Result<MiniValue, String> {
+    fn eval_binop(
+        &self,
+        op: BinaryOp,
+        left: MiniValue,
+        right: MiniValue,
+    ) -> Result<MiniValue, String> {
         match op {
             BinaryOp::Eq => Ok(MiniValue::Bool(left == right)),
             BinaryOp::NotEq => Ok(MiniValue::Bool(left != right)),
@@ -643,26 +495,34 @@ impl MiniApproverProgram {
                     BinaryOp::LtEq => left <= right,
                     _ => unreachable!(),
                 })),
-                (MiniValue::Float(left), MiniValue::Float(right)) => Ok(MiniValue::Bool(match op {
-                    BinaryOp::Gt => left > right,
-                    BinaryOp::GtEq => left >= right,
-                    BinaryOp::Lt => left < right,
-                    BinaryOp::LtEq => left <= right,
-                    _ => unreachable!(),
-                })),
-                (MiniValue::String(left), MiniValue::String(right)) => Ok(MiniValue::Bool(match op {
-                    BinaryOp::Gt => left > right,
-                    BinaryOp::GtEq => left >= right,
-                    BinaryOp::Lt => left < right,
-                    BinaryOp::LtEq => left <= right,
-                    _ => unreachable!(),
-                })),
+                (MiniValue::Float(left), MiniValue::Float(right)) => {
+                    Ok(MiniValue::Bool(match op {
+                        BinaryOp::Gt => left > right,
+                        BinaryOp::GtEq => left >= right,
+                        BinaryOp::Lt => left < right,
+                        BinaryOp::LtEq => left <= right,
+                        _ => unreachable!(),
+                    }))
+                }
+                (MiniValue::String(left), MiniValue::String(right)) => {
+                    Ok(MiniValue::Bool(match op {
+                        BinaryOp::Gt => left > right,
+                        BinaryOp::GtEq => left >= right,
+                        BinaryOp::Lt => left < right,
+                        BinaryOp::LtEq => left <= right,
+                        _ => unreachable!(),
+                    }))
+                }
                 _ => Err("comparison expects matching scalar operands".to_string()),
             },
             BinaryOp::Add => match (left, right) {
                 (MiniValue::Int(left), MiniValue::Int(right)) => Ok(MiniValue::Int(left + right)),
-                (MiniValue::Float(left), MiniValue::Float(right)) => Ok(MiniValue::Float(left + right)),
-                (MiniValue::String(left), MiniValue::String(right)) => Ok(MiniValue::String(left + &right)),
+                (MiniValue::Float(left), MiniValue::Float(right)) => {
+                    Ok(MiniValue::Float(left + right))
+                }
+                (MiniValue::String(left), MiniValue::String(right)) => {
+                    Ok(MiniValue::String(left + &right))
+                }
                 _ => Err("`+` expects matching Int, Float, or String operands".to_string()),
             },
             other => Err(format!("unsupported approver binary op `{other:?}`")),
@@ -712,7 +572,10 @@ fn site_value(site: &ApprovalSiteInput) -> MiniValue {
     MiniValue::Struct {
         type_name: "ApprovalSite".to_string(),
         fields: BTreeMap::from([
-            ("label".to_string(), MiniValue::String(site.site_name.clone())),
+            (
+                "label".to_string(),
+                MiniValue::String(site.site_name.clone()),
+            ),
             (
                 "agent_context".to_string(),
                 MiniValue::String(site.agent_context.clone()),
