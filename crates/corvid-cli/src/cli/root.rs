@@ -18,6 +18,7 @@
 use clap::{Parser, Subcommand, ValueEnum};
 use std::path::PathBuf;
 
+pub use super::abi::AbiCommand;
 pub use super::approvals::ApprovalsCommand;
 pub use super::auth::{AuthCommand, AuthKeysCommand};
 pub use super::bench::BenchCommand;
@@ -694,21 +695,6 @@ pub enum Command {
     Approvals {
         #[command(subcommand)]
         command: ApprovalsCommand,
-    },
-}
-
-#[derive(Subcommand)]
-pub enum AbiCommand {
-    Dump {
-        library: PathBuf,
-    },
-    Hash {
-        source: PathBuf,
-    },
-    Verify {
-        library: PathBuf,
-        #[arg(long, value_name = "HEX")]
-        expected_hash: String,
     },
 }
 
