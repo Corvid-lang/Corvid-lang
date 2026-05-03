@@ -79,11 +79,9 @@ impl SessionAuthRuntime {
                 "api key expiry must be in the future".to_string(),
             ));
         }
-        let actor = self
-            .get_actor(&input.service_actor_id)?
-            .ok_or_else(|| {
-                RuntimeError::Other(format!("auth actor `{}` not found", input.service_actor_id))
-            })?;
+        let actor = self.get_actor(&input.service_actor_id)?.ok_or_else(|| {
+            RuntimeError::Other(format!("auth actor `{}` not found", input.service_actor_id))
+        })?;
         if actor.tenant_id != input.tenant_id {
             return Err(RuntimeError::Other(
                 "api key actor tenant mismatch".to_string(),
@@ -145,7 +143,13 @@ impl SessionAuthRuntime {
         let keys = self.list_active_api_key_candidates(expected_tenant_id)?;
         for key in keys {
             if verify_api_key_secret(raw_key, &key.key_hash)? {
-                return self.resolve_api_key_record(key, expected_tenant_id, trace_id, replay_key, at_ms);
+                return self.resolve_api_key_record(
+                    key,
+                    expected_tenant_id,
+                    trace_id,
+                    replay_key,
+                    at_ms,
+                );
             }
         }
         self.insert_audit(
@@ -192,7 +196,9 @@ impl SessionAuthRuntime {
             })?;
         let rows = stmt
             .query_map(params![tenant_id], read_api_key_row)
-            .map_err(|err| RuntimeError::Other(format!("failed to list api key candidates: {err}")))?;
+            .map_err(|err| {
+                RuntimeError::Other(format!("failed to list api key candidates: {err}"))
+            })?;
         let mut keys = Vec::new();
         for row in rows {
             keys.push(row.map_err(|err| {
@@ -279,5 +285,147 @@ impl SessionAuthRuntime {
             api_key: key,
             trace,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::auth::AuthActor;
+
+    fn actor(id: &str, tenant_id: &str) -> AuthActor {
+        AuthActor {
+            id: id.to_string(),
+            tenant_id: tenant_id.to_string(),
+            display_name: "Ada".to_string(),
+            actor_kind: "user".to_string(),
+            auth_method: "session".to_string(),
+            assurance_level: "aal1".to_string(),
+            role_fingerprint: "sha256:roles".to_string(),
+            permission_fingerprint: "sha256:permissions".to_string(),
+            created_ms: 1,
+            updated_ms: 1,
+        }
+    }
+
+    fn service_actor(id: &str, tenant_id: &str) -> AuthActor {
+        AuthActor {
+            actor_kind: "service".to_string(),
+            auth_method: "api_key".to_string(),
+            display_name: "CI".to_string(),
+            permission_fingerprint: "sha256:service-scopes".to_string(),
+            ..actor(id, tenant_id)
+        }
+    }
+
+    #[test]
+    fn api_key_runtime_resolves_service_actor_with_argon2_hash_and_redacted_audit() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("auth.sqlite");
+        {
+            let auth = SessionAuthRuntime::open(&path).unwrap();
+            auth.upsert_actor(service_actor("svc-1", "org-1")).unwrap();
+            let key = auth
+                .create_api_key(ApiKeyCreate {
+                    id: "key-1".to_string(),
+                    service_actor_id: "svc-1".to_string(),
+                    tenant_id: "org-1".to_string(),
+                    raw_key: "raw-api-key-secret".to_string(),
+                    scope_fingerprint: "sha256:service-scopes".to_string(),
+                    expires_ms: now_ms().saturating_add(60_000),
+                })
+                .unwrap();
+            assert!(key.key_hash.starts_with("$argon2"));
+            assert!(!key.key_hash.contains("raw-api-key-secret"));
+            assert!(verify_api_key_secret("raw-api-key-secret", &key.key_hash).unwrap());
+        }
+
+        let auth = SessionAuthRuntime::open(&path).unwrap();
+        let resolved = auth
+            .resolve_api_key(
+                "raw-api-key-secret",
+                "org-1",
+                "trace-key-1",
+                "replay-key-1",
+                now_ms(),
+            )
+            .unwrap();
+        assert_eq!(resolved.actor.id, "svc-1");
+        assert_eq!(resolved.actor.actor_kind, "service");
+        assert_eq!(resolved.trace.api_key_id, "key-1");
+        assert_eq!(resolved.trace.session_id, "");
+        assert_eq!(
+            resolved.api_key.last_used_ms,
+            Some(resolved.api_key.updated_ms)
+        );
+        let audit = auth.audit_events().unwrap();
+        assert_eq!(audit.len(), 1);
+        assert_eq!(audit[0].event_kind, "api_key.resolve");
+        assert_eq!(audit[0].api_key_id.as_deref(), Some("key-1"));
+        assert_eq!(audit[0].status, "allowed");
+    }
+
+    #[test]
+    fn api_key_runtime_rejects_wrong_tenant_revoked_expired_and_user_actors() {
+        let auth = SessionAuthRuntime::open_in_memory().unwrap();
+        auth.upsert_actor(service_actor("svc-1", "org-1")).unwrap();
+        auth.upsert_actor(actor("user-1", "org-1")).unwrap();
+        let expires_ms = now_ms().saturating_add(60_000);
+        auth.create_api_key(ApiKeyCreate {
+            id: "key-1".to_string(),
+            service_actor_id: "svc-1".to_string(),
+            tenant_id: "org-1".to_string(),
+            raw_key: "secret-1".to_string(),
+            scope_fingerprint: "sha256:service-scopes".to_string(),
+            expires_ms,
+        })
+        .unwrap();
+        let user_key = auth.create_api_key(ApiKeyCreate {
+            id: "key-user".to_string(),
+            service_actor_id: "user-1".to_string(),
+            tenant_id: "org-1".to_string(),
+            raw_key: "user-secret".to_string(),
+            scope_fingerprint: "sha256:user-scopes".to_string(),
+            expires_ms,
+        });
+        assert!(user_key.unwrap_err().to_string().contains("service actors"));
+
+        let wrong_tenant = auth
+            .resolve_api_key(
+                "secret-1",
+                "org-2",
+                "trace-tenant",
+                "replay-tenant",
+                now_ms(),
+            )
+            .unwrap_err();
+        assert!(wrong_tenant.to_string().contains("key not found"));
+
+        let expired = auth
+            .resolve_api_key(
+                "secret-1",
+                "org-1",
+                "trace-expired",
+                "replay-expired",
+                expires_ms,
+            )
+            .unwrap_err();
+        assert!(expired.to_string().contains("key expired"));
+
+        auth.revoke_api_key("key-1", now_ms()).unwrap();
+        let revoked = auth
+            .resolve_api_key(
+                "secret-1",
+                "org-1",
+                "trace-revoked",
+                "replay-revoked",
+                now_ms(),
+            )
+            .unwrap_err();
+        assert!(revoked.to_string().contains("key not found"));
+        let audit = auth.audit_events().unwrap();
+        assert!(audit
+            .iter()
+            .all(|event| { !event.reason.contains("secret-1") && !event.id.contains("secret-1") }));
     }
 }
