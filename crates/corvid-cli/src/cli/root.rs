@@ -24,6 +24,7 @@ pub use super::approver::{ApproverCardFormat, ApproverCommand};
 pub use super::auth::{AuthCommand, AuthKeysCommand};
 pub use super::bench::BenchCommand;
 pub use super::bundle::BundleCommand;
+pub use super::capsule::CapsuleCommand;
 pub use super::claim::ClaimCommand;
 pub use super::connectors::{ConnectorsCommand, ConnectorsOauthCommand};
 pub use super::contract::ContractCommand;
@@ -696,18 +697,5 @@ pub enum Command {
     Approvals {
         #[command(subcommand)]
         command: ApprovalsCommand,
-    },
-}
-
-#[derive(Subcommand)]
-pub enum CapsuleCommand {
-    Create {
-        trace: PathBuf,
-        cdylib: PathBuf,
-        #[arg(long, value_name = "PATH")]
-        out: Option<PathBuf>,
-    },
-    Replay {
-        capsule: PathBuf,
     },
 }
