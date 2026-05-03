@@ -26,6 +26,7 @@ pub mod observe;
 pub mod package;
 pub mod receipt;
 pub mod root;
+pub mod trace;
 pub mod upgrade;
 
 #[allow(unused_imports)]
@@ -56,5 +57,7 @@ pub use package::*;
 pub use receipt::*;
 #[allow(unused_imports)]
 pub use root::*;
+#[allow(unused_imports)]
+pub use trace::*;
 #[allow(unused_imports)]
 pub use upgrade::*;
