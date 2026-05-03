@@ -1,30 +1,32 @@
 #![allow(unsafe_code)]
 
+mod invoke_matrix;
+pub(crate) use invoke_matrix::build_scalar_invoker;
+
+use crate::abi::CorvidString;
 use crate::approvals::{ApprovalDecision, ApprovalRequest};
 use crate::approver_bridge::{ApprovalDecisionInfo, ApprovalSiteInput};
 use crate::catalog::{
     call_agent, descriptor_hash, descriptor_json_ptr, list_agent_handles_owned, pre_flight,
     CorvidAgentHandle, CorvidApprovalDecision, CorvidApprovalRequired, CorvidApproverFn,
     CorvidCallStatus, CorvidFindAgentsResult, CorvidPreFlight, CorvidPreFlightStatus,
-    OwnedApprovalRequired, OwnedPreFlight, ScalarAbiType, ScalarInvocation, ScalarInvoker,
-    ScalarReturnType,
+    OwnedApprovalRequired, OwnedPreFlight,
 };
-use crate::grounded_handles;
-use crate::observation_handles;
-use crate::abi::CorvidString;
 use crate::effect_filter::CorvidFindAgentsStatus;
 use crate::errors::RuntimeError;
 use crate::ffi_bridge::{bridge, read_corvid_string};
-use corvid_abi::{read_embedded_section_from_library, EmbeddedDescriptorSection};
+use crate::grounded_handles;
+use crate::observation_handles;
 #[cfg(unix)]
 use corvid_abi::{parse_embedded_section_bytes, CORVID_ABI_DESCRIPTOR_SYMBOL};
+use corvid_abi::{read_embedded_section_from_library, EmbeddedDescriptorSection};
 use corvid_trace_schema::TraceEvent;
 use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::ffi::{c_char, c_void, CStr, CString};
 use std::path::PathBuf;
 use std::ptr;
-use std::sync::{Arc, Mutex};
+use std::sync::Mutex;
 
 thread_local! {
     static TRANSIENT_STRINGS: RefCell<Vec<CString>> = RefCell::new(Vec::new());
@@ -112,9 +114,7 @@ pub(crate) fn decide_registered_approval(req: &ApprovalRequest) -> ApprovalDecis
     let preapproved = PREAPPROVED_REQUESTS.with(|queue| {
         let mut queue = queue.borrow_mut();
         match queue.front() {
-            Some((label, args, _)) if *label == req.label && *args == req.args => {
-                queue.pop_front()
-            }
+            Some((label, args, _)) if *label == req.label && *args == req.args => queue.pop_front(),
             _ => None,
         }
     });
@@ -203,7 +203,9 @@ pub(crate) fn evaluate_approval_predicate(
             return crate::approver_bridge::CorvidPredicateResult {
                 status: crate::approver_bridge::CorvidPredicateStatus::BadArgs,
                 requires_approval: 0,
-                bad_args_message: stash_transient(&format!("args_json must be a JSON array: {err}")),
+                bad_args_message: stash_transient(&format!(
+                    "args_json must be a JSON array: {err}"
+                )),
             }
         }
     };
@@ -241,7 +243,9 @@ pub(crate) fn load_embedded_descriptor_from_current_library(
         let total_len = usize::try_from(json_len)
             .ok()
             .and_then(|len| len.checked_add(16 + 32))
-            .ok_or_else(|| RuntimeError::Other(format!("embedded descriptor length overflow: {json_len}")))?;
+            .ok_or_else(|| {
+                RuntimeError::Other(format!("embedded descriptor length overflow: {json_len}"))
+            })?;
         let bytes = std::slice::from_raw_parts(ptr.cast::<u8>(), total_len);
         return parse_embedded_section_bytes(bytes)
             .map_err(|err| RuntimeError::Other(format!("parse embedded descriptor: {err}")));
@@ -250,8 +254,12 @@ pub(crate) fn load_embedded_descriptor_from_current_library(
     #[cfg(windows)]
     {
         let path = current_library_path()?;
-        return read_embedded_section_from_library(&path)
-            .map_err(|err| RuntimeError::Other(format!("read embedded descriptor from `{}`: {err}", path.display())));
+        return read_embedded_section_from_library(&path).map_err(|err| {
+            RuntimeError::Other(format!(
+                "read embedded descriptor from `{}`: {err}",
+                path.display()
+            ))
+        });
     }
 }
 
@@ -288,33 +296,12 @@ fn current_library_path() -> Result<PathBuf, RuntimeError> {
             let written = written as usize;
             if written < buf.len() - 1 {
                 buf.truncate(written);
-                let path = String::from_utf16(&buf)
-                    .map_err(|err| RuntimeError::Other(format!("module path UTF-16 decode: {err}")))?;
+                let path = String::from_utf16(&buf).map_err(|err| {
+                    RuntimeError::Other(format!("module path UTF-16 decode: {err}"))
+                })?;
                 return Ok(PathBuf::from(path));
             }
             buf.resize(buf.len() * 2, 0);
-        }
-    }
-}
-
-pub(crate) fn build_scalar_invoker(
-    symbol: &str,
-    params: &[ScalarAbiType],
-    ret: ScalarReturnType,
-) -> Result<ScalarInvoker, RuntimeError> {
-    unsafe {
-        let address = resolve_current_library_symbol(symbol)? as usize;
-        if address == 0 {
-            return Err(RuntimeError::Other(format!("symbol `{symbol}` resolved to null")));
-        }
-        match params {
-            [] => build_invoker0(symbol.to_string(), address, ret),
-            [a0] => build_invoker1(symbol.to_string(), address, *a0, ret),
-            [a0, a1] => build_invoker2(symbol.to_string(), address, *a0, *a1, ret),
-            _ => Err(RuntimeError::Other(format!(
-                "catalog host dispatch currently supports up to two scalar parameters; `{symbol}` has {}",
-                params.len()
-            ))),
         }
     }
 }
@@ -353,424 +340,12 @@ unsafe fn resolve_current_library_symbol(symbol: &str) -> Result<*const c_void, 
             .map_err(|err| RuntimeError::Other(format!("symbol name contained NUL: {err}")))?;
         let ptr = GetProcAddress(module, symbol_c.as_ptr().cast());
         let Some(ptr) = ptr else {
-            return Err(RuntimeError::Other(format!("resolve symbol `{symbol}`: not found")));
+            return Err(RuntimeError::Other(format!(
+                "resolve symbol `{symbol}`: not found"
+            )));
         };
         return Ok(ptr as *const c_void);
     }
-}
-
-unsafe fn build_invoker0(
-    symbol: String,
-    address: usize,
-    ret: ScalarReturnType,
-) -> Result<ScalarInvoker, RuntimeError> {
-    Ok(Arc::new(move |args| {
-        if !args.is_empty() {
-            return Err(RuntimeError::Marshal(format!(
-                "agent `{symbol}` expected 0 args, got {}",
-                args.len()
-            )));
-        }
-        invoke0(&symbol, address, ret)
-    }))
-}
-
-unsafe fn build_invoker1(
-    symbol: String,
-    address: usize,
-    a0: ScalarAbiType,
-    ret: ScalarReturnType,
-) -> Result<ScalarInvoker, RuntimeError> {
-    Ok(Arc::new(move |args| {
-        if args.len() != 1 {
-            return Err(RuntimeError::Marshal(format!(
-                "agent `{symbol}` expected 1 arg, got {}",
-                args.len()
-            )));
-        }
-        invoke1(&symbol, address, a0, ret, &args[0])
-    }))
-}
-
-unsafe fn build_invoker2(
-    symbol: String,
-    address: usize,
-    a0: ScalarAbiType,
-    a1: ScalarAbiType,
-    ret: ScalarReturnType,
-) -> Result<ScalarInvoker, RuntimeError> {
-    Ok(Arc::new(move |args| {
-        if args.len() != 2 {
-            return Err(RuntimeError::Marshal(format!(
-                "agent `{symbol}` expected 2 args, got {}",
-                args.len()
-            )));
-        }
-        invoke2(&symbol, address, a0, a1, ret, &args[0], &args[1])
-    }))
-}
-
-unsafe fn invoke0(
-    symbol: &str,
-    address: usize,
-    ret: ScalarReturnType,
-) -> Result<ScalarInvocation, RuntimeError> {
-    let mut observation_handle = observation_handles::NULL_OBSERVATION_HANDLE;
-    match ret {
-        ScalarReturnType::Int => {
-            let func: unsafe extern "C" fn(*mut u64) -> i64 = std::mem::transmute(address);
-            Ok(ScalarInvocation {
-                result: serde_json::Value::from(func(&mut observation_handle)),
-                observation_handle,
-            })
-        }
-        ScalarReturnType::Float => {
-            let func: unsafe extern "C" fn(*mut u64) -> f64 = std::mem::transmute(address);
-            Ok(ScalarInvocation {
-                result: float_json(symbol, func(&mut observation_handle))?,
-                observation_handle,
-            })
-        }
-        ScalarReturnType::Bool => {
-            let func: unsafe extern "C" fn(*mut u64) -> bool = std::mem::transmute(address);
-            Ok(ScalarInvocation {
-                result: serde_json::Value::Bool(func(&mut observation_handle)),
-                observation_handle,
-            })
-        }
-        ScalarReturnType::String => {
-            let func: unsafe extern "C" fn(*mut u64) -> *const c_char = std::mem::transmute(address);
-            Ok(ScalarInvocation {
-                result: string_json(symbol, func(&mut observation_handle))?,
-                observation_handle,
-            })
-        }
-        ScalarReturnType::Nothing => {
-            let func: unsafe extern "C" fn(*mut u64) = std::mem::transmute(address);
-            func(&mut observation_handle);
-            Ok(ScalarInvocation {
-                result: serde_json::Value::Null,
-                observation_handle,
-            })
-        }
-    }
-}
-
-unsafe fn invoke1(
-    symbol: &str,
-    address: usize,
-    a0: ScalarAbiType,
-    ret: ScalarReturnType,
-    arg0: &serde_json::Value,
-) -> Result<ScalarInvocation, RuntimeError> {
-    match a0 {
-        ScalarAbiType::Int => invoke1_int(symbol, address, ret, parse_i64_arg(arg0, symbol, 0)?),
-        ScalarAbiType::Float => invoke1_float(symbol, address, ret, parse_f64_arg(arg0, symbol, 0)?),
-        ScalarAbiType::Bool => invoke1_bool(symbol, address, ret, parse_bool_arg(arg0, symbol, 0)?),
-        ScalarAbiType::String => {
-            let arg0 = parse_string_arg(arg0, symbol, 0)?;
-            invoke1_string(symbol, address, ret, arg0.as_ptr())
-        }
-    }
-}
-
-unsafe fn invoke2(
-    symbol: &str,
-    address: usize,
-    a0: ScalarAbiType,
-    a1: ScalarAbiType,
-    ret: ScalarReturnType,
-    arg0: &serde_json::Value,
-    arg1: &serde_json::Value,
-) -> Result<ScalarInvocation, RuntimeError> {
-    match a0 {
-        ScalarAbiType::Int => {
-            let arg0 = parse_i64_arg(arg0, symbol, 0)?;
-            invoke2_after_int(symbol, address, a1, ret, arg0, arg1)
-        }
-        ScalarAbiType::Float => {
-            let arg0 = parse_f64_arg(arg0, symbol, 0)?;
-            invoke2_after_float(symbol, address, a1, ret, arg0, arg1)
-        }
-        ScalarAbiType::Bool => {
-            let arg0 = parse_bool_arg(arg0, symbol, 0)?;
-            invoke2_after_bool(symbol, address, a1, ret, arg0, arg1)
-        }
-        ScalarAbiType::String => {
-            let arg0 = parse_string_arg(arg0, symbol, 0)?;
-            invoke2_after_string(symbol, address, a1, ret, arg0.as_ptr(), arg1)
-        }
-    }
-}
-
-macro_rules! impl_invoke1 {
-    ($name:ident, $arg_ty:ty) => {
-        unsafe fn $name(
-            symbol: &str,
-            address: usize,
-            ret: ScalarReturnType,
-            arg0: $arg_ty,
-        ) -> Result<ScalarInvocation, RuntimeError> {
-            let mut observation_handle = observation_handles::NULL_OBSERVATION_HANDLE;
-            // Why: exported `pub extern "C"` wrappers append a hidden
-            // observation-handle out-pointer after the user-visible
-            // arguments. Generic host dispatch must pass that pointer
-            // too; skipping it "worked" on Linux by luck and crashed
-            // on Windows with a misaligned pointer in
-            // `corvid_finish_direct_observation`.
-            match ret {
-                ScalarReturnType::Int => {
-                    let func: unsafe extern "C" fn($arg_ty, *mut u64) -> i64 = std::mem::transmute(address);
-                    Ok(ScalarInvocation {
-                        result: serde_json::Value::from(func(arg0, &mut observation_handle)),
-                        observation_handle,
-                    })
-                }
-                ScalarReturnType::Float => {
-                    let func: unsafe extern "C" fn($arg_ty, *mut u64) -> f64 = std::mem::transmute(address);
-                    Ok(ScalarInvocation {
-                        result: float_json(symbol, func(arg0, &mut observation_handle))?,
-                        observation_handle,
-                    })
-                }
-                ScalarReturnType::Bool => {
-                    let func: unsafe extern "C" fn($arg_ty, *mut u64) -> bool = std::mem::transmute(address);
-                    Ok(ScalarInvocation {
-                        result: serde_json::Value::Bool(func(arg0, &mut observation_handle)),
-                        observation_handle,
-                    })
-                }
-                ScalarReturnType::String => {
-                    let func: unsafe extern "C" fn($arg_ty, *mut u64) -> *const c_char = std::mem::transmute(address);
-                    Ok(ScalarInvocation {
-                        result: string_json(symbol, func(arg0, &mut observation_handle))?,
-                        observation_handle,
-                    })
-                }
-                ScalarReturnType::Nothing => {
-                    let func: unsafe extern "C" fn($arg_ty, *mut u64) = std::mem::transmute(address);
-                    func(arg0, &mut observation_handle);
-                    Ok(ScalarInvocation {
-                        result: serde_json::Value::Null,
-                        observation_handle,
-                    })
-                }
-            }
-        }
-    };
-}
-
-impl_invoke1!(invoke1_int, i64);
-impl_invoke1!(invoke1_float, f64);
-impl_invoke1!(invoke1_bool, bool);
-impl_invoke1!(invoke1_string, *const c_char);
-
-macro_rules! impl_invoke2_matrix {
-    ($name:ident, $arg0_ty:ty, $arg1_ty:ty) => {
-        unsafe fn $name(
-            symbol: &str,
-            address: usize,
-            ret: ScalarReturnType,
-            arg0: $arg0_ty,
-            arg1: $arg1_ty,
-        ) -> Result<ScalarInvocation, RuntimeError> {
-            let mut observation_handle = observation_handles::NULL_OBSERVATION_HANDLE;
-            match ret {
-                ScalarReturnType::Int => {
-                    let func: unsafe extern "C" fn($arg0_ty, $arg1_ty, *mut u64) -> i64 = std::mem::transmute(address);
-                    Ok(ScalarInvocation {
-                        result: serde_json::Value::from(func(arg0, arg1, &mut observation_handle)),
-                        observation_handle,
-                    })
-                }
-                ScalarReturnType::Float => {
-                    let func: unsafe extern "C" fn($arg0_ty, $arg1_ty, *mut u64) -> f64 = std::mem::transmute(address);
-                    Ok(ScalarInvocation {
-                        result: float_json(symbol, func(arg0, arg1, &mut observation_handle))?,
-                        observation_handle,
-                    })
-                }
-                ScalarReturnType::Bool => {
-                    let func: unsafe extern "C" fn($arg0_ty, $arg1_ty, *mut u64) -> bool = std::mem::transmute(address);
-                    Ok(ScalarInvocation {
-                        result: serde_json::Value::Bool(func(arg0, arg1, &mut observation_handle)),
-                        observation_handle,
-                    })
-                }
-                ScalarReturnType::String => {
-                    let func: unsafe extern "C" fn($arg0_ty, $arg1_ty, *mut u64) -> *const c_char = std::mem::transmute(address);
-                    Ok(ScalarInvocation {
-                        result: string_json(symbol, func(arg0, arg1, &mut observation_handle))?,
-                        observation_handle,
-                    })
-                }
-                ScalarReturnType::Nothing => {
-                    let func: unsafe extern "C" fn($arg0_ty, $arg1_ty, *mut u64) = std::mem::transmute(address);
-                    func(arg0, arg1, &mut observation_handle);
-                    Ok(ScalarInvocation {
-                        result: serde_json::Value::Null,
-                        observation_handle,
-                    })
-                }
-            }
-        }
-    };
-}
-
-impl_invoke2_matrix!(invoke2_i64_i64, i64, i64);
-impl_invoke2_matrix!(invoke2_i64_f64, i64, f64);
-impl_invoke2_matrix!(invoke2_i64_bool, i64, bool);
-impl_invoke2_matrix!(invoke2_i64_string, i64, *const c_char);
-impl_invoke2_matrix!(invoke2_f64_i64, f64, i64);
-impl_invoke2_matrix!(invoke2_f64_f64, f64, f64);
-impl_invoke2_matrix!(invoke2_f64_bool, f64, bool);
-impl_invoke2_matrix!(invoke2_f64_string, f64, *const c_char);
-impl_invoke2_matrix!(invoke2_bool_i64, bool, i64);
-impl_invoke2_matrix!(invoke2_bool_f64, bool, f64);
-impl_invoke2_matrix!(invoke2_bool_bool, bool, bool);
-impl_invoke2_matrix!(invoke2_bool_string, bool, *const c_char);
-impl_invoke2_matrix!(invoke2_string_i64, *const c_char, i64);
-impl_invoke2_matrix!(invoke2_string_f64, *const c_char, f64);
-impl_invoke2_matrix!(invoke2_string_bool, *const c_char, bool);
-impl_invoke2_matrix!(invoke2_string_string, *const c_char, *const c_char);
-
-unsafe fn invoke2_after_int(
-    symbol: &str,
-    address: usize,
-    a1: ScalarAbiType,
-    ret: ScalarReturnType,
-    arg0: i64,
-    arg1: &serde_json::Value,
-) -> Result<ScalarInvocation, RuntimeError> {
-    match a1 {
-        ScalarAbiType::Int => invoke2_i64_i64(symbol, address, ret, arg0, parse_i64_arg(arg1, symbol, 1)?),
-        ScalarAbiType::Float => invoke2_i64_f64(symbol, address, ret, arg0, parse_f64_arg(arg1, symbol, 1)?),
-        ScalarAbiType::Bool => invoke2_i64_bool(symbol, address, ret, arg0, parse_bool_arg(arg1, symbol, 1)?),
-        ScalarAbiType::String => {
-            let arg1 = parse_string_arg(arg1, symbol, 1)?;
-            invoke2_i64_string(symbol, address, ret, arg0, arg1.as_ptr())
-        }
-    }
-}
-
-unsafe fn invoke2_after_float(
-    symbol: &str,
-    address: usize,
-    a1: ScalarAbiType,
-    ret: ScalarReturnType,
-    arg0: f64,
-    arg1: &serde_json::Value,
-) -> Result<ScalarInvocation, RuntimeError> {
-    match a1 {
-        ScalarAbiType::Int => invoke2_f64_i64(symbol, address, ret, arg0, parse_i64_arg(arg1, symbol, 1)?),
-        ScalarAbiType::Float => invoke2_f64_f64(symbol, address, ret, arg0, parse_f64_arg(arg1, symbol, 1)?),
-        ScalarAbiType::Bool => invoke2_f64_bool(symbol, address, ret, arg0, parse_bool_arg(arg1, symbol, 1)?),
-        ScalarAbiType::String => {
-            let arg1 = parse_string_arg(arg1, symbol, 1)?;
-            invoke2_f64_string(symbol, address, ret, arg0, arg1.as_ptr())
-        }
-    }
-}
-
-unsafe fn invoke2_after_bool(
-    symbol: &str,
-    address: usize,
-    a1: ScalarAbiType,
-    ret: ScalarReturnType,
-    arg0: bool,
-    arg1: &serde_json::Value,
-) -> Result<ScalarInvocation, RuntimeError> {
-    match a1 {
-        ScalarAbiType::Int => invoke2_bool_i64(symbol, address, ret, arg0, parse_i64_arg(arg1, symbol, 1)?),
-        ScalarAbiType::Float => invoke2_bool_f64(symbol, address, ret, arg0, parse_f64_arg(arg1, symbol, 1)?),
-        ScalarAbiType::Bool => invoke2_bool_bool(symbol, address, ret, arg0, parse_bool_arg(arg1, symbol, 1)?),
-        ScalarAbiType::String => {
-            let arg1 = parse_string_arg(arg1, symbol, 1)?;
-            invoke2_bool_string(symbol, address, ret, arg0, arg1.as_ptr())
-        }
-    }
-}
-
-unsafe fn invoke2_after_string(
-    symbol: &str,
-    address: usize,
-    a1: ScalarAbiType,
-    ret: ScalarReturnType,
-    arg0: *const c_char,
-    arg1: &serde_json::Value,
-) -> Result<ScalarInvocation, RuntimeError> {
-    match a1 {
-        ScalarAbiType::Int => invoke2_string_i64(symbol, address, ret, arg0, parse_i64_arg(arg1, symbol, 1)?),
-        ScalarAbiType::Float => invoke2_string_f64(symbol, address, ret, arg0, parse_f64_arg(arg1, symbol, 1)?),
-        ScalarAbiType::Bool => invoke2_string_bool(symbol, address, ret, arg0, parse_bool_arg(arg1, symbol, 1)?),
-        ScalarAbiType::String => {
-            let arg1 = parse_string_arg(arg1, symbol, 1)?;
-            invoke2_string_string(symbol, address, ret, arg0, arg1.as_ptr())
-        }
-    }
-}
-
-fn float_json(symbol: &str, value: f64) -> Result<serde_json::Value, RuntimeError> {
-    let Some(number) = serde_json::Number::from_f64(value) else {
-        return Err(RuntimeError::Marshal(format!(
-            "agent `{symbol}` returned non-finite Float {value}"
-        )));
-    };
-    Ok(serde_json::Value::Number(number))
-}
-
-unsafe fn string_json(symbol: &str, value: *const c_char) -> Result<serde_json::Value, RuntimeError> {
-    if value.is_null() {
-        return Err(RuntimeError::Marshal(format!(
-            "agent `{symbol}` returned null String pointer"
-        )));
-    }
-    let text = CStr::from_ptr(value)
-        .to_str()
-        .map_err(|err| RuntimeError::Marshal(format!(
-            "agent `{symbol}` returned non-UTF8 String: {err}"
-        )))?
-        .to_owned();
-    crate::ffi_bridge::corvid_free_string(value);
-    Ok(serde_json::Value::String(text))
-}
-
-fn parse_i64_arg(value: &serde_json::Value, symbol: &str, index: usize) -> Result<i64, RuntimeError> {
-    value.as_i64().ok_or_else(|| {
-        RuntimeError::Marshal(format!(
-            "agent `{symbol}` argument {} expected Int",
-            index + 1
-        ))
-    })
-}
-
-fn parse_f64_arg(value: &serde_json::Value, symbol: &str, index: usize) -> Result<f64, RuntimeError> {
-    value.as_f64().ok_or_else(|| {
-        RuntimeError::Marshal(format!(
-            "agent `{symbol}` argument {} expected Float",
-            index + 1
-        ))
-    })
-}
-
-fn parse_bool_arg(value: &serde_json::Value, symbol: &str, index: usize) -> Result<bool, RuntimeError> {
-    value.as_bool().ok_or_else(|| {
-        RuntimeError::Marshal(format!(
-            "agent `{symbol}` argument {} expected Bool",
-            index + 1
-        ))
-    })
-}
-
-fn parse_string_arg(value: &serde_json::Value, symbol: &str, index: usize) -> Result<CString, RuntimeError> {
-    let text = value.as_str().ok_or_else(|| {
-        RuntimeError::Marshal(format!(
-            "agent `{symbol}` argument {} expected String",
-            index + 1
-        ))
-    })?;
-    CString::new(text)
-        .map_err(|err| RuntimeError::Marshal(format!("agent `{symbol}` argument {} contained NUL: {err}", index + 1)))
 }
 
 fn reset_transients() {
@@ -908,9 +483,7 @@ pub extern "C" fn corvid_observation_exceeded_bound(handle: u64) -> bool {
 #[no_mangle]
 pub extern "C" fn corvid_observation_release(handle: u64) {
     let released = observation_handles::release_handle(handle);
-    if cfg!(debug_assertions)
-        && handle != observation_handles::NULL_OBSERVATION_HANDLE
-        && !released
+    if cfg!(debug_assertions) && handle != observation_handles::NULL_OBSERVATION_HANDLE && !released
     {
         eprintln!("warning: observation handle {handle} was already released or never existed");
     }
@@ -967,8 +540,11 @@ pub unsafe extern "C" fn corvid_grounded_attest_int(
     confidence: f64,
 ) -> i64 {
     let source = read_corvid_string(source_name);
-    let chain = crate::provenance::ProvenanceChain::with_retrieval(&source, crate::tracing::now_ms());
-    grounded_handles::set_last_scalar_attestation(grounded_handles::make_attestation(chain, confidence));
+    let chain =
+        crate::provenance::ProvenanceChain::with_retrieval(&source, crate::tracing::now_ms());
+    grounded_handles::set_last_scalar_attestation(grounded_handles::make_attestation(
+        chain, confidence,
+    ));
     value
 }
 
@@ -979,8 +555,11 @@ pub unsafe extern "C" fn corvid_grounded_attest_float(
     confidence: f64,
 ) -> f64 {
     let source = read_corvid_string(source_name);
-    let chain = crate::provenance::ProvenanceChain::with_retrieval(&source, crate::tracing::now_ms());
-    grounded_handles::set_last_scalar_attestation(grounded_handles::make_attestation(chain, confidence));
+    let chain =
+        crate::provenance::ProvenanceChain::with_retrieval(&source, crate::tracing::now_ms());
+    grounded_handles::set_last_scalar_attestation(grounded_handles::make_attestation(
+        chain, confidence,
+    ));
     value
 }
 
@@ -991,8 +570,11 @@ pub unsafe extern "C" fn corvid_grounded_attest_bool(
     confidence: f64,
 ) -> bool {
     let source = read_corvid_string(source_name);
-    let chain = crate::provenance::ProvenanceChain::with_retrieval(&source, crate::tracing::now_ms());
-    grounded_handles::set_last_scalar_attestation(grounded_handles::make_attestation(chain, confidence));
+    let chain =
+        crate::provenance::ProvenanceChain::with_retrieval(&source, crate::tracing::now_ms());
+    grounded_handles::set_last_scalar_attestation(grounded_handles::make_attestation(
+        chain, confidence,
+    ));
     value
 }
 
@@ -1003,7 +585,8 @@ pub unsafe extern "C" fn corvid_grounded_attest_string(
     confidence: f64,
 ) -> CorvidString {
     let source = read_corvid_string(source_name);
-    let chain = crate::provenance::ProvenanceChain::with_retrieval(&source, crate::tracing::now_ms());
+    let chain =
+        crate::provenance::ProvenanceChain::with_retrieval(&source, crate::tracing::now_ms());
     grounded_handles::attach_string_attestation(
         value.descriptor_key(),
         grounded_handles::make_attestation(chain, confidence),
@@ -1067,10 +650,7 @@ pub extern "C" fn corvid_abi_verify(expected: *const u8) -> i32 {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn corvid_list_agents(
-    out: *mut CorvidAgentHandle,
-    capacity: usize,
-) -> usize {
+pub unsafe extern "C" fn corvid_list_agents(out: *mut CorvidAgentHandle, capacity: usize) -> usize {
     let Ok(handles) = list_agent_handles_owned() else {
         return 0;
     };
@@ -1253,7 +833,8 @@ pub unsafe extern "C" fn corvid_mark_preapproved_request(
     }
     let bytes = std::slice::from_raw_parts(args_json as *const u8, args_len);
     let args_json = String::from_utf8_lossy(bytes).into_owned();
-    let Ok(serde_json::Value::Array(args)) = serde_json::from_str::<serde_json::Value>(&args_json) else {
+    let Ok(serde_json::Value::Array(args)) = serde_json::from_str::<serde_json::Value>(&args_json)
+    else {
         return false;
     };
     mark_preapproved_request(
@@ -1280,7 +861,10 @@ pub unsafe extern "C" fn corvid_register_approver_from_source(
     let Ok(source_path) = read_c_string(source_path) else {
         return crate::approver_bridge::CorvidApproverLoadStatus::IoError;
     };
-    match register_corvid_approver_source(std::path::Path::new(&source_path), max_budget_usd_per_call) {
+    match register_corvid_approver_source(
+        std::path::Path::new(&source_path),
+        max_budget_usd_per_call,
+    ) {
         Ok(()) => crate::approver_bridge::CorvidApproverLoadStatus::Ok,
         Err(err) => {
             if !out_error_message.is_null() {
