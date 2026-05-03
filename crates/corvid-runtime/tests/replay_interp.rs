@@ -120,6 +120,22 @@ fn normalized_events(path: &Path) -> Vec<serde_json::Value> {
             if let serde_json::Value::Object(ref mut object) = json {
                 object.remove("run_id");
                 object.remove("ts_ms");
+                if object.get("kind").and_then(serde_json::Value::as_str)
+                    == Some("approval_token_issued")
+                {
+                    object.insert(
+                        "token_id".to_string(),
+                        serde_json::Value::String("<token>".into()),
+                    );
+                    object.insert(
+                        "issued_at_ms".to_string(),
+                        serde_json::Value::String("<issued>".into()),
+                    );
+                    object.insert(
+                        "expires_at_ms".to_string(),
+                        serde_json::Value::String("<expires>".into()),
+                    );
+                }
             }
             json
         })
