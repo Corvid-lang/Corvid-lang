@@ -115,36 +115,229 @@ surface + cross-domain tests).
    the actor surface + DDL + module declarations + the
    `validate_non_empty` helper. Target: ~150 lines.
 
-### 20k-* — additional sub-slices defined by the audit step
+### Audit results (2026-05-03)
 
-Filled in by 20k-audit's output. Strong-signal initial guesses pending
-verification:
+Workspace sweep against the strict rule + carve-outs identified
+**15 violators totaling ~67 estimated extraction commits**. Several
+files that initially looked like candidates by line count pass under
+a carve-out and are left in place.
 
-- `queue/mod.rs` (1,527 — ~1,140 lines are tests covering 6 sibling
-  domains) — likely splits tests into per-cluster `#[cfg(test)] mod
-  tests` in each sibling.
-- `runtime/mod.rs` (1,414) — likely a similar tests-split or
-  builder/runtime separation.
-- `lowering/runtime/mod.rs` (1,431) and `lowering/expr/mod.rs` (1,192)
-   — same shape; verify.
-- `replay/mod.rs` (924) — replay source + tests; verify.
-- `approval_queue.rs` (866) — workflow + tests; verify.
-- `interp.rs` (1,056) — dispatch + tests; verify.
-- Files outside the original 20j audit and ≥1,000 lines that may now
-  be in scope: `corvid-repl/src/lib.rs` (2,345),
-  `corvid-differential-verify/src/rewrite.rs` (1,929),
-  `corvid-driver/src/modules.rs` (1,455), `corvid-ir/src/lower.rs`
-  (1,407), `corvid-runtime/src/catalog_c_api.rs` (1,385),
-  `corvid-cli/src/cli/root.rs` (1,369),
-  `corvid-cli/src/dispatch.rs` (1,192),
-  `corvid-guarantees/src/registry.rs` (1,148),
-  `corvid-resolve/src/resolver.rs` (1,042),
-  `corvid-differential-verify/src/lib.rs` (1,020),
-  `corvid-types/src/checker/decl.rs` (1,010),
-  `corvid-ir/src/lib.rs` (1,009).
+#### Violator inventory
 
-The audit step decides which of these actually need work and which
-are single-concern roots that pass.
+| # | Sub-slice | File | Lines | Failed criterion | Mixed concerns | Est. commits |
+|---|---|---|---:|---|---|---:|
+| 1 | 20k-A2c | `corvid-runtime/src/queue/mod.rs` | 1,527 | 1, 3 | `QueueRuntime` (in-memory) + `DurableQueueRuntime` + `insert_job_audit_event` + 1,168-line cross-domain test cluster | 7 |
+| 2 | 20k-A5b | `corvid-runtime/src/runtime/mod.rs` | 1,414 | 1, 3 | `Runtime` + `RuntimeBuilder` + 967-line tests across 7 sibling concerns | 7 |
+| 3 | 20k-A3b | `corvid-codegen-cl/src/lowering/runtime/mod.rs` | 1,431 | 2, 3 | ~1,030-line `declare_runtime_funcs` + 70 `pub(super) const *_SYMBOL` + `RuntimeFuncs`/`TracePayload`/`LoopCtx` types + the literal-id helper | 4 |
+| 4 | 20k-A6b | `corvid-codegen-cl/src/lowering/expr/mod.rs` | 1,192 | 1, 2 | 970-line `lower_expr` switch + four `pub(super)` borrow/operand helpers + `tool_wrapper_symbol` mangler | 2 |
+| 5 | 20k-A13b | `corvid-runtime/src/replay/mod.rs` | 924 | 1 | `ReplaySource` + `ReplayMutation` + `ReplayApprovalDecision` records — three "what kind of replay session" types | 2 |
+| 6 | 20k-A9b | `corvid-runtime/src/ffi_bridge/mod.rs` | 976 | 1, 3 | 6 replay-tool exports + 4 prompt-call exports + citation-verify + approve-sync + 500-line `call_llm_once` LLM-orchestration helper + parse helpers + system-prompt builder | 4 |
+| 7 | 20k-A10c | `corvid-runtime/src/auth/mod.rs` | 764 | 1, 3 | `SessionAuthRuntime` + 18 typed records + 375-line tests across 5 sibling auth domains | 6 |
+| 8 | 20k-A1b | `corvid-cli/src/cli/root.rs` | 1,369 | 2 | `Cli` + `Command` + 17 sibling `*Command` enums (Bench, Contract, Connectors, Auth, Approvals, Claim, Deploy, Upgrade, Receipt, Bundle, Trace, Abi, Approver, Capsule …) | 14 |
+| 9 | 20k-A1c | `corvid-cli/src/dispatch.rs` | 1,192 | 1, 3 | Top-level `run` + nested `cmd_connectors` + `cmd_auth` + `cmd_approvals` subdomain dispatchers | 3 |
+| 10 | 20k-D1 | `corvid-differential-verify/src/rewrite.rs` | 1,929 | 1, 2 | 7-rule rewrite engine + 720-line AST renderer (printer) | 1 |
+| 11 | 20k-D2 | `corvid-differential-verify/src/lib.rs` | 1,020 | 1 | Tier orchestration + report rendering + divergence diffing + corpus shrinking | 3 |
+| 12 | 20k-T1 | `corvid-types/src/checker/decl.rs` | 1,010 | 1, 3 | `check_agent` (440 lines) + `check_eval`/`check_test`/`check_fixture`/`check_mock` + replayability-violation collectors + extern-C ownership inference | 3 |
+| 13 | 20k-R1 | `corvid-runtime/src/catalog_c_api.rs` | 1,385 | 1 | 33 `extern "C"` exports across 4 sub-domains: scalar invoke matrix + grounded-source-handle FFI + approval-decision FFI + descriptor/library-path helpers | 4 |
+| 14 | 20k-IR1 | `corvid-ir/src/lib.rs` | 1,009 | 1 | 6-line crate-root facade + 991-line `#[cfg(test)] mod tests` block (32 tests covering both `lower` and `types` sibling modules — exceeds 300 AND covers siblings, so carve-out 1 fails) | 5 |
+| 15 | 20k-CLI1 | `corvid-cli/src/eval_cmd.rs` | 995 | 1, 2 | `run_eval` + `run_promote_lineage` + `run_compare` + 8 `Stored*`/`CompareReport`/`*Change` records | 2 |
+
+#### Per-violator decomposition plans
+
+**20k-A2c — `queue/mod.rs` (1,527 → ~340)**
+
+Move `DurableQueueRuntime` impl to `queue/durable.rs`; move
+`insert_job_audit_event` + `eligible_to_run` to `queue/audit.rs`; split
+the 1,168-line tests into `queue/tests/durable_basics.rs`,
+`queue/tests/leases.rs`, `queue/tests/checkpoints.rs`,
+`queue/tests/approvals.rs`, `queue/tests/loops.rs`,
+`queue/tests/scheduler.rs`. Root keeps only `QueueRuntime` +
+sub-mod declarations.
+
+**20k-A5b — `runtime/mod.rs` (1,414 → ~450)**
+
+Extract `RuntimeBuilder` (lines 215–446) to `runtime/builder.rs`. Split
+the 967-line tests by sibling domain into `runtime/tests/store.rs`,
+`runtime/tests/python.rs`, `runtime/tests/approvals.rs`,
+`runtime/tests/llm.rs`, `runtime/tests/io_http.rs`,
+`runtime/tests/secrets_cache.rs`.
+
+**20k-A3b — `lowering/runtime/mod.rs` (1,431 → facade)**
+
+Move the `*_SYMBOL` constants to `lowering/runtime/symbols.rs`. Move
+`declare_runtime_funcs` to `lowering/runtime/declare.rs`. Move
+`RuntimeFuncs` struct + impl to `lowering/runtime/funcs.rs`. Move
+`LoopCtx`/`TracePayload` to `lowering/runtime/payload.rs`. Root
+becomes a re-export facade.
+
+**20k-A6b — `lowering/expr/mod.rs` (1,192 → ~970)**
+
+Extract the borrow/operand helpers to `lowering/expr/operand.rs`.
+Extract `tool_wrapper_symbol` to `lowering/expr/wrappers.rs`. Root
+keeps `lower_expr` and its `match` body.
+
+**20k-A13b — `replay/mod.rs` (924 → ~600)**
+
+Extract `ReplayMutation` + `ReplayMutationState` + impl to
+`replay/mutation_session.rs`. Extract approval-decision records to
+`replay/approval_outcome.rs`. Root keeps `ReplaySource` + `ReplayMode`.
+
+**20k-A9b — `ffi_bridge/mod.rs` (976 → ~250)**
+
+Extract `call_llm_once` + `build_system_prompt` +
+`trace_mock_llm_attempt` + `prompt_max_retries` +
+`format_instruction_*` + `using_env_mock_llm` + `parse_int/bool/float`
++ `strip_response` to `ffi_bridge/llm_dispatch.rs`. Extract
+`corvid_prompt_call_*` exports to `ffi_bridge/prompt_exports.rs`.
+Extract `corvid_replay_tool_call_*` exports to
+`ffi_bridge/replay_exports.rs`. Extract `corvid_approve_sync` +
+`corvid_citation_verify_or_panic` to
+`ffi_bridge/approval_exports.rs`.
+
+**20k-A10c — `auth/mod.rs` (764 → ~150)** *(pattern reference; see
+section below for full per-commit plan)*
+
+Already named in 20j's closing audit. Records → `auth/records.rs`;
+tests split per domain into `auth/tests/sessions.rs`,
+`auth/tests/api_keys.rs`, `auth/tests/jwt.rs`,
+`auth/tests/oauth.rs`, `auth/tests/permissions.rs`. Root keeps the
+actor surface + DDL + module wiring.
+
+**20k-A1b — `cli/root.rs` (1,369 → ~150)**
+
+Per-group submodules: `cli/bench.rs`, `cli/contract.rs`,
+`cli/connectors.rs` (with nested `oauth`), `cli/auth.rs` (with
+`keys`), `cli/approvals.rs`, `cli/claim.rs`, `cli/deploy.rs`,
+`cli/upgrade.rs`, `cli/receipt.rs`, `cli/bundle.rs`, `cli/trace.rs`,
+`cli/abi.rs`, `cli/approver.rs`, `cli/capsule.rs`. Root keeps only
+`Cli` + `Command`.
+
+**20k-A1c — `dispatch.rs` (1,192 → ~600)**
+
+Extract each `cmd_*` to its own dispatch file:
+`dispatch/connectors.rs`, `dispatch/auth.rs`,
+`dispatch/approvals.rs`. Root keeps only `pub(crate) fn run` plus
+re-exports.
+
+**20k-D1 — `differential-verify/rewrite.rs` (1,929 → ~1,200)**
+
+Move all `render_*` AST printer functions (lines 1209–1929) to
+`corvid-differential-verify/src/render.rs`. The seven rule engines
+stay together.
+
+**20k-D2 — `differential-verify/lib.rs` (1,020 → ~400)**
+
+Extract rendering helpers + `*_rank` to
+`corvid-differential-verify/src/render.rs` (combining with D1's
+extracted printer). Extract divergence diffing (`diff_reports`,
+`maybe_push_divergence`, `*_overapproximation`, `*_too_loose`,
+profile helpers, `value_map`) to
+`corvid-differential-verify/src/diff.rs`. Move `shrink_program` to
+`corvid-differential-verify/src/shrink.rs`. Root keeps tier
+orchestration + `Frontend` + the four `*_report` runners.
+
+**20k-T1 — `types/checker/decl.rs` (1,010 → ~470)**
+
+Extract `check_eval`/`check_test`/`check_fixture`/`check_mock` plus
+their assertion helpers to `checker/decl_eval.rs`. Move extern-C
+ownership inference (`check_extern_c_signature`,
+`extern_c_param_type_supported`, `infer_extern_*_ownership`,
+`ownership_*`, `InferredOwnership`) to `checker/decl_extern_c.rs`.
+Move `ReplayabilityViolation` collectors to
+`checker/decl_replayability.rs`. Root keeps `check_agent` and its
+agent-specific helpers.
+
+**20k-R1 — `runtime/catalog_c_api.rs` (1,385 → ~400)**
+
+Extract scalar-invocation matrix (`impl_invoke1!`,
+`impl_invoke2_matrix!`, `parse_*_arg`, `float_json`) to
+`catalog_c_api/invoke_matrix.rs`. Extract approval bridging
+(`ApproverRegistration`, `owned_approval_to_c`,
+`owned_preflight_to_c`, `record_host_event`,
+`LAST_APPROVAL_DETAIL`, `PREAPPROVED_REQUESTS`) to
+`catalog_c_api/approval_bridge.rs`. Extract grounded-handle pointers
+(`grounded_source_pointers`, transient string TLS) to
+`catalog_c_api/grounded_bridge.rs`. Root keeps
+`current_library_path` + descriptor exports.
+
+**20k-IR1 — `corvid-ir/src/lib.rs` (1,009 → ~10)**
+
+Move the entire 991-line `#[cfg(test)] mod tests` block to
+`corvid-ir/src/tests/mod.rs`, splitting per concern:
+`tests/lower_basic.rs`, `tests/lower_effects.rs`,
+`tests/lower_replay.rs`, `tests/lower_imports.rs`, `tests/types.rs`.
+Root collapses to its 6-line shim.
+
+**20k-CLI1 — `cli/eval_cmd.rs` (995 → ~470)**
+
+Extract `run_compare` + all `Stored*`/`CompareReport`/`PromptChange`/
+`RegressionCluster`/`AssertionChange` types and helpers
+(`build_compare_report`, `cluster_regressions`, `index_summaries`,
+`prompt_render_*`, `set_diff`, `percent`) to `eval_cmd/compare.rs`.
+Extract `run_promote_lineage` + `read_lineage_events` +
+`latest_summary_path_for_source` + `sanitize_*` helpers to
+`eval_cmd/promote.rs`. Root keeps `run_eval` + `run_golden_trace_evals`
++ `run_source_evals` + spend/budget helpers.
+
+#### Files that look like violators but pass under a carve-out
+
+These were enumerated and judged rubric-clean; they don't need work:
+
+- `corvid-vm/src/interp.rs` (1,056) — `Interpreter<'ir>` + inherent
+  impl. Carve-out 2.
+- `corvid-resolve/src/resolver.rs` (1,042) — `Resolver` + inherent
+  impl. Carve-out 2.
+- `corvid-ir/src/lower.rs` (1,407) — `Lowerer<'a>` + inherent impl.
+  Carve-out 2.
+- `corvid-driver/src/modules.rs` (1,455) — single concept (cross-file
+  `.cor` import loader); 590-line tests cover only the loader's own
+  behavior. Carve-out 1.
+- `corvid-guarantees/src/registry.rs` (1,148) — one
+  `pub static GUARANTEE_REGISTRY` table plus four lookup helpers
+  reading the same table. One responsibility ("the registry data and
+  its readers").
+- `corvid-abi/src/emit.rs` (946) — single concept (emit `CorvidAbi`
+  from IR); all `emit_*` helpers feed `emit_abi`.
+- `corvid-runtime/src/approval_queue.rs` (866) —
+  `ApprovalQueueRuntime` + inherent impl + 397-line tests covering
+  only the queue's own behavior. Carve-out 1 (just over 300 but
+  single-concept).
+- `corvid-codegen-cl/src/dup_drop.rs` (1,002) — `insert_dup_drop`
+  algorithm + 275-line tests testing only the algorithm. Carve-out 1.
+- `corvid-runtime/src/models.rs` (868) — `RegisteredModel` +
+  `ModelCatalog` form one cohesive "model catalog" facade; 282-line
+  tests under 300. Carve-outs 2 + 1.
+- `corvid-ast/src/decl.rs` (880) — dense AST declaration types; all
+  share the single concern "AST decl tree."
+- `corvid-repl/src/lib.rs` (2,345) — `Repl` + inherent impl forms
+  the bulk; supporting `display_*`/`format_*`/`history_*` are thin
+  formatter helpers consumed only by `Repl`. Carve-out 2.
+- `corvid-driver/src/build/server_render.rs` (884) — one concept
+  (render embedded server source for a Corvid HTTP target);
+  duplicated `fn` definitions are inside `format!` templates, not
+  real top-level fns.
+- `corvid-bind/src/python_backend.rs` (893) — all `render_*` helpers
+  feed one Python-binding generator.
+
+### 20k-A10c — auth records and tests split (pattern reference)
+
+Already sketched above; the per-commit plan stays:
+
+1. `extract records from auth` → `auth/records.rs` holds the 16
+   typed records.
+2. `relocate session tests to sessions` — the four
+   `session_runtime_*` / `session_rotation_*` tests move into
+   `sessions.rs`'s `#[cfg(test)] mod tests`.
+3. `relocate api_key tests to api_keys` — the two
+   `api_key_runtime_*` tests move into `api_keys.rs`.
+4. `relocate oauth tests to oauth` — the three `oauth_*` tests move
+   into `oauth.rs`.
+5. `relocate jwt + permission tests` — `jwt_contract_validation_*`
+   and `permission_propagation_*` tests find their best-fitting
+   sibling.
+6. `collapse auth mod to actor surface` — what remains is the actor
+   surface + DDL + module wiring + `validate_non_empty`. Target:
+   ~150 lines.
 
 ## Validation gate
 
