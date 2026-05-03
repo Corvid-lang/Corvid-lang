@@ -9,6 +9,7 @@ use std::sync::{Arc, Mutex};
 pub mod model;
 pub use model::*;
 
+mod enqueue;
 mod parsers;
 mod schedule;
 mod sqlite_init;
@@ -146,290 +147,6 @@ pub struct DurableQueueRuntime {
 }
 
 impl DurableQueueRuntime {
-    pub fn open(path: impl AsRef<std::path::Path>) -> Result<Self, RuntimeError> {
-        let conn = Connection::open(path.as_ref()).map_err(|err| {
-            RuntimeError::Other(format!(
-                "failed to open durable queue `{}`: {err}",
-                path.as_ref().display()
-            ))
-        })?;
-        let runtime = Self {
-            next_id: AtomicU64::new(0),
-            conn: Mutex::new(conn),
-        };
-        runtime.init()?;
-        runtime.seed_next_id()?;
-        Ok(runtime)
-    }
-
-    pub fn open_in_memory() -> Result<Self, RuntimeError> {
-        let conn = Connection::open_in_memory()
-            .map_err(|err| RuntimeError::Other(format!("failed to open durable queue: {err}")))?;
-        let runtime = Self {
-            next_id: AtomicU64::new(0),
-            conn: Mutex::new(conn),
-        };
-        runtime.init()?;
-        Ok(runtime)
-    }
-
-    pub fn enqueue(
-        &self,
-        task: impl Into<String>,
-        payload: Value,
-        max_retries: u64,
-        budget_usd: f64,
-        effect_summary: Option<String>,
-        replay_key: Option<String>,
-    ) -> Result<QueueJob, RuntimeError> {
-        self.enqueue_typed(
-            task,
-            payload,
-            None,
-            max_retries,
-            budget_usd,
-            effect_summary,
-            replay_key,
-        )
-    }
-
-    pub fn enqueue_typed(
-        &self,
-        task: impl Into<String>,
-        payload: Value,
-        input_schema: Option<String>,
-        max_retries: u64,
-        budget_usd: f64,
-        effect_summary: Option<String>,
-        replay_key: Option<String>,
-    ) -> Result<QueueJob, RuntimeError> {
-        self.enqueue_typed_at(
-            task,
-            payload,
-            input_schema,
-            max_retries,
-            budget_usd,
-            effect_summary,
-            replay_key,
-            None,
-        )
-    }
-
-    pub fn enqueue_typed_at(
-        &self,
-        task: impl Into<String>,
-        payload: Value,
-        input_schema: Option<String>,
-        max_retries: u64,
-        budget_usd: f64,
-        effect_summary: Option<String>,
-        replay_key: Option<String>,
-        next_run_ms: Option<u64>,
-    ) -> Result<QueueJob, RuntimeError> {
-        let task = task.into();
-        if task.trim().is_empty() {
-            return Err(RuntimeError::Other(
-                "std.queue task name must not be empty".to_string(),
-            ));
-        }
-        let now = now_ms();
-        let id = format!(
-            "job_{}",
-            self.next_id
-                .fetch_add(1, Ordering::Relaxed)
-                .saturating_add(1)
-        );
-        let budget_usd = if budget_usd.is_finite() && budget_usd > 0.0 {
-            budget_usd
-        } else {
-            0.0
-        };
-        let job = QueueJob {
-            id: id.clone(),
-            task,
-            payload,
-            input_schema,
-            status: QueueJobStatus::Pending,
-            attempts: 0,
-            max_retries,
-            budget_usd,
-            effect_summary,
-            replay_key,
-            idempotency_key: None,
-            output_kind: None,
-            output_fingerprint: None,
-            failure_kind: None,
-            failure_fingerprint: None,
-            next_run_ms,
-            lease_owner: None,
-            lease_expires_ms: None,
-            approval_id: None,
-            approval_expires_ms: None,
-            approval_reason: None,
-            created_ms: now,
-            updated_ms: now,
-        };
-        let payload_json = serde_json::to_string(&job.payload).map_err(|err| {
-            RuntimeError::Other(format!("failed to serialize durable queue payload: {err}"))
-        })?;
-        self.conn
-            .lock()
-            .unwrap()
-            .execute(
-                "insert into queue_jobs
-                 (id, task, payload_json, input_schema, status, attempts, max_retries, budget_usd, effect_summary, replay_key, idempotency_key, output_kind, output_fingerprint, failure_kind, failure_fingerprint, next_run_ms, lease_owner, lease_expires_ms, approval_id, approval_expires_ms, approval_reason, created_ms, updated_ms)
-                 values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23)",
-                params![
-                    job.id,
-                    job.task,
-                    payload_json,
-                    job.input_schema,
-                    job.status.as_str(),
-                    job.attempts as i64,
-                    job.max_retries as i64,
-                    job.budget_usd,
-                    job.effect_summary,
-                    job.replay_key,
-                    job.idempotency_key,
-                    job.output_kind,
-                    job.output_fingerprint,
-                    job.failure_kind,
-                    job.failure_fingerprint,
-                    job.next_run_ms.map(|value| value as i64),
-                    job.lease_owner,
-                    job.lease_expires_ms.map(|value| value as i64),
-                    job.approval_id,
-                    job.approval_expires_ms.map(|value| value as i64),
-                    job.approval_reason,
-                    job.created_ms as i64,
-                    job.updated_ms as i64,
-                ],
-            )
-            .map_err(|err| RuntimeError::Other(format!("failed to insert durable queue job: {err}")))?;
-        Ok(job)
-    }
-
-    pub fn enqueue_typed_idempotent(
-        &self,
-        task: impl Into<String>,
-        payload: Value,
-        input_schema: Option<String>,
-        max_retries: u64,
-        budget_usd: f64,
-        effect_summary: Option<String>,
-        replay_key: Option<String>,
-        idempotency_key: Option<String>,
-        next_run_ms: Option<u64>,
-    ) -> Result<QueueJob, RuntimeError> {
-        let Some(idempotency_key) = idempotency_key.filter(|key| !key.trim().is_empty()) else {
-            return self.enqueue_typed_at(
-                task,
-                payload,
-                input_schema,
-                max_retries,
-                budget_usd,
-                effect_summary,
-                replay_key,
-                next_run_ms,
-            );
-        };
-        if let Some(existing) = self.get_by_idempotency_key(&idempotency_key)? {
-            return Ok(existing);
-        }
-        let task = task.into();
-        if task.trim().is_empty() {
-            return Err(RuntimeError::Other(
-                "std.queue task name must not be empty".to_string(),
-            ));
-        }
-        let now = now_ms();
-        let id = format!(
-            "job_{}",
-            self.next_id
-                .fetch_add(1, Ordering::Relaxed)
-                .saturating_add(1)
-        );
-        let budget_usd = if budget_usd.is_finite() && budget_usd > 0.0 {
-            budget_usd
-        } else {
-            0.0
-        };
-        let job = QueueJob {
-            id: id.clone(),
-            task,
-            payload,
-            input_schema,
-            status: QueueJobStatus::Pending,
-            attempts: 0,
-            max_retries,
-            budget_usd,
-            effect_summary,
-            replay_key,
-            idempotency_key: Some(idempotency_key.clone()),
-            output_kind: None,
-            output_fingerprint: None,
-            failure_kind: None,
-            failure_fingerprint: None,
-            next_run_ms,
-            lease_owner: None,
-            lease_expires_ms: None,
-            approval_id: None,
-            approval_expires_ms: None,
-            approval_reason: None,
-            created_ms: now,
-            updated_ms: now,
-        };
-        let payload_json = serde_json::to_string(&job.payload).map_err(|err| {
-            RuntimeError::Other(format!("failed to serialize durable queue payload: {err}"))
-        })?;
-        let inserted = self
-            .conn
-            .lock()
-            .unwrap()
-            .execute(
-                "insert into queue_jobs
-                 (id, task, payload_json, input_schema, status, attempts, max_retries, budget_usd, effect_summary, replay_key, idempotency_key, output_kind, output_fingerprint, failure_kind, failure_fingerprint, next_run_ms, lease_owner, lease_expires_ms, approval_id, approval_expires_ms, approval_reason, created_ms, updated_ms)
-                 values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23)",
-                params![
-                    job.id,
-                    job.task,
-                    payload_json,
-                    job.input_schema,
-                    job.status.as_str(),
-                    job.attempts as i64,
-                    job.max_retries as i64,
-                    job.budget_usd,
-                    job.effect_summary,
-                    job.replay_key,
-                    job.idempotency_key,
-                    job.output_kind,
-                    job.output_fingerprint,
-                    job.failure_kind,
-                    job.failure_fingerprint,
-                    job.next_run_ms.map(|value| value as i64),
-                    job.lease_owner,
-                    job.lease_expires_ms.map(|value| value as i64),
-                    job.approval_id,
-                    job.approval_expires_ms.map(|value| value as i64),
-                    job.approval_reason,
-                    job.created_ms as i64,
-                    job.updated_ms as i64,
-                ],
-            );
-        match inserted {
-            Ok(_) => Ok(job),
-            Err(err) => {
-                if let Some(existing) = self.get_by_idempotency_key(&idempotency_key)? {
-                    Ok(existing)
-                } else {
-                    Err(RuntimeError::Other(format!(
-                        "failed to insert idempotent durable queue job: {err}"
-                    )))
-                }
-            }
-        }
-    }
-
     pub fn get(&self, id: &str) -> Result<Option<QueueJob>, RuntimeError> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn
@@ -523,7 +240,9 @@ impl DurableQueueRuntime {
                     updated_ms = excluded.updated_ms",
                 params![if paused { "true" } else { "false" }, reason, now as i64],
             )
-            .map_err(|err| RuntimeError::Other(format!("failed to set queue pause state: {err}")))?;
+            .map_err(|err| {
+                RuntimeError::Other(format!("failed to set queue pause state: {err}"))
+            })?;
         Ok(())
     }
 
@@ -536,7 +255,9 @@ impl DurableQueueRuntime {
                 |row| row.get::<_, String>(0),
             )
             .optional()
-            .map_err(|err| RuntimeError::Other(format!("failed to read queue pause state: {err}")))?;
+            .map_err(|err| {
+                RuntimeError::Other(format!("failed to read queue pause state: {err}"))
+            })?;
         Ok(paused.as_deref() == Some("true"))
     }
 
@@ -583,7 +304,9 @@ impl DurableQueueRuntime {
                  where id = ?1",
                 params![id, now as i64],
             )
-            .map_err(|err| RuntimeError::Other(format!("failed to retry durable queue job: {err}")))?;
+            .map_err(|err| {
+                RuntimeError::Other(format!("failed to retry durable queue job: {err}"))
+            })?;
         self.get(id)?
             .ok_or_else(|| RuntimeError::Other(format!("std.queue job `{id}` not found")))
     }
@@ -629,7 +352,9 @@ impl DurableQueueRuntime {
         max_tool_calls: Option<u64>,
     ) -> Result<JobLoopLimits, RuntimeError> {
         if self.get(job_id)?.is_none() {
-            return Err(RuntimeError::Other(format!("std.queue job `{job_id}` not found")));
+            return Err(RuntimeError::Other(format!(
+                "std.queue job `{job_id}` not found"
+            )));
         }
         let max_spend_usd = max_spend_usd.filter(|value| value.is_finite() && *value >= 0.0);
         let now = now_ms();
@@ -656,8 +381,9 @@ impl DurableQueueRuntime {
                 ],
             )
             .map_err(|err| RuntimeError::Other(format!("failed to set loop limits: {err}")))?;
-        self.loop_limits(job_id)?
-            .ok_or_else(|| RuntimeError::Other(format!("std.queue loop limits for `{job_id}` not found")))
+        self.loop_limits(job_id)?.ok_or_else(|| {
+            RuntimeError::Other(format!("std.queue loop limits for `{job_id}` not found"))
+        })
     }
 
     pub fn loop_limits(&self, job_id: &str) -> Result<Option<JobLoopLimits>, RuntimeError> {
@@ -667,7 +393,9 @@ impl DurableQueueRuntime {
                 "select job_id, max_steps, max_wall_ms, max_spend_usd, max_tool_calls, updated_ms
                  from queue_job_loop_limits where job_id = ?1",
             )
-            .map_err(|err| RuntimeError::Other(format!("failed to prepare loop limit read: {err}")))?;
+            .map_err(|err| {
+                RuntimeError::Other(format!("failed to prepare loop limit read: {err}"))
+            })?;
         let mut rows = stmt
             .query(params![job_id])
             .map_err(|err| RuntimeError::Other(format!("failed to query loop limits: {err}")))?;
@@ -690,7 +418,9 @@ impl DurableQueueRuntime {
                 "select job_id, steps, wall_ms, spend_usd, tool_calls, updated_ms
                  from queue_job_loop_usage where job_id = ?1",
             )
-            .map_err(|err| RuntimeError::Other(format!("failed to prepare loop usage read: {err}")))?;
+            .map_err(|err| {
+                RuntimeError::Other(format!("failed to prepare loop usage read: {err}"))
+            })?;
         let mut rows = stmt
             .query(params![job_id])
             .map_err(|err| RuntimeError::Other(format!("failed to query loop usage: {err}")))?;
@@ -748,16 +478,20 @@ impl DurableQueueRuntime {
             0.0
         };
         let mut conn = self.conn.lock().unwrap();
-        let tx = conn
-            .transaction()
-            .map_err(|err| RuntimeError::Other(format!("failed to start loop usage transaction: {err}")))?;
+        let tx = conn.transaction().map_err(|err| {
+            RuntimeError::Other(format!("failed to start loop usage transaction: {err}"))
+        })?;
         let status_before = tx
             .query_row(
                 "select status from queue_jobs where id = ?1",
                 params![job_id],
                 |row| row.get::<_, String>(0),
             )
-            .map_err(|err| RuntimeError::Other(format!("std.queue job `{job_id}` not found or unreadable: {err}")))?;
+            .map_err(|err| {
+                RuntimeError::Other(format!(
+                    "std.queue job `{job_id}` not found or unreadable: {err}"
+                ))
+            })?;
         if matches!(
             parse_status(&status_before),
             QueueJobStatus::Succeeded
@@ -798,7 +532,9 @@ impl DurableQueueRuntime {
                 params![job_id],
                 read_loop_usage_row,
             )
-            .map_err(|err| RuntimeError::Other(format!("failed to read loop usage after update: {err}")))?;
+            .map_err(|err| {
+                RuntimeError::Other(format!("failed to read loop usage after update: {err}"))
+            })?;
         let limits = tx
             .query_row(
                 "select job_id, max_steps, max_wall_ms, max_spend_usd, max_tool_calls, updated_ms
@@ -807,7 +543,9 @@ impl DurableQueueRuntime {
                 read_loop_limits_row,
             )
             .optional()
-            .map_err(|err| RuntimeError::Other(format!("failed to read loop limits after update: {err}")))?;
+            .map_err(|err| {
+                RuntimeError::Other(format!("failed to read loop limits after update: {err}"))
+            })?;
         let violated_bounds = limits
             .as_ref()
             .map(|limits| loop_bound_violations(&usage, limits))
@@ -859,7 +597,9 @@ impl DurableQueueRuntime {
             ));
         }
         if self.get(job_id)?.is_none() {
-            return Err(RuntimeError::Other(format!("std.queue job `{job_id}` not found")));
+            return Err(RuntimeError::Other(format!(
+                "std.queue job `{job_id}` not found"
+            )));
         }
         let now = now_ms();
         self.conn
@@ -876,8 +616,9 @@ impl DurableQueueRuntime {
                 params![job_id, stall_after_ms as i64, action.as_str(), now as i64],
             )
             .map_err(|err| RuntimeError::Other(format!("failed to set stall policy: {err}")))?;
-        self.stall_policy(job_id)?
-            .ok_or_else(|| RuntimeError::Other(format!("std.queue stall policy for `{job_id}` not found")))
+        self.stall_policy(job_id)?.ok_or_else(|| {
+            RuntimeError::Other(format!("std.queue stall policy for `{job_id}` not found"))
+        })
     }
 
     pub fn stall_policy(&self, job_id: &str) -> Result<Option<JobStallPolicy>, RuntimeError> {
@@ -887,7 +628,9 @@ impl DurableQueueRuntime {
                 "select job_id, stall_after_ms, action, updated_ms
                  from queue_job_stall_policies where job_id = ?1",
             )
-            .map_err(|err| RuntimeError::Other(format!("failed to prepare stall policy read: {err}")))?;
+            .map_err(|err| {
+                RuntimeError::Other(format!("failed to prepare stall policy read: {err}"))
+            })?;
         let mut rows = stmt
             .query(params![job_id])
             .map_err(|err| RuntimeError::Other(format!("failed to query stall policy: {err}")))?;
@@ -926,7 +669,9 @@ impl DurableQueueRuntime {
             ));
         }
         if self.get(job_id)?.is_none() {
-            return Err(RuntimeError::Other(format!("std.queue job `{job_id}` not found")));
+            return Err(RuntimeError::Other(format!(
+                "std.queue job `{job_id}` not found"
+            )));
         }
         self.conn
             .lock()
@@ -942,9 +687,12 @@ impl DurableQueueRuntime {
                     updated_ms = excluded.updated_ms",
                 params![job_id, actor, message, now as i64, now as i64],
             )
-            .map_err(|err| RuntimeError::Other(format!("failed to record loop heartbeat: {err}")))?;
-        self.loop_heartbeat(job_id)?
-            .ok_or_else(|| RuntimeError::Other(format!("std.queue heartbeat for `{job_id}` not found")))
+            .map_err(|err| {
+                RuntimeError::Other(format!("failed to record loop heartbeat: {err}"))
+            })?;
+        self.loop_heartbeat(job_id)?.ok_or_else(|| {
+            RuntimeError::Other(format!("std.queue heartbeat for `{job_id}` not found"))
+        })
     }
 
     pub fn loop_heartbeat(&self, job_id: &str) -> Result<Option<JobLoopHeartbeat>, RuntimeError> {
@@ -954,7 +702,9 @@ impl DurableQueueRuntime {
                 "select job_id, actor, message, last_heartbeat_ms, updated_ms
                  from queue_job_loop_heartbeats where job_id = ?1",
             )
-            .map_err(|err| RuntimeError::Other(format!("failed to prepare heartbeat read: {err}")))?;
+            .map_err(|err| {
+                RuntimeError::Other(format!("failed to prepare heartbeat read: {err}"))
+            })?;
         let mut rows = stmt
             .query(params![job_id])
             .map_err(|err| RuntimeError::Other(format!("failed to query loop heartbeat: {err}")))?;
@@ -970,7 +720,11 @@ impl DurableQueueRuntime {
         }
     }
 
-    pub fn check_stall(&self, job_id: &str, actor: impl Into<String>) -> Result<JobStallCheck, RuntimeError> {
+    pub fn check_stall(
+        &self,
+        job_id: &str,
+        actor: impl Into<String>,
+    ) -> Result<JobStallCheck, RuntimeError> {
         self.check_stall_at(job_id, actor, now_ms())
     }
 
@@ -987,16 +741,20 @@ impl DurableQueueRuntime {
             ));
         }
         let mut conn = self.conn.lock().unwrap();
-        let tx = conn
-            .transaction()
-            .map_err(|err| RuntimeError::Other(format!("failed to start stall check transaction: {err}")))?;
+        let tx = conn.transaction().map_err(|err| {
+            RuntimeError::Other(format!("failed to start stall check transaction: {err}"))
+        })?;
         let (status_before, job_updated_ms) = tx
             .query_row(
                 "select status, updated_ms from queue_jobs where id = ?1",
                 params![job_id],
                 |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)? as u64)),
             )
-            .map_err(|err| RuntimeError::Other(format!("std.queue job `{job_id}` not found or unreadable: {err}")))?;
+            .map_err(|err| {
+                RuntimeError::Other(format!(
+                    "std.queue job `{job_id}` not found or unreadable: {err}"
+                ))
+            })?;
         let policy = tx
             .query_row(
                 "select job_id, stall_after_ms, action, updated_ms
@@ -1006,7 +764,9 @@ impl DurableQueueRuntime {
             )
             .optional()
             .map_err(|err| RuntimeError::Other(format!("failed to read stall policy: {err}")))?
-            .ok_or_else(|| RuntimeError::Other(format!("std.queue job `{job_id}` has no stall policy")))?;
+            .ok_or_else(|| {
+                RuntimeError::Other(format!("std.queue job `{job_id}` has no stall policy"))
+            })?;
         let heartbeat = tx
             .query_row(
                 "select job_id, actor, message, last_heartbeat_ms, updated_ms
@@ -1054,7 +814,9 @@ impl DurableQueueRuntime {
                  where id = ?1",
                 params![job_id, status_after.as_str(), reason, now as i64],
             )
-            .map_err(|err| RuntimeError::Other(format!("failed to apply stall transition: {err}")))?;
+            .map_err(|err| {
+                RuntimeError::Other(format!("failed to apply stall transition: {err}"))
+            })?;
             let event_kind = format!("loop_stalled_{}", policy.action.as_str());
             insert_job_audit_event(
                 &tx,
@@ -1956,7 +1718,10 @@ fn loop_bound_violations(usage: &JobLoopUsage, limits: &JobLoopLimits) -> Vec<St
             limits.max_steps.unwrap()
         ));
     }
-    if limits.max_wall_ms.is_some_and(|limit| usage.wall_ms > limit) {
+    if limits
+        .max_wall_ms
+        .is_some_and(|limit| usage.wall_ms > limit)
+    {
         violations.push(format!(
             "max_wall_ms:{}>{}",
             usage.wall_ms,
@@ -2024,8 +1789,6 @@ fn insert_job_audit_event(
     .map_err(|err| RuntimeError::Other(format!("failed to insert job audit event: {err}")))?;
     Ok(())
 }
-
-
 
 fn read_concurrency_limit(conn: &Connection, scope: &str) -> Result<Option<u64>, RuntimeError> {
     let mut stmt = conn
@@ -2664,7 +2427,10 @@ mod tests {
             .unwrap();
         assert!(first.violated_bounds.is_empty());
         assert_eq!(first.usage.steps, 1);
-        assert_eq!(queue.get(&job.id).unwrap().unwrap().status, QueueJobStatus::Pending);
+        assert_eq!(
+            queue.get(&job.id).unwrap().unwrap().status,
+            QueueJobStatus::Pending
+        );
 
         let exceeded = queue
             .record_loop_usage_at(&job.id, 3, 900, 0.16, 2, "worker-a", 10_100)
@@ -2711,10 +2477,24 @@ mod tests {
     fn durable_queue_escalates_or_terminates_stalled_loops_with_audit() {
         let queue = DurableQueueRuntime::open_in_memory().unwrap();
         let escalated = queue
-            .enqueue("agent_loop", serde_json::json!({"n": 1}), 1, 0.1, None, None)
+            .enqueue(
+                "agent_loop",
+                serde_json::json!({"n": 1}),
+                1,
+                0.1,
+                None,
+                None,
+            )
             .unwrap();
         let terminated = queue
-            .enqueue("agent_loop", serde_json::json!({"n": 2}), 1, 0.1, None, None)
+            .enqueue(
+                "agent_loop",
+                serde_json::json!({"n": 2}),
+                1,
+                0.1,
+                None,
+                None,
+            )
             .unwrap();
 
         queue
@@ -3107,7 +2887,10 @@ mod tests {
                 }
             }
         }
-        assert!(!follow_up_id.is_empty(), "follow-up job should require approval");
+        assert!(
+            !follow_up_id.is_empty(),
+            "follow-up job should require approval"
+        );
 
         let queue = DurableQueueRuntime::open(&path).unwrap();
         let duplicate_recovery = queue.recover_schedules_at(now, 16).unwrap();
@@ -3170,7 +2953,9 @@ mod tests {
             1
         );
         let audit = queue.job_audit_events(&follow_up_id).unwrap();
-        assert!(audit.iter().any(|event| event.event_kind == "approval_approve"));
+        assert!(audit
+            .iter()
+            .any(|event| event.event_kind == "approval_approve"));
     }
 
     #[test]
