@@ -12,12 +12,15 @@
 //! bench / trace / receipt / bundle / deploy / upgrade arg trees
 //! follow as the dispatch tree is extracted.
 
+pub mod bench;
 pub mod jobs;
 pub mod migrate;
 pub mod observe;
 pub mod package;
 pub mod root;
 
+#[allow(unused_imports)]
+pub use bench::*;
 #[allow(unused_imports)]
 pub use jobs::*;
 #[allow(unused_imports)]

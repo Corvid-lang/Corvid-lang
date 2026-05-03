@@ -18,6 +18,7 @@
 use clap::{Parser, Subcommand, ValueEnum};
 use std::path::PathBuf;
 
+pub use super::bench::BenchCommand;
 use super::jobs::JobsCommand;
 use super::migrate::MigrateCommand;
 use super::observe::ObserveCommand;
@@ -687,25 +688,6 @@ pub enum Command {
 }
 
 #[derive(Subcommand)]
-pub enum BenchCommand {
-    /// Compare Corvid against Python or JS/TypeScript using a published archive.
-    Compare {
-        /// Comparison target: `python`, `js`, or `typescript`.
-        target: String,
-        /// Benchmark session id under `benches/results/`.
-        #[arg(
-            long,
-            value_name = "SESSION",
-            default_value = "2026-04-17-marketable-session"
-        )]
-        session: String,
-        /// Emit structured JSON.
-        #[arg(long)]
-        json: bool,
-    },
-}
-
-#[derive(Subcommand)]
 pub enum ContractCommand {
     /// Print the canonical guarantee table.
     ///
@@ -1261,7 +1243,6 @@ pub enum BundleCommand {
     },
 }
 
-
 #[derive(Subcommand)]
 pub enum TraceCommand {
     /// List every JSONL trace under `--trace-dir` (default:
@@ -1307,7 +1288,6 @@ pub enum TraceCommand {
         trace_dir: Option<PathBuf>,
     },
 }
-
 
 #[derive(Subcommand)]
 pub enum AbiCommand {
