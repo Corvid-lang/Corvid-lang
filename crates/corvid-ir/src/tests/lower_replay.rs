@@ -1,0 +1,377 @@
+use super::*;
+
+    // ============================================================
+    // Replay IR lowering (21-inv-E-4)
+    // ============================================================
+
+    /// Reach into the agent's body to find the `IrExprKind::Replay`
+    /// the tests below construct.
+    fn find_replay<'a>(ir: &'a IrFile) -> &'a IrExprKind {
+        for agent in &ir.agents {
+            if let Some(kind) = find_replay_in_block(&agent.body) {
+                return kind;
+            }
+        }
+        panic!("no IrExprKind::Replay found in IR");
+    }
+
+    fn find_replay_in_block<'a>(block: &'a IrBlock) -> Option<&'a IrExprKind> {
+        for stmt in &block.stmts {
+            if let Some(kind) = find_replay_in_stmt(stmt) {
+                return Some(kind);
+            }
+        }
+        None
+    }
+
+    fn find_replay_in_stmt<'a>(stmt: &'a IrStmt) -> Option<&'a IrExprKind> {
+        match stmt {
+            IrStmt::Let { value, .. }
+            | IrStmt::Expr { expr: value, .. }
+            | IrStmt::Yield { value, .. } => find_replay_in_expr(value),
+            IrStmt::Approve { args, .. } => args.iter().find_map(find_replay_in_expr),
+            IrStmt::Return {
+                value: Some(value), ..
+            } => find_replay_in_expr(value),
+            IrStmt::Return { value: None, .. } => None,
+            IrStmt::If {
+                cond,
+                then_block,
+                else_block,
+                ..
+            } => find_replay_in_expr(cond)
+                .or_else(|| find_replay_in_block(then_block))
+                .or_else(|| else_block.as_ref().and_then(find_replay_in_block)),
+            IrStmt::For { iter, body, .. } => {
+                find_replay_in_expr(iter).or_else(|| find_replay_in_block(body))
+            }
+            IrStmt::Break { .. }
+            | IrStmt::Continue { .. }
+            | IrStmt::Pass { .. }
+            | IrStmt::Dup { .. }
+            | IrStmt::Drop { .. } => None,
+        }
+    }
+
+    fn find_replay_in_expr<'a>(expr: &'a IrExpr) -> Option<&'a IrExprKind> {
+        if matches!(expr.kind, IrExprKind::Replay { .. }) {
+            return Some(&expr.kind);
+        }
+        match &expr.kind {
+            IrExprKind::Call { args, .. } => args.iter().find_map(find_replay_in_expr),
+            IrExprKind::FieldAccess { target, .. }
+            | IrExprKind::UnwrapGrounded { value: target }
+            | IrExprKind::WeakNew { strong: target }
+            | IrExprKind::WeakUpgrade { weak: target }
+            | IrExprKind::StreamSplitBy { stream: target, .. }
+            | IrExprKind::StreamMerge { groups: target, .. }
+            | IrExprKind::StreamOrderedBy { stream: target, .. }
+            | IrExprKind::StreamResumeToken { stream: target }
+            | IrExprKind::ResumeStream { token: target, .. }
+            | IrExprKind::ResultOk { inner: target }
+            | IrExprKind::ResultErr { inner: target }
+            | IrExprKind::OptionSome { inner: target }
+            | IrExprKind::TryPropagate { inner: target }
+            | IrExprKind::TryRetry { body: target, .. }
+            | IrExprKind::UnOp {
+                operand: target, ..
+            }
+            | IrExprKind::WrappingUnOp {
+                operand: target, ..
+            } => find_replay_in_expr(target),
+            IrExprKind::Index { target, index }
+            | IrExprKind::BinOp {
+                left: target,
+                right: index,
+                ..
+            }
+            | IrExprKind::WrappingBinOp {
+                left: target,
+                right: index,
+                ..
+            } => find_replay_in_expr(target).or_else(|| find_replay_in_expr(index)),
+            IrExprKind::List { items } => items.iter().find_map(find_replay_in_expr),
+            _ => None,
+        }
+    }
+
+    const REPLAY_PRELUDE: &str = r#"
+type Decision:
+    label: String
+
+type Order:
+    id: String
+
+prompt classify(x: String) -> Decision:
+    """Classify."""
+
+tool get_order(id: String) -> Order
+
+tool issue_refund(id: String, amount: Float) -> Order dangerous
+"#;
+
+    fn lower_replay(body: &str) -> IrFile {
+        let src = format!("{REPLAY_PRELUDE}\n{body}");
+        lower_src(&src)
+    }
+
+    #[test]
+    fn replay_lowers_to_structured_ir_node_not_just_else_body() {
+        let body = r#"
+agent run(x: String) -> Decision:
+    return replay "t.jsonl":
+        when llm("classify") -> Decision("fixture")
+        else Decision("unknown")
+"#;
+        let ir = lower_replay(body);
+        let kind = find_replay(&ir);
+        let (arms_len, has_trace) = match kind {
+            IrExprKind::Replay { trace, arms, .. } => {
+                let has_trace = matches!(trace.kind, IrExprKind::Literal(IrLiteral::String(_)));
+                (arms.len(), has_trace)
+            }
+            other => panic!("expected Replay, got {other:?}"),
+        };
+        assert_eq!(arms_len, 1, "expected exactly one `when` arm");
+        assert!(
+            has_trace,
+            "trace subexpression should lower to a String literal"
+        );
+    }
+
+    #[test]
+    fn replay_arm_pattern_lowers_with_resolved_name() {
+        let body = r#"
+agent run(x: String) -> Decision:
+    return replay "t.jsonl":
+        when llm("classify") -> Decision("fixture")
+        else Decision("unknown")
+"#;
+        let ir = lower_replay(body);
+        let IrExprKind::Replay { arms, .. } = find_replay(&ir) else {
+            unreachable!();
+        };
+        match &arms[0].pattern {
+            IrReplayPattern::Llm { prompt, .. } => {
+                assert_eq!(prompt, "classify");
+            }
+            other => panic!("expected Llm pattern, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn replay_arm_tool_pattern_lowers_wildcard_arg() {
+        let body = r#"
+agent run(x: String) -> Order:
+    return replay "t.jsonl":
+        when tool("get_order", _) -> Order("fixture")
+        else Order("unknown")
+"#;
+        let ir = lower_replay(body);
+        let IrExprKind::Replay { arms, .. } = find_replay(&ir) else {
+            unreachable!();
+        };
+        match &arms[0].pattern {
+            IrReplayPattern::Tool { tool, arg, .. } => {
+                assert_eq!(tool, "get_order");
+                assert!(
+                    matches!(arg, IrReplayToolArgPattern::Wildcard),
+                    "expected Wildcard, got {arg:?}"
+                );
+            }
+            other => panic!("expected Tool pattern, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn replay_arm_tool_pattern_lowers_string_literal_arg() {
+        let body = r#"
+agent run(x: String) -> Order:
+    return replay "t.jsonl":
+        when tool("get_order", "ticket-42") -> Order("fixture")
+        else Order("unknown")
+"#;
+        let ir = lower_replay(body);
+        let IrExprKind::Replay { arms, .. } = find_replay(&ir) else {
+            unreachable!();
+        };
+        match &arms[0].pattern {
+            IrReplayPattern::Tool { arg, .. } => match arg {
+                IrReplayToolArgPattern::StringLit(value) => {
+                    assert_eq!(value, "ticket-42");
+                }
+                other => panic!("expected StringLit arg, got {other:?}"),
+            },
+            other => panic!("expected Tool pattern, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn replay_arm_tool_pattern_lowers_identifier_capture_with_local_id() {
+        let body = r#"
+agent run(x: String) -> Order:
+    return replay "t.jsonl":
+        when tool("get_order", ticket_id) -> get_order(ticket_id)
+        else get_order(x)
+"#;
+        let ir = lower_replay(body);
+        let IrExprKind::Replay { arms, .. } = find_replay(&ir) else {
+            unreachable!();
+        };
+        let arg_capture = match &arms[0].pattern {
+            IrReplayPattern::Tool { arg, .. } => match arg {
+                IrReplayToolArgPattern::Capture(c) => c,
+                other => panic!("expected Capture arg, got {other:?}"),
+            },
+            other => panic!("expected Tool pattern, got {other:?}"),
+        };
+        assert_eq!(arg_capture.name, "ticket_id");
+        // LocalId should not be the unresolved-name sentinel.
+        assert_ne!(arg_capture.local_id.0, u32::MAX);
+
+        // And the arm body should reference that same LocalId.
+        let body_mentions_capture = expr_mentions_local_id(&arms[0].body, arg_capture.local_id);
+        assert!(
+            body_mentions_capture,
+            "arm body should read the captured LocalId",
+        );
+    }
+
+    fn expr_mentions_local_id(expr: &IrExpr, target: corvid_resolve::LocalId) -> bool {
+        match &expr.kind {
+            IrExprKind::Local { local_id, .. } => *local_id == target,
+            IrExprKind::Call { args, .. } => args.iter().any(|a| expr_mentions_local_id(a, target)),
+            IrExprKind::FieldAccess { target: t, .. } => expr_mentions_local_id(t, target),
+            IrExprKind::UnwrapGrounded { value } => expr_mentions_local_id(value, target),
+            IrExprKind::Index { target: t, index } => {
+                expr_mentions_local_id(t, target) || expr_mentions_local_id(index, target)
+            }
+            IrExprKind::BinOp { left, right, .. } => {
+                expr_mentions_local_id(left, target) || expr_mentions_local_id(right, target)
+            }
+            IrExprKind::WrappingBinOp { left, right, .. } => {
+                expr_mentions_local_id(left, target) || expr_mentions_local_id(right, target)
+            }
+            IrExprKind::UnOp { operand, .. } | IrExprKind::WrappingUnOp { operand, .. } => {
+                expr_mentions_local_id(operand, target)
+            }
+            IrExprKind::List { items } => items.iter().any(|i| expr_mentions_local_id(i, target)),
+            IrExprKind::WeakNew { strong }
+            | IrExprKind::WeakUpgrade { weak: strong }
+            | IrExprKind::StreamSplitBy { stream: strong, .. }
+            | IrExprKind::StreamMerge { groups: strong, .. }
+            | IrExprKind::StreamOrderedBy { stream: strong, .. }
+            | IrExprKind::StreamResumeToken { stream: strong }
+            | IrExprKind::ResumeStream { token: strong, .. } => {
+                expr_mentions_local_id(strong, target)
+            }
+            IrExprKind::ResultOk { inner }
+            | IrExprKind::ResultErr { inner }
+            | IrExprKind::OptionSome { inner }
+            | IrExprKind::TryPropagate { inner } => expr_mentions_local_id(inner, target),
+            IrExprKind::TryRetry { body, .. } => expr_mentions_local_id(body, target),
+            IrExprKind::Replay {
+                trace,
+                arms,
+                else_body,
+            } => {
+                expr_mentions_local_id(trace, target)
+                    || arms.iter().any(|a| expr_mentions_local_id(&a.body, target))
+                    || expr_mentions_local_id(else_body, target)
+            }
+            _ => false,
+        }
+    }
+
+    #[test]
+    fn replay_arm_whole_event_as_capture_lowers_with_local_id() {
+        let body = r#"
+agent run(x: String) -> Decision:
+    return replay "t.jsonl":
+        when llm("classify") as recorded -> recorded
+        else Decision("unknown")
+"#;
+        let ir = lower_replay(body);
+        let IrExprKind::Replay { arms, .. } = find_replay(&ir) else {
+            unreachable!();
+        };
+        let capture = arms[0]
+            .capture
+            .as_ref()
+            .expect("expected whole-event `as recorded` capture");
+        assert_eq!(capture.name, "recorded");
+        assert_ne!(capture.local_id.0, u32::MAX);
+
+        // Arm body references the capture.
+        let body_refs = expr_mentions_local_id(&arms[0].body, capture.local_id);
+        assert!(body_refs, "arm body should read the capture LocalId");
+    }
+
+    #[test]
+    fn replay_approve_pattern_lowers_with_label() {
+        let body = r#"
+agent run(id: String, amount: Float) -> Order:
+    approve IssueRefund(id, amount)
+    return replay "t.jsonl":
+        when approve("IssueRefund") -> get_order(id)
+        else get_order(id)
+"#;
+        let ir = lower_replay(body);
+        let IrExprKind::Replay { arms, .. } = find_replay(&ir) else {
+            unreachable!();
+        };
+        match &arms[0].pattern {
+            IrReplayPattern::Approve { label, .. } => {
+                assert_eq!(label, "IssueRefund");
+            }
+            other => panic!("expected Approve pattern, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn replay_preserves_arm_order_in_ir() {
+        let body = r#"
+agent run(x: String) -> Decision:
+    return replay "t.jsonl":
+        when llm("classify") -> Decision("a")
+        when llm("classify") -> Decision("b")
+        when llm("classify") -> Decision("c")
+        else Decision("d")
+"#;
+        let ir = lower_replay(body);
+        let IrExprKind::Replay {
+            arms, else_body, ..
+        } = find_replay(&ir)
+        else {
+            unreachable!();
+        };
+        assert_eq!(arms.len(), 3);
+        // Else body is present and non-empty.
+        assert!(!matches!(
+            else_body.kind,
+            IrExprKind::Literal(IrLiteral::Nothing)
+        ));
+    }
+
+    #[test]
+    fn replay_else_body_is_separate_from_arms() {
+        // Regression: the pre-E-4 stub lowered the whole replay to
+        // just else_body. Now arms must be distinct from else_body.
+        let body = r#"
+agent run(x: String) -> Decision:
+    return replay "t.jsonl":
+        when llm("classify") -> Decision("arm")
+        else Decision("else")
+"#;
+        let ir = lower_replay(body);
+        let IrExprKind::Replay {
+            arms, else_body, ..
+        } = find_replay(&ir)
+        else {
+            unreachable!();
+        };
+        assert_eq!(arms.len(), 1);
+        // The else body should literally be `Decision("else")` — a Call node,
+        // distinct from the arm body which is `Decision("arm")`.
+        assert!(matches!(else_body.kind, IrExprKind::Call { .. }));
+    }
