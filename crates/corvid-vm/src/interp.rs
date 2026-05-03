@@ -11,6 +11,8 @@
 mod effect_compose;
 #[path = "interp/expr.rs"]
 mod expr;
+#[path = "interp/grounding.rs"]
+mod grounding;
 #[path = "interp/prompt/mod.rs"]
 mod prompt;
 #[path = "interp/replay.rs"]
@@ -35,6 +37,7 @@ pub use test_runner::{
 };
 
 use self::expr::{eval_binop, eval_literal, eval_unop, require_bool};
+use self::grounding::{maybe_ground_tool_result, tool_has_retrieval_effect};
 use crate::conv::{json_to_value, value_to_json};
 use crate::env::Env;
 use crate::errors::{InterpError, InterpErrorKind};
@@ -820,7 +823,7 @@ impl<'ir> Interpreter<'ir> {
                         }
                     }
                 }
-                let is_grounded = tool.effect_names.iter().any(|e| e == "retrieval");
+                let is_grounded = tool_has_retrieval_effect(tool);
                 let result_decode_ty = match (&tool.return_ty, is_grounded) {
                     (Type::Grounded(inner), true) => inner.as_ref(),
                     _ => &tool.return_ty,
@@ -1050,13 +1053,4 @@ impl<'ir> Interpreter<'ir> {
             }
         }
     }
-}
-
-fn maybe_ground_tool_result(tool: &IrTool, callee_name: &str, value: Value) -> Value {
-    if !tool.effect_names.iter().any(|e| e == "retrieval") {
-        return value;
-    }
-
-    let chain = crate::ProvenanceChain::with_retrieval(callee_name, corvid_runtime::now_ms());
-    Value::Grounded(crate::value::GroundedValue::new(value, chain))
 }
