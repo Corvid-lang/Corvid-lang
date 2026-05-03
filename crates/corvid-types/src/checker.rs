@@ -593,6 +593,7 @@ mod call;
 mod case;
 mod decl;
 mod decl_eval;
+mod decl_extern_c;
 mod effect_decl;
 mod expr;
 mod import_call;

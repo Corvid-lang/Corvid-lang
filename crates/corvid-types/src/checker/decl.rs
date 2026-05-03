@@ -1,8 +1,8 @@
 //! Agent + eval declaration checking.
 //!
-//! `check_agent` validates an `agent name(params) -> T: body` â€”
+//! `check_agent` validates an `agent name(params) -> T: body` Ã¢â‚¬â€
 //! parameter binding, return-type matching, yield/stream legality.
-//! `check_eval` validates an `eval name: body` â€” including
+//! `check_eval` validates an `eval name: body` Ã¢â‚¬â€ including
 //! trace-assert (`assert called X before Y`) and statistical
 //! confidence modifiers.
 //!
@@ -14,8 +14,7 @@ use crate::determinism::{classify_call_target, NondeterminismSource};
 use crate::errors::{TypeError, TypeErrorKind, TypeWarning, TypeWarningKind};
 use crate::types::Type;
 use corvid_ast::{
-    AgentAttribute, AgentDecl, Block, Expr, HttpMethod, HttpRouteDecl, OwnershipAnnotation,
-    OwnershipMode, ServerDecl, Span, Stmt,
+    AgentAttribute, AgentDecl, Block, Expr, HttpMethod, HttpRouteDecl, ServerDecl, Span, Stmt,
 };
 use corvid_resolve::{Binding, BuiltIn, DeclKind};
 use std::collections::HashSet;
@@ -60,7 +59,7 @@ impl<'a> Checker<'a> {
         }
 
         // Phase 21 slice 21-inv-F: enforce `@deterministic`. Strictly
-        // stronger than `@replayable` â€” the body must be a pure
+        // stronger than `@replayable` Ã¢â‚¬â€ the body must be a pure
         // function of its parameters. No LLM / tool / approve
         // calls, no catalog-registered nondeterminism, and calls
         // to other agents must target agents that are themselves
@@ -143,123 +142,10 @@ impl<'a> Checker<'a> {
         }
     }
 
-    fn check_extern_c_signature(&mut self, a: &AgentDecl) {
-        for param in &a.params {
-            let ty = self.type_ref_to_type(&param.ty);
-            if !extern_c_param_type_supported(&ty) {
-                self.errors.push(TypeError::new(
-                    TypeErrorKind::NonScalarInExternC {
-                        agent: a.name.name.clone(),
-                        offender_type: ty.display_name(),
-                        position: format!("parameter `{}`", param.name.name),
-                    },
-                    param.span,
-                ));
-                continue;
-            }
-            match infer_extern_param_ownership(&ty) {
-                Ok(inferred) => {
-                    if let Some(declared) = param.ownership.as_ref() {
-                        if !ownership_matches(declared, &inferred) {
-                            self.errors.push(TypeError::new(
-                                TypeErrorKind::ExternOwnershipMismatch {
-                                    agent: a.name.name.clone(),
-                                    position: format!("parameter `{}`", param.name.name),
-                                    declared: ownership_label_declared(declared),
-                                    inferred: ownership_label_inferred(&inferred),
-                                    reason: inferred.reason.clone(),
-                                },
-                                param.span,
-                            ));
-                        }
-                    }
-                }
-                Err(reason) => {
-                    if param.ownership.is_none() {
-                        self.errors.push(TypeError::new(
-                            TypeErrorKind::AmbiguousExternOwnership {
-                                agent: a.name.name.clone(),
-                                position: format!("parameter `{}`", param.name.name),
-                            },
-                            param.span,
-                        ));
-                    } else {
-                        self.errors.push(TypeError::new(
-                            TypeErrorKind::ExternOwnershipMismatch {
-                                agent: a.name.name.clone(),
-                                position: format!("parameter `{}`", param.name.name),
-                                declared: ownership_label_declared(
-                                    param.ownership.as_ref().unwrap(),
-                                ),
-                                inferred: "ambiguous".into(),
-                                reason,
-                            },
-                            param.span,
-                        ));
-                    }
-                }
-            }
-        }
-        let ret = self.type_ref_to_type(&a.return_ty);
-        if !extern_c_return_type_supported(&ret) {
-            self.errors.push(TypeError::new(
-                TypeErrorKind::NonScalarInExternC {
-                    agent: a.name.name.clone(),
-                    offender_type: ret.display_name(),
-                    position: "return type".into(),
-                },
-                a.return_ty.span(),
-            ));
-            return;
-        }
-        match infer_extern_return_ownership(&ret) {
-            Ok(inferred) => {
-                if let Some(declared) = a.return_ownership.as_ref() {
-                    if !ownership_matches(declared, &inferred) {
-                        self.errors.push(TypeError::new(
-                            TypeErrorKind::ExternOwnershipMismatch {
-                                agent: a.name.name.clone(),
-                                position: "return type".into(),
-                                declared: ownership_label_declared(declared),
-                                inferred: ownership_label_inferred(&inferred),
-                                reason: inferred.reason.clone(),
-                            },
-                            a.return_ty.span(),
-                        ));
-                    }
-                }
-            }
-            Err(reason) => {
-                if a.return_ownership.is_none() {
-                    self.errors.push(TypeError::new(
-                        TypeErrorKind::AmbiguousExternOwnership {
-                            agent: a.name.name.clone(),
-                            position: "return type".into(),
-                        },
-                        a.return_ty.span(),
-                    ));
-                } else {
-                    self.errors.push(TypeError::new(
-                        TypeErrorKind::ExternOwnershipMismatch {
-                            agent: a.name.name.clone(),
-                            position: "return type".into(),
-                            declared: ownership_label_declared(
-                                a.return_ownership.as_ref().unwrap(),
-                            ),
-                            inferred: "ambiguous".into(),
-                            reason,
-                        },
-                        a.return_ty.span(),
-                    ));
-                }
-            }
-        }
-    }
-
     /// Walk `body` looking for calls to functions the determinism
     /// catalog flags as nondeterministic. Emits one
     /// `NonReplayableCall` error per offending call site. Safe to
-    /// call on any body â€” a catalog-empty walk is a no-op.
+    /// call on any body Ã¢â‚¬â€ a catalog-empty walk is a no-op.
     fn check_replayable_body(&mut self, agent_name: &str, body: &Block) {
         let mut violations = Vec::new();
         collect_replayability_violations_in_block(body, &mut violations);
@@ -372,7 +258,7 @@ impl<'a> Checker<'a> {
                 // Walk subexpressions so determinism violations
                 // nested inside a replay arm still surface. The
                 // `replay` expression itself is treated as pure
-                // substrate today â€” full classification lands with
+                // substrate today Ã¢â‚¬â€ full classification lands with
                 // the checker slice (21-inv-E-3).
                 self.walk_deterministic_expr(agent, trace);
                 for arm in arms {
@@ -387,7 +273,7 @@ impl<'a> Checker<'a> {
     /// Classify a call target inside a `@deterministic` body and
     /// emit a `NonDeterministicCall` error if the target fails
     /// the contract. Unresolved or dynamic callees (subscripts,
-    /// chained calls) are passed over â€” they cannot be statically
+    /// chained calls) are passed over Ã¢â‚¬â€ they cannot be statically
     /// classified, so the conservative choice is to let the
     /// existing call-check machinery handle them.
     fn classify_deterministic_call(&mut self, agent: &str, callee: &Expr, span: Span) {
@@ -398,7 +284,7 @@ impl<'a> Checker<'a> {
 
         // Catalog-registered nondeterminism (clocks, PRNGs, etc.)
         // fails `@deterministic` for the same reason it fails
-        // `@replayable` â€” but the error message is stricter.
+        // `@replayable` Ã¢â‚¬â€ but the error message is stricter.
         if let Some(source) = classify_call_target(&name) {
             self.errors.push(TypeError::with_guarantee(
                 TypeErrorKind::NonDeterministicCall {
@@ -417,7 +303,7 @@ impl<'a> Checker<'a> {
         // `@deterministic` agent, flag it. Method-call form
         // `x.foo()` is handled by the type checker's method
         // machinery and is deliberately out of scope here for
-        // v1 â€” the catalog + ident-call coverage is enough to
+        // v1 Ã¢â‚¬â€ the catalog + ident-call coverage is enough to
         // enforce the contract on realistic programs; a
         // follow-up slice can extend to method dispatch if
         // users start writing `@deterministic` bodies that
@@ -470,128 +356,17 @@ impl<'a> Checker<'a> {
     }
 }
 
-fn extern_c_param_type_supported(ty: &Type) -> bool {
-    matches!(ty, Type::Int | Type::Float | Type::Bool | Type::String)
-}
-
-fn extern_c_return_type_supported(ty: &Type) -> bool {
-    match ty {
-        Type::Int | Type::Float | Type::Bool | Type::String | Type::Nothing => true,
-        Type::Grounded(inner) => matches!(
-            &**inner,
-            Type::Int | Type::Float | Type::Bool | Type::String
-        ),
-        _ => false,
-    }
-}
-
-#[derive(Debug, Clone)]
-struct InferredOwnership {
-    mode: OwnershipMode,
-    lifetime: Option<String>,
-    reason: String,
-}
-
-fn infer_extern_param_ownership(ty: &Type) -> Result<InferredOwnership, String> {
-    match ty {
-        Type::String | Type::TraceId => Ok(InferredOwnership {
-            mode: OwnershipMode::Borrowed,
-            lifetime: Some("call".to_string()),
-            reason: "string-like extern parameters are passed as borrowed call-frame inputs".into(),
-        }),
-        Type::Int | Type::Float | Type::Bool => Ok(InferredOwnership {
-            mode: OwnershipMode::Owned,
-            lifetime: None,
-            reason: "scalar copy parameters transfer no lifetime obligations back to the caller"
-                .into(),
-        }),
-        other => Err(format!(
-            "the compiler cannot infer a stable ownership mode for extern parameter type `{}`",
-            other.display_name()
-        )),
-    }
-}
-
-fn infer_extern_return_ownership(ty: &Type) -> Result<InferredOwnership, String> {
-    match ty {
-        Type::Int | Type::Float | Type::Bool | Type::Nothing | Type::String | Type::TraceId => {
-            Ok(InferredOwnership {
-                mode: OwnershipMode::Owned,
-                lifetime: None,
-                reason: "extern return values cross the boundary as owned results".into(),
-            })
-        }
-        Type::Grounded(inner)
-            if matches!(
-                &**inner,
-                Type::Int | Type::Float | Type::Bool | Type::String | Type::TraceId
-            ) =>
-        {
-            Ok(InferredOwnership {
-                mode: OwnershipMode::Owned,
-                lifetime: None,
-                reason: "grounded handles must be returned as owned lifecycle objects".into(),
-            })
-        }
-        other => Err(format!(
-            "the compiler cannot infer a stable ownership mode for extern return type `{}`",
-            other.display_name()
-        )),
-    }
-}
-
-fn ownership_matches(declared: &OwnershipAnnotation, inferred: &InferredOwnership) -> bool {
-    if declared.mode != inferred.mode {
-        return false;
-    }
-    let declared_lifetime = declared.lifetime.as_deref().unwrap_or_else(|| {
-        if matches!(declared.mode, OwnershipMode::Borrowed) {
-            "call"
-        } else {
-            ""
-        }
-    });
-    let inferred_lifetime = inferred.lifetime.as_deref().unwrap_or_else(|| {
-        if matches!(inferred.mode, OwnershipMode::Borrowed) {
-            "call"
-        } else {
-            ""
-        }
-    });
-    declared_lifetime == inferred_lifetime
-}
-
-fn ownership_label_declared(annotation: &OwnershipAnnotation) -> String {
-    ownership_label(annotation.mode, annotation.lifetime.as_deref())
-}
-
-fn ownership_label_inferred(annotation: &InferredOwnership) -> String {
-    ownership_label(annotation.mode, annotation.lifetime.as_deref())
-}
-
-fn ownership_label(mode: OwnershipMode, lifetime: Option<&str>) -> String {
-    match mode {
-        OwnershipMode::Owned => "@owned".into(),
-        OwnershipMode::Borrowed => match lifetime {
-            Some("call") | None => "@borrowed".into(),
-            Some(name) => format!("@borrowed<'{name}>"),
-        },
-        OwnershipMode::Shared => "@shared".into(),
-        OwnershipMode::Static => "@static".into(),
-    }
-}
-
 // ----------------------------------------------------------------
 // Replayability walk helpers (Phase 21 slice 21-inv-A)
 // ----------------------------------------------------------------
 //
 // These walk an agent body and collect `ReplayabilityViolation`
-// entries â€” one per call site that resolves to a nondeterministic
+// entries Ã¢â‚¬â€ one per call site that resolves to a nondeterministic
 // builtin the trace schema cannot capture. Free functions (not
 // methods) so the walk doesn't need `Checker` state; the checker
 // pushes the resulting violations into its own error vec.
 
-/// One replayability violation â€” a call in a `@replayable` body
+/// One replayability violation Ã¢â‚¬â€ a call in a `@replayable` body
 /// that resolves to a nondeterministic builtin.
 struct ReplayabilityViolation {
     call_name: String,
@@ -705,7 +480,7 @@ fn collect_replayability_violations_in_expr(expr: &Expr, out: &mut Vec<Replayabi
 /// Pull a static callee name out of an expression, if the callee
 /// is a bare identifier or dotted path. Dynamic callees (subscript,
 /// call-returning-call, etc.) return `None`, which the replayability
-/// walk treats as "out of catalog scope" â€” the checker cannot
+/// walk treats as "out of catalog scope" Ã¢â‚¬â€ the checker cannot
 /// classify them statically, and runtime paths already route
 /// through the recorded dispatch layer.
 fn callee_name(callee: &Expr) -> Option<String> {
