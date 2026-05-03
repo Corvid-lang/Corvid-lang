@@ -1,6 +1,4 @@
-use crate::{
-    compile_to_ir_with_config_at_path, load_corvid_config_for, render_all_pretty, Diagnostic,
-};
+use crate::{compile_to_ir_with_config_at_path, load_corvid_config_for, render_all_pretty};
 use corvid_ir::{IrFile, IrTest};
 use corvid_runtime::Runtime;
 use corvid_trace_schema::{read_events_from_path, validate_supported_schema, TraceEvent};
@@ -8,92 +6,16 @@ use corvid_vm::{
     run_all_tests_with_options, SnapshotOptions, TestAssertionStatus, TestExecution,
     TestRunOptions, TraceFixtureOptions,
 };
-use std::collections::BTreeSet;
 use serde::{Deserialize, Serialize};
-use std::fmt;
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
-#[derive(Debug)]
-pub enum EvalRunnerError {
-    Io { path: PathBuf, error: std::io::Error },
-}
+mod report;
 
-impl fmt::Display for EvalRunnerError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Io { path, error } => {
-                write!(f, "failed to access `{}`: {error}", path.display())
-            }
-        }
-    }
-}
-
-impl std::error::Error for EvalRunnerError {}
-
-#[derive(Debug, Clone)]
-pub struct CorvidEvalReport {
-    pub source_path: PathBuf,
-    pub compile_diagnostics: Vec<Diagnostic>,
-    pub evals: Vec<TestExecution>,
-    pub html_report_path: PathBuf,
-    pub regression: EvalRegressionReport,
-    pub trace: EvalTraceReport,
-}
-
-impl CorvidEvalReport {
-    pub fn passed(&self) -> bool {
-        self.compile_diagnostics.is_empty()
-            && !self.evals.is_empty()
-            && self.evals.iter().all(TestExecution::passed)
-    }
-
-    pub fn exit_code(&self) -> u8 {
-        if self.passed() { 0 } else { 1 }
-    }
-}
-
-#[derive(Debug, Clone, Default, PartialEq)]
-pub struct EvalTraceReport {
-    pub trace_count: usize,
-    pub replay_compatible_count: usize,
-    pub invalid_traces: Vec<String>,
-    pub value_assertions_passed: usize,
-    pub value_assertions_total: usize,
-    pub process_assertions_passed: usize,
-    pub process_assertions_total: usize,
-    pub approval_assertions_passed: usize,
-    pub approval_assertions_total: usize,
-    pub tool_calls: usize,
-    pub prompt_calls: usize,
-    pub approval_events: usize,
-    pub grounded_edges: usize,
-    pub total_cost_usd: f64,
-    pub total_latency_ms: u64,
-    pub prompts: Vec<String>,
-    pub prompt_renders: Vec<EvalPromptRender>,
-    pub model_routes: Vec<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct EvalPromptRender {
-    pub prompt: String,
-    pub rendered: String,
-}
-
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct EvalRegressionReport {
-    pub prior_path: PathBuf,
-    pub current_path: PathBuf,
-    pub regressions: Vec<EvalRegression>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct EvalRegression {
-    pub eval: String,
-    pub assertion: Option<String>,
-    pub before: String,
-    pub after: String,
-}
+pub use report::{
+    CorvidEvalReport, EvalPromptRender, EvalRegression, EvalRegressionReport, EvalRunnerError,
+    EvalTraceReport,
+};
 
 pub async fn run_evals_at_path(
     path: &Path,
@@ -144,12 +66,13 @@ pub async fn run_evals_at_path_with_options(
     let evals = run_all_tests_with_options(&eval_ir, runtime, options).await;
     let trace = collect_trace_report(path, &evals);
     let summary = EvalSummary::from_evals(path, &evals, &trace);
-    let regression = persist_and_compare_summary(path, prior_summary.as_ref(), &summary).map_err(
-        |error| EvalRunnerError::Io {
-            path: latest_path,
-            error,
-        },
-    )?;
+    let regression =
+        persist_and_compare_summary(path, prior_summary.as_ref(), &summary).map_err(|error| {
+            EvalRunnerError::Io {
+                path: latest_path,
+                error,
+            }
+        })?;
     let report = CorvidEvalReport {
         source_path: path.to_path_buf(),
         compile_diagnostics: Vec::new(),
@@ -179,7 +102,10 @@ pub fn default_eval_options(path: &Path) -> TestRunOptions {
                 .unwrap_or(false),
         }),
         trace_fixtures: Some(TraceFixtureOptions {
-            root: base.join("target").join("eval").join(sanitize_path_segment(stem)),
+            root: base
+                .join("target")
+                .join("eval")
+                .join(sanitize_path_segment(stem)),
         }),
     }
 }
@@ -233,10 +159,7 @@ pub fn render_eval_report(report: &CorvidEvalReport, source: Option<&str>) -> St
                 if assertion.status == TestAssertionStatus::Passed {
                     continue;
                 }
-                out.push_str(&format!(
-                    "    {:?}: {}",
-                    assertion.status, assertion.label
-                ));
+                out.push_str(&format!("    {:?}: {}", assertion.status, assertion.label));
                 if let Some(message) = &assertion.message {
                     out.push_str(&format!(" - {message}"));
                 }
@@ -430,7 +353,9 @@ fn render_eval_html_report(report: &CorvidEvalReport) -> String {
         })
     ));
     out.push_str("</ul>");
-    out.push_str("<table><thead><tr><th>Eval</th><th>Status</th><th>Assertions</th></tr></thead><tbody>");
+    out.push_str(
+        "<table><thead><tr><th>Eval</th><th>Status</th><th>Assertions</th></tr></thead><tbody>",
+    );
     for eval in &report.evals {
         let class = if eval.passed() { "pass" } else { "fail" };
         let status = if eval.passed() { "PASS" } else { "FAIL" };
@@ -969,7 +894,9 @@ eval math:
         )
         .expect("rewrite");
 
-        let second = run_evals_at_path(&path, &runtime).await.expect("second run");
+        let second = run_evals_at_path(&path, &runtime)
+            .await
+            .expect("second run");
         assert_eq!(second.regression.regressions.len(), 2);
         assert!(second.regression.prior_path.exists());
         let rendered = render_eval_report(&second, None);
@@ -1081,6 +1008,9 @@ eval math:
         assert!(report.trace.model_routes.contains(&"draft:fast@1".into()));
         let rendered = render_eval_report(&report, None);
         assert!(rendered.contains("Trace report: 1 trace"), "{rendered}");
-        assert!(rendered.contains("model routes: draft:fast@1"), "{rendered}");
+        assert!(
+            rendered.contains("model routes: draft:fast@1"),
+            "{rendered}"
+        );
     }
 }
