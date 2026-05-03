@@ -1,4 +1,4 @@
-//! Top-level dispatch tree — slice 20j-A1 commit 11f.
+//! Top-level dispatch tree â€” slice 20j-A1 commit 11f.
 //!
 //! Owns one entry point [`run`] that takes the parsed [`Cli`]
 //! and dispatches into the per-command modules
@@ -34,7 +34,7 @@ use crate::cli::observe::ObserveCommand;
 use crate::cli::package::PackageCommand;
 use crate::cli::root::{
     AbiCommand, ApprovalsCommand, ApproverCommand, AuthCommand, AuthKeysCommand, BenchCommand,
-    BundleCommand, CapsuleCommand, Cli, ClaimCommand, Command, ConnectorsCommand,
+    BundleCommand, CapsuleCommand, ClaimCommand, Cli, Command, ConnectorsCommand,
     ConnectorsOauthCommand, ContractCommand, DeployCommand, ReceiptCommand, TraceCommand,
     UpgradeCommand,
 };
@@ -44,8 +44,7 @@ use crate::commands::misc::*;
 use crate::commands::test::*;
 use crate::doctor_cmd::cmd_doctor_v2;
 use crate::format::{
-    approval_summary_value, approvals_inspect_summary, approvals_queue_summary,
-    audit_event_value,
+    approval_summary_value, approvals_inspect_summary, approvals_queue_summary, audit_event_value,
 };
 use crate::migrate_cmd::{cmd_migrate, cmd_migrate_down};
 use crate::package_cmd::{
@@ -55,11 +54,13 @@ use crate::package_cmd::{
 use crate::run_cmd::cmd_run;
 use crate::verify_cmd::cmd_verify;
 use crate::{
-    abi_cmd, approver_cmd, audit_cmd, bench_cmd, bind_cmd, bundle_cmd, capsule_cmd,
-    claim_cmd, connectors_cmd, contract_cmd, deploy_cmd, eval_cmd, lineage_cmd, observe_cmd,
-    receipt_cmd, release_cmd, replay, test_from_traces, tour, trace_cmd, trace_dag,
-    trace_diff, upgrade_cmd,
+    abi_cmd, approver_cmd, audit_cmd, bench_cmd, bind_cmd, bundle_cmd, capsule_cmd, claim_cmd,
+    connectors_cmd, contract_cmd, deploy_cmd, eval_cmd, lineage_cmd, observe_cmd, receipt_cmd,
+    release_cmd, replay, test_from_traces, tour, trace_cmd, trace_dag, trace_diff, upgrade_cmd,
 };
+
+mod connectors;
+pub(crate) use connectors::cmd_connectors;
 
 /// Dispatch the parsed CLI into the per-command implementations.
 /// Returns the process exit code; the caller wraps it in
@@ -385,7 +386,12 @@ pub(crate) fn run(cli: Cli) -> Result<u8> {
             }
             None => {
                 if let Some(cdylib) = cdylib {
-                    claim_cmd::run_claim_explain(&cdylib, explain, key.as_deref(), source.as_deref())
+                    claim_cmd::run_claim_explain(
+                        &cdylib,
+                        explain,
+                        key.as_deref(),
+                        source.as_deref(),
+                    )
                 } else {
                     Err(anyhow::anyhow!(
                         "`corvid claim --explain` requires a cdylib path"
@@ -500,13 +506,7 @@ pub(crate) fn run(cli: Cli) -> Result<u8> {
                 lease_ttl_ms,
                 idle_poll_ms,
                 max_runtime_ms,
-            } => cmd_jobs_run(
-                &state,
-                workers,
-                lease_ttl_ms,
-                idle_poll_ms,
-                max_runtime_ms,
-            ),
+            } => cmd_jobs_run(&state, workers, lease_ttl_ms, idle_poll_ms, max_runtime_ms),
             JobsCommand::Inspect { state, job } => cmd_jobs_inspect(&state, &job),
             JobsCommand::Retry { state, job } => cmd_jobs_retry(&state, &job),
             JobsCommand::Cancel { state, job } => cmd_jobs_cancel(&state, &job),
@@ -670,12 +670,12 @@ pub(crate) fn run(cli: Cli) -> Result<u8> {
         Some(Command::Auth { command }) => cmd_auth(command),
         Some(Command::Approvals { command }) => cmd_approvals(command),
         None => {
-            println!("corvid — the AI-native language compiler");
+            println!("corvid â€” the AI-native language compiler");
             println!("Run `corvid --help` for usage.");
             Ok(0)
         }
         None => {
-            println!("corvid — the AI-native language compiler");
+            println!("corvid â€” the AI-native language compiler");
             println!("Run `corvid --help` for usage.");
             Ok(0)
         }
@@ -685,203 +685,6 @@ pub(crate) fn run(cli: Cli) -> Result<u8> {
 // ------------------------------------------------------------
 // Commands
 // ------------------------------------------------------------
-
-
-pub(crate) fn cmd_connectors(command: ConnectorsCommand) -> Result<u8> {
-    match command {
-        ConnectorsCommand::List { json } => {
-            let entries = connectors_cmd::run_list()?;
-            if json {
-                let out = serde_json::to_string_pretty(&entries.iter().map(|e| {
-                    serde_json::json!({
-                        "name": e.name,
-                        "provider": e.provider,
-                        "modes": e.modes,
-                        "scope_count": e.scope_count,
-                        "write_scopes": e.write_scopes,
-                        "rate_limit": e.rate_limit_summary,
-                        "redaction_count": e.redaction_count,
-                    })
-                }).collect::<Vec<_>>())?;
-                println!("{out}");
-            } else {
-                println!("{:<10} {:<14} {:<22} {:<6} {:<28} {}",
-                    "NAME", "PROVIDER", "MODES", "SCOPES", "RATE LIMIT", "WRITE SCOPES");
-                for e in &entries {
-                    println!("{:<10} {:<14} {:<22} {:<6} {:<28} {}",
-                        e.name,
-                        e.provider,
-                        e.modes.join(","),
-                        e.scope_count,
-                        if e.rate_limit_summary.len() > 27 {
-                            format!("{}…", &e.rate_limit_summary[..26])
-                        } else {
-                            e.rate_limit_summary.clone()
-                        },
-                        e.write_scopes.join(","),
-                    );
-                }
-            }
-            Ok(0)
-        }
-        ConnectorsCommand::Check { live, json } => {
-            let entries = connectors_cmd::run_check(live)?;
-            let any_invalid = entries.iter().any(|e| !e.valid);
-            if json {
-                let out = serde_json::to_string_pretty(&entries.iter().map(|e| {
-                    serde_json::json!({
-                        "name": e.name,
-                        "valid": e.valid,
-                        "diagnostics": e.diagnostics,
-                    })
-                }).collect::<Vec<_>>())?;
-                println!("{out}");
-            } else {
-                println!("{:<12} {:<7} DIAGNOSTICS", "NAME", "VALID");
-                for e in &entries {
-                    let status = if e.valid { "✓" } else { "✗" };
-                    println!("{:<12} {:<7} {}", e.name, status, e.diagnostics.join("; "));
-                }
-            }
-            Ok(if any_invalid { 1 } else { 0 })
-        }
-        ConnectorsCommand::Run {
-            connector,
-            operation,
-            scope,
-            mode,
-            payload,
-            mock,
-            approval_id,
-            replay_key,
-            tenant_id,
-            actor_id,
-            token_id,
-            now_ms,
-        } => {
-            let payload_value = match payload {
-                Some(path) => {
-                    let raw = std::fs::read_to_string(&path)
-                        .with_context(|| format!("reading payload from `{}`", path.display()))?;
-                    Some(serde_json::from_str(&raw).with_context(|| "payload is not JSON")?)
-                }
-                None => None,
-            };
-            let mock_value = match mock {
-                Some(path) => {
-                    let raw = std::fs::read_to_string(&path)
-                        .with_context(|| format!("reading mock from `{}`", path.display()))?;
-                    Some(serde_json::from_str(&raw).with_context(|| "mock is not JSON")?)
-                }
-                None => None,
-            };
-            let resolved_now_ms = now_ms.unwrap_or_else(|| {
-                std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .map(|d| d.as_millis() as u64)
-                    .unwrap_or(0)
-            });
-            let output = connectors_cmd::run_run(connectors_cmd::ConnectorRunArgs {
-                connector,
-                operation,
-                scope_id: scope,
-                mode,
-                payload: payload_value,
-                mock_payload: mock_value,
-                approval_id,
-                replay_key,
-                tenant_id,
-                actor_id,
-                token_id,
-                now_ms: resolved_now_ms,
-            })?;
-            println!("{}", serde_json::to_string_pretty(&serde_json::json!({
-                "connector": output.connector,
-                "operation": output.operation,
-                "mode": output.mode,
-                "payload": output.payload,
-            }))?);
-            Ok(0)
-        }
-        ConnectorsCommand::Oauth { command } => match command {
-            ConnectorsOauthCommand::Init {
-                provider,
-                client_id,
-                redirect_uri,
-                scope,
-            } => {
-                let output = connectors_cmd::run_oauth_init(connectors_cmd::OauthInitArgs {
-                    provider,
-                    client_id,
-                    redirect_uri,
-                    scopes: scope,
-                })?;
-                println!("{}", serde_json::to_string_pretty(&serde_json::json!({
-                    "provider": output.provider,
-                    "state": output.state,
-                    "code_verifier": output.code_verifier,
-                    "code_challenge": output.code_challenge,
-                    "authorization_url": output.authorization_url,
-                }))?);
-                Ok(0)
-            }
-            ConnectorsOauthCommand::Rotate {
-                provider,
-                token_id,
-                access_token,
-                refresh_token,
-                client_id,
-                client_secret,
-            } => {
-                let output = connectors_cmd::run_oauth_rotate(connectors_cmd::OauthRotateArgs {
-                    provider,
-                    token_id,
-                    access_token,
-                    refresh_token,
-                    client_id,
-                    client_secret,
-                })?;
-                println!("{}", serde_json::to_string_pretty(&serde_json::json!({
-                    "provider": output.provider,
-                    "access_token": output.access_token,
-                    "refresh_token": output.refresh_token,
-                    "expires_at_ms": output.expires_at_ms,
-                }))?);
-                Ok(0)
-            }
-        },
-        ConnectorsCommand::VerifyWebhook {
-            signature,
-            secret_env,
-            body_file,
-            provider,
-            headers,
-        } => {
-            let parsed_headers = headers
-                .iter()
-                .map(|h| {
-                    let mut parts = h.splitn(2, '=');
-                    let name = parts.next().unwrap_or_default().to_string();
-                    let value = parts.next().unwrap_or_default().to_string();
-                    (name, value)
-                })
-                .collect::<Vec<_>>();
-            let output = connectors_cmd::run_verify_webhook(connectors_cmd::WebhookVerifyArgs {
-                signature,
-                secret_env,
-                body_file,
-                provider,
-                headers: parsed_headers,
-            })?;
-            println!("{}", serde_json::to_string_pretty(&serde_json::json!({
-                "valid": output.valid,
-                "algorithm": output.algorithm,
-                "outcome": output.outcome,
-            }))?);
-            Ok(if output.valid { 0 } else { 1 })
-        }
-    }
-}
 
 pub(crate) fn cmd_auth(command: AuthCommand) -> Result<u8> {
     match command {
@@ -939,10 +742,7 @@ pub(crate) fn cmd_auth(command: AuthCommand) -> Result<u8> {
                 );
                 Ok(0)
             }
-            AuthKeysCommand::Revoke {
-                auth_state,
-                key_id,
-            } => {
+            AuthKeysCommand::Revoke { auth_state, key_id } => {
                 let out = auth_cmd::run_auth_key_revoke(auth_cmd::AuthKeyRevokeArgs {
                     auth_state,
                     key_id,
@@ -1003,7 +803,12 @@ pub(crate) fn cmd_approvals(command: ApprovalsCommand) -> Result<u8> {
                 tenant_id: tenant,
                 status,
             })?;
-            println!("{}", serde_json::to_string_pretty(&serde_json::to_value(approvals_queue_summary(&out))?)?);
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&serde_json::to_value(approvals_queue_summary(
+                    &out
+                ))?)?
+            );
             Ok(0)
         }
         ApprovalsCommand::Inspect {
@@ -1016,7 +821,10 @@ pub(crate) fn cmd_approvals(command: ApprovalsCommand) -> Result<u8> {
                 tenant_id: tenant,
                 approval_id,
             })?;
-            println!("{}", serde_json::to_string_pretty(&approvals_inspect_summary(&out))?);
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&approvals_inspect_summary(&out))?
+            );
             Ok(0)
         }
         ApprovalsCommand::Approve {
@@ -1035,7 +843,10 @@ pub(crate) fn cmd_approvals(command: ApprovalsCommand) -> Result<u8> {
                 role,
                 reason,
             })?;
-            println!("{}", serde_json::to_string_pretty(&approval_summary_value(&summary))?);
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&approval_summary_value(&summary))?
+            );
             Ok(0)
         }
         ApprovalsCommand::Deny {
@@ -1054,7 +865,10 @@ pub(crate) fn cmd_approvals(command: ApprovalsCommand) -> Result<u8> {
                 role,
                 reason,
             })?;
-            println!("{}", serde_json::to_string_pretty(&approval_summary_value(&summary))?);
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&approval_summary_value(&summary))?
+            );
             Ok(0)
         }
         ApprovalsCommand::Expire {
@@ -1071,7 +885,10 @@ pub(crate) fn cmd_approvals(command: ApprovalsCommand) -> Result<u8> {
                 actor_id: actor,
                 reason,
             })?;
-            println!("{}", serde_json::to_string_pretty(&approval_summary_value(&summary))?);
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&approval_summary_value(&summary))?
+            );
             Ok(0)
         }
         ApprovalsCommand::Comment {
@@ -1088,7 +905,10 @@ pub(crate) fn cmd_approvals(command: ApprovalsCommand) -> Result<u8> {
                 actor_id: actor,
                 comment,
             })?;
-            println!("{}", serde_json::to_string_pretty(&audit_event_value(&event))?);
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&audit_event_value(&event))?
+            );
             Ok(0)
         }
         ApprovalsCommand::Delegate {
@@ -1109,7 +929,10 @@ pub(crate) fn cmd_approvals(command: ApprovalsCommand) -> Result<u8> {
                 delegate_to,
                 reason,
             })?;
-            println!("{}", serde_json::to_string_pretty(&approval_summary_value(&summary))?);
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&approval_summary_value(&summary))?
+            );
             Ok(0)
         }
         ApprovalsCommand::Batch {
