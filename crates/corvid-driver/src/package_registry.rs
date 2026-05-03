@@ -15,8 +15,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::import_integrity::sha256_hex;
 use crate::modules::summarize_module_source;
-use crate::package_manifest::dependency;
-use crate::package_version::{normalize_version, parse_package_spec, validate_package_name};
+
+#[cfg(test)]
+use crate::package_version::parse_package_spec;
+use crate::package_version::{normalize_version, validate_package_name};
 
 const DEFAULT_REGISTRY: &str = "https://registry.corvid.dev/index.toml";
 mod add;
@@ -25,6 +27,8 @@ pub use add::add_package;
 use add::select_package;
 mod remove;
 pub use remove::remove_package;
+mod update;
+pub use update::update_package;
 
 #[derive(Debug, Clone)]
 pub enum AddPackageOutcome {
@@ -116,53 +120,6 @@ struct RegistryPackage {
     signature: Option<String>,
     #[serde(default)]
     semantic_summary: Option<ModuleSemanticSummary>,
-}
-
-pub fn update_package(
-    spec: &str,
-    project_dir: &Path,
-    registry: Option<&str>,
-) -> Result<PackageMutationOutcome> {
-    if parse_package_spec(spec).is_ok() {
-        return match add_package(spec, project_dir, registry)? {
-            AddPackageOutcome::Added {
-                uri,
-                version,
-                lockfile,
-                exports,
-            } => Ok(PackageMutationOutcome::Updated {
-                uri,
-                version,
-                lockfile,
-                exports,
-            }),
-            AddPackageOutcome::Rejected { reason } => {
-                Ok(PackageMutationOutcome::Rejected { reason })
-            }
-        };
-    }
-    validate_package_name(spec)?;
-    let Some(dep) = dependency(project_dir, spec)? else {
-        return Ok(PackageMutationOutcome::Rejected {
-            reason: format!("package `{spec}` is not declared in corvid.toml [dependencies]"),
-        });
-    };
-    let registry = registry.or(dep.registry.as_deref());
-    let add_spec = format!("{}@{}", dep.name, dep.version);
-    match add_package(&add_spec, project_dir, registry)? {
-        AddPackageOutcome::Added {
-            uri,
-            version,
-            lockfile,
-            exports,
-        } => Ok(PackageMutationOutcome::Updated {
-            uri,
-            version,
-            lockfile,
-            exports,
-        }),
-        AddPackageOutcome::Rejected { reason } => Ok(PackageMutationOutcome::Rejected { reason }),
-    }
 }
 
 pub fn publish_package(options: PublishPackageOptions<'_>) -> Result<PublishPackageOutcome> {
