@@ -17,6 +17,7 @@ use corvid_types::{analyze_effects, typecheck, EffectRegistry};
 use serde::{Deserialize, Serialize};
 
 pub mod fuzz;
+pub mod render;
 pub mod rewrite;
 
 const VERIFY_MODEL: &str = "verify-mock";
@@ -136,7 +137,10 @@ pub fn verify_program(path: &Path) -> Result<DivergenceReport> {
 pub fn verify_corpus(dir: &Path) -> Result<Vec<DivergenceReport>> {
     let mut files = collect_programs(dir)?;
     files.sort();
-    files.into_iter().map(|path| verify_program(&path)).collect()
+    files
+        .into_iter()
+        .map(|path| verify_program(&path))
+        .collect()
 }
 
 pub fn shrink_program(path: &Path) -> Result<ShrinkResult> {
@@ -159,8 +163,8 @@ pub fn shrink_program(path: &Path) -> Result<ShrinkResult> {
             let mut candidate = lines.clone();
             candidate.remove(idx);
             let candidate_source = candidate.join("\n");
-            let tmp = tempfile::NamedTempFile::new()
-                .context("failed to create shrink candidate file")?;
+            let tmp =
+                tempfile::NamedTempFile::new().context("failed to create shrink candidate file")?;
             std::fs::write(tmp.path(), &candidate_source).context("failed to write candidate")?;
             let candidate_report = verify_program(tmp.path());
             if let Ok(candidate_report) = candidate_report {
@@ -175,7 +179,9 @@ pub fn shrink_program(path: &Path) -> Result<ShrinkResult> {
 
     let output = path.with_file_name(format!(
         "{}.shrunk.cor",
-        path.file_stem().and_then(|stem| stem.to_str()).unwrap_or("reproducer")
+        path.file_stem()
+            .and_then(|stem| stem.to_str())
+            .unwrap_or("reproducer")
     ));
     std::fs::write(&output, lines.join("\n"))
         .with_context(|| format!("failed to write `{}`", output.display()))?;
@@ -199,9 +205,17 @@ pub fn render_corpus_grid(reports: &[DivergenceReport]) -> String {
     ];
     for report in reports {
         let interp = &report.reports[1].profile;
-        let cells: Vec<_> = report.reports.iter().map(|tier| {
-            if tier.profile == *interp { "agree" } else { "diff" }
-        }).collect();
+        let cells: Vec<_> = report
+            .reports
+            .iter()
+            .map(|tier| {
+                if tier.profile == *interp {
+                    "agree"
+                } else {
+                    "diff"
+                }
+            })
+            .collect();
         let verdict = if report.divergences.is_empty() {
             "ok"
         } else {
@@ -264,11 +278,19 @@ impl Frontend {
         }
         let resolved = resolve(&file);
         if !resolved.errors.is_empty() {
-            bail!("resolve failed for `{}`: {:?}", path.display(), resolved.errors);
+            bail!(
+                "resolve failed for `{}`: {:?}",
+                path.display(),
+                resolved.errors
+            );
         }
         let checked = typecheck(&file, &resolved);
         if !checked.errors.is_empty() {
-            bail!("typecheck failed for `{}`: {:?}", path.display(), checked.errors);
+            bail!(
+                "typecheck failed for `{}`: {:?}",
+                path.display(),
+                checked.errors
+            );
         }
         let ir = compile_to_ir(&source)
             .map_err(|diagnostics| anyhow!("IR lowering failed: {:?}", diagnostics))?;
@@ -357,8 +379,13 @@ fn native_report(frontend: &Frontend) -> Result<TierReport> {
     let run_root = persistent_verify_dir("native")?;
     let bin_path = run_root.join("verify_program");
     let trace_path = run_root.join("native-trace.jsonl");
-    let binary = build_native_to_disk(&frontend.ir, "corvid_verify", &bin_path, &[])
-        .map_err(|err| anyhow!("native build failed for `{}`: {err}", frontend.path.display()))?;
+    let binary =
+        build_native_to_disk(&frontend.ir, "corvid_verify", &bin_path, &[]).map_err(|err| {
+            anyhow!(
+                "native build failed for `{}`: {err}",
+                frontend.path.display()
+            )
+        })?;
     let replies = serde_json::to_string(&mock_reply_map(frontend)?)
         .context("failed to serialize native mock replies")?;
     let output = Command::new(&binary)
@@ -435,8 +462,12 @@ fn mock_reply_map(frontend: &Frontend) -> Result<BTreeMap<String, serde_json::Va
         .map(|prompt| {
             Ok((
                 prompt.name.name.clone(),
-                mock_value_for_type(&prompt.return_ty)
-                    .with_context(|| format!("unsupported prompt return type in `{}`", frontend.path.display()))?,
+                mock_value_for_type(&prompt.return_ty).with_context(|| {
+                    format!(
+                        "unsupported prompt return type in `{}`",
+                        frontend.path.display()
+                    )
+                })?,
             ))
         })
         .collect()
@@ -459,7 +490,10 @@ fn mock_value_for_type(ty: &TypeRef) -> Result<serde_json::Value> {
     }
 }
 
-fn profile_from_trace(frontend: &Frontend, events: &[TraceEvent]) -> Result<(EffectProfile, Vec<String>)> {
+fn profile_from_trace(
+    frontend: &Frontend,
+    events: &[TraceEvent],
+) -> Result<(EffectProfile, Vec<String>)> {
     let mut effect_names = Vec::new();
     for event in events {
         match event {
@@ -501,13 +535,17 @@ fn diff_reports(reports: &[TierReport; 4]) -> Result<Vec<Divergence>> {
         &mut divergences,
         "cost",
         value_map(reports, |profile| serde_json::json!(profile.cost)),
-        reports.iter().all(|report| report.profile.cost == reports[0].profile.cost),
+        reports
+            .iter()
+            .all(|report| report.profile.cost == reports[0].profile.cost),
         reports,
     )?;
     maybe_push_divergence(
         &mut divergences,
         "trust",
-        value_map(reports, |profile| serde_json::json!(render_trust(&profile.trust))),
+        value_map(reports, |profile| {
+            serde_json::json!(render_trust(&profile.trust))
+        }),
         reports
             .iter()
             .all(|report| report.profile.trust == reports[0].profile.trust),
@@ -525,7 +563,9 @@ fn diff_reports(reports: &[TierReport; 4]) -> Result<Vec<Divergence>> {
     maybe_push_divergence(
         &mut divergences,
         "data",
-        value_map(reports, |profile| serde_json::json!(render_data(&profile.data))),
+        value_map(reports, |profile| {
+            serde_json::json!(render_data(&profile.data))
+        }),
         reports
             .iter()
             .all(|report| report.profile.data == reports[0].profile.data),
@@ -534,7 +574,9 @@ fn diff_reports(reports: &[TierReport; 4]) -> Result<Vec<Divergence>> {
     maybe_push_divergence(
         &mut divergences,
         "latency",
-        value_map(reports, |profile| serde_json::json!(render_latency(&profile.latency))),
+        value_map(reports, |profile| {
+            serde_json::json!(render_latency(&profile.latency))
+        }),
         reports
             .iter()
             .all(|report| report.profile.latency == reports[0].profile.latency),
@@ -558,7 +600,9 @@ fn diff_reports(reports: &[TierReport; 4]) -> Result<Vec<Divergence>> {
         let values = value_map(reports, |profile| {
             serde_json::to_value(profile.extra.get(&key)).unwrap_or(serde_json::Value::Null)
         });
-        let all_equal = values.values().all(|value| value == values.get(&Tier::Checker).unwrap());
+        let all_equal = values
+            .values()
+            .all(|value| value == values.get(&Tier::Checker).unwrap());
         if !all_equal {
             divergences.push(Divergence {
                 dimension: key.clone(),
@@ -661,12 +705,27 @@ fn is_profile_too_loose(
 fn divergent_tier_blame(dimension: &str) -> Result<Vec<BlameAttribution>> {
     let targets = match dimension {
         "cost" | "trust" | "reversible" | "data" | "latency" | "confidence" => vec![
-            (Tier::Checker, PathBuf::from("crates/corvid-types/src/effects.rs")),
-            (Tier::Interpreter, PathBuf::from("crates/corvid-vm/src/interp.rs")),
-            (Tier::Native, PathBuf::from("crates/corvid-runtime/src/ffi_bridge.rs")),
-            (Tier::Replay, PathBuf::from("crates/corvid-runtime/src/tracing.rs")),
+            (
+                Tier::Checker,
+                PathBuf::from("crates/corvid-types/src/effects.rs"),
+            ),
+            (
+                Tier::Interpreter,
+                PathBuf::from("crates/corvid-vm/src/interp.rs"),
+            ),
+            (
+                Tier::Native,
+                PathBuf::from("crates/corvid-runtime/src/ffi_bridge.rs"),
+            ),
+            (
+                Tier::Replay,
+                PathBuf::from("crates/corvid-runtime/src/tracing.rs"),
+            ),
         ],
-        _ => vec![(Tier::Checker, PathBuf::from("crates/corvid-types/src/effects.rs"))],
+        _ => vec![(
+            Tier::Checker,
+            PathBuf::from("crates/corvid-types/src/effects.rs"),
+        )],
     };
 
     let mut attributions = Vec::new();
@@ -972,20 +1031,17 @@ mod tests {
 
     #[test]
     fn deliberate_fail_program_is_caught() {
-        let report = verify_program(&repo_root().join("tests/corpus/should_fail/tier_disagree.cor"))
-            .expect("verify deliberate fail fixture");
-        assert!(
-            !report.divergences.is_empty(),
-            "expected divergence report"
-        );
+        let report =
+            verify_program(&repo_root().join("tests/corpus/should_fail/tier_disagree.cor"))
+                .expect("verify deliberate fail fixture");
+        assert!(!report.divergences.is_empty(), "expected divergence report");
     }
 
     #[test]
     fn native_drop_fixture_is_classified_as_too_loose() {
-        let report = verify_program(
-            &repo_root().join("tests/corpus/should_fail/native_drops_effect.cor"),
-        )
-        .expect("verify native drop fixture");
+        let report =
+            verify_program(&repo_root().join("tests/corpus/should_fail/native_drops_effect.cor"))
+                .expect("verify native drop fixture");
         assert!(
             report.divergences.iter().any(|divergence| {
                 divergence.dimension == "trust"
