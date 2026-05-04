@@ -200,6 +200,7 @@ jobs:
         run: |
           cargo run -q -p corvid-cli -- test examples/rag_qa_bot/tests/unit.cor
           cargo run -q -p corvid-cli -- test examples/rag_qa_bot/tests/integration.cor
+          cargo run -q -p corvid-cli -- test examples/rag_qa_bot/tests/replay_invariant.cor
 
       - name: rag_qa_bot eval
         env:
@@ -209,7 +210,9 @@ jobs:
         run: cargo run -q -p corvid-cli -- eval examples/rag_qa_bot/evals/rag_qa_bot.cor
 
       - name: rag_qa_bot replay
-        run: cargo run -q -p corvid-cli -- replay examples/rag_qa_bot/traces/rag_qa_bot_refund_policy.jsonl
+        run: |
+          cargo run -q -p corvid-cli -- replay examples/rag_qa_bot/traces/rag_qa_bot_refund_policy.jsonl
+          cargo run -q -p corvid-cli -- replay examples/rag_qa_bot/seed/traces/rag_qa_bot_refund_policy.jsonl
 
       - name: support_escalation_bot build
         working-directory: examples/support_escalation_bot
