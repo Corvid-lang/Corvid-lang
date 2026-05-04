@@ -1720,7 +1720,7 @@ The determinism-source catalog and the language's treatment of non-reproducible 
 - [x] 33H-repro-scripts              Benchmark and bundle claim reproduction scripts are checked in.
 - [x] 33I-platform-parity            The `platform-parity` CI matrix runs on Windows, Linux, and macOS; each leg executes the platform installer, `corvid doctor`, and the WASM/Wasmtime cross-platform parity harness.
 - [ ] 33J-website-playground         Website, docs site, benchmark page, blog shell, and WASM playground are live from committed assets.
-- [ ] 33K-reference-demo-pack        One-command demo apps have tests, evals, traces, and benchmark notes.
+- [x] 33K-reference-demo-pack        One-command demo apps have tests, evals, traces, and benchmark notes.
 - [ ] 33L-launch-materials           GIF/video, launch drafts, and external-reader review are complete.
 - [ ] 33M-beta-feedback              20 external-developer feedback items are closed as code/docs/tests or explicit non-scope.
 - [x] 33N-moat-benchmarks            `benches/moat/` ships the two defensibility benchmarks the website can quote: compile-time rejection over 50 bug-class cases and governance line-count over 3 reference apps (`refund_bot`, `rag_qa_bot`, `support_escalation_bot`) implemented in Corvid, Python, and TypeScript. Each benchmark has a deterministic runner and `RESULTS.md`; CI runs both runners and drift-gates the committed results on every push.

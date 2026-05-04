@@ -6453,3 +6453,27 @@ Validation:
   scan.
 
 ---
+
+## 2026-05-04 - Close 33K reference demo pack
+
+- Closed the six-demo reference pack: `refund_bot`, `local_model_demo`,
+  `provider_routing_demo`, `rag_qa_bot`, `support_escalation_bot`, and
+  `code_review_agent`.
+- Confirmed every demo has `corvid.toml`, `src/main.cor`, Corvid unit and
+  integration tests, eval coverage, replay traces, deterministic seed data,
+  README setup notes, and benchmark notes where relevant.
+- Confirmed `.github/workflows/demo-verify.yml` exercises build, run, tests,
+  eval, and replay for every reference demo on push and pull request.
+
+Validation:
+- `cargo test -p corvid-cli --test demo_project_defaults`
+- `cargo check --workspace`
+- `cargo test -p corvid-cli --lib`
+  (structural baseline: no library targets found in package `corvid-cli`)
+- `cargo test -p corvid-cli --tests`
+  (CLI unit tests pass 282/282; fails only existing `abi_attestation`
+  Windows native linker baseline: `__imp_GetUserNameExW`)
+- `cargo run -q -p corvid-cli -- verify --corpus tests/corpus`
+  (exit 2 with the established Windows `whoami` linker signature)
+
+---

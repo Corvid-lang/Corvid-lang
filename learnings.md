@@ -3599,3 +3599,15 @@ Eval assertions may invoke the same tool/prompt path more than once. If an eval
 has two assertions that each call `main`, provide two queued mock tool results
 and two queued mock LLM replies; a single mock response can pass `run` and
 still exhaust during `eval`.
+
+## reference demo pack closeout
+
+The reusable shape across the six demos is not a new demo framework; it is the
+plain project layout plus env-backed typed mocks, eval queues, and committed
+replay substitution traces. `demo_project_defaults` is the useful local guard
+because it catches the same "works as a source file but not as a project" drift
+that CI would otherwise surface later.
+
+When closing a demo pack, verify the workflow itself names every demo's build,
+run, test, eval, and replay loop. A demo can have complete local artifacts and
+still miss the closure gate if CI only runs the Rust-side smoke test.
