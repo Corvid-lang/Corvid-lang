@@ -277,3 +277,58 @@ fn local_model_demo_replay_fixture_is_deterministic() {
         "{stdout}"
     );
 }
+
+#[test]
+fn provider_routing_demo_runs_with_mock_llm() {
+    let app = repo_root().join("examples").join("provider_routing_demo");
+
+    let out = Command::new(corvid_bin())
+        .arg("run")
+        .env("CORVID_TEST_MOCK_LLM", "1")
+        .env(
+            "CORVID_TEST_MOCK_LLM_RESPONSE",
+            "provider routing selected the expected mocked response.",
+        )
+        .current_dir(&app)
+        .output()
+        .expect("run provider routing demo");
+    assert!(
+        out.status.success(),
+        "provider routing demo failed:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("provider routing selected the expected mocked response."),
+        "{stdout}"
+    );
+}
+
+#[test]
+fn provider_routing_demo_corvid_tests_pass_with_mock_llm() {
+    let repo = repo_root();
+    let app = repo.join("examples").join("provider_routing_demo");
+
+    for suite in ["unit.cor", "integration.cor"] {
+        let out = Command::new(corvid_bin())
+            .arg("test")
+            .arg(app.join("tests").join(suite))
+            .env("CORVID_TEST_MOCK_LLM", "1")
+            .env(
+                "CORVID_TEST_MOCK_LLM_RESPONSE",
+                "provider routing selected the expected mocked response.",
+            )
+            .current_dir(&repo)
+            .output()
+            .unwrap_or_else(|err| panic!("run provider routing test {suite}: {err}"));
+        assert!(
+            out.status.success(),
+            "{suite} failed:\nstdout={}\nstderr={}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("1 passed, 0 failed"), "{stdout}");
+    }
+}

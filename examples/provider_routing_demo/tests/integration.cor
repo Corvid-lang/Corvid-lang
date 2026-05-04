@@ -1,0 +1,8 @@
+import "../src/main" use main
+
+agent one_command_flow_returns_mocked_answer() -> Bool:
+    answer = main()
+    return answer == "provider routing selected the expected mocked response."
+
+test provider_routing_demo_one_command_flow:
+    assert one_command_flow_returns_mocked_answer()

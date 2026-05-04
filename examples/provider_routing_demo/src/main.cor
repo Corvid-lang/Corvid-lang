@@ -45,11 +45,14 @@ public agent selected_model(policy: String) -> String:
         return "anthropic_deep"
     return "openai_fast"
 
-@budget($0.01)
-agent chat(policy: String, question: String) -> RoutedChatTurn:
+public agent chat(policy: String, question: String) -> RoutedChatTurn:
     answer = answer_with_policy(policy, question)
     return RoutedChatTurn(policy, selected_provider(policy), selected_model(policy), question, answer)
 
+@budget($0.01)
+agent checked_standard_chat() -> RoutedChatTurn:
+    return chat("standard", "How does Corvid choose between model providers?")
+
 public agent main() -> String:
-    turn = chat("standard", "How does Corvid choose between model providers?")
+    turn = checked_standard_chat()
     return turn.answer
