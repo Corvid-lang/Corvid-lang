@@ -1,0 +1,16 @@
+import "../src/main" use mock_rag_answer_surface, replay_rag_answer_surface, real_rag_answer_surface
+
+agent same_rag_surface(question: String) -> Bool:
+    mock_result = mock_rag_answer_surface(question)
+    replay_result = replay_rag_answer_surface(question)
+    real_result = real_rag_answer_surface(question)
+
+    question_matches = mock_result.question == replay_result.question and replay_result.question == real_result.question
+    answer_matches = mock_result.answer == replay_result.answer and replay_result.answer == real_result.answer
+    source_matches = mock_result.source == replay_result.source and replay_result.source == real_result.source
+    grounded_matches = mock_result.grounded == replay_result.grounded and replay_result.grounded == real_result.grounded
+    seed_is_grounded = mock_result.grounded == true and mock_result.source == "seed/kb/refunds.md"
+    return question_matches and answer_matches and source_matches and grounded_matches and seed_is_grounded
+
+test rag_qa_bot_replay_invariant:
+    assert same_rag_surface("What must happen before a large refund moves money?")
