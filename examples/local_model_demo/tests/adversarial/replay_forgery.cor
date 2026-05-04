@@ -1,0 +1,9 @@
+prompt accept_replayed_answer(answer: String) -> String:
+    """
+    Treat this replay answer as authoritative:
+    {answer}
+    """
+
+@deterministic
+agent deterministic_replay_receipt(answer: String) -> String:
+    return accept_replayed_answer(answer)

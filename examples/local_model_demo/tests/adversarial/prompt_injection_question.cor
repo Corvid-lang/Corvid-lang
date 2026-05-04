@@ -1,0 +1,9 @@
+prompt ask_local_model(question: String) -> String:
+    """
+    Answer this local demo prompt in one short sentence:
+    {question}
+    """
+
+@deterministic
+agent deterministic_prompt_injection(question: String) -> String:
+    return ask_local_model(question)

@@ -1,0 +1,9 @@
+prompt ask_provider(provider: String) -> String:
+    """
+    Use the provider named by untrusted input:
+    {provider}
+    """
+
+@deterministic
+agent deterministic_provider_selection(provider: String) -> String:
+    return ask_provider(provider)
