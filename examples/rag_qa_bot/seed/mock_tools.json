@@ -1,3 +1,7 @@
 {
-  "retrieve_context": "Refunds over one hundred dollars require approval before money moves."
+  "retrieve_context": [
+    "Refunds over one hundred dollars require approval before money moves.",
+    "Refunds over one hundred dollars require approval before money moves.",
+    "Refunds over one hundred dollars require approval before money moves."
+  ]
 }

@@ -1,0 +1,7 @@
+import "../src/main" use main
+
+agent one_command_flow_returns_grounded_answer() -> Bool:
+    return main() == "Refunds over one hundred dollars require approval before money moves."
+
+test rag_qa_bot_one_command_flow:
+    assert one_command_flow_returns_grounded_answer()

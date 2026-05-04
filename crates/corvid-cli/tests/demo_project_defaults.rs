@@ -9,6 +9,12 @@ fn corvid_bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_corvid"))
 }
 
+const RAG_QA_MOCK_CONTEXT: &str =
+    "Refunds over one hundred dollars require approval before money moves.";
+
+const RAG_QA_MOCK_TOOLS: &str =
+    "{\"retrieve_context\":[\"Refunds over one hundred dollars require approval before money moves.\",\"Refunds over one hundred dollars require approval before money moves.\",\"Refunds over one hundred dollars require approval before money moves.\"]}";
+
 #[test]
 fn build_and_run_default_to_project_main_source() {
     let app = repo_root().join("examples").join("refund_bot");
@@ -403,4 +409,88 @@ fn provider_routing_demo_replay_fixtures_are_deterministic() {
         assert!(stdout.contains("replay completed"), "{stdout}");
         assert!(stdout.contains(expected), "{stdout}");
     }
+}
+
+#[test]
+fn rag_qa_bot_runs_with_mock_retrieval_and_llm() {
+    let app = repo_root().join("examples").join("rag_qa_bot");
+
+    let out = Command::new(corvid_bin())
+        .arg("run")
+        .env("CORVID_TEST_MOCK_TOOLS", RAG_QA_MOCK_TOOLS)
+        .env("CORVID_TEST_MOCK_LLM", "1")
+        .env("CORVID_TEST_MOCK_LLM_RESPONSE", RAG_QA_MOCK_CONTEXT)
+        .current_dir(&app)
+        .output()
+        .expect("run rag qa demo");
+    assert!(
+        out.status.success(),
+        "rag qa demo failed:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains(RAG_QA_MOCK_CONTEXT), "{stdout}");
+}
+
+#[test]
+fn rag_qa_bot_corvid_tests_pass_with_mock_retrieval_and_llm() {
+    let repo = repo_root();
+    let app = repo.join("examples").join("rag_qa_bot");
+
+    for suite in ["unit.cor", "integration.cor"] {
+        let out = Command::new(corvid_bin())
+            .arg("test")
+            .arg(app.join("tests").join(suite))
+            .env("CORVID_TEST_MOCK_TOOLS", RAG_QA_MOCK_TOOLS)
+            .env("CORVID_TEST_MOCK_LLM", "1")
+            .env("CORVID_TEST_MOCK_LLM_RESPONSE", RAG_QA_MOCK_CONTEXT)
+            .current_dir(&repo)
+            .output()
+            .unwrap_or_else(|err| panic!("run rag qa test {suite}: {err}"));
+        assert!(
+            out.status.success(),
+            "{suite} failed:\nstdout={}\nstderr={}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("1 passed, 0 failed"), "{stdout}");
+    }
+}
+
+#[test]
+fn rag_qa_bot_rejects_fabricated_grounded_answer() {
+    let repo = repo_root();
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let bad_source = tmp.path().join("fabricated_rag_answer.cor");
+    std::fs::write(
+        &bad_source,
+        r#"
+effect llm:
+    cost: $0.01
+
+prompt answer_from_memory(question: String) -> String uses llm:
+    "Answer without retrieved context: {question}"
+
+agent answer(question: String) -> Grounded<String>:
+    return answer_from_memory(question)
+"#,
+    )
+    .expect("write adversarial source");
+    let out = Command::new(corvid_bin())
+        .arg("check")
+        .arg(&bad_source)
+        .current_dir(repo)
+        .output()
+        .expect("run corvid check on adversarial rag source");
+    assert!(
+        !out.status.success(),
+        "fabricated grounded answer should fail:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("ungrounded return"), "{stderr}");
+    assert!(stderr.contains("return value lacks a proven grounded source"), "{stderr}");
 }
