@@ -1,0 +1,21 @@
+import "../src/main" use mock_review_session_surface, replay_review_session_surface, real_review_session_surface
+
+agent same_review_surface() -> Bool:
+    mock_result = mock_review_session_surface()
+    replay_result = replay_review_session_surface()
+    real_result = real_review_session_surface()
+
+    repo_matches = mock_result.repo == replay_result.repo and replay_result.repo == real_result.repo
+    number_matches = mock_result.pull_number == replay_result.pull_number and replay_result.pull_number == real_result.pull_number
+    sha_matches = mock_result.base_sha == replay_result.base_sha and replay_result.base_sha == real_result.base_sha and mock_result.head_sha == replay_result.head_sha and replay_result.head_sha == real_result.head_sha
+    count_matches = mock_result.finding_count == replay_result.finding_count and replay_result.finding_count == real_result.finding_count
+    posted_matches = mock_result.posted == replay_result.posted and replay_result.posted == real_result.posted
+    comment_path_matches = mock_result.comment.path == replay_result.comment.path and replay_result.comment.path == real_result.comment.path
+    comment_line_matches = mock_result.comment.line == replay_result.comment.line and replay_result.comment.line == real_result.comment.line
+    comment_policy_matches = mock_result.comment.severity == replay_result.comment.severity and replay_result.comment.severity == real_result.comment.severity and mock_result.comment.checklist_id == replay_result.comment.checklist_id and replay_result.comment.checklist_id == real_result.comment.checklist_id
+    comment_body_matches = mock_result.comment.body == replay_result.comment.body and replay_result.comment.body == real_result.comment.body
+    seed_matches = mock_result.repo == "Corvid-lang/Corvid-lang" and mock_result.pull_number == 418 and mock_result.comment.checklist_id == "approval-boundary" and mock_result.posted == false
+    return repo_matches and number_matches and sha_matches and count_matches and posted_matches and comment_path_matches and comment_line_matches and comment_policy_matches and comment_body_matches and seed_matches
+
+test code_review_agent_replay_invariant:
+    assert same_review_surface()
