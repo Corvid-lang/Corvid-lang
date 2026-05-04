@@ -1,0 +1,55 @@
+model openai_fast:
+    capability: standard
+    privacy_tier: hosted
+
+model anthropic_deep:
+    capability: expert
+    privacy_tier: hosted
+
+model ollama_local:
+    capability: standard
+    privacy_tier: local
+
+effect routed_chat_call:
+    cost: $0.004
+
+public type RoutedChatTurn:
+    policy: String
+    selected_provider: String
+    selected_model: String
+    question: String
+    answer: String
+
+prompt answer_with_policy(policy: String, question: String) -> String uses routed_chat_call:
+    route:
+        policy == "private" -> ollama_local
+        policy == "deep" -> anthropic_deep
+        _ -> openai_fast
+    """
+    Answer this provider-routing demo prompt in one short sentence.
+    Routing policy: {policy}
+    Question: {question}
+    """
+
+public agent selected_provider(policy: String) -> String:
+    if policy == "private":
+        return "ollama"
+    if policy == "deep":
+        return "anthropic"
+    return "openai"
+
+public agent selected_model(policy: String) -> String:
+    if policy == "private":
+        return "ollama_local"
+    if policy == "deep":
+        return "anthropic_deep"
+    return "openai_fast"
+
+@budget($0.01)
+agent chat(policy: String, question: String) -> RoutedChatTurn:
+    answer = answer_with_policy(policy, question)
+    return RoutedChatTurn(policy, selected_provider(policy), selected_model(policy), question, answer)
+
+public agent main() -> String:
+    turn = chat("standard", "How does Corvid choose between model providers?")
+    return turn.answer

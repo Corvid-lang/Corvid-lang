@@ -1,0 +1,40 @@
+[package]
+name = "provider_routing_demo"
+version = "0.1.0"
+description = "Provider-neutral routing demo across OpenAI, Anthropic, and Ollama"
+
+[run]
+target = "interpreter"
+
+[llm.models.openai_fast]
+provider = "openai"
+capability = "standard"
+version = "gpt-4.1-mini"
+privacy_tier = "hosted"
+latency_tier = "low"
+context_window = 128000
+structured_output = true
+cost_per_token_in = "$0.0000004"
+cost_per_token_out = "$0.0000016"
+
+[llm.models.anthropic_deep]
+provider = "anthropic"
+capability = "expert"
+version = "claude-3-7-sonnet"
+privacy_tier = "hosted"
+latency_tier = "normal"
+context_window = 200000
+structured_output = true
+cost_per_token_in = "$0.000003"
+cost_per_token_out = "$0.000015"
+
+[llm.models.ollama_local]
+provider = "ollama"
+capability = "standard"
+version = "llama3.2"
+privacy_tier = "local"
+latency_tier = "local"
+context_window = 8192
+structured_output = true
+cost_per_token_in = "$0"
+cost_per_token_out = "$0"
