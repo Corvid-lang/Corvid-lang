@@ -1,0 +1,35 @@
+# Reference refund bot demo.
+#
+# The runnable `main` agent is intentionally offline so `corvid run`
+# works on a clean clone. The approval-gated `approve_refund` contract
+# below is the safety surface exercised by the demo tests.
+
+effect transfer_money:
+    cost: $0.05
+    trust: human_required
+    reversible: false
+    data: financial
+
+type RefundRequest:
+    order_id: String
+    amount: Float
+    reason: String
+
+type RefundResponse:
+    receipt_id: String
+    status: String
+
+type DemoStatus:
+    app: String
+    contract: String
+
+tool issue_refund(req: RefundRequest) -> String dangerous uses transfer_money
+
+@budget($500.00)
+agent approve_refund(req: RefundRequest) -> RefundResponse uses transfer_money:
+    approve IssueRefund(req)
+    receipt_id = issue_refund(req)
+    return RefundResponse(receipt_id, "approved")
+
+agent main() -> DemoStatus:
+    return DemoStatus("refund_bot", "approval-gated refund")

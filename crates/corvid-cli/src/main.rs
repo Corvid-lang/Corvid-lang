@@ -54,6 +54,7 @@ mod migrate_cmd;
 mod observe_cmd;
 mod observe_helpers_cmd;
 mod package_cmd;
+mod project_source;
 mod receipt_cache;
 mod receipt_cmd;
 mod release_cmd;

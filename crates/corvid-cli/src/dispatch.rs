@@ -49,6 +49,7 @@ use crate::package_cmd::{
     cmd_add_package, cmd_package_metadata, cmd_package_publish, cmd_package_verify_lock,
     cmd_package_verify_registry, cmd_remove_package, cmd_update_package,
 };
+use crate::project_source::resolve_project_source;
 use crate::run_cmd::cmd_run;
 use crate::verify_cmd::cmd_verify;
 use crate::{
@@ -80,21 +81,27 @@ pub(crate) fn run(cli: Cli) -> Result<u8> {
             all_artifacts,
             sign,
             key_id,
-        }) => cmd_build(
-            &file,
-            &target,
-            with_tools_lib.as_deref(),
-            header,
-            abi_descriptor,
-            all_artifacts,
-            sign.as_deref(),
-            key_id.as_deref(),
-        ),
+        }) => {
+            let file = resolve_project_source(file)?;
+            cmd_build(
+                &file,
+                &target,
+                with_tools_lib.as_deref(),
+                header,
+                abi_descriptor,
+                all_artifacts,
+                sign.as_deref(),
+                key_id.as_deref(),
+            )
+        }
         Some(Command::Run {
             file,
             target,
             with_tools_lib,
-        }) => cmd_run(&file, &target, with_tools_lib.as_deref()),
+        }) => {
+            let file = resolve_project_source(file)?;
+            cmd_run(&file, &target, with_tools_lib.as_deref())
+        }
         Some(Command::Test {
             target,
             meta,

@@ -54,7 +54,8 @@ pub enum Command {
     /// `--target=native` emits target/bin/, and `--target=wasm`
     /// emits target/wasm/ with `.wasm`, JS loader, and TypeScript types.
     Build {
-        file: PathBuf,
+        /// Source file. Defaults to `src/main.cor` when run from a Corvid project directory.
+        file: Option<PathBuf>,
         /// Output target. `python` (default), `native`, `server`, `wasm`, `cdylib`, or `staticlib`.
         #[arg(long, default_value = "python")]
         target: String,
@@ -92,7 +93,8 @@ pub enum Command {
     /// boundary; falls back to the interpreter otherwise with a one-line
     /// notice. Override with `--target`.
     Run {
-        file: PathBuf,
+        /// Source file. Defaults to `src/main.cor` when run from a Corvid project directory.
+        file: Option<PathBuf>,
         /// Execution tier. `auto` (default) tries native first, falls
         /// back to interpreter when a feature isn't native-able yet.
         /// `native` requires native and errors out otherwise. `interp`

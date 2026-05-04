@@ -1,0 +1,7 @@
+name = "refund_bot"
+version = "0.1.0"
+
+[demo]
+main = "src/main.cor"
+mode = "mock"
+
