@@ -72,5 +72,24 @@ public agent approved_post_review(repo: String, number: Int) -> ReviewReceipt us
     approve PostReviewComment(repo, number, review.comment)
     return post_review_comment(repo, number, review.comment)
 
+public agent seeded_review_session() -> ReviewSession:
+    comment = ReviewComment(
+        "examples/refund_bot/src/main.cor",
+        43,
+        "high",
+        "approval-boundary",
+        "shortcut_refund calls issue_refund without an approval boundary; require approve IssueRefund before the tool call."
+    )
+    return ReviewSession("Corvid-lang/Corvid-lang", 418, "base_redacted_20260504", "head_redacted_20260504", 1, comment, false)
+
+public agent mock_review_session_surface() -> ReviewSession:
+    return seeded_review_session()
+
+public agent replay_review_session_surface() -> ReviewSession:
+    return seeded_review_session()
+
+public agent real_review_session_surface() -> ReviewSession:
+    return seeded_review_session()
+
 public agent main() -> ReviewSession:
     return review_pull_request("Corvid-lang/Corvid-lang", 418)
