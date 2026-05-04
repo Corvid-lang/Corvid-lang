@@ -4,6 +4,43 @@ Weekly journal. Non-negotiable. Every entry is one commit.
 
 ---
 
+## 2026-05-04 - Slice 42H-code_review_agent hardening
+
+- Added deterministic code review seed data, a mirrored seed replay trace, and
+  explicit mock/replay/real `ReviewSession` entrypoints for the code review
+  app.
+- Added `replay_invariant.cor` plus adversarial fixtures for unapproved comment
+  posting, prompt injection through diffs, token-like data on a write path, and
+  untrusted diff source writes, all rejected with the registered
+  `approval.dangerous_call_requires_token` guarantee id.
+- Documented opt-in GitHub and LLM real-provider mode, the app-specific
+  security model, and the operator runbook; wired the replay invariant and seed
+  replay fixture into `demo-verify`.
+
+Validation:
+- `cargo run -q -p corvid-cli -- build` from `examples/code_review_agent` with
+  mock GitHub and LLM env.
+- `cargo run -q -p corvid-cli -- run` from `examples/code_review_agent` with
+  mock GitHub and LLM env.
+- `cargo run -q -p corvid-cli -- test examples/code_review_agent/tests/unit.cor`
+- `cargo run -q -p corvid-cli -- test examples/code_review_agent/tests/integration.cor`
+- `cargo run -q -p corvid-cli -- test examples/code_review_agent/tests/replay_invariant.cor`
+- `cargo test -p corvid-cli --test demo_project_defaults`
+- `cargo run -q -p corvid-cli -- eval examples/code_review_agent/evals/code_review_agent.cor`
+- `cargo run -q -p corvid-cli -- replay examples/code_review_agent/traces/code_review_agent_review_session.jsonl`
+- `cargo run -q -p corvid-cli -- replay examples/code_review_agent/seed/traces/code_review_agent_review_session.jsonl`
+- `cargo check --workspace`
+- `cargo test -p corvid-cli --lib`
+  (structural baseline: no library targets found in package `corvid-cli`)
+- `cargo test -p corvid-cli --tests`
+  (CLI unit tests pass 282/282; fails only existing `abi_attestation`
+  Windows native linker baseline: `__imp_GetUserNameExW`)
+- `cargo run -q -p corvid-cli -- verify --corpus tests/corpus`
+  (exit 2 with the established Windows `whoami` linker signature)
+- Credential-pattern scan over `examples/code_review_agent`
+
+---
+
 ## 2026-05-04 - Slice 33K provider_routing_demo
 
 - Added `examples/provider_routing_demo` as a one-command multi-provider LLM

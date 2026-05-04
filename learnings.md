@@ -3695,3 +3695,19 @@ Eval assertions may call the default path more than once. For support
 escalation, the eval harness needs queued `lookup_order` and
 `escalate_to_human` mock responses, while build, run, and normal tests can use
 the simpler single-response mock shape.
+
+## code review agent hardening
+
+The credential scan can match documentation that prints the literal scan
+pattern. Use a self-excluding regex in docs, such as `[s]k-|g[h]o_|w[h]sec_`,
+so the command stays useful without making the app fail its own scan.
+
+The code review app's enforceable hardening boundary is the GitHub write
+approval gate. Prompt injection, token-leak, and supply-chain source cases can
+all be represented as unapproved write attempts today; semantic review quality
+needs eval coverage and operator documentation rather than a stronger compiler
+claim.
+
+Mirrored seed traces need their `source_path` adjusted relative to
+`seed/traces/`. For code review replay, `../../src/main.cor` keeps the
+hardening trace runnable without duplicating the program.

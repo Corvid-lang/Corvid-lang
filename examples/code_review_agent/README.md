@@ -35,6 +35,8 @@ ReviewSession(... finding_count: 1 ... checklist_id: "approval-boundary" ... pos
 - `post_review_comment` is dangerous and cannot be called without
   `approve PostReviewComment(...)`.
 - Replay covers the full read plus structured-review path deterministically.
+- The hardening docs under `docs/` spell out real-provider opt-in, the
+  app-specific security model, and the operator runbook.
 
 ## Verify
 
@@ -43,13 +45,16 @@ From the repository root:
 ```sh
 cargo run -q -p corvid-cli -- test examples/code_review_agent/tests/unit.cor
 cargo run -q -p corvid-cli -- test examples/code_review_agent/tests/integration.cor
+cargo run -q -p corvid-cli -- test examples/code_review_agent/tests/replay_invariant.cor
 cargo run -q -p corvid-cli -- eval examples/code_review_agent/evals/code_review_agent.cor
 cargo run -q -p corvid-cli -- replay examples/code_review_agent/traces/code_review_agent_review_session.jsonl
+cargo run -q -p corvid-cli -- replay examples/code_review_agent/seed/traces/code_review_agent_review_session.jsonl
 ```
 
 Set the mock env vars from the setup section before running tests or evals.
 Replay does not need mock env vars because it substitutes the committed trace
-responses.
+responses. The adversarial fixtures under `tests/adversarial/` are checked by
+`cargo test -p corvid-cli --test demo_project_defaults`.
 
 ## How To Modify
 
