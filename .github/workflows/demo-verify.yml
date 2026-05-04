@@ -163,6 +163,7 @@ jobs:
         run: |
           cargo run -q -p corvid-cli -- test examples/provider_routing_demo/tests/unit.cor
           cargo run -q -p corvid-cli -- test examples/provider_routing_demo/tests/integration.cor
+          cargo run -q -p corvid-cli -- test examples/provider_routing_demo/tests/replay_invariant.cor
 
       - name: provider_routing_demo eval
         env:
@@ -175,6 +176,9 @@ jobs:
           cargo run -q -p corvid-cli -- replay examples/provider_routing_demo/traces/provider_routing_demo_openai.jsonl
           cargo run -q -p corvid-cli -- replay examples/provider_routing_demo/traces/provider_routing_demo_ollama.jsonl
           cargo run -q -p corvid-cli -- replay examples/provider_routing_demo/traces/provider_routing_demo_anthropic.jsonl
+          cargo run -q -p corvid-cli -- replay examples/provider_routing_demo/seed/traces/provider_routing_demo_openai.jsonl
+          cargo run -q -p corvid-cli -- replay examples/provider_routing_demo/seed/traces/provider_routing_demo_ollama.jsonl
+          cargo run -q -p corvid-cli -- replay examples/provider_routing_demo/seed/traces/provider_routing_demo_anthropic.jsonl
 
       - name: rag_qa_bot build
         working-directory: examples/rag_qa_bot
