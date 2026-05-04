@@ -1,0 +1,21 @@
+{
+  "schema": "rag-qa-bot-provider-modes-v1",
+  "surface": "RagAnswer",
+  "modes": {
+    "mock": {
+      "tool_env": "CORVID_TEST_MOCK_TOOLS",
+      "llm_env": "CORVID_TEST_MOCK_LLM",
+      "answer": "Refunds over one hundred dollars require approval before money moves."
+    },
+    "replay": {
+      "trace": "seed/traces/rag_qa_bot_refund_policy.jsonl",
+      "answer": "Refunds over one hundred dollars require approval before money moves."
+    },
+    "real": {
+      "opt_in": "CORVID_RUN_REAL=1",
+      "embedder_env": "RAG_EMBEDDER_PROVIDER",
+      "llm_env": "OPENAI_API_KEY or OLLAMA_HOST",
+      "answer_contract": "answers must remain grounded in retrieved chunks"
+    }
+  }
+}

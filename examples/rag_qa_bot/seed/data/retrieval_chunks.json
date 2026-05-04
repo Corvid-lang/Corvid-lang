@@ -1,0 +1,26 @@
+{
+  "schema": "rag-qa-bot-retrieval-chunks-v1",
+  "query": "What must happen before a large refund moves money?",
+  "selected_chunk": {
+    "doc_id": "refund-policy",
+    "chunk_id": "refund-policy:0",
+    "source": "seed/kb/refunds.md",
+    "text": "Refunds over one hundred dollars require approval before money moves.",
+    "provenance_key": "rag_refund_policy_0",
+    "grounded": true
+  },
+  "candidate_chunks": [
+    {
+      "doc_id": "privacy",
+      "chunk_id": "privacy:0",
+      "source": "seed/kb/privacy.md",
+      "provenance_key": "rag_privacy_0"
+    },
+    {
+      "doc_id": "provenance",
+      "chunk_id": "provenance:0",
+      "source": "seed/kb/provenance.md",
+      "provenance_key": "rag_provenance_0"
+    }
+  ]
+}
