@@ -1,0 +1,7 @@
+[package]
+name = "code_review_agent"
+version = "0.1.0"
+description = "One-command code review agent demo with GitHub connector mocks, structured comments, and approval-gated posting."
+
+[run]
+target = "interpreter"
