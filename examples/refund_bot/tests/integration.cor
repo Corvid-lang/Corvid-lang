@@ -1,0 +1,9 @@
+import "../src/main" use DemoStatus, main
+
+agent one_command_flow_returns_status() -> Bool:
+    status = main()
+    return status.app == "refund_bot" and status.contract == "approval-gated refund"
+
+test refund_bot_one_command_flow:
+    assert one_command_flow_returns_status()
+

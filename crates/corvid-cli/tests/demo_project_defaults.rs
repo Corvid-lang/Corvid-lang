@@ -46,3 +46,65 @@ fn build_and_run_default_to_project_main_source() {
     assert!(run_stdout.contains("refund_bot"), "{run_stdout}");
     assert!(run_stdout.contains("approval-gated refund"), "{run_stdout}");
 }
+
+#[test]
+fn refund_bot_corvid_tests_and_unapproved_variant_are_covered() {
+    let repo = repo_root();
+    let app = repo.join("examples").join("refund_bot");
+
+    for suite in ["unit.cor", "integration.cor"] {
+        let out = Command::new(corvid_bin())
+            .arg("test")
+            .arg(app.join("tests").join(suite))
+            .current_dir(&repo)
+            .output()
+            .unwrap_or_else(|err| panic!("run corvid test {suite}: {err}"));
+        assert!(
+            out.status.success(),
+            "{suite} failed:\nstdout={}\nstderr={}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("1 passed, 0 failed"), "{stdout}");
+    }
+
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let bad_source = tmp.path().join("unapproved_refund.cor");
+    std::fs::write(
+        &bad_source,
+        r#"
+effect transfer_money:
+    cost: $0.05
+    trust: human_required
+    reversible: false
+    data: financial
+
+type RefundRequest:
+    order_id: String
+    amount: Float
+    reason: String
+
+tool issue_refund(req: RefundRequest) -> String dangerous uses transfer_money
+
+agent bypass_refund(req: RefundRequest) -> String uses transfer_money:
+    return issue_refund(req)
+"#,
+    )
+    .expect("write adversarial source");
+    let out = Command::new(corvid_bin())
+        .arg("check")
+        .arg(&bad_source)
+        .current_dir(repo)
+        .output()
+        .expect("run corvid check on adversarial source");
+    assert!(
+        !out.status.success(),
+        "unapproved dangerous call should fail:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("dangerous tool `issue_refund`"), "{stderr}");
+    assert!(stderr.contains("approve IssueRefund"), "{stderr}");
+}

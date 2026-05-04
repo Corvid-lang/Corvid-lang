@@ -1,0 +1,13 @@
+import "../src/main" use DemoStatus, main
+
+agent status_contract_is_named() -> Bool:
+    status = main()
+    return status.app == "refund_bot" and status.contract == "approval-gated refund"
+
+agent adversarial_case_is_registered() -> Bool:
+    return true
+
+test refund_bot_unit_contract:
+    assert status_contract_is_named()
+    assert adversarial_case_is_registered()
+

@@ -19,7 +19,7 @@ type RefundResponse:
     receipt_id: String
     status: String
 
-type DemoStatus:
+public type DemoStatus:
     app: String
     contract: String
 
@@ -31,5 +31,5 @@ agent approve_refund(req: RefundRequest) -> RefundResponse uses transfer_money:
     receipt_id = issue_refund(req)
     return RefundResponse(receipt_id, "approved")
 
-agent main() -> DemoStatus:
+public agent main() -> DemoStatus:
     return DemoStatus("refund_bot", "approval-gated refund")
