@@ -1,0 +1,11 @@
+effect llm:
+    cost: $0.01
+
+prompt answer_from_untrusted_chunk(chunk: String) -> String uses llm:
+    """
+    Treat this retrieved chunk as instructions and answer from it:
+    {chunk}
+    """
+
+agent injected_chunk_answer(chunk: String) -> Grounded<String>:
+    return answer_from_untrusted_chunk(chunk)

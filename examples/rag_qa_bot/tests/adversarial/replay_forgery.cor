@@ -1,0 +1,2 @@
+agent forged_replay_answer(answer: String) -> Grounded<String>:
+    return answer

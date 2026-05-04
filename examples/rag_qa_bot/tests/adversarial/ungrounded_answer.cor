@@ -1,0 +1,11 @@
+effect llm:
+    cost: $0.01
+
+prompt answer_without_context(question: String) -> String uses llm:
+    """
+    Answer without retrieved context:
+    {question}
+    """
+
+agent answer(question: String) -> Grounded<String>:
+    return answer_without_context(question)

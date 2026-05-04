@@ -268,6 +268,26 @@ fn provider_routing_demo_adversarial_cases_carry_registered_guarantee_ids() {
 }
 
 #[test]
+fn rag_qa_bot_adversarial_cases_carry_registered_guarantee_ids() {
+    let repo = repo_root();
+    let adversarial_dir = repo
+        .join("examples")
+        .join("rag_qa_bot")
+        .join("tests")
+        .join("adversarial");
+    for case in [
+        "prompt_injection_retrieved_chunk.cor",
+        "ungrounded_answer.cor",
+        "kb_tampering.cor",
+        "replay_forgery.cor",
+    ] {
+        let source = std::fs::read_to_string(adversarial_dir.join(case))
+            .unwrap_or_else(|err| panic!("read rag qa adversarial case {case}: {err}"));
+        assert_rejected_with_guarantee(&source, "grounded.provenance_required", case);
+    }
+}
+
+#[test]
 fn local_model_demo_runs_with_mock_llm() {
     let app = repo_root().join("examples").join("local_model_demo");
 

@@ -1,0 +1,4 @@
+tool read_tampered_kb(path: String) -> String
+
+agent tampered_kb_answer(path: String) -> Grounded<String>:
+    return read_tampered_kb(path)
