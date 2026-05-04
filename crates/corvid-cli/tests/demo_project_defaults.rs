@@ -248,3 +248,32 @@ fn local_model_demo_eval_harness_passes_with_mock_llm() {
     assert!(stdout.contains("local_model_demo_contract_eval"), "{stdout}");
     assert!(stdout.contains("1 passed, 0 failed"), "{stdout}");
 }
+
+#[test]
+fn local_model_demo_replay_fixture_is_deterministic() {
+    let repo = repo_root();
+    let trace = repo
+        .join("examples")
+        .join("local_model_demo")
+        .join("traces")
+        .join("local_model_demo_mock_chat.jsonl");
+    let out = Command::new(corvid_bin())
+        .arg("replay")
+        .arg(trace)
+        .current_dir(repo)
+        .output()
+        .expect("run local model replay");
+    assert!(
+        out.status.success(),
+        "local model replay failed:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("trace loaded"), "{stdout}");
+    assert!(stdout.contains("replay completed"), "{stdout}");
+    assert!(
+        stdout.contains("provider-neutral local inference with deterministic replay."),
+        "{stdout}"
+    );
+}
