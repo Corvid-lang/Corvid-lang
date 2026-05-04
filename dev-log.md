@@ -4,6 +4,25 @@ Weekly journal. Non-negotiable. Every entry is one commit.
 
 ---
 
+## 2026-05-04 - Close 42H reference app hardening
+
+- Closed the reference app hardening pass for all six reference apps:
+  `refund_bot`, `local_model_demo`, `provider_routing_demo`, `rag_qa_bot`,
+  `support_escalation_bot`, and `code_review_agent`.
+- Each app now has deterministic seed data, mock/replay/real typed surfaces,
+  replay invariant coverage, adversarial fixtures with registered guarantee
+  ids, real-provider docs, a security model, and an operator runbook.
+- Marked `42H-reference-app-hardening` complete in `ROADMAP.md`.
+
+Validation:
+- Per-app build, run, test, eval, replay, seed replay, adversarial, workspace,
+  baseline, and credential-scan gates were run and recorded on each app
+  hardening commit.
+- Final closeout uses the pushed per-app validation history; no runtime surface
+  changed in this summary commit.
+
+---
+
 ## 2026-05-04 - Slice 42H-code_review_agent hardening
 
 - Added deterministic code review seed data, a mirrored seed replay trace, and

@@ -3711,3 +3711,16 @@ claim.
 Mirrored seed traces need their `source_path` adjusted relative to
 `seed/traces/`. For code review replay, `../../src/main.cor` keeps the
 hardening trace runnable without duplicating the program.
+
+## 42H reference app hardening
+
+The reusable mock pattern across the hardening pass is not a new connector
+trait. Each app exposes one small typed result surface in Corvid and lets mock,
+replay, and real modes converge on that shape. That kept replay invariant tests
+simple and avoided app-specific connector forks.
+
+Most app threat models collapsed to one of three enforceable classes: dangerous
+write requires approval, typed provenance must not be fabricated, and replay
+fixtures must stay deterministic and redacted. Anything beyond those classes
+belongs in evals, provider docs, or operator runbooks unless the compiler has a
+registered guarantee for it.

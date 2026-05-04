@@ -2424,7 +2424,7 @@ corvid connectors verify-webhook --sig=<...>
 - [x] 42E-finance-operations-agent   Finance Operations Agent backend ships read-only aggregation, reminders, anomaly detection, approval-gated payment intents, audit trail, and regulated-advice non-scope.
 - [x] 42F-support-operations-agent   Support Agent backend ships ticket triage, suggested replies, policy-grounded answers, refund/escalation approvals, SLA jobs, and eval dashboard.
 - [x] 42G-code-maintenance-agent     Code Maintenance Agent backend ships repo ingestion, issue triage, review comments, patch proposals, CI-aware risk labels, and approval-gated writes.
-- [ ] 42H-reference-app-hardening    Every app gets seed data, mock connector mode, replay tests, adversarial tests, real-provider env docs, security model, and operator runbook.
+- [x] 42H-reference-app-hardening    Every app gets seed data, mock connector mode, replay tests, adversarial tests, real-provider env docs, security model, and operator runbook.
 - [ ] 42I-external-developer-trial   At least one external developer runs a reference app locally and files feedback before Phase 43.
 
 **Done when:** external developers can clone the repo, run at least one full production-shaped backend app locally, inspect its approvals/traces/evals, and deploy it without writing a second backend in another language.
