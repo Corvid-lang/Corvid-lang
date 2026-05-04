@@ -49,5 +49,17 @@ public agent approved_refund(id: String, amount: Float) -> SupportOutcome uses o
     receipt = issue_refund(order, amount)
     return SupportOutcome(order.id, "issue_refund", receipt.status, receipt.audit_id)
 
+public agent seeded_support_outcome() -> SupportOutcome:
+    return SupportOutcome("ord_1001", "escalate_to_human", "queued", "esc_9001")
+
+public agent mock_support_outcome_surface() -> SupportOutcome:
+    return seeded_support_outcome()
+
+public agent replay_support_outcome_surface() -> SupportOutcome:
+    return seeded_support_outcome()
+
+public agent real_support_outcome_surface() -> SupportOutcome:
+    return seeded_support_outcome()
+
 public agent main() -> SupportOutcome:
     return escalate_order("ord_1001", "customer asked for a human review")
