@@ -3561,3 +3561,10 @@ recording environment. The captured local-model trace included
 plain replay substituted responses with no default model configured. Normalizing
 that field to `null` kept replay deterministic while the model identity stayed
 covered by tests and real-provider docs.
+
+Provider-routing replay keeps the selected model name but not the catalog-only
+model version on the substitution events. `provider_routing_demo` showed that
+plain replay compiles the source with the default replay runtime, which does not
+load the demo's `corvid.toml` model catalog. The route still selects
+`openai_fast`, `ollama_local`, or `anthropic_deep`, but `model_version` must be
+`null` on `llm_call` and `llm_result` for byte-strict substitution to match.

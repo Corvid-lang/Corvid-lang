@@ -140,3 +140,34 @@ jobs:
 
       - name: local_model_demo replay
         run: cargo run -q -p corvid-cli -- replay examples/local_model_demo/traces/local_model_demo_mock_chat.jsonl
+
+      - name: provider_routing_demo build
+        working-directory: examples/provider_routing_demo
+        run: cargo run -q -p corvid-cli -- build
+
+      - name: provider_routing_demo run
+        working-directory: examples/provider_routing_demo
+        env:
+          CORVID_TEST_MOCK_LLM: "1"
+          CORVID_TEST_MOCK_LLM_RESPONSE: provider routing selected the expected mocked response.
+        run: cargo run -q -p corvid-cli -- run
+
+      - name: provider_routing_demo tests
+        env:
+          CORVID_TEST_MOCK_LLM: "1"
+          CORVID_TEST_MOCK_LLM_RESPONSE: provider routing selected the expected mocked response.
+        run: |
+          cargo run -q -p corvid-cli -- test examples/provider_routing_demo/tests/unit.cor
+          cargo run -q -p corvid-cli -- test examples/provider_routing_demo/tests/integration.cor
+
+      - name: provider_routing_demo eval
+        env:
+          CORVID_TEST_MOCK_LLM: "1"
+          CORVID_TEST_MOCK_LLM_RESPONSE: provider routing selected the expected mocked response.
+        run: cargo run -q -p corvid-cli -- eval examples/provider_routing_demo/evals/provider_routing_demo.cor
+
+      - name: provider_routing_demo replay
+        run: |
+          cargo run -q -p corvid-cli -- replay examples/provider_routing_demo/traces/provider_routing_demo_openai.jsonl
+          cargo run -q -p corvid-cli -- replay examples/provider_routing_demo/traces/provider_routing_demo_ollama.jsonl
+          cargo run -q -p corvid-cli -- replay examples/provider_routing_demo/traces/provider_routing_demo_anthropic.jsonl

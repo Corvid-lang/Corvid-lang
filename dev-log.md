@@ -4,6 +4,33 @@ Weekly journal. Non-negotiable. Every entry is one commit.
 
 ---
 
+## 2026-05-04 - Slice 33K provider_routing_demo
+
+- Added `examples/provider_routing_demo` as a one-command multi-provider LLM
+  routing demo across OpenAI, Anthropic, and Ollama.
+- Added Corvid unit and integration tests, a source eval harness, deterministic
+  seed prompts, and provider-specific replay fixtures for every route.
+- Documented setup, modification guidance, benchmark notes, and real-provider
+  environment variables, then wired the demo verification workflow to build,
+  run, test, eval, and replay the provider routing demo.
+
+Validation:
+- `cargo run -q -p corvid-cli -- build` from `examples/provider_routing_demo`
+- `cargo run -q -p corvid-cli -- run` from `examples/provider_routing_demo`
+  with `CORVID_TEST_MOCK_LLM=1`
+- `cargo run -q -p corvid-cli -- test examples/provider_routing_demo/tests/unit.cor`
+- `cargo run -q -p corvid-cli -- test examples/provider_routing_demo/tests/integration.cor`
+- `cargo run -q -p corvid-cli -- eval examples/provider_routing_demo/evals/provider_routing_demo.cor`
+- `cargo run -q -p corvid-cli -- replay examples/provider_routing_demo/traces/provider_routing_demo_openai.jsonl`
+- `cargo run -q -p corvid-cli -- replay examples/provider_routing_demo/traces/provider_routing_demo_ollama.jsonl`
+- `cargo run -q -p corvid-cli -- replay examples/provider_routing_demo/traces/provider_routing_demo_anthropic.jsonl`
+- `cargo test -p corvid-cli --test demo_project_defaults`
+- `cargo check --workspace`
+- `cargo run -q -p corvid-cli -- verify --corpus tests/corpus`
+  (exit 2 with the established Windows `whoami` linker signature)
+
+---
+
 ## 2026-05-04 - Slice 33K local_model_demo
 
 - Added `examples/local_model_demo` as a one-command local LLM demo project.
