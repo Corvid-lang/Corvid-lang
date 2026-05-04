@@ -230,6 +230,7 @@ jobs:
         run: |
           cargo run -q -p corvid-cli -- test examples/support_escalation_bot/tests/unit.cor
           cargo run -q -p corvid-cli -- test examples/support_escalation_bot/tests/integration.cor
+          cargo run -q -p corvid-cli -- test examples/support_escalation_bot/tests/replay_invariant.cor
 
       - name: support_escalation_bot eval
         env:
@@ -245,6 +246,14 @@ jobs:
             exit 1
           else
             echo "approval-denied replay preserved denial"
+          fi
+          cargo run -q -p corvid-cli -- replay examples/support_escalation_bot/seed/traces/support_escalation_bot_escalation.jsonl
+          cargo run -q -p corvid-cli -- replay examples/support_escalation_bot/seed/traces/support_escalation_bot_approved_refund.jsonl
+          if cargo run -q -p corvid-cli -- replay examples/support_escalation_bot/seed/traces/support_escalation_bot_approval_denied.jsonl; then
+            echo "seed approval-denied replay unexpectedly succeeded"
+            exit 1
+          else
+            echo "seed approval-denied replay preserved denial"
           fi
 
       - name: code_review_agent build
