@@ -109,3 +109,34 @@ jobs:
 
       - name: refund_bot replay
         run: cargo run -q -p corvid-cli -- replay examples/refund_bot/traces/refund_bot_approval_gate.jsonl
+
+      - name: local_model_demo build
+        working-directory: examples/local_model_demo
+        run: cargo run -q -p corvid-cli -- build
+
+      - name: local_model_demo run
+        working-directory: examples/local_model_demo
+        env:
+          CORVID_TEST_MOCK_LLM: "1"
+          CORVID_TEST_MOCK_LLM_RESPONSE: provider-neutral local inference with deterministic replay.
+          CORVID_MODEL: ollama:llama3.2
+        run: cargo run -q -p corvid-cli -- run
+
+      - name: local_model_demo tests
+        env:
+          CORVID_TEST_MOCK_LLM: "1"
+          CORVID_TEST_MOCK_LLM_RESPONSE: provider-neutral local inference with deterministic replay.
+          CORVID_MODEL: ollama:llama3.2
+        run: |
+          cargo run -q -p corvid-cli -- test examples/local_model_demo/tests/unit.cor
+          cargo run -q -p corvid-cli -- test examples/local_model_demo/tests/integration.cor
+
+      - name: local_model_demo eval
+        env:
+          CORVID_TEST_MOCK_LLM: "1"
+          CORVID_TEST_MOCK_LLM_RESPONSE: provider-neutral local inference with deterministic replay.
+          CORVID_MODEL: ollama:llama3.2
+        run: cargo run -q -p corvid-cli -- eval examples/local_model_demo/evals/local_model_demo.cor
+
+      - name: local_model_demo replay
+        run: cargo run -q -p corvid-cli -- replay examples/local_model_demo/traces/local_model_demo_mock_chat.jsonl

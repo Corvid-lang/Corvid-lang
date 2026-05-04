@@ -4,6 +4,33 @@ Weekly journal. Non-negotiable. Every entry is one commit.
 
 ---
 
+## 2026-05-04 - Slice 33K local_model_demo
+
+- Added `examples/local_model_demo` as a one-command local LLM demo project.
+- Wired `corvid run`, `corvid test`, and `corvid eval` to consume the shared
+  env mock/provider runtime surface so the same Corvid program can run under
+  mock, replay, or real Ollama configuration.
+- Added unit, integration, eval, seed, and replay artifacts. The replay fixture
+  is redaction-checked and deterministic without live provider credentials.
+- Documented setup, modification guidance, benchmark notes, and real-provider
+  environment variables, then wired the demo verification workflow to build,
+  run, test, eval, and replay the local model demo.
+
+Validation:
+- `cargo run -q -p corvid-cli -- build` from `examples/local_model_demo`
+- `cargo run -q -p corvid-cli -- run` from `examples/local_model_demo` with
+  `CORVID_TEST_MOCK_LLM=1`
+- `cargo run -q -p corvid-cli -- test examples/local_model_demo/tests/unit.cor`
+- `cargo run -q -p corvid-cli -- test examples/local_model_demo/tests/integration.cor`
+- `cargo run -q -p corvid-cli -- eval examples/local_model_demo/evals/local_model_demo.cor`
+- `cargo run -q -p corvid-cli -- replay examples/local_model_demo/traces/local_model_demo_mock_chat.jsonl`
+- `cargo test -p corvid-cli --test demo_project_defaults`
+- `cargo check --workspace`
+- `cargo run -q -p corvid-cli -- verify --corpus tests/corpus`
+  (exit 2 with the established Windows `whoami` linker signature)
+
+---
+
 ## 2026-05-04 - Slice 33K refund_bot wrapper
 
 - Added `examples/refund_bot` as a one-command Corvid demo project for the

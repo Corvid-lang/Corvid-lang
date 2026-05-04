@@ -3547,3 +3547,17 @@ Keep the demo fixture boring and deterministic: a seed JSON file, a source eval
 that asserts the visible contract, and a replay trace with only schema, seed,
 run-started, and run-completed events were enough to prove the approval-gated
 moat without inventing a mock provider surface that this app does not need.
+
+For LLM-backed demos, wire every CLI execution surface that can call prompts to
+the same provider runtime. `local_model_demo` exposed that `corvid run` already
+had env mock plus provider adapters, while `corvid test` and `corvid eval` still
+used bare runtimes. Once those shared the same mock surface, the Corvid tests,
+eval harness, and one-command run all exercised the same typed program without
+requiring a live Ollama process.
+
+Plain replay fixtures need to match the no-env replay runtime, not just the
+recording environment. The captured local-model trace included
+`model="ollama:llama3.2"` because `CORVID_MODEL` was set during recording, but
+plain replay substituted responses with no default model configured. Normalizing
+that field to `null` kept replay deterministic while the model identity stayed
+covered by tests and real-provider docs.
