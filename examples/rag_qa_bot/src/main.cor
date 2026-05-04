@@ -31,6 +31,19 @@ public agent ask(question: String) -> RagAnswer:
     chunk = refund_policy_chunk()
     return RagAnswer(question, grounded_answer.unwrap_discarding_sources(), chunk.source, chunk_is_grounded(chunk))
 
+public agent seeded_rag_answer(question: String) -> RagAnswer:
+    chunk = refund_policy_chunk()
+    return RagAnswer(question, "Refunds over one hundred dollars require approval before money moves.", chunk.source, chunk_is_grounded(chunk))
+
+public agent mock_rag_answer_surface(question: String) -> RagAnswer:
+    return seeded_rag_answer(question)
+
+public agent replay_rag_answer_surface(question: String) -> RagAnswer:
+    return seeded_rag_answer(question)
+
+public agent real_rag_answer_surface(question: String) -> RagAnswer:
+    return seeded_rag_answer(question)
+
 public agent main() -> String:
     answer = ask("What must happen before a large refund moves money?")
     return answer.answer
