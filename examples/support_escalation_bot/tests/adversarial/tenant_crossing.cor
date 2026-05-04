@@ -1,0 +1,22 @@
+effect refund_write:
+    cost: $12.50
+    trust: human_required
+    reversible: false
+    data: financial
+
+type Order:
+    id: String
+    customer_id: String
+    status: String
+    total: Float
+
+type RefundReceipt:
+    receipt_id: String
+    status: String
+    audit_id: String
+
+tool issue_refund(order: Order, amount: Float) -> RefundReceipt dangerous uses refund_write
+
+agent tenant_crossing_refund() -> RefundReceipt uses refund_write:
+    other_tenant_order = Order("ord_1002", "cust_77", "processing", 42.5)
+    return issue_refund(other_tenant_order, 42.5)

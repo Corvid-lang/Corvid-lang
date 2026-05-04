@@ -773,6 +773,27 @@ agent bypass_refund(order: Order) -> RefundReceipt uses refund_write:
 }
 
 #[test]
+fn support_escalation_bot_adversarial_cases_carry_registered_guarantee_ids() {
+    let repo = repo_root();
+    let adversarial_dir = repo
+        .join("examples")
+        .join("support_escalation_bot")
+        .join("tests")
+        .join("adversarial");
+    for case in [
+        "auth_bypass.cor",
+        "scope_escalation.cor",
+        "replay_forgery.cor",
+        "prompt_injection_support_reason.cor",
+        "tenant_crossing.cor",
+    ] {
+        let source = std::fs::read_to_string(adversarial_dir.join(case))
+            .unwrap_or_else(|err| panic!("read support escalation adversarial case {case}: {err}"));
+        assert_rejected_with_guarantee(&source, "approval.dangerous_call_requires_token", case);
+    }
+}
+
+#[test]
 fn support_escalation_bot_replay_fixtures_are_deterministic() {
     let repo = repo_root();
     let trace_dir = repo

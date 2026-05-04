@@ -1,0 +1,23 @@
+effect refund_write:
+    cost: $12.50
+    trust: human_required
+    reversible: false
+    data: financial
+
+type Order:
+    id: String
+    customer_id: String
+    status: String
+    total: Float
+
+type RefundReceipt:
+    receipt_id: String
+    status: String
+    audit_id: String
+
+tool issue_refund(order: Order, amount: Float) -> RefundReceipt dangerous uses refund_write
+
+agent replay_forges_refund(order: Order) -> RefundReceipt uses refund_write:
+    replay_audit_id = "audit_refund_7001"
+    receipt = issue_refund(order, order.total)
+    return RefundReceipt(receipt.receipt_id, receipt.status, replay_audit_id)
