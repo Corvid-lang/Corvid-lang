@@ -1,0 +1,29 @@
+import "../src/main" use mock_provider_route_surface, replay_provider_route_surface, real_provider_route_surface
+
+agent same_surface(policy: String, question: String) -> Bool:
+    mock_result = mock_provider_route_surface(policy, question)
+    replay_result = replay_provider_route_surface(policy, question)
+    real_result = real_provider_route_surface(policy, question)
+
+    policy_matches = mock_result.policy == replay_result.policy and replay_result.policy == real_result.policy
+    provider_matches = mock_result.selected_provider == replay_result.selected_provider and replay_result.selected_provider == real_result.selected_provider
+    model_matches = mock_result.selected_model == replay_result.selected_model and replay_result.selected_model == real_result.selected_model
+    question_matches = mock_result.question == replay_result.question and replay_result.question == real_result.question
+    answer_matches = mock_result.answer == replay_result.answer and replay_result.answer == real_result.answer
+    return policy_matches and provider_matches and model_matches and question_matches and answer_matches
+
+agent provider_swap_safety() -> Bool:
+    private_turn = mock_provider_route_surface("private", "Which provider should handle a private local question?")
+    deep_turn = mock_provider_route_surface("deep", "Which provider should handle a hard reasoning question?")
+    standard_turn = mock_provider_route_surface("standard", "How does Corvid choose between model providers?")
+
+    private_is_local = private_turn.selected_provider == "ollama" and private_turn.selected_model == "ollama_local"
+    deep_is_anthropic = deep_turn.selected_provider == "anthropic" and deep_turn.selected_model == "anthropic_deep"
+    standard_is_openai = standard_turn.selected_provider == "openai" and standard_turn.selected_model == "openai_fast"
+    return private_is_local and deep_is_anthropic and standard_is_openai
+
+test provider_routing_demo_replay_invariant:
+    standard_matches = same_surface("standard", "How does Corvid choose between model providers?")
+    private_matches = same_surface("private", "Which provider should handle a private local question?")
+    deep_matches = same_surface("deep", "Which provider should handle a hard reasoning question?")
+    assert standard_matches and private_matches and deep_matches and provider_swap_safety()
