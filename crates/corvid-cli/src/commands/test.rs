@@ -18,17 +18,18 @@
 //! All actual work happens in `corvid_driver`; this module
 //! owns only the CLI shape + report rendering.
 
+use crate::cost_frontier::{
+    build_frontier, render_frontier as render_cost_frontier, CostFrontierOptions,
+};
 use anyhow::{Context, Result};
 use corvid_driver::{
     build_spec_site, file_github_issues_for_escapes, inspect_import_semantics,
     load_corvid_config_with_path_for, load_dotenv_walking, render_adversarial_report,
     render_dimension_verification_report, render_import_semantic_summaries, render_spec_report,
-    render_spec_site_report, render_test_report, run_adversarial_suite,
-    run_dimension_verification, run_tests_at_path_with_options, test_options,
-    verify_spec_examples, VerdictKind, DEFAULT_SAMPLES,
-};
-use crate::cost_frontier::{
-    build_frontier, render_frontier as render_cost_frontier, CostFrontierOptions,
+    render_spec_site_report, render_test_report, run_adversarial_suite, run_dimension_verification,
+    run_tests_at_path_with_options, test_options, verify_spec_examples, AnthropicAdapter,
+    EnvVarMockAdapter, OllamaAdapter, OpenAiAdapter, Runtime, StdinApprover, Tracer, VerdictKind,
+    DEFAULT_SAMPLES,
 };
 use std::path::{Path, PathBuf};
 
@@ -70,7 +71,7 @@ pub(crate) fn cmd_test(
 pub(crate) fn cmd_test_file(path: &Path, update_snapshots: bool) -> Result<u8> {
     let dotenv_start = path.parent().unwrap_or_else(|| Path::new("."));
     load_dotenv_walking(dotenv_start);
-    let runtime = corvid_driver::Runtime::builder().build();
+    let runtime = cli_test_runtime(path);
     let source = std::fs::read_to_string(path).ok();
     let tokio = tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -85,6 +86,33 @@ pub(crate) fn cmd_test_file(path: &Path, update_snapshots: bool) -> Result<u8> {
         .map_err(anyhow::Error::new)?;
     print!("{}", render_test_report(&report, source.as_deref()));
     Ok(report.exit_code())
+}
+
+fn cli_test_runtime(path: &Path) -> Runtime {
+    let trace_dir = path
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .join("target")
+        .join("trace");
+    let mut builder = Runtime::builder()
+        .approver(std::sync::Arc::new(StdinApprover::new()))
+        .tracer(Tracer::open(&trace_dir, corvid_driver::fresh_run_id()));
+
+    if let Ok(model) = std::env::var("CORVID_MODEL") {
+        builder = builder.default_model(&model);
+    }
+    if std::env::var("CORVID_TEST_MOCK_LLM").ok().as_deref() == Some("1") {
+        builder = builder.llm(std::sync::Arc::new(EnvVarMockAdapter::from_env()));
+    }
+    if let Ok(key) = std::env::var("ANTHROPIC_API_KEY") {
+        builder = builder.llm(std::sync::Arc::new(AnthropicAdapter::new(key)));
+    }
+    if let Ok(key) = std::env::var("OPENAI_API_KEY") {
+        builder = builder.llm(std::sync::Arc::new(OpenAiAdapter::new(key)));
+    }
+    builder
+        .llm(std::sync::Arc::new(OllamaAdapter::new()))
+        .build()
 }
 
 pub(crate) fn cmd_cost_frontier(

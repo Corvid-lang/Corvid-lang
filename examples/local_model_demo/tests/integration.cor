@@ -1,0 +1,8 @@
+import "../src/main" use main
+
+agent one_command_flow_returns_mocked_answer() -> Bool:
+    answer = main()
+    return answer == "provider-neutral local inference with deterministic replay."
+
+test local_model_demo_one_command_flow:
+    assert one_command_flow_returns_mocked_answer()

@@ -1,4 +1,4 @@
-type LocalChatTurn:
+public type LocalChatTurn:
     provider: String
     model_id: String
     question: String
@@ -10,7 +10,7 @@ prompt ask_local_model(question: String) -> String:
     {question}
     """
 
-agent chat(question: String) -> LocalChatTurn:
+public agent chat(question: String) -> LocalChatTurn:
     answer = ask_local_model(question)
     return LocalChatTurn("ollama", "ollama:llama3.2", question, answer)
 

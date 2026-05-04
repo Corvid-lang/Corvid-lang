@@ -160,3 +160,60 @@ fn refund_bot_replay_fixture_is_deterministic() {
     assert!(stdout.contains("refund_bot"), "{stdout}");
     assert!(stdout.contains("approval-gated refund"), "{stdout}");
 }
+
+#[test]
+fn local_model_demo_runs_with_mock_llm() {
+    let app = repo_root().join("examples").join("local_model_demo");
+
+    let out = Command::new(corvid_bin())
+        .arg("run")
+        .env("CORVID_TEST_MOCK_LLM", "1")
+        .env(
+            "CORVID_TEST_MOCK_LLM_RESPONSE",
+            "provider-neutral local inference with deterministic replay.",
+        )
+        .env("CORVID_MODEL", "ollama:llama3.2")
+        .current_dir(&app)
+        .output()
+        .expect("run local model demo");
+    assert!(
+        out.status.success(),
+        "local model demo failed:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("provider-neutral local inference with deterministic replay."),
+        "{stdout}"
+    );
+}
+
+#[test]
+fn local_model_demo_corvid_tests_pass_with_mock_llm() {
+    let repo = repo_root();
+    let app = repo.join("examples").join("local_model_demo");
+
+    for suite in ["unit.cor", "integration.cor"] {
+        let out = Command::new(corvid_bin())
+            .arg("test")
+            .arg(app.join("tests").join(suite))
+            .env("CORVID_TEST_MOCK_LLM", "1")
+            .env(
+                "CORVID_TEST_MOCK_LLM_RESPONSE",
+                "provider-neutral local inference with deterministic replay.",
+            )
+            .env("CORVID_MODEL", "ollama:llama3.2")
+            .current_dir(&repo)
+            .output()
+            .unwrap_or_else(|err| panic!("run local model test {suite}: {err}"));
+        assert!(
+            out.status.success(),
+            "{suite} failed:\nstdout={}\nstderr={}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("1 passed, 0 failed"), "{stdout}");
+    }
+}

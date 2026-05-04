@@ -81,8 +81,8 @@ pub use spec_site::{
 // runner binaries, embedding hosts) only need to depend on the driver.
 pub use corvid_runtime::{
     fresh_run_id, load_dotenv_walking, AnthropicAdapter, ApprovalDecision, ApprovalRequest,
-    Approver, MockAdapter, OpenAiAdapter, ProgrammaticApprover, RedactionSet, Runtime,
-    RuntimeBuilder, RuntimeError, StdinApprover, Tracer,
+    Approver, EnvVarMockAdapter, MockAdapter, OllamaAdapter, OpenAiAdapter, ProgrammaticApprover,
+    RedactionSet, Runtime, RuntimeBuilder, RuntimeError, StdinApprover, Tracer,
 };
 pub use corvid_vm::{build_struct, InterpError, InterpErrorKind, StructValue, Value};
 
