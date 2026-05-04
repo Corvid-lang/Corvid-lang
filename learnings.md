@@ -3488,6 +3488,15 @@ issue template can be documented as the intake path, but source, specs, and
 roadmap copy should not imply the corpus has already been fed by external
 submissions.
 
+## RAG replay timestamps
+
+Grounded retrieval values carry provenance timestamps minted when a tool result
+is wrapped, not just when the source trace was recorded. Plain replay for RAG
+must preserve prompt, value, source identity, and result checks while
+normalizing only retrieval-source `timestamp_ms` fields in grounded LLM args
+and rendered context. Otherwise deterministic fixtures fail for the wrong
+reason even when mock, replay, and real typed surfaces agree.
+
 ## hosted registry claims
 
 Package format, signed-publish tooling, and a resolver that can read local or

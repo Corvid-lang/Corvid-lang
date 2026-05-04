@@ -6371,3 +6371,34 @@ Validation:
 - `cargo check --workspace`
 - `cargo run -q -p corvid-cli -- verify --corpus tests/corpus`
   (exit 2 with the established Windows `whoami` linker signature)
+## 2026-05-04 - Slice 33K-rag_qa_bot reference demo
+
+- Added the `examples/rag_qa_bot` reference demo with a grounded retrieval
+  tool, source-preserving answer shape, deterministic knowledge-base fixtures,
+  Corvid unit/integration tests, eval coverage, and a replay trace.
+- Wired env-backed mock tool responses into CLI run/test/eval paths so the
+  retrieval tool uses the same typed mock surface as replay and future real
+  providers.
+- Hardened plain replay matching for grounded provenance timestamps, because
+  replay reruns mint fresh retrieval timestamps while preserving source
+  identity and value.
+- Documented setup, modification points, benchmark notes, real-provider
+  environment variables, and added the RAG demo to `demo-verify`.
+
+Validation:
+- `cargo check --workspace`
+- `cargo test -p corvid-runtime --lib`
+- `cargo test -p corvid-runtime --tests`
+  (fails only existing Windows `trace_record` cdylib linker baseline:
+  `__imp_GetUserNameExW`)
+- `cargo test -p corvid-driver --lib`
+  (fails only existing Windows native linker baseline:
+  `__imp_GetUserNameExW`)
+- `cargo test -p corvid-cli --tests`
+  (CLI unit tests pass 282/282; fails only existing `abi_attestation`
+  Windows native linker baseline: `__imp_GetUserNameExW`)
+- `cargo run -q -p corvid-cli -- verify --corpus tests/corpus`
+  (exit 2 with the established Windows `whoami` linker signature)
+- RAG demo `build`, `run`, Corvid tests, eval, replay, and credential scan.
+
+---

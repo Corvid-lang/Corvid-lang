@@ -171,3 +171,34 @@ jobs:
           cargo run -q -p corvid-cli -- replay examples/provider_routing_demo/traces/provider_routing_demo_openai.jsonl
           cargo run -q -p corvid-cli -- replay examples/provider_routing_demo/traces/provider_routing_demo_ollama.jsonl
           cargo run -q -p corvid-cli -- replay examples/provider_routing_demo/traces/provider_routing_demo_anthropic.jsonl
+
+      - name: rag_qa_bot build
+        working-directory: examples/rag_qa_bot
+        run: cargo run -q -p corvid-cli -- build
+
+      - name: rag_qa_bot run
+        working-directory: examples/rag_qa_bot
+        env:
+          CORVID_TEST_MOCK_TOOLS: '{"retrieve_context":["Refunds over one hundred dollars require approval before money moves.","Refunds over one hundred dollars require approval before money moves.","Refunds over one hundred dollars require approval before money moves."]}'
+          CORVID_TEST_MOCK_LLM: "1"
+          CORVID_TEST_MOCK_LLM_RESPONSE: Refunds over one hundred dollars require approval before money moves.
+        run: cargo run -q -p corvid-cli -- run
+
+      - name: rag_qa_bot tests
+        env:
+          CORVID_TEST_MOCK_TOOLS: '{"retrieve_context":["Refunds over one hundred dollars require approval before money moves.","Refunds over one hundred dollars require approval before money moves.","Refunds over one hundred dollars require approval before money moves."]}'
+          CORVID_TEST_MOCK_LLM: "1"
+          CORVID_TEST_MOCK_LLM_RESPONSE: Refunds over one hundred dollars require approval before money moves.
+        run: |
+          cargo run -q -p corvid-cli -- test examples/rag_qa_bot/tests/unit.cor
+          cargo run -q -p corvid-cli -- test examples/rag_qa_bot/tests/integration.cor
+
+      - name: rag_qa_bot eval
+        env:
+          CORVID_TEST_MOCK_TOOLS: '{"retrieve_context":["Refunds over one hundred dollars require approval before money moves.","Refunds over one hundred dollars require approval before money moves.","Refunds over one hundred dollars require approval before money moves."]}'
+          CORVID_TEST_MOCK_LLM: "1"
+          CORVID_TEST_MOCK_LLM_RESPONSE: Refunds over one hundred dollars require approval before money moves.
+        run: cargo run -q -p corvid-cli -- eval examples/rag_qa_bot/evals/rag_qa_bot.cor
+
+      - name: rag_qa_bot replay
+        run: cargo run -q -p corvid-cli -- replay examples/rag_qa_bot/traces/rag_qa_bot_refund_policy.jsonl
