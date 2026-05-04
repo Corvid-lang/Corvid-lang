@@ -653,3 +653,59 @@ agent bypass_refund(order: Order) -> RefundReceipt uses refund_write:
     assert!(stderr.contains("dangerous tool `issue_refund`"), "{stderr}");
     assert!(stderr.contains("approve IssueRefund"), "{stderr}");
 }
+
+#[test]
+fn support_escalation_bot_replay_fixtures_are_deterministic() {
+    let repo = repo_root();
+    let trace_dir = repo
+        .join("examples")
+        .join("support_escalation_bot")
+        .join("traces");
+    let passing = [
+        (
+            "support_escalation_bot_escalation.jsonl",
+            "escalate_to_human",
+        ),
+        (
+            "support_escalation_bot_approved_refund.jsonl",
+            "audit_refund_7001",
+        ),
+    ];
+
+    for (fixture, expected) in passing {
+        let out = Command::new(corvid_bin())
+            .arg("replay")
+            .arg(trace_dir.join(fixture))
+            .current_dir(&repo)
+            .output()
+            .unwrap_or_else(|err| panic!("run support replay {fixture}: {err}"));
+        assert!(
+            out.status.success(),
+            "{fixture} replay failed:\nstdout={}\nstderr={}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("trace loaded"), "{stdout}");
+        assert!(stdout.contains("replay completed"), "{stdout}");
+        assert!(stdout.contains(expected), "{stdout}");
+    }
+
+    let denied = Command::new(corvid_bin())
+        .arg("replay")
+        .arg(trace_dir.join("support_escalation_bot_approval_denied.jsonl"))
+        .current_dir(&repo)
+        .output()
+        .expect("run support denied replay");
+    assert!(
+        !denied.status.success(),
+        "denied replay should preserve approval denial:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&denied.stdout),
+        String::from_utf8_lossy(&denied.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&denied.stderr);
+    assert!(
+        stderr.contains("approval denied for `IssueRefund`"),
+        "{stderr}"
+    );
+}
