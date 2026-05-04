@@ -3661,3 +3661,20 @@ For multi-provider demos, mirror replay fixtures under `seed/traces` and wire
 both locations into CI. The seed tree is what the hardening docs and runbook
 point operators at, while the original demo-pack traces preserve the 33K
 one-command demo contract.
+
+## RAG QA hardening
+
+For adversarial grounded-return fixtures, the registered guarantee emitted for
+unsourced `Grounded<T>` construction is `grounded.provenance_required`. Do not
+guess at a more general provenance id in harness assertions; make the
+security-model threat table match the guarantee the checker actually returns.
+
+The useful mock/replay/real invariant for RAG is over the app-facing
+`RagAnswer`: `question`, `answer`, `source`, and `grounded`. Embedding vectors,
+token counts, latency, and cost are provider metadata, so keep them in
+seed/trace metadata instead of forcing them into the typed answer surface.
+
+RAG hardening should avoid claiming source truth or model-level
+prompt-injection immunity. The enforceable boundary is that ungrounded text
+cannot be returned as a grounded answer; document KB authoring quality and live
+provider behavior as operator responsibilities.

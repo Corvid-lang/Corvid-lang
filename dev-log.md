@@ -6584,3 +6584,40 @@ Validation:
 - Credential-pattern scan over `examples/provider_routing_demo`
 
 ---
+
+## 2026-05-04 - Slice 42H-rag_qa_bot hardening
+
+- Added deterministic retrieval/provider seed fixtures, a mirrored seed replay
+  trace, and explicit mock/replay/real `RagAnswer` entrypoints for the RAG QA
+  bot.
+- Added `replay_invariant.cor` plus adversarial fixtures for prompt injection
+  through retrieved chunks, ungrounded answers, KB tampering, and replay
+  forgery, all rejected with the registered `grounded.provenance_required`
+  guarantee id.
+- Documented opt-in OpenAI and Ollama real-provider mode, the RAG QA security
+  model, and the operator runbook; wired the replay invariant and seed replay
+  fixture into `demo-verify`.
+
+Validation:
+- `cargo run -q -p corvid-cli -- build` from `examples/rag_qa_bot` with mock
+  retrieval and LLM env.
+- `cargo run -q -p corvid-cli -- run` from `examples/rag_qa_bot` with mock
+  retrieval and LLM env.
+- `cargo run -q -p corvid-cli -- test examples/rag_qa_bot/tests/unit.cor`
+- `cargo run -q -p corvid-cli -- test examples/rag_qa_bot/tests/integration.cor`
+- `cargo run -q -p corvid-cli -- test examples/rag_qa_bot/tests/replay_invariant.cor`
+- `cargo test -p corvid-cli --test demo_project_defaults`
+- `cargo run -q -p corvid-cli -- eval examples/rag_qa_bot/evals/rag_qa_bot.cor`
+- `cargo run -q -p corvid-cli -- replay examples/rag_qa_bot/traces/rag_qa_bot_refund_policy.jsonl`
+- `cargo run -q -p corvid-cli -- replay examples/rag_qa_bot/seed/traces/rag_qa_bot_refund_policy.jsonl`
+- `cargo check --workspace`
+- `cargo test -p corvid-cli --lib`
+  (structural baseline: no library targets found in package `corvid-cli`)
+- `cargo test -p corvid-cli --tests`
+  (CLI unit tests pass 282/282; fails only existing `abi_attestation`
+  Windows native linker baseline: `__imp_GetUserNameExW`)
+- `cargo run -q -p corvid-cli -- verify --corpus tests/corpus`
+  (exit 2 with the established Windows `whoami` linker signature)
+- Credential-pattern scan over `examples/rag_qa_bot`
+
+---
