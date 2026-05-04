@@ -1,0 +1,16 @@
+import "../src/main" use ReviewSession, main
+
+agent review_contract() -> ReviewSession:
+    return main()
+
+agent finds_approval_boundary_regression() -> Bool:
+    review = review_contract()
+    return review.finding_count == 1 and review.comment.checklist_id == "approval-boundary" and review.comment.severity == "high"
+
+agent keeps_review_unposted_without_approval() -> Bool:
+    review = review_contract()
+    return review.posted == false and review.comment.path == "examples/refund_bot/src/main.cor"
+
+eval code_review_agent_contract_eval:
+    assert finds_approval_boundary_regression()
+    assert keeps_review_unposted_without_approval()
