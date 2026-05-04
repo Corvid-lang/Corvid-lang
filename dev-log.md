@@ -6477,3 +6477,33 @@ Validation:
   (exit 2 with the established Windows `whoami` linker signature)
 
 ---
+
+## 2026-05-04 - Slice 42H-refund_bot hardening
+
+- Added deterministic provider-mode seed fixtures, replay seed traces, and a
+  single typed mock/replay/real refund-provider surface for `examples/refund_bot`.
+- Added `replay_invariant.cor` plus adversarial fixtures for auth bypass, scope
+  escalation, replay forgery, and prompt injection over the refund reason.
+- Documented opt-in real-provider mode, the refund bot security model, and the
+  operator runbook; wired the replay invariant into `demo-verify`.
+
+Validation:
+- `cargo run -q -p corvid-cli -- build` from `examples/refund_bot`
+- `cargo run -q -p corvid-cli -- run` from `examples/refund_bot`
+- `cargo run -q -p corvid-cli -- test examples/refund_bot/tests/unit.cor`
+- `cargo run -q -p corvid-cli -- test examples/refund_bot/tests/integration.cor`
+- `cargo run -q -p corvid-cli -- test examples/refund_bot/tests/replay_invariant.cor`
+- `cargo test -p corvid-cli --test demo_project_defaults`
+- `cargo run -q -p corvid-cli -- eval examples/refund_bot/evals/refund_bot.cor`
+- `cargo run -q -p corvid-cli -- replay examples/refund_bot/traces/refund_bot_approval_gate.jsonl`
+- `cargo check --workspace`
+- `cargo test -p corvid-cli --lib`
+  (structural baseline: no library targets found in package `corvid-cli`)
+- `cargo test -p corvid-cli --tests`
+  (CLI unit tests pass 282/282; fails only existing `abi_attestation`
+  Windows native linker baseline: `__imp_GetUserNameExW`)
+- `cargo run -q -p corvid-cli -- verify --corpus tests/corpus`
+  (exit 2 with the established Windows `whoami` linker signature)
+- Credential-pattern scan over `examples/refund_bot`
+
+---

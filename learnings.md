@@ -3611,3 +3611,16 @@ that CI would otherwise surface later.
 When closing a demo pack, verify the workflow itself names every demo's build,
 run, test, eval, and replay loop. A demo can have complete local artifacts and
 still miss the closure gate if CI only runs the Rust-side smoke test.
+
+## refund bot hardening
+
+`mock` is a reserved Corvid keyword, so replay-invariant tests should avoid it
+as a local binding name even when the provider mode is conceptually called
+mock. Use names like `mock_result`, `replay_result`, and `real_result` to keep
+the invariant readable without tripping the parser.
+
+Do not overclaim semantic approval scope until the checker has field-level or
+amount-ceiling predicates. A refund that receives some prior approval still
+compiles even if the business meaning of the amount changed, so the hardening
+test should cover the compiler-enforced boundary and the security model should
+name semantic ceilings as a non-goal.

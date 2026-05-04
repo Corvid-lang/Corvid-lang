@@ -35,9 +35,18 @@ From the repository root:
 ```sh
 cargo run -q -p corvid-cli -- test examples/refund_bot/tests/unit.cor
 cargo run -q -p corvid-cli -- test examples/refund_bot/tests/integration.cor
+cargo run -q -p corvid-cli -- test examples/refund_bot/tests/replay_invariant.cor
 cargo run -q -p corvid-cli -- eval examples/refund_bot/evals/refund_bot.cor
 cargo run -q -p corvid-cli -- replay examples/refund_bot/traces/refund_bot_approval_gate.jsonl
 ```
+
+Hardening docs live under `docs/`:
+
+- `real-providers.md` lists the opt-in environment variables for real refund
+  provider mode.
+- `security-model.md` names the app-specific trusted computing base, threats,
+  non-goals, and adversarial test coverage.
+- `runbook.md` covers deploy, observe, rollback, and incident response.
 
 ## How To Modify
 
