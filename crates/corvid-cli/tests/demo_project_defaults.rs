@@ -460,6 +460,34 @@ fn rag_qa_bot_corvid_tests_pass_with_mock_retrieval_and_llm() {
 }
 
 #[test]
+fn rag_qa_bot_eval_harness_passes_with_mock_retrieval_and_llm() {
+    let repo = repo_root();
+    let eval = repo
+        .join("examples")
+        .join("rag_qa_bot")
+        .join("evals")
+        .join("rag_qa_bot.cor");
+    let out = Command::new(corvid_bin())
+        .arg("eval")
+        .arg(eval)
+        .env("CORVID_TEST_MOCK_TOOLS", RAG_QA_MOCK_TOOLS)
+        .env("CORVID_TEST_MOCK_LLM", "1")
+        .env("CORVID_TEST_MOCK_LLM_RESPONSE", RAG_QA_MOCK_CONTEXT)
+        .current_dir(repo)
+        .output()
+        .expect("run rag qa eval");
+    assert!(
+        out.status.success(),
+        "rag qa eval failed:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("rag_qa_bot_contract_eval"), "{stdout}");
+    assert!(stdout.contains("1 passed, 0 failed"), "{stdout}");
+}
+
+#[test]
 fn rag_qa_bot_rejects_fabricated_grounded_answer() {
     let repo = repo_root();
     let tmp = tempfile::tempdir().expect("tempdir");
