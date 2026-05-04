@@ -470,6 +470,107 @@ impl ReplaySource {
         replayed_json_result(tool, cursor.next_event(&self.events))
     }
 
+    fn llm_call_matches(
+        event: &TraceEvent,
+        prompt: &str,
+        recorded_model: Option<&str>,
+        recorded_model_version: Option<&str>,
+        rendered: &str,
+        args: &[serde_json::Value],
+    ) -> bool {
+        matches!(
+            event,
+            TraceEvent::LlmCall {
+                prompt: expected_prompt,
+                model: expected_model,
+                model_version: expected_model_version,
+                rendered: expected_rendered,
+                args: expected_args,
+                ..
+            } if expected_prompt == prompt
+                && expected_model.as_deref() == recorded_model
+                && expected_model_version.as_deref() == recorded_model_version
+                && Self::rendered_matches_grounded_timestamp(expected_rendered.as_deref(), rendered)
+                && Self::args_match_grounded_timestamp(expected_args, args)
+        )
+    }
+
+    fn rendered_matches_grounded_timestamp(expected: Option<&str>, actual: &str) -> bool {
+        expected.is_some_and(|expected| {
+            expected == actual
+                || Self::normalize_grounded_timestamps_in_str(expected)
+                    == Self::normalize_grounded_timestamps_in_str(actual)
+        })
+    }
+
+    fn args_match_grounded_timestamp(
+        expected: &[serde_json::Value],
+        actual: &[serde_json::Value],
+    ) -> bool {
+        expected == actual
+            || Self::normalize_grounded_timestamps_in_values(expected)
+                == Self::normalize_grounded_timestamps_in_values(actual)
+    }
+
+    fn normalize_grounded_timestamps_in_values(
+        values: &[serde_json::Value],
+    ) -> Vec<serde_json::Value> {
+        values
+            .iter()
+            .map(Self::normalize_grounded_timestamp_value)
+            .collect()
+    }
+
+    fn normalize_grounded_timestamp_value(value: &serde_json::Value) -> serde_json::Value {
+        match value {
+            serde_json::Value::Array(items) => serde_json::Value::Array(
+                items
+                    .iter()
+                    .map(Self::normalize_grounded_timestamp_value)
+                    .collect(),
+            ),
+            serde_json::Value::Object(map) => {
+                let mut map = map.clone();
+                if map.contains_key("timestamp_ms")
+                    && map.get("kind").and_then(serde_json::Value::as_str) == Some("retrieval")
+                {
+                    map.insert(
+                        "timestamp_ms".into(),
+                        serde_json::json!("replay-grounded-ts"),
+                    );
+                }
+                for value in map.values_mut() {
+                    *value = Self::normalize_grounded_timestamp_value(value);
+                }
+                serde_json::Value::Object(map)
+            }
+            other => other.clone(),
+        }
+    }
+
+    fn normalize_grounded_timestamps_in_str(input: &str) -> String {
+        let mut out = String::with_capacity(input.len());
+        let mut rest = input;
+        const KEY: &str = "\"timestamp_ms\":";
+        while let Some(index) = rest.find(KEY) {
+            let (prefix, suffix) = rest.split_at(index);
+            out.push_str(prefix);
+            out.push_str(KEY);
+            out.push_str("\"replay-grounded-ts\"");
+            let mut tail = &suffix[KEY.len()..];
+            while let Some(ch) = tail.chars().next() {
+                if ch.is_ascii_digit() {
+                    tail = &tail[ch.len_utf8()..];
+                } else {
+                    break;
+                }
+            }
+            rest = tail;
+        }
+        out.push_str(rest);
+        out
+    }
+
     pub async fn replay_llm_call(
         &self,
         prompt: &str,
@@ -487,21 +588,16 @@ impl ReplaySource {
                     cursor
                         .expect_next(
                             &self.events,
-                            |event| matches!(
-                                event,
-                                TraceEvent::LlmCall {
-                                    prompt: expected_prompt,
-                                    model: expected_model,
-                                    model_version: expected_model_version,
-                                    rendered: expected_rendered,
-                                    args: expected_args,
-                                    ..
-                                } if expected_prompt == prompt
-                                    && expected_model.as_deref() == recorded_model
-                                    && expected_model_version.as_deref() == recorded_model_version
-                                    && expected_rendered.as_deref() == Some(rendered)
-                                    && expected_args == args
-                            ),
+                            |event| {
+                                Self::llm_call_matches(
+                                    event,
+                                    prompt,
+                                    recorded_model,
+                                    recorded_model_version,
+                                    rendered,
+                                    args,
+                                )
+                            },
                             "llm_call",
                             format!(
                                 "prompt={prompt} model={} args={}",
@@ -544,21 +640,16 @@ impl ReplaySource {
                         cursor
                             .expect_next(
                                 &self.events,
-                                |event| matches!(
-                                    event,
-                                    TraceEvent::LlmCall {
-                                        prompt: expected_prompt,
-                                        model: expected_model,
-                                        model_version: expected_model_version,
-                                        rendered: expected_rendered,
-                                        args: expected_args,
-                                        ..
-                                    } if expected_prompt == prompt
-                                        && expected_model.as_deref() == recorded_model
-                                        && expected_model_version.as_deref() == recorded_model_version
-                                        && expected_rendered.as_deref() == Some(rendered)
-                                        && expected_args == args
-                                ),
+                                |event| {
+                                    Self::llm_call_matches(
+                                        event,
+                                        prompt,
+                                        recorded_model,
+                                        recorded_model_version,
+                                        rendered,
+                                        args,
+                                    )
+                                },
                                 "llm_call",
                                 format!(
                                     "prompt={prompt} model={} args={}",
@@ -569,20 +660,13 @@ impl ReplaySource {
                             .map_err(RuntimeError::ReplayDivergence)?
                     } else {
                         let recorded = cursor.next_event(&self.events);
-                        if !matches!(
+                        if !Self::llm_call_matches(
                             &recorded,
-                            TraceEvent::LlmCall {
-                                prompt: expected_prompt,
-                                model: expected_model,
-                                model_version: expected_model_version,
-                                rendered: expected_rendered,
-                                args: expected_args,
-                                ..
-                            } if expected_prompt == prompt
-                                && expected_model.as_deref() == recorded_model
-                                && expected_model_version.as_deref() == recorded_model_version
-                                && expected_rendered.as_deref() == Some(rendered)
-                                && expected_args == args
+                            prompt,
+                            recorded_model,
+                            recorded_model_version,
+                            rendered,
+                            args,
                         ) {
                             self.record_mutation_divergence(MutationDivergence {
                                 step,
@@ -899,5 +983,36 @@ mod tests {
                 .len(),
             1
         );
+    }
+
+    #[test]
+    fn grounded_llm_call_match_ignores_retrieval_timestamp_drift() {
+        let expected_args = vec![serde_json::json!({
+            "tag": "grounded",
+            "value": "policy",
+            "sources": [{"kind": "retrieval", "name": "lookup", "timestamp_ms": 10}]
+        })];
+        let actual_args = vec![serde_json::json!({
+            "tag": "grounded",
+            "value": "policy",
+            "sources": [{"kind": "retrieval", "name": "lookup", "timestamp_ms": 99}]
+        })];
+        let event = TraceEvent::LlmCall {
+            ts_ms: 1,
+            run_id: "run".into(),
+            prompt: "answer".into(),
+            model: None,
+            model_version: None,
+            rendered: Some("Context: {\"timestamp_ms\":10}".into()),
+            args: expected_args,
+        };
+        assert!(ReplaySource::llm_call_matches(
+            &event,
+            "answer",
+            None,
+            None,
+            "Context: {\"timestamp_ms\":99}",
+            &actual_args
+        ));
     }
 }
