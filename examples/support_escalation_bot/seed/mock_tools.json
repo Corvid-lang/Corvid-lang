@@ -1,0 +1,41 @@
+{
+  "escalation_path": {
+    "lookup_order": {
+      "id": "ord_1001",
+      "customer_id": "cust_42",
+      "status": "delivered",
+      "total": 149.99
+    },
+    "escalate_to_human": {
+      "ticket_id": "esc_9001",
+      "status": "queued",
+      "channel": "slack"
+    }
+  },
+  "approved_refund_path": {
+    "lookup_order": {
+      "id": "ord_1003",
+      "customer_id": "cust_42",
+      "status": "delivered",
+      "total": 19.95
+    },
+    "issue_refund": {
+      "receipt_id": "rf_7001",
+      "status": "approved",
+      "audit_id": "audit_refund_7001"
+    }
+  },
+  "approval_denied_path": {
+    "lookup_order": {
+      "id": "ord_1001",
+      "customer_id": "cust_42",
+      "status": "delivered",
+      "total": 149.99
+    },
+    "issue_refund": {
+      "receipt_id": "rf_denied_placeholder",
+      "status": "not_called_without_approval",
+      "audit_id": "audit_denied_placeholder"
+    }
+  }
+}
