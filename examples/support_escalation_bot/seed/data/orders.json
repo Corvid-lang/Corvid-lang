@@ -1,0 +1,22 @@
+{
+  "orders": [
+    {
+      "id": "ord_1001",
+      "customer_id": "cust_42",
+      "status": "delivered",
+      "total": 149.99
+    },
+    {
+      "id": "ord_1002",
+      "customer_id": "cust_77",
+      "status": "processing",
+      "total": 42.5
+    },
+    {
+      "id": "ord_1003",
+      "customer_id": "cust_42",
+      "status": "delivered",
+      "total": 19.95
+    }
+  ]
+}

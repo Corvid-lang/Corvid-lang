@@ -1,0 +1,8 @@
+{"kind":"schema_header","version":2,"writer":"corvid-vm","commit_sha":null,"source_path":"../../src/main.cor","ts_ms":1778112000000,"run_id":"support-escalation-bot-escalation"}
+{"kind":"seed_read","ts_ms":1778112000001,"run_id":"support-escalation-bot-escalation","purpose":"rollout_default_seed","value":1778112000001}
+{"kind":"run_started","ts_ms":1778112000002,"run_id":"support-escalation-bot-escalation","agent":"main","args":[]}
+{"kind":"tool_call","ts_ms":1778112000003,"run_id":"support-escalation-bot-escalation","tool":"lookup_order","args":["ord_1001"]}
+{"kind":"tool_result","ts_ms":1778112000004,"run_id":"support-escalation-bot-escalation","tool":"lookup_order","result":{"id":"ord_1001","customer_id":"cust_42","status":"delivered","total":149.99}}
+{"kind":"tool_call","ts_ms":1778112000005,"run_id":"support-escalation-bot-escalation","tool":"escalate_to_human","args":[{"id":"ord_1001","customer_id":"cust_42","status":"delivered","total":149.99},"customer asked for a human review"]}
+{"kind":"tool_result","ts_ms":1778112000006,"run_id":"support-escalation-bot-escalation","tool":"escalate_to_human","result":{"ticket_id":"esc_9001","status":"queued","channel":"slack"}}
+{"kind":"run_completed","ts_ms":1778112000007,"run_id":"support-escalation-bot-escalation","ok":true,"result":{"order_id":"ord_1001","action":"escalate_to_human","status":"queued","audit_id":"esc_9001"},"error":null}

@@ -1,0 +1,12 @@
+{"kind":"schema_header","version":2,"writer":"corvid-vm","commit_sha":null,"source_path":"../../src/main.cor","ts_ms":1778112100000,"run_id":"support-escalation-bot-approved-refund"}
+{"kind":"seed_read","ts_ms":1778112100001,"run_id":"support-escalation-bot-approved-refund","purpose":"rollout_default_seed","value":1778112100001}
+{"kind":"run_started","ts_ms":1778112100002,"run_id":"support-escalation-bot-approved-refund","agent":"approved_refund","args":["ord_1003",19.95]}
+{"kind":"tool_call","ts_ms":1778112100003,"run_id":"support-escalation-bot-approved-refund","tool":"lookup_order","args":["ord_1003"]}
+{"kind":"tool_result","ts_ms":1778112100004,"run_id":"support-escalation-bot-approved-refund","tool":"lookup_order","result":{"id":"ord_1003","customer_id":"cust_42","status":"delivered","total":19.95}}
+{"kind":"approval_request","ts_ms":1778112100005,"run_id":"support-escalation-bot-approved-refund","label":"IssueRefund","args":[{"id":"ord_1003","customer_id":"cust_42","status":"delivered","total":19.95},19.95]}
+{"kind":"approval_decision","ts_ms":1778112100006,"run_id":"support-escalation-bot-approved-refund","site":"IssueRefund","args":[{"id":"ord_1003","customer_id":"cust_42","status":"delivered","total":19.95},19.95],"accepted":true,"decider":"runtime-approver","rationale":"approved fixture"}
+{"kind":"approval_response","ts_ms":1778112100007,"run_id":"support-escalation-bot-approved-refund","label":"IssueRefund","approved":true}
+{"kind":"approval_token_issued","ts_ms":1778112100008,"run_id":"support-escalation-bot-approved-refund","token_id":"apr_support_approved_refund","label":"IssueRefund","args":[{"id":"ord_1003","customer_id":"cust_42","status":"delivered","total":19.95},19.95],"scope":"one_time","issued_at_ms":1778112100008,"expires_at_ms":1778112400008}
+{"kind":"tool_call","ts_ms":1778112100009,"run_id":"support-escalation-bot-approved-refund","tool":"issue_refund","args":[{"id":"ord_1003","customer_id":"cust_42","status":"delivered","total":19.95},19.95]}
+{"kind":"tool_result","ts_ms":1778112100010,"run_id":"support-escalation-bot-approved-refund","tool":"issue_refund","result":{"receipt_id":"rf_7001","status":"approved","audit_id":"audit_refund_7001"}}
+{"kind":"run_completed","ts_ms":1778112100011,"run_id":"support-escalation-bot-approved-refund","ok":true,"result":{"order_id":"ord_1003","action":"issue_refund","status":"approved","audit_id":"audit_refund_7001"},"error":null}
