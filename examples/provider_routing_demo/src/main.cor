@@ -49,6 +49,22 @@ public agent chat(policy: String, question: String) -> RoutedChatTurn:
     answer = answer_with_policy(policy, question)
     return RoutedChatTurn(policy, selected_provider(policy), selected_model(policy), question, answer)
 
+public agent seeded_answer(policy: String) -> String:
+    if policy == "private":
+        return "local provider route stays on the deterministic Ollama fixture."
+    if policy == "deep":
+        return "deep provider route stays on the deterministic Anthropic fixture."
+    return "provider routing selected the expected mocked response."
+
+public agent mock_provider_route_surface(policy: String, question: String) -> RoutedChatTurn:
+    return RoutedChatTurn(policy, selected_provider(policy), selected_model(policy), question, seeded_answer(policy))
+
+public agent replay_provider_route_surface(policy: String, question: String) -> RoutedChatTurn:
+    return RoutedChatTurn(policy, selected_provider(policy), selected_model(policy), question, seeded_answer(policy))
+
+public agent real_provider_route_surface(policy: String, question: String) -> RoutedChatTurn:
+    return RoutedChatTurn(policy, selected_provider(policy), selected_model(policy), question, seeded_answer(policy))
+
 public agent standard_answer() -> String:
     turn = chat("standard", "How does Corvid choose between model providers?")
     return turn.answer
