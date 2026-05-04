@@ -1,0 +1,12 @@
+import "../src/main" use chat, main
+
+agent mocked_local_answer_is_stable() -> Bool:
+    return main() == "provider-neutral local inference with deterministic replay."
+
+agent local_provider_metadata_is_stable() -> Bool:
+    turn = chat("Which local provider should this demo use?")
+    return turn.provider == "ollama" and turn.model_id == "ollama:llama3.2"
+
+eval local_model_demo_contract_eval:
+    assert mocked_local_answer_is_stable()
+    assert local_provider_metadata_is_stable()

@@ -217,3 +217,34 @@ fn local_model_demo_corvid_tests_pass_with_mock_llm() {
         assert!(stdout.contains("1 passed, 0 failed"), "{stdout}");
     }
 }
+
+#[test]
+fn local_model_demo_eval_harness_passes_with_mock_llm() {
+    let repo = repo_root();
+    let eval = repo
+        .join("examples")
+        .join("local_model_demo")
+        .join("evals")
+        .join("local_model_demo.cor");
+    let out = Command::new(corvid_bin())
+        .arg("eval")
+        .arg(eval)
+        .env("CORVID_TEST_MOCK_LLM", "1")
+        .env(
+            "CORVID_TEST_MOCK_LLM_RESPONSE",
+            "provider-neutral local inference with deterministic replay.",
+        )
+        .env("CORVID_MODEL", "ollama:llama3.2")
+        .current_dir(repo)
+        .output()
+        .expect("run local model eval");
+    assert!(
+        out.status.success(),
+        "local model eval failed:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("local_model_demo_contract_eval"), "{stdout}");
+    assert!(stdout.contains("1 passed, 0 failed"), "{stdout}");
+}

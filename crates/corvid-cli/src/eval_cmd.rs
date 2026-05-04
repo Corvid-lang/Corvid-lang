@@ -9,6 +9,8 @@ use anyhow::{Context, Result};
 use compare::{read_summary_cost_usd, run_compare};
 use corvid_driver::{
     default_eval_options, load_dotenv_walking, render_eval_report, run_evals_at_path_with_options,
+    AnthropicAdapter, EnvVarMockAdapter, OllamaAdapter, OpenAiAdapter, Runtime, StdinApprover,
+    Tracer,
 };
 use promote::{latest_summary_path_for_source, run_promote_lineage};
 use std::path::{Path, PathBuf};
@@ -169,7 +171,7 @@ fn run_source_evals(
     for input in inputs {
         let dotenv_start = input.parent().unwrap_or_else(|| Path::new("."));
         load_dotenv_walking(dotenv_start);
-        let runtime = corvid_driver::Runtime::builder().build();
+        let runtime = cli_eval_runtime(input);
         let source = std::fs::read_to_string(input).ok();
         let tokio = tokio::runtime::Builder::new_current_thread()
             .enable_all()
@@ -186,6 +188,33 @@ fn run_source_evals(
         exit_code = exit_code.max(report.exit_code());
     }
     Ok(exit_code)
+}
+
+fn cli_eval_runtime(path: &Path) -> Runtime {
+    let trace_dir = path
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .join("target")
+        .join("trace");
+    let mut builder = Runtime::builder()
+        .approver(std::sync::Arc::new(StdinApprover::new()))
+        .tracer(Tracer::open(&trace_dir, corvid_driver::fresh_run_id()));
+
+    if let Ok(model) = std::env::var("CORVID_MODEL") {
+        builder = builder.default_model(&model);
+    }
+    if std::env::var("CORVID_TEST_MOCK_LLM").ok().as_deref() == Some("1") {
+        builder = builder.llm(std::sync::Arc::new(EnvVarMockAdapter::from_env()));
+    }
+    if let Ok(key) = std::env::var("ANTHROPIC_API_KEY") {
+        builder = builder.llm(std::sync::Arc::new(AnthropicAdapter::new(key)));
+    }
+    if let Ok(key) = std::env::var("OPENAI_API_KEY") {
+        builder = builder.llm(std::sync::Arc::new(OpenAiAdapter::new(key)));
+    }
+    builder
+        .llm(std::sync::Arc::new(OllamaAdapter::new()))
+        .build()
 }
 
 fn configured_max_spend(cli: Option<f64>) -> Result<Option<f64>> {
