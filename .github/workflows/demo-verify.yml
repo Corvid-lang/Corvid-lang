@@ -103,6 +103,7 @@ jobs:
         run: |
           cargo run -q -p corvid-cli -- test examples/refund_bot/tests/unit.cor
           cargo run -q -p corvid-cli -- test examples/refund_bot/tests/integration.cor
+          cargo run -q -p corvid-cli -- test examples/refund_bot/tests/replay_invariant.cor
 
       - name: refund_bot eval
         run: cargo run -q -p corvid-cli -- eval examples/refund_bot/evals/refund_bot.cor
