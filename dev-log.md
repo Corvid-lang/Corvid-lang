@@ -4,6 +4,30 @@ Weekly journal. Non-negotiable. Every entry is one commit.
 
 ---
 
+## 2026-05-04 - Slice 33K refund_bot wrapper
+
+- Added `examples/refund_bot` as a one-command Corvid demo project for the
+  existing approval-gated refund program.
+- Added unit, integration, eval, seed, and replay artifacts. The replay fixture
+  runs through `corvid replay` and the negative test proves an unapproved
+  refund tool call is rejected at check time.
+- Wired the demo verification workflow to build, run, test, eval, and replay
+  the refund_bot demo on push and pull request.
+
+Validation:
+- `cargo run -q -p corvid-cli -- build` from `examples/refund_bot`
+- `cargo run -q -p corvid-cli -- run` from `examples/refund_bot`
+- `cargo run -q -p corvid-cli -- test examples/refund_bot/tests/unit.cor`
+- `cargo run -q -p corvid-cli -- test examples/refund_bot/tests/integration.cor`
+- `cargo run -q -p corvid-cli -- eval examples/refund_bot/evals/refund_bot.cor`
+- `cargo run -q -p corvid-cli -- replay examples/refund_bot/traces/refund_bot_approval_gate.jsonl`
+- `cargo test -p corvid-cli --test demo_project_defaults`
+- `cargo check --workspace`
+- `cargo run -q -p corvid-cli -- verify --corpus tests/corpus`
+  (exit 2 with the established Windows `whoami` linker signature)
+
+---
+
 ## Day 1 — repo scaffolded
 
 - Language name: **Corvid**. File extension: `.cor`.

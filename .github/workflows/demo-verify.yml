@@ -65,3 +65,47 @@ jobs:
 
       - name: examples/failing_adversarial/verify.sh
         run: bash examples/failing_adversarial/verify.sh
+
+  reference-demo-pack:
+    name: reference demo pack
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry + target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-reference-demos-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-reference-demos-
+
+      - name: cargo check --workspace
+        run: cargo check --workspace
+
+      - name: cargo test -p corvid-cli --test demo_project_defaults
+        run: cargo test -p corvid-cli --test demo_project_defaults
+
+      - name: refund_bot build
+        working-directory: examples/refund_bot
+        run: cargo run -q -p corvid-cli -- build
+
+      - name: refund_bot run
+        working-directory: examples/refund_bot
+        run: cargo run -q -p corvid-cli -- run
+
+      - name: refund_bot tests
+        run: |
+          cargo run -q -p corvid-cli -- test examples/refund_bot/tests/unit.cor
+          cargo run -q -p corvid-cli -- test examples/refund_bot/tests/integration.cor
+
+      - name: refund_bot eval
+        run: cargo run -q -p corvid-cli -- eval examples/refund_bot/evals/refund_bot.cor
+
+      - name: refund_bot replay
+        run: cargo run -q -p corvid-cli -- replay examples/refund_bot/traces/refund_bot_approval_gate.jsonl

@@ -3535,3 +3535,15 @@ committed cases and rerun the deterministic drift gates. The 33N scaffold had
 already grown to the full 50 compile-time cases and 3 governance apps; the real
 remaining work was closing stale README/ROADMAP language after runner output
 matched committed results byte-for-byte.
+
+## reference demo wrappers
+
+A one-command demo may expose missing CLI convention support before it exposes
+demo logic. For `examples/refund_bot`, `corvid build` and `corvid run` needed
+project-default source resolution, and `corvid replay <trace>` needed to use
+the already-shipped plain replay runtime path plus `SchemaHeader.source_path`.
+
+Keep the demo fixture boring and deterministic: a seed JSON file, a source eval
+that asserts the visible contract, and a replay trace with only schema, seed,
+run-started, and run-completed events were enough to prove the approval-gated
+moat without inventing a mock provider surface that this app does not need.
