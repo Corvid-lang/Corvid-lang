@@ -6621,3 +6621,46 @@ Validation:
 - Credential-pattern scan over `examples/rag_qa_bot`
 
 ---
+
+## 2026-05-04 - Slice 42H-support_escalation_bot hardening
+
+- Added deterministic order/tool seed fixtures, mirrored seed replay traces,
+  and explicit mock/replay/real `SupportOutcome` entrypoints for the support
+  escalation bot.
+- Added `replay_invariant.cor` plus adversarial fixtures for auth bypass, scope
+  escalation, replay forgery, prompt injection through support reason, and
+  tenant crossing, all rejected with the registered
+  `approval.dangerous_call_requires_token` guarantee id.
+- Documented opt-in order DB, refund provider, and Slack real-provider mode,
+  the support escalation security model, and the operator runbook; wired the
+  replay invariant and seed replay fixtures into `demo-verify`.
+
+Validation:
+- `cargo run -q -p corvid-cli -- build` from
+  `examples/support_escalation_bot` with mock tool env.
+- `cargo run -q -p corvid-cli -- run` from
+  `examples/support_escalation_bot` with mock tool env.
+- `cargo run -q -p corvid-cli -- test examples/support_escalation_bot/tests/unit.cor`
+- `cargo run -q -p corvid-cli -- test examples/support_escalation_bot/tests/integration.cor`
+- `cargo run -q -p corvid-cli -- test examples/support_escalation_bot/tests/replay_invariant.cor`
+- `cargo test -p corvid-cli --test demo_project_defaults`
+- `cargo run -q -p corvid-cli -- eval examples/support_escalation_bot/evals/support_escalation_bot.cor`
+- `cargo run -q -p corvid-cli -- replay examples/support_escalation_bot/traces/support_escalation_bot_escalation.jsonl`
+- `cargo run -q -p corvid-cli -- replay examples/support_escalation_bot/traces/support_escalation_bot_approved_refund.jsonl`
+- `cargo run -q -p corvid-cli -- replay examples/support_escalation_bot/traces/support_escalation_bot_approval_denied.jsonl`
+  (expected denial exit 2)
+- `cargo run -q -p corvid-cli -- replay examples/support_escalation_bot/seed/traces/support_escalation_bot_escalation.jsonl`
+- `cargo run -q -p corvid-cli -- replay examples/support_escalation_bot/seed/traces/support_escalation_bot_approved_refund.jsonl`
+- `cargo run -q -p corvid-cli -- replay examples/support_escalation_bot/seed/traces/support_escalation_bot_approval_denied.jsonl`
+  (expected denial exit 2)
+- `cargo check --workspace`
+- `cargo test -p corvid-cli --lib`
+  (structural baseline: no library targets found in package `corvid-cli`)
+- `cargo test -p corvid-cli --tests`
+  (CLI unit tests pass 282/282; fails only existing `abi_attestation`
+  Windows native linker baseline: `__imp_GetUserNameExW`)
+- `cargo run -q -p corvid-cli -- verify --corpus tests/corpus`
+  (exit 2 with the established Windows `whoami` linker signature)
+- Credential-pattern scan over `examples/support_escalation_bot`
+
+---

@@ -3678,3 +3678,20 @@ RAG hardening should avoid claiming source truth or model-level
 prompt-injection immunity. The enforceable boundary is that ungrounded text
 cannot be returned as a grounded answer; document KB authoring quality and live
 provider behavior as operator responsibilities.
+
+## support escalation hardening
+
+Negative replay fixtures should stay first-class in hardening docs and CI. The
+support escalation approval-denied trace is correct only when it exits nonzero;
+CI now checks both the original trace and the mirrored seed trace as
+expected-failure cases.
+
+Tenant crossing can be represented in this demo only through the existing
+`customer_id` seed data. The enforceable guarantee is still the approval
+boundary before `issue_refund`; broader tenant authorization needs a separate
+auth policy and should be documented as a non-goal until such a checker exists.
+
+Eval assertions may call the default path more than once. For support
+escalation, the eval harness needs queued `lookup_order` and
+`escalate_to_human` mock responses, while build, run, and normal tests can use
+the simpler single-response mock shape.

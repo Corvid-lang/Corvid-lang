@@ -29,6 +29,8 @@ SupportOutcome(... action: "escalate_to_human" ... audit_id: "esc_9001" ...)
   `approve IssueRefund(...)` statement.
 - The one-command `main` path stays noninteractive by escalating to a human.
 - Replay fixtures cover escalation, approved refund, and approval denial.
+- The hardening docs under `docs/` spell out real-provider opt-in, the
+  app-specific security model, and the operator runbook.
 
 ## Verify
 
@@ -38,9 +40,12 @@ From the repository root:
 set CORVID_TEST_MOCK_TOOLS={"lookup_order":[{"id":"ord_1001","customer_id":"cust_42","status":"delivered","total":149.99},{"id":"ord_1003","customer_id":"cust_42","status":"delivered","total":19.95}],"escalate_to_human":{"ticket_id":"esc_9001","status":"queued","channel":"slack"},"issue_refund":{"receipt_id":"rf_7001","status":"approved","audit_id":"audit_refund_7001"}}
 cargo run -q -p corvid-cli -- test examples/support_escalation_bot/tests/unit.cor
 cargo run -q -p corvid-cli -- test examples/support_escalation_bot/tests/integration.cor
+cargo run -q -p corvid-cli -- test examples/support_escalation_bot/tests/replay_invariant.cor
 cargo run -q -p corvid-cli -- eval examples/support_escalation_bot/evals/support_escalation_bot.cor
 cargo run -q -p corvid-cli -- replay examples/support_escalation_bot/traces/support_escalation_bot_escalation.jsonl
 cargo run -q -p corvid-cli -- replay examples/support_escalation_bot/traces/support_escalation_bot_approved_refund.jsonl
+cargo run -q -p corvid-cli -- replay examples/support_escalation_bot/seed/traces/support_escalation_bot_escalation.jsonl
+cargo run -q -p corvid-cli -- replay examples/support_escalation_bot/seed/traces/support_escalation_bot_approved_refund.jsonl
 ```
 
 The approval-denied trace is a negative replay fixture and exits nonzero with
