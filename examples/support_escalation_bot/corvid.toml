@@ -1,0 +1,7 @@
+[package]
+name = "support_escalation_bot"
+version = "0.1.0"
+description = "Customer support escalation demo with approval-gated refunds"
+
+[run]
+target = "interpreter"

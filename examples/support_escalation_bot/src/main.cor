@@ -1,0 +1,54 @@
+effect order_read:
+    data: customer
+
+effect refund_write:
+    cost: $12.50
+    trust: human_required
+    reversible: false
+    data: financial
+
+effect escalation_write:
+    trust: autonomous
+    reversible: true
+    data: customer
+
+type Order:
+    id: String
+    customer_id: String
+    status: String
+    total: Float
+
+type RefundReceipt:
+    receipt_id: String
+    status: String
+    audit_id: String
+
+type EscalationTicket:
+    ticket_id: String
+    status: String
+    channel: String
+
+public type SupportOutcome:
+    order_id: String
+    action: String
+    status: String
+    audit_id: String
+
+tool lookup_order(id: String) -> Order uses order_read
+tool issue_refund(order: Order, amount: Float) -> RefundReceipt dangerous uses refund_write
+tool escalate_to_human(order: Order, reason: String) -> EscalationTicket uses escalation_write
+
+public agent escalate_order(id: String, reason: String) -> SupportOutcome uses order_read, escalation_write:
+    order = lookup_order(id)
+    ticket = escalate_to_human(order, reason)
+    return SupportOutcome(order.id, "escalate_to_human", ticket.status, ticket.ticket_id)
+
+@budget($250.00)
+agent approved_refund(id: String, amount: Float) -> SupportOutcome uses order_read, refund_write:
+    order = lookup_order(id)
+    approve IssueRefund(order, amount)
+    receipt = issue_refund(order, amount)
+    return SupportOutcome(order.id, "issue_refund", receipt.status, receipt.audit_id)
+
+public agent main() -> SupportOutcome:
+    return escalate_order("ord_1001", "customer asked for a human review")
