@@ -1,0 +1,23 @@
+{
+  "standard": {
+    "policy": "standard",
+    "question": "How does Corvid choose between model providers?",
+    "expected_provider": "openai",
+    "expected_model": "openai_fast",
+    "mock_response": "provider routing selected the expected mocked response."
+  },
+  "private": {
+    "policy": "private",
+    "question": "Which provider should handle a private local question?",
+    "expected_provider": "ollama",
+    "expected_model": "ollama_local",
+    "mock_response": "local provider route stays on the deterministic Ollama fixture."
+  },
+  "deep": {
+    "policy": "deep",
+    "question": "Which provider should handle a hard reasoning question?",
+    "expected_provider": "anthropic",
+    "expected_model": "anthropic_deep",
+    "mock_response": "deep provider route stays on the deterministic Anthropic fixture."
+  }
+}

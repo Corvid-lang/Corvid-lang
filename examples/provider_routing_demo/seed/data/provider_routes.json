@@ -1,0 +1,38 @@
+{
+  "typed_surface": "RoutedChatTurn",
+  "routes": {
+    "standard": {
+      "policy": "standard",
+      "selected_provider": "openai",
+      "selected_model": "openai_fast",
+      "question": "How does Corvid choose between model providers?",
+      "answer": "provider routing selected the expected mocked response.",
+      "privacy_tier": "hosted",
+      "cost_estimate": 0.000512
+    },
+    "private": {
+      "policy": "private",
+      "selected_provider": "ollama",
+      "selected_model": "ollama_local",
+      "question": "Which provider should handle a private local question?",
+      "answer": "local provider route stays on the deterministic Ollama fixture.",
+      "privacy_tier": "local",
+      "cost_estimate": 0.0
+    },
+    "deep": {
+      "policy": "deep",
+      "selected_provider": "anthropic",
+      "selected_model": "anthropic_deep",
+      "question": "Which provider should handle a hard reasoning question?",
+      "answer": "deep provider route stays on the deterministic Anthropic fixture.",
+      "privacy_tier": "hosted",
+      "cost_estimate": 0.00384
+    }
+  },
+  "real_mode_required_env": [
+    "CORVID_RUN_REAL=1",
+    "OPENAI_API_KEY=replace-with-secret-from-operator-store",
+    "ANTHROPIC_API_KEY=replace-with-secret-from-operator-store",
+    "OLLAMA_HOST=http://localhost:11434"
+  ]
+}
