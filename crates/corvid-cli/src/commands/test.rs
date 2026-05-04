@@ -104,6 +104,7 @@ fn cli_test_runtime(path: &Path) -> Runtime {
     if std::env::var("CORVID_TEST_MOCK_LLM").ok().as_deref() == Some("1") {
         builder = builder.llm(std::sync::Arc::new(EnvVarMockAdapter::from_env()));
     }
+    builder = builder.env_mock_tools_from_env();
     if let Ok(key) = std::env::var("ANTHROPIC_API_KEY") {
         builder = builder.llm(std::sync::Arc::new(AnthropicAdapter::new(key)));
     }

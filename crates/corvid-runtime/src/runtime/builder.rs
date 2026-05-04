@@ -17,9 +17,10 @@ use crate::tools::ToolRegistry;
 use crate::tracing::{fresh_run_id, Tracer};
 use crate::usage::LlmUsageLedger;
 use corvid_trace_schema::WRITER_INTERPRETER;
+use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicU64;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 pub struct RuntimeBuilder {
     tools: ToolRegistry,
     llms: LlmRegistry,
@@ -66,6 +67,49 @@ impl RuntimeBuilder {
     {
         self.tools.register(name, handler);
         self
+    }
+
+    /// Register deterministic mock tool handlers from
+    /// `CORVID_TEST_MOCK_TOOLS`.
+    ///
+    /// The env var is a JSON object whose keys are tool names. Each value may
+    /// be either a single JSON response or an array of responses consumed in
+    /// FIFO order by that tool.
+    pub fn env_mock_tools_from_env(mut self) -> Self {
+        let Some(map) = std::env::var("CORVID_TEST_MOCK_TOOLS")
+            .ok()
+            .and_then(|raw| serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(&raw).ok())
+        else {
+            return self;
+        };
+
+        self.register_mock_tool_responses(map);
+        self
+    }
+
+    fn register_mock_tool_responses(&mut self, map: serde_json::Map<String, serde_json::Value>) {
+        for (name, value) in map {
+            let queue = match value {
+                serde_json::Value::Array(values) => values.into_iter().collect(),
+                other => VecDeque::from([other]),
+            };
+            let responses = Arc::new(Mutex::new(queue));
+            let tool_name = name.clone();
+            self.tools.register(name, move |_| {
+                let responses = Arc::clone(&responses);
+                let tool_name = tool_name.clone();
+                async move {
+                    responses
+                        .lock()
+                        .unwrap()
+                        .pop_front()
+                        .ok_or_else(|| RuntimeError::ToolFailed {
+                            tool: tool_name,
+                            message: "CORVID_TEST_MOCK_TOOLS response queue exhausted".into(),
+                        })
+                }
+            });
+        }
     }
 
     pub fn llm(mut self, adapter: Arc<dyn LlmAdapter>) -> Self {
@@ -249,5 +293,44 @@ impl RuntimeBuilder {
             secrets: SecretRuntime::new(),
             queue: QueueRuntime::new(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[tokio::test]
+    async fn mock_tool_responses_are_registered_and_consumed_fifo() {
+        let mut map = serde_json::Map::new();
+        map.insert("lookup".to_string(), json!(["first", "second"]));
+
+        let mut builder = Runtime::builder();
+        builder.register_mock_tool_responses(map);
+        let runtime = builder.build();
+
+        let first = runtime.tools().call("lookup", vec![]).await.unwrap();
+        let second = runtime.tools().call("lookup", vec![]).await.unwrap();
+        assert_eq!(first, json!("first"));
+        assert_eq!(second, json!("second"));
+    }
+
+    #[tokio::test]
+    async fn mock_tool_response_queue_exhaustion_is_explicit() {
+        let mut map = serde_json::Map::new();
+        map.insert("lookup".to_string(), json!("only"));
+
+        let mut builder = Runtime::builder();
+        builder.register_mock_tool_responses(map);
+        let runtime = builder.build();
+
+        runtime.tools().call("lookup", vec![]).await.unwrap();
+        let err = runtime.tools().call("lookup", vec![]).await.unwrap_err();
+        assert!(matches!(
+            err,
+            RuntimeError::ToolFailed { ref tool, ref message }
+                if tool == "lookup" && message.contains("response queue exhausted")
+        ));
     }
 }
