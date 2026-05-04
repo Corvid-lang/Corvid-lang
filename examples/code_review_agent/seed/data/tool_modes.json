@@ -1,0 +1,38 @@
+{
+  "mock": {
+    "fetch_pull_request_diff": {
+      "repo": "Corvid-lang/Corvid-lang",
+      "number": 418,
+      "base_sha": "base_redacted_20260504",
+      "head_sha": "head_redacted_20260504",
+      "diff": "approval bypass diff"
+    },
+    "draft_review_comment": {
+      "path": "examples/refund_bot/src/main.cor",
+      "line": 43,
+      "severity": "high",
+      "checklist_id": "approval-boundary",
+      "body": "shortcut_refund calls issue_refund without an approval boundary; require approve IssueRefund before the tool call."
+    },
+    "post_review_comment": {
+      "provider": "github",
+      "id": "review_comment_9001",
+      "key": "PR-418#discussion_r9001",
+      "approval_id": "approval_review_comment_9001",
+      "replay_key": "tasks:github_write:Corvid-lang/Corvid-lang:418:Comment"
+    }
+  },
+  "replay": {
+    "trace": "seed/traces/code_review_agent_review_session.jsonl",
+    "run_id": "code-review-agent-review-session"
+  },
+  "real": {
+    "opt_in": "CORVID_RUN_REAL=1",
+    "required_env": [
+      "GITHUB_TOKEN",
+      "GITHUB_REPOSITORY",
+      "GITHUB_PULL_REQUEST",
+      "OPENAI_API_KEY"
+    ]
+  }
+}
