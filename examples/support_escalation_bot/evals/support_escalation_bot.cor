@@ -1,0 +1,16 @@
+import "../src/main" use SupportOutcome, main
+
+agent support_escalation_contract() -> SupportOutcome:
+    return main()
+
+agent routes_to_human_channel() -> Bool:
+    outcome = support_escalation_contract()
+    return outcome.action == "escalate_to_human" and outcome.status == "queued"
+
+agent audit_id_is_stable() -> Bool:
+    outcome = support_escalation_contract()
+    return outcome.audit_id == "esc_9001"
+
+eval support_escalation_contract_eval:
+    assert routes_to_human_channel()
+    assert audit_id_is_stable()
