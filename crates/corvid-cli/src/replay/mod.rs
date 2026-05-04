@@ -23,10 +23,6 @@
 //!    `<STEP>` and reports the downstream behavior diff.
 //!    Runtime seam from `21-inv-D-runtime`.
 //!
-//! Modes 1 and 3 remain in their pre-wire stub state today; their
-//! wires are next in the queue (`21-F-cli-wire` +
-//! `21-inv-D-cli-wire`).
-//!
 //! `--source <FILE>` points at the Corvid source the trace was
 //! recorded against. It's required for actually-execute modes;
 //! the runtime needs the IR to replay. Once
@@ -47,7 +43,7 @@ mod mutation;
 mod plain;
 use differential::differential_replay_live;
 use mutation::mutate_replay_live;
-use plain::plain_replay_stub;
+use plain::plain_replay_live;
 
 /// Exit code returned when a replay runs cleanly but surfaces
 /// divergences (differential mode: any `LlmDivergence`; mutation
@@ -55,19 +51,13 @@ use plain::plain_replay_stub;
 /// "ran-and-diverged" from "could not run" (typed anyhow errors).
 pub const EXIT_DIVERGED: u8 = 1;
 
-/// Exit code returned when a replay runtime path isn't yet wired
-/// to the CLI. Kept stable so existing tests (and CI scripts that
-/// distinguish "not wired" from "diverged") continue to work.
-pub const EXIT_NOT_IMPLEMENTED: u8 = 1;
-
 /// Entry for `corvid replay <trace> [--source <file>] [--model <id>] [--mutate STEP JSON]`.
 ///
 /// `model` and `mutate` are mutually exclusive at the CLI layer
 /// (clap enforces this); callers that construct args another way
 /// must respect the same invariant. With neither set, runs a
-/// plain replay (stub until its wire slice). With `model`, runs
-/// a differential model replay (live wire as of 21-inv-B-cli-wire).
-/// With `mutate`, runs a counterfactual mutation replay (stub).
+/// plain replay. With `model`, runs a differential model replay.
+/// With `mutate`, runs a counterfactual mutation replay.
 pub fn run_replay(
     trace: &Path,
     source: Option<&Path>,
@@ -98,7 +88,7 @@ pub fn run_replay(
         }
         (Some(model_id), None) => differential_replay_live(trace, source, model_id),
         (None, Some(args)) => mutate_replay_live(trace, source, args, &events),
-        (None, None) => plain_replay_stub(),
+        (None, None) => plain_replay_live(trace, source, &events),
     }
 }
 
@@ -208,12 +198,18 @@ mod tests {
                 version: SCHEMA_VERSION,
                 writer: WRITER_INTERPRETER.into(),
                 commit_sha: None,
-                source_path: None,
+                source_path: Some("demo.cor".into()),
                 ts_ms: 1,
                 run_id: run_id.into(),
             },
-            TraceEvent::RunStarted {
+            TraceEvent::SeedRead {
                 ts_ms: 2,
+                run_id: run_id.into(),
+                purpose: "rollout_default_seed".into(),
+                value: 42,
+            },
+            TraceEvent::RunStarted {
+                ts_ms: 3,
                 run_id: run_id.into(),
                 agent: "demo".into(),
                 args: vec![],
@@ -221,7 +217,7 @@ mod tests {
         ];
         if with_llm {
             events.push(TraceEvent::LlmCall {
-                ts_ms: 3,
+                ts_ms: 4,
                 run_id: run_id.into(),
                 prompt: "classify".into(),
                 model: Some("claude-opus-4-6".into()),
@@ -230,7 +226,7 @@ mod tests {
                 args: vec![],
             });
             events.push(TraceEvent::LlmResult {
-                ts_ms: 4,
+                ts_ms: 5,
                 run_id: run_id.into(),
                 prompt: "classify".into(),
                 model: Some("claude-opus-4-6".into()),
@@ -239,10 +235,10 @@ mod tests {
             });
         }
         events.push(TraceEvent::RunCompleted {
-            ts_ms: 5,
+            ts_ms: 6,
             run_id: run_id.into(),
             ok: true,
-            result: None,
+            result: Some(serde_json::json!(42)),
             error: None,
         });
         write_events_to_path(&path, &events).unwrap();
@@ -250,11 +246,19 @@ mod tests {
     }
 
     #[test]
-    fn plain_replay_stub_returns_not_implemented_exit_code() {
+    fn plain_replay_uses_schema_source_path() {
         let dir = test_dir();
+        std::fs::write(
+            dir.join("demo.cor"),
+            r#"
+agent demo() -> Int:
+    return 42
+"#,
+        )
+        .unwrap();
         let path = write_sample(&dir, "run-plain", false);
         let code = run_replay(&path, None, None, None).unwrap();
-        assert_eq!(code, EXIT_NOT_IMPLEMENTED);
+        assert_eq!(code, 0);
     }
 
     #[test]
