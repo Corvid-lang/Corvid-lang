@@ -1,0 +1,4 @@
+{"kind":"schema_header","version":2,"writer":"corvid-vm","commit_sha":null,"source_path":"../../src/main.cor","ts_ms":1777500000000,"run_id":"refund-bot-approval-gate"}
+{"kind":"seed_read","ts_ms":1777500000001,"run_id":"refund-bot-approval-gate","purpose":"rollout_default_seed","value":1777500000001}
+{"kind":"run_started","ts_ms":1777500000002,"run_id":"refund-bot-approval-gate","agent":"main","args":[]}
+{"kind":"run_completed","ts_ms":1777500000003,"run_id":"refund-bot-approval-gate","ok":true,"result":{"app":"refund_bot","contract":"approval-gated refund"},"error":null}

@@ -1,0 +1,18 @@
+{
+  "requests": [
+    {
+      "order_id": "order-demo-1001",
+      "amount": 42.5,
+      "reason": "duplicate charge in demo fixture",
+      "tenant_id": "tenant-demo",
+      "actor_id": "support-agent-demo"
+    },
+    {
+      "order_id": "order-demo-1002",
+      "amount": 125.0,
+      "reason": "item never arrived",
+      "tenant_id": "tenant-demo",
+      "actor_id": "support-agent-demo"
+    }
+  ]
+}

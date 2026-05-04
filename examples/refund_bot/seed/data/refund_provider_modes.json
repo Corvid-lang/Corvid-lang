@@ -1,0 +1,33 @@
+{
+  "typed_surface": "RefundProviderResult",
+  "mode_selection": "host-env",
+  "default_mode": "mock",
+  "real_mode_opt_in": {
+    "required": true,
+    "env": [
+      "CORVID_RUN_REAL=1",
+      "REFUND_PROVIDER_ENDPOINT",
+      "REFUND_PROVIDER_TOKEN"
+    ]
+  },
+  "mock": {
+    "receipt_id": "rf_mock_1001",
+    "status": "approved",
+    "audit_id": "audit_mock_1001",
+    "guarantee_id": "approval.reachable_entrypoints_require_contract"
+  },
+  "replay": {
+    "trace": "../traces/refund_bot_approval_gate.jsonl",
+    "receipt_id": "rf_mock_1001",
+    "status": "approved",
+    "audit_id": "audit_mock_1001",
+    "guarantee_id": "approval.reachable_entrypoints_require_contract"
+  },
+  "real": {
+    "receipt_id": "rf_mock_1001",
+    "status": "approved",
+    "audit_id": "audit_mock_1001",
+    "guarantee_id": "approval.reachable_entrypoints_require_contract",
+    "credential_policy": "env-only"
+  }
+}

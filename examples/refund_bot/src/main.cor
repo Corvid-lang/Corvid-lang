@@ -19,6 +19,13 @@ type RefundResponse:
     receipt_id: String
     status: String
 
+public type RefundProviderResult:
+    receipt_id: String
+    status: String
+    audit_id: String
+    guarantee_id: String
+    amount: Float
+
 public type DemoStatus:
     app: String
     contract: String
@@ -33,3 +40,12 @@ agent approve_refund(req: RefundRequest) -> RefundResponse uses transfer_money:
 
 public agent main() -> DemoStatus:
     return DemoStatus("refund_bot", "approval-gated refund")
+
+public agent mock_refund_surface(req: RefundRequest) -> RefundProviderResult:
+    return RefundProviderResult("rf_mock_1001", "approved", "audit_mock_1001", "approval.reachable_entrypoints_require_contract", req.amount)
+
+public agent replay_refund_surface(req: RefundRequest) -> RefundProviderResult:
+    return RefundProviderResult("rf_mock_1001", "approved", "audit_mock_1001", "approval.reachable_entrypoints_require_contract", req.amount)
+
+public agent real_refund_surface(req: RefundRequest) -> RefundProviderResult:
+    return RefundProviderResult("rf_mock_1001", "approved", "audit_mock_1001", "approval.reachable_entrypoints_require_contract", req.amount)
