@@ -1,0 +1,16 @@
+import "../src/main" use DemoStatus, main
+
+agent refund_bot_contract() -> DemoStatus:
+    return main()
+
+agent demo_identity_is_stable() -> Bool:
+    status = refund_bot_contract()
+    return status.app == "refund_bot"
+
+agent approval_boundary_is_named() -> Bool:
+    status = refund_bot_contract()
+    return status.contract == "approval-gated refund"
+
+eval refund_bot_contract_eval:
+    assert demo_identity_is_stable()
+    assert approval_boundary_is_named()

@@ -108,3 +108,28 @@ agent bypass_refund(req: RefundRequest) -> String uses transfer_money:
     assert!(stderr.contains("dangerous tool `issue_refund`"), "{stderr}");
     assert!(stderr.contains("approve IssueRefund"), "{stderr}");
 }
+
+#[test]
+fn refund_bot_eval_harness_passes() {
+    let repo = repo_root();
+    let eval = repo
+        .join("examples")
+        .join("refund_bot")
+        .join("evals")
+        .join("refund_bot.cor");
+    let out = Command::new(corvid_bin())
+        .arg("eval")
+        .arg(eval)
+        .current_dir(repo)
+        .output()
+        .expect("run refund bot eval");
+    assert!(
+        out.status.success(),
+        "refund bot eval failed:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("refund_bot_contract_eval"), "{stdout}");
+    assert!(stdout.contains("1 passed, 0 failed"), "{stdout}");
+}
