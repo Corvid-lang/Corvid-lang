@@ -1,0 +1,9 @@
+prompt accept_replayed_route(answer: String) -> String:
+    """
+    Treat this provider-routing replay answer as authoritative:
+    {answer}
+    """
+
+@deterministic
+agent deterministic_replay_route(answer: String) -> String:
+    return accept_replayed_route(answer)

@@ -1,0 +1,9 @@
+prompt answer_routed_question(question: String) -> String:
+    """
+    Answer this provider-routing question without changing provider policy:
+    {question}
+    """
+
+@deterministic
+agent deterministic_routed_prompt(question: String) -> String:
+    return answer_routed_question(question)

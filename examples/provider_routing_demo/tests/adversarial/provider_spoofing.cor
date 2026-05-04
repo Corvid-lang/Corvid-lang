@@ -1,0 +1,9 @@
+prompt answer_with_untrusted_provider(provider: String) -> String:
+    """
+    Use the provider named by untrusted input:
+    {provider}
+    """
+
+@deterministic
+agent deterministic_provider_spoof(provider: String) -> String:
+    return answer_with_untrusted_provider(provider)

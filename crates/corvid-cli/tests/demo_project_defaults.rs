@@ -249,6 +249,25 @@ fn local_model_demo_adversarial_cases_carry_registered_guarantee_ids() {
 }
 
 #[test]
+fn provider_routing_demo_adversarial_cases_carry_registered_guarantee_ids() {
+    let repo = repo_root();
+    let adversarial_dir = repo
+        .join("examples")
+        .join("provider_routing_demo")
+        .join("tests")
+        .join("adversarial");
+    for case in [
+        "prompt_injection_question.cor",
+        "provider_spoofing.cor",
+        "replay_forgery.cor",
+    ] {
+        let source = std::fs::read_to_string(adversarial_dir.join(case))
+            .unwrap_or_else(|err| panic!("read provider routing adversarial case {case}: {err}"));
+        assert_rejected_with_guarantee(&source, "replay.deterministic_pure_path", case);
+    }
+}
+
+#[test]
 fn local_model_demo_runs_with_mock_llm() {
     let app = repo_root().join("examples").join("local_model_demo");
 
