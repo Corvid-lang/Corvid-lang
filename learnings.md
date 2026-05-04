@@ -3584,3 +3584,18 @@ plain replay compiles the source with the default replay runtime, which does not
 load the demo's `corvid.toml` model catalog. The route still selects
 `openai_fast`, `ollama_local`, or `anthropic_deep`, but `model_version` must be
 `null` on `llm_call` and `llm_result` for byte-strict substitution to match.
+
+## code review demo replay
+
+Structured prompt responses replay cleanly as JSON objects, but plain replay
+still matches the runtime's model metadata exactly. `code_review_agent` showed
+that a trace recorded with the env mock can include a default model name while
+plain replay reruns without that model configured. Normalize `model` and
+`model_version` on substitution events to the no-env replay runtime, and keep
+provider identity covered by tests and real-provider docs instead of forcing it
+into the replay fixture.
+
+Eval assertions may invoke the same tool/prompt path more than once. If an eval
+has two assertions that each call `main`, provide two queued mock tool results
+and two queued mock LLM replies; a single mock response can pass `run` and
+still exhaust during `eval`.

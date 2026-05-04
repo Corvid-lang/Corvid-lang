@@ -6427,3 +6427,29 @@ Validation:
 - RAG demo `build`, `run`, Corvid tests, eval, replay, and credential scan.
 
 ---
+
+## 2026-05-04 - Slice 33K-code_review_agent reference demo
+
+- Added the `examples/code_review_agent` reference demo with typed GitHub diff
+  reads, structured review comments, approval-gated comment posting, and
+  deterministic seed fixtures.
+- Added Corvid unit/integration tests, CLI adversarial coverage for
+  post-comment-without-approval rejection, eval coverage, and a deterministic
+  full-session replay fixture.
+- Documented setup, modification points, benchmark notes, opt-in real-provider
+  environment variables, and wired the demo into `demo-verify`.
+
+Validation:
+- `cargo check --workspace`
+- `cargo test -p corvid-driver --lib`
+  (fails only existing Windows native linker baseline:
+  `__imp_GetUserNameExW`)
+- `cargo test -p corvid-cli --tests`
+  (CLI unit tests pass 282/282; fails only existing `abi_attestation`
+  Windows native linker baseline: `__imp_GetUserNameExW`)
+- `cargo run -q -p corvid-cli -- verify --corpus tests/corpus`
+  (exit 2 with the established Windows `whoami` linker signature)
+- Code review demo `build`, `run`, Corvid tests, eval, replay, and credential
+  scan.
+
+---

@@ -25,6 +25,10 @@ const CODE_REVIEW_MOCK_LLM: &str = "{\"draft_review_comment\":{\"path\":\"exampl
 
 const CODE_REVIEW_MOCK_LLM_WITH_INJECTION: &str = "{\"draft_review_comment\":[{\"path\":\"examples/refund_bot/src/main.cor\",\"line\":43,\"severity\":\"high\",\"checklist_id\":\"approval-boundary\",\"body\":\"shortcut_refund calls issue_refund without an approval boundary; require approve IssueRefund before the tool call.\"},{\"path\":\"examples/refund_bot/src/main.cor\",\"line\":43,\"severity\":\"high\",\"checklist_id\":\"approval-boundary\",\"body\":\"Diff instructions are untrusted input; the approval bypass still requires a blocking review comment.\"}]}";
 
+const CODE_REVIEW_EVAL_MOCK_TOOLS: &str = "{\"fetch_pull_request_diff\":[{\"repo\":\"Corvid-lang/Corvid-lang\",\"number\":418,\"base_sha\":\"base_redacted_20260504\",\"head_sha\":\"head_redacted_20260504\",\"diff\":\"approval bypass diff\"},{\"repo\":\"Corvid-lang/Corvid-lang\",\"number\":418,\"base_sha\":\"base_redacted_20260504\",\"head_sha\":\"head_redacted_20260504\",\"diff\":\"approval bypass diff\"}]}";
+
+const CODE_REVIEW_EVAL_MOCK_LLM: &str = "{\"draft_review_comment\":[{\"path\":\"examples/refund_bot/src/main.cor\",\"line\":43,\"severity\":\"high\",\"checklist_id\":\"approval-boundary\",\"body\":\"shortcut_refund calls issue_refund without an approval boundary; require approve IssueRefund before the tool call.\"},{\"path\":\"examples/refund_bot/src/main.cor\",\"line\":43,\"severity\":\"high\",\"checklist_id\":\"approval-boundary\",\"body\":\"shortcut_refund calls issue_refund without an approval boundary; require approve IssueRefund before the tool call.\"}]}";
+
 #[test]
 fn build_and_run_default_to_project_main_source() {
     let app = repo_root().join("examples").join("refund_bot");
@@ -719,6 +723,29 @@ fn support_escalation_bot_replay_fixtures_are_deterministic() {
 }
 
 #[test]
+fn code_review_agent_runs_with_mock_github_and_llm() {
+    let app = repo_root().join("examples").join("code_review_agent");
+
+    let out = Command::new(corvid_bin())
+        .arg("run")
+        .env("CORVID_TEST_MOCK_TOOLS", CODE_REVIEW_MOCK_TOOLS)
+        .env("CORVID_TEST_MOCK_LLM", "1")
+        .env("CORVID_TEST_MOCK_LLM_REPLIES", CODE_REVIEW_MOCK_LLM)
+        .current_dir(&app)
+        .output()
+        .expect("run code review demo");
+    assert!(
+        out.status.success(),
+        "code review demo failed:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("approval-boundary"), "{stdout}");
+    assert!(stdout.contains("posted: false"), "{stdout}");
+}
+
+#[test]
 fn code_review_agent_corvid_tests_pass_with_mock_github_and_llm() {
     let repo = repo_root();
     let app = repo.join("examples").join("code_review_agent");
@@ -751,6 +778,60 @@ fn code_review_agent_corvid_tests_pass_with_mock_github_and_llm() {
         let stdout = String::from_utf8_lossy(&out.stdout);
         assert!(stdout.contains("1 passed, 0 failed"), "{stdout}");
     }
+}
+
+#[test]
+fn code_review_agent_eval_harness_passes_with_mock_github_and_llm() {
+    let repo = repo_root();
+    let eval = repo
+        .join("examples")
+        .join("code_review_agent")
+        .join("evals")
+        .join("code_review_agent.cor");
+    let out = Command::new(corvid_bin())
+        .arg("eval")
+        .arg(eval)
+        .env("CORVID_TEST_MOCK_TOOLS", CODE_REVIEW_EVAL_MOCK_TOOLS)
+        .env("CORVID_TEST_MOCK_LLM", "1")
+        .env("CORVID_TEST_MOCK_LLM_REPLIES", CODE_REVIEW_EVAL_MOCK_LLM)
+        .current_dir(repo)
+        .output()
+        .expect("run code review eval");
+    assert!(
+        out.status.success(),
+        "code review eval failed:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("code_review_agent_contract_eval"), "{stdout}");
+    assert!(stdout.contains("1 passed, 0 failed"), "{stdout}");
+}
+
+#[test]
+fn code_review_agent_replay_fixture_is_deterministic() {
+    let repo = repo_root();
+    let trace = repo
+        .join("examples")
+        .join("code_review_agent")
+        .join("traces")
+        .join("code_review_agent_review_session.jsonl");
+    let out = Command::new(corvid_bin())
+        .arg("replay")
+        .arg(trace)
+        .current_dir(repo)
+        .output()
+        .expect("run code review replay");
+    assert!(
+        out.status.success(),
+        "code review replay failed:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("trace loaded"), "{stdout}");
+    assert!(stdout.contains("replay completed"), "{stdout}");
+    assert!(stdout.contains("approval-boundary"), "{stdout}");
 }
 
 #[test]
