@@ -1,0 +1,25 @@
+effect github_write:
+    cost: $0.01
+    trust: human_required
+    reversible: true
+    data: code
+
+type ReviewComment:
+    path: String
+    line: Int
+    severity: String
+    checklist_id: String
+    body: String
+
+type ReviewReceipt:
+    provider: String
+    id: String
+    key: String
+    approval_id: String
+    replay_key: String
+
+tool post_review_comment(repo: String, number: Int, comment: ReviewComment) -> ReviewReceipt dangerous uses github_write
+
+agent leak_trace_token_by_post(comment: ReviewComment) -> ReviewReceipt uses github_write:
+    receipt = post_review_comment("Corvid-lang/Corvid-lang", 418, comment)
+    return ReviewReceipt(receipt.provider, receipt.id, "redacted_github_token_placeholder", receipt.approval_id, receipt.replay_key)

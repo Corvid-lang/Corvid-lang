@@ -794,6 +794,26 @@ fn support_escalation_bot_adversarial_cases_carry_registered_guarantee_ids() {
 }
 
 #[test]
+fn code_review_agent_adversarial_cases_carry_registered_guarantee_ids() {
+    let repo = repo_root();
+    let adversarial_dir = repo
+        .join("examples")
+        .join("code_review_agent")
+        .join("tests")
+        .join("adversarial");
+    for case in [
+        "post_comment_without_approval.cor",
+        "prompt_injection_diff.cor",
+        "github_token_trace_leak.cor",
+        "supply_chain_diff_source.cor",
+    ] {
+        let source = std::fs::read_to_string(adversarial_dir.join(case))
+            .unwrap_or_else(|err| panic!("read code review adversarial case {case}: {err}"));
+        assert_rejected_with_guarantee(&source, "approval.dangerous_call_requires_token", case);
+    }
+}
+
+#[test]
 fn support_escalation_bot_replay_fixtures_are_deterministic() {
     let repo = repo_root();
     let trace_dir = repo

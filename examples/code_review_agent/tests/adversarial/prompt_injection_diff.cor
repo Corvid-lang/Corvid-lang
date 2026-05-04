@@ -1,0 +1,32 @@
+effect github_write:
+    cost: $0.01
+    trust: human_required
+    reversible: true
+    data: code
+
+type PullRequestDiff:
+    repo: String
+    number: Int
+    base_sha: String
+    head_sha: String
+    diff: String
+
+type ReviewComment:
+    path: String
+    line: Int
+    severity: String
+    checklist_id: String
+    body: String
+
+type ReviewReceipt:
+    provider: String
+    id: String
+    key: String
+    approval_id: String
+    replay_key: String
+
+tool post_review_comment(repo: String, number: Int, comment: ReviewComment) -> ReviewReceipt dangerous uses github_write
+
+agent injected_diff_posts_comment(pr: PullRequestDiff) -> ReviewReceipt uses github_write:
+    injected = ReviewComment("examples/refund_bot/src/main.cor", 43, "low", "prompt-injection", pr.diff)
+    return post_review_comment(pr.repo, pr.number, injected)

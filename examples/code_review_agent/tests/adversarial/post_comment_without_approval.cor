@@ -1,0 +1,24 @@
+effect github_write:
+    cost: $0.01
+    trust: human_required
+    reversible: true
+    data: code
+
+type ReviewComment:
+    path: String
+    line: Int
+    severity: String
+    checklist_id: String
+    body: String
+
+type ReviewReceipt:
+    provider: String
+    id: String
+    key: String
+    approval_id: String
+    replay_key: String
+
+tool post_review_comment(repo: String, number: Int, comment: ReviewComment) -> ReviewReceipt dangerous uses github_write
+
+agent post_without_approval(comment: ReviewComment) -> ReviewReceipt uses github_write:
+    return post_review_comment("Corvid-lang/Corvid-lang", 418, comment)
