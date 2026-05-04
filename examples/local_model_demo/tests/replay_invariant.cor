@@ -1,0 +1,16 @@
+import "../src/main" use mock_local_chat_surface, replay_local_chat_surface, real_local_chat_surface
+
+agent surfaces_match_for_seed_question() -> Bool:
+    question = "What does Corvid demonstrate with local models?"
+    mock_result = mock_local_chat_surface(question)
+    replay_result = replay_local_chat_surface(question)
+    real_result = real_local_chat_surface(question)
+
+    provider_matches = mock_result.provider == replay_result.provider and replay_result.provider == real_result.provider
+    model_matches = mock_result.model_id == replay_result.model_id and replay_result.model_id == real_result.model_id
+    question_matches = mock_result.question == replay_result.question and replay_result.question == real_result.question
+    answer_matches = mock_result.answer == replay_result.answer and replay_result.answer == real_result.answer
+    return provider_matches and model_matches and question_matches and answer_matches
+
+test local_model_demo_replay_invariant:
+    assert surfaces_match_for_seed_question()
