@@ -49,10 +49,21 @@ public agent chat(policy: String, question: String) -> RoutedChatTurn:
     answer = answer_with_policy(policy, question)
     return RoutedChatTurn(policy, selected_provider(policy), selected_model(policy), question, answer)
 
+public agent standard_answer() -> String:
+    turn = chat("standard", "How does Corvid choose between model providers?")
+    return turn.answer
+
+public agent private_answer() -> String:
+    turn = chat("private", "Which provider should handle a private local question?")
+    return turn.answer
+
+public agent deep_answer() -> String:
+    turn = chat("deep", "Which provider should handle a hard reasoning question?")
+    return turn.answer
+
 @budget($0.01)
 agent checked_standard_chat() -> RoutedChatTurn:
     return chat("standard", "How does Corvid choose between model providers?")
 
 public agent main() -> String:
-    turn = checked_standard_chat()
-    return turn.answer
+    return standard_answer()

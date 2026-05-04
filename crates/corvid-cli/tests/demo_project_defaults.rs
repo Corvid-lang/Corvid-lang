@@ -362,3 +362,45 @@ fn provider_routing_demo_eval_harness_passes_with_mock_llm() {
     assert!(stdout.contains("provider_routing_demo_contract_eval"), "{stdout}");
     assert!(stdout.contains("1 passed, 0 failed"), "{stdout}");
 }
+
+#[test]
+fn provider_routing_demo_replay_fixtures_are_deterministic() {
+    let repo = repo_root();
+    let trace_dir = repo
+        .join("examples")
+        .join("provider_routing_demo")
+        .join("traces");
+    let fixtures = [
+        (
+            "provider_routing_demo_openai.jsonl",
+            "provider routing selected the expected mocked response.",
+        ),
+        (
+            "provider_routing_demo_ollama.jsonl",
+            "local provider route stays on the deterministic Ollama fixture.",
+        ),
+        (
+            "provider_routing_demo_anthropic.jsonl",
+            "deep provider route stays on the deterministic Anthropic fixture.",
+        ),
+    ];
+
+    for (fixture, expected) in fixtures {
+        let out = Command::new(corvid_bin())
+            .arg("replay")
+            .arg(trace_dir.join(fixture))
+            .current_dir(&repo)
+            .output()
+            .unwrap_or_else(|err| panic!("run provider routing replay {fixture}: {err}"));
+        assert!(
+            out.status.success(),
+            "{fixture} replay failed:\nstdout={}\nstderr={}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("trace loaded"), "{stdout}");
+        assert!(stdout.contains("replay completed"), "{stdout}");
+        assert!(stdout.contains(expected), "{stdout}");
+    }
+}
