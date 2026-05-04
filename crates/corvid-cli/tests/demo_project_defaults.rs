@@ -15,6 +15,8 @@ const RAG_QA_MOCK_CONTEXT: &str =
 const RAG_QA_MOCK_TOOLS: &str =
     "{\"retrieve_context\":[\"Refunds over one hundred dollars require approval before money moves.\",\"Refunds over one hundred dollars require approval before money moves.\",\"Refunds over one hundred dollars require approval before money moves.\"]}";
 
+const SUPPORT_ESCALATION_MOCK_TOOLS: &str = "{\"lookup_order\":[{\"id\":\"ord_1001\",\"customer_id\":\"cust_42\",\"status\":\"delivered\",\"total\":149.99},{\"id\":\"ord_1003\",\"customer_id\":\"cust_42\",\"status\":\"delivered\",\"total\":19.95}],\"escalate_to_human\":{\"ticket_id\":\"esc_9001\",\"status\":\"queued\",\"channel\":\"slack\"},\"issue_refund\":{\"receipt_id\":\"rf_7001\",\"status\":\"approved\",\"audit_id\":\"audit_refund_7001\"}}";
+
 #[test]
 fn build_and_run_default_to_project_main_source() {
     let app = repo_root().join("examples").join("refund_bot");
@@ -556,4 +558,98 @@ agent answer(question: String) -> Grounded<String>:
         stderr.contains("return value lacks a proven grounded source"),
         "{stderr}"
     );
+}
+
+#[test]
+fn support_escalation_bot_runs_with_mock_tools() {
+    let app = repo_root().join("examples").join("support_escalation_bot");
+
+    let out = Command::new(corvid_bin())
+        .arg("run")
+        .env("CORVID_TEST_MOCK_TOOLS", SUPPORT_ESCALATION_MOCK_TOOLS)
+        .current_dir(&app)
+        .output()
+        .expect("run support escalation demo");
+    assert!(
+        out.status.success(),
+        "support escalation demo failed:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("escalate_to_human"), "{stdout}");
+    assert!(stdout.contains("esc_9001"), "{stdout}");
+}
+
+#[test]
+fn support_escalation_bot_corvid_tests_pass_with_mock_tools() {
+    let repo = repo_root();
+    let app = repo.join("examples").join("support_escalation_bot");
+
+    for suite in ["unit.cor", "integration.cor"] {
+        let out = Command::new(corvid_bin())
+            .arg("test")
+            .arg(app.join("tests").join(suite))
+            .env("CORVID_TEST_MOCK_TOOLS", SUPPORT_ESCALATION_MOCK_TOOLS)
+            .current_dir(&repo)
+            .output()
+            .unwrap_or_else(|err| panic!("run support escalation test {suite}: {err}"));
+        assert!(
+            out.status.success(),
+            "{suite} failed:\nstdout={}\nstderr={}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("1 passed, 0 failed"), "{stdout}");
+    }
+}
+
+#[test]
+fn support_escalation_bot_rejects_unapproved_refund() {
+    let repo = repo_root();
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let bad_source = tmp.path().join("unapproved_support_refund.cor");
+    std::fs::write(
+        &bad_source,
+        r#"
+effect refund_write:
+    cost: $12.50
+    trust: human_required
+    reversible: false
+    data: financial
+
+type Order:
+    id: String
+    customer_id: String
+    status: String
+    total: Float
+
+type RefundReceipt:
+    receipt_id: String
+    status: String
+    audit_id: String
+
+tool issue_refund(order: Order, amount: Float) -> RefundReceipt dangerous uses refund_write
+
+agent bypass_refund(order: Order) -> RefundReceipt uses refund_write:
+    return issue_refund(order, 149.99)
+"#,
+    )
+    .expect("write adversarial source");
+    let out = Command::new(corvid_bin())
+        .arg("check")
+        .arg(&bad_source)
+        .current_dir(repo)
+        .output()
+        .expect("run corvid check on adversarial support source");
+    assert!(
+        !out.status.success(),
+        "unapproved support refund should fail:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("dangerous tool `issue_refund`"), "{stderr}");
+    assert!(stderr.contains("approve IssueRefund"), "{stderr}");
 }

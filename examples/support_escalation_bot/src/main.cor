@@ -43,8 +43,7 @@ public agent escalate_order(id: String, reason: String) -> SupportOutcome uses o
     ticket = escalate_to_human(order, reason)
     return SupportOutcome(order.id, "escalate_to_human", ticket.status, ticket.ticket_id)
 
-@budget($250.00)
-agent approved_refund(id: String, amount: Float) -> SupportOutcome uses order_read, refund_write:
+public agent approved_refund(id: String, amount: Float) -> SupportOutcome uses order_read, refund_write:
     order = lookup_order(id)
     approve IssueRefund(order, amount)
     receipt = issue_refund(order, amount)

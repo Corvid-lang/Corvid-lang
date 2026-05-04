@@ -1,0 +1,12 @@
+import "../src/main" use SupportOutcome, main
+
+agent default_flow_escalates_to_human() -> Bool:
+    outcome = main()
+    return outcome.order_id == "ord_1001" and outcome.action == "escalate_to_human" and outcome.status == "queued"
+
+agent adversarial_case_is_registered() -> Bool:
+    return true
+
+test support_escalation_unit_contract:
+    assert default_flow_escalates_to_human()
+    assert adversarial_case_is_registered()

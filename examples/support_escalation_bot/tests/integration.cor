@@ -1,0 +1,8 @@
+import "../src/main" use SupportOutcome, main
+
+agent one_command_flow_returns_escalation_ticket() -> Bool:
+    outcome = main()
+    return outcome.order_id == "ord_1001" and outcome.action == "escalate_to_human" and outcome.audit_id == "esc_9001"
+
+test support_escalation_one_command_flow:
+    assert one_command_flow_returns_escalation_ticket()
