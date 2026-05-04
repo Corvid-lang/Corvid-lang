@@ -1,0 +1,7 @@
+{"kind":"schema_header","version":2,"writer":"corvid-vm","commit_sha":null,"source_path":"../../src/main.cor","ts_ms":1777852800000,"run_id":"local-model-demo-mock-chat"}
+{"kind":"seed_read","ts_ms":1777852800001,"run_id":"local-model-demo-mock-chat","purpose":"rollout_default_seed","value":1777852800001}
+{"kind":"run_started","ts_ms":1777852800002,"run_id":"local-model-demo-mock-chat","agent":"main","args":[]}
+{"kind":"llm_call","ts_ms":1777852800003,"run_id":"local-model-demo-mock-chat","prompt":"ask_local_model","model":null,"model_version":null,"rendered":"\n    Answer this local demo prompt in one short sentence:\n    \"What does Corvid demonstrate with local models?\"\n    ","args":["What does Corvid demonstrate with local models?"]}
+{"kind":"host_event","ts_ms":1777852800004,"run_id":"local-model-demo-mock-chat","name":"llm.usage","payload":{"adapter":"env-mock-llm","completion_tokens":0,"cost_usd":0.0,"currency":"USD","local":true,"model":"ollama:llama3.2","privacy_tier":"local","prompt":"ask_local_model","prompt_tokens":0,"provider":"ollama","total_tokens":0,"unit":"token"}}
+{"kind":"llm_result","ts_ms":1777852800005,"run_id":"local-model-demo-mock-chat","prompt":"ask_local_model","model":null,"model_version":null,"result":"provider-neutral local inference with deterministic replay."}
+{"kind":"run_completed","ts_ms":1777852800006,"run_id":"local-model-demo-mock-chat","ok":true,"result":"provider-neutral local inference with deterministic replay.","error":null}

@@ -1,0 +1,35 @@
+{
+  "typed_surface": "LocalChatTurn",
+  "seed_question": "What does Corvid demonstrate with local models?",
+  "modes": {
+    "mock": {
+      "provider": "ollama",
+      "model_id": "ollama:llama3.2",
+      "answer": "provider-neutral local inference with deterministic replay.",
+      "cost_usd": 0.0,
+      "latency_ms": 0,
+      "privacy_tier": "local"
+    },
+    "replay": {
+      "provider": "ollama",
+      "model_id": "ollama:llama3.2",
+      "answer": "provider-neutral local inference with deterministic replay.",
+      "cost_usd": 0.0,
+      "latency_ms": 0,
+      "privacy_tier": "local"
+    },
+    "real": {
+      "provider": "ollama",
+      "model_id": "ollama:llama3.2",
+      "answer": "provider-neutral local inference with deterministic replay.",
+      "cost_usd": 0.0,
+      "latency_ms": 0,
+      "privacy_tier": "local"
+    }
+  },
+  "real_mode_required_env": [
+    "CORVID_RUN_REAL=1",
+    "OLLAMA_HOST=http://localhost:11434",
+    "CORVID_MODEL=ollama:llama3.2"
+  ]
+}
