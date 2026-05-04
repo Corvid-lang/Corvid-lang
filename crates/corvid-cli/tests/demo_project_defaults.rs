@@ -251,7 +251,10 @@ fn local_model_demo_eval_harness_passes_with_mock_llm() {
         String::from_utf8_lossy(&out.stderr)
     );
     let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(stdout.contains("local_model_demo_contract_eval"), "{stdout}");
+    assert!(
+        stdout.contains("local_model_demo_contract_eval"),
+        "{stdout}"
+    );
     assert!(stdout.contains("1 passed, 0 failed"), "{stdout}");
 }
 
@@ -365,7 +368,10 @@ fn provider_routing_demo_eval_harness_passes_with_mock_llm() {
         String::from_utf8_lossy(&out.stderr)
     );
     let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(stdout.contains("provider_routing_demo_contract_eval"), "{stdout}");
+    assert!(
+        stdout.contains("provider_routing_demo_contract_eval"),
+        "{stdout}"
+    );
     assert!(stdout.contains("1 passed, 0 failed"), "{stdout}");
 }
 
@@ -488,6 +494,32 @@ fn rag_qa_bot_eval_harness_passes_with_mock_retrieval_and_llm() {
 }
 
 #[test]
+fn rag_qa_bot_replay_fixture_is_deterministic() {
+    let repo = repo_root();
+    let trace = repo
+        .join("examples")
+        .join("rag_qa_bot")
+        .join("traces")
+        .join("rag_qa_bot_refund_policy.jsonl");
+    let out = Command::new(corvid_bin())
+        .arg("replay")
+        .arg(trace)
+        .current_dir(&repo)
+        .output()
+        .expect("run rag qa replay");
+    assert!(
+        out.status.success(),
+        "rag qa replay failed:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("trace loaded"), "{stdout}");
+    assert!(stdout.contains("replay completed"), "{stdout}");
+    assert!(stdout.contains(RAG_QA_MOCK_CONTEXT), "{stdout}");
+}
+
+#[test]
 fn rag_qa_bot_rejects_fabricated_grounded_answer() {
     let repo = repo_root();
     let tmp = tempfile::tempdir().expect("tempdir");
@@ -520,5 +552,8 @@ agent answer(question: String) -> Grounded<String>:
     );
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(stderr.contains("ungrounded return"), "{stderr}");
-    assert!(stderr.contains("return value lacks a proven grounded source"), "{stderr}");
+    assert!(
+        stderr.contains("return value lacks a proven grounded source"),
+        "{stderr}"
+    );
 }
