@@ -1,0 +1,8 @@
+import "../src/main" use ReviewSession, main
+
+agent one_command_flow_returns_structured_comment() -> Bool:
+    review = main()
+    return review.pull_number == 418 and review.posted == false and review.comment.line == 43 and review.comment.body != ""
+
+test code_review_agent_one_command_flow:
+    assert one_command_flow_returns_structured_comment()

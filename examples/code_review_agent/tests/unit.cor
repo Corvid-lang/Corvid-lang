@@ -1,0 +1,13 @@
+import "../src/main" use ReviewComment, ReviewSession, main, review_pull_request
+
+agent default_review_flags_approval_boundary() -> Bool:
+    review = main()
+    return review.repo == "Corvid-lang/Corvid-lang" and review.finding_count == 1 and review.comment.checklist_id == "approval-boundary" and review.comment.severity == "high"
+
+agent diff_instructions_do_not_override_review_policy() -> Bool:
+    review = review_pull_request("Corvid-lang/Corvid-lang", 418)
+    return review.comment.body != "looks good" and review.comment.path == "examples/refund_bot/src/main.cor"
+
+test code_review_agent_unit_contract:
+    assert default_review_flags_approval_boundary()
+    assert diff_instructions_do_not_override_review_policy()
