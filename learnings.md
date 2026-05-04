@@ -3643,3 +3643,21 @@ unless there is a concrete checker or runtime policy for it. The enforceable
 boundary here is `replay.deterministic_pure_path`: prompt-dependent flows
 cannot be mislabeled deterministic, while model quality and instruction
 following stay explicit non-goals.
+
+## provider routing hardening
+
+Provider routing can keep provider identity in the app-facing type without
+depending on live provider metadata during replay. The useful invariant is that
+`policy`, `selected_provider`, `selected_model`, `question`, and `answer` match
+across mock, replay, and real surfaces; token counts, latency, and invoice data
+belong in trace host events.
+
+Provider-swap safety needs a direct invariant over each named route. The replay
+invariant now checks standard/OpenAI, private/Ollama, and deep/Anthropic in one
+test, which is stronger than relying on the one-command `main` path that only
+exercises the standard route.
+
+For multi-provider demos, mirror replay fixtures under `seed/traces` and wire
+both locations into CI. The seed tree is what the hardening docs and runbook
+point operators at, while the original demo-pack traces preserve the 33K
+one-command demo contract.

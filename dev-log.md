@@ -6543,3 +6543,44 @@ Validation:
 - Credential-pattern scan over `examples/local_model_demo`
 
 ---
+
+## 2026-05-04 - Slice 42H-provider_routing_demo hardening
+
+- Added deterministic provider route seed fixtures, mirrored seed replay
+  traces, and explicit mock/replay/real `RoutedChatTurn` entrypoints for the
+  provider routing demo.
+- Added `replay_invariant.cor` with provider-swap safety coverage plus
+  adversarial fixtures for prompt injection, provider spoofing, and replay
+  forgery, all rejected with the registered `replay.deterministic_pure_path`
+  guarantee id.
+- Documented opt-in OpenAI, Anthropic, and Ollama real-provider mode, the
+  provider routing security model, and the operator runbook; wired the replay
+  invariant and seed replay fixtures into `demo-verify`.
+
+Validation:
+- `cargo run -q -p corvid-cli -- build` from `examples/provider_routing_demo`
+  with mock routing env.
+- `cargo run -q -p corvid-cli -- run` from `examples/provider_routing_demo`
+  with mock routing env.
+- `cargo run -q -p corvid-cli -- test examples/provider_routing_demo/tests/unit.cor`
+- `cargo run -q -p corvid-cli -- test examples/provider_routing_demo/tests/integration.cor`
+- `cargo run -q -p corvid-cli -- test examples/provider_routing_demo/tests/replay_invariant.cor`
+- `cargo test -p corvid-cli --test demo_project_defaults`
+- `cargo run -q -p corvid-cli -- eval examples/provider_routing_demo/evals/provider_routing_demo.cor`
+- `cargo run -q -p corvid-cli -- replay examples/provider_routing_demo/traces/provider_routing_demo_openai.jsonl`
+- `cargo run -q -p corvid-cli -- replay examples/provider_routing_demo/traces/provider_routing_demo_ollama.jsonl`
+- `cargo run -q -p corvid-cli -- replay examples/provider_routing_demo/traces/provider_routing_demo_anthropic.jsonl`
+- `cargo run -q -p corvid-cli -- replay examples/provider_routing_demo/seed/traces/provider_routing_demo_openai.jsonl`
+- `cargo run -q -p corvid-cli -- replay examples/provider_routing_demo/seed/traces/provider_routing_demo_ollama.jsonl`
+- `cargo run -q -p corvid-cli -- replay examples/provider_routing_demo/seed/traces/provider_routing_demo_anthropic.jsonl`
+- `cargo check --workspace`
+- `cargo test -p corvid-cli --lib`
+  (structural baseline: no library targets found in package `corvid-cli`)
+- `cargo test -p corvid-cli --tests`
+  (CLI unit tests pass 282/282; fails only existing `abi_attestation`
+  Windows native linker baseline: `__imp_GetUserNameExW`)
+- `cargo run -q -p corvid-cli -- verify --corpus tests/corpus`
+  (exit 2 with the established Windows `whoami` linker signature)
+- Credential-pattern scan over `examples/provider_routing_demo`
+
+---
