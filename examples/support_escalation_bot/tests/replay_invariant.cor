@@ -1,0 +1,16 @@
+import "../src/main" use mock_support_outcome_surface, replay_support_outcome_surface, real_support_outcome_surface
+
+agent same_support_surface() -> Bool:
+    mock_result = mock_support_outcome_surface()
+    replay_result = replay_support_outcome_surface()
+    real_result = real_support_outcome_surface()
+
+    order_matches = mock_result.order_id == replay_result.order_id and replay_result.order_id == real_result.order_id
+    action_matches = mock_result.action == replay_result.action and replay_result.action == real_result.action
+    status_matches = mock_result.status == replay_result.status and replay_result.status == real_result.status
+    audit_matches = mock_result.audit_id == replay_result.audit_id and replay_result.audit_id == real_result.audit_id
+    seed_matches = mock_result.order_id == "ord_1001" and mock_result.action == "escalate_to_human" and mock_result.audit_id == "esc_9001"
+    return order_matches and action_matches and status_matches and audit_matches and seed_matches
+
+test support_escalation_replay_invariant:
+    assert same_support_surface()
