@@ -1,0 +1,18 @@
+import "../src/main" use chat, main, selected_model, selected_provider
+
+agent mocked_provider_answer_is_stable() -> Bool:
+    return main() == "provider routing selected the expected mocked response."
+
+agent standard_route_metadata_is_stable() -> Bool:
+    turn = chat("standard", "Which provider should handle a normal support question?")
+    return turn.selected_provider == "openai" and turn.selected_model == "openai_fast"
+
+agent alternate_route_metadata_is_stable() -> Bool:
+    private_model = selected_model("private")
+    deep_provider = selected_provider("deep")
+    return private_model == "ollama_local" and deep_provider == "anthropic"
+
+eval provider_routing_demo_contract_eval:
+    assert mocked_provider_answer_is_stable()
+    assert standard_route_metadata_is_stable()
+    assert alternate_route_metadata_is_stable()

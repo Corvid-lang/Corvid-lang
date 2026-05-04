@@ -332,3 +332,33 @@ fn provider_routing_demo_corvid_tests_pass_with_mock_llm() {
         assert!(stdout.contains("1 passed, 0 failed"), "{stdout}");
     }
 }
+
+#[test]
+fn provider_routing_demo_eval_harness_passes_with_mock_llm() {
+    let repo = repo_root();
+    let eval = repo
+        .join("examples")
+        .join("provider_routing_demo")
+        .join("evals")
+        .join("provider_routing_demo.cor");
+    let out = Command::new(corvid_bin())
+        .arg("eval")
+        .arg(eval)
+        .env("CORVID_TEST_MOCK_LLM", "1")
+        .env(
+            "CORVID_TEST_MOCK_LLM_RESPONSE",
+            "provider routing selected the expected mocked response.",
+        )
+        .current_dir(repo)
+        .output()
+        .expect("run provider routing eval");
+    assert!(
+        out.status.success(),
+        "provider routing eval failed:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("provider_routing_demo_contract_eval"), "{stdout}");
+    assert!(stdout.contains("1 passed, 0 failed"), "{stdout}");
+}
