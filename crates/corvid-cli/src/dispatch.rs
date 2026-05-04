@@ -679,12 +679,7 @@ pub(crate) fn run(cli: Cli) -> Result<u8> {
         Some(Command::Auth { command }) => cmd_auth(command),
         Some(Command::Approvals { command }) => cmd_approvals(command),
         None => {
-            println!("corvid ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â the AI-native language compiler");
-            println!("Run `corvid --help` for usage.");
-            Ok(0)
-        }
-        None => {
-            println!("corvid ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â the AI-native language compiler");
+            println!("corvid - the AI-native language compiler");
             println!("Run `corvid --help` for usage.");
             Ok(0)
         }
