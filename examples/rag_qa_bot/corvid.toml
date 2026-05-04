@@ -1,0 +1,7 @@
+[package]
+name = "rag_qa_bot"
+version = "0.1.0"
+description = "Grounded retrieval-augmented QA demo over a committed knowledge base"
+
+[run]
+target = "interpreter"

@@ -1,0 +1,36 @@
+import "../../../std/rag" use RagChunkEnvelope, chunk_is_grounded, rag_chunk
+
+effect retrieval:
+    data: grounded
+
+effect llm:
+    cost: $0.01
+
+public type RagAnswer:
+    question: String
+    answer: String
+    source: String
+    grounded: Bool
+
+tool retrieve_context(query: String) -> Grounded<String> uses retrieval
+
+prompt answer_from_context(question: String, ctx: Grounded<String>) -> Grounded<String> uses llm:
+    cites ctx strictly
+    """
+    Answer the question using only this grounded context.
+    Question: {question}
+    Context: {ctx}
+    """
+
+public agent refund_policy_chunk() -> RagChunkEnvelope:
+    return rag_chunk("refund-policy", "refund-policy:0", "seed/kb/refunds.md", "Refunds over one hundred dollars require approval before money moves.", 0, 66, "rag_refund_policy_0")
+
+public agent ask(question: String) -> RagAnswer:
+    ctx = retrieve_context(question)
+    grounded_answer = answer_from_context(question, ctx)
+    chunk = refund_policy_chunk()
+    return RagAnswer(question, grounded_answer.unwrap_discarding_sources(), chunk.source, chunk_is_grounded(chunk))
+
+public agent main() -> String:
+    answer = ask("What must happen before a large refund moves money?")
+    return answer.answer
