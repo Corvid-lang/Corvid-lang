@@ -3488,6 +3488,13 @@ issue template can be documented as the intake path, but source, specs, and
 roadmap copy should not imply the corpus has already been fed by external
 submissions.
 
+## Support replay denial fixtures
+
+Plain replay preserves approval-denied runs as nonzero command exits even when
+the trace matches exactly. Negative approval fixtures should be committed and
+tested as expected-denial cases in CLI or CI wrappers, while successful replay
+fixtures remain the ones used for straight `corvid replay <trace>` commands.
+
 ## RAG replay timestamps
 
 Grounded retrieval values carry provenance timestamps minted when a tool result

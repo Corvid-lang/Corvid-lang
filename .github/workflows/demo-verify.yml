@@ -202,3 +202,36 @@ jobs:
 
       - name: rag_qa_bot replay
         run: cargo run -q -p corvid-cli -- replay examples/rag_qa_bot/traces/rag_qa_bot_refund_policy.jsonl
+
+      - name: support_escalation_bot build
+        working-directory: examples/support_escalation_bot
+        run: cargo run -q -p corvid-cli -- build
+
+      - name: support_escalation_bot run
+        working-directory: examples/support_escalation_bot
+        env:
+          CORVID_TEST_MOCK_TOOLS: '{"lookup_order":[{"id":"ord_1001","customer_id":"cust_42","status":"delivered","total":149.99},{"id":"ord_1003","customer_id":"cust_42","status":"delivered","total":19.95}],"escalate_to_human":{"ticket_id":"esc_9001","status":"queued","channel":"slack"},"issue_refund":{"receipt_id":"rf_7001","status":"approved","audit_id":"audit_refund_7001"}}'
+        run: cargo run -q -p corvid-cli -- run
+
+      - name: support_escalation_bot tests
+        env:
+          CORVID_TEST_MOCK_TOOLS: '{"lookup_order":[{"id":"ord_1001","customer_id":"cust_42","status":"delivered","total":149.99},{"id":"ord_1003","customer_id":"cust_42","status":"delivered","total":19.95}],"escalate_to_human":{"ticket_id":"esc_9001","status":"queued","channel":"slack"},"issue_refund":{"receipt_id":"rf_7001","status":"approved","audit_id":"audit_refund_7001"}}'
+        run: |
+          cargo run -q -p corvid-cli -- test examples/support_escalation_bot/tests/unit.cor
+          cargo run -q -p corvid-cli -- test examples/support_escalation_bot/tests/integration.cor
+
+      - name: support_escalation_bot eval
+        env:
+          CORVID_TEST_MOCK_TOOLS: '{"lookup_order":[{"id":"ord_1001","customer_id":"cust_42","status":"delivered","total":149.99},{"id":"ord_1001","customer_id":"cust_42","status":"delivered","total":149.99}],"escalate_to_human":[{"ticket_id":"esc_9001","status":"queued","channel":"slack"},{"ticket_id":"esc_9001","status":"queued","channel":"slack"}]}'
+        run: cargo run -q -p corvid-cli -- eval examples/support_escalation_bot/evals/support_escalation_bot.cor
+
+      - name: support_escalation_bot replay
+        run: |
+          cargo run -q -p corvid-cli -- replay examples/support_escalation_bot/traces/support_escalation_bot_escalation.jsonl
+          cargo run -q -p corvid-cli -- replay examples/support_escalation_bot/traces/support_escalation_bot_approved_refund.jsonl
+          if cargo run -q -p corvid-cli -- replay examples/support_escalation_bot/traces/support_escalation_bot_approval_denied.jsonl; then
+            echo "approval-denied replay unexpectedly succeeded"
+            exit 1
+          else
+            echo "approval-denied replay preserved denial"
+          fi

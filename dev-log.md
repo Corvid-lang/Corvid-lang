@@ -6371,6 +6371,31 @@ Validation:
 - `cargo check --workspace`
 - `cargo run -q -p corvid-cli -- verify --corpus tests/corpus`
   (exit 2 with the established Windows `whoami` linker signature)
+## 2026-05-04 - Slice 33K-support_escalation_bot reference demo
+
+- Added the `examples/support_escalation_bot` reference demo with typed order
+  lookup, approval-gated refund issuance, and human escalation tools.
+- Added deterministic seed fixtures, Corvid unit/integration tests, CLI
+  adversarial coverage for unapproved refund rejection, eval coverage, and
+  replay fixtures for escalation, approved refund, and approval denial.
+- Documented setup, modification points, benchmark notes, opt-in real-provider
+  environment variables, and wired the demo into `demo-verify`.
+
+Validation:
+- `cargo check --workspace`
+- `cargo test -p corvid-driver --lib`
+  (fails only existing Windows native linker baseline:
+  `__imp_GetUserNameExW`)
+- `cargo test -p corvid-cli --tests`
+  (CLI unit tests pass 282/282; fails only existing `abi_attestation`
+  Windows native linker baseline: `__imp_GetUserNameExW`)
+- `cargo run -q -p corvid-cli -- verify --corpus tests/corpus`
+  (exit 2 with the established Windows `whoami` linker signature)
+- Support escalation demo `build`, `run`, Corvid tests, eval, replay, and
+  trace credential scan.
+
+---
+
 ## 2026-05-04 - Slice 33K-rag_qa_bot reference demo
 
 - Added the `examples/rag_qa_bot` reference demo with a grounded retrieval
