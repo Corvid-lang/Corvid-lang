@@ -9,6 +9,34 @@ fn corvid_bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_corvid"))
 }
 
+fn assert_rejected_with_guarantee(source: &str, guarantee_id: &'static str, context: &str) {
+    assert!(
+        corvid_guarantees::lookup(guarantee_id).is_some(),
+        "test references unregistered guarantee id `{guarantee_id}`"
+    );
+    let tokens = corvid_syntax::lex(source).expect("lex failed");
+    let (file, parse_errors) = corvid_syntax::parse_file(&tokens);
+    assert!(
+        parse_errors.is_empty(),
+        "{context}; parse errors: {parse_errors:?}"
+    );
+    let resolved = corvid_resolve::resolve(&file);
+    assert!(
+        resolved.errors.is_empty(),
+        "{context}; resolve errors: {:?}",
+        resolved.errors
+    );
+    let checked = corvid_types::typecheck(&file, &resolved);
+    assert!(
+        checked
+            .errors
+            .iter()
+            .any(|err| err.guarantee_id == Some(guarantee_id)),
+        "{context}; expected diagnostic tagged `{guarantee_id}`, got {:?}",
+        checked.errors
+    );
+}
+
 const RAG_QA_MOCK_CONTEXT: &str =
     "Refunds over one hundred dollars require approval before money moves.";
 
@@ -179,6 +207,26 @@ fn refund_bot_replay_fixture_is_deterministic() {
     assert!(stdout.contains("replay completed"), "{stdout}");
     assert!(stdout.contains("refund_bot"), "{stdout}");
     assert!(stdout.contains("approval-gated refund"), "{stdout}");
+}
+
+#[test]
+fn refund_bot_adversarial_cases_carry_registered_guarantee_ids() {
+    let repo = repo_root();
+    let adversarial_dir = repo
+        .join("examples")
+        .join("refund_bot")
+        .join("tests")
+        .join("adversarial");
+    for case in [
+        "auth_bypass.cor",
+        "scope_escalation.cor",
+        "replay_forgery.cor",
+        "prompt_injection_refund_reason.cor",
+    ] {
+        let source = std::fs::read_to_string(adversarial_dir.join(case))
+            .unwrap_or_else(|err| panic!("read refund bot adversarial case {case}: {err}"));
+        assert_rejected_with_guarantee(&source, "approval.dangerous_call_requires_token", case);
+    }
 }
 
 #[test]

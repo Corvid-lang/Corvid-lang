@@ -1,0 +1,16 @@
+effect transfer_money:
+    cost: $0.05
+    trust: human_required
+    reversible: false
+    data: financial
+
+type RefundRequest:
+    order_id: String
+    amount: Float
+    reason: String
+
+tool issue_refund(req: RefundRequest) -> String dangerous uses transfer_money
+
+agent replay_forges_approval(req: RefundRequest) -> String uses transfer_money:
+    replay_receipt = "rf_mock_1001"
+    return issue_refund(req) + replay_receipt
