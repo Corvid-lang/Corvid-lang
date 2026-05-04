@@ -133,3 +133,30 @@ fn refund_bot_eval_harness_passes() {
     assert!(stdout.contains("refund_bot_contract_eval"), "{stdout}");
     assert!(stdout.contains("1 passed, 0 failed"), "{stdout}");
 }
+
+#[test]
+fn refund_bot_replay_fixture_is_deterministic() {
+    let repo = repo_root();
+    let trace = repo
+        .join("examples")
+        .join("refund_bot")
+        .join("traces")
+        .join("refund_bot_approval_gate.jsonl");
+    let out = Command::new(corvid_bin())
+        .arg("replay")
+        .arg(trace)
+        .current_dir(repo)
+        .output()
+        .expect("run refund bot replay");
+    assert!(
+        out.status.success(),
+        "refund bot replay failed:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("trace loaded"), "{stdout}");
+    assert!(stdout.contains("replay completed"), "{stdout}");
+    assert!(stdout.contains("refund_bot"), "{stdout}");
+    assert!(stdout.contains("approval-gated refund"), "{stdout}");
+}

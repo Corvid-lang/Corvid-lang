@@ -1,0 +1,5 @@
+{
+  "order_id": "order-demo-1001",
+  "amount": 42.5,
+  "reason": "duplicate charge in demo fixture"
+}
