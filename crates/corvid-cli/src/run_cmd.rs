@@ -12,10 +12,20 @@
 //! - `interp` / `interpreter`: forces the interpreter tier.
 
 use anyhow::{Context, Result};
-use corvid_driver::{run_with_target, RunTarget};
+use corvid_driver::{load_corvid_config_for, run_with_target, RunTarget};
 use std::path::Path;
 
 pub(crate) fn cmd_run(file: &Path, target: &str, tools_lib: Option<&Path>) -> Result<u8> {
+    let configured_target;
+    let target = if target == "auto" {
+        configured_target = load_corvid_config_for(file)
+            .and_then(|config| config.run.target)
+            .unwrap_or_else(|| "auto".to_string());
+        configured_target.as_str()
+    } else {
+        target
+    };
+
     let rt = match target {
         "auto" => RunTarget::Auto,
         "native" => RunTarget::Native,

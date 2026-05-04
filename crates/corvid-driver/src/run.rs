@@ -15,8 +15,8 @@ use super::{
 };
 use corvid_ir::IrFile;
 use corvid_runtime::{
-    load_dotenv_walking, AnthropicAdapter, OpenAiAdapter, RedactionSet, Runtime, StdinApprover,
-    Tracer,
+    load_dotenv_walking, AnthropicAdapter, EnvVarMockAdapter, OllamaAdapter, OpenAiAdapter,
+    RedactionSet, Runtime, StdinApprover, Tracer,
 };
 use corvid_vm::InterpError;
 use std::fmt;
@@ -188,12 +188,16 @@ fn run_via_interpreter_tier(path: &Path, ir: &IrFile) -> Result<u8, anyhow::Erro
     if let Ok(model) = std::env::var("CORVID_MODEL") {
         builder = builder.default_model(&model);
     }
+    if std::env::var("CORVID_TEST_MOCK_LLM").ok().as_deref() == Some("1") {
+        builder = builder.llm(std::sync::Arc::new(EnvVarMockAdapter::from_env()));
+    }
     if let Ok(key) = std::env::var("ANTHROPIC_API_KEY") {
         builder = builder.llm(std::sync::Arc::new(AnthropicAdapter::new(key)));
     }
     if let Ok(key) = std::env::var("OPENAI_API_KEY") {
         builder = builder.llm(std::sync::Arc::new(OpenAiAdapter::new(key)));
     }
+    builder = builder.llm(std::sync::Arc::new(OllamaAdapter::new()));
     let rt = builder.build();
 
     let tokio_rt = tokio::runtime::Builder::new_current_thread()

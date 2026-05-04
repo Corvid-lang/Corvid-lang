@@ -1,0 +1,19 @@
+type LocalChatTurn:
+    provider: String
+    model_id: String
+    question: String
+    answer: String
+
+prompt ask_local_model(question: String) -> String:
+    """
+    Answer this local demo prompt in one short sentence:
+    {question}
+    """
+
+agent chat(question: String) -> LocalChatTurn:
+    answer = ask_local_model(question)
+    return LocalChatTurn("ollama", "ollama:llama3.2", question, answer)
+
+public agent main() -> String:
+    turn = chat("What does Corvid demonstrate with local models?")
+    return turn.answer

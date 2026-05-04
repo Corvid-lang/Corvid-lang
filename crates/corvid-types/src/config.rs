@@ -31,6 +31,15 @@ pub struct CorvidConfig {
     pub effect_system: EffectSystemConfig,
     #[serde(rename = "package-policy")]
     pub package_policy: PackagePolicyConfig,
+    pub run: RunConfig,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, rename_all = "kebab-case")]
+pub struct RunConfig {
+    /// Optional default execution tier for `corvid run` when the CLI
+    /// invocation does not pass `--target`.
+    pub target: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -505,6 +514,16 @@ mod tests {
         let cfg: CorvidConfig = toml::from_str(toml).unwrap();
         let schemas = cfg.into_dimension_schemas().unwrap();
         assert_eq!(schemas.len(), 1);
+    }
+
+    #[test]
+    fn loads_run_target_default() {
+        let toml = r#"
+            [run]
+            target = "interpreter"
+        "#;
+        let cfg: CorvidConfig = toml::from_str(toml).unwrap();
+        assert_eq!(cfg.run.target.as_deref(), Some("interpreter"));
     }
 
     #[test]

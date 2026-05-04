@@ -1,0 +1,7 @@
+[package]
+name = "local_model_demo"
+version = "0.1.0"
+description = "Local-first LLM demo using the shared Corvid LLM adapter surface"
+
+[run]
+target = "interpreter"
