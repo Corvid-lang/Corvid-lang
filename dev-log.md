@@ -6507,3 +6507,39 @@ Validation:
 - Credential-pattern scan over `examples/refund_bot`
 
 ---
+
+## 2026-05-04 - Slice 42H-local_model_demo hardening
+
+- Added deterministic `seed/data` fixtures, a `seed/traces` replay fixture,
+  and explicit mock/replay/real `LocalChatTurn` entrypoints for the local model
+  demo.
+- Added `replay_invariant.cor` plus adversarial fixtures for prompt injection,
+  provider spoofing, and replay forgery, all rejected with the registered
+  `replay.deterministic_pure_path` guarantee id.
+- Documented opt-in Ollama real-provider mode, the local model security model,
+  and the operator runbook; wired the replay invariant and seed replay fixture
+  into `demo-verify`.
+
+Validation:
+- `cargo run -q -p corvid-cli -- build` from `examples/local_model_demo`
+  with mock Ollama env.
+- `cargo run -q -p corvid-cli -- run` from `examples/local_model_demo`
+  with mock Ollama env.
+- `cargo run -q -p corvid-cli -- test examples/local_model_demo/tests/unit.cor`
+- `cargo run -q -p corvid-cli -- test examples/local_model_demo/tests/integration.cor`
+- `cargo run -q -p corvid-cli -- test examples/local_model_demo/tests/replay_invariant.cor`
+- `cargo test -p corvid-cli --test demo_project_defaults`
+- `cargo run -q -p corvid-cli -- eval examples/local_model_demo/evals/local_model_demo.cor`
+- `cargo run -q -p corvid-cli -- replay examples/local_model_demo/traces/local_model_demo_mock_chat.jsonl`
+- `cargo run -q -p corvid-cli -- replay examples/local_model_demo/seed/traces/local_model_demo_mock_chat.jsonl`
+- `cargo check --workspace`
+- `cargo test -p corvid-cli --lib`
+  (structural baseline: no library targets found in package `corvid-cli`)
+- `cargo test -p corvid-cli --tests`
+  (CLI unit tests pass 282/282; fails only existing `abi_attestation`
+  Windows native linker baseline: `__imp_GetUserNameExW`)
+- `cargo run -q -p corvid-cli -- verify --corpus tests/corpus`
+  (exit 2 with the established Windows `whoami` linker signature)
+- Credential-pattern scan over `examples/local_model_demo`
+
+---

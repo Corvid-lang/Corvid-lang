@@ -41,9 +41,18 @@ set CORVID_TEST_MOCK_LLM_RESPONSE=provider-neutral local inference with determin
 set CORVID_MODEL=ollama:llama3.2
 cargo run -q -p corvid-cli -- test examples/local_model_demo/tests/unit.cor
 cargo run -q -p corvid-cli -- test examples/local_model_demo/tests/integration.cor
+cargo run -q -p corvid-cli -- test examples/local_model_demo/tests/replay_invariant.cor
 cargo run -q -p corvid-cli -- eval examples/local_model_demo/evals/local_model_demo.cor
 cargo run -q -p corvid-cli -- replay examples/local_model_demo/traces/local_model_demo_mock_chat.jsonl
+cargo run -q -p corvid-cli -- replay examples/local_model_demo/seed/traces/local_model_demo_mock_chat.jsonl
 ```
+
+Hardening docs live under `docs/`:
+
+- `real-providers.md` lists the opt-in Ollama environment variables.
+- `security-model.md` names the app-specific trust boundary, threats,
+  non-goals, and adversarial test coverage.
+- `runbook.md` covers deploy, observe, rollback, and incident response.
 
 ## How To Modify
 

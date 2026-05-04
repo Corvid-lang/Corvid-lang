@@ -3624,3 +3624,22 @@ amount-ceiling predicates. A refund that receives some prior approval still
 compiles even if the business meaning of the amount changed, so the hardening
 test should cover the compiler-enforced boundary and the security model should
 name semantic ceilings as a non-goal.
+
+## local model hardening
+
+Plain replay for LLM traces must run without provider env that changes model
+metadata. `CORVID_MODEL=ollama:llama3.2` is correct for mock build, run, test,
+and eval, but it makes plain replay observe a model name where the committed
+trace expects `null`. Clear provider env before replaying deterministic
+fixtures.
+
+For Corvid boolean assertions, do not rely on Python-style multiline `and`
+continuations. The parser treats the newline after `and` as the end of input.
+Use named intermediate booleans and a single-line final return when an
+invariant has several field comparisons.
+
+Local LLM hardening should avoid claiming semantic prompt-injection prevention
+unless there is a concrete checker or runtime policy for it. The enforceable
+boundary here is `replay.deterministic_pure_path`: prompt-dependent flows
+cannot be mislabeled deterministic, while model quality and instruction
+following stay explicit non-goals.
