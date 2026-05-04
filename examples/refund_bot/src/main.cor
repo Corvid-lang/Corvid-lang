@@ -10,7 +10,7 @@ effect transfer_money:
     reversible: false
     data: financial
 
-type RefundRequest:
+public type RefundRequest:
     order_id: String
     amount: Float
     reason: String

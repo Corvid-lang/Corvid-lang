@@ -1,0 +1,14 @@
+import "../src/main" use RefundRequest, mock_refund_surface, replay_refund_surface, real_refund_surface
+
+agent seed_request() -> RefundRequest:
+    return RefundRequest("order-demo-1001", 42.5, "duplicate charge in demo fixture")
+
+agent same_refund_surface() -> Bool:
+    req = seed_request()
+    mock_result = mock_refund_surface(req)
+    replay_result = replay_refund_surface(req)
+    real_result = real_refund_surface(req)
+    return mock_result.receipt_id == replay_result.receipt_id and replay_result.receipt_id == real_result.receipt_id and mock_result.status == replay_result.status and replay_result.status == real_result.status and mock_result.audit_id == replay_result.audit_id and replay_result.audit_id == real_result.audit_id and mock_result.guarantee_id == replay_result.guarantee_id and replay_result.guarantee_id == real_result.guarantee_id and mock_result.amount == replay_result.amount and replay_result.amount == real_result.amount
+
+test refund_bot_replay_invariant:
+    assert same_refund_surface()
