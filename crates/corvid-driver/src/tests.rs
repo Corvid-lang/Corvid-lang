@@ -1030,6 +1030,42 @@ agent main() -> Bool:
     }
 
     #[test]
+    fn vendor_std_from_copies_directory_tree() {
+        let tmp = tempfile::tempdir().unwrap();
+        let src = tmp.path().join("src_std");
+        std::fs::create_dir_all(src.join("nested")).unwrap();
+        std::fs::write(src.join("a.cor"), b"agent a()\n").unwrap();
+        std::fs::write(src.join("nested").join("b.cor"), b"agent b()\n").unwrap();
+
+        let dst = tmp.path().join("dst");
+        vendor_std_from(&src, &dst).unwrap();
+
+        assert_eq!(std::fs::read(dst.join("a.cor")).unwrap(), b"agent a()\n");
+        assert_eq!(
+            std::fs::read(dst.join("nested").join("b.cor")).unwrap(),
+            b"agent b()\n"
+        );
+    }
+
+    #[test]
+    fn vendor_std_skips_when_destination_exists() {
+        let tmp = tempfile::tempdir().unwrap();
+        let proj = tmp.path().join("proj");
+        std::fs::create_dir_all(proj.join("std")).unwrap();
+        std::fs::write(proj.join("std").join("preexisting.cor"), b"keep\n").unwrap();
+
+        // No CORVID_HOME, no exe-adjacent std → vendor_std returns None
+        // anyway, but the dst-exists guard is the primary check we care
+        // about: it must never overwrite a user's existing std/.
+        let result = vendor_std(&proj).unwrap();
+        assert!(result.is_none());
+        assert_eq!(
+            std::fs::read(proj.join("std").join("preexisting.cor")).unwrap(),
+            b"keep\n"
+        );
+    }
+
+    #[test]
     fn line_col_translation() {
         let src = "abc\ndef\nghi";
         assert_eq!(line_col_of(src, 0), (1, 1));

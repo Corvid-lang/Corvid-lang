@@ -15,7 +15,7 @@
 use anyhow::{Context, Result};
 use corvid_driver::{
     compile_with_config, diff_snapshots, load_corvid_config_for, render_all_pretty,
-    render_effect_diff, scaffold_new, snapshot_revision,
+    render_effect_diff, scaffold_new, snapshot_revision, vendor_std,
 };
 use std::path::{Path, PathBuf};
 
@@ -26,6 +26,11 @@ use crate::routing_report::{
 pub(crate) fn cmd_new(name: &str) -> Result<u8> {
     let root = scaffold_new(name).context("failed to scaffold project")?;
     println!("created new Corvid project at `{}`", root.display());
+    match vendor_std(&root) {
+        Ok(Some(src)) => println!("vendored stdlib from `{}`", src.display()),
+        Ok(None) => {}
+        Err(err) => eprintln!("warning: failed to vendor stdlib: {err:#}"),
+    }
     println!("\nNext steps:");
     println!("  cd {name}");
     println!("  pip install corvid-runtime");
