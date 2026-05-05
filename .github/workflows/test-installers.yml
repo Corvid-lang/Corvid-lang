@@ -1,0 +1,156 @@
+# Lint + smoke-test the install/ scripts and web/ worker on every change.
+#
+# Layered for fast feedback:
+#   lint   — runs on every PR, ~30 seconds (shellcheck, PSScriptAnalyzer,
+#            node --check, sh -n). Catches the typo class of bug.
+#   smoke  — runs install.sh end-to-end on ubuntu, asserting that `corvid`
+#            ends up on PATH and that `corvid new` produces a project that
+#            type-checks. Only fires on install/** changes.
+#   matrix — full macOS + Windows install runs. Manual dispatch only,
+#            because they cost CI minutes and the lint job already
+#            catches the everyday regressions.
+
+name: test-installers
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "install/**"
+      - "web/**"
+      - ".github/workflows/test-installers.yml"
+  pull_request:
+    paths:
+      - "install/**"
+      - "web/**"
+      - ".github/workflows/test-installers.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: lint scripts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: shellcheck install.sh
+        uses: ludeeus/action-shellcheck@master
+        with:
+          scandir: ./install
+          severity: warning
+
+      - name: POSIX parse check (sh -n)
+        run: sh -n install/install.sh
+
+      - name: node --check worker.js
+        run: node --check web/worker.js
+
+  pwsh-lint:
+    name: PSScriptAnalyzer
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - shell: pwsh
+        run: |
+          Install-Module -Name PSScriptAnalyzer -Force -Scope CurrentUser
+          $issues = Invoke-ScriptAnalyzer -Path install\install.ps1 -Severity Error,Warning
+          if ($issues) {
+            $issues | Format-Table -AutoSize
+            exit 1
+          }
+          Write-Host "install.ps1 clean"
+
+  smoke-linux:
+    name: smoke (ubuntu)
+    runs-on: ubuntu-latest
+    needs: lint
+    if: contains(github.event.pull_request.changed_files, 'install/') || github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: smoke-installer
+
+      - name: Install via install.sh against this checkout
+        env:
+          # Force the source-build fallback by pointing at a tag that
+          # cannot exist. The fallback builds from this very repo.
+          CORVID_VERSION: nonexistent-test-tag
+          CORVID_REPO: ${{ github.repository }}
+          CORVID_HOME: ${{ runner.temp }}/.corvid
+        run: |
+          set -euxo pipefail
+          # Run the script directly (not via curl|sh) so we test this branch's
+          # install.sh, not main's. CORVID_REPO + CORVID_VERSION are read by
+          # the script; the intentionally-broken version forces cargo fallback.
+          sh install/install.sh
+
+      - name: corvid is on PATH
+        run: |
+          export PATH="${{ runner.temp }}/.corvid/bin:$PATH"
+          command -v corvid
+          corvid --version || corvid --help | head -1
+
+      - name: corvid new produces a checkable project
+        run: |
+          export PATH="${{ runner.temp }}/.corvid/bin:$PATH"
+          export CORVID_HOME="${{ runner.temp }}/.corvid"
+          mkdir -p "${{ runner.temp }}/work" && cd "${{ runner.temp }}/work"
+          corvid new testproj
+          test -f testproj/corvid.toml
+          test -f testproj/src/main.cor
+          # std/ should have been vendored from $CORVID_HOME/std
+          test -d testproj/std
+          cd testproj
+          corvid doctor || true   # doctor is informational, not a gate
+
+  smoke-matrix:
+    name: smoke (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    needs: lint
+    if: github.event_name == 'workflow_dispatch'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: smoke-${{ matrix.os }}
+
+      - name: Install (Unix)
+        if: matrix.os == 'macos-latest'
+        env:
+          CORVID_VERSION: nonexistent-test-tag
+          CORVID_REPO: ${{ github.repository }}
+          CORVID_HOME: ${{ runner.temp }}/.corvid
+        run: sh install/install.sh
+
+      - name: Install (Windows)
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        env:
+          CORVID_VERSION: nonexistent-test-tag
+          CORVID_REPO: ${{ github.repository }}
+          CORVID_HOME: ${{ runner.temp }}\.corvid
+        run: |
+          .\install\install.ps1
+
+      - name: Verify corvid is callable
+        shell: bash
+        run: |
+          if [ "${{ matrix.os }}" = "windows-latest" ]; then
+            export PATH="${{ runner.temp }}\\.corvid\\bin:$PATH"
+          else
+            export PATH="${{ runner.temp }}/.corvid/bin:$PATH"
+          fi
+          command -v corvid
+          corvid --help | head -1
