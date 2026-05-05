@@ -1,0 +1,115 @@
+# After every successful release, push an updated Homebrew formula to
+# Micrurus-Ai/homebrew-corvid with the new version and freshly-computed
+# sha256s of the tagged tarballs.
+#
+# Scoop is intentionally not handled here -- bucket/corvid.json declares
+# `checkver` + `autoupdate` blocks, so Scoop's central auto-update bot
+# tracks new GitHub releases of Corvid-lang and refreshes the manifest
+# on its own. Nothing for us to do.
+#
+# Setup (one-time):
+#   1. Create a fine-grained Personal Access Token with `Contents: write`
+#      scoped to Micrurus-Ai/homebrew-corvid only.
+#   2. Add it as the `MANAGERS_TOKEN` repository secret on
+#      Micrurus-Ai/Corvid-lang.
+
+name: publish-managers
+
+on:
+  workflow_run:
+    workflows: ["release"]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag (e.g. v0.1.0)"
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  bump-homebrew:
+    name: bump homebrew-corvid
+    runs-on: ubuntu-latest
+    if: ${{ github.event_name == 'workflow_dispatch' || (github.event.workflow_run.conclusion == 'success' && startsWith(github.event.workflow_run.head_branch, 'v')) }}
+
+    steps:
+      - name: Resolve tag and version
+        id: tag
+        run: |
+          tag="${{ inputs.tag || github.event.workflow_run.head_branch }}"
+          if [ -z "$tag" ]; then
+            echo "could not resolve a release tag" >&2
+            exit 1
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Download release archives and compute sha256s
+        id: sums
+        env:
+          REPO: ${{ github.repository }}
+          TAG:  ${{ steps.tag.outputs.tag }}
+        run: |
+          set -euo pipefail
+          for target in aarch64-apple-darwin x86_64-apple-darwin x86_64-unknown-linux-gnu; do
+            file="corvid-${target}.tar.gz"
+            url="https://github.com/${REPO}/releases/download/${TAG}/${file}"
+            echo "fetching $url"
+            curl -fsSLo "/tmp/${file}" "$url"
+            sum="$(sha256sum "/tmp/${file}" | awk '{print $1}')"
+            key="$(echo "$target" | tr - _)"
+            echo "${key}=${sum}" >> "$GITHUB_OUTPUT"
+            echo "  ${target}: ${sum}"
+          done
+
+      - name: Checkout homebrew-corvid
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository_owner }}/homebrew-corvid
+          token: ${{ secrets.MANAGERS_TOKEN }}
+          path: tap
+
+      - name: Rewrite Formula/corvid.rb
+        env:
+          VERSION:        ${{ steps.tag.outputs.version }}
+          AARCH64_DARWIN: ${{ steps.sums.outputs.aarch64_apple_darwin }}
+          X86_64_DARWIN:  ${{ steps.sums.outputs.x86_64_apple_darwin }}
+          X86_64_LINUX:   ${{ steps.sums.outputs.x86_64_unknown_linux_gnu }}
+        run: |
+          cd tap
+          python3 - <<'PY'
+          import os, re, pathlib
+          v = os.environ["VERSION"]
+          sums = {
+              "aarch64-apple-darwin":     os.environ["AARCH64_DARWIN"],
+              "x86_64-apple-darwin":      os.environ["X86_64_DARWIN"],
+              "x86_64-unknown-linux-gnu": os.environ["X86_64_LINUX"],
+          }
+          p = pathlib.Path("Formula/corvid.rb")
+          t = p.read_text()
+          t = re.sub(r'(\n  version )"[^"]+"', f'\\1"{v}"', t, count=1)
+          for target, sum in sums.items():
+              t = re.sub(
+                  rf'(corvid-{re.escape(target)}\.tar\.gz"\s*\n\s*sha256 ")[0-9a-f]{{64}}(")',
+                  rf'\g<1>{sum}\g<2>',
+                  t,
+              )
+          p.write_text(t)
+          PY
+
+      - name: Commit and push
+        env:
+          VERSION: ${{ steps.tag.outputs.version }}
+        run: |
+          cd tap
+          git config user.name  "corvid-release-bot"
+          git config user.email "corvid-release-bot@users.noreply.github.com"
+          git add Formula/corvid.rb
+          if git diff --cached --quiet; then
+            echo "Formula already up to date for ${VERSION}"
+            exit 0
+          fi
+          git commit -m "corvid ${VERSION}"
+          git push

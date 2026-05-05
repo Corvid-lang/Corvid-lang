@@ -511,6 +511,17 @@ The installer downloads a prebuilt `corvid` for your OS/arch into `~/.corvid/`, 
 
 Override defaults with `CORVID_REPO`, `CORVID_VERSION` (e.g. `v0.1.0`), or `CORVID_HOME`.
 
+### Or via your package manager
+
+```sh
+brew install Micrurus-Ai/corvid/corvid                                 # macOS / Linux
+```
+
+```powershell
+scoop bucket add corvid https://github.com/Micrurus-Ai/scoop-corvid    # Windows
+scoop install corvid
+```
+
 ## Install From Source
 
 ```bash
