@@ -1,0 +1,19 @@
+# Cloudflare Workers config for the corvid short-URL installer.
+# Deploy with: `wrangler deploy` from this directory.
+#
+# After the first deploy, bind your domain in the Cloudflare dashboard:
+#   Workers & Pages -> corvid-installer -> Triggers -> Custom Domains -> "corvid.sh"
+# Or uncomment the [[routes]] block below and run `wrangler deploy` again.
+
+name = "corvid-installer"
+main = "worker.js"
+compatibility_date = "2026-01-01"
+
+# Uncomment after you've added your domain to Cloudflare.
+# [[routes]]
+# pattern = "corvid.sh"
+# custom_domain = true
+#
+# [[routes]]
+# pattern = "*.corvid.sh/*"
+# custom_domain = true
