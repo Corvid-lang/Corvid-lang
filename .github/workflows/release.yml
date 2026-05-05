@@ -1,0 +1,75 @@
+# Builds prebuilt `corvid` binaries on every v*.*.* tag and uploads
+# archives to a GitHub Release. The install/ scripts download these
+# archives via the `releases/latest/download/...` URL — without this
+# workflow, the installer falls back to a slow `cargo install`.
+
+name: release
+
+on:
+  push:
+    tags: ["v*.*.*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest,  target: x86_64-unknown-linux-gnu,  archive: tar.gz }
+          - { os: macos-latest,   target: x86_64-apple-darwin,       archive: tar.gz }
+          - { os: macos-latest,   target: aarch64-apple-darwin,      archive: tar.gz }
+          - { os: windows-latest, target: x86_64-pc-windows-msvc,    archive: zip    }
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      - name: Build
+        run: cargo build --release --locked --target ${{ matrix.target }} -p corvid-cli
+
+      - name: Stage artifact
+        shell: bash
+        run: |
+          name="corvid-${{ matrix.target }}"
+          stage="dist/$name"
+          mkdir -p "$stage/bin"
+          if [ "${{ matrix.os }}" = "windows-latest" ]; then
+            cp "target/${{ matrix.target }}/release/corvid.exe" "$stage/bin/"
+          else
+            cp "target/${{ matrix.target }}/release/corvid" "$stage/bin/"
+          fi
+          [ -d std ]            && cp -R std            "$stage/std"            || true
+          [ -f LICENSE-MIT ]    && cp    LICENSE-MIT    "$stage/LICENSE-MIT"    || true
+          [ -f LICENSE-APACHE ] && cp    LICENSE-APACHE "$stage/LICENSE-APACHE" || true
+          [ -f README.md ]      && cp    README.md      "$stage/README.md"      || true
+
+      - name: Archive (tar.gz)
+        if: matrix.archive == 'tar.gz'
+        shell: bash
+        run: |
+          cd dist && tar -czf "corvid-${{ matrix.target }}.tar.gz" "corvid-${{ matrix.target }}"
+
+      - name: Archive (zip)
+        if: matrix.archive == 'zip'
+        shell: pwsh
+        run: |
+          $name = "corvid-${{ matrix.target }}"
+          Compress-Archive -Path "dist/$name" -DestinationPath "dist/$name.zip" -Force
+
+      - name: Upload to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/corvid-${{ matrix.target }}.${{ matrix.archive }}

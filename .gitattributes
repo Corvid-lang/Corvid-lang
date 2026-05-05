@@ -1,0 +1,5 @@
+# Lock LF on files where CRLF would break execution.
+# Shell scripts must keep \n shebangs and POSIX line breaks.
+install/*.sh        text eol=lf
+install/*.ps1       text eol=lf
+.github/workflows/* text eol=lf

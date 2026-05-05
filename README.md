@@ -493,6 +493,24 @@ Use the roadmap for source-of-truth status:
 rg -n "^- \\[ \\]" ROADMAP.md
 ```
 
+## Install
+
+**Windows** (PowerShell):
+
+```powershell
+irm https://raw.githubusercontent.com/Micrurus-Ai/Corvid-lang/main/install/install.ps1 | iex
+```
+
+**macOS / Linux**:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/Micrurus-Ai/Corvid-lang/main/install/install.sh | sh
+```
+
+The installer downloads a prebuilt `corvid` for your OS/arch into `~/.corvid/`, adds `~/.corvid/bin` to your PATH, and runs `corvid doctor`. If a prebuilt archive is not available for your platform, it falls back to a `cargo install` from source.
+
+Override defaults with `CORVID_REPO`, `CORVID_VERSION` (e.g. `v0.1.0`), or `CORVID_HOME`.
+
 ## Install From Source
 
 ```bash
