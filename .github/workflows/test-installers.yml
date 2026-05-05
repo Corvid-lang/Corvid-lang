@@ -55,11 +55,16 @@ jobs:
       - uses: actions/checkout@v4
       - shell: pwsh
         run: |
-          Install-Module -Name PSScriptAnalyzer -Force -Scope CurrentUser
+          # PSScriptAnalyzer is pre-installed on the windows-latest runner
+          # image. Only install if a fresh runner ever drops it; -AllowClobber
+          # tolerates duplicate cmdlet names from older copies in PSModulePath.
+          if (-not (Get-Module -ListAvailable -Name PSScriptAnalyzer)) {
+              Install-Module -Name PSScriptAnalyzer -Force -Scope CurrentUser -AllowClobber
+          }
           $issues = Invoke-ScriptAnalyzer -Path install\install.ps1 -Severity Error,Warning
           if ($issues) {
-            $issues | Format-Table -AutoSize
-            exit 1
+              $issues | Format-Table -AutoSize
+              exit 1
           }
           Write-Host "install.ps1 clean"
 

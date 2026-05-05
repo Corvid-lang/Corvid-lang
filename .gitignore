@@ -1,7 +1,9 @@
 # Rust
 /target
 **/target
-Cargo.lock
+# Cargo.lock is committed: corvid-cli is a binary crate and CI builds use
+# `cargo build --locked` for reproducibility. The default `cargo new --lib`
+# excludes Cargo.lock; that default does not apply to binary workspaces.
 
 # Editor / OS
 .DS_Store
