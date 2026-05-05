@@ -61,7 +61,13 @@ jobs:
           if (-not (Get-Module -ListAvailable -Name PSScriptAnalyzer)) {
               Install-Module -Name PSScriptAnalyzer -Force -Scope CurrentUser -AllowClobber
           }
-          $issues = Invoke-ScriptAnalyzer -Path install\install.ps1 -Severity Error,Warning
+          # PSAvoidUsingWriteHost is intentional: install.ps1 is an
+          # interactive bootstrap that needs colored progress output.
+          # Write-Output pollutes the pipeline; Write-Information is
+          # silent by default. Write-Host is the right tool here.
+          $issues = Invoke-ScriptAnalyzer -Path install\install.ps1 `
+              -Severity Error,Warning `
+              -ExcludeRule PSAvoidUsingWriteHost
           if ($issues) {
               $issues | Format-Table -AutoSize
               exit 1
