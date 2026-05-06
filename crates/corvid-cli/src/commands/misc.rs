@@ -14,7 +14,7 @@
 
 use anyhow::{Context, Result};
 use corvid_driver::{
-    compile_with_config, diff_snapshots, load_corvid_config_for, render_all_pretty,
+    compile_with_config_at_path, diff_snapshots, load_corvid_config_for, render_all_pretty,
     render_effect_diff, scaffold_new, snapshot_revision, vendor_std,
 };
 use std::path::{Path, PathBuf};
@@ -42,7 +42,7 @@ pub(crate) fn cmd_check(file: &Path) -> Result<u8> {
     let source = std::fs::read_to_string(file)
         .with_context(|| format!("cannot read `{}`", file.display()))?;
     let config = load_corvid_config_for(file);
-    let result = compile_with_config(&source, config.as_ref());
+    let result = compile_with_config_at_path(&source, file, config.as_ref());
     if result.ok() {
         println!("ok: {} — no errors", file.display());
         Ok(0)
