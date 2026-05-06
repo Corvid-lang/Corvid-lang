@@ -1253,6 +1253,50 @@ Users register local models (Ollama, vLLM, llama.cpp) with declared capabilities
 
 ---
 
+### Phase 20l — First-impression gap repair
+
+**Goal.** Close the eight language-side gaps surfaced by an external reviewer building a non-trivial sample app (ticket-triage agent) against the workspace. Six are real bugs or polish gaps with small fixes; two are roadmap-territory feature work tracked as deferrals to their owning phases.
+
+**Why this phase exists.** Phase 20k closed with the workspace rubric-clean and the demo pack + hardening passes done. An external reviewer then test-drove Corvid end-to-end and surfaced eight rough edges in `corvid check`, the Python codegen, the diagnostic renderer, the auto-dispatch error path, the lexer, and the docs. The biggest is L-1 — `corvid check` silently passes code that won't build because it calls the path-less driver entry instead of the path-anchored one. Editor / pre-commit / LSP integrations report false positives until this lands.
+
+These aren't 20j/20k responsibility-rubric failures — the files are clean. They're behavioural gaps that only surface when a stranger uses the language. Pre-launch hygiene phase, mirroring 20j's role between 20i and Phase 21.
+
+**Detailed plan:** [docs/phase-20l-first-impression-gaps.md](./docs/phase-20l-first-impression-gaps.md) — every gap's verified site, fix shape, regression test, and acceptance criteria.
+
+**Sequencing rules** (per CLAUDE.md "When splitting"):
+
+- One commit per fix, smallest-blast-radius first.
+- Validation gate between every commit: `cargo check --workspace` + targeted `cargo test -p <crate>` + `cargo run -q -p corvid-cli -- verify --corpus tests/corpus` (Windows whoami linker baseline tolerated).
+- Push before starting the next slice.
+- Pre-phase chat per slice; no autonomous chaining.
+- Zero unrelated changes during a fix commit. Each slice ships one fix + its regression test + the dev-log/learnings entry.
+- Commit message: `<type>(<crate>): <imperative summary>` — body names slice id (20l-A through 20l-F), reproduction, root cause, fix.
+
+**Slices** (~7–10 commits total):
+
+- [ ] 20l-A — `corvid check` resolves imports (L-1, **Critical**). 3-line change in `crates/corvid-cli/src/commands/misc.rs`: switch from `compile_with_config` to `compile_with_config_at_path` (already on disk, doc comment explicitly says path-less variant can't resolve imports). Regression test in `crates/corvid-cli/tests/check_validates_imports.rs` asserts a missing import is rejected.
+- [ ] 20l-B — Python codegen preserves struct + container types (L-2, **High**). ~10 lines in `crates/corvid-codegen-py/src/codegen.rs` `python_type_hint_of`: emit forward-ref string literals for `T::Struct` / `T::ImportedStruct`, recurse into `List(_)` → `list[T]` and `Option(inner)` → `inner | None`. Regression test asserts the nested-struct field round-trips its name. Restores type fidelity for `mypy` / `pyright` / IDE autocomplete on the Python target.
+- [ ] 20l-C — Diagnostic renderer auto-detects TTY (L-6, **Low-medium**). ~5 lines in `crates/corvid-driver/src/render.rs` using `std::io::IsTerminal` (Rust ≥1.70, no new dep). Snapshot test asserts no `\x1b[` escape sequences when stderr is piped. Already respects `NO_COLOR` env via ariadne; this adds the auto-detect path.
+- [ ] 20l-D — Native staticlib-missing diagnostic actionable (L-5 re-diagnosed). ~10 lines in `crates/corvid-driver/src/run.rs`: when the native path fails because `corvid_runtime.lib` isn't on disk in dev, name the recovery command (`cargo build -p corvid-runtime --release`) instead of the current "no release fallback was found" message. The reporter's framing "auto-dispatch picks native when interpreter would suffice" was wrong — the dispatch is intentional and tested. The actual gap is an unactionable error path on missing staticlib.
+- [ ] 20l-E — Document `approve` PascalCase rule (L-8, docs only). One paragraph added to `docs/effects-spec/03-typing-rules.md` (or wherever approve gates are specified) naming the rule: "the identifier following `approve` must be the PascalCase form of the dangerous tool's snake_case name; the compiler rejects mismatches at typecheck time (E0101); this makes approval sites greppable per-tool." Plus a one-line addition to the `corvid tour --topic approve-gates` blurb.
+- [ ] 20l-F — Lexer accepts `\` end-of-line continuation (L-7, **Low**, optional). ~10 lines in `crates/corvid-syntax/src/lexer.rs` to consume `\` followed by `\n` outside strings as whitespace. Optional — there are existing workarounds (`+` concatenation, triple-quoted strings). Ship only if the slice gate is clean and there's room.
+
+**Filed as deferrals (not 20l slices):**
+
+- **L-3 native struct returns from prompts** — real feature work in `crates/corvid-codegen-cl/src/lowering/prompt.rs` to extend the native prompt bridge to allocate structs on the runtime heap and deserialize LLM responses into them. Tracked as a Phase 17/Phase 20 followup. Honest "not yet implemented" error already present.
+- **L-4 WASM `String` parameters** — real feature work in `crates/corvid-codegen-wasm/src/lib.rs` to pick a string ABI (UTF-8 + length, or WASM Component Model) and thread it through codegen + the JS loader. Tracked as a Phase 23 followup. Honest "currently supports only" error already present.
+
+**Phase-done criteria:**
+
+- [ ] L-1, L-2, L-6, L-5'-rediagnosed, L-8 land with regression tests.
+- [ ] L-7 lands OR is documented in `learnings.md` as "deferred — workarounds suffice."
+- [ ] L-3 and L-4 are filed against their owning phase docs (17/20 and 23 respectively) so they're not lost.
+- [ ] Closing audit recorded in `docs/phase-20l-first-impression-gaps.md` with per-gap status and shipped-line-counts.
+- [ ] `learnings.md` updated per slice.
+- [ ] Memory record `project_phase_20l_closed.md` summarises the recurring "first-impression gap" pattern (path-anchored API used in some commands but not others; codegen TODOs that ship as `object`-shaped degradations; diagnostic surface that didn't auto-detect environment) so future-session can spot similar regressions before they ship.
+
+---
+
 ### Phase 21 — Replay (~5–6 months, maximal-flagship scope) ✅ closed — **THE FLAGSHIP WOW**
 
 **Goal.** Every run replayable by construction — and beyond. Baseline record + replay in both tiers, plus nine inventive features that push past every existing observability tool. Replay becomes a language-level, compile-time-guaranteed, regression-oracle-producing primitive.
